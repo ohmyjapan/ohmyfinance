@@ -1,28 +1,33 @@
 {
   "name": "transaction-middleware",
   "private": true,
+  "type": "module",
   "version": "0.1.0",
   "scripts": {
-    "build": "nuxt build",
-    "dev": "nuxt dev",
-    "generate": "nuxt generate",
-    "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "dev": "node --require ./esm-patch.cjs node_modules/nuxt/bin/nuxt.js dev",
+    "build": "node --require ./esm-patch.cjs node_modules/nuxt/bin/nuxt.js build",
+    "generate": "node --require ./esm-patch.cjs node_modules/nuxt/bin/nuxt.js generate",
+    "preview": "node --require ./esm-patch.cjs node_modules/nuxt/bin/nuxt.js preview",
+    "postinstall": "nuxt prepare && node setup.cjs"
+  },
+  "dependencies": {
+    "@pinia/nuxt": "^0.5.1",
+    "@vueuse/core": "^10.7.0",
+    "chart.js": "^4.4.1",
+    "h3": "^1.8.2",
+    "lucide-vue-next": "^0.292.0",
+    "papaparse": "^5.4.1",
+    "pinia": "^2.1.7",
+    "uuid": "^9.0.1",
+    "vue-chartjs": "^5.2.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@nuxtjs/tailwindcss": "^6.13.2",
-    "@tailwindcss/forms": "^0.5.10",
+    "@nuxtjs/tailwindcss": "^6.10.1",
+    "@tailwindcss/forms": "^0.5.7",
+    "@types/uuid": "^9.0.7",
     "nuxt": "^3.8.2",
     "typescript": "^5.3.2",
     "vue-tsc": "^1.8.24"
-  },
-  "dependencies": {
-    "@pinia/nuxt": "^0.5.5",
-    "@vueuse/core": "^10.11.1",
-    "lucide-vue-next": "^0.292.0",
-    "papaparse": "^5.5.2",
-    "pinia": "^2.3.1",
-    "uuid": "^11.1.0",
-    "xlsx": "^0.18.5"
   }
 }

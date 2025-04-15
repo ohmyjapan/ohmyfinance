@@ -1,3 +1,4 @@
+// plugins/api.ts
 import { defineNuxtPlugin } from 'nuxt/app'
 import { useAuth } from '~/composables/useAuth'
 

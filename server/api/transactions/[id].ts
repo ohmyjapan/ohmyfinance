@@ -1,90 +1,65 @@
-import { defineEventHandler, readBody, createError } from 'h3'
+// server/api/transactions/[id].ts
+import { defineEventHandler } from 'h3'
 
-// In a real app, you would use a database
-// This is a simple in-memory store that would be shared with other handlers
-// For a real implementation, use a database or a shared data store
-let transactions = []
-
-/**
- * Handles operations on a specific transaction by ID
- * GET, PATCH, DELETE /api/transactions/:id
- */
 export default defineEventHandler(async (event) => {
-    const method = event.method
-    const id = event.context.params.id
+    const id = event.context.params?.id
 
-    // Find the transaction
-    const transactionIndex = transactions.findIndex(t => t.id === id)
-
-    if (transactionIndex === -1) {
-        throw createError({
-            statusCode: 404,
-            statusMessage: 'Not Found',
-            message: `Transaction with ID ${id} not found`
-        })
-    }
-
-    const transaction = transactions[transactionIndex]
-
-    // GET - Retrieve transaction details
-    if (method === 'GET') {
-        return { transaction }
-    }
-
-    // PATCH - Update transaction
-    if (method === 'PATCH') {
-        const body = await readBody(event)
-
-        // Update transaction fields
-        const updatedTransaction = {
-            ...transaction,
-            ...body,
-            // Ensure these fields can't be changed
-            id: transaction.id,
-            createdAt: transaction.createdAt,
-            // Update the updatedAt timestamp
-            updatedAt: new Date().toISOString()
-        }
-
-        // Add a timeline event if status is changing
-        if (body.status && body.status !== transaction.status) {
-            const statusEvent = {
-                type: body.status,
-                title: `Transaction ${body.status.charAt(0).toUpperCase() + body.status.slice(1)}`,
-                timestamp: new Date().toISOString(),
-                description: body.statusNotes || `Status changed to ${body.status}`
+    // In a real application, fetch data from database based on ID
+    // For this demo, return a mock transaction
+    return {
+        id: id || 'TRX-1001',
+        reference: `REF-${id?.replace('TRX-', '')}`,
+        createdAt: '2025-04-12T15:32:00Z',
+        status: 'completed',
+        source: 'credit_card',
+        amount: 1459.00,
+        currency: 'USD',
+        customer: {
+            name: 'John Anderson',
+            email: 'john.anderson@example.com'
+        },
+        paymentMethod: {
+            type: 'VISA',
+            last4: '4242',
+            expiryDate: '09/2027'
+        },
+        processor: {
+            name: 'VISA Direct',
+            gatewayId: 'VD-89223'
+        },
+        items: [
+            {
+                name: 'Premium Subscription',
+                description: '12-month plan',
+                quantity: 1,
+                price: 1199.00,
+                total: 1199.00
+            },
+            {
+                name: 'Add-on Package',
+                description: 'Premium support',
+                quantity: 1,
+                price: 260.00,
+                total: 260.00
             }
-
-            updatedTransaction.timeline = [
-                statusEvent,
-                ...(transaction.timeline || [])
-            ]
-        }
-
-        // Save the updated transaction
-        transactions[transactionIndex] = updatedTransaction
-
-        return {
-            transaction: updatedTransaction,
-            message: 'Transaction updated successfully'
-        }
+        ],
+        timeline: [
+            {
+                type: 'completed',
+                title: 'Transaction Completed',
+                timestamp: '2025-04-12T15:32:00Z',
+                description: 'Payment successfully processed and confirmed.'
+            },
+            {
+                type: 'processing',
+                title: 'Payment Processing',
+                timestamp: '2025-04-12T15:30:00Z'
+            },
+            {
+                type: 'created',
+                title: 'Order Placed',
+                timestamp: '2025-04-12T15:28:00Z'
+            }
+        ]
     }
-
-    // DELETE - Remove transaction
-    if (method === 'DELETE') {
-        // Remove the transaction
-        transactions.splice(transactionIndex, 1)
-
-        return {
-            id,
-            message: 'Transaction deleted successfully'
-        }
-    }
-
-    // Method not allowed
-    throw createError({
-        statusCode: 405,
-        statusMessage: 'Method Not Allowed',
-        message: `Method ${method} not allowed for this endpoint`
-    })
 })
