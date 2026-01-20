@@ -168,6 +168,9 @@ const handleLogin = async () => {
     // Successful login
     console.log('Login successful:', { email: email.value, rememberMe: rememberMe.value })
 
+    // Set auth token in localStorage
+    localStorage.setItem('auth_token', 'user-token')
+
     // Redirect to the dashboard
     router.push('/')
   } catch (err) {
