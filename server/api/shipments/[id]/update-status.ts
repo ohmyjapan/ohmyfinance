@@ -1,9 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3'
-
-// In a real app, you would use a database
-// These are simple in-memory stores that would be shared with other handlers
-let shipments = []
-let transactions = []
+import { getShipmentById, updateShipment } from '../../../services/shipmentService'
+import { getTransactionById, updateTransaction } from '../../../services/transactionService'
 
 /**
  * POST /api/shipments/:id/update-status
@@ -31,17 +28,15 @@ export default defineEventHandler(async (event) => {
     }
 
     // Find the shipment
-    const shipmentIndex = shipments.findIndex(s => s.id === shipmentId)
+    const shipment = await getShipmentById(shipmentId)
 
-    if (shipmentIndex === -1) {
+    if (!shipment) {
         throw createError({
             statusCode: 404,
             statusMessage: 'Not Found',
             message: `Shipment with ID ${shipmentId} not found`
         })
     }
-
-    const shipment = shipments[shipmentIndex]
 
     // Update shipment status
     const updatedShipment = {

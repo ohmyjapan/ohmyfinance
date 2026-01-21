@@ -11,7 +11,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- Left: Upload Zone -->
           <div class="lg:col-span-1">
-            <FileUploader @files-selected="handleFilesSelected" />
+            <ReceiptFileUploader @files-selected="handleFilesSelected" />
           </div>
 
           <!-- Right: Instructions -->

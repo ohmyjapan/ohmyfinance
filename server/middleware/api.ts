@@ -77,8 +77,9 @@ export default defineEventHandler(async (event) => {
         // Log API request (in a real app, use a proper logger)
         console.log(`[API] ${getMethod(event)} ${path}`)
 
-    } catch (error) {
-        console.error(`[API Error] ${error.message}`)
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        console.error(`[API Error] ${message}`)
         throw error
     }
 })

@@ -438,9 +438,6 @@ export default defineNuxtPlugin((nuxtApp) => {
         }
     }
 
-    // Register API in Nuxt app
-    nuxtApp.provide('api', api)
-
     return {
         provide: {
             api

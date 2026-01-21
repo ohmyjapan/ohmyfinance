@@ -1,18 +1,16 @@
 import { defineEventHandler, getRouterParam, readBody, createError } from 'h3'
 import { Receipt } from '~/types/receipt'
-
-// Reference to in-memory store (replace with DB in production)
-import receipts from './index'
+import { getReceiptById, updateReceipt, deleteReceipt } from '../../services/receiptService'
 
 /**
  * GET /api/receipts/:id
  * Get a receipt by ID
  */
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
     const id = getRouterParam(event, 'id')
 
     // Find receipt by ID
-    const receipt = receipts.find(r => r.id === id)
+    const receipt = await getReceiptById(id)
 
     // Return 404 if not found
     if (!receipt) {

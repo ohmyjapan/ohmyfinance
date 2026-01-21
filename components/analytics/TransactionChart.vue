@@ -22,7 +22,7 @@
 
     <div class="h-64">
       <LineChart
-          :chart-data="chartData"
+          :chart-data="processedChartData"
           :options="chartOptions"
       />
     </div>
@@ -67,7 +67,7 @@ const props = defineProps({
 const selectedPeriod = ref('weekly')
 
 // Create chart data with selected period
-const chartData = computed(() => {
+const processedChartData = computed(() => {
   // In a real app, we would filter data based on selectedPeriod
   return {
     labels: props.chartData.labels,

@@ -4,7 +4,6 @@ import fs from 'fs'
 import path from 'path'
 import { promisify } from 'util'
 import * as Papa from 'papaparse'
-import * as XLSX from 'xlsx'
 import { create as createInDb } from '../utils/database'
 
 const writeFileAsync = promisify(fs.writeFile)
@@ -99,11 +98,8 @@ export async function processTransactionFile(fileRecord: any, sourceType: string
             fileRecord.originalName.endsWith('.xls') ||
             fileRecord.originalName.endsWith('.xlsx')
         ) {
-            // Parse Excel
-            const workbook = XLSX.read(fileData, { type: 'buffer' })
-            const sheetName = workbook.SheetNames[0]
-            const worksheet = workbook.Sheets[sheetName]
-            parsedData = XLSX.utils.sheet_to_json(worksheet)
+            // Excel files are not supported due to ESM compatibility issues
+            throw new Error('Excel files are not supported. Please convert to CSV and try again.')
         } else {
             throw new Error(`Unsupported file type: ${fileRecord.mimeType}`)
         }

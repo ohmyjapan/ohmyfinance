@@ -1,24 +1,6 @@
 // stores/transaction.ts
 import { defineStore } from 'pinia'
-
-export interface Transaction {
-    id: string
-    reference: string
-    createdAt: string
-    status: 'completed' | 'pending' | 'processing' | 'failed' | 'refunded'
-    source: string
-    amount: number
-    currency: string
-    customer: {
-        name: string
-        email: string
-    }
-    receiptId?: string
-    shipmentId?: string
-    hasReceipt: boolean
-    hasShipment: boolean
-    [key: string]: any
-}
+import type { Transaction, TransactionFilters, TransactionStats } from '~/types/transaction'
 
 export interface TransactionFilters {
     status?: string
@@ -126,8 +108,8 @@ export const useTransactionStore = defineStore('transaction', {
             this.error = null
 
             try {
-                const { data } = await useFetch('/api/transactions')
-                this.transactions = data.value as Transaction[]
+                const data = await $fetch<Transaction[]>('/api/transactions')
+                this.transactions = data
 
                 // Fetch statistics
                 await this.fetchStats()
@@ -144,8 +126,8 @@ export const useTransactionStore = defineStore('transaction', {
             this.error = null
 
             try {
-                const { data } = await useFetch(`/api/transactions/${id}`)
-                this.currentTransaction = data.value as Transaction
+                const data = await $fetch<Transaction>(`/api/transactions/${id}`)
+                this.currentTransaction = data
             } catch (error: any) {
                 this.error = error.message || `Failed to fetch transaction ${id}`
                 console.error(`Error fetching transaction ${id}:`, error)
@@ -159,12 +141,10 @@ export const useTransactionStore = defineStore('transaction', {
             this.error = null
 
             try {
-                const { data } = await useFetch('/api/transactions/create', {
+                const newTransaction = await $fetch<Transaction>('/api/transactions/create', {
                     method: 'POST',
                     body: transactionData
                 })
-
-                const newTransaction = data.value as Transaction
 
                 // Add to local state
                 this.transactions.unshift(newTransaction)
@@ -187,12 +167,10 @@ export const useTransactionStore = defineStore('transaction', {
             this.error = null
 
             try {
-                const { data } = await useFetch(`/api/transactions/${id}/update`, {
+                const updatedTransaction = await $fetch<Transaction>(`/api/transactions/${id}/update`, {
                     method: 'POST',
                     body: { status, notes }
                 })
-
-                const updatedTransaction = data.value as Transaction
 
                 // Update in the list
                 const index = this.transactions.findIndex(t => t.id === id)
@@ -223,12 +201,10 @@ export const useTransactionStore = defineStore('transaction', {
             this.error = null
 
             try {
-                const { data } = await useFetch('/api/transactions/import', {
+                const result = await $fetch('/api/transactions/import', {
                     method: 'POST',
                     body: { data: parsedData, mappings, options }
                 })
-
-                const result = data.value
 
                 // Refresh transactions list
                 await this.fetchTransactions()
@@ -245,8 +221,8 @@ export const useTransactionStore = defineStore('transaction', {
 
         async fetchStats() {
             try {
-                const { data } = await useFetch('/api/transactions/stats')
-                this.stats = data.value
+                const data = await $fetch<typeof this.stats>('/api/transactions/stats')
+                this.stats = data
             } catch (error: any) {
                 console.error('Error fetching transaction stats:', error)
             }

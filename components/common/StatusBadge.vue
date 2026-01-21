@@ -9,6 +9,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { CheckCircle, Clock, AlertTriangle, XCircle } from 'lucide-vue-next'
 
 const props = defineProps({

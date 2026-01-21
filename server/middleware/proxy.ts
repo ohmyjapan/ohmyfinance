@@ -80,8 +80,9 @@ export default defineEventHandler(async (event) => {
             }
         })
 
-    } catch (error) {
-        console.error(`[PROXY Error] ${error.message}`)
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        console.error(`[PROXY Error] ${message}`)
         throw error
     }
 })

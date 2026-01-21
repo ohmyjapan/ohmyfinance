@@ -173,8 +173,8 @@ export const useShipmentStore = defineStore('shipment', {
             this.error = null
 
             try {
-                const { data } = await useFetch('/api/shipments')
-                this.shipments = data.value as Shipment[]
+                const data = await $fetch<Shipment[]>('/api/shipments')
+                this.shipments = data
 
                 // Fetch statistics
                 await this.fetchStats()
@@ -191,8 +191,8 @@ export const useShipmentStore = defineStore('shipment', {
             this.error = null
 
             try {
-                const { data } = await useFetch(`/api/shipments/${id}`)
-                this.currentShipment = data.value as Shipment
+                const data = await $fetch<Shipment>(`/api/shipments/${id}`)
+                this.currentShipment = data
             } catch (error: any) {
                 this.error = error.message || `Failed to fetch shipment ${id}`
                 console.error(`Error fetching shipment ${id}:`, error)

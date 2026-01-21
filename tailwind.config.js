@@ -1,74 +1,102 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-    content: [
-        "./components/**/*.{js,vue,ts}",
-        "./layouts/**/*.vue",
-        "./pages/**/*.vue",
-        "./plugins/**/*.{js,ts}",
-        "./app.vue",
-        "./error.vue",
-    ],
-    theme: {
-        extend: {
-            colors: {
-                purple: {
-                    50: '#f5f3ff',
-                    100: '#ede9fe',
-                    200: '#ddd6fe',
-                    300: '#c4b5fd',
-                    400: '#a78bfa',
-                    500: '#8b5cf6',
-                    600: '#7c3aed',
-                    700: '#6d28d9',
-                    800: '#5b21b6',
-                    900: '#4c1d95',
-                },
-                amber: {
-                    50: '#fffbeb',
-                    100: '#fef3c7',
-                    200: '#fde68a',
-                    300: '#fcd34d',
-                    400: '#fbbf24',
-                    500: '#f59e0b',
-                    600: '#d97706',
-                    700: '#b45309',
-                    800: '#92400e',
-                    900: '#78350f',
-                }
-            },
+  content: [
+    "./components/**/*.{js,vue,ts}",
+    "./layouts/**/*.vue",
+    "./pages/**/*.vue",
+    "./plugins/**/*.{js,ts}",
+    "./app.vue",
+    "./error.vue",
+  ],
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        'primary': {
+          light: '#F3D9D7',
+          main: '#C0392B',
+          dark: '#962D22',
         },
+        'secondary': {
+          light: '#E9ECEF',
+          main: '#8A9099',
+          dark: '#4D5762',
+        },
+        'success': {
+          light: '#D4F4E2',
+          main: '#28C76F',
+          dark: '#1F9D57',
+        },
+        'info': {
+          light: '#CCF3FF',
+          main: '#00CFE8',
+          dark: '#0097AF',
+        },
+        'warning': {
+          light: '#FFF5DF',
+          main: '#FF9F43',
+          dark: '#FF7D00',
+        },
+        'error': {
+          light: '#FFE7E6',
+          main: '#EA5455',
+          dark: '#D43D3E',
+        },
+        'background': {
+          default: '#F8F7FA',
+          paper: '#FFFFFF',
+          dark: '#1E1E2D',
+          darkPaper: '#2B2C40'
+        },
+        // Keep purple for backwards compatibility
+        purple: {
+          50: '#f5f3ff',
+          100: '#ede9fe',
+          200: '#ddd6fe',
+          300: '#c4b5fd',
+          400: '#a78bfa',
+          500: '#8b5cf6',
+          600: '#7c3aed',
+          700: '#6d28d9',
+          800: '#5b21b6',
+          900: '#4c1d95',
+        },
+        amber: {
+          50: '#fffbeb',
+          100: '#fef3c7',
+          200: '#fde68a',
+          300: '#fcd34d',
+          400: '#fbbf24',
+          500: '#f59e0b',
+          600: '#d97706',
+          700: '#b45309',
+          800: '#92400e',
+          900: '#78350f',
+        }
+      },
     },
-    plugins: [
-        require('@tailwindcss/forms'),
-    ],
-    safelist: [
-        // Background colors for stat cards and status badges
-        'bg-purple-100',
-        'bg-blue-100',
-        'bg-green-100',
-        'bg-amber-100',
-        'bg-red-100',
-        'bg-yellow-100',
-        'bg-gray-100',
-
-        // Text colors
-        'text-purple-600',
-        'text-blue-600',
-        'text-green-600',
-        'text-amber-600',
-        'text-red-600',
-        'text-yellow-600',
-        'text-gray-600',
-
-        // Status badge text colors
-        'text-green-800',
-        'text-blue-800',
-        'text-red-800',
-        'text-yellow-800',
-        'text-gray-800',
-
-        // Trend colors
-        'text-green-500',
-        'text-red-500',
-    ]
+  },
+  plugins: [
+    require('@tailwindcss/forms'),
+  ],
+  safelist: [
+    // Background colors
+    'bg-primary-light', 'bg-primary-main', 'bg-primary-dark',
+    'bg-secondary-light', 'bg-secondary-main', 'bg-secondary-dark',
+    'bg-success-light', 'bg-success-main', 'bg-success-dark',
+    'bg-info-light', 'bg-info-main', 'bg-info-dark',
+    'bg-warning-light', 'bg-warning-main', 'bg-warning-dark',
+    'bg-error-light', 'bg-error-main', 'bg-error-dark',
+    'bg-background-default', 'bg-background-paper', 'bg-background-dark', 'bg-background-darkPaper',
+    // Text colors
+    'text-primary-main', 'text-primary-dark',
+    'text-secondary-main', 'text-secondary-dark',
+    'text-success-main', 'text-success-dark',
+    'text-info-main', 'text-info-dark',
+    'text-warning-main', 'text-warning-dark',
+    'text-error-main', 'text-error-dark',
+    // Legacy colors
+    'bg-purple-100', 'bg-blue-100', 'bg-green-100', 'bg-amber-100', 'bg-red-100',
+    'text-purple-600', 'text-blue-600', 'text-green-600', 'text-amber-600', 'text-red-600',
+  ]
 }

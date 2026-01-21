@@ -1,8 +1,8 @@
 <template>
   <div class="bg-white rounded-lg shadow p-6">
     <div class="flex items-center">
-      <div :class="`p-3 rounded-full bg-${color}-100 text-${color}-600`">
-        <component :is="icon" size="24" />
+      <div :class="[iconContainerClasses]" class="p-3 rounded-full">
+        <component :is="icon" :size="24" />
       </div>
       <div class="ml-4">
         <p class="text-sm font-medium text-gray-500">{{ title }}</p>
@@ -21,7 +21,8 @@
 </template>
 
 <script setup lang="ts">
-import { TrendingUp, TrendingDown } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { TrendingUp, TrendingDown, CreditCard, FileText, Package } from 'lucide-vue-next'
 
 const props = defineProps({
   title: {
@@ -53,6 +54,30 @@ const props = defineProps({
     type: String,
     default: 'purple'
   }
+})
+
+// Map icon names to actual components
+const icons: Record<string, any> = {
+  CreditCard,
+  FileText,
+  Package,
+  TrendingUp,
+  TrendingDown
+}
+
+// Resolved icon component
+const icon = computed(() => icons[props.icon] || CreditCard)
+
+// Container classes for the icon based on color
+const iconContainerClasses = computed(() => {
+  const colorClasses: Record<string, string> = {
+    purple: 'bg-purple-100 text-purple-600',
+    blue: 'bg-blue-100 text-blue-600',
+    green: 'bg-green-100 text-green-600',
+    amber: 'bg-amber-100 text-amber-600',
+    red: 'bg-red-100 text-red-600'
+  }
+  return colorClasses[props.color] || colorClasses.purple
 })
 
 // Determine the color of the trend indicator

@@ -17,11 +17,11 @@ const ALLOWED_TYPES = {
 export default defineEventHandler(async (event) => {
     try {
         // Only process POST requests to specific endpoints
-        if (event.req.method !== 'POST') {
+        if (event.method !== 'POST') {
             return;
         }
 
-        const url = event.req.url;
+        const url = event.path || event.node.req.url;
         if (!url || (!url.includes('/api/upload/transaction') &&
             !url.includes('/api/upload/receipt'))) {
             return;

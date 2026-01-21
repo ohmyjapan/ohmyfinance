@@ -1,5 +1,5 @@
 // server/api/proxy/[source].ts
-import { defineEventHandler, readBody } from 'h3'
+import { defineEventHandler, readBody, createError } from 'h3'
 import { proxyRequest } from '../../services/proxyService'
 
 export default defineEventHandler(async (event) => {
@@ -8,7 +8,11 @@ export default defineEventHandler(async (event) => {
     // Validate source
     const validSources = ['credit-card', 'credit_card', 'payment-gateway', 'payment_gateway', 'overseas', 'overseas_market']
     if (!validSources.includes(source)) {
-        throw new Error(`Invalid source: ${source}. Valid sources are: ${validSources.join(', ')}`)
+        throw createError({
+            statusCode: 400,
+            statusMessage: 'Bad Request',
+            message: `Invalid source: ${source}. Valid sources are: ${validSources.join(', ')}`
+        })
     }
 
     const body = await readBody(event)

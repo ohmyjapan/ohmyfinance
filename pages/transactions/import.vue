@@ -140,7 +140,7 @@
     </div>
 
     <!-- File Uploader Component -->
-    <TransactionFileUploader />
+    <TransactionFileUpload />
   </div>
 </template>
 
@@ -149,7 +149,7 @@ import { ref } from 'vue'
 import { CreditCard, ShoppingCart, Globe, Check, Clock, AlertCircle } from 'lucide-vue-next'
 
 // Import our custom component
-import TransactionFileUploader from '~/components/transaction/TransactionFileUploader.vue'
+import TransactionFileUpload from '~/components/transaction/TransactionFileUpload.vue'
 
 // Mock data for recent imports
 const recentImports = ref([

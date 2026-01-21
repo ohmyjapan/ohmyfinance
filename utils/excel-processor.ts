@@ -20,6 +20,10 @@ export async function processExcelFile(filePath, outputDir) {
         const scriptPath = path.join(process.cwd(), 'temp-excel-script.cjs');
         const outputPath = path.join(outputDir, `${path.basename(fileName, path.extname(fileName))}.json`);
 
+        // Escape paths to prevent injection (handle backslashes AND single quotes)
+        const escapedFilePath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+        const escapedOutputPath = outputPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+
         // Create the CommonJS script content
         const scriptContent = `
       const XLSX = require('xlsx');
@@ -28,7 +32,7 @@ export async function processExcelFile(filePath, outputDir) {
       
       try {
         // Read the Excel file
-        const workbook = XLSX.readFile('${filePath.replace(/\\/g, '\\\\')}', {
+        const workbook = XLSX.readFile('${escapedFilePath}', {
           cellStyles: true,
           cellFormulas: true,
           cellDates: true,
@@ -44,7 +48,7 @@ export async function processExcelFile(filePath, outputDir) {
         });
         
         // Write the result to a JSON file
-        fs.writeFileSync('${outputPath.replace(/\\/g, '\\\\')}', JSON.stringify(result, null, 2));
+        fs.writeFileSync('${escapedOutputPath}', JSON.stringify(result, null, 2));
         console.log('SUCCESS');
         process.exit(0);
       } catch (error) {

@@ -65,7 +65,7 @@
 
       <!-- Step 3: Data Preview -->
       <div v-if="currentStep === 2">
-        <DataPreview
+        <TransactionDataPreview
             :files="uploadedFiles"
             :mappings="fieldMappings"
             :parsed-data="parsedData"

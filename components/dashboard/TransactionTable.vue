@@ -47,6 +47,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { MoreVertical } from 'lucide-vue-next'
 
 const props = defineProps({

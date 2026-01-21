@@ -3,11 +3,9 @@
 import { defineEventHandler, readMultipartFormData, createError } from 'h3';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-// Safe way to get current directory with ESM
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(__dirname, '../..');
+// Use process.cwd() for Windows compatibility
+const rootDir = process.cwd();
 
 export default defineEventHandler(async (event) => {
     try {

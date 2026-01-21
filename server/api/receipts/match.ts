@@ -1,7 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3';
 import path from 'path';
 import fs from 'fs/promises';
-import { toFileUrl } from '../../../utils/path';
 
 /**
  * Matches receipt with transaction data

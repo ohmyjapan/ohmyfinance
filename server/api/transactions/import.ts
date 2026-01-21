@@ -1,7 +1,6 @@
 import { defineEventHandler, readMultipartFormData, createError } from 'h3'
 import { v4 as uuidv4 } from 'uuid'
 import * as Papa from 'papaparse'
-import * as XLSX from 'xlsx'
 
 // In a real app, you would use a database
 // This is a simple in-memory store that would be shared with other handlers
@@ -76,11 +75,13 @@ export default defineEventHandler(async (event) => {
 
             parsedData = parseResult.data
         } else {
-            // Parse Excel
-            const workbook = XLSX.read(file.data, { type: 'buffer' })
-            const firstSheetName = workbook.SheetNames[0]
-            const worksheet = workbook.Sheets[firstSheetName]
-            parsedData = XLSX.utils.sheet_to_json(worksheet)
+            // For Excel files, return an error asking to use CSV
+            // XLSX library has ESM compatibility issues on Windows
+            throw createError({
+                statusCode: 400,
+                statusMessage: 'Bad Request',
+                message: 'Excel files are not supported in this version. Please convert to CSV and try again.'
+            })
         }
 
         // Apply field mappings if provided

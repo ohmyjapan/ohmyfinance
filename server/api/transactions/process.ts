@@ -2,7 +2,6 @@ import { defineEventHandler, readBody, createError } from 'h3';
 import path from 'path';
 import fs from 'fs/promises';
 import { processExcelFile } from '../../../utils/excel-processor';
-import { toFileUrl } from '../../../utils/path';
 
 /**
  * Handles transaction file processing and imports data to the system

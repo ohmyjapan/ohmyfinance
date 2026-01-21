@@ -1,50 +1,70 @@
 // nuxt.config.ts
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
-
-// Get the current module's directory
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 export default defineNuxtConfig({
-  // Your existing configuration
-
-  // Fix for ESM path issues on Windows
-  alias: {
-    // Define aliases to avoid absolute path issues
-    '~': resolve(__dirname),
-    '@': resolve(__dirname)
+  // Development server configuration
+  devServer: {
+    port: 5000,
+    host: '0.0.0.0'
   },
 
-  vite: {
-    resolve: {
-      alias: {
-        // Ensure these aliases work in Vite
-        '~': resolve(__dirname),
-        '@': resolve(__dirname)
+  // Nitro configuration to fix worker entry issues
+  nitro: {
+    preset: 'node-server',
+    esbuild: {
+      options: {
+        target: 'esnext'
       }
-    },
-    // Better handling of modules
+    }
+  },
+
+  // Disable SSR temporarily for debugging
+  ssr: false,
+
+  // Runtime configuration
+  runtimeConfig: {
+    mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/ohmyfinance'
+  },
+
+  // Modules
+  modules: [
+    '@nuxtjs/tailwindcss',
+    '@pinia/nuxt'
+  ],
+
+  // Tailwind CSS configuration
+  tailwindcss: {
+    cssPath: '~/assets/css/tailwind.css',
+    configPath: 'tailwind.config.js'
+  },
+
+  // Plugins
+  plugins: [
+    '~/plugins/i18n.ts'
+  ],
+
+  // Component auto-import configuration
+  components: {
+    dirs: [
+      {
+        path: '~/components',
+        pathPrefix: false
+      }
+    ]
+  },
+
+  // Better handling of modules
+  vite: {
     optimizeDeps: {
       include: ['uuid'],
-      exclude: [],
       esbuildOptions: {
         target: 'es2020'
       }
     },
     build: {
-      target: 'es2020',
-      // Fix for ESM issues
-      rollupOptions: {
-        // Properly externalize dependencies
-        external: [],
-        output: {
-          format: 'es'
-        }
-      }
+      target: 'es2020'
     }
   },
 
-  // Disable typecheck during development to avoid ESM issues
+  // Disable typecheck during development
   typescript: {
     shim: true,
     strict: true,
