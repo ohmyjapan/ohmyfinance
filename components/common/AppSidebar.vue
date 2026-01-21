@@ -131,7 +131,8 @@ import {
   Package,
   Settings,
   Code,
-  User
+  User,
+  Calendar
 } from 'lucide-vue-next'
 
 defineProps({
@@ -154,7 +155,8 @@ const icons: Record<string, any> = {
   FileText,
   Package,
   Settings,
-  Code
+  Code,
+  Calendar
 }
 
 // Navigation items
@@ -162,7 +164,8 @@ const navItems = [
   {
     section: 'Dashboard',
     items: [
-      { name: 'Analytics', icon: 'TrendingUp', route: '/' }
+      { name: 'Analytics', icon: 'TrendingUp', route: '/' },
+      { name: 'Payment Calendar', icon: 'Calendar', route: '/calendar' }
     ]
   },
   {
