@@ -6,10 +6,10 @@
         class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-900/95 backdrop-blur-sm"
       >
         <div class="w-full max-w-md mx-4 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8">
-          <!-- Session Expired State -->
-          <div v-if="forceLogoutRequired" class="text-center">
-            <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-              <Clock class="w-10 h-10 text-red-500" />
+          <!-- Session Expired State (from force logout or detected during unlock) -->
+          <div v-if="forceLogoutRequired || sessionExpired" class="text-center">
+            <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+              <Clock class="w-10 h-10 text-amber-500" />
             </div>
             <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">
               {{ t('security.sessionExpired') }}
@@ -18,10 +18,11 @@
               {{ t('security.sessionExpiredMessage') }}
             </p>
             <button
-              @click="handleForceLogout"
-              class="w-full py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors"
+              @click="handleSessionExpiredLogin"
+              class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
             >
-              {{ t('security.logoutAndLogin') }}
+              <LogIn class="w-5 h-5" />
+              {{ t('auth.login') }}
             </button>
           </div>
 
@@ -141,7 +142,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { Lock, Unlock, Eye, EyeOff, Clock, Loader2 } from 'lucide-vue-next'
+import { Lock, Unlock, Eye, EyeOff, Clock, Loader2, LogIn } from 'lucide-vue-next'
 import { useActivityTracker } from '~/composables/useActivityTracker'
 import { useSecurityPin } from '~/composables/useSecurityPin'
 import { useUserStore } from '~/stores/user'
@@ -160,6 +161,7 @@ const showPassword = ref(false)
 const showPasswordInput = ref(false)
 const isUnlocking = ref(false)
 const errorMessage = ref('')
+const sessionExpired = ref(false)
 
 const pinInputs = ref<HTMLInputElement[]>([])
 const passwordInput = ref<HTMLInputElement | null>(null)
@@ -171,6 +173,7 @@ watch(isLocked, async (locked) => {
     password.value = ''
     pinDigits.value = ['', '', '', '', '', '']
     showPasswordInput.value = false
+    sessionExpired.value = false
 
     await nextTick()
     if (isPinEnabled.value && !requiresPassword.value) {
@@ -268,54 +271,38 @@ const unlockWithPassword = async () => {
       tokenValid = await userStore.refreshAuthToken()
     }
 
-    if (tokenValid && userStore.token) {
-      // Token is valid, verify password
-      const response = await fetch('/api/auth/verify-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${userStore.token}`
-        },
-        body: JSON.stringify({ password: password.value })
-      })
-
-      const data = await response.json()
-
-      if (response.ok && data.valid) {
-        resetPinAttempts()
-        unlock()
-        password.value = ''
-        return
-      } else if (response.status !== 401) {
-        // Password is wrong (not a token issue)
-        errorMessage.value = t('security.invalidPassword')
-        password.value = ''
-        return
-      }
-      // If 401, fall through to re-login attempt
+    // If token refresh failed, session is expired
+    if (!tokenValid || !userStore.token) {
+      sessionExpired.value = true
+      password.value = ''
+      return
     }
 
-    // Token expired or invalid - try to re-login with the password
-    if (user.value?.email) {
-      const loginResult = await userStore.login(user.value.email, password.value)
+    // Token is valid, verify password
+    const response = await fetch('/api/auth/verify-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${userStore.token}`
+      },
+      body: JSON.stringify({ password: password.value })
+    })
 
-      if (loginResult === true) {
-        // Successfully re-authenticated
-        resetPinAttempts()
-        unlock()
-        password.value = ''
-        return
-      } else if (loginResult === '2fa_required') {
-        // 2FA required - need to handle this case
-        errorMessage.value = t('security.unlockFailed')
-        password.value = ''
-        return
-      }
+    const data = await response.json()
+
+    if (response.ok && data.valid) {
+      resetPinAttempts()
+      unlock()
+      password.value = ''
+    } else if (response.status === 401) {
+      // Token became invalid - session expired
+      sessionExpired.value = true
+      password.value = ''
+    } else {
+      // Password is wrong
+      errorMessage.value = t('security.invalidPassword')
+      password.value = ''
     }
-
-    // Login failed - wrong password
-    errorMessage.value = t('security.invalidPassword')
-    password.value = ''
   } catch (error: any) {
     errorMessage.value = t('security.unlockFailed')
   } finally {
@@ -330,11 +317,12 @@ const handleLogout = async () => {
   router.push('/login')
 }
 
-// Handle force logout (session expired)
-const handleForceLogout = async () => {
+// Handle session expired - go to login
+const handleSessionExpiredLogin = async () => {
   await userStore.logout()
+  sessionExpired.value = false
   unlock()
-  router.push('/login?reason=session_expired')
+  router.push('/login')
 }
 </script>
 
