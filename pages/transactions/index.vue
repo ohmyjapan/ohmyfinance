@@ -2,21 +2,28 @@
   <div>
     <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
       <div>
-        <h1 class="text-xl font-semibold text-gray-800">Transactions</h1>
-        <p class="text-gray-600">View and manage transaction records</p>
+        <h1 class="text-xl font-semibold text-gray-800">{{ t('transactions.title') }}</h1>
+        <p class="text-gray-600">{{ t('transactions.transactionDetails') }}</p>
       </div>
 
       <div class="mt-4 md:mt-0 flex space-x-3">
-        <button class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+        <button class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
           <FileText class="mr-2 h-4 w-4 text-gray-500" />
-          Export CSV
+          {{ t('common.export') }} CSV
         </button>
         <button
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="router.push('/transactions/upload')"
         >
-          <Upload class="mr-2 h-4 w-4" />
-          Import Transactions
+          <Upload class="mr-2 h-4 w-4 text-gray-500" />
+          {{ t('common.import') }}
+        </button>
+        <button
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+            @click="showCreateModal = true"
+        >
+          <Plus class="mr-2 h-4 w-4" />
+          {{ t('transactionForm.createTitle') }}
         </button>
       </div>
     </header>
@@ -24,39 +31,31 @@
     <!-- Stats Cards -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
       <StatCard
-          title="Total Transactions"
-          :value="formatCurrency(transactionStats.total.amount)"
-          :change="+8.2"
-          trend="up"
+          title="支出合計"
+          :value="formatCurrency(transactionStats.expense?.amount || 0)"
           icon="CreditCard"
-          color="purple"
-      />
-
-      <StatCard
-          title="Avg Order Value"
-          :value="formatCurrency(transactionStats.avgOrderValue)"
-          :change="+3.4"
-          trend="up"
-          icon="DollarSign"
-          color="blue"
-      />
-
-      <StatCard
-          title="Pending Transactions"
-          :value="transactionStats.pending.count.toString()"
-          :change="+12.3"
-          trend="up"
-          icon="Clock"
-          color="amber"
-      />
-
-      <StatCard
-          title="Failed Transactions"
-          :value="transactionStats.failed.count.toString()"
-          :change="-5.2"
-          trend="down"
-          icon="AlertCircle"
           color="red"
+      />
+
+      <StatCard
+          title="入金合計"
+          :value="formatCurrency(transactionStats.income?.amount || 0)"
+          icon="DollarSign"
+          color="green"
+      />
+
+      <StatCard
+          title="取引件数"
+          :value="transactionStats.total.count.toString()"
+          icon="Clock"
+          color="primary"
+      />
+
+      <StatCard
+          title="領収書あり"
+          :value="Math.round((transactionStats.receiptMatchRate || 0) * 100) + '%'"
+          icon="FileText"
+          color="blue"
       />
     </div>
 
@@ -71,8 +70,8 @@
             <input
                 v-model="searchQuery"
                 type="text"
-                class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                placeholder="Search by ID, reference, or customer..."
+                class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
+                :placeholder="t('transactionsList.searchPlaceholder')"
             />
           </div>
 
@@ -80,27 +79,25 @@
             <div class="relative">
               <select
                   v-model="filters.status"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
               >
-                <option value="">All Statuses</option>
-                <option value="completed">Completed</option>
-                <option value="pending">Pending</option>
-                <option value="processing">Processing</option>
-                <option value="failed">Failed</option>
-                <option value="refunded">Refunded</option>
+                <option value="">{{ t('transactionsList.allStatuses') }}</option>
+                <option value="completed">{{ t('transactions.statuses.completed') }}</option>
+                <option value="pending">{{ t('transactions.statuses.pending') }}</option>
+                <option value="processing">{{ t('transactions.statuses.processing') }}</option>
+                <option value="failed">{{ t('transactions.statuses.failed') }}</option>
+                <option value="refunded">{{ t('transactions.statuses.refunded') }}</option>
               </select>
             </div>
 
             <div class="relative">
               <select
-                  v-model="filters.source"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
+                  v-model="filters.type"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
               >
-                <option value="">All Sources</option>
-                <option value="credit_card">Credit Card</option>
-                <option value="payment_gateway">Payment Gateway</option>
-                <option value="overseas">Overseas</option>
-                <option value="manual">Manual</option>
+                <option value="">全ての区別</option>
+                <option value="支出">支出</option>
+                <option value="入金">入金</option>
               </select>
             </div>
           </div>
@@ -108,19 +105,19 @@
 
         <div class="flex items-center">
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="showAdvancedFilters = !showAdvancedFilters"
           >
             <Filter class="mr-2 h-4 w-4 text-gray-500" />
-            {{ showAdvancedFilters ? 'Hide Filters' : 'Advanced Filters' }}
+            {{ showAdvancedFilters ? t('transactionsList.hideFilters') : t('transactionsList.advancedFilters') }}
           </button>
 
           <button
               v-if="isFiltered"
-              class="ml-3 text-sm text-purple-600 hover:text-purple-500"
+              class="ml-3 text-sm text-primary-main hover:text-primary-dark"
               @click="resetFilters"
           >
-            Clear Filters
+            {{ t('transactionsList.clearFilters') }}
           </button>
         </div>
       </div>
@@ -129,61 +126,53 @@
       <div v-if="showAdvancedFilters" class="px-4 py-3 border-t border-gray-200 bg-gray-50">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('transactionsList.dateRange') }}</label>
             <div class="flex space-x-2">
               <input
                   v-model="filters.dateFrom"
                   type="date"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
               <input
                   v-model="filters.dateTo"
                   type="date"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
             </div>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Amount Range</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('transactionsList.amountRange') }}</label>
             <div class="flex space-x-2">
               <input
                   v-model="filters.minAmount"
                   type="number"
                   min="0"
                   step="0.01"
-                  placeholder="Min"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  :placeholder="t('transactionsList.min')"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
               <input
                   v-model="filters.maxAmount"
                   type="number"
                   min="0"
                   step="0.01"
-                  placeholder="Max"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  :placeholder="t('transactionsList.max')"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
             </div>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Additional Filters</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">その他のフィルター</label>
             <div class="flex space-x-4">
               <label class="inline-flex items-center">
                 <input
                     v-model="filters.hasReceipt"
                     type="checkbox"
-                    class="rounded border-gray-300 text-purple-600 shadow-sm focus:border-purple-300 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="rounded border-gray-300 text-primary-main shadow-sm focus:border-primary-light focus:ring focus:ring-primary-light focus:ring-opacity-50"
                 />
-                <span class="ml-2 text-sm text-gray-700">Has Receipt</span>
-              </label>
-              <label class="inline-flex items-center">
-                <input
-                    v-model="filters.hasShipment"
-                    type="checkbox"
-                    class="rounded border-gray-300 text-purple-600 shadow-sm focus:border-purple-300 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
-                />
-                <span class="ml-2 text-sm text-gray-700">Has Shipment</span>
+                <span class="ml-2 text-sm text-gray-700">領収書あり</span>
               </label>
             </div>
           </div>
@@ -194,23 +183,23 @@
     <!-- Transactions Table -->
     <div class="bg-white rounded-lg shadow-sm overflow-hidden">
       <div v-if="isLoading" class="flex justify-center items-center p-12">
-        <Loader class="h-8 w-8 text-purple-600 animate-spin" />
-        <span class="ml-2 text-gray-600">Loading transactions...</span>
+        <Loader class="h-8 w-8 text-primary-main animate-spin" />
+        <span class="ml-2 text-gray-600">{{ t('transactionsList.loading') }}</span>
       </div>
 
       <div v-else-if="filteredTransactions.length === 0" class="text-center py-16">
         <CreditCard class="mx-auto h-12 w-12 text-gray-300" />
-        <h3 class="mt-2 text-sm font-medium text-gray-900">No transactions found</h3>
+        <h3 class="mt-2 text-sm font-medium text-gray-900">{{ t('transactionsList.noTransactions') }}</h3>
         <p class="mt-1 text-sm text-gray-500">
-          {{ isFiltered ? 'Try adjusting your filters or search query.' : 'Get started by adding a transaction.' }}
+          {{ isFiltered ? t('transactionsList.adjustFilters') : t('transactionsList.getStarted') }}
         </p>
         <div class="mt-6">
           <button
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="router.push('/transactions/upload')"
           >
             <Upload class="mr-2 h-4 w-4" />
-            Import Transactions
+            {{ t('transactionsList.importTransactions') }}
           </button>
         </div>
       </div>
@@ -218,13 +207,13 @@
       <table v-else class="min-w-full divide-y divide-gray-200">
         <thead class="bg-gray-50">
         <tr>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID/Date</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Receipt</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">日付</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">区別</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">勘定科目</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">金額</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">仕入れ先/顧客</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">領収書</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('common.actions') }}</th>
         </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200">
@@ -234,34 +223,41 @@
             class="hover:bg-gray-50"
         >
           <td class="px-6 py-4 whitespace-nowrap">
-            <div class="text-sm font-medium text-gray-900">{{ transaction.id }}</div>
-            <div class="text-xs text-gray-500">{{ formatDate(transaction.createdAt) }}</div>
+            <div class="text-sm font-medium text-gray-900">{{ formatDate(transaction.date) }}</div>
+            <div class="text-xs text-gray-500">{{ transaction.referenceNumber || transaction.id }}</div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
-            <div class="text-sm text-gray-900">{{ transaction.customer.name }}</div>
-            <div class="text-xs text-gray-500">{{ transaction.customer.email }}</div>
+            <span :class="[
+              'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+              transaction.type === '入金' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+            ]">
+              {{ transaction.type || '支出' }}
+            </span>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
-            <div class="text-sm text-gray-900">{{ formatSource(transaction.source) }}</div>
-            <div class="text-xs text-gray-500">{{ transaction.reference }}</div>
+            <div class="text-sm text-gray-900">{{ transaction.accountCategoryId?.name || transaction.accountCategoryName || '-' }}</div>
+            <div class="text-xs text-gray-500">{{ transaction.subAccountCategoryId?.name || transaction.subAccountCategoryName || '' }}</div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
-            <div class="text-sm font-medium text-gray-900">
-              {{ formatCurrency(transaction.amount, transaction.currency) }}
+            <div :class="[
+              'text-sm font-medium',
+              transaction.type === '入金' ? 'text-green-600' : 'text-gray-900'
+            ]">
+              {{ formatCurrency(transaction.amount) }}
             </div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
-            <StatusBadge :status="transaction.status" />
+            <div class="text-sm text-gray-900">
+              {{ transaction.supplierId?.name || transaction.supplierName || transaction.customerId?.name || transaction.customerName || '-' }}
+            </div>
+            <div class="text-xs text-gray-500">{{ transaction.productName || '' }}</div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
-            <div v-if="transaction.receipt" class="text-sm">
-              <button
-                  @click="viewReceipt(transaction.receipt)"
-                  class="text-purple-600 hover:text-purple-900 inline-flex items-center"
-              >
+            <div v-if="transaction.hasReceipt" class="text-sm">
+              <span class="text-green-600 inline-flex items-center">
                 <FileText class="h-4 w-4 mr-1" />
-                View
-              </button>
+                あり
+              </span>
             </div>
             <div v-else>
               <button
@@ -269,16 +265,16 @@
                   class="text-gray-500 hover:text-gray-700 text-xs inline-flex items-center"
               >
                 <Plus class="h-3 w-3 mr-1" />
-                Add
+                追加
               </button>
             </div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap text-sm">
             <button
                 @click="viewTransactionDetails(transaction.id)"
-                class="text-purple-600 hover:text-purple-900 mr-3"
+                class="text-primary-main hover:text-primary-dark mr-3"
             >
-              View
+              詳細
             </button>
             <div class="relative inline-block text-left" v-click-outside="() => closeActionsMenu(transaction.id)">
               <button
@@ -294,31 +290,30 @@
               >
                 <div class="py-1">
                   <button
+                      @click="openEditModal(transaction)"
+                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    編集
+                  </button>
+                  <button
                       @click="updateTransactionStatus(transaction.id, 'completed')"
                       class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                       v-if="transaction.status !== 'completed'"
                   >
-                    Mark as Completed
+                    完了にする
                   </button>
                   <button
-                      @click="updateTransactionStatus(transaction.id, 'failed')"
+                      @click="updateTransactionStatus(transaction.id, 'cancelled')"
                       class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                      v-if="transaction.status !== 'failed'"
+                      v-if="transaction.status !== 'cancelled'"
                   >
-                    Mark as Failed
+                    キャンセル
                   </button>
                   <button
-                      @click="updateTransactionStatus(transaction.id, 'refunded')"
-                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                      v-if="transaction.status === 'completed'"
+                      @click="deleteTransactionConfirm(transaction.id)"
+                      class="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
                   >
-                    Mark as Refunded
-                  </button>
-                  <button
-                      @click="addShipment(transaction.id)"
-                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                  >
-                    {{ transaction.shipment ? 'Update Shipment' : 'Add Shipment' }}
+                    削除
                   </button>
                 </div>
               </div>
@@ -333,7 +328,7 @@
         <div class="flex items-center justify-between">
           <div class="hidden sm:block">
             <p class="text-sm text-gray-700">
-              Showing <span class="font-medium">{{ paginationStart }}</span> to <span class="font-medium">{{ paginationEnd }}</span> of <span class="font-medium">{{ filteredTransactions.length }}</span> transactions
+              {{ t('common.showing') }} <span class="font-medium">{{ paginationStart }}</span> {{ t('common.to') }} <span class="font-medium">{{ paginationEnd }}</span> {{ t('common.of') }} <span class="font-medium">{{ filteredTransactions.length }}</span> {{ t('transactionsList.transactions') }}
             </p>
           </div>
           <div class="flex-1 flex justify-center sm:justify-end">
@@ -353,7 +348,7 @@
                     @click="currentPage = page"
                     :class="[
                     currentPage === page
-                      ? 'z-10 bg-purple-50 border-purple-500 text-purple-600'
+                      ? 'z-10 bg-primary-light border-primary-main text-primary-main'
                       : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50',
                     'relative inline-flex items-center px-4 py-2 border text-sm font-medium'
                   ]"
@@ -381,6 +376,20 @@
         </div>
       </div>
     </div>
+
+    <!-- Create Transaction Modal -->
+    <TransactionFormModal
+      v-model="showCreateModal"
+      @submit="handleCreateTransaction"
+    />
+
+    <!-- Edit Transaction Modal -->
+    <TransactionFormModal
+      v-model="showEditModal"
+      :initialData="editingTransaction"
+      :isEditing="true"
+      @submit="handleEditTransaction"
+    />
   </div>
 </template>
 
@@ -400,8 +409,11 @@ import {
   Loader,
   Clock,
   AlertCircle,
-  DollarSign
+  DollarSign,
+  X
 } from 'lucide-vue-next'
+
+const { t } = useI18n()
 
 // Use the transactions composable
 const {
@@ -413,6 +425,8 @@ const {
   searchQuery,
   filters,
   fetchTransactions,
+  createTransaction,
+  deleteTransaction,
   updateTransactionStatus: updateStatus,
   formatDate,
   formatCurrency
@@ -420,6 +434,9 @@ const {
 
 // Local state
 const showAdvancedFilters = ref(false)
+const showCreateModal = ref(false)
+const showEditModal = ref(false)
+const editingTransaction = ref<any>(null)
 const currentPage = ref(1)
 const itemsPerPage = ref(10)
 const openMenuId = ref<string | null>(null)
@@ -436,14 +453,13 @@ onMounted(async () => {
 const isFiltered = computed(() => {
   return (
       searchQuery.value !== '' ||
-      filters.value.status !== '' ||
-      filters.value.source !== '' ||
-      filters.value.dateFrom !== '' ||
-      filters.value.dateTo !== '' ||
-      filters.value.minAmount !== '' ||
-      filters.value.maxAmount !== '' ||
-      filters.value.hasReceipt !== undefined ||
-      filters.value.hasShipment !== undefined
+      filters.value.status ||
+      filters.value.type ||
+      filters.value.dateFrom ||
+      filters.value.dateTo ||
+      filters.value.minAmount ||
+      filters.value.maxAmount ||
+      filters.value.hasReceipt !== undefined
   )
 })
 
@@ -466,19 +482,6 @@ const paginationStart = computed(() => {
 const paginationEnd = computed(() => {
   return Math.min(currentPage.value * itemsPerPage.value, filteredTransactions.value.length)
 })
-
-// Format transaction source
-const formatSource = (source: string) => {
-  const mapping = {
-    credit_card: 'Credit Card',
-    payment_gateway: 'Payment Gateway',
-    overseas: 'Overseas',
-    manual: 'Manual Entry',
-    other: 'Other'
-  }
-
-  return mapping[source] || source
-}
 
 // Reset filters
 const resetFilters = () => {
@@ -532,12 +535,77 @@ const viewReceipt = (receipt: any) => {
   }
 }
 
-const addShipment = (id: string) => {
+const deleteTransactionConfirm = async (id: string) => {
   closeActionsMenu(id)
-  router.push({
-    path: '/shipments',
-    query: { transactionId: id }
-  })
+  if (confirm('この取引を削除しますか？')) {
+    const success = await deleteTransaction(id)
+    if (success) {
+      await fetchTransactions()
+    }
+  }
+}
+
+// Handle create transaction
+const handleCreateTransaction = async (formData: any) => {
+  const result = await createTransaction(formData)
+  if (result) {
+    showCreateModal.value = false
+    // Refresh the list
+    await fetchTransactions()
+  }
+}
+
+// Open edit modal
+const openEditModal = (transaction: any) => {
+  closeActionsMenu(transaction.id)
+  editingTransaction.value = {
+    id: transaction._id || transaction.id,
+    date: transaction.date ? new Date(transaction.date).toISOString().split('T')[0] : '',
+    amount: transaction.amount,
+    type: transaction.type || '支出',
+    status: transaction.status || 'pending',
+    accountCategoryId: transaction.accountCategoryId?._id || transaction.accountCategoryId || '',
+    subAccountCategoryId: transaction.subAccountCategoryId?._id || transaction.subAccountCategoryId || '',
+    taxCategoryId: transaction.taxCategoryId?._id || transaction.taxCategoryId || '',
+    taxRate: transaction.taxRate,
+    supplierId: transaction.supplierId?._id || transaction.supplierId || '',
+    customerId: transaction.customerId?._id || transaction.customerId || '',
+    transactionCategoryId: transaction.transactionCategoryId?._id || transaction.transactionCategoryId || '',
+    companyInfo: transaction.companyInfo || '',
+    invoiceNumber: transaction.invoiceNumber || '',
+    receiptNumber: transaction.receiptNumber || '',
+    productName: transaction.productName || '',
+    productPrice: transaction.productPrice,
+    janCode: transaction.janCode || '',
+    notes: transaction.notes || '',
+    referenceNumber: transaction.referenceNumber || ''
+  }
+  showEditModal.value = true
+}
+
+// Close edit modal
+const closeEditModal = () => {
+  showEditModal.value = false
+  editingTransaction.value = null
+}
+
+// Handle edit transaction
+const handleEditTransaction = async (formData: any) => {
+  if (!editingTransaction.value?.id) return
+
+  try {
+    const response = await $fetch(`/api/transactions/${editingTransaction.value.id}`, {
+      method: 'PUT',
+      body: formData
+    })
+    if (response) {
+      closeEditModal()
+      await fetchTransactions()
+    }
+  } catch (err) {
+    console.error('Failed to update transaction:', err)
+    alert('取引の更新に失敗しました')
+  }
 }
 
 // Click outside directive
