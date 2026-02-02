@@ -3,15 +3,15 @@
     <!-- Header -->
     <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Payment Calendar</h1>
-        <p class="text-gray-600 dark:text-gray-400">Track and manage your payments and expected income</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('nav.paymentCalendar') }}</h1>
+        <p class="text-gray-600 dark:text-gray-400">{{ t('calendar.trackPayments') }}</p>
       </div>
       <button
         @click="openAddModal()"
         class="mt-4 sm:mt-0 inline-flex items-center px-4 py-2 bg-primary-main hover:bg-primary-dark text-white rounded-lg font-medium transition-colors"
       >
         <Plus class="h-5 w-5 mr-2" />
-        Add Payment
+        {{ t('calendar.addPayment') }}
       </button>
     </div>
 
@@ -31,6 +31,8 @@
           @select-date="handleSelectDate"
           @add-payment="openAddModal"
           @edit-payment="openEditModal"
+          @mark-completed="handleMarkCompleted"
+          @move-payment="handleMovePayment"
         />
       </div>
 
@@ -40,6 +42,7 @@
         <UpcomingPayments
           :payments="calendarStore.upcomingPayments"
           @select="openEditModal"
+          @mark-completed="handleMarkCompleted"
         />
 
         <!-- Overdue Payments Alert -->
@@ -48,7 +51,7 @@
             <AlertTriangle class="h-5 w-5 text-error-main mt-0.5" />
             <div class="ml-3">
               <h4 class="text-sm font-medium text-error-dark dark:text-error-light">
-                {{ calendarStore.overduePayments.length }} Overdue Payment{{ calendarStore.overduePayments.length > 1 ? 's' : '' }}
+                {{ t('calendar.overduePayments', { count: calendarStore.overduePayments.length }) }}
               </h4>
               <div class="mt-2 space-y-1">
                 <div
@@ -64,37 +67,51 @@
           </div>
         </div>
 
-        <!-- Quick Actions -->
+        <!-- Quick Actions (OMF style) -->
         <div class="bg-white dark:bg-background-darkPaper rounded-lg shadow p-4">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Quick Add</h3>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">クイック追加</h3>
           <div class="space-y-2">
             <button
-              @click="quickAdd('expense', 'Rent')"
+              @click="quickAdd('expense', '地代家賃')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
             >
               <Home class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">Add Rent Payment</span>
+              <span class="text-gray-700 dark:text-gray-300">地代家賃</span>
             </button>
             <button
-              @click="quickAdd('expense', 'Utilities')"
+              @click="quickAdd('expense', '水道光熱費')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
             >
               <Zap class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">Add Utility Bill</span>
+              <span class="text-gray-700 dark:text-gray-300">水道光熱費</span>
             </button>
             <button
-              @click="quickAdd('income', 'Invoice')"
+              @click="quickAdd('income', '売上')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
             >
               <FileText class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">Add Invoice Income</span>
+              <span class="text-gray-700 dark:text-gray-300">売上入金</span>
             </button>
             <button
-              @click="quickAdd('income', 'Salary')"
+              @click="quickAdd('expense', '給与手当')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
             >
               <DollarSign class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">Add Salary Income</span>
+              <span class="text-gray-700 dark:text-gray-300">給与支払い</span>
+            </button>
+            <button
+              @click="quickAdd('expense', 'クレジットカード')"
+              class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
+            >
+              <CreditCard class="h-4 w-4 mr-2 text-gray-400" />
+              <span class="text-gray-700 dark:text-gray-300">カード支払い</span>
+            </button>
+            <button
+              @click="quickAdd('expense', '通信費')"
+              class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
+            >
+              <Zap class="h-4 w-4 mr-2 text-gray-400" />
+              <span class="text-gray-700 dark:text-gray-300">通信費</span>
             </button>
           </div>
         </div>
@@ -115,11 +132,20 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { Plus, AlertTriangle, Home, Zap, FileText, DollarSign } from 'lucide-vue-next'
+import { Plus, AlertTriangle, Home, Zap, FileText, DollarSign, CreditCard } from 'lucide-vue-next'
 import { useCalendarStore } from '~/stores/calendar'
 import type { Payment, PaymentFormData } from '~/types/calendar'
 
+const { t, locale } = useI18n()
 const calendarStore = useCalendarStore()
+
+// Format date to YYYY-MM-DD in local timezone (JST)
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 // Modal state
 const isModalOpen = ref(false)
@@ -134,7 +160,7 @@ onMounted(() => {
 
 const openAddModal = (dateString?: string) => {
   selectedPayment.value = null
-  selectedDate.value = dateString || new Date().toISOString().split('T')[0]
+  selectedDate.value = dateString || formatLocalDate(new Date())
   isModalOpen.value = true
 }
 
@@ -152,6 +178,22 @@ const closeModal = () => {
 
 const handleSelectDate = (date: Date) => {
   calendarStore.setSelectedDate(date)
+}
+
+const handleMarkCompleted = async (payment: Payment) => {
+  try {
+    await calendarStore.markAsCompleted(payment.id)
+  } catch (error) {
+    console.error('Error marking payment as completed:', error)
+  }
+}
+
+const handleMovePayment = async (payment: Payment, newDate: string) => {
+  try {
+    await calendarStore.updatePayment(payment.id, { dueDate: newDate })
+  } catch (error) {
+    console.error('Error moving payment:', error)
+  }
 }
 
 const handleSubmit = async (data: PaymentFormData) => {
@@ -192,9 +234,10 @@ const quickAdd = (type: 'expense' | 'income', category: string) => {
 }
 
 const formatCurrency = (amount: number, currency: string): string => {
-  return new Intl.NumberFormat('en-US', {
+  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
-    currency: currency,
+    currency: currency || (locale.value === 'ko' ? 'KRW' : 'JPY'),
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
   }).format(amount)

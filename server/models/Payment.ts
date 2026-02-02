@@ -2,13 +2,11 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IBankTransferInfo {
-  bankName: string
-  accountNumber: string
-  accountHolder: string
-  routingNumber?: string
-  swiftCode?: string
-  iban?: string
-  notes?: string
+  bankName: string           // 銀行名
+  branchName: string         // 支店名
+  accountType: 'ordinary' | 'current' | 'savings'  // 口座種別
+  accountNumber: string      // 口座番号
+  accountHolder: string      // 口座名義
 }
 
 export interface IPayment extends Document {
@@ -17,7 +15,7 @@ export interface IPayment extends Document {
   currency: string
   dueDate: Date
   type: 'expense' | 'income'
-  status: 'pending' | 'paid' | 'overdue' | 'cancelled'
+  status: 'pending' | 'paid' | 'overdue' | 'cancelled' | 'completed'
   category: string
   recurring: boolean
   recurringFrequency?: 'weekly' | 'monthly' | 'quarterly' | 'yearly'
@@ -29,12 +27,10 @@ export interface IPayment extends Document {
 
 const BankTransferInfoSchema = new Schema({
   bankName: { type: String, required: true },
+  branchName: { type: String, required: true },
+  accountType: { type: String, enum: ['ordinary', 'current', 'savings'], default: 'ordinary' },
   accountNumber: { type: String, required: true },
-  accountHolder: { type: String, required: true },
-  routingNumber: { type: String },
-  swiftCode: { type: String },
-  iban: { type: String },
-  notes: { type: String }
+  accountHolder: { type: String, required: true }
 }, { _id: false })
 
 const PaymentSchema = new Schema<IPayment>({
@@ -51,8 +47,8 @@ const PaymentSchema = new Schema<IPayment>({
   currency: {
     type: String,
     required: true,
-    default: 'USD',
-    enum: ['USD', 'EUR', 'GBP', 'JPY', 'KRW', 'CNY']
+    default: 'JPY',
+    enum: ['JPY', 'USD', 'EUR', 'GBP', 'KRW', 'CNY']
   },
   dueDate: {
     type: Date,
@@ -67,7 +63,7 @@ const PaymentSchema = new Schema<IPayment>({
     type: String,
     required: true,
     default: 'pending',
-    enum: ['pending', 'paid', 'overdue', 'cancelled']
+    enum: ['pending', 'paid', 'overdue', 'cancelled', 'completed']
   },
   category: {
     type: String,

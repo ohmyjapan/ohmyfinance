@@ -4,7 +4,7 @@
     <div class="bg-white dark:bg-background-darkPaper rounded-lg shadow p-4">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Expected Income</p>
+          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('calendarStats.expectedIncome') }}</p>
           <p class="text-2xl font-bold text-success-main">
             {{ formatCurrency(stats.totalIncome) }}
           </p>
@@ -19,7 +19,7 @@
     <div class="bg-white dark:bg-background-darkPaper rounded-lg shadow p-4">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Expected Expenses</p>
+          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('calendarStats.expectedExpenses') }}</p>
           <p class="text-2xl font-bold text-error-main">
             {{ formatCurrency(stats.totalExpenses) }}
           </p>
@@ -34,7 +34,7 @@
     <div class="bg-white dark:bg-background-darkPaper rounded-lg shadow p-4">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Pending</p>
+          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('calendarStats.pending') }}</p>
           <p class="text-2xl font-bold text-warning-main">
             {{ stats.pendingPayments }}
           </p>
@@ -49,7 +49,7 @@
     <div class="bg-white dark:bg-background-darkPaper rounded-lg shadow p-4">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Overdue</p>
+          <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('calendarStats.overdue') }}</p>
           <p class="text-2xl font-bold text-error-dark">
             {{ stats.overduePayments }}
           </p>
@@ -66,14 +66,18 @@
 import { TrendingUp, TrendingDown, Clock, AlertTriangle } from 'lucide-vue-next'
 import type { MonthlyStats } from '~/types/calendar'
 
+const { t, locale } = useI18n()
+
 defineProps<{
   stats: MonthlyStats
 }>()
 
 const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('en-US', {
+  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
+  return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
-    currency: 'USD',
+    currency,
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
   }).format(amount)

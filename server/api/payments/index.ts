@@ -1,129 +1,75 @@
 // server/api/payments/index.ts
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
+import { ensureConnection } from '../../config/database'
+import { Payment } from '../../models/Payment'
 
-// In-memory storage for development (replace with MongoDB in production)
-let payments: any[] = [
-  {
-    id: '1',
-    title: 'Office Rent',
-    amount: 2500,
-    currency: 'USD',
-    dueDate: new Date(new Date().setDate(1)).toISOString(),
-    type: 'expense',
-    status: 'pending',
-    category: 'Rent',
-    recurring: true,
-    recurringFrequency: 'monthly',
-    bankTransfer: {
-      bankName: 'Chase Bank',
-      accountNumber: '****4567',
-      accountHolder: 'Property Management LLC',
-      routingNumber: '021000021'
-    },
-    notes: 'Monthly office rent payment',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: '2',
-    title: 'Client Invoice #1042',
-    amount: 5000,
-    currency: 'USD',
-    dueDate: new Date(new Date().setDate(15)).toISOString(),
-    type: 'income',
-    status: 'pending',
-    category: 'Client Payment',
-    recurring: false,
-    notes: 'Project milestone payment',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: '3',
-    title: 'Software Subscription',
-    amount: 99,
-    currency: 'USD',
-    dueDate: new Date(new Date().setDate(20)).toISOString(),
-    type: 'expense',
-    status: 'paid',
-    category: 'Subscription',
-    recurring: true,
-    recurringFrequency: 'monthly',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: '4',
-    title: 'Quarterly Tax Payment',
-    amount: 3500,
-    currency: 'USD',
-    dueDate: new Date(new Date().setDate(new Date().getDate() - 5)).toISOString(),
-    type: 'expense',
-    status: 'overdue',
-    category: 'Tax',
-    recurring: true,
-    recurringFrequency: 'quarterly',
-    bankTransfer: {
-      bankName: 'IRS',
-      accountNumber: 'EFTPS',
-      accountHolder: 'US Treasury'
-    },
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: '5',
-    title: 'Monthly Salary',
-    amount: 8500,
-    currency: 'USD',
-    dueDate: new Date(new Date().setDate(28)).toISOString(),
-    type: 'income',
-    status: 'pending',
-    category: 'Salary',
-    recurring: true,
-    recurringFrequency: 'monthly',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+// Parse date string to noon UTC to avoid timezone boundary issues
+// Input: "2026-01-26" -> Output: Date object representing 2026-01-26 12:00:00 UTC
+// Using noon UTC ensures the date part remains the same in any timezone (UTC-12 to UTC+14)
+const parseDateToNoonUTC = (dateString: string): Date => {
+  // If it's just a date string (YYYY-MM-DD), parse as noon UTC
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const [year, month, day] = dateString.split('-').map(Number)
+    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0))
   }
-]
+  // If it already has time component, parse as-is
+  return new Date(dateString)
+}
 
 export default defineEventHandler(async (event) => {
   const method = event.method
 
+  // Ensure MongoDB connection
+  try {
+    await ensureConnection()
+  } catch (error) {
+    throw createError({
+      statusCode: 503,
+      statusMessage: 'Database connection failed',
+      message: 'Unable to connect to database. Please ensure MongoDB is running.'
+    })
+  }
+
   // GET - List all payments
   if (method === 'GET') {
     const query = getQuery(event)
-    let result = [...payments]
 
-    // Filter by type
+    // Build filter
+    const filter: Record<string, any> = {}
+
     if (query.type) {
-      result = result.filter(p => p.type === query.type)
+      filter.type = query.type
     }
 
-    // Filter by status
     if (query.status) {
-      result = result.filter(p => p.status === query.status)
+      filter.status = query.status
     }
 
-    // Filter by category
     if (query.category) {
-      result = result.filter(p => p.category === query.category)
+      filter.category = query.category
     }
 
-    // Filter by date range
-    if (query.startDate) {
-      const startDate = new Date(query.startDate as string)
-      result = result.filter(p => new Date(p.dueDate) >= startDate)
-    }
-    if (query.endDate) {
-      const endDate = new Date(query.endDate as string)
-      result = result.filter(p => new Date(p.dueDate) <= endDate)
+    // Date range filter
+    if (query.startDate || query.endDate) {
+      filter.dueDate = {}
+      if (query.startDate) {
+        filter.dueDate.$gte = parseDateToNoonUTC(query.startDate as string)
+      }
+      if (query.endDate) {
+        filter.dueDate.$lte = parseDateToNoonUTC(query.endDate as string)
+      }
     }
 
-    // Sort by due date
-    result.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
-
-    return result
+    try {
+      const payments = await Payment.find(filter).sort({ dueDate: 1 })
+      return payments
+    } catch (error: any) {
+      throw createError({
+        statusCode: 500,
+        statusMessage: 'Failed to fetch payments',
+        message: error.message
+      })
+    }
   }
 
   // POST - Create new payment
@@ -137,25 +83,30 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const newPayment = {
-      id: Date.now().toString(),
-      title: body.title,
-      amount: parseFloat(body.amount),
-      currency: body.currency || 'USD',
-      dueDate: new Date(body.dueDate).toISOString(),
-      type: body.type,
-      status: body.status || 'pending',
-      category: body.category,
-      recurring: body.recurring || false,
-      recurringFrequency: body.recurringFrequency,
-      bankTransfer: body.bankTransfer,
-      notes: body.notes,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
+    try {
+      const payment = new Payment({
+        title: body.title,
+        amount: parseFloat(body.amount),
+        currency: body.currency || 'JPY',
+        dueDate: parseDateToNoonUTC(body.dueDate),
+        type: body.type,
+        status: body.status || 'pending',
+        category: body.category,
+        recurring: body.recurring || false,
+        recurringFrequency: body.recurringFrequency,
+        bankTransfer: body.bankTransfer,
+        notes: body.notes
+      })
 
-    payments.push(newPayment)
-    return newPayment
+      await payment.save()
+      return payment
+    } catch (error: any) {
+      throw createError({
+        statusCode: 500,
+        statusMessage: 'Failed to create payment',
+        message: error.message
+      })
+    }
   }
 
   throw createError({

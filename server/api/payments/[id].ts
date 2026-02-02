@@ -1,20 +1,15 @@
 // server/api/payments/[id].ts
 import { defineEventHandler, readBody, createError, getRouterParam } from 'h3'
+import { ensureConnection } from '../../config/database'
+import { Payment } from '../../models/Payment'
 
-// Reference to the same in-memory storage (in real app, use database)
-// This is a workaround - in production, use MongoDB
-let payments: any[] = []
-
-// Helper to get payments from the index module
-const getPaymentsStore = async () => {
-  // In development, we'll use a simple approach
-  // In production, this would be a database query
-  try {
-    const response = await $fetch('/api/payments')
-    return response as any[]
-  } catch {
-    return payments
+// Parse date string to noon UTC to avoid timezone boundary issues
+const parseDateToNoonUTC = (dateString: string): Date => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const [year, month, day] = dateString.split('-').map(Number)
+    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0))
   }
+  return new Date(dateString)
 }
 
 export default defineEventHandler(async (event) => {
@@ -28,75 +23,105 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  // For this simple implementation, we'll work with the in-memory store
-  // In production, replace with MongoDB queries
+  // Ensure MongoDB connection
+  try {
+    await ensureConnection()
+  } catch (error) {
+    throw createError({
+      statusCode: 503,
+      statusMessage: 'Database connection failed',
+      message: 'Unable to connect to database. Please ensure MongoDB is running.'
+    })
+  }
 
   // GET - Get single payment
   if (method === 'GET') {
-    const allPayments = await getPaymentsStore()
-    const payment = allPayments.find(p => p.id === id)
+    try {
+      const payment = await Payment.findById(id)
 
-    if (!payment) {
+      if (!payment) {
+        throw createError({
+          statusCode: 404,
+          statusMessage: 'Payment not found'
+        })
+      }
+
+      return payment
+    } catch (error: any) {
+      if (error.statusCode === 404) throw error
       throw createError({
-        statusCode: 404,
-        statusMessage: 'Payment not found'
+        statusCode: 500,
+        statusMessage: 'Failed to fetch payment',
+        message: error.message
       })
     }
-
-    return payment
   }
 
   // PUT - Update payment
   if (method === 'PUT') {
     const body = await readBody(event)
 
-    // Since we can't easily share state, we'll use $fetch to get and update
-    // This is a simplified approach for development
-    const allPayments = await getPaymentsStore()
-    const index = allPayments.findIndex(p => p.id === id)
+    try {
+      const updateData: Record<string, any> = {}
 
-    if (index === -1) {
+      // Only update provided fields
+      if (body.title !== undefined) updateData.title = body.title
+      if (body.amount !== undefined) updateData.amount = parseFloat(body.amount)
+      if (body.currency !== undefined) updateData.currency = body.currency
+      if (body.dueDate !== undefined) updateData.dueDate = parseDateToNoonUTC(body.dueDate)
+      if (body.type !== undefined) updateData.type = body.type
+      if (body.status !== undefined) updateData.status = body.status
+      if (body.category !== undefined) updateData.category = body.category
+      if (body.recurring !== undefined) updateData.recurring = body.recurring
+      if (body.recurringFrequency !== undefined) updateData.recurringFrequency = body.recurringFrequency
+      if (body.bankTransfer !== undefined) updateData.bankTransfer = body.bankTransfer
+      if (body.notes !== undefined) updateData.notes = body.notes
+
+      const payment = await Payment.findByIdAndUpdate(
+        id,
+        { $set: updateData },
+        { new: true, runValidators: true }
+      )
+
+      if (!payment) {
+        throw createError({
+          statusCode: 404,
+          statusMessage: 'Payment not found'
+        })
+      }
+
+      return payment
+    } catch (error: any) {
+      if (error.statusCode === 404) throw error
       throw createError({
-        statusCode: 404,
-        statusMessage: 'Payment not found'
+        statusCode: 500,
+        statusMessage: 'Failed to update payment',
+        message: error.message
       })
     }
-
-    const updatedPayment = {
-      ...allPayments[index],
-      ...body,
-      id, // Ensure ID doesn't change
-      updatedAt: new Date().toISOString()
-    }
-
-    // Update amount if provided
-    if (body.amount !== undefined) {
-      updatedPayment.amount = parseFloat(body.amount)
-    }
-
-    // Update dueDate if provided
-    if (body.dueDate) {
-      updatedPayment.dueDate = new Date(body.dueDate).toISOString()
-    }
-
-    allPayments[index] = updatedPayment
-    return updatedPayment
   }
 
   // DELETE - Delete payment
   if (method === 'DELETE') {
-    const allPayments = await getPaymentsStore()
-    const index = allPayments.findIndex(p => p.id === id)
+    try {
+      const payment = await Payment.findByIdAndDelete(id)
 
-    if (index === -1) {
+      if (!payment) {
+        throw createError({
+          statusCode: 404,
+          statusMessage: 'Payment not found'
+        })
+      }
+
+      return { success: true, message: 'Payment deleted successfully' }
+    } catch (error: any) {
+      if (error.statusCode === 404) throw error
       throw createError({
-        statusCode: 404,
-        statusMessage: 'Payment not found'
+        statusCode: 500,
+        statusMessage: 'Failed to delete payment',
+        message: error.message
       })
     }
-
-    allPayments.splice(index, 1)
-    return { success: true, message: 'Payment deleted successfully' }
   }
 
   throw createError({
