@@ -51,9 +51,10 @@
         <!-- Weekday Headers -->
         <div class="grid grid-cols-7 gap-0 px-2 py-2 bg-gray-50 dark:bg-gray-900/50">
           <div
-            v-for="day in weekDays"
+            v-for="(day, index) in weekDays"
             :key="day"
-            class="text-center text-xs font-medium text-gray-500 dark:text-gray-400 py-1"
+            class="text-center text-xs font-medium py-1"
+            :class="index === 0 ? 'text-red-500' : index === 6 ? 'text-blue-500' : 'text-gray-500 dark:text-gray-400'"
           >
             {{ day }}
           </div>
@@ -66,27 +67,52 @@
             :key="index"
             @click="day.date && selectDate(day.date)"
             :disabled="!day.date || day.isDisabled"
-            class="aspect-square flex items-center justify-center text-sm rounded-lg transition-all"
+            class="aspect-square flex flex-col items-center justify-center text-sm rounded-lg transition-all relative group"
             :class="getDayClasses(day)"
+            :title="day.holidayName || ''"
           >
-            {{ day.day }}
+            <span>{{ day.day }}</span>
+            <!-- Holiday indicator dots -->
+            <div v-if="day.isCurrentMonth && (day.isJpHoliday || day.isKrHoliday)" class="flex gap-0.5 mt-0.5">
+              <span v-if="day.isJpHoliday" class="w-1 h-1 rounded-full bg-red-500"></span>
+              <span v-if="day.isKrHoliday" class="w-1 h-1 rounded-full bg-blue-500"></span>
+            </div>
+            <!-- Tooltip -->
+            <div
+              v-if="day.holidayName"
+              class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+            >
+              {{ day.holidayName }}
+            </div>
           </button>
         </div>
 
         <!-- Footer -->
         <div class="flex items-center justify-between p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
-          <button
-            @click="selectToday"
-            class="text-sm text-primary-main hover:text-primary-dark font-medium"
-          >
-            今日
-          </button>
-          <button
-            @click="clear"
-            class="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-          >
-            クリア
-          </button>
+          <div class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+            <span class="flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+              JP
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+              KR
+            </span>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              @click="selectToday"
+              class="text-sm text-primary-main hover:text-primary-dark font-medium"
+            >
+              今日
+            </button>
+            <button
+              @click="clear"
+              class="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+            >
+              クリア
+            </button>
+          </div>
         </div>
       </div>
     </Transition>
@@ -96,6 +122,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Calendar as CalendarIcon, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { useHolidays } from '~/composables/useHolidays'
 
 const props = withDefaults(defineProps<{
   modelValue?: string | null
@@ -107,6 +134,9 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits(['update:modelValue'])
+
+const { locale } = useI18n()
+const { getHolidayForDate, isJapaneseHoliday, isKoreanHoliday, getHolidayName } = useHolidays()
 
 const isOpen = ref(false)
 const containerRef = ref<HTMLElement | null>(null)
@@ -144,9 +174,28 @@ const headerDisplay = computed(() => {
   return `${m}月${d}日 (${dayOfWeek})`
 })
 
+// Format date string for holiday lookup
+const formatDateString = (date: Date): string => {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 // Generate calendar days
 const calendarDays = computed(() => {
-  const days: Array<{ day: number | string; date: Date | null; isCurrentMonth: boolean; isToday: boolean; isSelected: boolean; isDisabled: boolean }> = []
+  const days: Array<{
+    day: number | string
+    date: Date | null
+    dateString: string
+    isCurrentMonth: boolean
+    isToday: boolean
+    isSelected: boolean
+    isDisabled: boolean
+    isJpHoliday: boolean
+    isKrHoliday: boolean
+    holidayName: string | null
+  }> = []
 
   const firstDay = new Date(currentYear.value, currentMonth.value, 1)
   const lastDay = new Date(currentYear.value, currentMonth.value + 1, 0)
@@ -156,13 +205,19 @@ const calendarDays = computed(() => {
   const prevMonthLast = new Date(currentYear.value, currentMonth.value, 0)
   for (let i = startPadding - 1; i >= 0; i--) {
     const d = prevMonthLast.getDate() - i
+    const date = new Date(currentYear.value, currentMonth.value - 1, d)
+    const dateString = formatDateString(date)
     days.push({
       day: d,
-      date: new Date(currentYear.value, currentMonth.value - 1, d),
+      date,
+      dateString,
       isCurrentMonth: false,
       isToday: false,
       isSelected: false,
-      isDisabled: true
+      isDisabled: true,
+      isJpHoliday: false,
+      isKrHoliday: false,
+      holidayName: null
     })
   }
 
@@ -170,29 +225,43 @@ const calendarDays = computed(() => {
   const today = new Date()
   for (let d = 1; d <= lastDay.getDate(); d++) {
     const date = new Date(currentYear.value, currentMonth.value, d)
+    const dateString = formatDateString(date)
     const isToday = date.toDateString() === today.toDateString()
     const isSelected = selectedDate.value ? date.toDateString() === selectedDate.value.toDateString() : false
+    const isJpHoliday = isJapaneseHoliday(dateString)
+    const isKrHoliday = isKoreanHoliday(dateString)
+    const holidayName = getHolidayName(dateString, locale.value)
 
     days.push({
       day: d,
       date,
+      dateString,
       isCurrentMonth: true,
       isToday,
       isSelected,
-      isDisabled: false
+      isDisabled: false,
+      isJpHoliday,
+      isKrHoliday,
+      holidayName
     })
   }
 
   // Next month padding
   const remaining = 42 - days.length
   for (let d = 1; d <= remaining; d++) {
+    const date = new Date(currentYear.value, currentMonth.value + 1, d)
+    const dateString = formatDateString(date)
     days.push({
       day: d,
-      date: new Date(currentYear.value, currentMonth.value + 1, d),
+      date,
+      dateString,
       isCurrentMonth: false,
       isToday: false,
       isSelected: false,
-      isDisabled: true
+      isDisabled: true,
+      isJpHoliday: false,
+      isKrHoliday: false,
+      holidayName: null
     })
   }
 
@@ -208,10 +277,21 @@ const getDayClasses = (day: typeof calendarDays.value[0]) => {
     classes.push('bg-primary-main text-white font-medium shadow-md')
   } else if (day.isToday) {
     classes.push('bg-primary-light dark:bg-primary-dark/30 text-primary-main dark:text-primary-light font-medium')
+  } else if (day.isJpHoliday || day.isKrHoliday) {
+    // Holiday styling - red text for holidays (like Japanese calendars)
+    classes.push('text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-medium')
   } else if (!day.isCurrentMonth) {
     classes.push('text-gray-400 dark:text-gray-500')
   } else {
-    classes.push('text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700')
+    // Sunday in red, Saturday in blue (Japanese calendar style)
+    const dayOfWeek = day.date.getDay()
+    if (dayOfWeek === 0) {
+      classes.push('text-red-500 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700')
+    } else if (dayOfWeek === 6) {
+      classes.push('text-blue-500 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700')
+    } else {
+      classes.push('text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700')
+    }
   }
 
   return classes
