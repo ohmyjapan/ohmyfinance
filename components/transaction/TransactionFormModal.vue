@@ -88,20 +88,24 @@
                           {{ t('transactionForm.date') }}
                         </label>
                         <ClientOnly>
-                          <VueDatePicker
+                          <VDatePicker
                             v-model="datePickerValue"
+                            :is-dark="isDark"
                             :locale="locale"
-                            :format="'yyyy年MM月dd日'"
-                            :preview-format="'yyyy年MM月dd日'"
-                            :enable-time-picker="false"
-                            :dark="isDark"
-                            :auto-apply="true"
-                            :teleport="true"
-                            text-input
-                            :placeholder="t('transactionForm.date')"
-                            input-class-name="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent text-sm"
+                            :popover="{ visibility: 'click' }"
+                            :masks="{ input: 'YYYY年MM月DD日' }"
                             @update:model-value="handleDateUpdate"
-                          />
+                          >
+                            <template #default="{ inputValue, inputEvents }">
+                              <input
+                                :value="inputValue"
+                                v-on="inputEvents"
+                                class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent text-sm cursor-pointer"
+                                :placeholder="t('transactionForm.date')"
+                                readonly
+                              />
+                            </template>
+                          </VDatePicker>
                           <template #fallback>
                             <input
                               type="date"
