@@ -21,7 +21,7 @@
     <Transition name="dropdown">
       <div
         v-if="isOpen"
-        class="absolute z-50 mt-2 w-72 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden"
+        class="absolute z-50 mt-2 w-full min-w-72 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden"
       >
         <!-- Header -->
         <div class="bg-primary-main text-white p-4">
