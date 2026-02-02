@@ -454,8 +454,14 @@ import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
-const colorMode = useColorMode()
-const isDark = computed(() => colorMode.value === 'dark')
+
+// Check dark mode from document class
+const isDark = computed(() => {
+  if (process.client) {
+    return document.documentElement.classList.contains('dark')
+  }
+  return false
+})
 
 const props = defineProps<{
   modelValue: boolean
