@@ -263,33 +263,59 @@ const unlockWithPassword = async () => {
 
   try {
     // Try to refresh token first in case it expired while locked
+    let tokenValid = false
     if (userStore.refreshToken) {
-      await userStore.refreshAuthToken()
+      tokenValid = await userStore.refreshAuthToken()
     }
 
-    const response = await fetch('/api/auth/verify-password', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${userStore.token}`
-      },
-      body: JSON.stringify({ password: password.value })
-    })
+    if (tokenValid && userStore.token) {
+      // Token is valid, verify password
+      const response = await fetch('/api/auth/verify-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${userStore.token}`
+        },
+        body: JSON.stringify({ password: password.value })
+      })
 
-    const data = await response.json()
+      const data = await response.json()
 
-    if (response.ok && data.valid) {
-      resetPinAttempts()
-      unlock()
-      password.value = ''
-    } else if (response.status === 401) {
-      // Token invalid even after refresh - need to re-login
-      errorMessage.value = t('errors.unauthorized')
-      password.value = ''
-    } else {
-      errorMessage.value = t('security.invalidPassword')
-      password.value = ''
+      if (response.ok && data.valid) {
+        resetPinAttempts()
+        unlock()
+        password.value = ''
+        return
+      } else if (response.status !== 401) {
+        // Password is wrong (not a token issue)
+        errorMessage.value = t('security.invalidPassword')
+        password.value = ''
+        return
+      }
+      // If 401, fall through to re-login attempt
     }
+
+    // Token expired or invalid - try to re-login with the password
+    if (user.value?.email) {
+      const loginResult = await userStore.login(user.value.email, password.value)
+
+      if (loginResult === true) {
+        // Successfully re-authenticated
+        resetPinAttempts()
+        unlock()
+        password.value = ''
+        return
+      } else if (loginResult === '2fa_required') {
+        // 2FA required - need to handle this case
+        errorMessage.value = t('security.unlockFailed')
+        password.value = ''
+        return
+      }
+    }
+
+    // Login failed - wrong password
+    errorMessage.value = t('security.invalidPassword')
+    password.value = ''
   } catch (error: any) {
     errorMessage.value = t('security.unlockFailed')
   } finally {
