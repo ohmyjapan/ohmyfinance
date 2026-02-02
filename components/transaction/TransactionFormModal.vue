@@ -87,11 +87,29 @@
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                           {{ t('transactionForm.date') }}
                         </label>
-                        <input
-                          type="date"
-                          v-model="form.date"
-                          class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
-                        />
+                        <ClientOnly>
+                          <VueDatePicker
+                            v-model="datePickerValue"
+                            :locale="locale"
+                            :format="'yyyy年MM月dd日'"
+                            :preview-format="'yyyy年MM月dd日'"
+                            :enable-time-picker="false"
+                            :dark="isDark"
+                            :auto-apply="true"
+                            :teleport="true"
+                            text-input
+                            :placeholder="t('transactionForm.date')"
+                            input-class-name="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent text-sm"
+                            @update:model-value="handleDateUpdate"
+                          />
+                          <template #fallback>
+                            <input
+                              type="date"
+                              v-model="form.date"
+                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                            />
+                          </template>
+                        </ClientOnly>
                       </div>
 
                       <!-- Amount -->
@@ -434,8 +452,10 @@ import {
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const userStore = useUserStore()
+const colorMode = useColorMode()
+const isDark = computed(() => colorMode.value === 'dark')
 
 const props = defineProps<{
   modelValue: boolean
@@ -450,6 +470,7 @@ const isDragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const showSupplierSuggestions = ref(false)
 const supplierSearch = ref('')
+const datePickerValue = ref<Date | null>(null)
 
 const sections = ref({
   categories: true,
@@ -509,8 +530,9 @@ onMounted(async () => {
 // Watch for initial data
 watch(() => props.initialData, (data) => {
   if (data && props.isEditing) {
+    const dateValue = data.date ? new Date(data.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
     form.value = {
-      date: data.date ? new Date(data.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      date: dateValue,
       type: data.type || '支出',
       amount: data.amount ? formatNumberWithCommas(String(data.amount)) : '',
       customerId: data.customerId || '',
@@ -525,10 +547,19 @@ watch(() => props.initialData, (data) => {
       notes: data.notes || '',
       receiptFile: null
     }
+    // Sync date picker value
+    datePickerValue.value = new Date(dateValue)
     if (data.supplierId) {
       const supplier = suppliers.value.find(s => s.id === data.supplierId)
       if (supplier) supplierSearch.value = supplier.name
     }
+  }
+}, { immediate: true })
+
+// Initialize datePickerValue from form.date on mount
+watch(() => form.value.date, (newDate) => {
+  if (newDate && !datePickerValue.value) {
+    datePickerValue.value = new Date(newDate)
   }
 }, { immediate: true })
 
@@ -545,6 +576,18 @@ const filteredSuppliers = computed(() => {
 })
 
 const close = () => emit('update:modelValue', false)
+
+// Handle date picker update
+const handleDateUpdate = (value: Date | null) => {
+  if (value) {
+    const year = value.getFullYear()
+    const month = String(value.getMonth() + 1).padStart(2, '0')
+    const day = String(value.getDate()).padStart(2, '0')
+    form.value.date = `${year}-${month}-${day}`
+  } else {
+    form.value.date = ''
+  }
+}
 
 const handleAccountCategoryChange = () => {
   form.value.subAccountCategoryId = ''
