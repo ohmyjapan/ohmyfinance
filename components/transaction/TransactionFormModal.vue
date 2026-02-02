@@ -87,33 +87,10 @@
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                           {{ t('transactionForm.date') }}
                         </label>
-                        <ClientOnly>
-                          <VDatePicker
-                            v-model="datePickerValue"
-                            :is-dark="isDark"
-                            :locale="locale"
-                            :popover="{ visibility: 'click' }"
-                            :masks="{ input: 'YYYY年MM月DD日' }"
-                            @update:model-value="handleDateUpdate"
-                          >
-                            <template #default="{ inputValue, inputEvents }">
-                              <input
-                                :value="inputValue"
-                                v-on="inputEvents"
-                                class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent text-sm cursor-pointer"
-                                :placeholder="t('transactionForm.date')"
-                                readonly
-                              />
-                            </template>
-                          </VDatePicker>
-                          <template #fallback>
-                            <input
-                              type="date"
-                              v-model="form.date"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
-                            />
-                          </template>
-                        </ClientOnly>
+                        <CustomDatePicker
+                          v-model="form.date"
+                          :placeholder="t('transactionForm.date')"
+                        />
                       </div>
 
                       <!-- Amount -->
