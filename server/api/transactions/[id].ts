@@ -1,5 +1,5 @@
 // server/api/transactions/[id].ts
-import { defineEventHandler, readBody, getMethod } from 'h3'
+import { defineEventHandler, readBody, getMethod, createError } from 'h3'
 import { getTransactionById, updateTransaction, deleteTransaction } from '../../services/transactionService'
 
 export default defineEventHandler(async (event) => {

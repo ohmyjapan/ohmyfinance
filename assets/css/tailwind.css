@@ -7,6 +7,43 @@ body {
     @apply antialiased text-gray-800;
 }
 
+/* Form element base styles */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="tel"],
+input[type="url"],
+input[type="number"],
+select,
+textarea {
+    @apply border px-3 py-2;
+}
+
+/* Select dropdown styling - ensure visibility */
+select {
+    appearance: auto;
+    -webkit-appearance: menulist;
+    -moz-appearance: menulist;
+    background-image: none;
+    cursor: pointer;
+}
+
+/* Dark mode form elements */
+.dark input[type="text"],
+.dark input[type="email"],
+.dark input[type="password"],
+.dark input[type="tel"],
+.dark input[type="url"],
+.dark input[type="number"],
+.dark select,
+.dark textarea {
+    @apply bg-gray-700 border-gray-600 text-white;
+}
+
+.dark select option {
+    @apply bg-gray-700 text-white;
+}
+
 /* Input focus styles */
 input:focus,
 select:focus,

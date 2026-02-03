@@ -3,12 +3,12 @@
     <table class="w-full">
       <thead>
       <tr class="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-        <th class="px-6 py-3 border-b">Transaction ID</th>
-        <th class="px-6 py-3 border-b">Source</th>
-        <th class="px-6 py-3 border-b">Amount</th>
-        <th class="px-6 py-3 border-b">Date</th>
-        <th class="px-6 py-3 border-b">Status</th>
-        <th class="px-6 py-3 border-b">Actions</th>
+        <th class="px-6 py-3 border-b">{{ t('dashboard.transactionId') }}</th>
+        <th class="px-6 py-3 border-b">{{ t('dashboard.source') }}</th>
+        <th class="px-6 py-3 border-b">{{ t('dashboard.amount') }}</th>
+        <th class="px-6 py-3 border-b">{{ t('dashboard.date') }}</th>
+        <th class="px-6 py-3 border-b">{{ t('dashboard.status') }}</th>
+        <th class="px-6 py-3 border-b">{{ t('dashboard.actions') }}</th>
       </tr>
       </thead>
       <tbody class="divide-y">
@@ -32,7 +32,7 @@
         <td class="px-6 py-4 whitespace-nowrap">
             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
                   :class="statusClasses[transaction.status]">
-              {{ capitalizeStatus(transaction.status) }}
+              {{ t(`status.${transaction.status}`) }}
             </span>
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm">
@@ -50,6 +50,8 @@
 import { computed } from 'vue'
 import { MoreVertical } from 'lucide-vue-next'
 
+const { t } = useI18n()
+
 const props = defineProps({
   transactions: {
     type: Array,
@@ -63,11 +65,6 @@ const statusClasses = {
   pending: 'bg-yellow-100 text-yellow-800',
   processing: 'bg-blue-100 text-blue-800',
   failed: 'bg-red-100 text-red-800'
-}
-
-// Helper to capitalize status text
-const capitalizeStatus = (status: string) => {
-  return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
 // Method to navigate to transaction details

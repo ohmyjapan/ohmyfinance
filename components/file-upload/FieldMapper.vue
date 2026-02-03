@@ -1,29 +1,28 @@
 <template>
-  <div class="bg-white rounded-lg shadow-sm">
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
     <div class="p-6">
       <div class="mb-6">
-        <h2 class="text-lg font-medium text-gray-900 mb-2">Map File Fields to Database Fields</h2>
-        <p class="text-sm text-gray-600">
-          Configure how your imported data fields map to our system fields. The system has automatically
-          suggested mappings which you can adjust as needed.
+        <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">{{ t('fieldMapper.title') }}</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('fieldMapper.description') }}
         </p>
       </div>
 
-      <div class="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-md">
+      <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-md">
         <div class="flex">
           <div class="flex-shrink-0">
             <AlertCircle class="h-5 w-5 text-blue-400" />
           </div>
           <div class="ml-3 flex-1 md:flex md:justify-between">
-            <p class="text-sm text-blue-700">
-              We've detected <strong>{{ totalRows }}</strong> rows from your files. Please review the field mappings below.
+            <p class="text-sm text-blue-700 dark:text-blue-300">
+              {{ t('fieldMapper.detectedRows', { count: totalRows }) }}
             </p>
             <p class="mt-3 text-sm md:mt-0 md:ml-6">
               <button
-                  class="whitespace-nowrap font-medium text-blue-700 hover:text-blue-600"
+                  class="whitespace-nowrap font-medium text-blue-700 dark:text-blue-300 hover:text-blue-600"
                   @click="showSampleData = !showSampleData"
               >
-                {{ showSampleData ? 'Hide Sample Data' : 'View Sample Data' }}
+                {{ showSampleData ? t('fieldMapper.hideSampleData') : t('fieldMapper.viewSampleData') }}
                 <component :is="showSampleData ? ChevronUp : ChevronDown" class="inline h-3 w-3" />
               </button>
             </p>
@@ -61,7 +60,7 @@
 
       <!-- File Selector -->
       <div class="mb-6">
-        <label class="block text-sm font-medium text-gray-700 mb-2">Select File to Map</label>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{{ t('fieldMapper.selectFile') }}</label>
         <div class="relative">
           <select
               v-model="currentFile"
@@ -82,55 +81,55 @@
       </div>
 
       <!-- Field Mapping Table -->
-      <div class="border border-gray-200 rounded-lg overflow-hidden mb-6">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+      <div class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden mb-6">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700">
           <tr>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Source Field
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.sourceField') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Sample Data
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.sampleData') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Maps To
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.mapsTo') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Data Format
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.dataFormat') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Status
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('common.status') }}
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
           <tr
               v-for="(field, index) in sourceFields"
               :key="index"
-              :class="{'bg-yellow-50': !isFieldMapped(field)}"
+              :class="{'bg-yellow-50 dark:bg-yellow-900/20': !isFieldMapped(field)}"
           >
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
               {{ field }}
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
               {{ getSampleValue(field) }}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm">
               <div class="relative">
                 <select
                     v-model="localMappings[field].field"
-                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
-                    :class="{'bg-yellow-50 border-yellow-300': !isFieldMapped(field)}"
+                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                    :class="{'bg-yellow-50 border-yellow-300 dark:bg-yellow-900/20': !isFieldMapped(field)}"
                 >
-                  <option value="">-- Select Field --</option>
+                  <option value="">-- {{ t('fieldMapper.selectField') }} --</option>
                   <option
-                      v-for="(option, optIndex) in targetFieldOptions"
+                      v-for="(option, optIndex) in translatedTargetFieldOptions"
                       :key="optIndex"
                       :value="option.value"
                   >
                     {{ option.label }}
                   </option>
-                  <option value="null">-- Do Not Import --</option>
+                  <option value="null">-- {{ t('fieldMapper.doNotImport') }} --</option>
                 </select>
               </div>
             </td>
@@ -138,10 +137,10 @@
               <div class="relative">
                 <select
                     v-model="localMappings[field].format"
-                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
                 >
                   <option
-                      v-for="(option, optIndex) in formatOptions[getFieldType(field)]"
+                      v-for="(option, optIndex) in translatedFormatOptions[getFieldType(field)]"
                       :key="optIndex"
                       :value="option.value"
                   >
@@ -154,10 +153,10 @@
                 <span
                     class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
                     :class="isFieldMapped(field)
-                    ? 'bg-green-100 text-green-800'
-                    : 'bg-yellow-100 text-yellow-800'"
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'"
                 >
-                  {{ isFieldMapped(field) ? 'Mapped' : 'Needs Mapping' }}
+                  {{ isFieldMapped(field) ? t('fieldMapper.mapped') : t('fieldMapper.needsMapping') }}
                 </span>
             </td>
           </tr>
@@ -177,8 +176,8 @@
             />
           </div>
           <div class="ml-3 text-sm">
-            <label for="save-template" class="font-medium text-gray-700">Save this mapping as a template</label>
-            <p class="text-gray-500">You can reuse this mapping for future imports from the same source</p>
+            <label for="save-template" class="font-medium text-gray-700 dark:text-gray-300">{{ t('fieldMapper.saveAsTemplate') }}</label>
+            <p class="text-gray-500 dark:text-gray-400">{{ t('fieldMapper.saveTemplateDescription') }}</p>
           </div>
         </div>
 
@@ -186,15 +185,15 @@
           <input
               v-model="templateName"
               type="text"
-              class="flex-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
-              placeholder="Template name"
+              class="flex-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md"
+              :placeholder="t('fieldMapper.templateName')"
           />
           <button
               class="ml-3 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
               :disabled="!templateName"
               @click="saveTemplateAction"
           >
-            Save Template
+            {{ t('fieldMapper.saveTemplate') }}
           </button>
         </div>
       </div>
@@ -202,10 +201,10 @@
       <!-- Action Buttons -->
       <div class="flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
             @click="$emit('back')"
         >
-          Back to Upload
+          {{ t('fieldMapper.backToUpload') }}
         </button>
         <div>
           <button
@@ -213,7 +212,7 @@
               :disabled="!allFieldsMapped"
               @click="continueToPreview"
           >
-            Continue to Preview
+            {{ t('fieldMapper.continueToPreview') }}
             <ArrowRight class="ml-2 h-4 w-4" />
           </button>
         </div>
@@ -230,6 +229,8 @@ import {
   ChevronUp,
   ArrowRight
 } from 'lucide-vue-next'
+
+const { t } = useI18n()
 
 const props = defineProps({
   files: {
@@ -270,50 +271,53 @@ const allFieldsMapped = computed(() => {
   return sourceFields.value.every(field => isFieldMapped(field))
 })
 
-// Target field options
-const targetFieldOptions = [
-  { label: 'Transaction ID', value: 'transaction_id' },
-  { label: 'Transaction Date', value: 'transaction_date' },
-  { label: 'Amount', value: 'amount' },
-  { label: 'Currency Code', value: 'currency_code' },
-  { label: 'Customer Email', value: 'customer_email' },
-  { label: 'Customer Name', value: 'customer_name' },
-  { label: 'Transaction Status', value: 'transaction_status' },
-  { label: 'Payment Method', value: 'payment_method' },
-  { label: 'Reference Number', value: 'reference_number' },
-  { label: 'Order Number', value: 'order_number' },
-  { label: 'Country', value: 'country' },
-  { label: 'Notes', value: 'notes' }
-]
+// Target field options (translated)
+const translatedTargetFieldOptions = computed(() => [
+  { label: t('fieldMapper.targetFields.transactionId'), value: 'transaction_id' },
+  { label: t('fieldMapper.targetFields.transactionDate'), value: 'transaction_date' },
+  { label: t('fieldMapper.targetFields.amount'), value: 'amount' },
+  { label: t('fieldMapper.targetFields.currencyCode'), value: 'currency_code' },
+  { label: t('fieldMapper.targetFields.customerEmail'), value: 'customer_email' },
+  { label: t('fieldMapper.targetFields.customerName'), value: 'customer_name' },
+  { label: t('fieldMapper.targetFields.transactionStatus'), value: 'transaction_status' },
+  { label: t('fieldMapper.targetFields.paymentMethod'), value: 'payment_method' },
+  { label: t('fieldMapper.targetFields.referenceNumber'), value: 'reference_number' },
+  { label: t('fieldMapper.targetFields.orderNumber'), value: 'order_number' },
+  { label: t('fieldMapper.targetFields.country'), value: 'country' },
+  { label: t('fieldMapper.targetFields.notes'), value: 'notes' }
+])
 
-// Format options by field type
-const formatOptions = {
+// Format options by field type (translated)
+const translatedFormatOptions = computed(() => ({
   string: [
-    { label: 'Text', value: 'text' },
-    { label: 'Email', value: 'email' },
-    { label: 'Phone Number', value: 'phone' },
-    { label: 'Address', value: 'address' }
+    { label: t('fieldMapper.formatOptions.text'), value: 'text' },
+    { label: t('fieldMapper.formatOptions.email'), value: 'email' },
+    { label: t('fieldMapper.formatOptions.phone'), value: 'phone' },
+    { label: t('fieldMapper.formatOptions.address'), value: 'address' }
   ],
   number: [
-    { label: 'Number', value: 'number' },
-    { label: 'Currency (USD)', value: 'currency_usd' },
-    { label: 'Percentage', value: 'percentage' },
-    { label: 'Decimal', value: 'decimal' }
+    { label: t('fieldMapper.formatOptions.number'), value: 'number' },
+    { label: t('fieldMapper.formatOptions.currency'), value: 'currency_usd' },
+    { label: t('fieldMapper.formatOptions.percentage'), value: 'percentage' },
+    { label: t('fieldMapper.formatOptions.decimal'), value: 'decimal' }
   ],
   date: [
-    { label: 'Date (YYYY-MM-DD)', value: 'date_iso' },
-    { label: 'Date (MM/DD/YYYY)', value: 'date_us' },
-    { label: 'Date (DD/MM/YYYY)', value: 'date_eu' },
-    { label: 'Date/Time', value: 'datetime' }
+    { label: t('fieldMapper.formatOptions.dateIso'), value: 'date_iso' },
+    { label: t('fieldMapper.formatOptions.dateUs'), value: 'date_us' },
+    { label: t('fieldMapper.formatOptions.dateEu'), value: 'date_eu' },
+    { label: t('fieldMapper.formatOptions.datetime'), value: 'datetime' }
   ],
   status: [
-    { label: 'Text', value: 'text' },
-    { label: 'Status Code', value: 'status_code' }
+    { label: t('fieldMapper.formatOptions.text'), value: 'text' },
+    { label: t('fieldMapper.formatOptions.statusCode'), value: 'status_code' }
   ]
-}
+}))
 
 // Initialize component
-onMounted(() => {
+onMounted(async () => {
+  // Load saved templates
+  await loadTemplates()
+
   if (props.files.length > 0) {
     currentFile.value = props.files[0].name
 
@@ -460,17 +464,71 @@ const getFieldType = (field) => {
   }
 }
 
+// Saved templates
+const savedTemplates = ref<any[]>([])
+const selectedTemplate = ref('')
+
+// Load saved templates
+const loadTemplates = async () => {
+  try {
+    const templates = await $fetch('/api/templates')
+    savedTemplates.value = templates as any[]
+  } catch (error) {
+    console.error('Failed to load templates:', error)
+  }
+}
+
+// Apply a saved template
+const applyTemplate = (templateId: string) => {
+  const template = savedTemplates.value.find(t => t.id === templateId)
+  if (!template) return
+
+  // Convert array back to object format
+  template.mappings.forEach((mapping: any) => {
+    if (localMappings.value[mapping.sourceField]) {
+      localMappings.value[mapping.sourceField] = {
+        field: mapping.targetField,
+        format: mapping.format
+      }
+    }
+  })
+
+  emit('update-mappings', localMappings.value)
+}
+
 // Save the current mapping template
-const saveTemplateAction = () => {
-  // In a real app, this would save the template to a database or local storage
-  console.log('Saving template:', templateName.value, localMappings.value)
+const saveTemplateAction = async () => {
+  if (!templateName.value) return
 
-  // Show a success message
-  alert(`Template "${templateName.value}" saved successfully.`)
+  try {
+    // Determine source type from file name
+    let sourceType = 'custom'
+    if (currentFile.value.toLowerCase().includes('credit') || currentFile.value.toLowerCase().includes('card')) {
+      sourceType = 'credit_card'
+    } else if (currentFile.value.toLowerCase().includes('payment') || currentFile.value.toLowerCase().includes('gateway')) {
+      sourceType = 'payment_gateway'
+    } else if (currentFile.value.toLowerCase().includes('overseas')) {
+      sourceType = 'overseas'
+    }
 
-  // Reset the template name
-  templateName.value = ''
-  saveTemplate.value = false
+    await $fetch('/api/templates', {
+      method: 'POST',
+      body: {
+        name: templateName.value,
+        sourceType,
+        mappings: localMappings.value
+      }
+    })
+
+    // Reload templates
+    await loadTemplates()
+
+    // Reset
+    templateName.value = ''
+    saveTemplate.value = false
+  } catch (error) {
+    console.error('Failed to save template:', error)
+  }
 }
 
 // Continue to preview

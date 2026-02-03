@@ -8,7 +8,7 @@
       >
         <ArrowLeft size="20" class="text-gray-600" />
       </button>
-      <h1 class="ml-2 text-xl font-medium text-gray-800">Shipment Details</h1>
+      <h1 class="ml-2 text-xl font-medium text-gray-800">{{ t('shipments.details') }}</h1>
     </div>
 
     <div v-if="isLoading" class="flex justify-center items-center h-64">
@@ -27,7 +27,7 @@
             <div>
               <h2 class="text-xl font-semibold text-gray-800">#{{ shipment.id }}</h2>
               <p class="text-sm text-gray-500">
-                Created on {{ formatDate(shipment.createdAt) }}
+                {{ t('shipmentPage.createdOn', { date: formatDate(shipment.createdAt) }) }}
               </p>
             </div>
             <div class="mt-4 md:mt-0 flex items-center space-x-3">
@@ -37,14 +37,14 @@
                   class="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
                   @click="updateStatus = true"
               >
-                Update Status
+                {{ t('shipmentPage.updateStatus') }}
               </button>
             </div>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-b py-6 my-6">
             <div>
-              <p class="text-sm font-medium text-gray-500 mb-1">Tracking Number</p>
+              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.trackingNumber') }}</p>
               <div class="flex items-center">
                 <p class="text-base font-medium text-gray-800 mr-2">{{ shipment.trackingNumber }}</p>
                 <button
@@ -61,21 +61,21 @@
                     @click="trackShipment(shipment.trackingNumber, shipment.carrier)"
                 >
                   <ExternalLink size="12" class="mr-1" />
-                  Track
+                  {{ t('shipmentPage.track') }}
                 </button>
               </div>
             </div>
             <div>
-              <p class="text-sm font-medium text-gray-500 mb-1">Linked Order</p>
-              <p class="text-base font-medium text-gray-800">Order #{{ shipment.orderId }}</p>
+              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.linkedOrder') }}</p>
+              <p class="text-base font-medium text-gray-800">{{ t('shipmentPage.orderNumber', { id: shipment.orderId }) }}</p>
               <p class="text-sm text-gray-600">
                 <button class="text-purple-600 hover:text-purple-800">
-                  View Order
+                  {{ t('shipmentPage.viewOrder') }}
                 </button>
               </p>
             </div>
             <div>
-              <p class="text-sm font-medium text-gray-500 mb-1">Estimated Delivery</p>
+              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.estimatedDelivery') }}</p>
               <p class="text-base font-medium text-gray-800">{{ formatDate(shipment.estimatedDelivery) }}</p>
               <p class="text-sm" :class="getETAClass(shipment)">{{ getETAText(shipment) }}</p>
             </div>
@@ -83,17 +83,17 @@
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <p class="text-sm font-medium text-gray-500 mb-1">Customer Information</p>
+              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.customerInfo') }}</p>
               <p class="text-base font-medium text-gray-800">{{ shipment.customer.name }}</p>
               <p class="text-sm text-gray-600">{{ shipment.customer.email }}</p>
               <p class="text-sm text-gray-600">
                 <button class="text-purple-600 hover:text-purple-800 mt-1">
-                  View Customer
+                  {{ t('shipmentPage.viewCustomer') }}
                 </button>
               </p>
             </div>
             <div>
-              <p class="text-sm font-medium text-gray-500 mb-1">Shipping Address</p>
+              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.shippingAddress') }}</p>
               <p class="text-base font-medium text-gray-800">{{ shipment.customer.name }}</p>
               <p class="text-sm text-gray-600">{{ shipment.destination.address }}</p>
               <p class="text-sm text-gray-600">
@@ -111,7 +111,7 @@
         <div class="lg:col-span-2">
           <div class="bg-white rounded-lg shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b">
-              <h3 class="text-lg font-medium text-gray-800">Shipment Timeline</h3>
+              <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentPage.timeline') }}</h3>
             </div>
             <div class="p-6">
               <div class="flow-root">
@@ -173,33 +173,33 @@
           <!-- Shipment Details Card -->
           <div class="bg-white rounded-lg shadow-sm overflow-hidden mb-6">
             <div class="px-6 py-4 border-b">
-              <h3 class="text-lg font-medium text-gray-800">Shipment Details</h3>
+              <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentPage.details') }}</h3>
             </div>
             <div class="p-6">
               <dl class="space-y-4">
                 <div>
-                  <dt class="text-sm font-medium text-gray-500">Service Type</dt>
+                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.serviceType') }}</dt>
                   <dd class="mt-1 text-sm text-gray-900">{{ shipment.serviceType }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sm font-medium text-gray-500">Package Type</dt>
+                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.packageType') }}</dt>
                   <dd class="mt-1 text-sm text-gray-900">{{ shipment.packageType }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sm font-medium text-gray-500">Weight</dt>
+                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.weight') }}</dt>
                   <dd class="mt-1 text-sm text-gray-900">{{ shipment.weight }} {{ shipment.weightUnit }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sm font-medium text-gray-500">Dimensions</dt>
+                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.dimensions') }}</dt>
                   <dd class="mt-1 text-sm text-gray-900">{{ shipment.dimensions }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sm font-medium text-gray-500">Insurance</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.insurance ? `$${shipment.insurance}` : 'No insurance' }}</dd>
+                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.insurance') }}</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.insurance ? formatCurrency(parseFloat(shipment.insurance)) : t('shipmentPage.noInsurance') }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sm font-medium text-gray-500">Signature Required</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.signatureRequired ? 'Yes' : 'No' }}</dd>
+                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.signatureRequired') }}</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.signatureRequired ? t('common.yes') : t('common.no') }}</dd>
                 </div>
               </dl>
             </div>
@@ -208,31 +208,31 @@
           <!-- Actions Card -->
           <div class="bg-white rounded-lg shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b">
-              <h3 class="text-lg font-medium text-gray-800">Actions</h3>
+              <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentPage.actions') }}</h3>
             </div>
             <div class="p-6">
               <div class="space-y-4">
                 <button class="w-full inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
                   <Printer class="mr-2 h-4 w-4" />
-                  Print Shipping Label
+                  {{ t('shipmentPage.printLabel') }}
                 </button>
                 <button class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
                   <FileText class="mr-2 h-4 w-4 text-gray-500" />
-                  Download Proof of Delivery
+                  {{ t('shipmentPage.downloadPod') }}
                 </button>
                 <button
                     class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
                     @click="sendTrackingInfo = true"
                 >
                   <Mail class="mr-2 h-4 w-4 text-gray-500" />
-                  Email Tracking Information
+                  {{ t('shipmentPage.emailTracking') }}
                 </button>
                 <button
                     v-if="shipment.status !== 'cancelled'"
                     class="w-full inline-flex items-center px-4 py-2 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                 >
                   <AlertOctagon class="mr-2 h-4 w-4 text-red-500" />
-                  Cancel Shipment
+                  {{ t('shipmentPage.cancelShipment') }}
                 </button>
               </div>
             </div>
@@ -266,49 +266,49 @@
               </div>
               <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
                 <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                  Update Shipment Status
+                  {{ t('shipmentPage.updateStatusTitle') }}
                 </h3>
                 <div class="mt-2">
                   <p class="text-sm text-gray-500">
-                    Select the new status for this shipment. This will update the tracking information and notify the customer.
+                    {{ t('shipmentPage.updateStatusDesc') }}
                   </p>
                 </div>
               </div>
             </div>
             <div class="mt-4">
-              <label for="status" class="block text-sm font-medium text-gray-700">Status</label>
+              <label for="status" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.statusLabel') }}</label>
               <select
                   id="status"
                   v-model="newStatus"
                   class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
               >
-                <option value="pending">Pending</option>
-                <option value="processing">Processing</option>
-                <option value="in_transit">In Transit</option>
-                <option value="out_for_delivery">Out for Delivery</option>
-                <option value="delivered">Delivered</option>
-                <option value="delayed">Delayed</option>
-                <option value="exception">Exception</option>
+                <option value="pending">{{ t('shipmentPage.statusPending') }}</option>
+                <option value="processing">{{ t('shipmentPage.statusProcessing') }}</option>
+                <option value="in_transit">{{ t('shipmentPage.statusInTransit') }}</option>
+                <option value="out_for_delivery">{{ t('shipmentPage.statusOutForDelivery') }}</option>
+                <option value="delivered">{{ t('shipmentPage.statusDelivered') }}</option>
+                <option value="delayed">{{ t('shipmentPage.statusDelayed') }}</option>
+                <option value="exception">{{ t('shipmentPage.statusException') }}</option>
               </select>
             </div>
             <div class="mt-4">
-              <label for="location" class="block text-sm font-medium text-gray-700">Current Location</label>
+              <label for="location" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.currentLocation') }}</label>
               <input
                   type="text"
                   id="location"
                   v-model="statusLocation"
                   class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="e.g. Chicago, IL Sorting Facility"
+                  :placeholder="t('shipmentPage.locationPlaceholder')"
               />
             </div>
             <div class="mt-4">
-              <label for="notes" class="block text-sm font-medium text-gray-700">Additional Notes</label>
+              <label for="notes" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.additionalNotes') }}</label>
               <textarea
                   id="notes"
                   v-model="statusNotes"
                   rows="3"
                   class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="Add any relevant details about this status update"
+                  :placeholder="t('shipmentPage.notesPlaceholder')"
               ></textarea>
             </div>
             <div class="mt-4 flex items-start">
@@ -321,8 +321,8 @@
                 />
               </div>
               <div class="ml-3 text-sm">
-                <label for="notify-customer" class="font-medium text-gray-700">Notify customer</label>
-                <p class="text-gray-500">Send an email update to the customer about this status change</p>
+                <label for="notify-customer" class="font-medium text-gray-700">{{ t('shipmentPage.notifyCustomer') }}</label>
+                <p class="text-gray-500">{{ t('shipmentPage.notifyCustomerDesc') }}</p>
               </div>
             </div>
           </div>
@@ -332,14 +332,14 @@
                 class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-purple-600 text-base font-medium text-white hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="updateShipmentStatus"
             >
-              Update Status
+              {{ t('shipmentPage.updateStatus') }}
             </button>
             <button
                 type="button"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="updateStatus = false"
             >
-              Cancel
+              {{ t('common.cancel') }}
             </button>
           </div>
         </div>
@@ -371,17 +371,17 @@
               </div>
               <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
                 <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                  Email Tracking Information
+                  {{ t('shipmentPage.emailTrackingTitle') }}
                 </h3>
                 <div class="mt-2">
                   <p class="text-sm text-gray-500">
-                    Send tracking information to the customer or additional recipients.
+                    {{ t('shipmentPage.emailTrackingDesc') }}
                   </p>
                 </div>
               </div>
             </div>
             <div class="mt-4">
-              <label for="recipient-email" class="block text-sm font-medium text-gray-700">Recipient Email</label>
+              <label for="recipient-email" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.recipientEmail') }}</label>
               <input
                   type="email"
                   id="recipient-email"
@@ -389,10 +389,10 @@
                   class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
                   :placeholder="shipment.customer.email"
               />
-              <p class="mt-1 text-xs text-gray-500">Leave blank to use customer's email</p>
+              <p class="mt-1 text-xs text-gray-500">{{ t('shipmentPage.leaveBlankForCustomer') }}</p>
             </div>
             <div class="mt-4">
-              <label for="additional-recipients" class="block text-sm font-medium text-gray-700">Additional Recipients</label>
+              <label for="additional-recipients" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.additionalRecipients') }}</label>
               <input
                   type="text"
                   id="additional-recipients"
@@ -400,20 +400,20 @@
                   class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
                   placeholder="email@example.com, another@example.com"
               />
-              <p class="mt-1 text-xs text-gray-500">Separate multiple emails with commas</p>
+              <p class="mt-1 text-xs text-gray-500">{{ t('shipmentPage.separateEmails') }}</p>
             </div>
             <div class="mt-4">
-              <label for="email-message" class="block text-sm font-medium text-gray-700">Additional Message</label>
+              <label for="email-message" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.additionalMessage') }}</label>
               <textarea
                   id="email-message"
                   v-model="emailMessage"
                   rows="3"
                   class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="Add any additional information to include in the email"
+                  :placeholder="t('shipmentPage.messagePlaceholder')"
               ></textarea>
             </div>
             <div class="mt-4">
-              <label class="block text-sm font-medium text-gray-700">Include in Email</label>
+              <label class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.includeInEmail') }}</label>
               <div class="mt-2 space-y-2">
                 <div class="flex items-center">
                   <input
@@ -423,7 +423,7 @@
                       disabled
                       class="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
                   />
-                  <label for="include-tracking" class="ml-2 text-sm text-gray-700">Tracking Information</label>
+                  <label for="include-tracking" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeTracking') }}</label>
                 </div>
                 <div class="flex items-center">
                   <input
@@ -432,7 +432,7 @@
                       checked
                       class="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
                   />
-                  <label for="include-eta" class="ml-2 text-sm text-gray-700">Estimated Delivery Date</label>
+                  <label for="include-eta" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeEta') }}</label>
                 </div>
                 <div class="flex items-center">
                   <input
@@ -441,7 +441,7 @@
                       checked
                       class="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
                   />
-                  <label for="include-order" class="ml-2 text-sm text-gray-700">Order Information</label>
+                  <label for="include-order" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeOrder') }}</label>
                 </div>
               </div>
             </div>
@@ -452,14 +452,14 @@
                 class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-purple-600 text-base font-medium text-white hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="sendTrackingEmail"
             >
-              Send Email
+              {{ t('shipmentPage.sendEmail') }}
             </button>
             <button
                 type="button"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="sendTrackingInfo = false"
             >
-              Cancel
+              {{ t('common.cancel') }}
             </button>
           </div>
         </div>
@@ -485,6 +485,8 @@ import {
   Mail,
   Loader
 } from 'lucide-vue-next'
+
+const { t, locale } = useI18n()
 
 const route = useRoute()
 const router = useRouter()
@@ -532,26 +534,40 @@ onMounted(async () => {
   }
 })
 
-// Format date
+// Format date with locale
 const formatDate = (isoDate: string) => {
-  if (!isoDate) return 'N/A'
+  if (!isoDate) return t('common.unknown')
 
-  return new Date(isoDate).toLocaleDateString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Date(isoDate).toLocaleDateString(dateLocale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric'
   })
 }
 
-// Format time
+// Format time with locale
 const formatTime = (isoDate: string) => {
   if (!isoDate) return ''
 
-  return new Date(isoDate).toLocaleTimeString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Date(isoDate).toLocaleTimeString(dateLocale, {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true
+    hour12: locale.value !== 'ja'
   })
+}
+
+// Format currency with locale
+const formatCurrency = (amount: number) => {
+  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
+  return new Intl.NumberFormat(currencyLocale, {
+    style: 'currency',
+    currency: currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(amount)
 }
 
 // Get carrier name from code
@@ -568,16 +584,10 @@ const getCarrierName = (code: string) => {
 
 // Get country name from code
 const getCountryName = (code: string) => {
-  const countries = {
-    US: 'United States',
-    CA: 'Canada',
-    UK: 'United Kingdom',
-    AU: 'Australia',
-    DE: 'Germany',
-    JP: 'Japan'
-  }
-
-  return countries[code] || code
+  const countryKey = `countries.${code.toLowerCase()}`
+  const translated = t(countryKey)
+  // Return the translation if found, otherwise return code
+  return translated !== countryKey ? translated : code
 }
 
 // Get ETA class and text
@@ -605,32 +615,32 @@ const getETAClass = (shipment) => {
 
 const getETAText = (shipment) => {
   if (shipment.status === 'delivered') {
-    return 'Delivered'
+    return t('shipmentPage.etaDelivered')
   }
 
   const today = new Date()
   const etaDate = new Date(shipment.estimatedDelivery)
 
   if (etaDate < today && shipment.status !== 'delivered') {
-    return 'Overdue'
+    return t('shipmentPage.etaOverdue')
   }
 
   const tomorrow = new Date(today)
   tomorrow.setDate(today.getDate() + 1)
 
   if (etaDate.toDateString() === today.toDateString()) {
-    return 'Today'
+    return t('shipmentPage.etaToday')
   }
 
   if (etaDate.toDateString() === tomorrow.toDateString()) {
-    return 'Tomorrow'
+    return t('shipmentPage.etaTomorrow')
   }
 
   // Calculate days from now
   const diffTime = Math.abs(etaDate.getTime() - today.getTime())
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
 
-  return `In ${diffDays} days`
+  return t('shipmentPage.etaInDays', { days: diffDays })
 }
 
 // Get event icon and colors
@@ -701,7 +711,7 @@ const getEventIconColor = (type: string) => {
 const copyToClipboard = (text: string) => {
   navigator.clipboard.writeText(text)
   // Could add a toast notification here
-  alert(`Copied to clipboard: ${text}`)
+  alert(t('shipmentPage.copiedToClipboard', { text }))
 }
 
 // Track shipment externally
@@ -723,7 +733,7 @@ const trackShipment = (trackingNumber: string, carrier: string) => {
       trackingUrl = `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`
       break
     default:
-      alert('No tracking URL available for this carrier')
+      alert(t('shipmentPage.noTrackingUrl'))
       return
   }
 
@@ -757,7 +767,7 @@ const updateShipmentStatus = () => {
   statusNotes.value = ''
 
   // Show success message (in a real app, this would be a toast)
-  alert('Shipment status updated successfully')
+  alert(t('shipmentPage.statusUpdateSuccess'))
 }
 
 // Send tracking email
@@ -787,22 +797,23 @@ const sendTrackingEmail = () => {
   emailMessage.value = ''
 
   // Show success message (in a real app, this would be a toast)
-  alert('Tracking information email sent successfully')
+  alert(t('shipmentPage.emailSentSuccess'))
 }
 
 // Helper to get status title
 const getStatusTitle = (status: string) => {
-  const titles = {
-    pending: 'Shipment Pending',
-    processing: 'Shipment Processing',
-    in_transit: 'Shipment In Transit',
-    out_for_delivery: 'Out for Delivery',
-    delivered: 'Shipment Delivered',
-    delayed: 'Shipment Delayed',
-    exception: 'Shipment Exception'
+  const statusKeys = {
+    pending: 'eventPending',
+    processing: 'eventProcessing',
+    in_transit: 'eventInTransit',
+    out_for_delivery: 'eventOutForDelivery',
+    delivered: 'eventDelivered',
+    delayed: 'eventDelayed',
+    exception: 'eventException'
   }
 
-  return titles[status] || 'Status Updated'
+  const key = statusKeys[status]
+  return key ? t(`shipmentPage.${key}`) : t('shipmentPage.statusUpdated')
 }
 
 // Generate mock shipment for demo

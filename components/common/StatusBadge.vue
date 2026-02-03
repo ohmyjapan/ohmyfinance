@@ -4,13 +4,15 @@
       :class="badgeClasses[normalizedStatus]"
   >
     <component :is="statusIcon" class="mr-1" size="16" />
-    {{ formatStatus(status) }}
+    {{ t(`status.${normalizedStatus}`) }}
   </span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { CheckCircle, Clock, AlertTriangle, XCircle } from 'lucide-vue-next'
+
+const { t } = useI18n()
 
 const props = defineProps({
   status: {
@@ -63,20 +65,4 @@ const statusIcon = computed(() => {
       return AlertTriangle
   }
 })
-
-// Format status for display
-const formatStatus = (status: string) => {
-  // Handle special cases
-  if (status.toLowerCase() === 'in_transit' || status.toLowerCase() === 'in-transit') {
-    return 'In Transit'
-  }
-
-  // Capitalize first letter of each word
-  return status
-      .split('_').join(' ')
-      .split('-').join(' ')
-      .replace(/\w\S*/g, (txt) => {
-        return txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase()
-      })
-}
 </script>

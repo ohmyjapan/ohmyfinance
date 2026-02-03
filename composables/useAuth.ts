@@ -1,346 +1,464 @@
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 interface User {
-    id: string
-    email: string
-    name: string
-    role: 'admin' | 'manager' | 'user'
-    permissions?: string[]
-    avatar?: string
-    lastLogin?: string
+  id: string
+  _id: string
+  email: string
+  name: string
+  avatar?: string
+  phone?: string
+  isActive: boolean
+  isEmailVerified: boolean
+  preferences: {
+    language: string
+    currency: string
+    timezone: string
+    darkMode: boolean
+  }
+  securityPreferences?: {
+    pinEnabled: boolean
+    screenLockTimeout: number
+    forceLogoutTimeout: number
+  }
+  twoFactorEnabled?: boolean
+  lastLoginAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface Organization {
+  id: string
+  _id: string
+  name: string
+  slug: string
+  type: 'personal' | 'business' | 'enterprise'
+  role: 'owner' | 'admin' | 'member' | 'viewer'
+  settings: {
+    defaultCurrency: string
+    fiscalYearStart: number
+    timezone: string
+    invoicePrefix: string
+    invoiceNextNumber: number
+  }
+  isActive: boolean
+}
+
+interface AuthTokens {
+  accessToken: string
+  refreshToken: string
+  expiresIn: number
 }
 
 interface LoginCredentials {
-    email: string
-    password: string
-    rememberMe?: boolean
+  email: string
+  password: string
+  rememberMe?: boolean
 }
+
+interface RegisterData {
+  email: string
+  password: string
+  name: string
+  organizationType?: 'personal' | 'business'
+  organizationName?: string
+}
+
+// Singleton state for auth
+const user = ref<User | null>(null)
+const organizations = ref<Organization[]>([])
+const currentOrganization = ref<Organization | null>(null)
+const tokens = ref<AuthTokens | null>(null)
+const isLoading = ref<boolean>(false)
+const error = ref<string | null>(null)
+
+// Token refresh timer
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+const TOKEN_REFRESH_MARGIN = 60 // Refresh 1 minute before expiry
 
 /**
  * Composable for handling authentication
  */
 export function useAuth() {
+  // Check if user is authenticated
+  const isAuthenticated = computed(() => Boolean(user.value && tokens.value?.accessToken))
+
+  // Check if user is owner
+  const isOwner = computed(() => currentOrganization.value?.role === 'owner')
+
+  // Check if user is admin
+  const isAdmin = computed(() =>
+    currentOrganization.value?.role === 'owner' ||
+    currentOrganization.value?.role === 'admin'
+  )
+
+  /**
+   * Initialize auth state (e.g., on app load)
+   */
+  const initAuth = async () => {
+    isLoading.value = true
+    error.value = null
+
+    try {
+      if (process.client) {
+        const storedTokens = localStorage.getItem('auth_tokens')
+        if (storedTokens) {
+          tokens.value = JSON.parse(storedTokens)
+
+          // Validate token by fetching user data
+          const response = await fetch('/api/auth/me', {
+            headers: {
+              'Authorization': `Bearer ${tokens.value?.accessToken}`
+            }
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            user.value = data.user
+            organizations.value = data.organizations || []
+            currentOrganization.value = data.currentOrganization
+
+            // Store organization ID
+            if (data.currentOrganization) {
+              localStorage.setItem('current_organization_id', data.currentOrganization.id)
+            }
+
+            // Schedule automatic token refresh
+            scheduleTokenRefresh()
+
+            return true
+          } else {
+            // Token is invalid, try to refresh
+            const refreshed = await refreshToken()
+            if (!refreshed) {
+              await logout()
+              return false
+            }
+            return true
+          }
+        }
+      }
+
+      return false
+    } catch (err: any) {
+      console.error('Init auth error:', err)
+      error.value = err.message || 'Failed to initialize authentication'
+      await logout()
+      return false
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  /**
+   * Login user with email and password
+   */
+  const login = async (credentials: LoginCredentials) => {
+    isLoading.value = true
+    error.value = null
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: credentials.email,
+          password: credentials.password
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.statusMessage || data.message || 'Login failed')
+      }
+
+      // Set state
+      user.value = data.user
+      organizations.value = data.organizations || []
+      tokens.value = data.tokens
+
+      // Set current organization (first one)
+      if (data.organizations && data.organizations.length > 0) {
+        currentOrganization.value = data.organizations[0]
+        localStorage.setItem('current_organization_id', data.organizations[0].id)
+      }
+
+      // Store tokens
+      if (process.client) {
+        localStorage.setItem('auth_tokens', JSON.stringify(data.tokens))
+      }
+
+      // Schedule automatic token refresh
+      scheduleTokenRefresh()
+
+      return true
+    } catch (err: any) {
+      error.value = err.message || 'Login failed'
+      return false
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  /**
+   * Register new user
+   */
+  const register = async (data: RegisterData) => {
+    isLoading.value = true
+    error.value = null
+
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.statusMessage || result.message || 'Registration failed')
+      }
+
+      // Set state
+      user.value = result.user
+      organizations.value = [{ ...result.organization, role: 'owner' }]
+      currentOrganization.value = { ...result.organization, role: 'owner' }
+      tokens.value = result.tokens
+
+      // Store tokens
+      if (process.client) {
+        localStorage.setItem('auth_tokens', JSON.stringify(result.tokens))
+        localStorage.setItem('current_organization_id', result.organization.id)
+      }
+
+      return true
+    } catch (err: any) {
+      error.value = err.message || 'Registration failed'
+      return false
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  /**
+   * Logout user
+   */
+  const logout = async () => {
+    isLoading.value = true
+
+    // Stop token refresh timer
+    stopTokenRefresh()
+
+    try {
+      // Notify server and revoke tokens
+      if (tokens.value?.accessToken) {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tokens.value.accessToken}`
+          },
+          body: JSON.stringify({
+            refreshToken: tokens.value.refreshToken
+          })
+        }).catch(() => {})
+      }
+
+      // Clear state
+      user.value = null
+      organizations.value = []
+      currentOrganization.value = null
+      tokens.value = null
+      error.value = null
+
+      // Clear stored auth data
+      if (process.client) {
+        localStorage.removeItem('auth_tokens')
+        localStorage.removeItem('current_organization_id')
+      }
+
+      return true
+    } catch (err: any) {
+      console.error('Logout error:', err)
+      return false
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  /**
+   * Refresh access token
+   */
+  const refreshToken = async () => {
+    if (!tokens.value?.refreshToken) return false
+
+    try {
+      const response = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          refreshToken: tokens.value.refreshToken
+        })
+      })
+
+      if (!response.ok) return false
+
+      const data = await response.json()
+      tokens.value = data.tokens
+
+      if (process.client) {
+        localStorage.setItem('auth_tokens', JSON.stringify(data.tokens))
+      }
+
+      // Schedule next refresh
+      scheduleTokenRefresh()
+
+      return true
+    } catch (err) {
+      console.error('Token refresh error:', err)
+      return false
+    }
+  }
+
+  /**
+   * Schedule automatic token refresh
+   */
+  const scheduleTokenRefresh = () => {
+    // Clear existing timer
+    if (refreshTimer) {
+      clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+
+    if (!tokens.value?.expiresIn) return
+
+    // Calculate when to refresh (1 minute before expiry)
+    const refreshInMs = (tokens.value.expiresIn - TOKEN_REFRESH_MARGIN) * 1000
+
+    // Only schedule if refresh time is positive
+    if (refreshInMs > 0) {
+      refreshTimer = setTimeout(async () => {
+        const success = await refreshToken()
+        if (!success) {
+          // Token refresh failed, logout user
+          await logout()
+        }
+      }, refreshInMs)
+    }
+  }
+
+  /**
+   * Stop token refresh timer
+   */
+  const stopTokenRefresh = () => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+  }
+
+  /**
+   * Switch current organization
+   */
+  const switchOrganization = async (organizationId: string) => {
+    if (!tokens.value?.accessToken) {
+      error.value = 'Not authenticated'
+      return false
+    }
+
+    isLoading.value = true
+    error.value = null
+
+    try {
+      const response = await fetch('/api/auth/switch-organization', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokens.value.accessToken}`
+        },
+        body: JSON.stringify({ organizationId })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.statusMessage || 'Failed to switch organization')
+      }
+
+      // Update tokens
+      tokens.value = data.tokens
+
+      // Update current organization
+      const org = organizations.value.find(o => o.id === organizationId || o._id === organizationId)
+      if (org) {
+        currentOrganization.value = org
+      }
+
+      // Store
+      if (process.client) {
+        localStorage.setItem('auth_tokens', JSON.stringify(data.tokens))
+        localStorage.setItem('current_organization_id', organizationId)
+      }
+
+      return true
+    } catch (err: any) {
+      error.value = err.message || 'Failed to switch organization'
+      return false
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  /**
+   * Check if user has specific role in current organization
+   */
+  const hasRole = (roles: string | string[]) => {
+    if (!currentOrganization.value?.role) return false
+    const roleArray = Array.isArray(roles) ? roles : [roles]
+    return roleArray.includes(currentOrganization.value.role)
+  }
+
+  /**
+   * Get auth header for API requests
+   */
+  const getAuthHeader = () => {
+    if (!tokens.value?.accessToken) return {}
+    return { Authorization: `Bearer ${tokens.value.accessToken}` }
+  }
+
+  /**
+   * Get current organization ID
+   */
+  const getOrganizationId = () => {
+    return currentOrganization.value?.id || currentOrganization.value?._id || null
+  }
+
+  return {
     // State
-    const user = ref<User | null>(null)
-    const isLoading = ref<boolean>(false)
-    const error = ref<string | null>(null)
-    const token = ref<string | null>(null)
+    user,
+    organizations,
+    currentOrganization,
+    tokens,
+    isLoading,
+    error,
 
-    // Check if user is authenticated
-    const isAuthenticated = computed(() => Boolean(user.value && token.value))
+    // Computed
+    isAuthenticated,
+    isOwner,
+    isAdmin,
 
-    // Check if user is admin
-    const isAdmin = computed(() => user.value?.role === 'admin')
-
-    /**
-     * Initialize auth state (e.g., on app load)
-     */
-    const initAuth = async () => {
-        isLoading.value = true
-        error.value = null
-
-        try {
-            // In a real app, you would validate the stored token with your API
-            if (process.client) {
-                const storedToken = localStorage.getItem('auth_token')
-                if (storedToken) {
-                    token.value = storedToken
-
-                    // For demo, fetch user from localStorage
-                    const storedUser = localStorage.getItem('auth_user')
-                    if (storedUser) {
-                        user.value = JSON.parse(storedUser)
-                    } else {
-                        // User info not found, so perform logout
-                        await logout()
-                        return false
-                    }
-
-                    return true
-                }
-            }
-
-            return false
-        } catch (err: any) {
-            error.value = err.message || 'Failed to initialize authentication'
-            return false
-        } finally {
-            isLoading.value = false
-        }
-    }
-
-    /**
-     * Login user with email and password
-     */
-    const login = async (credentials: LoginCredentials) => {
-        isLoading.value = true
-        error.value = null
-
-        try {
-            // In a real app, this would be an API call
-            // const response = await fetch('/api/auth/login', {
-            //   method: 'POST',
-            //   headers: { 'Content-Type': 'application/json' },
-            //   body: JSON.stringify(credentials)
-            // })
-
-            // if (!response.ok) {
-            //   const errorData = await response.json()
-            //   throw new Error(errorData.message || 'Invalid credentials')
-            // }
-
-            // const data = await response.json()
-            // token.value = data.token
-            // user.value = data.user
-
-            // Simulate login for demo
-            await new Promise(resolve => setTimeout(resolve, 1000))
-
-            // Validate credentials (simulated)
-            if (!credentials.email || !credentials.password) {
-                throw new Error('Email and password are required')
-            }
-
-            // Simulate basic validation
-            if (!credentials.email.includes('@') || credentials.password.length < 6) {
-                throw new Error('Invalid email or password')
-            }
-
-            // Generate mock token and user
-            const mockToken = `mock_token_${Date.now()}`
-            const mockUser: User = {
-                id: 'usr_123456',
-                email: credentials.email,
-                name: credentials.email.split('@')[0],
-                role: 'admin',
-                permissions: ['read:transactions', 'write:transactions', 'manage:receipts'],
-                lastLogin: new Date().toISOString()
-            }
-
-            // Set state
-            token.value = mockToken
-            user.value = mockUser
-
-            // Store auth data if remember me is enabled
-            if (process.client && (credentials.rememberMe || true)) {
-                localStorage.setItem('auth_token', mockToken)
-                localStorage.setItem('auth_user', JSON.stringify(mockUser))
-            }
-
-            return true
-        } catch (err: any) {
-            error.value = err.message || 'Login failed'
-            return false
-        } finally {
-            isLoading.value = false
-        }
-    }
-
-    /**
-     * Logout user
-     */
-    const logout = async () => {
-        isLoading.value = true
-
-        try {
-            // In a real app, you might want to notify the server
-            // await fetch('/api/auth/logout', {
-            //   method: 'POST',
-            //   headers: { 'Authorization': `Bearer ${token.value}` }
-            // })
-
-            // Clear state
-            user.value = null
-            token.value = null
-            error.value = null
-
-            // Clear stored auth data
-            if (process.client) {
-                localStorage.removeItem('auth_token')
-                localStorage.removeItem('auth_user')
-            }
-
-            return true
-        } catch (err: any) {
-            console.error('Logout error:', err)
-            return false
-        } finally {
-            isLoading.value = false
-        }
-    }
-
-    /**
-     * Check if user has specific permission
-     */
-    const hasPermission = (permission: string) => {
-        if (!user.value?.permissions) return false
-        return user.value.permissions.includes(permission)
-    }
-
-    /**
-     * Update user profile
-     */
-    const updateProfile = async (profileData: Partial<User>) => {
-        if (!isAuthenticated.value) {
-            error.value = 'You must be logged in to update your profile'
-            return false
-        }
-
-        isLoading.value = true
-
-        try {
-            // In a real app, this would be an API call
-            // const response = await fetch('/api/auth/profile', {
-            //   method: 'PATCH',
-            //   headers: {
-            //     'Content-Type': 'application/json',
-            //     'Authorization': `Bearer ${token.value}`
-            //   },
-            //   body: JSON.stringify(profileData)
-            // })
-
-            // if (!response.ok) {
-            //   const errorData = await response.json()
-            //   throw new Error(errorData.message || 'Failed to update profile')
-            // }
-
-            // const updatedUser = await response.json()
-            // user.value = updatedUser
-
-            // Simulate profile update
-            await new Promise(resolve => setTimeout(resolve, 500))
-
-            // Update user state
-            if (user.value) {
-                user.value = { ...user.value, ...profileData }
-
-                // Update stored user data
-                if (process.client) {
-                    localStorage.setItem('auth_user', JSON.stringify(user.value))
-                }
-            }
-
-            return true
-        } catch (err: any) {
-            error.value = err.message || 'Failed to update profile'
-            return false
-        } finally {
-            isLoading.value = false
-        }
-    }
-
-    /**
-     * Change password
-     */
-    const changePassword = async (currentPassword: string, newPassword: string) => {
-        if (!isAuthenticated.value) {
-            error.value = 'You must be logged in to change your password'
-            return false
-        }
-
-        if (newPassword.length < 6) {
-            error.value = 'New password must be at least 6 characters long'
-            return false
-        }
-
-        isLoading.value = true
-
-        try {
-            // In a real app, this would be an API call
-            // const response = await fetch('/api/auth/change-password', {
-            //   method: 'POST',
-            //   headers: {
-            //     'Content-Type': 'application/json',
-            //     'Authorization': `Bearer ${token.value}`
-            //   },
-            //   body: JSON.stringify({ currentPassword, newPassword })
-            // })
-
-            // if (!response.ok) {
-            //   const errorData = await response.json()
-            //   throw new Error(errorData.message || 'Failed to change password')
-            // }
-
-            // Simulate password change
-            await new Promise(resolve => setTimeout(resolve, 800))
-
-            // Simple validation for demo
-            if (currentPassword === 'wrong-password') {
-                throw new Error('Current password is incorrect')
-            }
-
-            return true
-        } catch (err: any) {
-            error.value = err.message || 'Failed to change password'
-            return false
-        } finally {
-            isLoading.value = false
-        }
-    }
-
-    /**
-     * Request password reset
-     */
-    const requestPasswordReset = async (email: string) => {
-        isLoading.value = true
-        error.value = null
-
-        try {
-            // In a real app, this would be an API call
-            // const response = await fetch('/api/auth/reset-password-request', {
-            //   method: 'POST',
-            //   headers: { 'Content-Type': 'application/json' },
-            //   body: JSON.stringify({ email })
-            // })
-
-            // if (!response.ok) {
-            //   const errorData = await response.json()
-            //   throw new Error(errorData.message || 'Failed to request password reset')
-            // }
-
-            // Simulate request
-            await new Promise(resolve => setTimeout(resolve, 1000))
-
-            // Simple validation
-            if (!email.includes('@')) {
-                throw new Error('Please enter a valid email address')
-            }
-
-            return true
-        } catch (err: any) {
-            error.value = err.message || 'Failed to request password reset'
-            return false
-        } finally {
-            isLoading.value = false
-        }
-    }
-
-    /**
-     * Get auth token for API requests
-     */
-    const getAuthHeader = () => {
-        if (!token.value) return {}
-        return { Authorization: `Bearer ${token.value}` }
-    }
-
-    return {
-        // State
-        user,
-        isLoading,
-        error,
-
-        // Computed
-        isAuthenticated,
-        isAdmin,
-
-        // Methods
-        initAuth,
-        login,
-        logout,
-        hasPermission,
-        updateProfile,
-        changePassword,
-        requestPasswordReset,
-        getAuthHeader
-    }
+    // Methods
+    initAuth,
+    login,
+    register,
+    logout,
+    refreshToken,
+    scheduleTokenRefresh,
+    stopTokenRefresh,
+    switchOrganization,
+    hasRole,
+    getAuthHeader,
+    getOrganizationId
+  }
 }

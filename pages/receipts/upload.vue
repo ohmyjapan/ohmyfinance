@@ -1,8 +1,8 @@
 <template>
   <div>
     <header class="mb-6">
-      <h1 class="text-xl font-semibold text-gray-800">Receipt Management</h1>
-      <p class="text-gray-600">Upload and match receipt documents with transactions</p>
+      <h1 class="text-xl font-semibold text-gray-800">{{ t('receiptUpload.title') }}</h1>
+      <p class="text-gray-600">{{ t('receiptUpload.description') }}</p>
     </header>
 
     <!-- Upload Section -->
@@ -16,26 +16,25 @@
 
           <!-- Right: Instructions -->
           <div class="lg:col-span-2">
-            <h3 class="text-lg font-medium text-gray-900 mb-4">Receipt Processing</h3>
+            <h3 class="text-lg font-medium text-gray-900 mb-4">{{ t('receiptUpload.processing') }}</h3>
             <p class="text-sm text-gray-600 mb-4">
-              Upload physical or digital receipts to match with your transaction records. Our system will automatically
-              extract relevant information and match receipts with corresponding transactions.
+              {{ t('receiptUpload.processingDescription') }}
             </p>
 
             <div class="bg-blue-50 border border-blue-100 rounded-md p-4 mb-4">
-              <h4 class="text-sm font-medium text-blue-800 mb-2">Tips for better matching</h4>
+              <h4 class="text-sm font-medium text-blue-800 mb-2">{{ t('receiptUpload.tips') }}</h4>
               <ul class="text-sm text-blue-700 space-y-2">
                 <li class="flex items-start">
                   <CheckCircle size="16" class="text-blue-600 mr-2 mt-0.5 flex-shrink-0" />
-                  <span>Ensure receipt images are clear and well-lit</span>
+                  <span>{{ t('receiptUpload.tip1') }}</span>
                 </li>
                 <li class="flex items-start">
                   <CheckCircle size="16" class="text-blue-600 mr-2 mt-0.5 flex-shrink-0" />
-                  <span>Make sure transaction amount is clearly visible</span>
+                  <span>{{ t('receiptUpload.tip2') }}</span>
                 </li>
                 <li class="flex items-start">
                   <CheckCircle size="16" class="text-blue-600 mr-2 mt-0.5 flex-shrink-0" />
-                  <span>Include transaction date and merchant information where possible</span>
+                  <span>{{ t('receiptUpload.tip3') }}</span>
                 </li>
               </ul>
             </div>
@@ -43,15 +42,15 @@
             <div class="grid grid-cols-3 gap-4 text-center">
               <div class="bg-gray-50 p-4 rounded-md">
                 <div class="text-purple-600 font-semibold text-2xl mb-1">{{ receiptStats.total }}</div>
-                <div class="text-xs text-gray-500">Total Receipts</div>
+                <div class="text-xs text-gray-500">{{ t('receiptUpload.totalReceipts') }}</div>
               </div>
               <div class="bg-gray-50 p-4 rounded-md">
                 <div class="text-green-600 font-semibold text-2xl mb-1">{{ receiptStats.matched }}</div>
-                <div class="text-xs text-gray-500">Matched</div>
+                <div class="text-xs text-gray-500">{{ t('receiptUpload.matched') }}</div>
               </div>
               <div class="bg-gray-50 p-4 rounded-md">
                 <div class="text-yellow-600 font-semibold text-2xl mb-1">{{ receiptStats.unmatched }}</div>
-                <div class="text-xs text-gray-500">Unmatched</div>
+                <div class="text-xs text-gray-500">{{ t('receiptUpload.unmatched') }}</div>
               </div>
             </div>
           </div>
@@ -62,7 +61,7 @@
     <!-- Recent Uploads Table -->
     <div class="bg-white rounded-lg shadow-sm mb-6">
       <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-        <h2 class="text-lg font-medium text-gray-800">Recently Uploaded Receipts</h2>
+        <h2 class="text-lg font-medium text-gray-800">{{ t('receiptUpload.recentUploads') }}</h2>
         <div class="flex space-x-3">
           <div class="relative">
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -72,7 +71,7 @@
                 v-model="searchQuery"
                 type="text"
                 class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                placeholder="Search receipts..."
+                :placeholder="t('receiptUpload.searchReceipts')"
             />
           </div>
           <button
@@ -80,7 +79,7 @@
               @click="isFilterOpen = !isFilterOpen"
           >
             <Filter size="16" class="mr-2 text-gray-500" />
-            Filters
+            {{ t('common.filters') }}
           </button>
         </div>
       </div>
@@ -89,28 +88,28 @@
       <div v-if="isFilterOpen" class="px-6 py-4 border-b border-gray-200 bg-gray-50">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label for="status-filter" class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+            <label for="status-filter" class="block text-sm font-medium text-gray-700 mb-1">{{ t('common.status') }}</label>
             <select
                 id="status-filter"
                 v-model="filters.status"
                 class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
             >
-              <option value="">All Statuses</option>
-              <option value="matched">Matched</option>
-              <option value="unmatched">Unmatched</option>
+              <option value="">{{ t('receiptUpload.allStatuses') }}</option>
+              <option value="matched">{{ t('receiptUpload.matched') }}</option>
+              <option value="unmatched">{{ t('receiptUpload.unmatched') }}</option>
             </select>
           </div>
           <div>
-            <label for="date-filter" class="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+            <label for="date-filter" class="block text-sm font-medium text-gray-700 mb-1">{{ t('common.dateRange') }}</label>
             <select
                 id="date-filter"
                 v-model="filters.dateRange"
                 class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
             >
-              <option value="">All Time</option>
-              <option value="today">Today</option>
-              <option value="week">This Week</option>
-              <option value="month">This Month</option>
+              <option value="">{{ t('common.allTime') }}</option>
+              <option value="today">{{ t('common.today') }}</option>
+              <option value="week">{{ t('common.thisWeek') }}</option>
+              <option value="month">{{ t('common.thisMonth') }}</option>
             </select>
           </div>
           <div class="flex items-end">
@@ -118,7 +117,7 @@
                 class="inline-flex items-center px-4 py-2 border border-gray-300 bg-white rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
                 @click="resetFilters"
             >
-              Reset Filters
+              {{ t('common.resetFilters') }}
             </button>
           </div>
         </div>
@@ -135,7 +134,7 @@
       <!-- Pagination -->
       <div class="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
         <div class="text-sm text-gray-700">
-          Showing <span class="font-medium">{{ paginationStart }}</span> to <span class="font-medium">{{ paginationEnd }}</span> of <span class="font-medium">{{ receiptStats.total }}</span> receipts
+          {{ t('common.showingRange', { start: paginationStart, end: paginationEnd, total: receiptStats.total }) }}
         </div>
         <div class="flex space-x-1">
           <button
@@ -144,7 +143,7 @@
               @click="currentPage--"
           >
             <ArrowLeft size="16" class="mr-1" />
-            Previous
+            {{ t('common.previous') }}
           </button>
           <template v-for="page in totalPages" :key="page">
             <button
@@ -162,7 +161,7 @@
               :disabled="currentPage === totalPages"
               @click="currentPage++"
           >
-            Next
+            {{ t('common.next') }}
             <ArrowRight size="16" class="ml-1" />
           </button>
         </div>
@@ -183,10 +182,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { CheckCircle, Search, Filter, ArrowLeft, ArrowRight } from 'lucide-vue-next'
 
+const { t, locale } = useI18n()
+
 // State
-const receipts = ref([])
+const receipts = ref<any[]>([])
 const searchQuery = ref('')
 const isFilterOpen = ref(false)
+const isLoading = ref(false)
+const isUploading = ref(false)
 const filters = ref({
   status: '',
   dateRange: ''
@@ -198,59 +201,37 @@ const selectedReceipt = ref(null)
 
 // Receipt stats
 const receiptStats = ref({
-  total: 247,
-  matched: 189,
-  unmatched: 58
+  total: 0,
+  matched: 0,
+  unmatched: 0
 })
 
-// Load receipts (mock data for now)
-onMounted(async () => {
-  // In a real app, this would be an API call
-  // await loadReceipts()
+// Load receipts from API
+const loadReceipts = async () => {
+  isLoading.value = true
+  try {
+    const response = await $fetch<any>('/api/receipts')
+    // Handle both array and object responses
+    const data = Array.isArray(response) ? response : (response?.receipts || [])
+    receipts.value = data
 
-  // Mock data
-  receipts.value = [
-    {
-      id: 'receipt_4392',
-      filename: 'receipt_4392.pdf',
-      size: 438272, // 428 KB
-      uploadDate: '2025-04-14T10:32:00Z',
-      amount: 189.99,
-      merchant: 'Tech Gadgets Inc.',
-      status: 'matched',
-      transactionId: 'TRX-7843'
-    },
-    {
-      id: 'receipt_4391',
-      filename: 'receipt_4391.jpg',
-      size: 1258291, // 1.2 MB
-      uploadDate: '2025-04-14T09:45:00Z',
-      amount: 1299.00,
-      merchant: 'ElectroMart',
-      status: 'unmatched',
-      transactionId: null
-    },
-    {
-      id: 'receipt_4390',
-      filename: 'receipt_4390.pdf',
-      size: 357376, // 349 KB
-      uploadDate: '2025-04-13T17:18:00Z',
-      amount: 74.50,
-      merchant: 'Office Supplies Co.',
-      status: 'matched',
-      transactionId: 'TRX-7830'
-    },
-    {
-      id: 'receipt_4389',
-      filename: 'receipt_4389.png',
-      size: 865280, // 845 KB
-      uploadDate: '2025-04-13T14:30:00Z',
-      amount: 429.99,
-      merchant: 'Global Imports Ltd.',
-      status: 'unmatched',
-      transactionId: null
+    // Calculate stats
+    receiptStats.value = {
+      total: receipts.value.length,
+      matched: receipts.value.filter((r: any) => r.status === 'matched' || r.transactionId).length,
+      unmatched: receipts.value.filter((r: any) => r.status !== 'matched' && !r.transactionId).length
     }
-  ]
+  } catch (error) {
+    console.error('Failed to load receipts:', error)
+    receipts.value = []
+  } finally {
+    isLoading.value = false
+  }
+}
+
+// Load receipts on mount
+onMounted(async () => {
+  await loadReceipts()
 })
 
 // Filtered receipts based on search and filters
@@ -313,35 +294,42 @@ const resetFilters = () => {
   searchQuery.value = ''
 }
 
-// File selection handler
-const handleFilesSelected = (files) => {
-  // Here you would upload the files to your server
-  console.log('Files selected:', files)
+// File selection handler - Upload to API
+const handleFilesSelected = async (files: File[]) => {
+  if (!files || files.length === 0) return
 
-  // Mock successful upload
-  const newReceipt = {
-    id: `receipt_${Date.now()}`,
-    filename: files[0].name,
-    size: files[0].size,
-    uploadDate: new Date().toISOString(),
-    amount: null, // Would be extracted from receipt
-    merchant: null, // Would be extracted from receipt
-    status: 'unmatched',
-    transactionId: null
+  isUploading.value = true
+  try {
+    for (const file of files) {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const result = await $fetch<any>('/api/receipts/upload', {
+        method: 'POST',
+        body: formData
+      })
+
+      if (result && result.receipt) {
+        // Add to beginning of list
+        receipts.value.unshift(result.receipt)
+
+        // Update stats
+        receiptStats.value.total++
+        receiptStats.value.unmatched++
+      }
+    }
+  } catch (error) {
+    console.error('Failed to upload receipt:', error)
+    alert('領収書のアップロードに失敗しました')
+  } finally {
+    isUploading.value = false
   }
-
-  // Add to beginning of list
-  receipts.value.unshift(newReceipt)
-
-  // Update stats
-  receiptStats.value.total++
-  receiptStats.value.unmatched++
 }
 
 // View receipt details
-const viewReceipt = (receiptId) => {
+const viewReceipt = (receiptId: string) => {
   // Navigate to receipt details page
-  console.log('View receipt:', receiptId)
+  navigateTo(`/receipts/${receiptId}`)
 }
 
 // Open match dialog
@@ -353,44 +341,62 @@ const openMatchDialog = (receiptId) => {
   }
 }
 
-// Match receipt with transaction
-const matchReceipt = (receiptId, transactionId) => {
-  // In a real app, this would be an API call
-  console.log('Matching receipt', receiptId, 'with transaction', transactionId)
+// Match receipt with transaction - Call API
+const matchReceipt = async (receiptId: string, transactionId: string) => {
+  try {
+    const result = await $fetch(`/api/receipts/${receiptId}/match`, {
+      method: 'POST',
+      body: { transactionId }
+    })
 
-  // Update receipt status
-  const receipt = receipts.value.find(r => r.id === receiptId)
-  if (receipt) {
-    receipt.status = 'matched'
-    receipt.transactionId = transactionId
+    if (result) {
+      // Update receipt in local state
+      const receipt = receipts.value.find(r => r.id === receiptId || r._id === receiptId)
+      if (receipt) {
+        receipt.status = 'matched'
+        receipt.transactionId = transactionId
 
-    // Update stats
-    receiptStats.value.matched++
-    receiptStats.value.unmatched--
+        // Update stats
+        receiptStats.value.matched++
+        receiptStats.value.unmatched--
+      }
+    }
+  } catch (error) {
+    console.error('Failed to match receipt:', error)
+    alert('領収書のマッチングに失敗しました')
   }
 
   // Close dialog
   showMatchDialog.value = false
 }
 
-// Delete receipt
-const deleteReceipt = (receiptId) => {
-  // In a real app, this would be an API call with confirmation
+// Delete receipt - Call API
+const deleteReceipt = async (receiptId: string) => {
+  if (!confirm('この領収書を削除しますか？')) return
 
-  const receiptIndex = receipts.value.findIndex(r => r.id === receiptId)
-  if (receiptIndex !== -1) {
-    const receipt = receipts.value[receiptIndex]
+  try {
+    await $fetch(`/api/receipts/${receiptId}`, {
+      method: 'DELETE'
+    })
 
-    // Update stats
-    receiptStats.value.total--
-    if (receipt.status === 'matched') {
-      receiptStats.value.matched--
-    } else {
-      receiptStats.value.unmatched--
+    const receiptIndex = receipts.value.findIndex(r => r.id === receiptId || r._id === receiptId)
+    if (receiptIndex !== -1) {
+      const receipt = receipts.value[receiptIndex]
+
+      // Update stats
+      receiptStats.value.total--
+      if (receipt.status === 'matched' || receipt.transactionId) {
+        receiptStats.value.matched--
+      } else {
+        receiptStats.value.unmatched--
+      }
+
+      // Remove from array
+      receipts.value.splice(receiptIndex, 1)
     }
-
-    // Remove from array
-    receipts.value.splice(receiptIndex, 1)
+  } catch (error) {
+    console.error('Failed to delete receipt:', error)
+    alert('領収書の削除に失敗しました')
   }
 }
 </script>

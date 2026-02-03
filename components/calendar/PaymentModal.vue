@@ -152,7 +152,7 @@
                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
                 >
                   <option v-for="cat in PAYMENT_CATEGORIES" :key="cat" :value="cat">
-                    {{ t(`paymentModal.categories.${cat.toLowerCase()}`) }}
+                    {{ t(`paymentModal.categories.${cat.toLowerCase().replace(/\s+/g, '_')}`) }}
                   </option>
                 </select>
               </div>

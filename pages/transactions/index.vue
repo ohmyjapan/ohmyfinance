@@ -547,11 +547,14 @@ const deleteTransactionConfirm = async (id: string) => {
 
 // Handle create transaction
 const handleCreateTransaction = async (formData: any) => {
-  const result = await createTransaction(formData)
-  if (result) {
-    showCreateModal.value = false
-    // Refresh the list
-    await fetchTransactions()
+  try {
+    const result = await createTransaction(formData)
+    if (result) {
+      showCreateModal.value = false
+      await fetchTransactions()
+    }
+  } catch (err) {
+    console.error('Error in handleCreateTransaction:', err)
   }
 }
 

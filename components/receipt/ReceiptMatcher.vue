@@ -2,10 +2,9 @@
   <div class="bg-white rounded-lg shadow-sm">
     <div class="p-6">
       <div class="mb-6">
-        <h2 class="text-lg font-medium text-gray-900 mb-2">Match Receipt with Transaction</h2>
+        <h2 class="text-lg font-medium text-gray-900 mb-2">{{ t('receiptMatcher.title') }}</h2>
         <p class="text-sm text-gray-600">
-          Find and link transactions that correspond to this receipt. The system will suggest matches
-          based on amount, date, and merchant information.
+          {{ t('receiptMatcher.description') }}
         </p>
       </div>
 
@@ -17,8 +16,8 @@
               <FileText class="h-5 w-5 text-purple-600" />
             </div>
             <div class="ml-3">
-              <h3 class="text-sm font-medium text-gray-900">Receipt Information</h3>
-              <p class="text-xs text-gray-500">Uploaded {{ formatDate(receipt.uploadDate) }}</p>
+              <h3 class="text-sm font-medium text-gray-900">{{ t('receiptMatcher.receiptInfo') }}</h3>
+              <p class="text-xs text-gray-500">{{ t('receiptMatcher.uploaded', { date: formatDate(receipt.uploadDate) }) }}</p>
             </div>
           </div>
         </div>
@@ -26,16 +25,16 @@
         <div class="p-4">
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <p class="text-xs text-gray-500 mb-1">Merchant</p>
-              <p class="text-sm font-medium text-gray-900">{{ receipt.merchant || 'Not detected' }}</p>
+              <p class="text-xs text-gray-500 mb-1">{{ t('receiptMatcher.merchant') }}</p>
+              <p class="text-sm font-medium text-gray-900">{{ receipt.merchant || t('receiptMatcher.notDetected') }}</p>
             </div>
             <div>
-              <p class="text-xs text-gray-500 mb-1">Date</p>
-              <p class="text-sm font-medium text-gray-900">{{ receipt.date ? formatDate(receipt.date) : 'Not detected' }}</p>
+              <p class="text-xs text-gray-500 mb-1">{{ t('common.date') }}</p>
+              <p class="text-sm font-medium text-gray-900">{{ receipt.date ? formatDate(receipt.date) : t('receiptMatcher.notDetected') }}</p>
             </div>
             <div>
-              <p class="text-xs text-gray-500 mb-1">Amount</p>
-              <p class="text-sm font-medium text-gray-900">{{ receipt.amount ? formatCurrency(receipt.amount) : 'Not detected' }}</p>
+              <p class="text-xs text-gray-500 mb-1">{{ t('common.amount') }}</p>
+              <p class="text-sm font-medium text-gray-900">{{ receipt.amount ? formatCurrency(receipt.amount) : t('receiptMatcher.notDetected') }}</p>
             </div>
           </div>
         </div>
@@ -52,7 +51,7 @@
                 v-model="searchQuery"
                 type="text"
                 class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                placeholder="Search by transaction ID, reference, or customer..."
+                :placeholder="t('receiptMatcher.searchPlaceholder')"
             />
           </div>
 
@@ -62,11 +61,11 @@
                   v-model="filters.dateRange"
                   class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
               >
-                <option value="">All Dates</option>
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday</option>
-                <option value="week">This Week</option>
-                <option value="month">This Month</option>
+                <option value="">{{ t('receiptMatcher.allDates') }}</option>
+                <option value="today">{{ t('time.today') }}</option>
+                <option value="yesterday">{{ t('time.yesterday') }}</option>
+                <option value="week">{{ t('time.thisWeek') }}</option>
+                <option value="month">{{ t('time.thisMonth') }}</option>
               </select>
             </div>
 
@@ -75,11 +74,11 @@
                   v-model="filters.amountRange"
                   class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
               >
-                <option value="">Any Amount</option>
-                <option value="exact">Exact Match (±1%)</option>
-                <option value="close">Close Match (±10%)</option>
-                <option value="lower">Lower Than Receipt</option>
-                <option value="higher">Higher Than Receipt</option>
+                <option value="">{{ t('receiptMatcher.anyAmount') }}</option>
+                <option value="exact">{{ t('receiptMatcher.exactMatch') }}</option>
+                <option value="close">{{ t('receiptMatcher.closeMatch') }}</option>
+                <option value="lower">{{ t('receiptMatcher.lowerThan') }}</option>
+                <option value="higher">{{ t('receiptMatcher.higherThan') }}</option>
               </select>
             </div>
           </div>
@@ -89,13 +88,13 @@
       <!-- Matching Transactions -->
       <div v-if="isLoading" class="flex justify-center items-center p-12">
         <Loader class="h-8 w-8 text-purple-600 animate-spin" />
-        <span class="ml-2 text-gray-600">Finding matching transactions...</span>
+        <span class="ml-2 text-gray-600">{{ t('receiptMatcher.finding') }}</span>
       </div>
 
       <div v-else>
         <!-- Suggested Matches -->
         <div v-if="suggestedMatches.length > 0" class="mb-6">
-          <h3 class="text-sm font-medium text-gray-700 mb-3">Suggested Matches</h3>
+          <h3 class="text-sm font-medium text-gray-700 mb-3">{{ t('receiptMatcher.suggestedMatches') }}</h3>
 
           <div class="border border-gray-200 rounded-lg overflow-hidden mb-6">
             <div class="divide-y divide-gray-200">
@@ -144,7 +143,7 @@
 
         <!-- Other Transactions -->
         <div v-if="filteredTransactions.length > 0">
-          <h3 class="text-sm font-medium text-gray-700 mb-3">Other Transactions</h3>
+          <h3 class="text-sm font-medium text-gray-700 mb-3">{{ t('receiptMatcher.otherTransactions') }}</h3>
 
           <div class="border border-gray-200 rounded-lg overflow-hidden">
             <div class="divide-y divide-gray-200">
@@ -183,9 +182,9 @@
           <!-- Pagination -->
           <div class="flex items-center justify-between mt-4">
             <div class="text-sm text-gray-700">
-              Showing <span class="font-medium">{{ paginationStart }}</span> to
-              <span class="font-medium">{{ paginationEnd }}</span> of
-              <span class="font-medium">{{ filteredTransactions.length }}</span> transactions
+              {{ t('common.showing') }} <span class="font-medium">{{ paginationStart }}</span> {{ t('common.to') }}
+              <span class="font-medium">{{ paginationEnd }}</span> {{ t('common.of') }}
+              <span class="font-medium">{{ filteredTransactions.length }}</span> {{ t('receiptMatcher.transactions') }}
             </div>
             <div class="flex space-x-1">
               <button
@@ -194,14 +193,14 @@
                   @click="currentPage--"
               >
                 <ArrowLeft size="16" class="mr-1" />
-                Previous
+                {{ t('common.previous') }}
               </button>
               <button
                   class="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   :disabled="currentPage === totalPages"
                   @click="currentPage++"
               >
-                Next
+                {{ t('common.next') }}
                 <ArrowRight size="16" class="ml-1" />
               </button>
             </div>
@@ -211,9 +210,9 @@
         <!-- No Transactions Found -->
         <div v-if="suggestedMatches.length === 0 && filteredTransactions.length === 0" class="text-center py-12">
           <SearchX class="mx-auto h-12 w-12 text-gray-300" />
-          <h3 class="mt-2 text-sm font-medium text-gray-900">No transactions found</h3>
+          <h3 class="mt-2 text-sm font-medium text-gray-900">{{ t('receiptMatcher.noTransactions') }}</h3>
           <p class="mt-1 text-sm text-gray-500">
-            Try adjusting your filters or search query to find a matching transaction.
+            {{ t('receiptMatcher.noTransactionsHint') }}
           </p>
         </div>
       </div>
@@ -224,14 +223,14 @@
             class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
             @click="$emit('cancel')"
         >
-          Cancel
+          {{ t('common.cancel') }}
         </button>
         <button
             class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
             :disabled="!selectedTransactionId"
             @click="confirmMatch"
         >
-          Link with Selected Transaction
+          {{ t('receiptMatcher.linkTransaction') }}
         </button>
       </div>
     </div>
@@ -253,6 +252,8 @@ import {
   Loader
 } from 'lucide-vue-next';
 import { useTransactions } from '~/composables/useTransactions';
+
+const { t, locale } = useI18n()
 
 const props = defineProps({
   receipt: {
@@ -319,11 +320,11 @@ const getMatchConfidence = (transaction) => {
   const percentDiff = amountDiff / props.receipt.amount * 100;
 
   if (percentDiff < 1) {
-    return 'High match confidence - Amount matches exactly';
+    return t('receiptMatcher.highConfidence');
   } else if (percentDiff < 5) {
-    return 'Good match confidence - Amount within 5%';
+    return t('receiptMatcher.goodConfidence');
   } else if (percentDiff < 10) {
-    return 'Possible match - Amount within 10%';
+    return t('receiptMatcher.possibleMatchAmount');
   }
 
   // Check date match if available
@@ -332,7 +333,7 @@ const getMatchConfidence = (transaction) => {
     const transactionDate = new Date(transaction.createdAt).setHours(0, 0, 0, 0);
 
     if (receiptDate === transactionDate) {
-      return 'Possible match - Date matches';
+      return t('receiptMatcher.possibleMatchDate');
     }
   }
 

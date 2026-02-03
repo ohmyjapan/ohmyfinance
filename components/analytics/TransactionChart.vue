@@ -148,7 +148,7 @@ const chartOptions = {
 
 // Watch for period changes
 watch(selectedPeriod, (newValue) => {
-  console.log('Period changed to', newValue)
-  // In a real app, we would reload data here
+  // Period changed - emit event to parent for data reload
+  emit('period-change', newValue)
 })
 </script>

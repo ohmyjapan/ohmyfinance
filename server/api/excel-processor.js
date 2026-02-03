@@ -2,17 +2,221 @@
 
 import { defineEventHandler, readMultipartFormData, createError } from 'h3';
 import fs from 'node:fs/promises';
+import { writeFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 // Use process.cwd() for Windows compatibility
 const rootDir = process.cwd();
 
+/**
+ * Process Excel file using a child process to avoid ESM issues
+ */
+async function processExcelWithChildProcess(filePath, outputDir) {
+    await fs.mkdir(outputDir, { recursive: true });
+
+    const fileName = path.basename(filePath);
+    const scriptPath = path.join(rootDir, `temp-excel-proc-${Date.now()}.cjs`);
+    const outputPath = path.join(outputDir, `${path.basename(fileName, path.extname(fileName))}.json`);
+
+    const escapedFilePath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedOutputPath = outputPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+    // Script that converts Excel to JSON with proper headers
+    const scriptContent = `
+const XLSX = require('xlsx');
+const fs = require('fs');
+
+try {
+    const workbook = XLSX.readFile('${escapedFilePath}', {
+        cellStyles: true,
+        cellFormulas: true,
+        cellDates: true,
+        cellNF: true,
+        sheetStubs: true,
+        raw: false // Get formatted values
+    });
+
+    // Get the first sheet (or all sheets)
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+
+    // Convert to JSON with headers
+    const rawData = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+        defval: '',
+        blankrows: false
+    });
+
+    if (rawData.length === 0) {
+        fs.writeFileSync('${escapedOutputPath}', JSON.stringify({ headers: [], data: [] }));
+        console.log('SUCCESS');
+        process.exit(0);
+    }
+
+    // First row is headers
+    const headers = rawData[0].map((h, i) => h ? String(h).trim() : 'Column' + (i + 1));
+
+    // Convert remaining rows to objects
+    const data = [];
+    for (let i = 1; i < rawData.length; i++) {
+        const row = rawData[i];
+        // Skip completely empty rows
+        if (!row || row.every(cell => cell === '' || cell === null || cell === undefined)) {
+            continue;
+        }
+
+        const obj = {};
+        headers.forEach((header, index) => {
+            let value = row[index];
+            // Handle dates
+            if (value instanceof Date) {
+                value = value.toISOString().split('T')[0];
+            }
+            obj[header] = value !== undefined && value !== null ? value : '';
+        });
+        data.push(obj);
+    }
+
+    const result = {
+        headers: headers,
+        data: data,
+        sheetName: sheetName,
+        totalSheets: workbook.SheetNames.length,
+        allSheetNames: workbook.SheetNames
+    };
+
+    fs.writeFileSync('${escapedOutputPath}', JSON.stringify(result, null, 2));
+    console.log('SUCCESS');
+    process.exit(0);
+} catch (error) {
+    console.error('ERROR:', error.message);
+    process.exit(1);
+}
+`;
+
+    writeFileSync(scriptPath, scriptContent, 'utf8');
+
+    return new Promise((resolve, reject) => {
+        const child = spawn('node', [scriptPath]);
+        let stderr = '';
+        let stdout = '';
+
+        child.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+
+        child.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        child.on('close', (code) => {
+            try { unlinkSync(scriptPath); } catch (e) {}
+
+            if (code === 0) {
+                resolve(outputPath);
+            } else {
+                reject(new Error(`Excel processing failed: ${stderr || stdout}`));
+            }
+        });
+    });
+}
+
+/**
+ * Parse CSV file properly handling quoted fields and Japanese text
+ */
+function parseCSV(content) {
+    const lines = [];
+    let currentLine = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < content.length; i++) {
+        const char = content[i];
+        const nextChar = content[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+                currentLine += '"';
+                i++; // Skip the escaped quote
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if ((char === '\n' || (char === '\r' && nextChar === '\n')) && !inQuotes) {
+            if (currentLine.trim()) {
+                lines.push(currentLine);
+            }
+            currentLine = '';
+            if (char === '\r') i++; // Skip \n after \r
+        } else if (char !== '\r') {
+            currentLine += char;
+        }
+    }
+
+    if (currentLine.trim()) {
+        lines.push(currentLine);
+    }
+
+    if (lines.length === 0) {
+        return { headers: [], data: [] };
+    }
+
+    // Parse each line into fields
+    const parseRow = (line) => {
+        const fields = [];
+        let field = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const nextChar = line[i + 1];
+
+            if (char === '"') {
+                if (inQuotes && nextChar === '"') {
+                    field += '"';
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (char === ',' && !inQuotes) {
+                fields.push(field.trim());
+                field = '';
+            } else {
+                field += char;
+            }
+        }
+        fields.push(field.trim());
+        return fields;
+    };
+
+    const headers = parseRow(lines[0]).map((h, i) => h || `Column${i + 1}`);
+    const data = [];
+
+    for (let i = 1; i < lines.length; i++) {
+        const values = parseRow(lines[i]);
+        // Skip empty rows
+        if (values.every(v => !v)) continue;
+
+        const obj = {};
+        headers.forEach((header, index) => {
+            obj[header] = values[index] || '';
+        });
+        data.push(obj);
+    }
+
+    return { headers, data };
+}
+
 export default defineEventHandler(async (event) => {
+    console.log('[excel-processor] Processing file upload request...');
+
     try {
         // Handle form data upload
         const formData = await readMultipartFormData(event);
 
+        console.log('[excel-processor] FormData received:', formData?.length || 0, 'items');
+
         if (!formData || formData.length === 0) {
+            console.log('[excel-processor] Error: No form data received');
             throw createError({
                 statusCode: 400,
                 statusMessage: 'No file provided'
@@ -20,7 +224,18 @@ export default defineEventHandler(async (event) => {
         }
 
         // Get the uploaded file
-        const file = formData[0];
+        const file = formData.find(f => f.filename) || formData[0];
+
+        console.log('[excel-processor] File found:', file?.filename, 'Size:', file?.data?.length);
+
+        if (!file || !file.filename) {
+            console.log('[excel-processor] Error: No filename in form data');
+            throw createError({
+                statusCode: 400,
+                statusMessage: 'No file provided'
+            });
+        }
+
         const fileExt = path.extname(file.filename).toLowerCase();
 
         // Validate file type
@@ -45,56 +260,47 @@ export default defineEventHandler(async (event) => {
 
         await fs.writeFile(filePath, file.data);
 
-        // Process the file using the global helper function from our patch
-        // This avoids ESM loading issues by using a child process
+        let headers = [];
+        let data = [];
         let processedFilePath = null;
-        let processedData = null;
 
         if (fileExt === '.xlsx' || fileExt === '.xls') {
-            processedFilePath = await global.processExcelWithChildProcess(filePath, processedDir);
+            processedFilePath = await processExcelWithChildProcess(filePath, processedDir);
 
             if (processedFilePath) {
                 const jsonContent = await fs.readFile(processedFilePath, 'utf8');
-                processedData = JSON.parse(jsonContent);
+                const parsed = JSON.parse(jsonContent);
+                headers = parsed.headers || [];
+                data = parsed.data || [];
             }
         } else if (fileExt === '.csv') {
-            // For CSV files, we can process them directly
+            // For CSV files, parse them properly
             const csvContent = await fs.readFile(filePath, 'utf8');
-
-            // Simple CSV parsing (in a real app, use a dedicated CSV parser)
-            const lines = csvContent.split('\n');
-            const headers = lines[0].split(',').map(h => h.trim());
-
-            const data = [];
-            for (let i = 1; i < lines.length; i++) {
-                if (!lines[i].trim()) continue;
-
-                const values = lines[i].split(',');
-                const entry = {};
-
-                headers.forEach((header, index) => {
-                    entry[header] = values[index]?.trim() || '';
-                });
-
-                data.push(entry);
-            }
-
-            processedData = { data };
+            const parsed = parseCSV(csvContent);
+            headers = parsed.headers;
+            data = parsed.data;
 
             // Save processed CSV data
             processedFilePath = path.join(processedDir, `${path.basename(safeFilename, fileExt)}.json`);
-            await fs.writeFile(processedFilePath, JSON.stringify(processedData, null, 2));
+            await fs.writeFile(processedFilePath, JSON.stringify({ headers, data }, null, 2));
         }
+
+        // Clean up the original uploaded file after processing (optional)
+        // await fs.unlink(filePath);
+
+        console.log('[excel-processor] Success! Headers:', headers.length, 'Data rows:', data.length);
 
         return {
             success: true,
             originalName: file.filename,
             savedPath: filePath,
             processedPath: processedFilePath,
-            data: processedData
+            headers: headers,
+            data: data,
+            rowCount: data.length
         };
     } catch (error) {
-        console.error('File processing error:', error);
+        console.error('[excel-processor] Error:', error.message || error);
 
         throw createError({
             statusCode: 500,

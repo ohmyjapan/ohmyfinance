@@ -1,5 +1,5 @@
 // server/api/transactions/index.ts
-import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
+import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
 import { getTransactions, createTransaction, getTransactionStats } from '../../services/transactionService'
 
 export default defineEventHandler(async (event) => {
@@ -17,13 +17,18 @@ export default defineEventHandler(async (event) => {
 
     const filters = {
       status: query.status as string | undefined,
-      source: query.source as string | undefined,
+      type: query.type as string | undefined, // 支出 or 入金
       dateFrom: query.dateFrom as string | undefined,
       dateTo: query.dateTo as string | undefined,
       minAmount: query.minAmount ? Number(query.minAmount) : undefined,
       maxAmount: query.maxAmount ? Number(query.maxAmount) : undefined,
       search: query.search as string | undefined,
-      hasReceipt: query.hasReceipt === 'true' ? true : query.hasReceipt === 'false' ? false : undefined
+      hasReceipt: query.hasReceipt === 'true' ? true : query.hasReceipt === 'false' ? false : undefined,
+      customerId: query.customerId as string | undefined,
+      supplierId: query.supplierId as string | undefined,
+      accountCategoryId: query.accountCategoryId as string | undefined,
+      transactionCategoryId: query.transactionCategoryId as string | undefined,
+      sourceId: query.sourceId as string | undefined
     }
 
     // Remove undefined values
@@ -44,27 +49,28 @@ export default defineEventHandler(async (event) => {
   if (method === 'POST') {
     const body = await readBody(event)
 
-    // Validate required fields
-    if (!body.amount) {
+    // Validate required fields (OMF style)
+    if (!body.amount && body.amount !== 0) {
       throw createError({
         statusCode: 400,
         statusMessage: 'Bad Request',
-        message: 'Amount is required'
+        message: '金額は必須です (Amount is required)'
       })
     }
 
-    if (!body.customer?.name || !body.customer?.email) {
+    if (!body.date) {
       throw createError({
         statusCode: 400,
         statusMessage: 'Bad Request',
-        message: 'Customer name and email are required'
+        message: '日付は必須です (Date is required)'
       })
     }
 
     const transaction = await createTransaction({
       ...body,
-      date: body.date ? new Date(body.date) : new Date(),
-      source: body.source || 'manual'
+      date: new Date(body.date),
+      type: body.type || '支出',
+      status: body.status || 'pending'
     })
 
     return transaction

@@ -1,35 +1,48 @@
 // server/api/receipts/[id]/matches.ts
-import { defineEventHandler } from 'h3'
-// Don't use '#app' or other client-only aliases here
+import { defineEventHandler, createError } from 'h3'
+import { findMatchesForReceipt, getReceiptById } from '../../../services/receiptService'
 
+/**
+ * GET /api/receipts/:id/matches
+ * Find potential transaction matches for a receipt
+ */
 export default defineEventHandler(async (event) => {
-    const id = event.context.params?.id
+  const id = event.context.params?.id
 
-    // Return possible transaction matches for this receipt
-    return {
-        success: true,
-        matches: [
-            {
-                transactionId: 'TRX-7845',
-                date: '2025-04-14T12:30:00Z',
-                amount: 1299.00,
-                description: 'Similar amount and date',
-                confidence: 92
-            },
-            {
-                transactionId: 'TRX-7846',
-                date: '2025-04-14T09:45:00Z',
-                amount: 1320.00,
-                description: 'Possible match',
-                confidence: 85
-            },
-            {
-                transactionId: 'TRX-7830',
-                date: '2025-04-13T14:30:00Z',
-                amount: 1299.00,
-                description: 'Same amount, different date',
-                confidence: 78
-            }
-        ]
+  if (!id) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Receipt ID is required'
+    })
+  }
+
+  try {
+    // Verify receipt exists
+    const receipt = await getReceiptById(id)
+    if (!receipt) {
+      throw createError({
+        statusCode: 404,
+        statusMessage: `Receipt ${id} not found`
+      })
     }
+
+    // Find potential matches
+    const matches = await findMatchesForReceipt(id)
+
+    return {
+      success: true,
+      receiptId: id,
+      matches,
+      totalMatches: matches.length,
+      highConfidenceMatches: matches.filter(m => m.confidence >= 80).length
+    }
+  } catch (error: any) {
+    if (error.statusCode) throw error
+
+    console.error(`Error finding matches for receipt ${id}:`, error)
+    throw createError({
+      statusCode: 500,
+      statusMessage: error.message || 'Failed to find matches'
+    })
+  }
 })

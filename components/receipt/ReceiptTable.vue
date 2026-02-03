@@ -4,22 +4,22 @@
       <thead class="bg-gray-50">
       <tr>
         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          Receipt
+          {{ t('receiptTable.receipt') }}
         </th>
         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          Date Uploaded
+          {{ t('receiptTable.dateUploaded') }}
         </th>
         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          Amount
+          {{ t('receiptTable.amount') }}
         </th>
         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          Merchant
+          {{ t('receiptTable.merchant') }}
         </th>
         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          Status
+          {{ t('receiptTable.status') }}
         </th>
         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          Actions
+          {{ t('receiptTable.actions') }}
         </th>
       </tr>
       </thead>
@@ -58,12 +58,12 @@
             <span v-if="receipt.status === 'matched'"
                   class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
               <CheckCircle size="14" class="mr-1" />
-              Matched
+              {{ t('receiptTable.matched') }}
             </span>
           <span v-else
                 class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
               <AlertTriangle size="14" class="mr-1" />
-              Unmatched
+              {{ t('receiptTable.unmatched') }}
             </span>
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -71,20 +71,20 @@
               @click="$emit('view', receipt.id)"
               class="text-purple-600 hover:text-purple-900 mr-3"
           >
-            View
+            {{ t('common.view') }}
           </button>
           <button
               v-if="receipt.status === 'unmatched'"
               @click="$emit('match', receipt.id)"
               class="text-purple-600 hover:text-purple-900 mr-3"
           >
-            Match
+            {{ t('receiptTable.match') }}
           </button>
           <button
               @click="confirmDelete(receipt.id)"
               class="text-red-600 hover:text-red-900"
           >
-            Delete
+            {{ t('common.delete') }}
           </button>
         </td>
       </tr>
@@ -93,7 +93,7 @@
       <tr v-if="receipts.length === 0">
         <td colspan="6" class="px-6 py-12 text-center">
           <FileText size="40" class="text-gray-300 mx-auto mb-3" />
-          <p class="text-gray-500 text-sm">No receipts found</p>
+          <p class="text-gray-500 text-sm">{{ t('receiptTable.noReceipts') }}</p>
         </td>
       </tr>
       </tbody>
@@ -103,6 +103,8 @@
 
 <script setup lang="ts">
 import { FileText, CheckCircle, AlertTriangle } from 'lucide-vue-next'
+
+const { t, locale } = useI18n()
 
 const props = defineProps({
   receipts: {
@@ -126,7 +128,8 @@ const formatFileSize = (bytes: number) => {
 
 // Format date
 const formatDate = (isoDate: string) => {
-  return new Date(isoDate).toLocaleDateString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Date(isoDate).toLocaleDateString(dateLocale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric'
@@ -135,24 +138,28 @@ const formatDate = (isoDate: string) => {
 
 // Format time
 const formatTime = (isoDate: string) => {
-  return new Date(isoDate).toLocaleTimeString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Date(isoDate).toLocaleTimeString(dateLocale, {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true
+    hour12: false
   })
 }
 
 // Format currency
 const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-US', {
+  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
+  return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
-    currency: 'USD'
+    currency,
+    minimumFractionDigits: 0
   }).format(amount)
 }
 
 // Confirm delete
 const confirmDelete = (receiptId: string) => {
-  if (confirm('Are you sure you want to delete this receipt?')) {
+  if (confirm(t('receiptTable.confirmDelete'))) {
     emit('delete', receiptId)
   }
 }

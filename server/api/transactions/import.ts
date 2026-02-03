@@ -1,10 +1,78 @@
 import { defineEventHandler, readMultipartFormData, createError } from 'h3'
 import { v4 as uuidv4 } from 'uuid'
 import * as Papa from 'papaparse'
+import { writeFile, mkdir, unlink, readFile } from 'fs/promises'
+import { join, basename, extname } from 'path'
+import { spawn } from 'child_process'
+import { writeFileSync, unlinkSync } from 'fs'
+import { createTransaction } from '../../services/transactionService'
+import AccountCategory from '../../models/AccountCategory'
+import TaxCategory from '../../models/TaxCategory'
+import Supplier from '../../models/Supplier'
+import TransactionCategory from '../../models/TransactionCategory'
+import Customer from '../../models/Customer'
+import { ensureConnection } from '../../config/database'
 
-// In a real app, you would use a database
-// This is a simple in-memory store that would be shared with other handlers
-let transactions = []
+/**
+ * Process Excel file using a child process to avoid ESM issues
+ */
+async function processExcelFile(filePath: string, outputDir: string): Promise<string> {
+    await mkdir(outputDir, { recursive: true })
+
+    const fileName = basename(filePath)
+    const scriptPath = join(process.cwd(), `temp-excel-import-${Date.now()}.cjs`)
+    const outputPath = join(outputDir, `${basename(fileName, extname(fileName))}.json`)
+
+    // Escape paths for Windows compatibility
+    const escapedFilePath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    const escapedOutputPath = outputPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+
+    const scriptContent = `
+const XLSX = require('xlsx');
+const fs = require('fs');
+
+try {
+    const workbook = XLSX.readFile('${escapedFilePath}', {
+        cellStyles: true,
+        cellDates: true,
+        cellNF: true
+    });
+
+    // Get first sheet and convert to JSON with headers
+    const firstSheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[firstSheetName];
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    fs.writeFileSync('${escapedOutputPath}', JSON.stringify({ data, sheetName: firstSheetName }, null, 2));
+    console.log('SUCCESS');
+    process.exit(0);
+} catch (error) {
+    console.error('ERROR:', error.message);
+    process.exit(1);
+}
+`
+
+    writeFileSync(scriptPath, scriptContent, 'utf8')
+
+    return new Promise((resolve, reject) => {
+        const child = spawn('node', [scriptPath])
+        let stderr = ''
+
+        child.stderr.on('data', (data) => {
+            stderr += data.toString()
+        })
+
+        child.on('close', (code) => {
+            try { unlinkSync(scriptPath) } catch (e) {}
+
+            if (code === 0) {
+                resolve(outputPath)
+            } else {
+                reject(new Error(`Excel processing failed: ${stderr}`))
+            }
+        })
+    })
+}
 
 /**
  * POST /api/transactions/import
@@ -74,14 +142,34 @@ export default defineEventHandler(async (event) => {
             })
 
             parsedData = parseResult.data
-        } else {
-            // For Excel files, return an error asking to use CSV
-            // XLSX library has ESM compatibility issues on Windows
-            throw createError({
-                statusCode: 400,
-                statusMessage: 'Bad Request',
-                message: 'Excel files are not supported in this version. Please convert to CSV and try again.'
-            })
+        } else if (isExcel) {
+            // Process Excel file using child process to avoid ESM issues
+            const uploadDir = join(process.cwd(), 'server/data/download')
+            const processedDir = join(process.cwd(), 'server/data/processed')
+
+            await mkdir(uploadDir, { recursive: true })
+
+            // Save uploaded file temporarily
+            const timestamp = Date.now()
+            const safeFileName = `${timestamp}-${fileName.replace(/[^a-zA-Z0-9.-]/g, '_')}`
+            const tempFilePath = join(uploadDir, safeFileName)
+
+            await writeFile(tempFilePath, file.data)
+
+            try {
+                // Process Excel file
+                const jsonPath = await processExcelFile(tempFilePath, processedDir)
+                const jsonContent = await readFile(jsonPath, 'utf8')
+                const result = JSON.parse(jsonContent)
+
+                parsedData = result.data || []
+
+                // Clean up processed JSON
+                try { await unlink(jsonPath) } catch (e) {}
+            } finally {
+                // Clean up temp file
+                try { await unlink(tempFilePath) } catch (e) {}
+            }
         }
 
         // Apply field mappings if provided
@@ -101,122 +189,129 @@ export default defineEventHandler(async (event) => {
             })
         }
 
+        // Ensure MongoDB connection
+        await ensureConnection()
+
         // Track import results
         const importResults = {
             total: parsedData.length,
             imported: 0,
             skipped: 0,
             updated: 0,
-            errors: []
+            errors: [] as any[]
         }
 
         // Process each record
-        const importedTransactions = []
+        const importedTransactions: any[] = []
+
+        // Helper function to find or create related records by name
+        const findAccountCategory = async (name: string) => {
+            if (!name) return null
+            const cat = await AccountCategory.findOne({ name })
+            return cat?._id || null
+        }
+
+        const findTaxCategory = async (name: string) => {
+            if (!name) return null
+            const cat = await TaxCategory.findOne({ name })
+            return cat?._id || null
+        }
+
+        const findSupplier = async (name: string) => {
+            if (!name) return null
+            let supplier = await Supplier.findOne({ name })
+            if (!supplier) {
+                supplier = await Supplier.create({ name, isActive: true })
+            }
+            return supplier._id
+        }
+
+        const findCustomer = async (name: string) => {
+            if (!name) return null
+            let customer = await Customer.findOne({ name })
+            if (!customer) {
+                customer = await Customer.create({ name, isActive: true })
+            }
+            return customer._id
+        }
+
+        const findTransactionCategory = async (name: string) => {
+            if (!name) return null
+            const cat = await TransactionCategory.findOne({ name })
+            return cat?._id || null
+        }
 
         for (const record of parsedData) {
             try {
-                // Validate required fields
-                if (!record.amount) {
+                // Validate required fields (OMF style)
+                if (!record.amount && record.amount !== 0) {
                     importResults.errors.push({
                         record,
-                        error: 'Missing required field: amount'
+                        error: '金額は必須です (Missing required field: amount)'
                     })
                     continue
                 }
 
-                // Create a transaction reference for matching
-                const transactionReference = record.reference || record.transaction_id || ''
-
-                // Check for duplicates if option is enabled
-                if (options.skipDuplicates && transactionReference) {
-                    const isDuplicate = transactions.some(t =>
-                        t.reference === transactionReference
-                    )
-
-                    if (isDuplicate) {
-                        importResults.skipped++
-                        continue
-                    }
+                // Parse date
+                let transactionDate = new Date()
+                if (record.date) {
+                    transactionDate = new Date(record.date)
                 }
 
-                // Check for existing transaction to update
-                if (options.updateMatches && transactionReference) {
-                    const existingIndex = transactions.findIndex(t =>
-                        t.reference === transactionReference
-                    )
-
-                    if (existingIndex !== -1) {
-                        // Update existing transaction
-                        const existingTransaction = transactions[existingIndex]
-
-                        // Update fields from the record
-                        const updatedTransaction = {
-                            ...existingTransaction,
-                            amount: parseFloat(record.amount) || existingTransaction.amount,
-                            status: record.status || record.transaction_status || existingTransaction.status,
-                            currency: record.currency || record.currency_code || existingTransaction.currency,
-                            updatedAt: new Date().toISOString()
-                        }
-
-                        // Update customer data if provided
-                        if (record.customer_email || record.customer_name) {
-                            updatedTransaction.customer = {
-                                ...existingTransaction.customer,
-                                email: record.customer_email || existingTransaction.customer.email,
-                                name: record.customer_name || existingTransaction.customer.name
-                            }
-                        }
-
-                        // Save the updated transaction
-                        transactions[existingIndex] = updatedTransaction
-                        importedTransactions.push(updatedTransaction)
-                        importResults.updated++
-                        continue
-                    }
+                // Parse type (支出/入金)
+                let transactionType = record.type || '支出'
+                if (transactionType !== '支出' && transactionType !== '入金') {
+                    // Try to infer from amount sign or default
+                    const amount = parseFloat(record.amount)
+                    transactionType = amount < 0 ? '支出' : '入金'
                 }
 
-                // Determine source type based on file name or options
-                let source = 'manual'
-                if (fileName.toLowerCase().includes('credit') || fileName.toLowerCase().includes('card')) {
-                    source = 'credit_card'
-                } else if (fileName.toLowerCase().includes('payment') || fileName.toLowerCase().includes('gateway')) {
-                    source = 'payment_gateway'
-                } else if (fileName.toLowerCase().includes('overseas') || fileName.toLowerCase().includes('order')) {
-                    source = 'overseas'
-                }
+                // Resolve related IDs by name
+                const accountCategoryId = await findAccountCategory(record.accountCategoryName)
+                const subAccountCategoryId = await findAccountCategory(record.subAccountCategoryName)
+                const taxCategoryId = await findTaxCategory(record.taxCategoryName)
+                const supplierId = await findSupplier(record.supplierName)
+                const customerId = await findCustomer(record.customerName)
+                const transactionCategoryId = await findTransactionCategory(record.transactionCategoryName)
 
-                // Create a new transaction
-                const newTransaction = {
-                    id: `TRX-${uuidv4().substring(0, 8)}`,
-                    reference: record.reference || record.transaction_id || `REF-${Date.now()}-${importResults.imported}`,
-                    createdAt: record.date || record.transaction_date || new Date().toISOString(),
-                    status: record.status || record.transaction_status || 'completed',
-                    source,
-                    amount: parseFloat(record.amount),
-                    currency: record.currency || record.currency_code || 'USD',
-                    customer: {
-                        name: record.customer_name || '',
-                        email: record.customer_email || ''
-                    },
+                // Create a new transaction (OMF style)
+                const transactionData = {
+                    referenceNumber: record.referenceNumber || `IMP-${Date.now()}-${importResults.imported}`,
+                    date: transactionDate,
+                    amount: Math.abs(parseFloat(record.amount)),
+                    type: transactionType,
+                    status: 'completed',
+                    accountCategoryId,
+                    subAccountCategoryId,
+                    taxCategoryId,
+                    taxRate: record.taxRate ? parseFloat(record.taxRate) : undefined,
+                    supplierId,
+                    customerId,
+                    transactionCategoryId,
+                    companyInfo: record.companyInfo || '',
+                    invoiceNumber: record.invoiceNumber || '',
+                    receiptNumber: record.receiptNumber || '',
+                    productName: record.productName || '',
+                    productPrice: record.productPrice ? parseFloat(record.productPrice) : undefined,
+                    janCode: record.janCode || '',
+                    notes: record.notes || '',
+                    hasReceipt: false,
+                    tags: ['imported'],
                     timeline: [
                         {
-                            type: 'created',
-                            title: 'Transaction Imported',
-                            timestamp: new Date().toISOString(),
-                            description: `Imported from ${fileName}`
+                            type: 'imported',
+                            title: 'インポート完了',
+                            timestamp: new Date(),
+                            description: `${fileName}からインポート`
                         }
-                    ],
-                    notes: record.notes || '',
-                    tags: ['imported'],
-                    updatedAt: new Date().toISOString()
+                    ]
                 }
 
-                // Add to transactions
-                transactions.push(newTransaction)
+                const newTransaction = await createTransaction(transactionData)
                 importedTransactions.push(newTransaction)
                 importResults.imported++
 
-            } catch (error) {
+            } catch (error: any) {
                 importResults.errors.push({
                     record,
                     error: error.message

@@ -2,8 +2,8 @@
 <template>
   <div>
     <header class="mb-6">
-      <h1 class="text-xl font-semibold text-gray-800">Transaction Data Import</h1>
-      <p class="text-gray-600">Import transaction data from various sources</p>
+      <h1 class="text-xl font-semibold text-gray-800">{{ t('import.title') }}</h1>
+      <p class="text-gray-600">{{ t('import.description') }}</p>
     </header>
 
     <!-- Info Cards -->
@@ -11,10 +11,10 @@
       <div class="bg-white rounded-lg shadow-sm p-5 border-l-4 border-purple-500">
         <h3 class="font-medium text-gray-900 mb-2 flex items-center">
           <CreditCard class="h-5 w-5 text-purple-500 mr-2" />
-          Credit Card Files
+          {{ t('import.creditCardFiles') }}
         </h3>
         <p class="text-sm text-gray-600">
-          Import transaction data from credit card providers. Supports standard formats from major providers.
+          {{ t('import.creditCardDescription') }}
         </p>
         <div class="mt-3">
           <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
@@ -29,10 +29,10 @@
       <div class="bg-white rounded-lg shadow-sm p-5 border-l-4 border-blue-500">
         <h3 class="font-medium text-gray-900 mb-2 flex items-center">
           <ShoppingCart class="h-5 w-5 text-blue-500 mr-2" />
-          Payment Gateway
+          {{ t('import.paymentGateway') }}
         </h3>
         <p class="text-sm text-gray-600">
-          Import data from payment gateway systems such as Stripe, PayPal, and Square.
+          {{ t('import.paymentGatewayDescription') }}
         </p>
         <div class="mt-3">
           <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -47,10 +47,10 @@
       <div class="bg-white rounded-lg shadow-sm p-5 border-l-4 border-green-500">
         <h3 class="font-medium text-gray-900 mb-2 flex items-center">
           <Globe class="h-5 w-5 text-green-500 mr-2" />
-          Overseas Orders
+          {{ t('import.overseasOrders') }}
         </h3>
         <p class="text-sm text-gray-600">
-          Import transaction data from international markets and overseas operations.
+          {{ t('import.overseasDescription') }}
         </p>
         <div class="mt-3">
           <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
@@ -66,30 +66,30 @@
     <!-- Recent Imports Table -->
     <div class="bg-white rounded-lg shadow-sm mb-8">
       <div class="px-6 py-4 border-b flex items-center justify-between">
-        <h2 class="text-lg font-medium text-gray-800">Recent Imports</h2>
-        <div class="text-sm text-gray-500">Showing last 5 imports</div>
+        <h2 class="text-lg font-medium text-gray-800">{{ t('import.recentImports') }}</h2>
+        <div class="text-sm text-gray-500">{{ t('import.showingLast', { count: 5 }) }}</div>
       </div>
       <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
           <tr>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Date
+              {{ t('import.date') }}
             </th>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Source
+              {{ t('import.source') }}
             </th>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Files
+              {{ t('import.files') }}
             </th>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Records
+              {{ t('import.records') }}
             </th>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Status
+              {{ t('common.status') }}
             </th>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              User
+              {{ t('import.user') }}
             </th>
           </tr>
           </thead>
@@ -113,13 +113,13 @@
               </div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm text-gray-900">{{ import_.files }} files</div>
+              <div class="text-sm text-gray-900">{{ t('import.fileCount', { count: import_.files }) }}</div>
               <div class="text-xs text-gray-500">{{ getFileTypes(import_) }}</div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm text-gray-900">{{ import_.records }} records</div>
+              <div class="text-sm text-gray-900">{{ t('import.recordCount', { count: import_.records }) }}</div>
               <div class="text-xs text-gray-500">
-                {{ import_.imported }} imported, {{ import_.skipped }} skipped
+                {{ t('import.importedSkipped', { imported: import_.imported, skipped: import_.skipped }) }}
               </div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
@@ -147,6 +147,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { CreditCard, ShoppingCart, Globe, Check, Clock, AlertCircle } from 'lucide-vue-next'
+
+const { t, locale } = useI18n()
 
 // Import our custom component
 import TransactionFileUpload from '~/components/transaction/TransactionFileUpload.vue'
@@ -213,7 +215,8 @@ const recentImports = ref([
 // Helper functions
 const formatDate = (dateStr: string) => {
   const date = new Date(dateStr)
-  return date.toLocaleDateString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return date.toLocaleDateString(dateLocale, {
     month: 'short',
     day: 'numeric',
     year: 'numeric'
@@ -222,10 +225,11 @@ const formatDate = (dateStr: string) => {
 
 const formatTime = (dateStr: string) => {
   const date = new Date(dateStr)
-  return date.toLocaleTimeString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return date.toLocaleTimeString(dateLocale, {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true
+    hour12: false
   })
 }
 
@@ -234,16 +238,8 @@ const getFileTypes = (import_: any) => {
 }
 
 const getSourceName = (source: string) => {
-  switch (source) {
-    case 'credit_card':
-      return 'Credit Card'
-    case 'payment_gateway':
-      return 'Payment Gateway'
-    case 'overseas':
-      return 'Overseas Orders'
-    default:
-      return source
-  }
+  const key = `import.sources.${source}`
+  return t(key) || source
 }
 
 const getSourceIcon = (source: string) => {

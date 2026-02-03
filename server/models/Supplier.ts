@@ -2,6 +2,9 @@ import mongoose, { Document, Schema } from 'mongoose'
 
 export interface ISupplier extends Document {
   name: string
+  companyName?: string      // 会社名
+  serviceName?: string      // サービス名
+  invoiceNumber?: string    // インボイス登録番号 (T + 13桁)
   companyInfo?: string
   address?: string
   contactPerson?: string
@@ -17,6 +20,9 @@ export interface ISupplier extends Document {
 
 const SupplierSchema = new Schema<ISupplier>({
   name: { type: String, required: true },
+  companyName: String,
+  serviceName: String,
+  invoiceNumber: String,
   companyInfo: String,
   address: String,
   contactPerson: String,

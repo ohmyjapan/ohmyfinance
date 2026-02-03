@@ -1,31 +1,30 @@
 <template>
-  <div class="bg-white rounded-lg shadow-sm">
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
     <div class="p-6">
       <div class="mb-6">
-        <h2 class="text-lg font-medium text-gray-900 mb-2">Preview Processed Data</h2>
-        <p class="text-sm text-gray-600">
-          Review how your data will appear in the system after import. You can make adjustments
-          to field mappings if needed before finalizing the import.
+        <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">{{ t('dataPreview.title') }}</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('dataPreview.description') }}
         </p>
       </div>
 
       <!-- Data Stats -->
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <div class="text-sm font-medium text-gray-500 mb-1">Total Records</div>
-          <div class="text-2xl font-semibold text-gray-900">{{ stats.totalRecords }}</div>
+        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.totalRecords') }}</div>
+          <div class="text-2xl font-semibold text-gray-900 dark:text-gray-100">{{ stats.totalRecords }}</div>
         </div>
-        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <div class="text-sm font-medium text-gray-500 mb-1">Valid Records</div>
+        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.validRecords') }}</div>
           <div class="text-2xl font-semibold text-green-600">{{ stats.validRecords }}</div>
         </div>
-        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <div class="text-sm font-medium text-gray-500 mb-1">Records with Warnings</div>
+        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.warningRecords') }}</div>
           <div class="text-2xl font-semibold text-yellow-600">{{ stats.warningRecords }}</div>
         </div>
-        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <div class="text-sm font-medium text-gray-500 mb-1">Invalid Records</div>
-          <div class="text-2xl font-semibold text-gray-900">{{ stats.invalidRecords }}</div>
+        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.invalidRecords') }}</div>
+          <div class="text-2xl font-semibold text-gray-900 dark:text-gray-100">{{ stats.invalidRecords }}</div>
         </div>
       </div>
 
@@ -35,99 +34,99 @@
           <div class="relative">
             <select
                 v-model="filter.recordType"
-                class="block w-full pl-3 pr-10 py-2 text-sm border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                class="block w-full pl-3 pr-10 py-2 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
             >
-              <option value="all">All Records</option>
-              <option value="valid">Valid Records Only</option>
-              <option value="warning">Records with Warnings</option>
-              <option value="invalid">Invalid Records</option>
+              <option value="all">{{ t('dataPreview.allRecords') }}</option>
+              <option value="valid">{{ t('dataPreview.validOnly') }}</option>
+              <option value="warning">{{ t('dataPreview.warningOnly') }}</option>
+              <option value="invalid">{{ t('dataPreview.invalidOnly') }}</option>
             </select>
             <div class="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
               <ChevronDown class="h-4 w-4 text-gray-400" />
             </div>
           </div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
               @click="isFilterOpen = !isFilterOpen"
           >
             <Filter class="mr-2 h-4 w-4" />
-            Filter
+            {{ t('common.filter') }}
           </button>
         </div>
         <div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
           >
             <Download class="mr-2 h-4 w-4" />
-            Export Preview
+            {{ t('dataPreview.exportPreview') }}
           </button>
         </div>
       </div>
 
       <!-- Additional Filters (conditionally shown) -->
-      <div v-if="isFilterOpen" class="mb-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+      <div v-if="isFilterOpen" class="mb-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-700">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('dataPreview.dateRange') }}</label>
             <select
                 v-model="filter.dateRange"
-                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
             >
-              <option value="">All Dates</option>
-              <option value="last30">Last 30 Days</option>
-              <option value="last90">Last 90 Days</option>
-              <option value="thisYear">This Year</option>
+              <option value="">{{ t('dataPreview.allDates') }}</option>
+              <option value="last30">{{ t('dataPreview.last30Days') }}</option>
+              <option value="last90">{{ t('dataPreview.last90Days') }}</option>
+              <option value="thisYear">{{ t('dataPreview.thisYear') }}</option>
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Amount Range</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('dataPreview.amountRange') }}</label>
             <div class="flex space-x-2">
               <input
                   v-model="filter.minAmount"
                   type="number"
                   min="0"
-                  placeholder="Min"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  :placeholder="t('dataPreview.min')"
+                  class="block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
               />
               <input
                   v-model="filter.maxAmount"
                   type="number"
                   min="0"
-                  placeholder="Max"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  :placeholder="t('dataPreview.max')"
+                  class="block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
               />
             </div>
           </div>
           <div class="flex items-end">
             <button
-                class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
                 @click="resetFilters"
             >
-              Reset Filters
+              {{ t('dataPreview.resetFilters') }}
             </button>
           </div>
         </div>
       </div>
 
       <!-- Data Preview Table -->
-      <div class="border border-gray-200 rounded-lg overflow-x-auto mb-6">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+      <div class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto mb-6">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700">
           <tr>
-            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Status
+            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('common.status') }}
             </th>
             <th
                 v-for="field in previewFields"
                 :key="field"
                 scope="col"
-                class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
             >
               {{ field }}
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
           <tr
               v-for="(row, index) in filteredData"
               :key="index"
@@ -146,7 +145,7 @@
                 class="px-4 py-4 whitespace-nowrap"
                 :class="getFieldClass(row, field)"
             >
-              <div class="text-sm" :class="field === 'status' ? getStatusClass(row[field]) : 'text-gray-900'">
+              <div class="text-sm" :class="field === 'status' ? getStatusClass(row[field]) : 'text-gray-900 dark:text-gray-100'">
                 {{ formatFieldValue(field, row[field]) }}
               </div>
             </td>
@@ -155,8 +154,8 @@
           <!-- Empty state -->
           <tr v-if="filteredData.length === 0">
             <td :colspan="previewFields.length + 1" class="px-6 py-12 text-center">
-              <Database class="mx-auto h-10 w-10 text-gray-300" />
-              <p class="mt-2 text-sm text-gray-500">No matching records found</p>
+              <Database class="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" />
+              <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('dataPreview.noRecordsFound') }}</p>
             </td>
           </tr>
           </tbody>
@@ -165,20 +164,20 @@
 
       <!-- Validation Summary -->
       <div v-if="stats.warningRecords > 0 || stats.invalidRecords > 0"
-           class="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-        <h3 class="text-sm font-medium text-yellow-800 mb-2">Data Validation Warnings</h3>
-        <ul class="text-sm text-yellow-700 space-y-1">
+           class="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+        <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-300 mb-2">{{ t('dataPreview.validationWarnings') }}</h3>
+        <ul class="text-sm text-yellow-700 dark:text-yellow-400 space-y-1">
           <li v-if="validationIssues.missingEmails > 0" class="flex items-start">
             <AlertCircle class="h-4 w-4 text-yellow-500 mr-2 mt-0.5" />
-            <span>{{ validationIssues.missingEmails }} records have missing or invalid email addresses</span>
+            <span>{{ t('dataPreview.missingEmails', { count: validationIssues.missingEmails }) }}</span>
           </li>
           <li v-if="validationIssues.missingStatus > 0" class="flex items-start">
             <AlertCircle class="h-4 w-4 text-yellow-500 mr-2 mt-0.5" />
-            <span>{{ validationIssues.missingStatus }} records have missing transaction status codes</span>
+            <span>{{ t('dataPreview.missingStatus', { count: validationIssues.missingStatus }) }}</span>
           </li>
           <li v-if="validationIssues.outOfRangeDates > 0" class="flex items-start">
             <AlertCircle class="h-4 w-4 text-yellow-500 mr-2 mt-0.5" />
-            <span>{{ validationIssues.outOfRangeDates }} records have dates outside the expected range</span>
+            <span>{{ t('dataPreview.outOfRangeDates', { count: validationIssues.outOfRangeDates }) }}</span>
           </li>
         </ul>
       </div>
@@ -186,23 +185,23 @@
       <!-- Action Buttons -->
       <div class="flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
             @click="$emit('back')"
         >
-          Back to Field Mapping
+          {{ t('dataPreview.backToMapping') }}
         </button>
         <div>
           <button
-              class="mr-3 inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="mr-3 inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
           >
             <RefreshCw class="mr-2 h-4 w-4" />
-            Refresh Preview
+            {{ t('dataPreview.refreshPreview') }}
           </button>
           <button
               class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
               @click="$emit('continue')"
           >
-            Continue to Import
+            {{ t('dataPreview.continueToImport') }}
             <ArrowRight class="ml-2 h-4 w-4" />
           </button>
         </div>
@@ -224,6 +223,8 @@ import {
   ArrowRight,
   Database
 } from 'lucide-vue-next'
+
+const { t, locale } = useI18n()
 
 const props = defineProps({
   files: {
@@ -534,22 +535,27 @@ const formatFieldValue = (field, value) => {
   return value
 }
 
-// Format currency
+// Format currency (locale-aware)
 const formatCurrency = (value) => {
   const num = parseFloat(value)
   if (isNaN(num)) return value
 
-  return new Intl.NumberFormat('en-US', {
+  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
+
+  return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
-    currency: 'USD'
+    currency: currency,
+    maximumFractionDigits: 0
   }).format(num)
 }
 
-// Format date
+// Format date (locale-aware)
 const formatDate = (value) => {
   try {
     const date = new Date(value)
-    return date.toLocaleDateString('en-US', {
+    const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+    return date.toLocaleDateString(dateLocale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric'

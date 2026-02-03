@@ -1,18 +1,7 @@
-// stores/transaction.ts
+// stores/transaction.ts (OMF style - Japanese accounting)
 import { defineStore } from 'pinia'
 import type { Transaction, TransactionFilters, TransactionStats } from '~/types/transaction'
-
-export interface TransactionFilters {
-    status?: string
-    source?: string
-    dateFrom?: string
-    dateTo?: string
-    minAmount?: string | number
-    maxAmount?: string | number
-    hasReceipt?: boolean
-    hasShipment?: boolean
-    search?: string
-}
+import { useUserStore } from './user'
 
 export const useTransactionStore = defineStore('transaction', {
     state: () => ({
@@ -29,7 +18,9 @@ export const useTransactionStore = defineStore('transaction', {
             processing: { count: 0, amount: 0 },
             failed: { count: 0, amount: 0 },
             avgOrderValue: 0,
-            receiptMatchRate: 0
+            receiptMatchRate: 0,
+            income: { count: 0, amount: 0 },
+            expense: { count: 0, amount: 0 }
         }
     }),
 
@@ -37,15 +28,16 @@ export const useTransactionStore = defineStore('transaction', {
         filteredTransactions(): Transaction[] {
             let result = [...this.transactions]
 
-            // Apply search filter
+            // Apply search filter (OMF style)
             if (this.searchQuery) {
                 const query = this.searchQuery.toLowerCase()
                 result = result.filter(transaction =>
-                    transaction.id.toLowerCase().includes(query) ||
-                    transaction.reference.toLowerCase().includes(query) ||
-                    transaction.customer.name.toLowerCase().includes(query) ||
-                    transaction.customer.email.toLowerCase().includes(query) ||
-                    transaction.amount.toString().includes(query)
+                    transaction.id?.toLowerCase().includes(query) ||
+                    transaction.referenceNumber?.toLowerCase().includes(query) ||
+                    transaction.productName?.toLowerCase().includes(query) ||
+                    transaction.invoiceNumber?.toLowerCase().includes(query) ||
+                    transaction.companyInfo?.toLowerCase().includes(query) ||
+                    transaction.amount?.toString().includes(query)
                 )
             }
 
@@ -54,21 +46,21 @@ export const useTransactionStore = defineStore('transaction', {
                 result = result.filter(transaction => transaction.status === this.filters.status)
             }
 
-            // Apply source filter
-            if (this.filters.source) {
-                result = result.filter(transaction => transaction.source === this.filters.source)
+            // Apply type filter (支出 or 入金)
+            if (this.filters.type) {
+                result = result.filter(transaction => transaction.type === this.filters.type)
             }
 
             // Apply date range filter
             if (this.filters.dateFrom) {
                 const fromDate = new Date(this.filters.dateFrom)
-                result = result.filter(transaction => new Date(transaction.createdAt) >= fromDate)
+                result = result.filter(transaction => new Date(transaction.date) >= fromDate)
             }
 
             if (this.filters.dateTo) {
                 const toDate = new Date(this.filters.dateTo)
                 toDate.setHours(23, 59, 59, 999) // End of the day
-                result = result.filter(transaction => new Date(transaction.createdAt) <= toDate)
+                result = result.filter(transaction => new Date(transaction.date) <= toDate)
             }
 
             // Apply amount filter
@@ -77,7 +69,7 @@ export const useTransactionStore = defineStore('transaction', {
                     ? parseFloat(this.filters.minAmount)
                     : this.filters.minAmount
 
-                result = result.filter(transaction => transaction.amount >= min)
+                result = result.filter(transaction => (transaction.amount || 0) >= min)
             }
 
             if (this.filters.maxAmount) {
@@ -85,7 +77,7 @@ export const useTransactionStore = defineStore('transaction', {
                     ? parseFloat(this.filters.maxAmount)
                     : this.filters.maxAmount
 
-                result = result.filter(transaction => transaction.amount <= max)
+                result = result.filter(transaction => (transaction.amount || 0) <= max)
             }
 
             // Filter by receipt presence
@@ -93,9 +85,14 @@ export const useTransactionStore = defineStore('transaction', {
                 result = result.filter(transaction => transaction.hasReceipt === this.filters.hasReceipt)
             }
 
-            // Filter by shipment presence
-            if (this.filters.hasShipment !== undefined) {
-                result = result.filter(transaction => transaction.hasShipment === this.filters.hasShipment)
+            // Filter by customer
+            if (this.filters.customerId) {
+                result = result.filter(transaction => transaction.customerId === this.filters.customerId)
+            }
+
+            // Filter by supplier
+            if (this.filters.supplierId) {
+                result = result.filter(transaction => transaction.supplierId === this.filters.supplierId)
             }
 
             return result
@@ -106,10 +103,13 @@ export const useTransactionStore = defineStore('transaction', {
         async fetchTransactions() {
             this.isLoading = true
             this.error = null
+            const userStore = useUserStore()
 
             try {
-                const data = await $fetch<Transaction[]>('/api/transactions')
-                this.transactions = data
+                const response = await $fetch<{ transactions: Transaction[], total: number }>('/api/transactions', {
+                    headers: userStore.authHeader
+                })
+                this.transactions = response.transactions || []
 
                 // Fetch statistics
                 await this.fetchStats()
@@ -124,9 +124,12 @@ export const useTransactionStore = defineStore('transaction', {
         async fetchTransactionById(id: string) {
             this.isLoading = true
             this.error = null
+            const userStore = useUserStore()
 
             try {
-                const data = await $fetch<Transaction>(`/api/transactions/${id}`)
+                const data = await $fetch<Transaction>(`/api/transactions/${id}`, {
+                    headers: userStore.authHeader
+                })
                 this.currentTransaction = data
             } catch (error: any) {
                 this.error = error.message || `Failed to fetch transaction ${id}`
@@ -139,10 +142,12 @@ export const useTransactionStore = defineStore('transaction', {
         async createTransaction(transactionData: Partial<Transaction>) {
             this.isLoading = true
             this.error = null
+            const userStore = useUserStore()
 
             try {
-                const newTransaction = await $fetch<Transaction>('/api/transactions/create', {
+                const newTransaction = await $fetch<Transaction>('/api/transactions', {
                     method: 'POST',
+                    headers: userStore.authHeader,
                     body: transactionData
                 })
 
@@ -165,10 +170,12 @@ export const useTransactionStore = defineStore('transaction', {
         async updateTransactionStatus(id: string, status: Transaction['status'], notes?: string) {
             this.isLoading = true
             this.error = null
+            const userStore = useUserStore()
 
             try {
-                const updatedTransaction = await $fetch<Transaction>(`/api/transactions/${id}/update`, {
-                    method: 'POST',
+                const updatedTransaction = await $fetch<Transaction>(`/api/transactions/${id}`, {
+                    method: 'PATCH',
+                    headers: userStore.authHeader,
                     body: { status, notes }
                 })
 
@@ -199,10 +206,12 @@ export const useTransactionStore = defineStore('transaction', {
         async importTransactions(parsedData: any[], mappings: Record<string, string>, options = {}) {
             this.isLoading = true
             this.error = null
+            const userStore = useUserStore()
 
             try {
                 const result = await $fetch('/api/transactions/import', {
                     method: 'POST',
+                    headers: userStore.authHeader,
                     body: { data: parsedData, mappings, options }
                 })
 
@@ -220,8 +229,11 @@ export const useTransactionStore = defineStore('transaction', {
         },
 
         async fetchStats() {
+            const userStore = useUserStore()
             try {
-                const data = await $fetch<typeof this.stats>('/api/transactions/stats')
+                const data = await $fetch<typeof this.stats>('/api/transactions/stats', {
+                    headers: userStore.authHeader
+                })
                 this.stats = data
             } catch (error: any) {
                 console.error('Error fetching transaction stats:', error)

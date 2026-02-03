@@ -1,6 +1,6 @@
 // plugins/api.ts
 import { defineNuxtPlugin } from 'nuxt/app'
-import { useAuth } from '~/composables/useAuth'
+import { useUserStore } from '~/stores/user'
 
 /**
  * API Plugin for Transaction Middleware System
@@ -8,13 +8,15 @@ import { useAuth } from '~/composables/useAuth'
  * Provides a standardized way to make API requests to our backend services
  * with automatic authentication, error handling, and response formatting.
  */
-export default defineNuxtPlugin((nuxtApp) => {
+export default defineNuxtPlugin({
+    name: 'api',
+    setup(nuxtApp) {
     const apiBaseUrl = process.env.NODE_ENV === 'production'
         ? 'https://api.transacthub.com/v1'
         : 'http://localhost:3001/api/v1'
 
-    // Get auth composable for authentication
-    const { getAuthHeader, isAuthenticated } = useAuth()
+    // Get user store for authentication - must be called within setup context
+    const userStore = useUserStore()
 
     // Create API instance
     const api = {
@@ -306,7 +308,7 @@ export default defineNuxtPlugin((nuxtApp) => {
             }
 
             // Get auth headers if authenticated
-            const authHeaders = isAuthenticated.value ? getAuthHeader() : {}
+            const authHeaders = userStore.isAuthenticated ? userStore.authHeader : {}
 
             // Set up request options
             const fetchOptions: RequestInit = {
@@ -443,6 +445,7 @@ export default defineNuxtPlugin((nuxtApp) => {
             api
         }
     }
+  }
 })
 
 // Type declaration for better TypeScript support

@@ -1,18 +1,18 @@
 // components/GenericFileUploader.vue
 <template>
   <div>
-    <h2 class="text-lg font-semibold mb-4">Upload Excel File</h2>
+    <h2 class="text-lg font-semibold mb-4 dark:text-gray-100">{{ t('fileUploader.uploadExcelFile') }}</h2>
 
     <div
-        class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center"
+        class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center dark:bg-gray-800"
         @dragover.prevent="isDragging = true"
         @dragleave.prevent="isDragging = false"
         @drop.prevent="handleFileDrop"
-        :class="{ 'border-purple-400 bg-purple-50': isDragging }"
+        :class="{ 'border-purple-400 bg-purple-50 dark:bg-purple-900/20': isDragging }"
     >
       <div v-if="isUploading">
-        <p>Uploading... {{ uploadProgress }}%</p>
-        <div class="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+        <p class="dark:text-gray-200">{{ t('fileUploader.uploading', { progress: uploadProgress }) }}</p>
+        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mt-2">
           <div
               class="bg-purple-600 h-2.5 rounded-full"
               :style="{ width: `${uploadProgress}%` }"
@@ -20,13 +20,13 @@
         </div>
       </div>
       <div v-else>
-        <p class="mb-2">Drag and drop Excel files here</p>
-        <p class="text-sm text-gray-500 mb-4">or</p>
+        <p class="mb-2 dark:text-gray-200">{{ t('fileUploader.dragDropExcel') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('fileUploader.or') }}</p>
         <button
             @click="$refs.fileInput.click()"
             class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
         >
-          Select File
+          {{ t('fileUploader.selectFile') }}
         </button>
         <input
             type="file"
@@ -38,22 +38,24 @@
       </div>
     </div>
 
-    <div v-if="result" class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-      <h3 class="font-semibold text-green-700 mb-2">File Processed Successfully</h3>
-      <p class="text-sm mb-1"><strong>Original name:</strong> {{ result.originalName }}</p>
-      <p class="text-sm mb-1"><strong>Saved as:</strong> {{ result.savedAs }}</p>
-      <p class="text-sm"><strong>Processed path:</strong> {{ result.processedPath }}</p>
+    <div v-if="result" class="mt-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+      <h3 class="font-semibold text-green-700 dark:text-green-400 mb-2">{{ t('fileUploader.processedSuccess') }}</h3>
+      <p class="text-sm mb-1 dark:text-gray-300"><strong>{{ t('fileUploader.originalName') }}:</strong> {{ result.originalName }}</p>
+      <p class="text-sm mb-1 dark:text-gray-300"><strong>{{ t('fileUploader.savedAs') }}:</strong> {{ result.savedAs }}</p>
+      <p class="text-sm dark:text-gray-300"><strong>{{ t('fileUploader.processedPath') }}:</strong> {{ result.processedPath }}</p>
     </div>
 
-    <div v-if="error" class="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-      <h3 class="font-semibold text-red-700 mb-2">Error</h3>
-      <p class="text-sm">{{ error }}</p>
+    <div v-if="error" class="mt-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+      <h3 class="font-semibold text-red-700 dark:text-red-400 mb-2">{{ t('common.error') }}</h3>
+      <p class="text-sm dark:text-gray-300">{{ error }}</p>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue';
+
+const { t } = useI18n()
 
 const isDragging = ref(false);
 const isUploading = ref(false);

@@ -52,12 +52,14 @@ export const useCalendarStore = defineStore('calendar', {
     // Monthly statistics
     monthlyStats(): MonthlyStats {
       const payments = this.currentMonthPayments
+      // Include all non-cancelled payments for expected totals
+      const activePayments = payments.filter(p => p.status !== 'cancelled')
       return {
-        totalIncome: payments
-          .filter(p => p.type === 'income' && (p.status === 'paid' || p.status === 'completed'))
+        totalIncome: activePayments
+          .filter(p => p.type === 'income')
           .reduce((sum, p) => sum + p.amount, 0),
-        totalExpenses: payments
-          .filter(p => p.type === 'expense' && (p.status === 'paid' || p.status === 'completed'))
+        totalExpenses: activePayments
+          .filter(p => p.type === 'expense')
           .reduce((sum, p) => sum + p.amount, 0),
         pendingPayments: payments.filter(p => p.status === 'pending').length,
         overduePayments: payments.filter(p => p.status === 'overdue').length

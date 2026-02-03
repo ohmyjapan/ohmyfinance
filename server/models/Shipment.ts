@@ -24,6 +24,7 @@ export interface IShipmentEvent {
 
 // Main shipment interface
 export interface IShipment extends Document {
+  organizationId: mongoose.Types.ObjectId
   trackingNumber?: string
   status: string
   carrier?: string
@@ -52,6 +53,7 @@ export interface IShipment extends Document {
   events: IShipmentEvent[]
   notes?: string
   metadata?: Record<string, any>
+  createdBy?: mongoose.Types.ObjectId
   createdAt: Date
   updatedAt: Date
 }
@@ -98,6 +100,7 @@ const DimensionsSchema = new Schema({
 
 // Main shipment schema
 const ShipmentSchema = new Schema<IShipment>({
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
   trackingNumber: { type: String, index: true },
   status: {
     type: String,
@@ -118,7 +121,8 @@ const ShipmentSchema = new Schema<IShipment>({
   transactionIds: [{ type: Schema.Types.ObjectId, ref: 'Transaction', index: true }],
   events: [ShipmentEventSchema],
   notes: String,
-  metadata: Schema.Types.Mixed
+  metadata: Schema.Types.Mixed,
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -130,7 +134,9 @@ ShipmentSchema.virtual('id').get(function() {
   return this._id.toHexString()
 })
 
-// Index for tracking
+// Index for multi-tenancy and tracking
+ShipmentSchema.index({ organizationId: 1, trackingNumber: 1 })
+ShipmentSchema.index({ organizationId: 1, status: 1 })
 ShipmentSchema.index({ trackingNumber: 1, carrier: 1 })
 
 export default mongoose.models.Shipment || mongoose.model<IShipment>('Shipment', ShipmentSchema)

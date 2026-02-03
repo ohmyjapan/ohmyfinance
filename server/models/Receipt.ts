@@ -33,6 +33,7 @@ export interface IReceiptExtractedData {
 
 // Main receipt interface
 export interface IReceipt extends Document {
+  organizationId: mongoose.Types.ObjectId
   filename: string
   originalFilename: string
   size: number
@@ -50,7 +51,7 @@ export interface IReceipt extends Document {
   category?: 'business' | 'personal' | 'travel' | 'entertainment' | 'office' | 'other'
   notes?: string
   tags?: string[]
-  uploadedBy?: string
+  uploadedBy?: mongoose.Types.ObjectId
   taxAmount?: number
   taxRate?: number
   extractedData?: IReceiptExtractedData
@@ -93,7 +94,8 @@ const ExtractedDataSchema = new Schema<IReceiptExtractedData>({
 
 // Main receipt schema
 const ReceiptSchema = new Schema<IReceipt>({
-  filename: { type: String, required: true, unique: true },
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
+  filename: { type: String, required: true },
   originalFilename: { type: String, required: true },
   size: { type: Number, required: true },
   mimeType: String,
@@ -119,7 +121,7 @@ const ReceiptSchema = new Schema<IReceipt>({
   },
   notes: String,
   tags: [String],
-  uploadedBy: String,
+  uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' },
   taxAmount: Number,
   taxRate: Number,
   extractedData: ExtractedDataSchema,
@@ -137,6 +139,10 @@ ReceiptSchema.virtual('id').get(function() {
   return this._id.toHexString()
 })
 
+// Indexes for multi-tenancy
+ReceiptSchema.index({ organizationId: 1, filename: 1 }, { unique: true })
+ReceiptSchema.index({ organizationId: 1, status: 1 })
+ReceiptSchema.index({ organizationId: 1, uploadDate: -1 })
 // Text search index
 ReceiptSchema.index({ merchant: 'text', notes: 'text', 'extractedData.merchant': 'text' })
 

@@ -1,9 +1,44 @@
 import mongoose from 'mongoose'
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/ohmyfinance'
-
 let isConnected = false
 let connectionPromise: Promise<void> | null = null
+let mongoServer: any = null
+
+// Get MongoDB URI - uses memory server if no external MongoDB available
+const getMongoUri = async (): Promise<string> => {
+  // If MONGO_URI is set and points to a real server, try that first
+  const envUri = process.env.MONGO_URI
+
+  if (envUri && !envUri.includes('localhost:27017')) {
+    return envUri
+  }
+
+  // Try to connect to localhost first
+  if (envUri) {
+    try {
+      const testConnection = await mongoose.createConnection(envUri).asPromise()
+      await testConnection.close()
+      console.log('Using local MongoDB at', envUri)
+      return envUri
+    } catch {
+      console.log('Local MongoDB not available, starting in-memory server...')
+    }
+  }
+
+  // Fall back to in-memory MongoDB
+  const { MongoMemoryServer } = await import('mongodb-memory-server')
+
+  if (!mongoServer) {
+    mongoServer = await MongoMemoryServer.create({
+      instance: {
+        dbName: 'ohmyfinance'
+      }
+    })
+    console.log('In-memory MongoDB server started')
+  }
+
+  return mongoServer.getUri()
+}
 
 export const connectDB = async (): Promise<void> => {
   // Return existing promise if connection is in progress
@@ -17,7 +52,8 @@ export const connectDB = async (): Promise<void> => {
 
   connectionPromise = (async () => {
     try {
-      await mongoose.connect(MONGO_URI)
+      const uri = await getMongoUri()
+      await mongoose.connect(uri)
       isConnected = true
       console.log('MongoDB connected successfully')
 
@@ -54,7 +90,17 @@ export const getConnectionStatus = () => ({
   isConnected,
   readyState: mongoose.connection.readyState,
   host: mongoose.connection.host,
-  name: mongoose.connection.name
+  name: mongoose.connection.name,
+  isMemoryServer: !!mongoServer
 })
+
+// Stop memory server on shutdown
+export const stopMemoryServer = async () => {
+  if (mongoServer) {
+    await mongoServer.stop()
+    mongoServer = null
+    console.log('In-memory MongoDB server stopped')
+  }
+}
 
 export default connectDB

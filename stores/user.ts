@@ -18,6 +18,9 @@ interface UserState {
     error: string | null
     token: string | null
     refreshToken: string | null
+    // 2FA state
+    requires2FA: boolean
+    tempToken: string | null
 }
 
 export const useUserStore = defineStore('user', {
@@ -27,7 +30,9 @@ export const useUserStore = defineStore('user', {
         isLoading: false,
         error: null,
         token: null,
-        refreshToken: null
+        refreshToken: null,
+        requires2FA: false,
+        tempToken: null
     }),
 
     getters: {
@@ -105,35 +110,85 @@ export const useUserStore = defineStore('user', {
         async login(email: string, password: string, rememberMe: boolean = false) {
             this.isLoading = true
             this.error = null
+            this.requires2FA = false
+            this.tempToken = null
 
             try {
-                const response = await $fetch('/api/auth/login', {
+                const response = await $fetch<any>('/api/auth/login', {
                     method: 'POST',
                     body: { email, password }
                 })
 
-                this.token = response.token
-                this.refreshToken = response.refreshToken || null
+                // Check if 2FA is required
+                if (response.requires2FA) {
+                    this.requires2FA = true
+                    this.tempToken = response.tempToken
+                    this.user = response.user // Partial user info
+                    return '2fa_required'
+                }
+
+                this.token = response.tokens?.accessToken || response.token
+                this.refreshToken = response.tokens?.refreshToken || response.refreshToken || null
                 this.user = response.user
                 this.isAuthenticated = true
 
-                // Store auth data in localStorage if remember me is enabled
-                if (process.client && rememberMe) {
-                    localStorage.setItem('auth_token', response.token)
-                    if (response.refreshToken) {
-                        localStorage.setItem('auth_refresh_token', response.refreshToken)
+                // Store auth data in localStorage
+                if (process.client) {
+                    localStorage.setItem('auth_token', this.token!)
+                    if (this.refreshToken) {
+                        localStorage.setItem('auth_refresh_token', this.refreshToken)
                     }
                     localStorage.setItem('auth_user', JSON.stringify(response.user))
+                    // Store tokens in the new format too
+                    localStorage.setItem('auth_tokens', JSON.stringify({
+                        accessToken: this.token,
+                        refreshToken: this.refreshToken,
+                        expiresIn: response.tokens?.expiresIn || 900
+                    }))
                 }
 
                 return true
             } catch (err: any) {
-                this.error = err.message || 'Login failed'
+                this.error = err.data?.statusMessage || err.message || 'Login failed'
                 console.error('Login error:', err)
                 return false
             } finally {
                 this.isLoading = false
             }
+        },
+
+        // Complete login after 2FA verification
+        async complete2FA(data: { user: any; organizations: any[]; tokens: any; deviceId?: string }) {
+            this.token = data.tokens.accessToken
+            this.refreshToken = data.tokens.refreshToken
+            this.user = data.user
+            this.isAuthenticated = true
+            this.requires2FA = false
+            this.tempToken = null
+
+            // Store auth data in localStorage
+            if (process.client) {
+                localStorage.setItem('auth_token', this.token!)
+                if (this.refreshToken) {
+                    localStorage.setItem('auth_refresh_token', this.refreshToken)
+                }
+                localStorage.setItem('auth_user', JSON.stringify(data.user))
+                localStorage.setItem('auth_tokens', JSON.stringify(data.tokens))
+
+                // Store trusted device ID if provided
+                if (data.deviceId) {
+                    localStorage.setItem('trusted_device_id', data.deviceId)
+                }
+            }
+
+            return true
+        },
+
+        // Cancel 2FA flow
+        cancel2FA() {
+            this.requires2FA = false
+            this.tempToken = null
+            this.user = null
         },
 
         // Logout user

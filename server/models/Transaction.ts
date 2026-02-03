@@ -1,33 +1,14 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
-// Address subdocument interface
-export interface IAddress {
-  name?: string
-  line1?: string
-  line2?: string
-  city?: string
-  state?: string
-  postalCode?: string
-  country?: string
-  phone?: string
-}
-
-// Transaction item interface
+// Transaction item interface (OMF style)
 export interface ITransactionItem {
-  name: string
-  description?: string
+  productName?: string
+  janCode?: string
+  productUrl?: string
   quantity: number
-  price: number
-  total: number
-  sku?: string
-  tax?: number
-  category?: string
-  imageUrl?: string
-  weight?: {
-    value: number
-    unit: string
-  }
-  metadata?: Record<string, any>
+  unitPrice: number
+  taxCategoryId?: mongoose.Types.ObjectId
+  taxRate?: number
 }
 
 // Timeline event interface
@@ -36,282 +17,131 @@ export interface ITimelineEvent {
   title: string
   timestamp: Date
   description?: string
-  location?: string
-  actor?: string
-  data?: Record<string, any>
 }
 
-// Payment method interface
-export interface IPaymentMethod {
-  type: string
-  last4?: string
-  brand?: string
-  expiryDate?: string
-  holderName?: string
-  token?: string
-}
-
-// Processor interface
-export interface IProcessor {
-  name: string
-  gatewayId: string
-  responseCode?: string
-  authCode?: string
-  batchId?: string
-}
-
-// Fees interface
-export interface IFees {
-  processor: number
-  platform?: number
-  other?: number
-  total: number
-}
-
-// Tax interface
-export interface ITax {
-  amount: number
-  rate: number
-  reference?: string
-}
-
-// Risk assessment interface
-export interface IRiskAssessment {
-  score: number
-  level: 'low' | 'medium' | 'high'
-  factors?: string[]
-  triggeredRules?: string[]
-}
-
-// Related transaction interface
-export interface IRelatedTransaction {
-  transactionId: mongoose.Types.ObjectId
-  date: Date
-  amount: number
-  status: string
-  type?: string
-}
-
-// Embedded receipt interface
-export interface IEmbeddedReceipt {
-  receiptId?: mongoose.Types.ObjectId
+// Attachment interface
+export interface IAttachment {
+  originalName: string
   filename: string
+  path: string
   size: number
-  date?: Date
-  amount?: number
-  merchant?: string
-  url?: string
+  mimeType: string
+  uploadedAt: Date
 }
 
-// Embedded shipment interface
-export interface IEmbeddedShipment {
-  shipmentId?: mongoose.Types.ObjectId
-  trackingNumber: string
-  carrier: string
-  status: string
-  estimatedDelivery?: Date
-  address?: IAddress
-  shippingMethod?: {
-    name: string
-    estimatedDelivery?: string
-    carrier: string
-    cost?: number
-  }
-}
-
-// Customer interface
-export interface ICustomer {
-  customerId?: mongoose.Types.ObjectId
-  name: string
-  email: string
-  phone?: string
-  address?: IAddress
-}
-
-// Main transaction interface
+// Main transaction interface (OMF style - Japanese accounting)
 export interface ITransaction extends Document {
-  reference: string
+  referenceNumber?: string
   date: Date
   amount: number
-  currency: string
+  type: string // 支出 or 入金
   status: string
-  source: string
-  type?: string
-  customer: ICustomer
-  paymentMethod?: IPaymentMethod
-  processor?: IProcessor
-  items?: ITransactionItem[]
-  shipment?: IEmbeddedShipment
-  timeline?: ITimelineEvent[]
-  receipt?: IEmbeddedReceipt | null
-  relatedTransactions?: IRelatedTransaction[]
+  // Japanese accounting fields
+  customerId?: mongoose.Types.ObjectId
+  accountCategoryId?: mongoose.Types.ObjectId // 勘定科目
+  subAccountCategoryId?: mongoose.Types.ObjectId // 補助科目
+  taxCategoryId?: mongoose.Types.ObjectId // 税区分
+  taxRate?: number // 税率
+  supplierId?: mongoose.Types.ObjectId // 仕入れ先
+  transactionCategoryId?: mongoose.Types.ObjectId // 区分
+  companyInfo?: string // 法人情報
+  invoiceNumber?: string // インボイス番号
+  receiptNumber?: string // レシート/注文番号
+  trackingNumber?: string // 追跡番号/運送状番号
+  paymentMethod?: string // 支払方法 (現金, クレジットカード, etc.)
+  cardNumber?: string // カード番号 (下4桁)
+  productName?: string // 商品コード/商品名
+  productPrice?: number // 商品価格
+  janCode?: string // JAN CODE
+  // Receipt fields
+  hasReceipt: boolean
+  receiptFilePath?: string
+  receiptUploadedAt?: Date
+  // Data source
+  sourceId?: mongoose.Types.ObjectId
+  // Items and timeline
+  items: ITransactionItem[]
+  timeline: ITimelineEvent[]
+  attachments?: IAttachment[]
   notes?: string
   tags?: string[]
   metadata?: Record<string, any>
-  tax?: ITax
-  fees?: IFees
-  riskAssessment?: IRiskAssessment
-  createdBy?: string
   createdAt: Date
   updatedAt: Date
 }
 
-// Subdocument schemas
-const AddressSchema = new Schema<IAddress>({
-  name: String,
-  line1: String,
-  line2: String,
-  city: String,
-  state: String,
-  postalCode: String,
-  country: String,
-  phone: String
-}, { _id: false })
-
+// Subdocument schemas (OMF style)
 const TransactionItemSchema = new Schema<ITransactionItem>({
-  name: { type: String, required: true },
-  description: String,
+  productName: { type: String },
+  janCode: { type: String },
+  productUrl: { type: String },
   quantity: { type: Number, required: true, default: 1 },
-  price: { type: Number, required: true },
-  total: { type: Number, required: true },
-  sku: String,
-  tax: Number,
-  category: String,
-  imageUrl: String,
-  weight: {
-    value: Number,
-    unit: String
-  },
-  metadata: Schema.Types.Mixed
+  unitPrice: { type: Number, required: true },
+  taxCategoryId: { type: Schema.Types.ObjectId, ref: 'TaxCategory' },
+  taxRate: { type: Number }
 }, { _id: false })
 
 const TimelineEventSchema = new Schema<ITimelineEvent>({
   type: { type: String, required: true },
   title: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now },
-  description: String,
-  location: String,
-  actor: String,
-  data: Schema.Types.Mixed
+  description: { type: String },
+  timestamp: { type: Date, default: Date.now }
 }, { _id: false })
 
-const PaymentMethodSchema = new Schema<IPaymentMethod>({
-  type: { type: String, required: true },
-  last4: String,
-  brand: String,
-  expiryDate: String,
-  holderName: String,
-  token: String
-}, { _id: false })
-
-const ProcessorSchema = new Schema<IProcessor>({
-  name: { type: String, required: true },
-  gatewayId: { type: String, required: true },
-  responseCode: String,
-  authCode: String,
-  batchId: String
-}, { _id: false })
-
-const FeesSchema = new Schema<IFees>({
-  processor: { type: Number, required: true },
-  platform: Number,
-  other: Number,
-  total: { type: Number, required: true }
-}, { _id: false })
-
-const TaxSchema = new Schema<ITax>({
-  amount: { type: Number, required: true },
-  rate: { type: Number, required: true },
-  reference: String
-}, { _id: false })
-
-const RiskAssessmentSchema = new Schema<IRiskAssessment>({
-  score: { type: Number, required: true },
-  level: { type: String, enum: ['low', 'medium', 'high'], required: true },
-  factors: [String],
-  triggeredRules: [String]
-}, { _id: false })
-
-const RelatedTransactionSchema = new Schema<IRelatedTransaction>({
-  transactionId: { type: Schema.Types.ObjectId, ref: 'Transaction' },
-  date: Date,
-  amount: Number,
-  status: String,
-  type: String
-}, { _id: false })
-
-const EmbeddedReceiptSchema = new Schema<IEmbeddedReceipt>({
-  receiptId: { type: Schema.Types.ObjectId, ref: 'Receipt' },
-  filename: String,
+const AttachmentSchema = new Schema<IAttachment>({
+  originalName: String,
+  filename: { type: String, required: true },
+  path: { type: String, required: true },
   size: Number,
-  date: Date,
-  amount: Number,
-  merchant: String,
-  url: String
+  mimeType: String,
+  uploadedAt: { type: Date, default: Date.now }
 }, { _id: false })
 
-const ShippingMethodSchema = new Schema({
-  name: String,
-  estimatedDelivery: String,
-  carrier: String,
-  cost: Number
-}, { _id: false })
-
-const EmbeddedShipmentSchema = new Schema<IEmbeddedShipment>({
-  shipmentId: { type: Schema.Types.ObjectId, ref: 'Shipment' },
-  trackingNumber: String,
-  carrier: String,
-  status: String,
-  estimatedDelivery: Date,
-  address: AddressSchema,
-  shippingMethod: ShippingMethodSchema
-}, { _id: false })
-
-const CustomerSchema = new Schema<ICustomer>({
-  customerId: { type: Schema.Types.ObjectId, ref: 'Customer' },
-  name: { type: String, required: true },
-  email: { type: String, required: true },
-  phone: String,
-  address: AddressSchema
-}, { _id: false })
-
-// Main transaction schema
+// Main transaction schema (OMF style - Japanese accounting)
 const TransactionSchema = new Schema<ITransaction>({
-  reference: { type: String, required: true, unique: true, index: true },
+  referenceNumber: { type: String, index: true },
   date: { type: Date, required: true, index: true },
   amount: { type: Number, required: true },
-  currency: { type: String, default: 'JPY' },
+  type: { type: String, required: true, index: true }, // 支出 or 入金
   status: {
     type: String,
     required: true,
     default: 'pending',
-    enum: ['completed', 'pending', 'processing', 'failed', 'refunded', 'cancelled', 'disputed', 'on_hold'],
-    index: true
+    index: true,
+    enum: ['completed', 'pending', 'processing', 'failed', 'cancelled']
   },
-  source: {
-    type: String,
-    required: true,
-    enum: ['credit_card', 'payment_gateway', 'overseas', 'manual', 'other'],
-    index: true
-  },
-  type: String,
-  customer: { type: CustomerSchema, required: true },
-  paymentMethod: PaymentMethodSchema,
-  processor: ProcessorSchema,
+  // Japanese accounting fields
+  customerId: { type: Schema.Types.ObjectId, ref: 'Customer', index: true },
+  accountCategoryId: { type: Schema.Types.ObjectId, ref: 'AccountCategory' }, // 勘定科目
+  subAccountCategoryId: { type: Schema.Types.ObjectId, ref: 'AccountCategory' }, // 補助科目
+  taxCategoryId: { type: Schema.Types.ObjectId, ref: 'TaxCategory' }, // 税区分
+  taxRate: { type: Number }, // 税率
+  supplierId: { type: Schema.Types.ObjectId, ref: 'Supplier', index: true }, // 仕入れ先
+  transactionCategoryId: { type: Schema.Types.ObjectId, ref: 'TransactionCategory' }, // 区分
+  companyInfo: { type: String }, // 法人情報
+  invoiceNumber: { type: String }, // インボイス番号
+  receiptNumber: { type: String }, // レシート/注文番号
+  trackingNumber: { type: String }, // 追跡番号/運送状番号
+  paymentMethod: { type: String }, // 支払方法 (現金, クレジットカード, etc.)
+  cardNumber: { type: String }, // カード番号 (下4桁)
+  productName: { type: String }, // 商品コード/商品名
+  productPrice: { type: Number }, // 商品価格
+  janCode: { type: String }, // JAN CODE
+  // Receipt fields
+  hasReceipt: { type: Boolean, default: false },
+  receiptFilePath: { type: String },
+  receiptUploadedAt: { type: Date },
+  // Data source
+  sourceId: { type: Schema.Types.ObjectId, ref: 'DataSource', index: true },
+  // Items and timeline
   items: [TransactionItemSchema],
-  shipment: EmbeddedShipmentSchema,
   timeline: [TimelineEventSchema],
-  receipt: EmbeddedReceiptSchema,
-  relatedTransactions: [RelatedTransactionSchema],
+  attachments: [AttachmentSchema],
   notes: String,
   tags: [String],
-  metadata: Schema.Types.Mixed,
-  tax: TaxSchema,
-  fees: FeesSchema,
-  riskAssessment: RiskAssessmentSchema,
-  createdBy: String
+  metadata: Schema.Types.Mixed
 }, {
-  timestamps: true,
+  timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 })
@@ -321,17 +151,17 @@ TransactionSchema.virtual('id').get(function() {
   return this._id.toHexString()
 })
 
-// Pre-save middleware to generate reference if not provided
+// Pre-save middleware to generate reference number if not provided
 TransactionSchema.pre('save', function(next) {
-  if (!this.reference) {
-    this.reference = `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
+  if (!this.referenceNumber) {
+    this.referenceNumber = `REF${Math.floor(Math.random() * 100000).toString().padStart(6, '0')}`
   }
   next()
 })
 
-// Indexes for common queries
-TransactionSchema.index({ 'customer.email': 1 })
-TransactionSchema.index({ 'customer.name': 'text', reference: 'text', notes: 'text' })
+// Text search index (only indexes not already declared inline)
+TransactionSchema.index({ accountCategoryId: 1 })
 TransactionSchema.index({ createdAt: -1 })
+TransactionSchema.index({ referenceNumber: 'text', productName: 'text', notes: 'text' })
 
 export default mongoose.models.Transaction || mongoose.model<ITransaction>('Transaction', TransactionSchema)

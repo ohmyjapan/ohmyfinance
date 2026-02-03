@@ -1,436 +1,1068 @@
+<!-- components/transaction/TransactionForm.vue -->
 <template>
-  <div class="bg-white rounded-lg shadow-sm">
-    <div class="p-6">
-      <h2 class="text-lg font-medium text-gray-900 mb-6">
-        {{ isEditing ? 'Edit Transaction' : 'Create New Transaction' }}
-      </h2>
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+    <h2 class="text-xl font-bold mb-6 text-gray-900 dark:text-white">{{ isEditing ? '取引を編集' : '新規取引' }}</h2>
 
-      <form @submit.prevent="submitForm">
-        <!-- Transaction Details Section -->
-        <div class="grid grid-cols-1 gap-6 mb-8">
-          <h3 class="text-sm font-medium text-gray-700 col-span-full">Transaction Details</h3>
+    <form @submit.prevent="submitForm" class="space-y-6">
+      <!-- Basic Information Section -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Date -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">日付</label>
+          <input
+              type="date"
+              v-model="form.date"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              required
+          />
+        </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- Transaction Source -->
-            <div>
-              <label for="source" class="block text-sm font-medium text-gray-700 mb-1">Transaction Source</label>
-              <select
-                  id="source"
-                  v-model="form.source"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  required
-              >
-                <option value="credit_card">Credit Card</option>
-                <option value="payment_gateway">Payment Gateway</option>
-                <option value="overseas">Overseas</option>
-                <option value="manual">Manual Entry</option>
-              </select>
-            </div>
+        <!-- Transaction Type -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">区別</label>
+          <select
+              v-model="form.type"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              required
+          >
+            <option value="支出">支出</option>
+            <option value="入金">入金</option>
+          </select>
+        </div>
 
-            <!-- Amount -->
-            <div>
-              <label for="amount" class="block text-sm font-medium text-gray-700 mb-1">Amount</label>
-              <div class="mt-1 relative rounded-md shadow-sm">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <span class="text-gray-500 sm:text-sm">{{ currencySymbol }}</span>
-                </div>
+        <!-- Amount -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">金額</label>
+          <input
+              type="text"
+              v-model="form.amount"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              :placeholder="'例: 10,000'"
+              required
+              @input="formatAmount"
+          />
+        </div>
+      </div>
+
+      <!-- Customer and Account Section -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Customer -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">顧客</label>
+          <div class="relative">
+            <select
+                v-model="form.customerId"
+                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+            >
+              <option value="">選択してください</option>
+              <option v-for="customer in customers" :key="customer.id" :value="customer.id">
+                {{ customer.name }}
+              </option>
+              <option value="new">+ 新規顧客を追加</option>
+            </select>
+          </div>
+
+          <!-- New Customer Form -->
+          <div v-if="form.customerId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規顧客</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">顧客名</label>
                 <input
-                    id="amount"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    v-model="form.amount"
-                    class="block w-full pl-7 pr-12 border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                    placeholder="0.00"
-                    required
+                    type="text"
+                    v-model="newCustomer.name"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="顧客名を入力"
                 />
-                <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <span class="text-gray-500 sm:text-sm">{{ form.currency }}</span>
-                </div>
+              </div>
+              <div class="flex justify-end">
+                <button
+                    type="button"
+                    @click="addNewCustomer"
+                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                >
+                  追加
+                </button>
               </div>
             </div>
+          </div>
+        </div>
 
-            <!-- Currency -->
-            <div>
-              <label for="currency" class="block text-sm font-medium text-gray-700 mb-1">Currency</label>
-              <select
-                  id="currency"
-                  v-model="form.currency"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  required
-              >
-                <option value="USD">USD - US Dollar</option>
-                <option value="EUR">EUR - Euro</option>
-                <option value="GBP">GBP - British Pound</option>
-                <option value="JPY">JPY - Japanese Yen</option>
-                <option value="CAD">CAD - Canadian Dollar</option>
-                <option value="AUD">AUD - Australian Dollar</option>
-              </select>
-            </div>
+        <!-- Account Category -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">勘定科目</label>
+          <div class="relative">
+            <select
+                v-model="form.accountCategoryId"
+                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                @change="handleAccountCategoryChange"
+            >
+              <option value="">選択してください</option>
+              <option v-for="category in accountCategories" :key="category.id" :value="category.id">
+                {{ category.name }}
+              </option>
+              <option value="new">+ 新規勘定科目を追加</option>
+            </select>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Reference ID -->
-            <div>
-              <label for="reference" class="block text-sm font-medium text-gray-700 mb-1">Reference ID</label>
-              <input
-                  id="reference"
-                  type="text"
-                  v-model="form.reference"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="Transaction reference number"
-              />
-              <p class="mt-1 text-xs text-gray-500">
-                Leave blank to auto-generate a reference number
+          <!-- New Account Category Form -->
+          <div v-if="form.accountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規勘定科目</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">勘定科目名</label>
+                <input
+                    type="text"
+                    v-model="newAccountCategory.name"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="勘定科目名を入力"
+                />
+              </div>
+              <div class="flex justify-end">
+                <button
+                    type="button"
+                    @click="addNewAccountCategory"
+                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                >
+                  追加
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub Account & Tax Section -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Sub Account Category -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">補助科目</label>
+          <div class="relative">
+            <select
+                v-model="form.subAccountCategoryId"
+                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+            >
+              <option value="">選択してください</option>
+              <option v-for="category in filteredSubAccountCategories" :key="category.id" :value="category.id">
+                {{ category.name }}
+              </option>
+              <option value="new">+ 新規補助科目を追加</option>
+            </select>
+          </div>
+
+          <!-- New Sub Account Category Form -->
+          <div v-if="form.subAccountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規補助科目</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">補助科目名</label>
+                <input
+                    type="text"
+                    v-model="newSubAccountCategory.name"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="補助科目名を入力"
+                />
+              </div>
+              <!-- Credit card specific fields -->
+              <div v-if="form.accountCategory === 'credit_card'">
+                <div class="mb-2">
+                  <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">カード番号（下4桁）</label>
+                  <input
+                      type="text"
+                      v-model="newSubAccountCategory.cardNumber"
+                      maxlength="4"
+                      class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                      placeholder="例: 1234"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">カード会社</label>
+                  <select
+                      v-model="newSubAccountCategory.cardProvider"
+                      class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                  >
+                    <option value="">選択してください</option>
+                    <option value="VISA">VISA</option>
+                    <option value="MasterCard">MasterCard</option>
+                    <option value="American Express">American Express</option>
+                    <option value="JCB">JCB</option>
+                    <option value="Discover">Discover</option>
+                    <option value="Other">その他</option>
+                  </select>
+                </div>
+              </div>
+              <div class="flex justify-end">
+                <button
+                    type="button"
+                    @click="addNewSubAccountCategory"
+                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                >
+                  追加
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tax Category -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">税区分</label>
+          <div class="relative">
+            <select
+                v-model="form.taxCategoryId"
+                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+            >
+              <option value="">選択してください</option>
+              <option v-for="category in taxCategories" :key="category.id" :value="category.name">
+                {{ category.name }}
+              </option>
+              <option value="new">+ 新規税区分を追加</option>
+            </select>
+          </div>
+
+          <!-- New Tax Category Form -->
+          <div v-if="form.taxCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規税区分</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">税区分名</label>
+                <input
+                    type="text"
+                    v-model="newTaxCategory.name"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="例: 課税対象 / 非課税"
+                />
+              </div>
+              <div class="flex justify-end">
+                <button
+                    type="button"
+                    @click="addNewTaxCategory"
+                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                >
+                  追加
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tax Rate -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">税率</label>
+          <div class="relative">
+            <select
+                v-model="form.taxRate"
+                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+            >
+              <option value="">選択してください</option>
+              <option v-for="rate in taxRates" :key="rate.id" :value="rate.value">
+                {{ rate.value }}
+              </option>
+              <option value="new">+ 新規税率を追加</option>
+            </select>
+          </div>
+
+          <!-- New Tax Rate Form -->
+          <div v-if="form.taxRate === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規税率</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">税率</label>
+                <input
+                    type="text"
+                    v-model="newTaxRate.value"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="例: 10%"
+                />
+              </div>
+              <div class="flex justify-end">
+                <button
+                    type="button"
+                    @click="addNewTaxRate"
+                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                >
+                  追加
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Supplier & Receipt Number Section -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Supplier with autocomplete -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">仕入れ先</label>
+          <div class="relative">
+            <input
+                type="text"
+                v-model="supplierSearch"
+                @input="onSupplierSearchInput"
+                @focus="showSupplierSuggestions = true"
+                @blur="onSupplierBlur"
+                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                placeholder="仕入れ先を入力"
+            />
+            <!-- Supplier suggestions dropdown -->
+            <div v-if="showSupplierSuggestions && filteredSuppliers.length > 0" class="absolute z-10 w-full mt-1 bg-white dark:bg-gray-700 rounded-md shadow-lg max-h-60 overflow-auto">
+              <ul class="py-1">
+                <li v-for="supplier in filteredSuppliers" :key="supplier.id"
+                    @mousedown="selectSupplier(supplier)"
+                    class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-gray-900 dark:text-gray-100">
+                  {{ supplier.name }}
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Receipt/Order Number -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">レシート/注文番号</label>
+          <input
+              type="text"
+              v-model="form.receiptNumber"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              placeholder="レシート/注文番号を入力"
+          />
+        </div>
+      </div>
+
+      <!-- Category & Company Info Section -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Category -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">区分</label>
+          <div class="relative">
+            <select
+                v-model="form.transactionCategoryId"
+                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+            >
+              <option value="">選択してください</option>
+              <option v-for="category in categories" :key="category.id" :value="category.id">
+                {{ category.name }}
+              </option>
+              <option value="new">+ 新規区分を追加</option>
+            </select>
+          </div>
+
+          <!-- New Category Form -->
+          <div v-if="form.transactionCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規区分</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">区分名</label>
+                <input
+                    type="text"
+                    v-model="newCategory.name"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="例: 仕入高 / 売上高 / 消耗費"
+                />
+              </div>
+              <div class="flex justify-end">
+                <button
+                    type="button"
+                    @click="addNewCategory"
+                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                >
+                  追加
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Company Info -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">法人情報</label>
+          <input
+              type="text"
+              v-model="form.companyInfo"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              placeholder="例: 株式会社XXX"
+          />
+        </div>
+      </div>
+
+      <!-- Invoice & Product Info Section -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Invoice Number -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">インボイス番号</label>
+          <input
+              type="text"
+              v-model="form.invoiceNumber"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              placeholder="例: INV-12345"
+          />
+        </div>
+
+        <!-- JAN Code -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">JAN CODE</label>
+          <input
+              type="text"
+              v-model="form.janCode"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              placeholder="例: 4901234567894"
+          />
+        </div>
+
+        <!-- Product Price -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">商品価格</label>
+          <input
+              type="text"
+              v-model="form.productPrice"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              placeholder="例: 5,000"
+              @input="formatProductPrice"
+          />
+        </div>
+      </div>
+
+      <!-- Product Name & Receipt Section -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Product Name/Code -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">商品コード/商品名</label>
+          <input
+              type="text"
+              v-model="form.productName"
+              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              placeholder="例: PROD-001 / 商品名"
+          />
+        </div>
+
+        <!-- Receipt Upload -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">領収書アップロード</label>
+          <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md">
+            <div class="space-y-1 text-center">
+              <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <div class="flex text-sm text-gray-600 dark:text-gray-400">
+                <label for="receipt-upload" class="relative cursor-pointer bg-white dark:bg-gray-700 rounded-md font-medium text-purple-600 hover:text-purple-500">
+                  <span>ファイルをアップロード</span>
+                  <input id="receipt-upload" name="receipt-upload" type="file" class="sr-only" @change="handleFileUpload">
+                </label>
+                <p class="pl-1">またはドラッグ&ドロップ</p>
+              </div>
+              <p class="text-xs text-gray-500">
+                PNG, JPG, PDF (最大10MB)
               </p>
             </div>
-
-            <!-- Status -->
-            <div>
-              <label for="status" class="block text-sm font-medium text-gray-700 mb-1">Status</label>
-              <select
-                  id="status"
-                  v-model="form.status"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  required
-              >
-                <option value="pending">Pending</option>
-                <option value="processing">Processing</option>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
-                <option value="refunded">Refunded</option>
-              </select>
-            </div>
+          </div>
+          <div v-if="form.receiptFile" class="mt-2 text-sm text-green-600">
+            アップロード済み: {{ form.receiptFile.name }}
           </div>
         </div>
+      </div>
 
-        <!-- Customer Information Section -->
-        <div class="grid grid-cols-1 gap-6 mb-8">
-          <h3 class="text-sm font-medium text-gray-700 col-span-full">Customer Information</h3>
+      <!-- Items Section -->
+      <div>
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">商品明細</h3>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Customer Name -->
-            <div>
-              <label for="customer-name" class="block text-sm font-medium text-gray-700 mb-1">Customer Name</label>
-              <input
-                  id="customer-name"
-                  type="text"
-                  v-model="form.customer.name"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="Full name"
-                  required
-              />
-            </div>
-
-            <!-- Customer Email -->
-            <div>
-              <label for="customer-email" class="block text-sm font-medium text-gray-700 mb-1">Customer Email</label>
-              <input
-                  id="customer-email"
-                  type="email"
-                  v-model="form.customer.email"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="email@example.com"
-                  required
-              />
-            </div>
-          </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-700">
+            <tr>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                商品名
+              </th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                JAN/商品コード
+              </th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                商品URL
+              </th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                数量
+              </th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                単価
+              </th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                小計
+              </th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                アクション
+              </th>
+            </tr>
+            </thead>
+            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            <tr v-for="(item, index) in items" :key="index">
+              <td class="px-4 py-3 whitespace-nowrap">
+                <input
+                    type="text"
+                    v-model="item.productName"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="商品名"
+                />
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <input
+                    type="text"
+                    v-model="item.janCode"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="JAN/商品コード"
+                />
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <input
+                    type="text"
+                    v-model="item.productUrl"
+                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="商品URL"
+                />
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <input
+                    type="number"
+                    v-model.number="item.quantity"
+                    min="1"
+                    class="w-20 bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="数量"
+                />
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <input
+                    type="text"
+                    v-model="item.unitPrice"
+                    @input="formatItemPrice(index)"
+                    class="w-32 bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    placeholder="0"
+                />
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap font-medium text-gray-900 dark:text-gray-100">
+                {{ formatCurrency(calculateItemSubtotal(item)) }}
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap text-right">
+                <button
+                    type="button"
+                    @click="removeItem(index)"
+                    class="text-red-600 hover:text-red-800"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </td>
+            </tr>
+            </tbody>
+          </table>
         </div>
 
-        <!-- Payment Method Section -->
-        <div class="grid grid-cols-1 gap-6 mb-8">
-          <div class="flex items-center justify-between col-span-full">
-            <h3 class="text-sm font-medium text-gray-700">Payment Method</h3>
-            <div class="flex items-center">
-              <input
-                  id="has-payment-method"
-                  type="checkbox"
-                  v-model="hasPaymentMethod"
-                  class="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
-              />
-              <label for="has-payment-method" class="ml-2 block text-sm text-gray-900">
-                Include payment method details
-              </label>
-            </div>
-          </div>
-
-          <div v-if="hasPaymentMethod" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- Payment Type -->
-            <div>
-              <label for="payment-type" class="block text-sm font-medium text-gray-700 mb-1">Card Type</label>
-              <select
-                  id="payment-type"
-                  v-model="form.paymentMethod.type"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-              >
-                <option value="VISA">VISA</option>
-                <option value="MasterCard">MasterCard</option>
-                <option value="American Express">American Express</option>
-                <option value="Discover">Discover</option>
-                <option value="PayPal">PayPal</option>
-              </select>
-            </div>
-
-            <!-- Last 4 Digits -->
-            <div>
-              <label for="last4" class="block text-sm font-medium text-gray-700 mb-1">Last 4 Digits</label>
-              <input
-                  id="last4"
-                  type="text"
-                  v-model="form.paymentMethod.last4"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="1234"
-                  maxlength="4"
-                  pattern="[0-9]{4}"
-              />
-            </div>
-
-            <!-- Expiry Date -->
-            <div>
-              <label for="expiry-date" class="block text-sm font-medium text-gray-700 mb-1">Expiry Date</label>
-              <input
-                  id="expiry-date"
-                  type="text"
-                  v-model="form.paymentMethod.expiryDate"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="MM/YYYY"
-              />
-            </div>
-          </div>
-        </div>
-
-        <!-- Processor Information Section -->
-        <div class="grid grid-cols-1 gap-6 mb-8">
-          <div class="flex items-center justify-between col-span-full">
-            <h3 class="text-sm font-medium text-gray-700">Processor Information</h3>
-            <div class="flex items-center">
-              <input
-                  id="has-processor"
-                  type="checkbox"
-                  v-model="hasProcessor"
-                  class="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
-              />
-              <label for="has-processor" class="ml-2 block text-sm text-gray-900">
-                Include processor details
-              </label>
-            </div>
-          </div>
-
-          <div v-if="hasProcessor" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Processor Name -->
-            <div>
-              <label for="processor-name" class="block text-sm font-medium text-gray-700 mb-1">Processor Name</label>
-              <input
-                  id="processor-name"
-                  type="text"
-                  v-model="form.processor.name"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="e.g. Stripe, PayPal"
-              />
-            </div>
-
-            <!-- Gateway ID -->
-            <div>
-              <label for="gateway-id" class="block text-sm font-medium text-gray-700 mb-1">Gateway ID</label>
-              <input
-                  id="gateway-id"
-                  type="text"
-                  v-model="form.processor.gatewayId"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                  placeholder="Gateway reference ID"
-              />
-            </div>
-          </div>
-        </div>
-
-        <!-- Notes Section -->
-        <div class="grid grid-cols-1 gap-6 mb-8">
-          <h3 class="text-sm font-medium text-gray-700">Notes</h3>
-          <div>
-            <textarea
-                v-model="form.notes"
-                rows="3"
-                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                placeholder="Add any notes about this transaction"
-            ></textarea>
-          </div>
-        </div>
-
-        <!-- Form Actions -->
-        <div class="flex justify-end space-x-3">
+        <div class="mt-4 flex justify-between">
           <button
               type="button"
-              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-              @click="$emit('cancel')"
+              @click="addItem"
+              class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
           >
-            Cancel
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            商品を追加
           </button>
-          <button
-              type="submit"
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-              :disabled="isSubmitting"
-          >
-            <span v-if="isSubmitting">
-              <Loader class="animate-spin mr-2 h-4 w-4" />
-              Saving...
-            </span>
-            <span v-else>
-              {{ isEditing ? 'Update Transaction' : 'Create Transaction' }}
-              <Save class="ml-2 h-4 w-4" />
-            </span>
-          </button>
+
+          <div class="text-right">
+            <div class="text-gray-500 dark:text-gray-400">合計</div>
+            <div class="text-xl font-bold text-gray-900 dark:text-white">{{ formatCurrency(calculateTotal()) }}</div>
+          </div>
         </div>
-      </form>
-    </div>
+      </div>
+
+      <!-- Buttons -->
+      <div class="flex justify-end space-x-3">
+        <button
+            type="button"
+            @click="cancel"
+            class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+        >
+          キャンセル
+        </button>
+        <button
+            type="submit"
+            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            :disabled="isSubmitting"
+        >
+          <span v-if="isSubmitting" class="flex items-center">
+            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            保存中...
+          </span>
+          <span v-else>{{ isEditing ? '更新' : '保存' }}</span>
+        </button>
+      </div>
+    </form>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Loader, Save } from 'lucide-vue-next'
+
+interface SubAccountCategory {
+  id: string
+  name: string
+  parentId?: string
+  cardNumber?: string
+  cardProvider?: string
+}
 
 const props = defineProps({
-  transaction: {
+  initialData: {
     type: Object,
-    default: () => null
+    default: null
+  },
+  isEditing: {
+    type: Boolean,
+    default: false
   }
 })
 
 const emit = defineEmits(['submit', 'cancel'])
-
-// State
 const isSubmitting = ref(false)
-const hasPaymentMethod = ref(false)
-const hasProcessor = ref(false)
+const isLoadingMasterData = ref(true)
 
 // Form data
 const form = ref({
-  source: 'manual',
+  id: '',
+  date: new Date().toISOString().split('T')[0],
+  type: '支出',
   amount: '',
-  currency: 'USD',
-  reference: '',
-  status: 'pending',
-  customer: {
-    name: '',
-    email: ''
-  },
-  paymentMethod: {
-    type: 'VISA',
-    last4: '',
-    expiryDate: ''
-  },
-  processor: {
-    name: '',
-    gatewayId: ''
-  },
-  notes: ''
+  customerId: '',
+  accountCategoryId: '',
+  subAccountCategoryId: '',
+  taxCategoryId: '',
+  taxRate: '',
+  supplierId: '',
+  receiptNumber: '',
+  transactionCategoryId: '',
+  companyInfo: '',
+  invoiceNumber: '',
+  janCode: '',
+  productName: '',
+  productPrice: '',
+  receiptFile: null as File | null
 })
 
-// Computed properties
-const isEditing = computed(() => !!props.transaction)
-
-const currencySymbol = computed(() => {
-  const symbols = {
-    USD: '$',
-    EUR: '€',
-    GBP: '£',
-    JPY: '¥',
-    CAD: 'C$',
-    AUD: 'A$'
+// Items data
+const items = ref([
+  {
+    id: crypto.randomUUID(),
+    productName: '',
+    janCode: '',
+    productUrl: '',
+    quantity: 1,
+    unitPrice: ''
   }
-  return symbols[form.value.currency] || '$'
-})
+])
 
-// Initialize form data if editing
-onMounted(() => {
-  if (props.transaction) {
-    // Pre-fill form with transaction data
-    form.value = {
-      source: props.transaction.source || 'manual',
-      amount: props.transaction.amount || '',
-      currency: props.transaction.currency || 'USD',
-      reference: props.transaction.reference || '',
-      status: props.transaction.status || 'pending',
-      customer: {
-        name: props.transaction.customer?.name || '',
-        email: props.transaction.customer?.email || ''
-      },
-      paymentMethod: {
-        type: props.transaction.paymentMethod?.type || 'VISA',
-        last4: props.transaction.paymentMethod?.last4 || '',
-        expiryDate: props.transaction.paymentMethod?.expiryDate || ''
-      },
-      processor: {
-        name: props.transaction.processor?.name || '',
-        gatewayId: props.transaction.processor?.gatewayId || ''
-      },
-      notes: props.transaction.notes || ''
+// For creating new entries
+const newCustomer = ref({ name: '' })
+const newAccountCategory = ref({ name: '' })
+const newSubAccountCategory = ref({
+  name: '',
+  parentId: '',
+  cardNumber: '',
+  cardProvider: ''
+})
+const newCategory = ref({ name: '' })
+const newTaxCategory = ref({ name: '' })
+const newTaxRate = ref({ value: '' })
+
+// Supplier autocomplete
+const supplierSearch = ref('')
+const showSupplierSuggestions = ref(false)
+
+// Master data from APIs
+const customers = ref<any[]>([])
+const accountCategories = ref<any[]>([])
+const subAccountCategories = ref<SubAccountCategory[]>([])
+const categories = ref<any[]>([])
+const taxCategories = ref<any[]>([])
+const suppliers = ref<any[]>([])
+
+const taxRates = ref([
+  { id: 'taxrate1', value: '10%' },
+  { id: 'taxrate2', value: '8%' },
+  { id: 'taxrate3', value: '0%' }
+])
+
+// Fetch master data on mount
+onMounted(async () => {
+  isLoadingMasterData.value = true
+  try {
+    const [
+      customersData,
+      accountCategoriesData,
+      subAccountCategoriesData,
+      categoriesData,
+      taxCategoriesData,
+      suppliersData
+    ] = await Promise.all([
+      $fetch<any[]>('/api/customers').catch(() => []),
+      $fetch<any[]>('/api/account-categories?topLevel=true').catch(() => []),
+      $fetch<any[]>('/api/account-categories').catch(() => []),
+      $fetch<any[]>('/api/transaction-categories').catch(() => []),
+      $fetch<any[]>('/api/tax-categories').catch(() => []),
+      $fetch<any[]>('/api/suppliers').catch(() => [])
+    ])
+
+    customers.value = customersData.map((c: any) => ({ id: c.id || c._id, name: c.name }))
+    accountCategories.value = accountCategoriesData.map((c: any) => ({ id: c.id || c._id, name: c.name }))
+    subAccountCategories.value = subAccountCategoriesData
+      .filter((c: any) => c.parentId)
+      .map((c: any) => ({
+        id: c.id || c._id,
+        name: c.name,
+        parentId: c.parentId,
+        cardNumber: c.cardNumber,
+        cardProvider: c.cardProvider
+      }))
+    categories.value = categoriesData.map((c: any) => ({ id: c.id || c._id, name: c.name }))
+    taxCategories.value = taxCategoriesData.map((c: any) => ({ id: c.id || c._id, name: c.name, rate: c.rate }))
+    suppliers.value = suppliersData.map((s: any) => ({ id: s.id || s._id, name: s.name }))
+
+    // Populate form with initial data if editing
+    if (props.initialData && props.isEditing) {
+      const data = props.initialData
+      form.value = {
+        id: data.id || '',
+        date: data.date || new Date().toISOString().split('T')[0],
+        type: data.type || '支出',
+        amount: data.amount ? formatNumberWithCommas(String(data.amount)) : '',
+        customerId: data.customerId || '',
+        accountCategoryId: data.accountCategoryId || '',
+        subAccountCategoryId: data.subAccountCategoryId || '',
+        taxCategoryId: data.taxCategoryId || '',
+        taxRate: data.taxRate ? `${data.taxRate}%` : '',
+        supplierId: data.supplierId || '',
+        receiptNumber: data.receiptNumber || '',
+        transactionCategoryId: data.transactionCategoryId || '',
+        companyInfo: data.companyInfo || '',
+        invoiceNumber: data.invoiceNumber || '',
+        janCode: data.janCode || '',
+        productName: data.productName || '',
+        productPrice: data.productPrice ? formatNumberWithCommas(String(data.productPrice)) : '',
+        receiptFile: null
+      }
+
+      // Set supplier search field if supplier is selected
+      if (data.supplierId) {
+        const supplier = suppliers.value.find(s => s.id === data.supplierId)
+        if (supplier) {
+          supplierSearch.value = supplier.name
+        }
+      }
+
+      // Populate items if present
+      if (data.items && data.items.length > 0) {
+        items.value = data.items.map((item: any) => ({
+          id: item.id || crypto.randomUUID(),
+          productName: item.productName || '',
+          janCode: item.janCode || '',
+          productUrl: item.productUrl || '',
+          quantity: item.quantity || 1,
+          unitPrice: item.unitPrice ? formatNumberWithCommas(String(item.unitPrice)) : ''
+        }))
+      }
     }
-
-    // Set checkboxes based on data
-    hasPaymentMethod.value = !!props.transaction.paymentMethod
-    hasProcessor.value = !!props.transaction.processor
+  } catch (error) {
+    console.error('Failed to load master data:', error)
+  } finally {
+    isLoadingMasterData.value = false
   }
 })
 
-// Form submission
+// Computed
+const filteredSuppliers = computed(() => {
+  if (!supplierSearch.value) return []
+  const searchTerm = supplierSearch.value.toLowerCase()
+  return suppliers.value.filter(
+      supplier => supplier.name.toLowerCase().includes(searchTerm)
+  )
+})
+
+const filteredSubAccountCategories = computed(() => {
+  if (form.value.accountCategoryId && form.value.accountCategoryId !== 'new') {
+    return subAccountCategories.value.filter(subCat =>
+        subCat.parentId === form.value.accountCategoryId
+    )
+  }
+  return subAccountCategories.value
+})
+
+// Methods
+const onSupplierSearchInput = () => {
+  showSupplierSuggestions.value = true
+}
+
+const onSupplierBlur = () => {
+  setTimeout(() => {
+    showSupplierSuggestions.value = false
+  }, 200)
+}
+
+const selectSupplier = (supplier: any) => {
+  supplierSearch.value = supplier.name
+  form.value.supplierId = supplier.id
+  showSupplierSuggestions.value = false
+}
+
+const handleAccountCategoryChange = () => {
+  form.value.subAccountCategoryId = ''
+}
+
+const formatAmount = () => {
+  form.value.amount = formatNumberWithCommas(form.value.amount)
+}
+
+const formatProductPrice = () => {
+  form.value.productPrice = formatNumberWithCommas(form.value.productPrice)
+}
+
+const formatNumberWithCommas = (value: string) => {
+  const plainNumber = value.replace(/,/g, '')
+  if (!plainNumber || isNaN(Number(plainNumber))) {
+    return plainNumber
+  }
+  return plainNumber.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+const formatItemPrice = (index: number) => {
+  if (!items.value[index]) return
+  const item = items.value[index]
+  if (typeof item.unitPrice !== 'string') return
+  const plainNumber = item.unitPrice.replace(/,/g, '')
+  if (!plainNumber || isNaN(Number(plainNumber))) return
+  items.value[index].unitPrice = plainNumber.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+const parseNumberWithCommas = (value: string) => {
+  return Number(value.replace(/,/g, ''))
+}
+
+const calculateItemSubtotal = (item: any) => {
+  const unitPrice = typeof item.unitPrice === 'string'
+      ? parseNumberWithCommas(item.unitPrice)
+      : (item.unitPrice || 0)
+  return unitPrice * (item.quantity || 1)
+}
+
+const calculateTotal = () => {
+  return items.value.reduce((sum, item) => {
+    return sum + calculateItemSubtotal(item)
+  }, 0)
+}
+
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('ja-JP', {
+    style: 'currency',
+    currency: 'JPY',
+    currencyDisplay: 'narrowSymbol'
+  }).format(amount)
+}
+
+const handleFileUpload = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (input.files && input.files.length > 0) {
+    form.value.receiptFile = input.files[0]
+  }
+}
+
+const addItem = () => {
+  items.value.push({
+    id: crypto.randomUUID(),
+    productName: '',
+    janCode: '',
+    productUrl: '',
+    quantity: 1,
+    unitPrice: ''
+  })
+}
+
+const removeItem = (index: number) => {
+  items.value.splice(index, 1)
+  if (items.value.length === 0) {
+    addItem()
+  }
+}
+
+const addNewCustomer = async () => {
+  if (newCustomer.value.name) {
+    try {
+      const result = await $fetch<any>('/api/customers', {
+        method: 'POST',
+        body: { name: newCustomer.value.name }
+      })
+      const newId = result.id || result._id
+      customers.value.push({ id: newId, name: newCustomer.value.name })
+      form.value.customerId = newId
+      newCustomer.value.name = ''
+    } catch (error) {
+      console.error('Failed to create customer:', error)
+    }
+  }
+}
+
+const addNewAccountCategory = async () => {
+  if (newAccountCategory.value.name) {
+    try {
+      const result = await $fetch<any>('/api/account-categories', {
+        method: 'POST',
+        body: { name: newAccountCategory.value.name }
+      })
+      const newId = result.id || result._id
+      accountCategories.value.push({ id: newId, name: newAccountCategory.value.name })
+      form.value.accountCategoryId = newId
+      newAccountCategory.value.name = ''
+    } catch (error) {
+      console.error('Failed to create account category:', error)
+    }
+  }
+}
+
+const addNewSubAccountCategory = async () => {
+  if (newSubAccountCategory.value.name || newSubAccountCategory.value.cardNumber) {
+    try {
+      const isCreditCard = accountCategories.value.find(c => c.id === form.value.accountCategoryId)?.name === 'クレジットカード'
+      const displayName = isCreditCard
+          ? `${newSubAccountCategory.value.cardProvider || ''} ${newSubAccountCategory.value.cardNumber || ''}`.trim()
+          : newSubAccountCategory.value.name
+
+      const result = await $fetch<any>('/api/account-categories', {
+        method: 'POST',
+        body: {
+          name: displayName,
+          parentId: form.value.accountCategoryId,
+          cardNumber: newSubAccountCategory.value.cardNumber,
+          cardProvider: newSubAccountCategory.value.cardProvider
+        }
+      })
+      const newId = result.id || result._id
+      subAccountCategories.value.push({
+        id: newId,
+        name: displayName,
+        parentId: form.value.accountCategoryId,
+        cardNumber: newSubAccountCategory.value.cardNumber,
+        cardProvider: newSubAccountCategory.value.cardProvider
+      })
+      form.value.subAccountCategoryId = newId
+      newSubAccountCategory.value = { name: '', parentId: '', cardNumber: '', cardProvider: '' }
+    } catch (error) {
+      console.error('Failed to create sub account category:', error)
+    }
+  }
+}
+
+const addNewCategory = async () => {
+  if (newCategory.value.name) {
+    try {
+      const result = await $fetch<any>('/api/transaction-categories', {
+        method: 'POST',
+        body: { name: newCategory.value.name }
+      })
+      const newId = result.id || result._id
+      categories.value.push({ id: newId, name: newCategory.value.name })
+      form.value.transactionCategoryId = newId
+      newCategory.value.name = ''
+    } catch (error) {
+      console.error('Failed to create transaction category:', error)
+    }
+  }
+}
+
+const addNewTaxCategory = async () => {
+  if (newTaxCategory.value.name) {
+    try {
+      const result = await $fetch<any>('/api/tax-categories', {
+        method: 'POST',
+        body: { name: newTaxCategory.value.name }
+      })
+      const newId = result.id || result._id
+      taxCategories.value.push({ id: newId, name: newTaxCategory.value.name })
+      form.value.taxCategoryId = newId
+      newTaxCategory.value.name = ''
+    } catch (error) {
+      console.error('Failed to create tax category:', error)
+    }
+  }
+}
+
+const addNewTaxRate = () => {
+  if (newTaxRate.value.value) {
+    const newId = crypto.randomUUID()
+    taxRates.value.push({ id: newId, value: newTaxRate.value.value })
+    form.value.taxRate = newTaxRate.value.value
+    newTaxRate.value.value = ''
+  }
+}
+
 const submitForm = async () => {
   isSubmitting.value = true
 
   try {
-    // Prepare data for submission - remove empty optional sections
-    const formData = { ...form.value }
-
-    if (!hasPaymentMethod.value) {
-      delete formData.paymentMethod
+    // Build transaction data matching the OMF model
+    const transactionData: any = {
+      date: new Date(form.value.date).toISOString(),
+      type: form.value.type,
+      amount: parseNumberWithCommas(form.value.amount),
+      status: 'pending',
+      hasReceipt: !!form.value.receiptFile,
+      receiptNumber: form.value.receiptNumber,
+      companyInfo: form.value.companyInfo,
+      invoiceNumber: form.value.invoiceNumber,
+      janCode: form.value.janCode,
+      productName: form.value.productName,
+      productPrice: form.value.productPrice ? parseNumberWithCommas(form.value.productPrice) : undefined,
+      items: items.value
+        .filter(item => item.productName || item.janCode)
+        .map(item => ({
+          productName: item.productName,
+          janCode: item.janCode,
+          productUrl: item.productUrl,
+          quantity: item.quantity,
+          unitPrice: typeof item.unitPrice === 'string' ? parseNumberWithCommas(item.unitPrice) : item.unitPrice
+        }))
     }
 
-    if (!hasProcessor.value) {
-      delete formData.processor
+    // Only add IDs if they are valid (not empty and not 'new')
+    if (form.value.customerId && form.value.customerId !== 'new') {
+      transactionData.customerId = form.value.customerId
+    }
+    if (form.value.accountCategoryId && form.value.accountCategoryId !== 'new') {
+      transactionData.accountCategoryId = form.value.accountCategoryId
+    }
+    if (form.value.subAccountCategoryId && form.value.subAccountCategoryId !== 'new') {
+      transactionData.subAccountCategoryId = form.value.subAccountCategoryId
+    }
+    if (form.value.taxCategoryId && form.value.taxCategoryId !== 'new') {
+      transactionData.taxCategoryId = form.value.taxCategoryId
+    }
+    if (form.value.taxRate) {
+      transactionData.taxRate = parseFloat(form.value.taxRate.replace('%', ''))
+    }
+    if (form.value.supplierId) {
+      transactionData.supplierId = form.value.supplierId
+    }
+    if (form.value.transactionCategoryId && form.value.transactionCategoryId !== 'new') {
+      transactionData.transactionCategoryId = form.value.transactionCategoryId
     }
 
-    // In a real app, you would send this data to your API
-    // await apiClient.saveTransaction(formData)
-
-    // Emit the submit event with form data
-    emit('submit', formData)
-
-    // Reset form if creating a new transaction
-    if (!isEditing.value) {
-      resetForm()
-    }
+    emit('submit', transactionData)
   } catch (error) {
-    console.error('Error saving transaction:', error)
-    // Handle error - perhaps show an error message
+    console.error('Failed to save transaction', error)
   } finally {
     isSubmitting.value = false
   }
 }
 
-// Reset form to initial state
-const resetForm = () => {
-  form.value = {
-    source: 'manual',
-    amount: '',
-    currency: 'USD',
-    reference: '',
-    status: 'pending',
-    customer: {
-      name: '',
-      email: ''
-    },
-    paymentMethod: {
-      type: 'VISA',
-      last4: '',
-      expiryDate: ''
-    },
-    processor: {
-      name: '',
-      gatewayId: ''
-    },
-    notes: ''
-  }
-  hasPaymentMethod.value = false
-  hasProcessor.value = false
+const cancel = () => {
+  emit('cancel')
 }
 </script>

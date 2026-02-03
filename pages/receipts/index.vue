@@ -2,21 +2,21 @@
   <div>
     <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
       <div>
-        <h1 class="text-xl font-semibold text-gray-800">Receipt Management</h1>
-        <p class="text-gray-600">View, search, and manage receipt documents</p>
+        <h1 class="text-xl font-semibold text-gray-800">{{ t('nav.receiptManagement') }}</h1>
+        <p class="text-gray-600">{{ t('receipts.description') }}</p>
       </div>
 
       <div class="mt-4 md:mt-0 flex space-x-3">
         <button class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
           <FileText class="mr-2 h-4 w-4 text-gray-500" />
-          Export CSV
+          {{ t('common.export') }} CSV
         </button>
         <button
             class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
             @click="router.push('/receipts/upload')"
         >
           <Upload class="mr-2 h-4 w-4" />
-          Upload Receipt
+          {{ t('receipts.upload') }}
         </button>
       </div>
     </header>
@@ -24,7 +24,7 @@
     <!-- Stats Cards -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
       <StatCard
-          title="Total Receipts"
+          :title="t('receipts.title')"
           value="247"
           change="+5.8%"
           trend="up"
@@ -33,7 +33,7 @@
       />
 
       <StatCard
-          title="Matched Receipts"
+          :title="t('receipts.matched')"
           value="189"
           change="+8.2%"
           trend="up"
@@ -42,7 +42,7 @@
       />
 
       <StatCard
-          title="Unmatched Receipts"
+          :title="t('receipts.unmatched')"
           value="58"
           change="-12.5%"
           trend="down"
@@ -51,7 +51,7 @@
       />
 
       <StatCard
-          title="Match Rate"
+          :title="t('receipts.matchRate')"
           value="76.5%"
           change="+2.3%"
           trend="up"
@@ -72,7 +72,7 @@
                 v-model="searchQuery"
                 type="text"
                 class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                placeholder="Search by filename, amount, or merchant..."
+                :placeholder="t('receiptsList.searchPlaceholder')"
             />
           </div>
 
@@ -82,9 +82,9 @@
                   v-model="filters.status"
                   class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
               >
-                <option value="">All Statuses</option>
-                <option value="matched">Matched</option>
-                <option value="unmatched">Unmatched</option>
+                <option value="">{{ t('receiptsList.allStatuses') }}</option>
+                <option value="matched">{{ t('receipts.matched') }}</option>
+                <option value="unmatched">{{ t('receipts.unmatched') }}</option>
               </select>
             </div>
 
@@ -93,7 +93,7 @@
                   v-model="filters.type"
                   class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
               >
-                <option value="">All Types</option>
+                <option value="">{{ t('receiptsList.allTypes') }}</option>
                 <option value="pdf">PDF</option>
                 <option value="jpg">JPG/JPEG</option>
                 <option value="png">PNG</option>
@@ -108,7 +108,7 @@
               @click="showAdvancedFilters = !showAdvancedFilters"
           >
             <Filter class="mr-2 h-4 w-4 text-gray-500" />
-            {{ showAdvancedFilters ? 'Hide Filters' : 'Advanced Filters' }}
+            {{ showAdvancedFilters ? t('transactionsList.hideFilters') : t('transactionsList.advancedFilters') }}
           </button>
 
           <button
@@ -116,7 +116,7 @@
               class="ml-3 text-sm text-purple-600 hover:text-purple-500"
               @click="resetFilters"
           >
-            Clear Filters
+            {{ t('transactionsList.clearFilters') }}
           </button>
         </div>
       </div>
@@ -125,7 +125,7 @@
       <div v-if="showAdvancedFilters" class="px-4 py-3 border-t border-gray-200 bg-gray-50">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Upload Date Range</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('receiptsList.uploadDateRange') }}</label>
             <div class="flex space-x-2">
               <input
                   v-model="filters.dateFrom"
@@ -141,14 +141,14 @@
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Amount Range</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('transactionsList.amountRange') }}</label>
             <div class="flex space-x-2">
               <input
                   v-model="filters.minAmount"
                   type="number"
                   min="0"
                   step="0.01"
-                  placeholder="Min"
+                  :placeholder="t('transactionsList.min')"
                   class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
               />
               <input
@@ -156,18 +156,18 @@
                   type="number"
                   min="0"
                   step="0.01"
-                  placeholder="Max"
+                  :placeholder="t('transactionsList.max')"
                   class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
               />
             </div>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Merchant</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('receipts.merchant') }}</label>
             <input
                 v-model="filters.merchant"
                 type="text"
-                placeholder="Merchant name"
+                :placeholder="t('receiptsList.merchantPlaceholder')"
                 class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
             />
           </div>
@@ -179,14 +179,14 @@
     <div class="bg-white rounded-lg shadow-sm overflow-hidden">
       <div v-if="isLoading" class="flex justify-center items-center p-12">
         <Loader class="h-8 w-8 text-purple-600 animate-spin" />
-        <span class="ml-2 text-gray-600">Loading receipts...</span>
+        <span class="ml-2 text-gray-600">{{ t('receiptsList.loading') }}</span>
       </div>
 
       <div v-else-if="filteredReceipts.length === 0" class="text-center py-16">
         <FileText class="mx-auto h-12 w-12 text-gray-300" />
-        <h3 class="mt-2 text-sm font-medium text-gray-900">No receipts found</h3>
+        <h3 class="mt-2 text-sm font-medium text-gray-900">{{ t('receiptsList.noReceipts') }}</h3>
         <p class="mt-1 text-sm text-gray-500">
-          {{ isFiltered ? 'Try adjusting your filters or search query.' : 'Get started by uploading a receipt.' }}
+          {{ isFiltered ? t('receiptsList.adjustFilters') : t('receiptsList.getStarted') }}
         </p>
         <div class="mt-6">
           <button
@@ -194,7 +194,7 @@
               @click="router.push('/receipts/upload')"
           >
             <Upload class="mr-2 h-4 w-4" />
-            Upload Receipt
+            {{ t('receipts.upload') }}
           </button>
         </div>
       </div>
@@ -202,12 +202,12 @@
       <table v-else class="min-w-full divide-y divide-gray-200">
         <thead class="bg-gray-50">
         <tr>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Receipt</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date Uploaded</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Merchant</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('receiptTable.receipt') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('receiptTable.dateUploaded') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('common.amount') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('receipts.merchant') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('common.status') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('common.actions') }}</th>
         </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200">
@@ -249,12 +249,12 @@
               <span v-if="receipt.status === 'matched'"
                     class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
                 <CheckCircle size="14" class="mr-1" />
-                Matched
+                {{ t('receipts.matched') }}
               </span>
             <span v-else
                   class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
                 <AlertTriangle size="14" class="mr-1" />
-                Unmatched
+                {{ t('receipts.unmatched') }}
               </span>
           </td>
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -262,20 +262,20 @@
                 @click="viewReceiptDetails(receipt.id)"
                 class="text-purple-600 hover:text-purple-900 mr-3"
             >
-              View
+              {{ t('common.view') }}
             </button>
             <button
                 v-if="receipt.status === 'unmatched'"
                 @click="matchReceipt(receipt.id)"
                 class="text-purple-600 hover:text-purple-900 mr-3"
             >
-              Match
+              {{ t('receipts.match') }}
             </button>
             <button
                 @click="confirmDelete(receipt.id)"
                 class="text-red-600 hover:text-red-900"
             >
-              Delete
+              {{ t('common.delete') }}
             </button>
           </td>
         </tr>
@@ -287,7 +287,7 @@
         <div class="flex items-center justify-between">
           <div class="hidden sm:block">
             <p class="text-sm text-gray-700">
-              Showing <span class="font-medium">{{ paginationStart }}</span> to <span class="font-medium">{{ paginationEnd }}</span> of <span class="font-medium">{{ filteredReceipts.length }}</span> receipts
+              {{ t('common.showing') }} <span class="font-medium">{{ paginationStart }}</span> {{ t('common.to') }} <span class="font-medium">{{ paginationEnd }}</span> {{ t('common.of') }} <span class="font-medium">{{ filteredReceipts.length }}</span> {{ t('receiptsList.receipts') }}
             </p>
           </div>
           <div class="flex-1 flex justify-center sm:justify-end">
@@ -360,11 +360,11 @@
               </div>
               <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
                 <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                  Delete Receipt
+                  {{ t('receiptsList.deleteReceipt') }}
                 </h3>
                 <div class="mt-2">
                   <p class="text-sm text-gray-500">
-                    Are you sure you want to delete this receipt? This action cannot be undone.
+                    {{ t('receiptsList.deleteConfirm') }}
                   </p>
                 </div>
               </div>
@@ -376,14 +376,14 @@
                 class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="deleteReceipt"
             >
-              Delete
+              {{ t('common.delete') }}
             </button>
             <button
                 type="button"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="showDeleteConfirm = false"
             >
-              Cancel
+              {{ t('common.cancel') }}
             </button>
           </div>
         </div>
@@ -407,6 +407,8 @@ import {
   Trash2,
   Image
 } from 'lucide-vue-next'
+
+const { t, locale } = useI18n()
 
 // State
 const receipts = ref([])
@@ -556,7 +558,8 @@ const resetFilters = () => {
 
 // Format helpers
 const formatDate = (isoDate: string) => {
-  return new Date(isoDate).toLocaleDateString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Date(isoDate).toLocaleDateString(dateLocale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric'
@@ -564,7 +567,8 @@ const formatDate = (isoDate: string) => {
 }
 
 const formatTime = (isoDate: string) => {
-  return new Date(isoDate).toLocaleTimeString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Date(isoDate).toLocaleTimeString(dateLocale, {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true
@@ -572,9 +576,13 @@ const formatTime = (isoDate: string) => {
 }
 
 const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-US', {
+  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
+  return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
-    currency: 'USD'
+    currency: currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
   }).format(amount)
 }
 
@@ -591,13 +599,11 @@ const formatFileSize = (bytes: number) => {
 // Action handlers
 const viewReceiptDetails = (id: string) => {
   // Navigate to receipt details
-  console.log('View receipt:', id)
-  // router.push(`/receipts/${id}`)
+  navigateTo(`/receipts/${id}`)
 }
 
 const matchReceipt = (id: string) => {
   // Navigate to receipt matching screen
-  console.log('Match receipt:', id)
   router.push({
     path: '/receipts/upload',
     query: { action: 'match', id }
@@ -609,11 +615,15 @@ const confirmDelete = (id: string) => {
   showDeleteConfirm.value = true
 }
 
-const deleteReceipt = () => {
+const deleteReceipt = async () => {
   if (!receiptToDelete.value) return
 
-  // Delete receipt (in a real app, this would be an API call)
-  console.log('Deleting receipt:', receiptToDelete.value)
+  try {
+    // Delete receipt via API
+    await $fetch(`/api/receipts/${receiptToDelete.value}`, { method: 'DELETE' })
+  } catch (error) {
+    // Continue to remove from local state even if API fails
+  }
 
   // Remove from local state
   const index = receipts.value.findIndex(r => r.id === receiptToDelete.value)

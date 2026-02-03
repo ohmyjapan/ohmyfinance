@@ -2,7 +2,7 @@
 export default defineNuxtConfig({
   // Development server configuration
   devServer: {
-    port: 5000,
+    port: 8080,
     host: '0.0.0.0'
   },
 
@@ -12,6 +12,16 @@ export default defineNuxtConfig({
     esbuild: {
       options: {
         target: 'esnext'
+      }
+    },
+    routeRules: {
+      '/api/**': {
+        headers: {
+          'Access-Control-Allow-Origin': process.env.ALLOWED_ORIGINS || 'http://localhost:8080',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Allow-Credentials': 'true'
+        }
       }
     }
   },
@@ -27,8 +37,41 @@ export default defineNuxtConfig({
   // Modules
   modules: [
     '@nuxtjs/tailwindcss',
-    '@pinia/nuxt'
+    '@pinia/nuxt',
+    '@nuxtjs/i18n'
   ],
+
+  // Pinia configuration - auto-import stores
+  pinia: {
+    storesDirs: ['./stores/**']
+  },
+
+  // Auto-imports configuration
+  imports: {
+    dirs: ['stores']
+  },
+
+  // i18n configuration
+  i18n: {
+    locales: [
+      { code: 'ja', iso: 'ja-JP', file: 'ja.json', name: '日本語' },
+      { code: 'ko', iso: 'ko-KR', file: 'ko.json', name: '한국어' }
+    ],
+    defaultLocale: 'ja',
+    lazy: false,
+    langDir: 'locales',
+    strategy: 'prefix_except_default',
+    detectBrowserLanguage: {
+      useCookie: true,
+      cookieKey: 'i18n_redirected',
+      redirectOn: 'root',
+      alwaysRedirect: false
+    },
+    vueI18n: './i18n.config.ts',
+    bundle: {
+      fullInstall: true
+    }
+  },
 
   // Tailwind CSS configuration
   tailwindcss: {
@@ -37,9 +80,7 @@ export default defineNuxtConfig({
   },
 
   // Plugins
-  plugins: [
-    '~/plugins/i18n.ts'
-  ],
+  plugins: [],
 
   // Component auto-import configuration
   components: {

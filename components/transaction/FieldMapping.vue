@@ -1,29 +1,28 @@
 <template>
-  <div class="bg-white rounded-lg shadow-sm">
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
     <div class="p-6">
       <div class="mb-6">
-        <h2 class="text-lg font-medium text-gray-900 mb-2">Map File Fields to Database Fields</h2>
-        <p class="text-sm text-gray-600">
-          Configure how your imported data fields map to our system fields. The system has automatically
-          suggested mappings which you can adjust as needed.
+        <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">{{ t('fieldMapper.title') }}</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('fieldMapper.description') }}
         </p>
       </div>
 
-      <div class="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-md">
+      <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-md">
         <div class="flex">
           <div class="flex-shrink-0">
             <AlertCircle class="h-5 w-5 text-blue-400" />
           </div>
           <div class="ml-3 flex-1 md:flex md:justify-between">
-            <p class="text-sm text-blue-700">
-              We've detected <strong>{{ totalRows }}</strong> rows from your files. Please review the field mappings below.
+            <p class="text-sm text-blue-700 dark:text-blue-300">
+              {{ t('fieldMapper.detectedRows', { count: totalRows }) }}
             </p>
             <p class="mt-3 text-sm md:mt-0 md:ml-6">
               <button
-                  class="whitespace-nowrap font-medium text-blue-700 hover:text-blue-600"
+                  class="whitespace-nowrap font-medium text-blue-700 dark:text-blue-300 hover:text-blue-600"
                   @click="showSampleData = !showSampleData"
               >
-                {{ showSampleData ? 'Hide Sample Data' : 'View Sample Data' }}
+                {{ showSampleData ? t('fieldMapper.hideSampleData') : t('fieldMapper.viewSampleData') }}
                 <component :is="showSampleData ? ChevronUp : ChevronDown" class="inline h-3 w-3" />
               </button>
             </p>
@@ -61,7 +60,7 @@
 
       <!-- File Selector -->
       <div class="mb-6">
-        <label class="block text-sm font-medium text-gray-700 mb-2">Select File to Map</label>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{{ t('fieldMapper.selectFile') }}</label>
         <div class="relative">
           <select
               v-model="currentFile"
@@ -82,55 +81,55 @@
       </div>
 
       <!-- Field Mapping Table -->
-      <div class="border border-gray-200 rounded-lg overflow-hidden mb-6">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+      <div class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden mb-6">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700">
           <tr>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Source Field
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.sourceField') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Sample Data
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.sampleData') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Maps To
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.mapsTo') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Data Format
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('fieldMapper.dataFormat') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Status
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              {{ t('common.status') }}
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
           <tr
               v-for="(field, index) in sourceFields"
               :key="index"
-              :class="{'bg-yellow-50': !isFieldMapped(field)}"
+              :class="{'bg-yellow-50 dark:bg-yellow-900/20': !isFieldMapped(field)}"
           >
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
               {{ field }}
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
               {{ getSampleValue(field) }}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm">
               <div class="relative">
                 <select
                     v-model="localMappings[field].field"
-                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
-                    :class="{'bg-yellow-50 border-yellow-300': !isFieldMapped(field)}"
+                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                    :class="{'bg-yellow-50 border-yellow-300 dark:bg-yellow-900/20': !isFieldMapped(field)}"
                 >
-                  <option value="">-- Select Field --</option>
+                  <option value="">-- {{ t('fieldMapper.selectField') }} --</option>
                   <option
-                      v-for="(option, optIndex) in targetFieldOptions"
+                      v-for="(option, optIndex) in translatedTargetFieldOptions"
                       :key="optIndex"
                       :value="option.value"
                   >
                     {{ option.label }}
                   </option>
-                  <option value="null">-- Do Not Import --</option>
+                  <option value="null">-- {{ t('fieldMapper.doNotImport') }} --</option>
                 </select>
               </div>
             </td>
@@ -138,10 +137,10 @@
               <div class="relative">
                 <select
                     v-model="localMappings[field].format"
-                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
                 >
                   <option
-                      v-for="(option, optIndex) in formatOptions[getFieldType(field)]"
+                      v-for="(option, optIndex) in translatedFormatOptions[getFieldType(field)]"
                       :key="optIndex"
                       :value="option.value"
                   >
@@ -154,10 +153,10 @@
                 <span
                     class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
                     :class="isFieldMapped(field)
-                    ? 'bg-green-100 text-green-800'
-                    : 'bg-yellow-100 text-yellow-800'"
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'"
                 >
-                  {{ isFieldMapped(field) ? 'Mapped' : 'Needs Mapping' }}
+                  {{ isFieldMapped(field) ? t('fieldMapper.mapped') : t('fieldMapper.needsMapping') }}
                 </span>
             </td>
           </tr>
@@ -177,8 +176,8 @@
             />
           </div>
           <div class="ml-3 text-sm">
-            <label for="save-template" class="font-medium text-gray-700">Save this mapping as a template</label>
-            <p class="text-gray-500">You can reuse this mapping for future imports from the same source</p>
+            <label for="save-template" class="font-medium text-gray-700 dark:text-gray-300">{{ t('fieldMapper.saveAsTemplate') }}</label>
+            <p class="text-gray-500 dark:text-gray-400">{{ t('fieldMapper.saveTemplateDescription') }}</p>
           </div>
         </div>
 
@@ -186,14 +185,14 @@
           <input
               v-model="templateName"
               type="text"
-              class="flex-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
-              placeholder="Template name"
+              class="flex-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md"
+              :placeholder="t('fieldMapper.templateName')"
           />
           <button
               class="ml-3 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
               :disabled="!templateName"
           >
-            Save Template
+            {{ t('fieldMapper.saveTemplate') }}
           </button>
         </div>
       </div>
@@ -201,10 +200,10 @@
       <!-- Action Buttons -->
       <div class="flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
             @click="$emit('back')"
         >
-          Back to Upload
+          {{ t('fieldMapper.backToUpload') }}
         </button>
         <div>
           <button
@@ -212,7 +211,7 @@
               :disabled="!allFieldsMapped"
               @click="continueToPreview"
           >
-            Continue to Preview
+            {{ t('fieldMapper.continueToPreview') }}
             <ArrowRight class="ml-2 h-4 w-4" />
           </button>
         </div>
@@ -229,6 +228,8 @@ import {
   ChevronUp,
   ArrowRight
 } from 'lucide-vue-next'
+
+const { t } = useI18n()
 
 const props = defineProps({
   files: {
@@ -272,47 +273,52 @@ const allFieldsMapped = computed(() => {
   return sourceFields.value.every(field => isFieldMapped(field))
 })
 
-// Target field options
-const targetFieldOptions = [
-  { label: 'Transaction ID', value: 'transaction_id' },
-  { label: 'Transaction Date', value: 'transaction_date' },
-  { label: 'Amount', value: 'amount' },
-  { label: 'Currency Code', value: 'currency_code' },
-  { label: 'Customer Email', value: 'customer_email' },
-  { label: 'Customer Name', value: 'customer_name' },
-  { label: 'Transaction Status', value: 'transaction_status' },
-  { label: 'Payment Method', value: 'payment_method' },
-  { label: 'Reference Number', value: 'reference_number' },
-  { label: 'Order Number', value: 'order_number' },
-  { label: 'Country', value: 'country' },
-  { label: 'Notes', value: 'notes' }
-]
+// Target field options for OMF (Japanese accounting style)
+const translatedTargetFieldOptions = computed(() => [
+  { label: '日付 (Date)', value: 'date' },
+  { label: '区別 (Type: 支出/入金)', value: 'type' },
+  { label: '金額 (Amount)', value: 'amount' },
+  { label: '勘定科目 (Account Category)', value: 'accountCategoryName' },
+  { label: '補助科目 (Sub Account)', value: 'subAccountCategoryName' },
+  { label: '税区分 (Tax Category)', value: 'taxCategoryName' },
+  { label: '税率 (Tax Rate)', value: 'taxRate' },
+  { label: '仕入れ先 (Supplier)', value: 'supplierName' },
+  { label: '顧客 (Customer)', value: 'customerName' },
+  { label: '区分 (Transaction Category)', value: 'transactionCategoryName' },
+  { label: '法人情報 (Company Info)', value: 'companyInfo' },
+  { label: 'インボイス番号 (Invoice Number)', value: 'invoiceNumber' },
+  { label: '領収書番号 (Receipt Number)', value: 'receiptNumber' },
+  { label: '商品名 (Product Name)', value: 'productName' },
+  { label: '商品価格 (Product Price)', value: 'productPrice' },
+  { label: 'JANコード (JAN Code)', value: 'janCode' },
+  { label: '参照番号 (Reference Number)', value: 'referenceNumber' },
+  { label: '備考 (Notes)', value: 'notes' }
+])
 
-// Format options by field type
-const formatOptions = {
+// Format options by field type (OMF style)
+const translatedFormatOptions = computed(() => ({
   string: [
-    { label: 'Text', value: 'text' },
-    { label: 'Email', value: 'email' },
-    { label: 'Phone Number', value: 'phone' },
-    { label: 'Address', value: 'address' }
+    { label: 'テキスト (Text)', value: 'text' },
+    { label: 'メール (Email)', value: 'email' },
+    { label: '電話番号 (Phone)', value: 'phone' }
   ],
   number: [
-    { label: 'Number', value: 'number' },
-    { label: 'Currency (USD)', value: 'currency_usd' },
-    { label: 'Percentage', value: 'percentage' },
-    { label: 'Decimal', value: 'decimal' }
+    { label: '数値 (Number)', value: 'number' },
+    { label: '金額 (円)', value: 'currency_jpy' },
+    { label: 'パーセント (%)', value: 'percentage' },
+    { label: '小数 (Decimal)', value: 'decimal' }
   ],
   date: [
-    { label: 'Date (YYYY-MM-DD)', value: 'date_iso' },
-    { label: 'Date (MM/DD/YYYY)', value: 'date_us' },
-    { label: 'Date (DD/MM/YYYY)', value: 'date_eu' },
-    { label: 'Date/Time', value: 'datetime' }
+    { label: 'ISO形式 (YYYY-MM-DD)', value: 'date_iso' },
+    { label: '日本形式 (YYYY/MM/DD)', value: 'date_jp' },
+    { label: '日本形式 (YYYY年MM月DD日)', value: 'date_jp_kanji' },
+    { label: '日時 (Datetime)', value: 'datetime' }
   ],
-  status: [
-    { label: 'Text', value: 'text' },
-    { label: 'Status Code', value: 'status_code' }
+  type: [
+    { label: 'テキスト (Text)', value: 'text' },
+    { label: '区別コード (支出/入金)', value: 'type_code' }
   ]
-}
+}))
 
 // Initialize component
 onMounted(() => {
@@ -333,7 +339,7 @@ watch(currentFile, () => {
   initializeMappings()
 })
 
-// Generate sample data for the selected file
+// Generate sample data for the selected file (OMF style)
 const generateSampleData = () => {
   // In a real app, this would load data from the file
   // For this example, we'll generate some mock data
@@ -342,45 +348,55 @@ const generateSampleData = () => {
 
   if (!file) return
 
-  // Determine fields based on the file type
+  // Determine fields based on the file type (OMF Japanese accounting)
   let fields = []
 
-  if (file.name.toLowerCase().includes('credit') || file.name.toLowerCase().includes('card')) {
-    fields = ['transaction_id', 'date', 'amount', 'currency_code', 'customer_email', 'status_code']
-  } else if (file.name.toLowerCase().includes('payment') || file.name.toLowerCase().includes('gateway')) {
-    fields = ['reference', 'transaction_date', 'payment_amount', 'currency', 'customer_id', 'payment_status']
-  } else { // overseas
-    fields = ['order_id', 'order_date', 'total_amount', 'currency', 'customer_email', 'order_status', 'country']
+  if (file.name.toLowerCase().includes('経費') || file.name.toLowerCase().includes('expense')) {
+    fields = ['日付', '金額', '勘定科目', '税区分', '仕入れ先', '備考']
+  } else if (file.name.toLowerCase().includes('売上') || file.name.toLowerCase().includes('sales')) {
+    fields = ['日付', '金額', '勘定科目', '顧客', '税区分', 'インボイス番号']
+  } else if (file.name.toLowerCase().includes('仕入') || file.name.toLowerCase().includes('purchase')) {
+    fields = ['日付', '金額', '勘定科目', '仕入れ先', '商品名', '税区分']
+  } else {
+    // Default fields
+    fields = ['日付', '区別', '金額', '勘定科目', '税区分', '仕入れ先', '備考']
   }
 
   // Generate sample data
   const data = []
+  const accountCategories = ['消耗品費', '通信費', '交通費', '接待交際費', '広告宣伝費']
+  const taxCategories = ['課税仕入', '課税仕入(軽減)', '非課税']
+  const suppliers = ['株式会社ABC', '○○商店', 'XYZ株式会社']
+  const customers = ['田中太郎', '鈴木花子', '山田商事']
+
   for (let i = 0; i < 10; i++) {
     const row = {}
 
     fields.forEach(field => {
-      if (field.includes('id') || field.includes('reference')) {
-        row[field] = `TRX-${10000 + i}`
-      } else if (field.includes('date')) {
+      if (field === '日付' || field.includes('date')) {
         const date = new Date()
         date.setDate(date.getDate() - Math.floor(Math.random() * 30))
         row[field] = date.toISOString().split('T')[0]
-      } else if (field.includes('amount') || field.includes('total')) {
-        row[field] = (Math.random() * 1000 + 50).toFixed(2)
-      } else if (field.includes('currency')) {
-        row[field] = 'USD'
-      } else if (field.includes('email')) {
-        row[field] = `customer${i}@example.com`
-      } else if (field.includes('status')) {
-        const statuses = ['COMPLETED', 'PENDING', 'PROCESSING', 'FAILED']
-        row[field] = statuses[Math.floor(Math.random() * statuses.length)]
-      } else if (field.includes('country')) {
-        const countries = ['USA', 'Canada', 'UK', 'Australia', 'Japan']
-        row[field] = countries[Math.floor(Math.random() * countries.length)]
-      } else if (field.includes('customer')) {
-        row[field] = `Customer ${i}`
+      } else if (field === '金額' || field.includes('amount') || field.includes('price')) {
+        row[field] = Math.floor(Math.random() * 50000 + 1000)
+      } else if (field === '区別' || field.includes('type')) {
+        row[field] = Math.random() > 0.5 ? '支出' : '入金'
+      } else if (field === '勘定科目') {
+        row[field] = accountCategories[Math.floor(Math.random() * accountCategories.length)]
+      } else if (field === '税区分') {
+        row[field] = taxCategories[Math.floor(Math.random() * taxCategories.length)]
+      } else if (field === '仕入れ先') {
+        row[field] = suppliers[Math.floor(Math.random() * suppliers.length)]
+      } else if (field === '顧客') {
+        row[field] = customers[Math.floor(Math.random() * customers.length)]
+      } else if (field === 'インボイス番号') {
+        row[field] = `T${1000000000000 + i}`
+      } else if (field === '商品名') {
+        row[field] = `商品${i + 1}`
+      } else if (field === '備考') {
+        row[field] = `サンプル備考${i + 1}`
       } else {
-        row[field] = `Value ${i}`
+        row[field] = `値${i}`
       }
     })
 
@@ -390,37 +406,66 @@ const generateSampleData = () => {
   sampleData.value = data
 }
 
-// Initialize mappings for fields
+// Initialize mappings for fields (OMF style)
 const initializeMappings = () => {
   sourceFields.value.forEach(field => {
     if (!localMappings.value[field]) {
-      // Auto-map based on field name
+      // Auto-map based on field name (Japanese and English)
       let targetField = null
       let format = 'text'
 
-      if (field.includes('id') || field.includes('reference')) {
-        targetField = 'transaction_id'
-        format = 'text'
-      } else if (field.includes('date')) {
-        targetField = 'transaction_date'
+      const lowerField = field.toLowerCase()
+
+      if (field === '日付' || lowerField.includes('date')) {
+        targetField = 'date'
         format = 'date_iso'
-      } else if (field.includes('amount') || field.includes('total')) {
+      } else if (field === '区別' || lowerField.includes('type')) {
+        targetField = 'type'
+        format = 'type_code'
+      } else if (field === '金額' || lowerField.includes('amount') || lowerField.includes('total')) {
         targetField = 'amount'
-        format = 'currency_usd'
-      } else if (field.includes('currency')) {
-        targetField = 'currency_code'
+        format = 'currency_jpy'
+      } else if (field === '勘定科目' || lowerField.includes('account')) {
+        targetField = 'accountCategoryName'
         format = 'text'
-      } else if (field.includes('email')) {
-        targetField = 'customer_email'
-        format = 'email'
-      } else if (field.includes('status')) {
-        targetField = 'transaction_status'
+      } else if (field === '補助科目' || lowerField.includes('sub')) {
+        targetField = 'subAccountCategoryName'
         format = 'text'
-      } else if (field.includes('country')) {
-        targetField = 'country'
+      } else if (field === '税区分' || lowerField.includes('tax')) {
+        targetField = 'taxCategoryName'
         format = 'text'
-      } else if (field.includes('customer')) {
-        targetField = 'customer_name'
+      } else if (field === '税率' || lowerField.includes('rate')) {
+        targetField = 'taxRate'
+        format = 'percentage'
+      } else if (field === '仕入れ先' || lowerField.includes('supplier') || lowerField.includes('vendor')) {
+        targetField = 'supplierName'
+        format = 'text'
+      } else if (field === '顧客' || lowerField.includes('customer')) {
+        targetField = 'customerName'
+        format = 'text'
+      } else if (field === '法人情報' || lowerField.includes('company')) {
+        targetField = 'companyInfo'
+        format = 'text'
+      } else if (field === 'インボイス番号' || lowerField.includes('invoice')) {
+        targetField = 'invoiceNumber'
+        format = 'text'
+      } else if (field === '領収書番号' || lowerField.includes('receipt')) {
+        targetField = 'receiptNumber'
+        format = 'text'
+      } else if (field === '商品名' || lowerField.includes('product')) {
+        targetField = 'productName'
+        format = 'text'
+      } else if (field === '商品価格' || lowerField.includes('price')) {
+        targetField = 'productPrice'
+        format = 'currency_jpy'
+      } else if (field === 'JANコード' || lowerField.includes('jan') || lowerField.includes('barcode')) {
+        targetField = 'janCode'
+        format = 'text'
+      } else if (field === '参照番号' || lowerField.includes('reference')) {
+        targetField = 'referenceNumber'
+        format = 'text'
+      } else if (field === '備考' || lowerField.includes('note') || lowerField.includes('memo')) {
+        targetField = 'notes'
         format = 'text'
       } else {
         targetField = '' // Needs manual mapping
@@ -445,16 +490,19 @@ const isFieldMapped = (field) => {
   return localMappings.value[field] && localMappings.value[field].field && localMappings.value[field].field !== ''
 }
 
-// Get the field type based on the field name or sample value
+// Get the field type based on the field name or sample value (OMF style)
 const getFieldType = (field) => {
   const sampleValue = getSampleValue(field)
+  const lowerField = field.toLowerCase()
 
-  if (field.includes('date')) {
+  if (field === '日付' || lowerField.includes('date')) {
     return 'date'
-  } else if (field.includes('amount') || field.includes('price') || field.includes('total')) {
+  } else if (field === '区別' || lowerField.includes('type')) {
+    return 'type'
+  } else if (field === '金額' || field === '税率' || field === '商品価格' ||
+             lowerField.includes('amount') || lowerField.includes('price') ||
+             lowerField.includes('total') || lowerField.includes('rate')) {
     return 'number'
-  } else if (field.includes('status')) {
-    return 'status'
   } else if (!isNaN(parseFloat(sampleValue)) && isFinite(sampleValue)) {
     return 'number'
   } else {

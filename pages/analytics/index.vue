@@ -2,21 +2,21 @@
   <div>
     <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
       <div>
-        <h1 class="text-xl font-semibold text-gray-800">Analytics Dashboard</h1>
-        <p class="text-gray-600">Monitor and analyze your transaction data and business metrics</p>
+        <h1 class="text-xl font-semibold text-gray-800 dark:text-gray-100">{{ t('nav.analytics') }}</h1>
+        <p class="text-gray-600 dark:text-gray-400">{{ t('dashboard.overview') }}</p>
       </div>
 
       <div class="mt-4 md:mt-0 flex space-x-3">
         <div class="relative">
           <select
               v-model="dateRange"
-              class="block w-full pl-3 pr-10 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+              class="block w-full pl-3 pr-10 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
           >
-            <option value="last7days">Last 7 Days</option>
-            <option value="last30days">Last 30 Days</option>
-            <option value="last90days">Last 90 Days</option>
-            <option value="lastYear">Last Year</option>
-            <option value="custom">Custom Range</option>
+            <option value="last7days">{{ t('analytics.last7Days') }}</option>
+            <option value="last30days">{{ t('analytics.last30Days') }}</option>
+            <option value="last90days">{{ t('analytics.last90Days') }}</option>
+            <option value="lastYear">{{ t('analytics.lastYear') }}</option>
+            <option value="custom">{{ t('analytics.customRange') }}</option>
           </select>
         </div>
 
@@ -24,42 +24,95 @@
           <input
               v-model="customDateFrom"
               type="date"
-              class="block w-32 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+              class="block w-32 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
           />
           <input
               v-model="customDateTo"
               type="date"
-              class="block w-32 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+              class="block w-32 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
           />
         </div>
 
-        <button class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
-          <Download class="mr-2 h-4 w-4 text-gray-500" />
-          Export
+        <button
+            @click="showCustomize = true"
+            class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
+        >
+          <Settings class="h-4 w-4" />
+        </button>
+
+        <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+          <Download class="mr-2 h-4 w-4 text-gray-500 dark:text-gray-400" />
+          {{ t('common.export') }}
         </button>
       </div>
     </header>
 
-    <!-- Key Metrics -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+    <!-- Customization Panel -->
+    <div v-if="showCustomize" class="fixed inset-0 z-50 overflow-y-auto">
+      <div class="flex items-center justify-center min-h-screen px-4">
+        <div class="fixed inset-0 bg-black/50" @click="showCustomize = false"></div>
+        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-lg w-full p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">{{ t('analytics.customizeDashboard') }}</h3>
+            <button @click="showCustomize = false" class="text-gray-400 hover:text-gray-600">
+              <X class="h-5 w-5" />
+            </button>
+          </div>
+
+          <div class="space-y-4">
+            <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('analytics.selectWidgets') }}</p>
+
+            <div class="space-y-2">
+              <label v-for="widget in availableWidgets" :key="widget.id" class="flex items-center space-x-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700">
+                <input
+                    type="checkbox"
+                    v-model="widgetSettings[widget.id]"
+                    class="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                />
+                <component :is="widget.icon" class="h-5 w-5 text-gray-400" />
+                <span class="text-sm text-gray-700 dark:text-gray-300">{{ widget.name }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="mt-6 flex justify-end space-x-3">
+            <button
+                @click="resetWidgets"
+                class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900"
+            >
+              {{ t('analytics.resetDefault') }}
+            </button>
+            <button
+                @click="saveWidgetSettings"
+                class="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-md hover:bg-purple-700"
+            >
+              {{ t('analytics.saveChanges') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key Metrics (OMF style) -->
+    <div v-if="widgetSettings.metrics" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
       <MetricCard
-          title="Total Transactions"
-          :value="formatCurrency(metrics.totalTransactions.value)"
-          :change="metrics.totalTransactions.change"
-          color="purple"
+          title="支出合計"
+          :value="formatCurrency(metrics.expenseTotal.value)"
+          :change="metrics.expenseTotal.change"
+          color="red"
           icon="CreditCard"
       />
 
       <MetricCard
-          title="Average Order Value"
-          :value="formatCurrency(metrics.averageOrderValue.value)"
-          :change="metrics.averageOrderValue.change"
-          color="blue"
+          title="入金合計"
+          :value="formatCurrency(metrics.incomeTotal.value)"
+          :change="metrics.incomeTotal.change"
+          color="green"
           icon="DollarSign"
       />
 
       <MetricCard
-          title="Pending Receipts"
+          title="未マッチ領収書"
           :value="metrics.pendingReceipts.value.toString()"
           :change="metrics.pendingReceipts.change"
           color="amber"
@@ -67,30 +120,30 @@
       />
 
       <MetricCard
-          title="Active Shipments"
-          :value="metrics.activeShipments.value.toString()"
-          :change="metrics.activeShipments.change"
-          color="green"
-          icon="Package"
+          title="取引件数"
+          :value="metrics.transactionCount.value.toString()"
+          :change="metrics.transactionCount.change"
+          color="purple"
+          icon="BarChart3"
       />
     </div>
 
     <!-- Charts Row -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       <!-- Transactions Over Time Chart -->
-      <div class="bg-white rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-lg font-medium text-gray-800">Transactions Over Time</h2>
+      <div v-if="widgetSettings.transactionChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('analytics.transactionsOverTime') }}</h2>
         </div>
         <div class="p-6">
           <TransactionsChart :chart-data="transactionsChartData" />
         </div>
       </div>
 
-      <!-- Transaction Sources Chart -->
-      <div class="bg-white rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-lg font-medium text-gray-800">Transaction Sources</h2>
+      <!-- Transaction Type Chart (OMF style: 支出/入金) -->
+      <div v-if="widgetSettings.sourceChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">取引区別分布</h2>
         </div>
         <div class="p-6">
           <TransactionSourcesChart :chart-data="sourcesChartData" />
@@ -98,22 +151,22 @@
       </div>
     </div>
 
-    <!-- Transaction Status and Geographic Distribution -->
+    <!-- Transaction Status and Category Distribution -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       <!-- Transaction Status Chart -->
-      <div class="bg-white rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-lg font-medium text-gray-800">Transaction Status</h2>
+      <div v-if="widgetSettings.statusChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">取引ステータス</h2>
         </div>
         <div class="p-6">
           <StatusChart :chart-data="statusChartData" />
         </div>
       </div>
 
-      <!-- Geographic Distribution -->
-      <div class="bg-white rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-lg font-medium text-gray-800">Geographic Distribution</h2>
+      <!-- Category Distribution (OMF style: 勘定科目別) -->
+      <div v-if="widgetSettings.geoChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">勘定科目別分布</h2>
         </div>
         <div class="p-6">
           <GeographicChart :chart-data="geoChartData" />
@@ -122,28 +175,28 @@
     </div>
 
     <!-- Recent Trends Table -->
-    <div class="bg-white rounded-lg shadow-sm">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-lg font-medium text-gray-800">Recent Trends</h2>
+    <div v-if="widgetSettings.trends" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+      <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('analytics.recentTrends') }}</h2>
       </div>
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700">
           <tr>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Metric</th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Value</th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trend</th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Change</th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('analytics.metric') }}</th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('analytics.value') }}</th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('analytics.trend') }}</th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('analytics.change') }}</th>
           </tr>
           </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
           <tr v-for="(trend, index) in trends" :key="index">
             <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm font-medium text-gray-900">{{ trend.name }}</div>
-              <div class="text-xs text-gray-500">{{ trend.period }}</div>
+              <div class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ trend.name }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ trend.period }}</div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm text-gray-900">{{ formatTrendValue(trend) }}</div>
+              <div class="text-sm text-gray-900 dark:text-gray-100">{{ formatTrendValue(trend) }}</div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
               <TrendSparkline
@@ -169,156 +222,234 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { Download } from 'lucide-vue-next'
+import { ref, reactive, watch, onMounted } from 'vue'
+import { Download, Settings, X, CreditCard, TrendingUp, PieChart, Globe, BarChart3, FileText } from 'lucide-vue-next'
+
+const { t } = useI18n()
 
 // State
 const isLoading = ref(false)
 const dateRange = ref('last30days')
 const customDateFrom = ref('')
 const customDateTo = ref('')
+const showCustomize = ref(false)
 
-// Key metrics data
+// Widget configuration
+const defaultWidgetSettings = {
+  metrics: true,
+  transactionChart: true,
+  sourceChart: true,
+  statusChart: true,
+  geoChart: true,
+  trends: true
+}
+
+const widgetSettings = reactive({ ...defaultWidgetSettings })
+
+const availableWidgets = [
+  { id: 'metrics', name: '主要指標カード', icon: CreditCard },
+  { id: 'transactionChart', name: '取引推移グラフ', icon: TrendingUp },
+  { id: 'sourceChart', name: '取引区別分布', icon: PieChart },
+  { id: 'statusChart', name: '取引ステータス', icon: BarChart3 },
+  { id: 'geoChart', name: '勘定科目別分布', icon: Globe },
+  { id: 'trends', name: 'トレンド一覧', icon: FileText }
+]
+
+const loadWidgetSettings = () => {
+  const saved = localStorage.getItem('dashboardWidgets')
+  if (saved) {
+    const parsed = JSON.parse(saved)
+    Object.assign(widgetSettings, parsed)
+  }
+}
+
+const saveWidgetSettings = () => {
+  localStorage.setItem('dashboardWidgets', JSON.stringify(widgetSettings))
+  showCustomize.value = false
+}
+
+const resetWidgets = () => {
+  Object.assign(widgetSettings, defaultWidgetSettings)
+}
+
+// Key metrics data (OMF style)
 const metrics = ref({
-  totalTransactions: {
-    value: 458950.75,
-    change: 8.2
+  expenseTotal: {
+    value: 0,
+    change: 0
   },
-  averageOrderValue: {
-    value: 89.25,
-    change: 3.4
+  incomeTotal: {
+    value: 0,
+    change: 0
   },
   pendingReceipts: {
-    value: 142,
-    change: -5.2
+    value: 0,
+    change: 0
   },
-  activeShipments: {
-    value: 567,
-    change: 12.3
+  transactionCount: {
+    value: 0,
+    change: 0
   }
 })
 
-// Chart data for transactions over time
+// Chart data
 const transactionsChartData = ref({
-  labels: ['Apr 1', 'Apr 8', 'Apr 15', 'Apr 22', 'Apr 29', 'May 6', 'May 13'],
-  datasets: [
-    {
-      label: 'Transactions',
-      data: [12500, 15000, 14200, 16800, 19500, 16300, 18400],
-      borderColor: '#7c3aed', // Purple
-      backgroundColor: 'rgba(124, 58, 237, 0.1)',
-      tension: 0.4,
-      fill: true
-    }
-  ]
+  labels: [] as string[],
+  datasets: [{
+    label: 'Transactions',
+    data: [] as number[],
+    borderColor: '#7c3aed',
+    backgroundColor: 'rgba(124, 58, 237, 0.1)',
+    tension: 0.4,
+    fill: true
+  }]
 })
 
-// Chart data for transaction sources
 const sourcesChartData = ref({
-  labels: ['Credit Card', 'Payment Gateway', 'Overseas', 'Other'],
-  datasets: [
-    {
-      data: [45, 30, 20, 5],
-      backgroundColor: [
-        '#7c3aed', // Purple
-        '#3b82f6', // Blue
-        '#10b981', // Green
-        '#f59e0b'  // Amber
-      ],
-      borderWidth: 0
-    }
-  ]
+  labels: [] as string[],
+  datasets: [{
+    data: [] as number[],
+    backgroundColor: ['#7c3aed', '#3b82f6', '#10b981', '#f59e0b', '#9ca3af'],
+    borderWidth: 0
+  }]
 })
 
-// Chart data for transaction status
 const statusChartData = ref({
-  labels: ['Completed', 'Pending', 'Processing', 'Failed'],
-  datasets: [
-    {
-      data: [65, 15, 12, 8],
-      backgroundColor: [
-        '#10b981', // Green
-        '#f59e0b', // Amber
-        '#3b82f6', // Blue
-        '#ef4444'  // Red
-      ],
-      borderWidth: 0
-    }
-  ]
+  labels: [] as string[],
+  datasets: [{
+    data: [] as number[],
+    backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6'],
+    borderWidth: 0
+  }]
 })
 
-// Chart data for geographic distribution
+// Account category distribution (OMF style)
 const geoChartData = ref({
-  labels: ['United States', 'Europe', 'Asia Pacific', 'Canada', 'Other'],
-  datasets: [
-    {
-      data: [38, 24, 18, 12, 8],
-      backgroundColor: [
-        '#7c3aed', // Purple
-        '#3b82f6', // Blue
-        '#10b981', // Green
-        '#f59e0b', // Amber
-        '#9ca3af'  // Gray
-      ],
-      borderWidth: 0
-    }
-  ]
+  labels: ['経費', '仕入', '売上', '給与', 'その他'],
+  datasets: [{
+    data: [40, 25, 20, 10, 5],
+    backgroundColor: ['#7c3aed', '#3b82f6', '#10b981', '#f59e0b', '#9ca3af'],
+    borderWidth: 0
+  }]
 })
 
 // Trends data
-const trends = ref([
-  {
-    name: 'Weekly Transactions',
-    period: 'Last 7 days',
-    value: 2845,
-    data: [65, 72, 68, 78, 85, 82, 91],
-    change: 5.8
-  },
-  {
-    name: 'Average Processing Time',
-    period: 'Last 7 days',
-    value: 34.5,
-    unit: 'minutes',
-    data: [42, 38, 35, 36, 35, 32, 34.5],
-    change: -17.9
-  },
-  {
-    name: 'Failed Transactions',
-    period: 'Last 30 days',
-    value: 2.8,
-    unit: 'percent',
-    data: [3.4, 3.2, 3.1, 2.9, 2.8, 2.8, 2.8],
-    change: -17.6
-  },
-  {
-    name: 'International Transactions',
-    period: 'Last 30 days',
-    value: 18.5,
-    unit: 'percent',
-    data: [15.2, 16.1, 16.8, 17.2, 17.5, 18.1, 18.5],
-    change: 21.7
-  },
-  {
-    name: 'Receipt Match Rate',
-    period: 'Last 30 days',
-    value: 92.4,
-    unit: 'percent',
-    data: [88.7, 89.5, 90.2, 91.0, 91.5, 92.0, 92.4],
-    change: 4.2
-  }
-])
+const trends = ref<any[]>([])
 
-// Load data
-onMounted(async () => {
-  // In a real app, this would load data based on the selected date range
-  // loadAnalyticsData(dateRange.value)
+// Load analytics data from API (OMF style)
+const loadAnalyticsData = async () => {
+  isLoading.value = true
+  try {
+    // Fetch transaction stats
+    const [analyticsData, statsData, receiptsData] = await Promise.all([
+      $fetch<any>(`/api/analytics?range=${dateRange.value}`).catch(() => null),
+      $fetch<any>('/api/transactions/stats').catch(() => null),
+      $fetch<any>('/api/receipts?stats=true').catch(() => null)
+    ])
+
+    // Use transaction stats for metrics (OMF style)
+    if (statsData) {
+      metrics.value = {
+        expenseTotal: {
+          value: statsData.expense?.amount || 0,
+          change: 0
+        },
+        incomeTotal: {
+          value: statsData.income?.amount || 0,
+          change: 0
+        },
+        pendingReceipts: {
+          value: receiptsData?.stats?.unmatched || 0,
+          change: 0
+        },
+        transactionCount: {
+          value: statsData.total?.count || 0,
+          change: 0
+        }
+      }
+    }
+
+    // Handle analytics data if available
+    if (analyticsData) {
+      if (analyticsData.charts) {
+        if (analyticsData.charts.transactionsOverTime) {
+          transactionsChartData.value = analyticsData.charts.transactionsOverTime
+        }
+        if (analyticsData.charts.typeDistribution) {
+          // Use type distribution (支出/入金) instead of source distribution
+          sourcesChartData.value = {
+            labels: ['支出', '入金'],
+            datasets: [{
+              data: [
+                statsData?.expense?.count || 0,
+                statsData?.income?.count || 0
+              ],
+              backgroundColor: ['#ef4444', '#10b981'],
+              borderWidth: 0
+            }]
+          }
+        }
+        if (analyticsData.charts.statusDistribution) {
+          statusChartData.value = analyticsData.charts.statusDistribution
+        }
+      }
+
+      if (analyticsData.trends) {
+        trends.value = analyticsData.trends
+      }
+    } else {
+      // Build charts from stats data if analytics endpoint not available
+      sourcesChartData.value = {
+        labels: ['支出', '入金'],
+        datasets: [{
+          data: [
+            statsData?.expense?.count || 0,
+            statsData?.income?.count || 0
+          ],
+          backgroundColor: ['#ef4444', '#10b981'],
+          borderWidth: 0
+        }]
+      }
+
+      statusChartData.value = {
+        labels: ['完了', '保留中', '処理中', '失敗'],
+        datasets: [{
+          data: [
+            statsData?.completed?.count || 0,
+            statsData?.pending?.count || 0,
+            statsData?.processing?.count || 0,
+            statsData?.failed?.count || 0
+          ],
+          backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#ef4444'],
+          borderWidth: 0
+        }]
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load analytics:', error)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+// Watch for date range changes
+watch([dateRange, customDateFrom, customDateTo], () => {
+  if (dateRange.value !== 'custom' || (customDateFrom.value && customDateTo.value)) {
+    loadAnalyticsData()
+  }
 })
 
-// Format currency
+// Load data on mount
+onMounted(() => {
+  loadWidgetSettings()
+  loadAnalyticsData()
+})
+
+// Format currency (JPY default)
 const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('ja-JP', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'JPY',
     maximumFractionDigits: 0
   }).format(value)
 }

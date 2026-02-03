@@ -11,17 +11,25 @@
     <!-- Dropdown Menu -->
     <div v-if="isOpen" class="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg z-50 border dark:border-gray-700">
       <div class="py-1">
-        <button @click="forceSelectLanguage('en')" class="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
-          <span class="mr-2">🇺🇸</span>
-          <span>English</span>
-        </button>
-        <button @click="forceSelectLanguage('ko')" class="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
-          <span class="mr-2">🇰🇷</span>
-          <span>한국어</span>
-        </button>
-        <button @click="forceSelectLanguage('ja')" class="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+        <button
+          @click="selectLanguage('ja')"
+          :class="[
+            'flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700',
+            locale === 'ja' ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
+          ]"
+        >
           <span class="mr-2">🇯🇵</span>
           <span>日本語</span>
+        </button>
+        <button
+          @click="selectLanguage('ko')"
+          :class="[
+            'flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700',
+            locale === 'ko' ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
+          ]"
+        >
+          <span class="mr-2">🇰🇷</span>
+          <span>한국어</span>
         </button>
       </div>
     </div>
@@ -30,9 +38,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useLanguageStore, type Language } from '../../stores/language'
 
-const languageStore = useLanguageStore()
+const { locale, setLocale } = useI18n()
 const isOpen = ref(false)
 
 onMounted(() => {
@@ -54,29 +61,24 @@ const closeDropdownOnOutsideClick = () => {
   }
 }
 
-const forceSelectLanguage = (lang: Language) => {
-  if (process.client) {
-    localStorage.setItem('forcedLanguage', lang)
-  }
-  languageStore.setLanguage(lang)
+const selectLanguage = async (lang: string) => {
+  await setLocale(lang)
   isOpen.value = false
 }
 
 const languageEmoji = computed(() => {
-  switch (languageStore.current) {
-    case 'en': return '🇺🇸'
+  switch (locale.value) {
     case 'ko': return '🇰🇷'
     case 'ja': return '🇯🇵'
-    default: return '🇺🇸'
+    default: return '🇯🇵'
   }
 })
 
 const languageName = computed(() => {
-  switch (languageStore.current) {
-    case 'en': return 'English'
+  switch (locale.value) {
     case 'ko': return '한국어'
     case 'ja': return '日本語'
-    default: return 'English'
+    default: return '日本語'
   }
 })
 </script>

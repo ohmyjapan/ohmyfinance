@@ -1,11 +1,20 @@
 <template>
   <div class="min-h-screen bg-gray-100 flex flex-col justify-center sm:py-12">
     <div class="p-10 xs:p-0 mx-auto md:w-full md:max-w-md">
-      <div class="bg-white shadow w-full rounded-lg divide-y divide-gray-200">
+      <!-- 2FA Verification -->
+      <TwoFactorVerify
+        v-if="userStore.requires2FA && userStore.tempToken"
+        :temp-token="userStore.tempToken"
+        @verified="handle2FAVerified"
+        @cancel="handle2FACancel"
+      />
+
+      <!-- Regular Login Form -->
+      <div v-else class="bg-white shadow w-full rounded-lg divide-y divide-gray-200">
         <div class="px-5 py-7">
           <div class="text-center mb-8">
-            <h1 class="font-bold text-2xl text-purple-600 mb-1">TransactHub</h1>
-            <p class="text-gray-500 text-sm">Sign in to your account</p>
+            <h1 class="font-bold text-2xl text-red-600 mb-1">{{ t('app.name') }}</h1>
+            <p class="text-gray-500 text-sm">{{ t('auth.signInToAccount') }}</p>
           </div>
 
           <!-- Error alert -->
@@ -25,26 +34,26 @@
           <form @submit.prevent="handleLogin">
             <div class="mb-4">
               <label class="block text-gray-700 text-sm font-bold mb-2" for="email">
-                Email Address
+                {{ t('auth.email') }}
               </label>
               <input
                   v-model="email"
-                  class="border border-gray-300 rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  class="border border-gray-300 rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                   id="email"
                   type="email"
-                  placeholder="you@example.com"
+                  :placeholder="t('loginPage.emailPlaceholder')"
                   required
               />
             </div>
 
             <div class="mb-6">
               <label class="block text-gray-700 text-sm font-bold mb-2" for="password">
-                Password
+                {{ t('auth.password') }}
               </label>
               <div class="relative">
                 <input
                     v-model="password"
-                    class="border border-gray-300 rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    class="border border-gray-300 rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                     id="password"
                     :type="showPassword ? 'text' : 'password'"
                     placeholder="••••••••"
@@ -66,53 +75,56 @@
                     v-model="rememberMe"
                     id="remember-me"
                     type="checkbox"
-                    class="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                    class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
                 />
                 <label for="remember-me" class="ml-2 block text-sm text-gray-700">
-                  Remember me
+                  {{ t('auth.rememberMe') }}
                 </label>
               </div>
 
               <div class="text-sm">
-                <a href="#" class="font-medium text-purple-600 hover:text-purple-500">
-                  Forgot your password?
+                <a href="#" class="font-medium text-red-600 hover:text-red-500">
+                  {{ t('auth.forgotPassword') }}
                 </a>
               </div>
             </div>
 
             <button
                 type="submit"
-                class="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 rounded-md text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                class="w-full py-2 px-4 bg-red-600 hover:bg-red-700 rounded-md text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                 :disabled="isLoading"
             >
               <div v-if="isLoading" class="flex items-center justify-center">
                 <Loader class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" />
-                Signing in...
+                {{ t('auth.signingIn') }}
               </div>
-              <span v-else>Sign in</span>
+              <span v-else>{{ t('auth.signIn') }}</span>
             </button>
           </form>
         </div>
 
         <div class="p-5 text-center">
           <div class="text-sm text-gray-500">
-            Don't have an account? <a href="#" class="text-purple-600 hover:text-purple-500 font-medium">Contact your administrator</a>
+            {{ t('auth.noAccount') }}
+            <NuxtLink to="/auth/register" class="text-red-600 hover:text-red-500 font-medium">
+              {{ t('auth.createAccount') }}
+            </NuxtLink>
           </div>
         </div>
       </div>
 
-      <div class="py-5">
+      <div v-if="!userStore.requires2FA" class="py-5">
         <div class="grid grid-cols-2 gap-1">
           <div class="text-center sm:text-left whitespace-nowrap">
-            <button class="px-5 py-2 mx-auto flex items-center text-sm text-gray-700 hover:text-purple-600 group">
-              <Shield class="h-4 w-4 text-gray-400 group-hover:text-purple-500 mr-1" />
-              Terms and Conditions
+            <button class="px-5 py-2 mx-auto flex items-center text-sm text-gray-700 hover:text-red-600 group">
+              <Shield class="h-4 w-4 text-gray-400 group-hover:text-red-500 mr-1" />
+              {{ t('auth.termsOfService') }}
             </button>
           </div>
           <div class="text-center sm:text-right whitespace-nowrap">
-            <button class="px-5 py-2 mx-auto flex items-center justify-end text-sm text-gray-700 hover:text-purple-600 group">
-              <HelpCircle class="h-4 w-4 text-gray-400 group-hover:text-purple-500 mr-1" />
-              Help
+            <button class="px-5 py-2 mx-auto flex items-center justify-end text-sm text-gray-700 hover:text-red-600 group">
+              <HelpCircle class="h-4 w-4 text-gray-400 group-hover:text-red-500 mr-1" />
+              {{ t('loginPage.help') }}
             </button>
           </div>
         </div>
@@ -132,6 +144,11 @@ import {
   HelpCircle
 } from 'lucide-vue-next'
 
+const { t } = useI18n()
+const router = useRouter()
+const route = useRoute()
+const userStore = useUserStore()
+
 // State
 const email = ref('')
 const password = ref('')
@@ -145,40 +162,63 @@ definePageMeta({
   layout: 'minimal'
 })
 
+// Redirect if already authenticated
+onMounted(() => {
+  if (userStore.isAuthenticated) {
+    const redirect = route.query.redirect as string || '/'
+    router.push(redirect)
+  }
+})
+
 // Handle login
-const router = useRouter()
 const handleLogin = async () => {
   isLoading.value = true
   error.value = ''
 
   try {
-    // Simulate API call with a delay
-    await new Promise(resolve => setTimeout(resolve, 1000))
-
-    // For demo purposes, accept any email with a valid format and any password
-    // In a real app, this would check credentials against an authentication service
+    // Validate email format
     if (!isValidEmail(email.value)) {
-      throw new Error('Please enter a valid email address')
+      throw new Error(t('loginPage.invalidEmail'))
     }
 
     if (password.value.length < 6) {
-      throw new Error('Password must be at least 6 characters long')
+      throw new Error(t('auth.passwordMinLength'))
     }
 
-    // Successful login
-    console.log('Login successful:', { email: email.value, rememberMe: rememberMe.value })
+    // Use the user store to login
+    const result = await userStore.login(email.value, password.value, rememberMe.value)
 
-    // Set auth token in localStorage
-    localStorage.setItem('auth_token', 'user-token')
+    if (result === '2fa_required') {
+      // 2FA is required, the component will switch to show TwoFactorVerify
+      return
+    }
 
-    // Redirect to the dashboard
-    router.push('/')
-  } catch (err) {
+    if (result === true) {
+      // Redirect to the intended page or dashboard
+      const redirect = route.query.redirect as string || '/'
+      router.push(redirect)
+    } else {
+      throw new Error(userStore.error || t('auth.loginFailed'))
+    }
+  } catch (err: any) {
     // Handle login error
-    error.value = err.message || 'Failed to sign in. Please check your credentials and try again.'
+    error.value = err.message || t('auth.loginFailed')
   } finally {
     isLoading.value = false
   }
+}
+
+// Handle 2FA verification success
+const handle2FAVerified = (data: { user: any; organizations: any[]; tokens: any; deviceId?: string }) => {
+  userStore.complete2FA(data)
+  const redirect = route.query.redirect as string || '/'
+  router.push(redirect)
+}
+
+// Handle 2FA cancel
+const handle2FACancel = () => {
+  userStore.cancel2FA()
+  password.value = ''
 }
 
 // Validate email format

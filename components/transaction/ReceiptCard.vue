@@ -1,7 +1,7 @@
 <template>
   <div class="bg-white rounded-lg shadow overflow-hidden">
     <div class="px-6 py-4 border-b">
-      <h3 class="text-lg font-medium text-gray-800">Receipt</h3>
+      <h3 class="text-lg font-medium text-gray-800">{{ t('receiptCard.title') }}</h3>
     </div>
     <div class="p-6">
       <!-- If there's a receipt attached -->
@@ -26,30 +26,30 @@
         </div>
 
         <div class="border border-gray-200 rounded-lg p-4">
-          <div class="text-sm text-gray-600 mb-2">Receipt Information</div>
+          <div class="text-sm text-gray-600 mb-2">{{ t('receiptCard.receiptInfo') }}</div>
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <p class="text-xs text-gray-500">Date</p>
+              <p class="text-xs text-gray-500">{{ t('common.date') }}</p>
               <p class="text-sm font-medium">{{ formatDate(receipt.date) }}</p>
             </div>
             <div>
-              <p class="text-xs text-gray-500">Amount</p>
+              <p class="text-xs text-gray-500">{{ t('common.amount') }}</p>
               <p class="text-sm font-medium">{{ formatCurrency(receipt.amount) }}</p>
             </div>
             <div>
-              <p class="text-xs text-gray-500">Merchant</p>
+              <p class="text-xs text-gray-500">{{ t('receiptCard.merchant') }}</p>
               <p class="text-sm font-medium">{{ receipt.merchant }}</p>
             </div>
             <div>
-              <p class="text-xs text-gray-500">Status</p>
-              <p class="text-sm font-medium text-green-600">Verified</p>
+              <p class="text-xs text-gray-500">{{ t('common.status') }}</p>
+              <p class="text-sm font-medium text-green-600">{{ t('receiptCard.verified') }}</p>
             </div>
           </div>
         </div>
 
         <div class="flex justify-end">
           <button class="text-sm text-purple-600 hover:text-purple-700">
-            View Full Receipt
+            {{ t('receiptCard.viewFull') }}
           </button>
         </div>
       </div>
@@ -59,18 +59,18 @@
         <div class="flex flex-col items-center justify-center bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-6 mb-4">
           <div class="text-center">
             <FileText size="36" class="mx-auto text-gray-400" />
-            <p class="mt-2 text-sm font-medium text-gray-900">No receipt uploaded yet</p>
-            <p class="mt-1 text-xs text-gray-500">Upload a receipt to match with this transaction</p>
+            <p class="mt-2 text-sm font-medium text-gray-900">{{ t('receiptCard.noReceipt') }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{ t('receiptCard.uploadHint') }}</p>
           </div>
           <button
               class="mt-4 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
               @click="navigateToReceiptUpload"
           >
             <Upload size="16" class="mr-2" />
-            Upload Receipt
+            {{ t('receiptCard.uploadReceipt') }}
           </button>
         </div>
-        <p class="text-xs text-gray-500 text-center">Supported formats: PDF, JPG, PNG (max 10MB)</p>
+        <p class="text-xs text-gray-500 text-center">{{ t('receiptCard.supportedFormats') }}</p>
       </div>
     </div>
   </div>
@@ -78,6 +78,8 @@
 
 <script setup lang="ts">
 import { Upload, FileText, Download } from 'lucide-vue-next'
+
+const { t, locale } = useI18n()
 
 const props = defineProps({
   receipt: {
@@ -113,7 +115,8 @@ const formatFileSize = (bytes: number) => {
 
 // Format date
 const formatDate = (isoDate: string) => {
-  return new Date(isoDate).toLocaleDateString('en-US', {
+  const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  return new Date(isoDate).toLocaleDateString(dateLocale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric'
@@ -121,10 +124,14 @@ const formatDate = (isoDate: string) => {
 }
 
 // Format currency
-const formatCurrency = (amount: number, currency = 'USD') => {
-  return new Intl.NumberFormat('en-US', {
+const formatCurrency = (amount: number, currency = 'JPY') => {
+  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  const displayCurrency = locale.value === 'ko' ? 'KRW' : currency
+  return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
-    currency: currency
+    currency: displayCurrency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
   }).format(amount)
 }
 </script>

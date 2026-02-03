@@ -1,29 +1,29 @@
 <template>
   <div>
     <div
-        class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center"
-        :class="{ 'border-purple-400 bg-purple-50': isDragging }"
+        class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center dark:bg-gray-800"
+        :class="{ 'border-purple-400 bg-purple-50 dark:bg-purple-900/20': isDragging }"
         @dragover.prevent="isDragging = true"
         @dragleave.prevent="isDragging = false"
         @drop.prevent="handleFileDrop"
     >
       <div v-if="isLoading">
         <div class="animate-spin rounded-full h-10 w-10 border-4 border-purple-500 border-t-transparent mx-auto mb-3"></div>
-        <p class="text-gray-600">Processing file...</p>
+        <p class="text-gray-600 dark:text-gray-400">{{ t('fileUploader.processingFile') }}</p>
       </div>
       <div v-else>
-        <div class="text-gray-400 mb-3">
+        <div class="text-gray-400 dark:text-gray-500 mb-3">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
           </svg>
         </div>
-        <p class="text-base mb-2">Drag and drop your file here</p>
-        <p class="text-sm text-gray-500 mb-4">or</p>
+        <p class="text-base mb-2 dark:text-gray-200">{{ t('fileUploader.dragDropFile') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('fileUploader.or') }}</p>
         <button
             class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none"
             @click="$refs.fileInput.click()"
         >
-          Browse files
+          {{ t('fileUploader.browseFiles') }}
         </button>
         <input
             ref="fileInput"
@@ -32,40 +32,42 @@
             class="hidden"
             @change="handleFileSelect"
         />
-        <p class="mt-3 text-xs text-gray-500">
-          Supported formats: XLSX, XLS, CSV
+        <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('fileUploader.supportedFormats') }}
         </p>
       </div>
     </div>
 
     <!-- Results section -->
-    <div v-if="result" class="mt-6 p-4 border rounded-md bg-green-50 border-green-100">
-      <h3 class="font-medium text-green-800 mb-2">File processed successfully!</h3>
-      <div class="text-sm text-gray-700">
-        <p><strong>Original filename:</strong> {{ result.originalName }}</p>
-        <p><strong>Saved at:</strong> {{ result.savedPath }}</p>
-        <p><strong>Processed at:</strong> {{ result.processedPath }}</p>
+    <div v-if="result" class="mt-6 p-4 border rounded-md bg-green-50 dark:bg-green-900/20 border-green-100 dark:border-green-800">
+      <h3 class="font-medium text-green-800 dark:text-green-400 mb-2">{{ t('fileUploader.processedSuccess') }}</h3>
+      <div class="text-sm text-gray-700 dark:text-gray-300">
+        <p><strong>{{ t('fileUploader.originalFilename') }}:</strong> {{ result.originalName }}</p>
+        <p><strong>{{ t('fileUploader.savedAt') }}:</strong> {{ result.savedPath }}</p>
+        <p><strong>{{ t('fileUploader.processedAt') }}:</strong> {{ result.processedPath }}</p>
       </div>
 
       <!-- Show sample of processed data -->
       <div v-if="result.data" class="mt-4">
-        <h4 class="font-medium text-gray-800 mb-2">Sample data:</h4>
-        <div class="bg-white p-3 rounded border overflow-auto max-h-60">
-          <pre class="text-xs">{{ JSON.stringify(getSampleData(result.data), null, 2) }}</pre>
+        <h4 class="font-medium text-gray-800 dark:text-gray-200 mb-2">{{ t('fileUploader.sampleData') }}:</h4>
+        <div class="bg-white dark:bg-gray-800 p-3 rounded border dark:border-gray-600 overflow-auto max-h-60">
+          <pre class="text-xs dark:text-gray-300">{{ JSON.stringify(getSampleData(result.data), null, 2) }}</pre>
         </div>
       </div>
     </div>
 
     <!-- Error message -->
-    <div v-if="error" class="mt-6 p-4 border rounded-md bg-red-50 border-red-100">
-      <h3 class="font-medium text-red-800 mb-2">Error processing file</h3>
-      <p class="text-sm text-red-700">{{ error }}</p>
+    <div v-if="error" class="mt-6 p-4 border rounded-md bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800">
+      <h3 class="font-medium text-red-800 dark:text-red-400 mb-2">{{ t('fileUploader.errorProcessing') }}</h3>
+      <p class="text-sm text-red-700 dark:text-red-300">{{ error }}</p>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue';
+
+const { t } = useI18n()
 
 const isDragging = ref(false);
 const isLoading = ref(false);

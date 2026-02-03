@@ -11,20 +11,43 @@
 
       <AppFooter />
     </div>
+
+    <!-- Screen Lock Overlay -->
+    <ScreenLockOverlay />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useThemeStore } from '../stores/theme'
 import { useLanguageStore } from '../stores/language'
+import { useActivityTracker } from '~/composables/useActivityTracker'
+import { useUserStore } from '~/stores/user'
 
 const themeStore = useThemeStore()
 const languageStore = useLanguageStore()
+const userStore = useUserStore()
 const isSidebarOpen = ref(false)
+
+const { init: initActivityTracker, configure: configureActivityTracker } = useActivityTracker()
 
 onMounted(() => {
   themeStore.initTheme()
   languageStore.initLanguage()
+
+  // Initialize activity tracker if authenticated
+  if (userStore.isAuthenticated) {
+    initActivityTracker()
+  }
 })
+
+// Configure activity tracker based on user preferences
+watch(() => userStore.user?.securityPreferences, (prefs) => {
+  if (prefs) {
+    configureActivityTracker({
+      screenLockTimeout: prefs.screenLockTimeout || 15,
+      forceLogoutTimeout: prefs.forceLogoutTimeout || 8
+    })
+  }
+}, { immediate: true })
 </script>

@@ -1,11 +1,20 @@
 <template>
   <Teleport to="body">
+    <!-- Invisible blocker that prevents interaction when locked -->
+    <div
+      v-if="isLocked"
+      class="fixed inset-0 z-[9998]"
+      @click.stop.prevent
+      @mousedown.stop.prevent
+      @touchstart.stop.prevent
+    />
     <Transition name="fade">
       <div
         v-if="isLocked"
         class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-900/95 backdrop-blur-sm"
+        style="pointer-events: auto;"
       >
-        <div class="w-full max-w-md mx-4 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8">
+        <div class="w-full max-w-md mx-4 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8" style="pointer-events: auto;">
           <!-- Session Expired State (from force logout or detected during unlock) -->
           <div v-if="forceLogoutRequired || sessionExpired" class="text-center">
             <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
@@ -141,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Lock, Unlock, Eye, EyeOff, Clock, Loader2, LogIn } from 'lucide-vue-next'
 import { useActivityTracker } from '~/composables/useActivityTracker'
 import { useSecurityPin } from '~/composables/useSecurityPin'
@@ -150,9 +159,16 @@ import { useUserStore } from '~/stores/user'
 const { t } = useI18n()
 const router = useRouter()
 
-const { isLocked, forceLogoutRequired, unlock } = useActivityTracker()
+const { isLocked, forceLogoutRequired, unlock, init: initActivityTracker } = useActivityTracker()
 const { isPinEnabled, requiresPassword, verifyPin, resetAttempts: resetPinAttempts } = useSecurityPin()
 const userStore = useUserStore()
+
+// Ensure activity tracker is initialized when this component mounts
+onMounted(() => {
+  if (userStore.isAuthenticated) {
+    initActivityTracker()
+  }
+})
 const user = computed(() => userStore.user)
 
 const password = ref('')
@@ -166,21 +182,39 @@ const sessionExpired = ref(false)
 const pinInputs = ref<HTMLInputElement[]>([])
 const passwordInput = ref<HTMLInputElement | null>(null)
 
-// Focus first input when locked
+// Focus first input when locked and manage body scroll/pointer-events
 watch(isLocked, async (locked) => {
-  if (locked) {
-    errorMessage.value = ''
-    password.value = ''
-    pinDigits.value = ['', '', '', '', '', '']
-    showPasswordInput.value = false
-    sessionExpired.value = false
+  if (typeof document !== 'undefined') {
+    if (locked) {
+      // Prevent body scroll and interactions when locked
+      document.body.style.overflow = 'hidden'
+      document.body.style.pointerEvents = 'none'
 
-    await nextTick()
-    if (isPinEnabled.value && !requiresPassword.value) {
-      pinInputs.value[0]?.focus()
+      errorMessage.value = ''
+      password.value = ''
+      pinDigits.value = ['', '', '', '', '', '']
+      showPasswordInput.value = false
+      sessionExpired.value = false
+
+      await nextTick()
+      if (isPinEnabled.value && !requiresPassword.value) {
+        pinInputs.value[0]?.focus()
+      } else {
+        passwordInput.value?.focus()
+      }
     } else {
-      passwordInput.value?.focus()
+      // Restore body scroll and interactions
+      document.body.style.overflow = ''
+      document.body.style.pointerEvents = ''
     }
+  }
+}, { immediate: true })
+
+// Cleanup on unmount
+onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = ''
+    document.body.style.pointerEvents = ''
   }
 })
 
