@@ -9,6 +9,9 @@ export default defineNuxtConfig({
   // Nitro configuration to fix worker entry issues
   nitro: {
     preset: 'node-server',
+    rollupConfig: {
+      external: ['papaparse']
+    },
     esbuild: {
       options: {
         target: 'esnext'
