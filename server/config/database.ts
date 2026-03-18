@@ -4,25 +4,32 @@ let isConnected = false
 let connectionPromise: Promise<void> | null = null
 let mongoServer: any = null
 
-// Get MongoDB URI - uses memory server if no external MongoDB available
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+const MAX_RETRIES = 5
+const RETRY_DELAY_MS = 3000
+
+// Get MongoDB URI - retries local MongoDB before falling back to in-memory
 const getMongoUri = async (): Promise<string> => {
-  // If MONGO_URI is set and points to a real server, try that first
   const envUri = process.env.MONGO_URI
 
   if (envUri && !envUri.includes('localhost:27017')) {
     return envUri
   }
 
-  // Try to connect to localhost first
   if (envUri) {
-    try {
-      const testConnection = await mongoose.createConnection(envUri).asPromise()
-      await testConnection.close()
-      console.log('Using local MongoDB at', envUri)
-      return envUri
-    } catch {
-      console.log('Local MongoDB not available, starting in-memory server...')
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const testConnection = await mongoose.createConnection(envUri).asPromise()
+        await testConnection.close()
+        console.log('Using local MongoDB at', envUri)
+        return envUri
+      } catch {
+        console.warn(`[MongoDB] Connection attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${RETRY_DELAY_MS / 1000}s...`)
+        if (attempt < MAX_RETRIES) await sleep(RETRY_DELAY_MS)
+      }
     }
+    console.error('[MongoDB] WARNING: All connection attempts failed — falling back to in-memory DB. Auth and data will NOT persist!')
   }
 
   // Fall back to in-memory MongoDB
@@ -34,7 +41,7 @@ const getMongoUri = async (): Promise<string> => {
         dbName: 'ohmyfinance'
       }
     })
-    console.log('In-memory MongoDB server started')
+    console.error('[MongoDB] In-memory server started — THIS IS NOT PRODUCTION-SAFE')
   }
 
   return mongoServer.getUri()
