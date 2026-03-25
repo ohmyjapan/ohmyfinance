@@ -6,18 +6,21 @@ let mongoServer: any = null
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-const MAX_RETRIES = 5
-const RETRY_DELAY_MS = 3000
+const IS_PRODUCTION = process.env.NODE_ENV === 'production'
+const MAX_RETRIES = IS_PRODUCTION ? 15 : 5
+const RETRY_DELAY_MS = IS_PRODUCTION ? 5000 : 3000
+
+const DEFAULT_MONGO_URI = 'mongodb://localhost:27017/ohmyfinance'
 
 // Get MongoDB URI - retries local MongoDB before falling back to in-memory
 const getMongoUri = async (): Promise<string> => {
-  const envUri = process.env.MONGO_URI
+  const envUri = process.env.MONGO_URI || DEFAULT_MONGO_URI
 
-  if (envUri && !envUri.includes('localhost:27017')) {
+  if (!envUri.includes('localhost:27017')) {
     return envUri
   }
 
-  if (envUri) {
+  {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         const testConnection = await mongoose.createConnection(envUri).asPromise()
@@ -29,10 +32,15 @@ const getMongoUri = async (): Promise<string> => {
         if (attempt < MAX_RETRIES) await sleep(RETRY_DELAY_MS)
       }
     }
+    if (IS_PRODUCTION) {
+      console.error('[MongoDB] FATAL: All connection attempts failed in production. Crashing to let PM2 restart.')
+      process.exit(1)
+    }
+
     console.error('[MongoDB] WARNING: All connection attempts failed — falling back to in-memory DB. Auth and data will NOT persist!')
   }
 
-  // Fall back to in-memory MongoDB
+  // Fall back to in-memory MongoDB (dev only — production crashes above)
   const { MongoMemoryServer } = await import('mongodb-memory-server')
 
   if (!mongoServer) {
