@@ -3,8 +3,10 @@ import { defineEventHandler, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import RecurringPayment from '../../models/RecurringPayment'
 import { sendPaymentReminder } from '../../services/emailService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
   }

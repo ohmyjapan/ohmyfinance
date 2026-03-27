@@ -1,12 +1,14 @@
 // server/api/recurring/process.ts
 import { defineEventHandler, createError } from 'h3'
 import { processDuePayments, getUpcomingPayments } from '../../services/recurringPaymentService'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * POST /api/recurring/process - Process all due recurring payments
  * GET /api/recurring/process - Get upcoming payments
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = event.method
 
   // GET - Get upcoming payments

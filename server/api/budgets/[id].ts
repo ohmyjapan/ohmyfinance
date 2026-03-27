@@ -2,8 +2,10 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Budget from '../../models/Budget'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = event.context.params?.id
   if (!id) {
     throw createError({ statusCode: 400, statusMessage: 'Budget ID required' })

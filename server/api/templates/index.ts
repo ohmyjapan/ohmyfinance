@@ -2,8 +2,10 @@
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { MappingTemplate } from '../../models/MappingTemplate'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = event.method
 
   try {

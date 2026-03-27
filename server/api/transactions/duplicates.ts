@@ -2,6 +2,7 @@
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
+import { requireAuth } from '../../middleware/auth'
 
 interface DuplicateGroup {
   key: string
@@ -11,6 +12,7 @@ interface DuplicateGroup {
 }
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   await ensureConnection()
   const method = event.method
 

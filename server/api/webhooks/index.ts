@@ -3,8 +3,10 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Webhook from '../../models/Webhook'
 import { testWebhook } from '../../services/webhookService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   await ensureConnection()
   const method = event.method
 

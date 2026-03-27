@@ -1,8 +1,10 @@
 // server/api/shipments/index.ts
 import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
 import { getShipments, createShipment, getShipmentStats } from '../../services/shipmentService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = getMethod(event)
 
   if (method === 'GET') {

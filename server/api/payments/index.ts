@@ -2,6 +2,7 @@
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { Payment } from '../../models/Payment'
+import { requireAuth } from '../../middleware/auth'
 
 // Parse date string to noon UTC to avoid timezone boundary issues
 // Input: "2026-01-26" -> Output: Date object representing 2026-01-26 12:00:00 UTC
@@ -17,6 +18,7 @@ const parseDateToNoonUTC = (dateString: string): Date => {
 }
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = event.method
 
   // Ensure MongoDB connection

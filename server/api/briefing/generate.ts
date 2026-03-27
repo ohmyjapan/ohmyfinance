@@ -5,8 +5,10 @@
 import { defineEventHandler, readBody, createError, getMethod } from 'h3'
 import { generateBriefing } from '../../services/briefingService'
 import { validateTicker } from '../../services/financialDataService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = getMethod(event)
 
   if (method !== 'POST') {

@@ -5,10 +5,12 @@ import { join } from 'path'
 import { unlink } from 'fs/promises'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
+import { requireAuth } from '../../middleware/auth'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads', 'attachments')
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const filename = event.context.params?.id
   if (!filename) {
     throw createError({ statusCode: 400, statusMessage: 'Filename required' })

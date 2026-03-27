@@ -1,12 +1,14 @@
 // server/api/receipts/[id]/matches.ts
 import { defineEventHandler, createError } from 'h3'
 import { findMatchesForReceipt, getReceiptById } from '../../../services/receiptService'
+import { requireAuth } from '../../../middleware/auth'
 
 /**
  * GET /api/receipts/:id/matches
  * Find potential transaction matches for a receipt
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = event.context.params?.id
 
   if (!id) {

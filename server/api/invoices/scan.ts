@@ -2,10 +2,12 @@
 // Invoice scanning with Gemini Vision API
 import { defineEventHandler, readMultipartFormData, createError } from 'h3'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { requireAuth } from '../../middleware/auth'
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,

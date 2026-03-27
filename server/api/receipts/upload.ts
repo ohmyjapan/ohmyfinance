@@ -4,8 +4,10 @@ import { writeFile, mkdir } from 'fs/promises'
 import { join, extname } from 'path'
 import { createReceipt } from '../../services/receiptService'
 import { ensureConnection } from '../../config/database'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,

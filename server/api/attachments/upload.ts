@@ -6,10 +6,12 @@ import { existsSync } from 'fs'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
+import { requireAuth } from '../../middleware/auth'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads', 'attachments')
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
   }

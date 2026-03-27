@@ -2,12 +2,14 @@
 import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import AuditLog from '../../models/AuditLog'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/audit
  * Get audit log entries
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   try {
     await ensureConnection()
 

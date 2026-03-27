@@ -1,12 +1,14 @@
 // server/api/transactions/export.ts
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
 import { getTransactions } from '../../services/transactionService'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/transactions/export
  * Export transactions to CSV, JSON, or Excel format
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   try {
     // Get query parameters
     const query = getQuery(event)

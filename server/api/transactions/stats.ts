@@ -2,8 +2,10 @@
 import { defineEventHandler, createError } from 'h3'
 import { getTransactionStats } from '../../services/transactionService'
 import { ensureConnection } from '../../config/database'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   await ensureConnection()
 
   try {

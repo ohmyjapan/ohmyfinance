@@ -5,8 +5,10 @@ import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Supplier from '../../models/Supplier'
 import Transaction from '../../models/Transaction'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   await ensureConnection()
   const method = event.method
 

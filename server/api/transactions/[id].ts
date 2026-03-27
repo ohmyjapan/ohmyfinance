@@ -1,8 +1,10 @@
 // server/api/transactions/[id].ts
 import { defineEventHandler, readBody, getMethod, createError } from 'h3'
 import { getTransactionById, updateTransaction, deleteTransaction } from '../../services/transactionService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = getMethod(event)
   const id = event.context.params?.id
 

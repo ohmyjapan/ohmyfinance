@@ -4,12 +4,14 @@ import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/reports
  * Generate financial reports
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   try {
     await ensureConnection()
 

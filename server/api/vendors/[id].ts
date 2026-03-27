@@ -3,8 +3,10 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Vendor from '../../models/Vendor'
 import Transaction from '../../models/Transaction'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = event.context.params?.id
   if (!id) {
     throw createError({ statusCode: 400, statusMessage: 'Vendor ID required' })

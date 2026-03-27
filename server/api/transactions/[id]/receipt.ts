@@ -3,12 +3,14 @@ import { defineEventHandler, getRouterParam, readBody, createError } from 'h3'
 // Reference to in-memory store (replace with DB in production)
 import transactions from '../index'
 import receipts from '../../receipts/index'
+import { requireAuth } from '../../../middleware/auth'
 
 /**
  * PUT /api/transactions/:id/receipt
  * Attach a receipt to a transaction
  */
 export const PUT = defineEventHandler(async (event) => {
+  requireAuth(event)
     const id = getRouterParam(event, 'id')
     const body = await readBody(event)
 

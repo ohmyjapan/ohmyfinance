@@ -5,6 +5,7 @@ import AccountCategory from '../../models/AccountCategory'
 import TaxCategory from '../../models/TaxCategory'
 import TransactionCategory from '../../models/TransactionCategory'
 import { ensureConnection } from '../../config/database'
+import { requireAuth } from '../../middleware/auth'
 
 const defaultAccountCategories = [
   // Main categories (top level)
@@ -62,6 +63,7 @@ const defaultTransactionCategories = [
 ]
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   await ensureConnection()
 
   try {

@@ -2,6 +2,7 @@
 import { defineEventHandler, setHeader, createError } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import Transaction from '../../../models/Transaction'
+import { requireAuth } from '../../../middleware/auth'
 
 /**
  * GET /api/receipts/:id/pdf
@@ -14,6 +15,7 @@ import Transaction from '../../../models/Transaction'
  * - pdf-lib
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = event.context.params?.id
 
   if (!id) {

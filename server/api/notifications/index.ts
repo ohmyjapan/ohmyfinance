@@ -3,12 +3,14 @@ import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import RecurringPayment from '../../models/RecurringPayment'
 import Receipt from '../../models/Receipt'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/notifications
  * Get pending notifications for the user
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   try {
     await ensureConnection()
 

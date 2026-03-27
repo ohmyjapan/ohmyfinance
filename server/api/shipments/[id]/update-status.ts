@@ -1,12 +1,14 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { getShipmentById, updateShipment } from '../../../services/shipmentService'
 import { getTransactionById, updateTransaction } from '../../../services/transactionService'
+import { requireAuth } from '../../../middleware/auth'
 
 /**
  * POST /api/shipments/:id/update-status
  * Update the status of a shipment and add a status event
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
     if (event.method !== 'POST') {
         throw createError({
             statusCode: 405,

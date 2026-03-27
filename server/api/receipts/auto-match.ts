@@ -1,12 +1,14 @@
 // server/api/receipts/auto-match.ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { autoMatchReceipts } from '../../services/receiptService'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * POST /api/receipts/auto-match
  * Automatically match unmatched receipts with high-confidence transactions
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,

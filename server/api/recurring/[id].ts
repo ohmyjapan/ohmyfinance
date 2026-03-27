@@ -6,6 +6,7 @@ import {
   deleteRecurringPayment,
   generateTransaction
 } from '../../services/recurringPaymentService'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/recurring/:id - Get a recurring payment
@@ -14,6 +15,7 @@ import {
  * POST /api/recurring/:id - Generate transaction manually
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = event.context.params?.id
   const method = event.method
 

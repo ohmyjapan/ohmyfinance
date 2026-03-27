@@ -1,8 +1,10 @@
 // server/api/proxy/[source].ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { proxyRequest } from '../../services/proxyService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
     const source = event.context.params?.source as string // credit-card, payment-gateway, overseas
 
     // Validate source

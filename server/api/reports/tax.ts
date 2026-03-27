@@ -2,8 +2,10 @@
 import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const query = getQuery(event)
   const { year, format } = query
 

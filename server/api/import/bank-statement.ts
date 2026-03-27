@@ -2,6 +2,7 @@
 import { defineEventHandler, readMultipartFormData, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
+import { requireAuth } from '../../middleware/auth'
 
 interface ParsedTransaction {
   date: Date
@@ -195,6 +196,7 @@ function parseCSV(content: string): ParsedTransaction[] {
 }
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
   }

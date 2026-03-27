@@ -1,6 +1,7 @@
 // server/api/receipts/[id]/match.ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { matchReceiptWithTransaction, unmatchReceipt, getReceiptById } from '../../../services/receiptService'
+import { requireAuth } from '../../../middleware/auth'
 
 /**
  * POST /api/receipts/:id/match
@@ -10,6 +11,7 @@ import { matchReceiptWithTransaction, unmatchReceipt, getReceiptById } from '../
  * Unmatch a receipt from its transaction
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const receiptId = event.context.params?.id
 
   if (!receiptId) {

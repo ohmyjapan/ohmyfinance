@@ -2,12 +2,14 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * POST /api/transactions/bulk
  * Perform bulk operations on transactions
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
   }

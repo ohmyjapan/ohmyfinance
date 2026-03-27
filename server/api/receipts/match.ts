@@ -1,11 +1,13 @@
 import { defineEventHandler, readBody, createError } from 'h3';
 import path from 'path';
 import fs from 'fs/promises';
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * Matches receipt with transaction data
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
     try {
         // Parse request body
         const body = await readBody(event);

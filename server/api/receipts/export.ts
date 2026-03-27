@@ -1,12 +1,14 @@
 // server/api/receipts/export.ts
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
 import { getReceipts } from '../../services/receiptService'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/receipts/export
  * Export receipts to CSV, JSON format
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   try {
     const query = getQuery(event)
     const format = String(query.format || 'csv').toLowerCase()

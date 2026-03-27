@@ -10,6 +10,7 @@ import Vendor from '../../models/Vendor'
 import { writeFile, mkdir, readdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { requireAuth } from '../../middleware/auth'
 
 const BACKUP_DIR = join(process.cwd(), 'backups')
 const MAX_BACKUPS = 7 // Keep last 7 backups
@@ -104,6 +105,7 @@ async function listBackups(): Promise<any[]> {
 }
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = event.method
 
   if (method === 'GET') {

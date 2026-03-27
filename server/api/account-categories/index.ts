@@ -2,8 +2,10 @@
 import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
 import AccountCategory from '../../models/AccountCategory'
 import { ensureConnection } from '../../config/database'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   await ensureConnection()
   const method = getMethod(event)
 

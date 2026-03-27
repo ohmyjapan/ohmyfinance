@@ -5,8 +5,10 @@
 import { defineEventHandler, createError } from 'h3'
 import { ensureConnection } from '../config/database'
 import { Payment } from '../models/Payment'
+import { requireAuth } from '../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   // Only allow GET method
   if (event.method !== 'GET') {
     throw createError({

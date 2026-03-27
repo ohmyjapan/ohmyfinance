@@ -2,11 +2,13 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Category from '../../models/Category'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET/PUT/DELETE /api/categories/:id
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   await ensureConnection()
   const id = event.context.params?.id
   const method = event.method

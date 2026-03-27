@@ -5,11 +5,13 @@ import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
 import { MappingTemplate } from '../../models/MappingTemplate'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/backup - Create a full backup of all data
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   try {
     await ensureConnection()
 

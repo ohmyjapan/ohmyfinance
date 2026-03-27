@@ -5,6 +5,7 @@ import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
 import { MappingTemplate } from '../../models/MappingTemplate'
+import { requireAuth } from '../../middleware/auth'
 
 interface RestoreOptions {
   clearExisting?: boolean
@@ -19,6 +20,7 @@ interface RestoreOptions {
  * POST /api/backup/restore - Restore data from a backup
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,

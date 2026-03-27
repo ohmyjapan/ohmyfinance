@@ -2,11 +2,13 @@ import { defineEventHandler, readBody, createError } from 'h3';
 import path from 'path';
 import fs from 'fs/promises';
 import { processExcelFile } from '../../../utils/excel-processor';
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * Handles transaction file processing and imports data to the system
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
     try {
         // Parse request body
         const body = await readBody(event);

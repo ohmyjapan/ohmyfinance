@@ -2,6 +2,7 @@
 import { defineEventHandler, readBody, createError, getRouterParam } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { Payment } from '../../models/Payment'
+import { requireAuth } from '../../middleware/auth'
 
 // Parse date string to noon UTC to avoid timezone boundary issues
 const parseDateToNoonUTC = (dateString: string): Date => {
@@ -13,6 +14,7 @@ const parseDateToNoonUTC = (dateString: string): Date => {
 }
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = getRouterParam(event, 'id')
   const method = event.method
 

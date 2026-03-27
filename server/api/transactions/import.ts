@@ -12,6 +12,7 @@ import Supplier from '../../models/Supplier'
 import TransactionCategory from '../../models/TransactionCategory'
 import Customer from '../../models/Customer'
 import { ensureConnection } from '../../config/database'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * Process Excel file using a child process to avoid ESM issues
@@ -79,6 +80,7 @@ try {
  * Import transactions from CSV or Excel files
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
     if (event.method !== 'POST') {
         throw createError({
             statusCode: 405,

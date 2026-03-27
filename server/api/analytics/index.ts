@@ -3,6 +3,7 @@ import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
+import { requireAuth } from '../../middleware/auth'
 
 interface DateRange {
   start: Date
@@ -16,6 +17,7 @@ interface DateRange {
  * Get comprehensive analytics data
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   try {
     await ensureConnection()
 

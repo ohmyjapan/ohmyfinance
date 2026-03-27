@@ -9,8 +9,10 @@ import {
   deleteBriefing,
   updateBriefingUserFields
 } from '../../services/briefingService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = getMethod(event)
   const id = event.context.params?.id
 

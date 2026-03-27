@@ -3,8 +3,10 @@
 
 import { defineEventHandler, getQuery, getMethod, createError } from 'h3'
 import { listBriefings, markStaleBriefings } from '../../services/briefingService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = getMethod(event)
 
   if (method !== 'GET') {

@@ -1,5 +1,6 @@
 // server/api/receipts/ocr.ts
 import { defineEventHandler, readBody, createError } from 'h3'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * POST /api/receipts/ocr
@@ -12,6 +13,7 @@ import { defineEventHandler, readBody, createError } from 'h3'
  * - Azure Computer Vision
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
   }

@@ -2,11 +2,13 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { MappingTemplate } from '../../models/MappingTemplate'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET/PUT/DELETE /api/templates/:id
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = event.context.params?.id
   const method = event.method
 

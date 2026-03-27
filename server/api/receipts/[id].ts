@@ -1,12 +1,14 @@
 import { defineEventHandler, getRouterParam, readBody, createError } from 'h3'
 import { Receipt } from '~/types/receipt'
 import { getReceiptById, updateReceipt, deleteReceipt } from '../../services/receiptService'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/receipts/:id
  * Get a receipt by ID
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
     const id = getRouterParam(event, 'id')
 
     // Find receipt by ID

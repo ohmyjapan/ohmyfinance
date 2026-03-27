@@ -1,8 +1,10 @@
 // server/api/receipts/index.ts
 import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
 import { getReceipts, createReceipt, getReceiptStats } from '../../services/receiptService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = getMethod(event)
 
   if (method === 'GET') {

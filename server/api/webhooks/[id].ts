@@ -3,8 +3,10 @@ import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Webhook from '../../models/Webhook'
 import { testWebhook } from '../../services/webhookService'
+import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const id = event.context.params?.id
   if (!id) {
     throw createError({ statusCode: 400, statusMessage: 'Webhook ID required' })

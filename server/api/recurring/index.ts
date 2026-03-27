@@ -5,12 +5,14 @@ import {
   createRecurringPayment,
   getRecurringPaymentStats
 } from '../../services/recurringPaymentService'
+import { requireAuth } from '../../middleware/auth'
 
 /**
  * GET /api/recurring - List all recurring payments
  * POST /api/recurring - Create new recurring payment
  */
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const method = event.method
 
   // GET - List recurring payments
