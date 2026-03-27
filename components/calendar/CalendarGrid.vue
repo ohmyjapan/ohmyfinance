@@ -177,7 +177,7 @@
         <!-- Payment indicators -->
         <div class="space-y-1">
           <div
-            v-for="payment in day.payments.slice(0, day.holidays.length > 0 ? 2 : 3)"
+            v-for="payment in day.payments.slice(0, 2)"
             :key="payment.id"
             :class="[
               'flex items-center gap-1 px-2 py-1 rounded text-xs cursor-grab transition-all duration-150 hover:scale-[1.02] hover:shadow-sm',
@@ -212,11 +212,11 @@
             </div>
           </div>
           <div
-            v-if="day.payments.length > (day.holidays.length > 0 ? 2 : 3)"
+            v-if="day.payments.length > 2"
             class="text-xs text-gray-500 dark:text-gray-400 pl-2 cursor-pointer hover:text-primary-main"
-            @click.stop="emit('add-payment', day.dateString)"
+            @click.stop="emit('show-day-detail', day.dateString)"
           >
-            {{ t('calendarGrid.morePayments', { count: day.payments.length - (day.holidays.length > 0 ? 2 : 3) }) }}
+            +{{ day.payments.length - 2 }} {{ t('calendarGrid.morePayments') }}
           </div>
         </div>
 
@@ -304,6 +304,7 @@ const emit = defineEmits<{
   (e: 'edit-payment', payment: Payment): void
   (e: 'mark-completed', payment: Payment): void
   (e: 'move-payment', payment: Payment, newDate: string): void
+  (e: 'show-day-detail', dateString: string): void
 }>()
 
 const selectedDateString = ref<string>('')
@@ -406,9 +407,12 @@ const handleDayClick = (day: CalendarDay, event: MouseEvent) => {
 
   selectedDateString.value = day.dateString
 
-  // If clicking on current month day, open add modal
   if (day.isCurrentMonth) {
-    emit('add-payment', day.dateString)
+    if (day.payments.length > 0) {
+      emit('show-day-detail', day.dateString)
+    } else {
+      emit('add-payment', day.dateString)
+    }
   } else {
     emit('select-date', day.date)
   }

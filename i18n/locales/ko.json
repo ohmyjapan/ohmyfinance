@@ -627,7 +627,12 @@
       "sat": "토"
     },
     "clickToAdd": "클릭하여 추가",
-    "markComplete": "완료 처리"
+    "markComplete": "완료 처리",
+    "dayDetail": {
+      "progress": "완료 현황",
+      "noPayments": "이 날의 결제 예정이 없습니다",
+      "total": "합계"
+    }
   },
   "recurring": {
     "description": "정기 결제 및 구독 관리",

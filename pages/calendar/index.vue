@@ -33,6 +33,7 @@
           @edit-payment="openEditModal"
           @mark-completed="handleMarkCompleted"
           @move-payment="handleMovePayment"
+          @show-day-detail="openDayDetail"
         />
       </div>
 
@@ -118,6 +119,17 @@
       </div>
     </div>
 
+    <!-- Day Detail Modal -->
+    <DayDetailModal
+      :is-open="isDayDetailOpen"
+      :date-string="dayDetailDate"
+      :payments="dayDetailPayments"
+      @close="isDayDetailOpen = false"
+      @mark-completed="handleDayDetailMarkCompleted"
+      @edit-payment="handleDayDetailEdit"
+      @add-payment="handleDayDetailAdd"
+    />
+
     <!-- Payment Modal -->
     <PaymentModal
       :is-open="isModalOpen"
@@ -131,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Plus, AlertTriangle, Home, Zap, FileText, DollarSign, CreditCard } from 'lucide-vue-next'
 import { useCalendarStore } from '~/stores/calendar'
 import type { Payment, PaymentFormData } from '~/types/calendar'
@@ -145,6 +157,34 @@ const formatLocalDate = (date: Date): string => {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+// Day Detail Modal state
+const isDayDetailOpen = ref(false)
+const dayDetailDate = ref('')
+
+const dayDetailPayments = computed(() => {
+  if (!dayDetailDate.value) return []
+  return calendarStore.getPaymentsByDate(dayDetailDate.value)
+})
+
+const openDayDetail = (dateString: string) => {
+  dayDetailDate.value = dateString
+  isDayDetailOpen.value = true
+}
+
+const handleDayDetailMarkCompleted = async (payment: Payment) => {
+  await handleMarkCompleted(payment)
+}
+
+const handleDayDetailEdit = (payment: Payment) => {
+  isDayDetailOpen.value = false
+  openEditModal(payment)
+}
+
+const handleDayDetailAdd = () => {
+  isDayDetailOpen.value = false
+  openAddModal(dayDetailDate.value)
 }
 
 // Modal state

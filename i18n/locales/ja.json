@@ -603,7 +603,12 @@
       "sat": "土"
     },
     "clickToAdd": "クリックして追加",
-    "markComplete": "完了にする"
+    "markComplete": "完了にする",
+    "dayDetail": {
+      "progress": "完了状況",
+      "noPayments": "この日の支払い予定はありません",
+      "total": "合計"
+    }
   },
   "recurring": {
     "description": "定期的な支払いとサブスクリプションを管理",
