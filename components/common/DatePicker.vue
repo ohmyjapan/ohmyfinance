@@ -34,7 +34,7 @@
         :value="modelValue"
         :placeholder="placeholder"
         :disabled="disabled"
-        class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg"
+        class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg"
         @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       />
     </template>
@@ -85,7 +85,7 @@ const displayFormat = computed(() => {
 })
 
 const inputClassName = computed(() =>
-  'w-full h-11 px-3 pl-10 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent transition-shadow text-sm'
+  'w-full h-11 px-3 pl-10 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent transition-shadow text-sm'
 )
 
 // Internal value handling

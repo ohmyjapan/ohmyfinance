@@ -11,7 +11,7 @@
         <p class="text-yellow-800 dark:text-yellow-200">{{ t('organizationPage.noOrganization') }}</p>
       </div>
 
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ t('organizationPage.createNew') }}</h2>
         <p class="text-gray-600 dark:text-gray-400 mb-6">{{ t('organizationPage.createNewDesc') }}</p>
 
@@ -26,7 +26,7 @@
                 type="text"
                 required
                 :placeholder="t('organization.namePlaceholder')"
-                class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
               />
             </div>
 
@@ -34,11 +34,11 @@
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('organizationPage.type') }}</label>
               <select
                 v-model="createForm.type"
-                class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 sm:text-sm cursor-pointer"
+                class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-white/10 bg-white dark:bg-white/5 text-gray-900 dark:text-white shadow-sm focus:border-primary-main focus:ring-2 focus:ring-primary-main sm:text-sm cursor-pointer"
               >
-                <option value="personal" class="bg-white dark:bg-gray-700">{{ t('organization.types.personal') }}</option>
-                <option value="business" class="bg-white dark:bg-gray-700">{{ t('organization.types.business') }}</option>
-                <option value="enterprise" class="bg-white dark:bg-gray-700">{{ t('organization.types.enterprise') }}</option>
+                <option value="personal" class="bg-white dark:bg-white/5">{{ t('organization.types.personal') }}</option>
+                <option value="business" class="bg-white dark:bg-white/5">{{ t('organization.types.business') }}</option>
+                <option value="enterprise" class="bg-white dark:bg-white/5">{{ t('organization.types.enterprise') }}</option>
               </select>
             </div>
 
@@ -47,7 +47,7 @@
               <input
                 v-model="createForm.email"
                 type="email"
-                class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
               />
             </div>
 
@@ -56,7 +56,7 @@
               <input
                 v-model="createForm.phone"
                 type="tel"
-                class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
               />
             </div>
 
@@ -66,7 +66,7 @@
                 v-model="createForm.website"
                 type="url"
                 placeholder="https://"
-                class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
               />
             </div>
 
@@ -75,7 +75,7 @@
               <input
                 v-model="createForm.taxId"
                 type="text"
-                class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
               />
             </div>
 
@@ -85,7 +85,7 @@
                 v-model="createForm.description"
                 rows="3"
                 :placeholder="t('organization.descriptionPlaceholder')"
-                class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
               ></textarea>
             </div>
           </div>
@@ -110,7 +110,7 @@
 
     <div v-else class="space-y-6">
       <!-- Organization Details -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ t('organizationPage.organizationDetails') }}</h2>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -121,7 +121,7 @@
               type="text"
               :disabled="!canEdit"
               @input="markDirty"
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             />
           </div>
 
@@ -131,11 +131,11 @@
               v-model="orgForm.type"
               :disabled="!canEdit"
               @change="markDirty"
-              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 sm:text-sm cursor-pointer disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
+              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-white/10 bg-white dark:bg-white/5 text-gray-900 dark:text-white shadow-sm focus:border-primary-main focus:ring-2 focus:ring-primary-main sm:text-sm cursor-pointer disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
             >
-              <option value="personal" class="bg-white dark:bg-gray-700">{{ t('organization.types.personal') }}</option>
-              <option value="business" class="bg-white dark:bg-gray-700">{{ t('organization.types.business') }}</option>
-              <option value="enterprise" class="bg-white dark:bg-gray-700">{{ t('organization.types.enterprise') }}</option>
+              <option value="personal" class="bg-white dark:bg-white/5">{{ t('organization.types.personal') }}</option>
+              <option value="business" class="bg-white dark:bg-white/5">{{ t('organization.types.business') }}</option>
+              <option value="enterprise" class="bg-white dark:bg-white/5">{{ t('organization.types.enterprise') }}</option>
             </select>
           </div>
 
@@ -146,7 +146,7 @@
               type="email"
               :disabled="!canEdit"
               @input="markDirty"
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             />
           </div>
 
@@ -157,7 +157,7 @@
               type="tel"
               :disabled="!canEdit"
               @input="markDirty"
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             />
           </div>
 
@@ -168,7 +168,7 @@
               type="url"
               :disabled="!canEdit"
               @input="markDirty"
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             />
           </div>
 
@@ -179,7 +179,7 @@
               type="text"
               :disabled="!canEdit"
               @input="markDirty"
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             />
           </div>
 
@@ -190,14 +190,14 @@
               rows="2"
               :disabled="!canEdit"
               @input="markDirty"
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             ></textarea>
           </div>
         </div>
       </div>
 
       <!-- Settings -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ t('organizationPage.settings') }}</h2>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -207,7 +207,7 @@
               v-model="settingsForm.defaultCurrency"
               :disabled="!canEdit"
               @change="markDirty"
-              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-white/10 bg-white dark:bg-white/5 text-gray-900 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             >
               <option value="JPY">JPY - {{ t('currencies.jpy') }}</option>
               <option value="USD">USD - {{ t('currencies.usd') }}</option>
@@ -223,7 +223,7 @@
               v-model="settingsForm.timezone"
               :disabled="!canEdit"
               @change="markDirty"
-              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-white/10 bg-white dark:bg-white/5 text-gray-900 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             >
               <option value="Asia/Tokyo">Asia/Tokyo</option>
               <option value="America/New_York">America/New_York</option>
@@ -239,7 +239,7 @@
               v-model="settingsForm.fiscalYearStart"
               :disabled="!canEdit"
               @change="markDirty"
-              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              class="mt-1 block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-white/10 bg-white dark:bg-white/5 text-gray-900 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             >
               <option v-for="month in 12" :key="month" :value="month">{{ t(`organizationPage.months.${month}`) }}</option>
             </select>
@@ -248,7 +248,7 @@
       </div>
 
       <!-- Team Members -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 p-6">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('organizationPage.teamMembers') }}</h2>
           <button
@@ -265,7 +265,7 @@
         </div>
 
         <div v-else class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
             <thead>
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('organizationPage.member') }}</th>
@@ -274,11 +274,11 @@
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('organizationPage.actions') }}</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <tbody class="divide-y divide-gray-200 dark:divide-white/10">
               <tr v-for="member in members" :key="member.userId">
                 <td class="px-4 py-3 whitespace-nowrap">
                   <div class="flex items-center">
-                    <div class="h-8 w-8 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-sm font-medium">
+                    <div class="h-8 w-8 rounded-full bg-gray-300 dark:bg-slate-600 flex items-center justify-center text-sm font-medium">
                       {{ member.user?.name?.charAt(0) || '?' }}
                     </div>
                     <div class="ml-3">
@@ -301,7 +301,7 @@
                       v-if="member.role !== 'owner'"
                       :value="member.role"
                       @change="updateMemberRole(member.userId, ($event.target as HTMLSelectElement).value)"
-                      class="text-xs rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700"
+                      class="text-xs rounded border-gray-300 dark:border-white/10 dark:bg-white/5"
                     >
                       <option value="admin">Admin</option>
                       <option value="member">Member</option>
@@ -323,7 +323,7 @@
       </div>
 
       <!-- Switch Organization -->
-      <div v-if="organizations.length > 1" class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      <div v-if="organizations.length > 1" class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ t('organizationPage.switchOrganization') }}</h2>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -335,7 +335,7 @@
               'p-4 rounded-lg border-2 text-left transition-colors',
               org.id === currentOrganization?.id
                 ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-gray-600'
             ]"
           >
             <div class="font-medium text-gray-900 dark:text-white">{{ org.name }}</div>
@@ -352,7 +352,7 @@
         v-if="isDirty && canEdit && currentOrganization"
         class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40"
       >
-        <div class="bg-white dark:bg-gray-800 rounded-full shadow-lg border border-gray-200 dark:border-gray-700 px-6 py-3 flex items-center gap-4">
+        <div class="bg-white dark:bg-white/5 rounded-full shadow-lg border border-gray-200 dark:border-white/10 px-6 py-3 flex items-center gap-4">
           <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('common.unsavedChanges') }}</span>
           <button
             @click="discardChanges"
@@ -374,8 +374,8 @@
     </Transition>
 
     <!-- Invite Modal -->
-    <div v-if="showInviteModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+    <div v-if="showInviteModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl p-6 w-full max-w-md mx-4">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ t('organizationPage.inviteTeamMember') }}</h3>
 
         <form @submit.prevent="sendInvite" class="space-y-4">
@@ -385,7 +385,7 @@
               v-model="inviteForm.email"
               type="email"
               required
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
               :placeholder="t('organizationPage.emailPlaceholder')"
             />
           </div>
@@ -394,7 +394,7 @@
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('organizationPage.role') }}</label>
             <select
               v-model="inviteForm.role"
-              class="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
             >
               <option value="member">Member</option>
               <option value="admin">Admin</option>
@@ -410,14 +410,14 @@
             <button
               type="button"
               @click="showInviteModal = false"
-              class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
             >
               {{ t('common.cancel') }}
             </button>
             <button
               type="submit"
               :disabled="inviting"
-              class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark disabled:opacity-50"
             >
               {{ inviting ? t('organizationPage.sending') : t('organizationPage.sendInvite') }}
             </button>
@@ -728,10 +728,10 @@ async function handleSwitchOrg(orgId: string) {
 
 function getRoleBadgeClass(role: string) {
   const classes: Record<string, string> = {
-    owner: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
+    owner: 'bg-primary-main/20 text-primary-dark dark:bg-primary-main/20 dark:text-primary-light',
     admin: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
     member: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-    viewer: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+    viewer: 'bg-gray-100 text-gray-800 dark:bg-white/5 dark:text-gray-300'
   }
   return classes[role] || classes.viewer
 }

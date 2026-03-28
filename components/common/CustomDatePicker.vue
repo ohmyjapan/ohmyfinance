@@ -3,7 +3,7 @@
     <!-- Input -->
     <div
       @click="toggle"
-      class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg flex items-center cursor-pointer hover:border-primary-main dark:hover:border-primary-main transition-colors"
+      class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 rounded-lg flex items-center cursor-pointer hover:border-primary-main dark:hover:border-primary-main transition-colors"
       :class="{ 'ring-2 ring-primary-main border-transparent': isOpen }"
     >
       <CalendarIcon class="w-4 h-4 text-gray-400 mr-2" />
@@ -21,7 +21,7 @@
     <Transition name="dropdown">
       <div
         v-if="isOpen"
-        class="absolute z-50 mt-2 w-full min-w-72 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden"
+        class="absolute z-50 mt-2 w-full min-w-72 bg-white dark:bg-white/5 rounded-xl shadow-xl border border-gray-200 dark:border-white/10 overflow-hidden"
       >
         <!-- Header -->
         <div class="bg-primary-main text-white p-4">
@@ -30,10 +30,10 @@
         </div>
 
         <!-- Month Navigation -->
-        <div class="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center justify-between p-3 border-b border-gray-200 dark:border-white/10">
           <button
             @click="prevMonth"
-            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.07] transition-colors"
           >
             <ChevronLeft class="w-5 h-5 text-gray-600 dark:text-gray-300" />
           </button>
@@ -42,14 +42,14 @@
           </div>
           <button
             @click="nextMonth"
-            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.07] transition-colors"
           >
             <ChevronRight class="w-5 h-5 text-gray-600 dark:text-gray-300" />
           </button>
         </div>
 
         <!-- Weekday Headers -->
-        <div class="grid grid-cols-7 gap-0 px-2 py-2 bg-gray-50 dark:bg-gray-900/50">
+        <div class="grid grid-cols-7 gap-0 px-2 py-2 bg-gray-50 dark:bg-gray-950/50">
           <div
             v-for="(day, index) in weekDays"
             :key="day"
@@ -80,7 +80,7 @@
             <!-- Tooltip -->
             <div
               v-if="day.holidayName"
-              class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+              class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 dark:bg-white/5 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
             >
               {{ day.holidayName }}
             </div>
@@ -88,7 +88,7 @@
         </div>
 
         <!-- Footer -->
-        <div class="flex items-center justify-between p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+        <div class="flex items-center justify-between p-3 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-gray-950/50">
           <div class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
             <span class="flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
@@ -286,11 +286,11 @@ const getDayClasses = (day: typeof calendarDays.value[0]) => {
     // Sunday in red, Saturday in blue (Japanese calendar style)
     const dayOfWeek = day.date.getDay()
     if (dayOfWeek === 0) {
-      classes.push('text-red-500 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700')
+      classes.push('text-red-500 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-white/[0.07]')
     } else if (dayOfWeek === 6) {
-      classes.push('text-blue-500 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700')
+      classes.push('text-blue-500 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-white/[0.07]')
     } else {
-      classes.push('text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700')
+      classes.push('text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.07]')
     }
   }
 

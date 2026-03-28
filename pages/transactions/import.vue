@@ -8,25 +8,25 @@
 
     <!-- Info Cards -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-      <div class="bg-white rounded-lg shadow-sm p-5 border-l-4 border-purple-500">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 border-l-4 border-primary-main">
         <h3 class="font-medium text-gray-900 mb-2 flex items-center">
-          <CreditCard class="h-5 w-5 text-purple-500 mr-2" />
+          <CreditCard class="h-5 w-5 text-primary-main mr-2" />
           {{ t('import.creditCardFiles') }}
         </h3>
         <p class="text-sm text-gray-600">
           {{ t('import.creditCardDescription') }}
         </p>
         <div class="mt-3">
-          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-main/20 text-primary-dark">
             CSV
           </span>
-          <span class="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+          <span class="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-main/20 text-primary-dark">
             Excel
           </span>
         </div>
       </div>
 
-      <div class="bg-white rounded-lg shadow-sm p-5 border-l-4 border-blue-500">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 border-l-4 border-blue-500">
         <h3 class="font-medium text-gray-900 mb-2 flex items-center">
           <ShoppingCart class="h-5 w-5 text-blue-500 mr-2" />
           {{ t('import.paymentGateway') }}
@@ -44,7 +44,7 @@
         </div>
       </div>
 
-      <div class="bg-white rounded-lg shadow-sm p-5 border-l-4 border-green-500">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 border-l-4 border-green-500">
         <h3 class="font-medium text-gray-900 mb-2 flex items-center">
           <Globe class="h-5 w-5 text-green-500 mr-2" />
           {{ t('import.overseasOrders') }}
@@ -64,14 +64,14 @@
     </div>
 
     <!-- Recent Imports Table -->
-    <div class="bg-white rounded-lg shadow-sm mb-8">
-      <div class="px-6 py-4 border-b flex items-center justify-between">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-8">
+      <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
         <h2 class="text-lg font-medium text-gray-800">{{ t('import.recentImports') }}</h2>
         <div class="text-sm text-gray-500">{{ t('import.showingLast', { count: 5 }) }}</div>
       </div>
       <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+          <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               {{ t('import.date') }}
@@ -93,8 +93,8 @@
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
-          <tr v-for="(import_, index) in recentImports" :key="index" class="hover:bg-gray-50">
+          <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/5">
+          <tr v-for="(import_, index) in recentImports" :key="index" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
             <td class="px-6 py-4 whitespace-nowrap">
               <div class="text-sm font-medium text-gray-900">{{ formatDate(import_.date) }}</div>
               <div class="text-xs text-gray-500">{{ formatTime(import_.date) }}</div>
@@ -258,7 +258,7 @@ const getSourceIcon = (source: string) => {
 const getSourceClass = (source: string) => {
   switch (source) {
     case 'credit_card':
-      return 'bg-purple-100 text-purple-600'
+      return 'bg-primary-main/20 text-primary-main'
     case 'payment_gateway':
       return 'bg-blue-100 text-blue-600'
     case 'overseas':

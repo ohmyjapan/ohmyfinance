@@ -1,3 +1,5 @@
+const defaultTheme = require('tailwindcss/defaultTheme')
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -11,6 +13,10 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', ...defaultTheme.fontFamily.sans],
+        mono: ['JetBrains Mono', 'monospace'],
+      },
       colors: {
         'primary': {
           light: '#F3D9D7',
@@ -45,21 +51,8 @@ module.exports = {
         'background': {
           default: '#F8F7FA',
           paper: '#FFFFFF',
-          dark: '#1E1E2D',
-          darkPaper: '#2B2C40'
-        },
-        // Keep purple for backwards compatibility
-        purple: {
-          50: '#f5f3ff',
-          100: '#ede9fe',
-          200: '#ddd6fe',
-          300: '#c4b5fd',
-          400: '#a78bfa',
-          500: '#8b5cf6',
-          600: '#7c3aed',
-          700: '#6d28d9',
-          800: '#5b21b6',
-          900: '#4c1d95',
+          dark: '#0f172a',
+          darkPaper: '#1e293b'
         },
         amber: {
           50: '#fffbeb',
@@ -82,6 +75,7 @@ module.exports = {
   safelist: [
     // Background colors
     'bg-primary-light', 'bg-primary-main', 'bg-primary-dark',
+    'bg-primary-main/20',
     'bg-secondary-light', 'bg-secondary-main', 'bg-secondary-dark',
     'bg-success-light', 'bg-success-main', 'bg-success-dark',
     'bg-info-light', 'bg-info-main', 'bg-info-dark',
@@ -89,14 +83,19 @@ module.exports = {
     'bg-error-light', 'bg-error-main', 'bg-error-dark',
     'bg-background-default', 'bg-background-paper', 'bg-background-dark', 'bg-background-darkPaper',
     // Text colors
-    'text-primary-main', 'text-primary-dark',
+    'text-primary-main', 'text-primary-dark', 'text-primary-light',
     'text-secondary-main', 'text-secondary-dark',
     'text-success-main', 'text-success-dark',
     'text-info-main', 'text-info-dark',
     'text-warning-main', 'text-warning-dark',
     'text-error-main', 'text-error-dark',
+    // Alpha utilities
+    'bg-white/5', 'bg-white/10', 'bg-white/80',
+    'border-white/10',
+    'dark:bg-white/5', 'dark:bg-white/10',
+    'dark:border-white/10',
     // Legacy colors
-    'bg-purple-100', 'bg-blue-100', 'bg-green-100', 'bg-amber-100', 'bg-red-100',
-    'text-purple-600', 'text-blue-600', 'text-green-600', 'text-amber-600', 'text-red-600',
+    'bg-blue-100', 'bg-green-100', 'bg-amber-100', 'bg-red-100',
+    'text-blue-600', 'text-green-600', 'text-amber-600', 'text-red-600',
   ]
 }

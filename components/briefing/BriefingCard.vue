@@ -1,9 +1,9 @@
 <template>
   <div
-    class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-md transition-shadow"
+    class="bg-white dark:bg-white/5 rounded-xl shadow-sm border border-gray-200 dark:border-white/10 overflow-hidden hover:shadow-md transition-shadow"
   >
     <!-- Header: Ticker + Price -->
-    <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+    <div class="px-5 py-4 border-b border-gray-100 dark:border-white/10">
       <div class="flex items-start justify-between">
         <div class="flex items-center gap-3">
           <!-- Ticker badge -->
@@ -22,7 +22,7 @@
           <!-- Bookmark -->
           <button
             @click.stop="$emit('bookmark', briefing.id)"
-            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.07] transition-colors"
             :class="briefing.isBookmarked ? 'text-yellow-500' : 'text-gray-400 dark:text-gray-500'"
           >
             <Bookmark class="h-4 w-4" :fill="briefing.isBookmarked ? 'currentColor' : 'none'" />
@@ -71,14 +71,14 @@
           <span>{{ t('briefing.dayRange') }}</span>
           <span>H: {{ briefing.priceData.dayHigh.toFixed(2) }}</span>
         </div>
-        <div class="relative h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div class="relative h-1.5 bg-gray-200 dark:bg-white/5 rounded-full overflow-hidden">
           <div
             class="absolute h-full rounded-full"
             :class="briefing.priceData.change >= 0 ? 'bg-green-500' : 'bg-red-500'"
             :style="{ width: priceRangePercent + '%', left: '0' }"
           ></div>
           <div
-            class="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-gray-800 dark:bg-gray-200 border border-white dark:border-gray-600"
+            class="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-gray-800 dark:bg-gray-200 border border-white dark:border-white/10"
             :style="{ left: currentPricePosition + '%' }"
           ></div>
         </div>
@@ -86,14 +86,14 @@
     </div>
 
     <!-- Executive Summary -->
-    <div v-if="briefing.executiveSummary" class="px-5 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+    <div v-if="briefing.executiveSummary" class="px-5 py-3 border-b border-gray-100 dark:border-white/10 bg-gray-50 dark:bg-white/5">
       <p class="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
         {{ briefing.executiveSummary }}
       </p>
     </div>
 
     <!-- Primary Movers -->
-    <div v-if="briefing.primaryMovers && briefing.primaryMovers.length > 0" class="px-5 py-3 border-b border-gray-100 dark:border-gray-700">
+    <div v-if="briefing.primaryMovers && briefing.primaryMovers.length > 0" class="px-5 py-3 border-b border-gray-100 dark:border-white/10">
       <h4 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-2">
         {{ t('briefing.whyItMoved') }}
       </h4>
@@ -103,7 +103,7 @@
           :key="index"
           class="flex items-start gap-2"
         >
-          <span class="flex-shrink-0 w-5 h-5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-xs font-bold flex items-center justify-center mt-0.5">
+          <span class="flex-shrink-0 w-5 h-5 rounded-full bg-primary-main/20 dark:bg-primary-main/20 text-primary-main dark:text-primary-light text-xs font-bold flex items-center justify-center mt-0.5">
             {{ index + 1 }}
           </span>
           <p class="text-sm text-gray-700 dark:text-gray-300">{{ mover }}</p>
@@ -112,7 +112,7 @@
     </div>
 
     <!-- Events preview (top 3) -->
-    <div v-if="briefing.events && briefing.events.length > 0" class="px-5 py-3 border-b border-gray-100 dark:border-gray-700">
+    <div v-if="briefing.events && briefing.events.length > 0" class="px-5 py-3 border-b border-gray-100 dark:border-white/10">
       <div class="flex items-center justify-between mb-2">
         <h4 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">
           {{ t('briefing.keyEvents') }}
@@ -146,7 +146,7 @@
     </div>
 
     <!-- Financial Highlights preview (top 3) -->
-    <div v-if="briefing.financialHighlights && briefing.financialHighlights.length > 0" class="px-5 py-3 border-b border-gray-100 dark:border-gray-700">
+    <div v-if="briefing.financialHighlights && briefing.financialHighlights.length > 0" class="px-5 py-3 border-b border-gray-100 dark:border-white/10">
       <h4 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-2">
         {{ t('briefing.financials') }}
       </h4>
@@ -154,7 +154,7 @@
         <div
           v-for="(fh, index) in briefing.financialHighlights.slice(0, 3)"
           :key="index"
-          class="text-center p-2 rounded-lg bg-gray-50 dark:bg-gray-700/50"
+          class="text-center p-2 rounded-lg bg-gray-50 dark:bg-white/5"
         >
           <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ fh.metric }}</div>
           <div v-if="fh.actual != null" class="text-sm font-bold text-gray-900 dark:text-gray-100 mt-0.5">
@@ -179,7 +179,7 @@
       </div>
       <NuxtLink
         :to="`/briefing/${briefing.id}`"
-        class="inline-flex items-center gap-1 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300"
+        class="inline-flex items-center gap-1 text-sm font-medium text-primary-main dark:text-primary-light hover:text-primary-dark dark:hover:text-primary-light"
         @click.stop
       >
         {{ t('briefing.viewDetail') }}

@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
     <div class="p-6">
       <div class="flex flex-col md:flex-row md:justify-between md:items-center mb-6">
         <div>
@@ -13,11 +13,11 @@
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-b dark:border-gray-700 py-6 my-6">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-b dark:border-white/10 py-6 my-6">
         <div>
           <p class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('transactionSummary.source') }}</p>
           <div class="flex items-center">
-            <CreditCard size="18" class="text-purple-600 dark:text-purple-400 mr-2" />
+            <CreditCard size="18" class="text-primary-main dark:text-primary-light mr-2" />
             <p class="text-base font-medium text-gray-800 dark:text-gray-100">{{ formatSource(transaction.source) }}</p>
           </div>
         </div>
@@ -62,7 +62,7 @@
       </div>
 
       <!-- Optional Notes -->
-      <div v-if="transaction.notes" class="mt-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+      <div v-if="transaction.notes" class="mt-6 p-4 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/10">
         <p class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('common.notes') }}</p>
         <p class="text-sm text-gray-800 dark:text-gray-200">{{ transaction.notes }}</p>
       </div>
@@ -71,14 +71,14 @@
       <div class="mt-6 flex flex-wrap gap-3 justify-end">
         <button
             @click="$emit('edit')"
-            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
         >
           <Edit2 size="16" class="mr-2" />
           {{ t('transactions.editTransaction') }}
         </button>
         <button
             @click="$emit('download-receipt')"
-            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             :disabled="!transaction.receipt"
         >
           <Download size="16" class="mr-2" />
@@ -86,7 +86,7 @@
         </button>
         <button
             @click="$emit('update-status')"
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
         >
           <RefreshCw size="16" class="mr-2" />
           {{ t('shipmentPage.updateStatus') }}

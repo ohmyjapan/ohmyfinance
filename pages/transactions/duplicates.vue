@@ -9,7 +9,7 @@
         <select
             v-model="threshold"
             @change="loadDuplicates"
-            class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+            class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
         >
           <option value="90">{{ t('duplicates.highConfidence') }}</option>
           <option value="80">{{ t('duplicates.mediumConfidence') }}</option>
@@ -17,7 +17,7 @@
         </select>
         <button
             @click="loadDuplicates"
-            class="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            class="inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
         >
           <RefreshCw class="h-4 w-4 mr-2" :class="isLoading ? 'animate-spin' : ''" />
           {{ t('duplicates.scan') }}
@@ -26,7 +26,7 @@
     </header>
 
     <!-- Summary -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 mb-6">
       <div class="flex items-center justify-between">
         <div>
           <span class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ groups.length }}</span>
@@ -40,14 +40,14 @@
 
     <div v-if="isLoading" class="text-center py-8 text-gray-500">{{ t('duplicates.scanning') }}</div>
 
-    <div v-else-if="groups.length === 0" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-8 text-center text-gray-500">
+    <div v-else-if="groups.length === 0" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-8 text-center text-gray-500">
       <Check class="h-12 w-12 mx-auto text-green-500 mb-4" />
       <p>{{ t('duplicates.noDuplicates') }}</p>
     </div>
 
     <div v-else class="space-y-4">
-      <div v-for="group in groups" :key="group.key" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm overflow-hidden">
-        <div class="px-4 py-3 bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
+      <div v-for="group in groups" :key="group.key" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
+        <div class="px-4 py-3 bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
           <div class="flex items-center space-x-3">
             <div
                 class="px-2 py-1 rounded text-xs font-medium"
@@ -60,24 +60,24 @@
           <div class="flex space-x-2">
             <button
                 @click="ignoreGroup(group)"
-                class="px-3 py-1 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 border border-gray-300 dark:border-gray-600 rounded"
+                class="px-3 py-1 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 border border-gray-300 dark:border-white/10 rounded-xl touch-manipulation"
             >
               {{ t('duplicates.notDuplicate') }}
             </button>
             <button
                 @click="openMergeModal(group)"
-                class="px-3 py-1 text-sm text-white bg-purple-600 hover:bg-purple-700 rounded"
+                class="px-3 py-1 text-sm text-white bg-primary-main hover:bg-primary-dark rounded-xl touch-manipulation"
             >
               {{ t('duplicates.merge') }}
             </button>
           </div>
         </div>
 
-        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+        <div class="divide-y divide-gray-200 dark:divide-white/10">
           <div
               v-for="(tx, idx) in group.transactions"
               :key="tx.id"
-              class="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700"
+              class="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/10"
           >
             <div class="flex items-center space-x-4">
               <div class="text-xs text-gray-400">#{{ idx + 1 }}</div>
@@ -106,8 +106,8 @@
     <!-- Merge Modal -->
     <div v-if="showMergeModal" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-black/50" @click="showMergeModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-lg w-full p-6">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showMergeModal = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl max-w-lg w-full p-6">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">{{ t('duplicates.mergeTitle') }}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
             {{ t('duplicates.selectToKeep') }}
@@ -118,13 +118,13 @@
                 v-for="tx in selectedGroup?.transactions"
                 :key="tx.id"
                 class="flex items-center p-3 rounded border cursor-pointer"
-                :class="keepId === tx.id ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-600'"
+                :class="keepId === tx.id ? 'border-primary-main bg-primary-main/10 dark:bg-primary-main/20' : 'border-gray-200 dark:border-white/10'"
             >
               <input
                   type="radio"
                   v-model="keepId"
                   :value="tx.id"
-                  class="h-4 w-4 text-purple-600"
+                  class="h-4 w-4 text-primary-main"
               />
               <div class="ml-3">
                 <div class="font-medium text-gray-900 dark:text-gray-100">{{ tx.reference }}</div>
@@ -138,14 +138,14 @@
           <div class="flex justify-end space-x-3">
             <button
                 @click="showMergeModal = false"
-                class="px-4 py-2 text-gray-700 dark:text-gray-300"
+                class="px-4 py-2 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-100 dark:hover:bg-white/10"
             >
               {{ t('common.cancel') }}
             </button>
             <button
                 @click="mergeDuplicates"
                 :disabled="!keepId"
-                class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+                class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark disabled:opacity-50 touch-manipulation"
             >
               {{ t('duplicates.mergeAndDelete') }}
             </button>

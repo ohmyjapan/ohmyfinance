@@ -7,7 +7,7 @@
       </div>
       <button
           @click="openModal()"
-          class="mt-4 md:mt-0 inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+          class="mt-4 md:mt-0 inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
       >
         <Plus class="h-4 w-4 mr-2" />
         {{ t('invoices.newInvoice') }}
@@ -15,12 +15,12 @@
     </header>
 
     <!-- Filters -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 mb-6">
       <div class="flex space-x-4">
         <select
             v-model="statusFilter"
             @change="loadInvoices"
-            class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+            class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
         >
           <option value="">{{ t('invoices.allStatus') }}</option>
           <option value="draft">{{ t('invoices.statuses.draft') }}</option>
@@ -33,13 +33,13 @@
     </div>
 
     <!-- Invoices List -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
       <div v-if="isLoading" class="p-8 text-center text-gray-500">{{ t('common.loading') }}</div>
       <div v-else-if="invoices.length === 0" class="p-8 text-center text-gray-500">
         {{ t('invoices.noInvoices') }}
       </div>
-      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead class="bg-gray-50 dark:bg-gray-700">
+      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+        <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('invoices.invoiceNumber') }}</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('transactions.customer') }}</th>
@@ -50,8 +50,8 @@
             <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('common.actions') }}</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-          <tr v-for="invoice in invoices" :key="invoice.id" class="hover:bg-gray-50 dark:hover:bg-gray-700">
+        <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+          <tr v-for="invoice in invoices" :key="invoice.id" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
             <td class="px-6 py-4">
               <div class="font-medium text-gray-900 dark:text-gray-100">{{ invoice.invoiceNumber }}</div>
             </td>
@@ -66,7 +66,7 @@
             </td>
             <td class="px-6 py-4 text-right">
               <div class="flex justify-end space-x-2">
-                <button @click="viewPdf(invoice.id)" class="p-1 text-gray-400 hover:text-purple-600">
+                <button @click="viewPdf(invoice.id)" class="p-1 text-gray-400 hover:text-primary-main">
                   <FileText class="h-4 w-4" />
                 </button>
                 <button @click="openModal(invoice)" class="p-1 text-gray-400 hover:text-blue-600">
@@ -85,8 +85,8 @@
     <!-- Modal -->
     <div v-if="showModal" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-black/50" @click="showModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showModal = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
             {{ editingInvoice ? t('invoices.editInvoice') : t('invoices.newInvoice') }}
           </h3>
@@ -95,24 +95,24 @@
             <div class="grid grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('invoices.issueDate') }}</label>
-                <input v-model="form.issueDate" type="date" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model="form.issueDate" type="date" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('invoices.dueDate') }}</label>
-                <input v-model="form.dueDate" type="date" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model="form.dueDate" type="date" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
               </div>
             </div>
 
             <div class="grid grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('invoices.from') }}</label>
-                <input v-model="form.from.name" type="text" :placeholder="t('invoices.companyName')" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2 mb-2" />
-                <input v-model="form.from.email" type="email" :placeholder="t('common.email')" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model="form.from.name" type="text" :placeholder="t('invoices.companyName')" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 mb-2" />
+                <input v-model="form.from.email" type="email" :placeholder="t('common.email')" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('invoices.to') }}</label>
-                <input v-model="form.to.name" type="text" :placeholder="t('invoices.customerName')" required class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2 mb-2" />
-                <input v-model="form.to.email" type="email" :placeholder="t('common.email')" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model="form.to.name" type="text" :placeholder="t('invoices.customerName')" required class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 mb-2" />
+                <input v-model="form.to.email" type="email" :placeholder="t('common.email')" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
               </div>
             </div>
 
@@ -120,24 +120,24 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{{ t('invoices.items') }}</label>
               <div v-for="(item, idx) in form.items" :key="idx" class="flex space-x-2 mb-2">
-                <input v-model="item.description" type="text" :placeholder="t('common.description')" class="flex-1 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
-                <input v-model.number="item.quantity" type="number" min="1" class="w-20 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
-                <input v-model.number="item.unitPrice" type="number" :placeholder="t('invoices.price')" class="w-28 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model="item.description" type="text" :placeholder="t('common.description')" class="flex-1 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
+                <input v-model.number="item.quantity" type="number" min="1" class="w-20 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
+                <input v-model.number="item.unitPrice" type="number" :placeholder="t('invoices.price')" class="w-28 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
                 <button type="button" @click="removeItem(idx)" class="p-2 text-red-500 hover:text-red-700">
                   <X class="h-4 w-4" />
                 </button>
               </div>
-              <button type="button" @click="addItem" class="text-sm text-purple-600 hover:text-purple-700">+ {{ t('invoices.addItem') }}</button>
+              <button type="button" @click="addItem" class="text-sm text-primary-main hover:text-primary-dark">+ {{ t('invoices.addItem') }}</button>
             </div>
 
             <div class="grid grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('invoices.taxRate') }} (%)</label>
-                <input v-model.number="form.taxRate" type="number" min="0" max="100" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model.number="form.taxRate" type="number" min="0" max="100" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('common.status') }}</label>
-                <select v-model="form.status" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2">
+                <select v-model="form.status" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2">
                   <option value="draft">{{ t('invoices.statuses.draft') }}</option>
                   <option value="sent">{{ t('invoices.statuses.sent') }}</option>
                   <option value="paid">{{ t('invoices.statuses.paid') }}</option>
@@ -149,12 +149,12 @@
 
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('invoices.notes') }}</label>
-              <textarea v-model="form.notes" rows="2" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"></textarea>
+              <textarea v-model="form.notes" rows="2" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"></textarea>
             </div>
 
             <div class="flex justify-end space-x-3 pt-4">
-              <button type="button" @click="showModal = false" class="px-4 py-2 text-gray-700 dark:text-gray-300">{{ t('common.cancel') }}</button>
-              <button type="submit" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">
+              <button type="button" @click="showModal = false" class="px-4 py-2 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-100 dark:hover:bg-white/[0.07]">{{ t('common.cancel') }}</button>
+              <button type="submit" class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark">
                 {{ editingInvoice ? t('common.edit') : t('common.create') }}
               </button>
             </div>

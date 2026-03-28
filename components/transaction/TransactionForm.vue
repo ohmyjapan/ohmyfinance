@@ -1,6 +1,6 @@
 <!-- components/transaction/TransactionForm.vue -->
 <template>
-  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
     <h2 class="text-xl font-bold mb-6 text-gray-900 dark:text-white">{{ isEditing ? '取引を編集' : '新規取引' }}</h2>
 
     <form @submit.prevent="submitForm" class="space-y-6">
@@ -12,7 +12,7 @@
           <input
               type="date"
               v-model="form.date"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               required
           />
         </div>
@@ -22,7 +22,7 @@
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">区別</label>
           <select
               v-model="form.type"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               required
           >
             <option value="支出">支出</option>
@@ -36,7 +36,7 @@
           <input
               type="text"
               v-model="form.amount"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               :placeholder="'例: 10,000'"
               required
               @input="formatAmount"
@@ -52,7 +52,7 @@
           <div class="relative">
             <select
                 v-model="form.customerId"
-                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
               <option value="">選択してください</option>
               <option v-for="customer in customers" :key="customer.id" :value="customer.id">
@@ -63,7 +63,7 @@
           </div>
 
           <!-- New Customer Form -->
-          <div v-if="form.customerId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+          <div v-if="form.customerId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
             <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規顧客</h3>
             <div class="space-y-3">
               <div>
@@ -71,7 +71,7 @@
                 <input
                     type="text"
                     v-model="newCustomer.name"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="顧客名を入力"
                 />
               </div>
@@ -79,7 +79,7 @@
                 <button
                     type="button"
                     @click="addNewCustomer"
-                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                    class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
                   追加
                 </button>
@@ -94,7 +94,7 @@
           <div class="relative">
             <select
                 v-model="form.accountCategoryId"
-                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                 @change="handleAccountCategoryChange"
             >
               <option value="">選択してください</option>
@@ -106,7 +106,7 @@
           </div>
 
           <!-- New Account Category Form -->
-          <div v-if="form.accountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+          <div v-if="form.accountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
             <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規勘定科目</h3>
             <div class="space-y-3">
               <div>
@@ -114,7 +114,7 @@
                 <input
                     type="text"
                     v-model="newAccountCategory.name"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="勘定科目名を入力"
                 />
               </div>
@@ -122,7 +122,7 @@
                 <button
                     type="button"
                     @click="addNewAccountCategory"
-                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                    class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
                   追加
                 </button>
@@ -140,7 +140,7 @@
           <div class="relative">
             <select
                 v-model="form.subAccountCategoryId"
-                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
               <option value="">選択してください</option>
               <option v-for="category in filteredSubAccountCategories" :key="category.id" :value="category.id">
@@ -151,7 +151,7 @@
           </div>
 
           <!-- New Sub Account Category Form -->
-          <div v-if="form.subAccountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+          <div v-if="form.subAccountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
             <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規補助科目</h3>
             <div class="space-y-3">
               <div>
@@ -159,7 +159,7 @@
                 <input
                     type="text"
                     v-model="newSubAccountCategory.name"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="補助科目名を入力"
                 />
               </div>
@@ -171,7 +171,7 @@
                       type="text"
                       v-model="newSubAccountCategory.cardNumber"
                       maxlength="4"
-                      class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                      class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                       placeholder="例: 1234"
                   />
                 </div>
@@ -179,7 +179,7 @@
                   <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">カード会社</label>
                   <select
                       v-model="newSubAccountCategory.cardProvider"
-                      class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                      class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                   >
                     <option value="">選択してください</option>
                     <option value="VISA">VISA</option>
@@ -195,7 +195,7 @@
                 <button
                     type="button"
                     @click="addNewSubAccountCategory"
-                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                    class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
                   追加
                 </button>
@@ -210,7 +210,7 @@
           <div class="relative">
             <select
                 v-model="form.taxCategoryId"
-                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
               <option value="">選択してください</option>
               <option v-for="category in taxCategories" :key="category.id" :value="category.name">
@@ -221,7 +221,7 @@
           </div>
 
           <!-- New Tax Category Form -->
-          <div v-if="form.taxCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+          <div v-if="form.taxCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
             <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規税区分</h3>
             <div class="space-y-3">
               <div>
@@ -229,7 +229,7 @@
                 <input
                     type="text"
                     v-model="newTaxCategory.name"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="例: 課税対象 / 非課税"
                 />
               </div>
@@ -237,7 +237,7 @@
                 <button
                     type="button"
                     @click="addNewTaxCategory"
-                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                    class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
                   追加
                 </button>
@@ -252,7 +252,7 @@
           <div class="relative">
             <select
                 v-model="form.taxRate"
-                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
               <option value="">選択してください</option>
               <option v-for="rate in taxRates" :key="rate.id" :value="rate.value">
@@ -263,7 +263,7 @@
           </div>
 
           <!-- New Tax Rate Form -->
-          <div v-if="form.taxRate === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+          <div v-if="form.taxRate === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
             <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規税率</h3>
             <div class="space-y-3">
               <div>
@@ -271,7 +271,7 @@
                 <input
                     type="text"
                     v-model="newTaxRate.value"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="例: 10%"
                 />
               </div>
@@ -279,7 +279,7 @@
                 <button
                     type="button"
                     @click="addNewTaxRate"
-                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                    class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
                   追加
                 </button>
@@ -301,15 +301,15 @@
                 @input="onSupplierSearchInput"
                 @focus="showSupplierSuggestions = true"
                 @blur="onSupplierBlur"
-                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                 placeholder="仕入れ先を入力"
             />
             <!-- Supplier suggestions dropdown -->
-            <div v-if="showSupplierSuggestions && filteredSuppliers.length > 0" class="absolute z-10 w-full mt-1 bg-white dark:bg-gray-700 rounded-md shadow-lg max-h-60 overflow-auto">
+            <div v-if="showSupplierSuggestions && filteredSuppliers.length > 0" class="absolute z-10 w-full mt-1 bg-white dark:bg-white/5 rounded-md shadow-lg max-h-60 overflow-auto">
               <ul class="py-1">
                 <li v-for="supplier in filteredSuppliers" :key="supplier.id"
                     @mousedown="selectSupplier(supplier)"
-                    class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-gray-900 dark:text-gray-100">
+                    class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-white/[0.07] cursor-pointer text-gray-900 dark:text-gray-100">
                   {{ supplier.name }}
                 </li>
               </ul>
@@ -323,7 +323,7 @@
           <input
               type="text"
               v-model="form.receiptNumber"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               placeholder="レシート/注文番号を入力"
           />
         </div>
@@ -337,7 +337,7 @@
           <div class="relative">
             <select
                 v-model="form.transactionCategoryId"
-                class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
               <option value="">選択してください</option>
               <option v-for="category in categories" :key="category.id" :value="category.id">
@@ -348,7 +348,7 @@
           </div>
 
           <!-- New Category Form -->
-          <div v-if="form.transactionCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+          <div v-if="form.transactionCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
             <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規区分</h3>
             <div class="space-y-3">
               <div>
@@ -356,7 +356,7 @@
                 <input
                     type="text"
                     v-model="newCategory.name"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="例: 仕入高 / 売上高 / 消耗費"
                 />
               </div>
@@ -364,7 +364,7 @@
                 <button
                     type="button"
                     @click="addNewCategory"
-                    class="px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                    class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
                   追加
                 </button>
@@ -379,7 +379,7 @@
           <input
               type="text"
               v-model="form.companyInfo"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               placeholder="例: 株式会社XXX"
           />
         </div>
@@ -393,7 +393,7 @@
           <input
               type="text"
               v-model="form.invoiceNumber"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               placeholder="例: INV-12345"
           />
         </div>
@@ -404,7 +404,7 @@
           <input
               type="text"
               v-model="form.janCode"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               placeholder="例: 4901234567894"
           />
         </div>
@@ -415,7 +415,7 @@
           <input
               type="text"
               v-model="form.productPrice"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               placeholder="例: 5,000"
               @input="formatProductPrice"
           />
@@ -430,7 +430,7 @@
           <input
               type="text"
               v-model="form.productName"
-              class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+              class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               placeholder="例: PROD-001 / 商品名"
           />
         </div>
@@ -438,13 +438,13 @@
         <!-- Receipt Upload -->
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">領収書アップロード</label>
-          <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md">
+          <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-white/10 border-dashed rounded-md">
             <div class="space-y-1 text-center">
               <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
                 <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <div class="flex text-sm text-gray-600 dark:text-gray-400">
-                <label for="receipt-upload" class="relative cursor-pointer bg-white dark:bg-gray-700 rounded-md font-medium text-purple-600 hover:text-purple-500">
+                <label for="receipt-upload" class="relative cursor-pointer bg-white dark:bg-white/5 rounded-md font-medium text-primary-main hover:text-primary-main">
                   <span>ファイルをアップロード</span>
                   <input id="receipt-upload" name="receipt-upload" type="file" class="sr-only" @change="handleFileUpload">
                 </label>
@@ -466,8 +466,8 @@
         <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">商品明細</h3>
 
         <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead class="bg-gray-50 dark:bg-gray-700">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+            <thead class="bg-gray-50 dark:bg-white/5">
             <tr>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 商品名
@@ -492,13 +492,13 @@
               </th>
             </tr>
             </thead>
-            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/10">
             <tr v-for="(item, index) in items" :key="index">
               <td class="px-4 py-3 whitespace-nowrap">
                 <input
                     type="text"
                     v-model="item.productName"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="商品名"
                 />
               </td>
@@ -506,7 +506,7 @@
                 <input
                     type="text"
                     v-model="item.janCode"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="JAN/商品コード"
                 />
               </td>
@@ -514,7 +514,7 @@
                 <input
                     type="text"
                     v-model="item.productUrl"
-                    class="w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="商品URL"
                 />
               </td>
@@ -523,7 +523,7 @@
                     type="number"
                     v-model.number="item.quantity"
                     min="1"
-                    class="w-20 bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-20 bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="数量"
                 />
               </td>
@@ -532,7 +532,7 @@
                     type="text"
                     v-model="item.unitPrice"
                     @input="formatItemPrice(index)"
-                    class="w-32 bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50"
+                    class="w-32 bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                     placeholder="0"
                 />
               </td>
@@ -559,7 +559,7 @@
           <button
               type="button"
               @click="addItem"
-              class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -579,13 +579,13 @@
         <button
             type="button"
             @click="cancel"
-            class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+            class="px-4 py-2 border border-gray-300 dark:border-white/10 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-white/[0.07]"
         >
           キャンセル
         </button>
         <button
             type="submit"
-            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
             :disabled="isSubmitting"
         >
           <span v-if="isSubmitting" class="flex items-center">

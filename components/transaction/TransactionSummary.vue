@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow overflow-hidden">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
     <div class="p-6">
       <div class="flex flex-col md:flex-row md:justify-between md:items-center mb-4">
         <div>
@@ -17,7 +17,7 @@
         <div>
           <p class="text-sm font-medium text-gray-500 mb-1">{{ t('transactionSummary.source') }}</p>
           <div class="flex items-center">
-            <CreditCard size="18" class="text-purple-600 mr-2" />
+            <CreditCard size="18" class="text-primary-main mr-2" />
             <p class="text-base font-medium text-gray-800">{{ transaction.source }}</p>
           </div>
         </div>

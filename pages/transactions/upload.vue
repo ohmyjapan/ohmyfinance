@@ -10,7 +10,7 @@
     <div class="mb-8">
       <div class="relative">
         <!-- Progress Bar Background -->
-        <div class="absolute top-5 left-0 right-0 h-0.5 bg-gray-200 dark:bg-gray-700" />
+        <div class="absolute top-5 left-0 right-0 h-0.5 bg-gray-200 dark:bg-white/5" />
         <!-- Progress Bar Fill -->
         <div
           class="absolute top-5 left-0 h-0.5 bg-primary-main transition-all duration-500"
@@ -144,7 +144,7 @@ const getStepCircleClass = (index: number) => {
   if (currentStep.value === index) {
     return 'bg-primary-main border-primary-main text-white'
   }
-  return 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400'
+  return 'bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-500 dark:text-gray-400'
 }
 
 // Check if can navigate to step

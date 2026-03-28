@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow overflow-hidden">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
     <div class="px-6 py-4 border-b">
       <h3 class="text-lg font-medium text-gray-800">Timeline</h3>
     </div>
@@ -130,7 +130,7 @@ const getIconBackground = (type: string) => {
     case 'shipped':
       return 'bg-blue-100'
     case 'created':
-      return 'bg-purple-100'
+      return 'bg-primary-main/20'
     case 'refunded':
       return 'bg-yellow-100'
     case 'failed':
@@ -153,7 +153,7 @@ const getIconColor = (type: string) => {
     case 'shipped':
       return 'text-blue-600'
     case 'created':
-      return 'text-purple-600'
+      return 'text-primary-main'
     case 'refunded':
       return 'text-yellow-600'
     case 'failed':

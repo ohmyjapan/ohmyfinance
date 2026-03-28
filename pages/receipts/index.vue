@@ -7,12 +7,12 @@
       </div>
 
       <div class="mt-4 md:mt-0 flex space-x-3">
-        <button class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+        <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
           <FileText class="mr-2 h-4 w-4 text-gray-500" />
           {{ t('common.export') }} CSV
         </button>
         <button
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="router.push('/receipts/upload')"
         >
           <Upload class="mr-2 h-4 w-4" />
@@ -29,7 +29,7 @@
           change="+5.8%"
           trend="up"
           icon="FileText"
-          color="purple"
+          color="primary"
       />
 
       <StatCard
@@ -61,7 +61,7 @@
     </div>
 
     <!-- Filter & Search Bar -->
-    <div class="bg-white rounded-lg shadow-sm mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-6">
       <div class="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div class="flex flex-1 flex-col sm:flex-row gap-3">
           <div class="relative flex-1">
@@ -71,7 +71,7 @@
             <input
                 v-model="searchQuery"
                 type="text"
-                class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-white/10 rounded-xl leading-5 bg-white dark:bg-white/5 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                 :placeholder="t('receiptsList.searchPlaceholder')"
             />
           </div>
@@ -80,7 +80,7 @@
             <div class="relative">
               <select
                   v-model="filters.status"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-xl dark:bg-white/5 dark:border-white/10 dark:text-white"
               >
                 <option value="">{{ t('receiptsList.allStatuses') }}</option>
                 <option value="matched">{{ t('receipts.matched') }}</option>
@@ -91,7 +91,7 @@
             <div class="relative">
               <select
                   v-model="filters.type"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-xl dark:bg-white/5 dark:border-white/10 dark:text-white"
               >
                 <option value="">{{ t('receiptsList.allTypes') }}</option>
                 <option value="pdf">PDF</option>
@@ -104,7 +104,7 @@
 
         <div class="flex items-center">
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="showAdvancedFilters = !showAdvancedFilters"
           >
             <Filter class="mr-2 h-4 w-4 text-gray-500" />
@@ -113,7 +113,7 @@
 
           <button
               v-if="isFiltered"
-              class="ml-3 text-sm text-purple-600 hover:text-purple-500"
+              class="ml-3 text-sm text-primary-main hover:text-primary-main"
               @click="resetFilters"
           >
             {{ t('transactionsList.clearFilters') }}
@@ -130,12 +130,12 @@
               <input
                   v-model="filters.dateFrom"
                   type="date"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
               <input
                   v-model="filters.dateTo"
                   type="date"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
             </div>
           </div>
@@ -149,7 +149,7 @@
                   min="0"
                   step="0.01"
                   :placeholder="t('transactionsList.min')"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
               <input
                   v-model="filters.maxAmount"
@@ -157,7 +157,7 @@
                   min="0"
                   step="0.01"
                   :placeholder="t('transactionsList.max')"
-                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
             </div>
           </div>
@@ -168,7 +168,7 @@
                 v-model="filters.merchant"
                 type="text"
                 :placeholder="t('receiptsList.merchantPlaceholder')"
-                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
             />
           </div>
         </div>
@@ -176,9 +176,9 @@
     </div>
 
     <!-- Receipts Table -->
-    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
       <div v-if="isLoading" class="flex justify-center items-center p-12">
-        <Loader class="h-8 w-8 text-purple-600 animate-spin" />
+        <Loader class="h-8 w-8 text-primary-main animate-spin" />
         <span class="ml-2 text-gray-600">{{ t('receiptsList.loading') }}</span>
       </div>
 
@@ -190,7 +190,7 @@
         </p>
         <div class="mt-6">
           <button
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="router.push('/receipts/upload')"
           >
             <Upload class="mr-2 h-4 w-4" />
@@ -200,7 +200,7 @@
       </div>
 
       <table v-else class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
+        <thead class="bg-gray-50 dark:bg-white/5">
         <tr>
           <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('receiptTable.receipt') }}</th>
           <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('receiptTable.dateUploaded') }}</th>
@@ -210,11 +210,11 @@
           <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('common.actions') }}</th>
         </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
+        <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/5">
         <tr
             v-for="receipt in paginatedReceipts"
             :key="receipt.id"
-            class="hover:bg-gray-50"
+            class="hover:bg-gray-50 dark:hover:bg-white/[0.07]"
         >
           <td class="px-6 py-4 whitespace-nowrap">
             <div class="flex items-center">
@@ -260,14 +260,14 @@
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
             <button
                 @click="viewReceiptDetails(receipt.id)"
-                class="text-purple-600 hover:text-purple-900 mr-3"
+                class="text-primary-main hover:text-primary-dark mr-3"
             >
               {{ t('common.view') }}
             </button>
             <button
                 v-if="receipt.status === 'unmatched'"
                 @click="matchReceipt(receipt.id)"
-                class="text-purple-600 hover:text-purple-900 mr-3"
+                class="text-primary-main hover:text-primary-dark mr-3"
             >
               {{ t('receipts.match') }}
             </button>
@@ -283,7 +283,7 @@
       </table>
 
       <!-- Pagination -->
-      <div v-if="filteredReceipts.length > 0" class="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
+      <div v-if="filteredReceipts.length > 0" class="bg-white dark:bg-white/5 px-4 py-3 border-t border-gray-200 dark:border-white/10 sm:px-6">
         <div class="flex items-center justify-between">
           <div class="hidden sm:block">
             <p class="text-sm text-gray-700">
@@ -307,7 +307,7 @@
                     @click="currentPage = page"
                     :class="[
                     currentPage === page
-                      ? 'z-10 bg-purple-50 border-purple-500 text-purple-600'
+                      ? 'z-10 bg-primary-main/10 border-primary-main text-primary-main'
                       : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50',
                     'relative inline-flex items-center px-4 py-2 border text-sm font-medium'
                   ]"
@@ -346,13 +346,13 @@
     >
       <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
         <div
-            class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+            class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
             aria-hidden="true"
         ></div>
 
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+        <div class="inline-block align-bottom bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
           <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
             <div class="sm:flex sm:items-start">
               <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
@@ -373,14 +373,14 @@
           <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
                 type="button"
-                class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
+                class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="deleteReceipt"
             >
               {{ t('common.delete') }}
             </button>
             <button
                 type="button"
-                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                class="mt-3 w-full inline-flex justify-center rounded-xl border border-gray-300 dark:border-white/10 shadow-sm px-4 py-2 bg-white dark:bg-white/5 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="showDeleteConfirm = false"
             >
               {{ t('common.cancel') }}

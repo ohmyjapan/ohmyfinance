@@ -9,7 +9,7 @@
       <p class="text-gray-600 dark:text-gray-400">{{ t('organization.createOrganizationDesc') }}</p>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+    <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 p-6">
       <form @submit.prevent="createOrganization" class="space-y-6">
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -20,7 +20,7 @@
             type="text"
             required
             :placeholder="t('organization.namePlaceholder')"
-            class="block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            class="block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
           />
         </div>
 
@@ -30,11 +30,11 @@
           </label>
           <select
             v-model="form.type"
-            class="block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 sm:text-sm cursor-pointer"
+            class="block w-full h-10 px-3 py-2 rounded-md border border-gray-300 dark:border-white/10 bg-white dark:bg-white/5 text-gray-900 dark:text-white shadow-sm focus:border-primary-main focus:ring-2 focus:ring-primary-main sm:text-sm cursor-pointer"
           >
-            <option value="personal" class="bg-white dark:bg-gray-700">{{ t('organization.types.personal') }}</option>
-            <option value="business" class="bg-white dark:bg-gray-700">{{ t('organization.types.business') }}</option>
-            <option value="enterprise" class="bg-white dark:bg-gray-700">{{ t('organization.types.enterprise') }}</option>
+            <option value="personal" class="bg-white dark:bg-white/5">{{ t('organization.types.personal') }}</option>
+            <option value="business" class="bg-white dark:bg-white/5">{{ t('organization.types.business') }}</option>
+            <option value="enterprise" class="bg-white dark:bg-white/5">{{ t('organization.types.enterprise') }}</option>
           </select>
         </div>
 
@@ -46,7 +46,7 @@
             v-model="form.description"
             rows="3"
             :placeholder="t('organization.descriptionPlaceholder')"
-            class="block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            class="block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-white shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
           ></textarea>
         </div>
 
@@ -57,7 +57,7 @@
         <div class="flex justify-end gap-3">
           <NuxtLink
             to="/"
-            class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600"
+            class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 rounded-md hover:bg-gray-50 dark:hover:bg-white/[0.07]"
           >
             {{ t('common.cancel') }}
           </NuxtLink>

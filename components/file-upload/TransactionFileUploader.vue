@@ -3,7 +3,7 @@
     <div
         class="border-2 border-dashed rounded-lg p-8"
         :class="isDragging
-        ? 'border-purple-400 bg-purple-50'
+        ? 'border-primary-main bg-primary-main/10'
         : 'border-gray-300'"
         @dragenter.prevent="isDragging = true"
         @dragover.prevent="isDragging = true"
@@ -11,7 +11,7 @@
         @drop.prevent="handleFileDrop"
     >
       <div class="flex flex-col items-center justify-center text-center">
-        <Upload :class="isDragging ? 'text-purple-400' : 'text-gray-400'" class="h-10 w-10 mb-3" />
+        <Upload :class="isDragging ? 'text-primary-main' : 'text-gray-400'" class="h-10 w-10 mb-3" />
         <h4 class="text-sm font-medium text-gray-900 mb-1">
           {{ isDragging ? 'Drop files here' : 'Drag and drop files here' }}
         </h4>
@@ -25,7 +25,7 @@
             @change="handleFileInput"
         />
         <button
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="$refs.fileInput.click()"
         >
           <Upload class="mr-2 h-4 w-4" />
@@ -38,7 +38,7 @@
     <div v-if="isUploading" class="w-full mt-4">
       <div class="bg-gray-200 rounded-full h-2.5 mb-2">
         <div
-            class="bg-purple-600 h-2.5 rounded-full"
+            class="bg-primary-main h-2.5 rounded-full"
             :style="{ width: `${uploadProgress}%` }"
         ></div>
       </div>
@@ -55,7 +55,7 @@
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-medium text-gray-700">Selected Files</h3>
         <button
-            class="text-sm text-purple-600 hover:text-purple-800"
+            class="text-sm text-primary-main hover:text-primary-dark"
             @click="clearFiles"
         >
           Clear All
@@ -69,8 +69,8 @@
         >
           <div class="flex items-center justify-between">
             <div class="flex items-center">
-              <div class="h-10 w-10 flex-shrink-0 bg-purple-100 rounded-lg flex items-center justify-center">
-                <FileText class="h-5 w-5 text-purple-600" />
+              <div class="h-10 w-10 flex-shrink-0 bg-primary-main/20 rounded-lg flex items-center justify-center">
+                <FileText class="h-5 w-5 text-primary-main" />
               </div>
               <div class="ml-3">
                 <p class="text-sm font-medium text-gray-900">{{ file.name }}</p>

@@ -2,8 +2,8 @@
   <div class="space-y-4">
     <!-- Financial Highlights Table -->
     <div v-if="highlights && highlights.length > 0" class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead class="bg-gray-50 dark:bg-gray-800">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+        <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
               {{ t('briefing.metric') }}
@@ -22,7 +22,7 @@
             </th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+        <tbody class="divide-y divide-gray-200 dark:divide-white/10">
           <tr
             v-for="(h, index) in highlights"
             :key="index"
@@ -92,7 +92,7 @@
         <div
           v-for="(g, index) in guidance"
           :key="index"
-          class="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700"
+          class="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/10"
         >
           <div class="flex-1">
             <div class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ g.metric }}</div>
@@ -131,14 +131,14 @@
       </h4>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <!-- Consensus Rating -->
-        <div v-if="analystInfo.consensusRating" class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-center">
+        <div v-if="analystInfo.consensusRating" class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg text-center">
           <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('briefing.rating') }}</div>
           <div class="text-sm font-bold" :class="ratingColor(analystInfo.consensusRating)">
             {{ analystInfo.consensusRating }}
           </div>
         </div>
         <!-- Target Price -->
-        <div v-if="analystInfo.targetPriceAvg" class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-center">
+        <div v-if="analystInfo.targetPriceAvg" class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg text-center">
           <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('briefing.targetPrice') }}</div>
           <div class="text-sm font-bold text-gray-900 dark:text-gray-100">
             ${{ analystInfo.targetPriceAvg.toFixed(2) }}
@@ -148,12 +148,12 @@
           </div>
         </div>
         <!-- Analysts Count -->
-        <div v-if="analystInfo.numberOfAnalysts" class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-center">
+        <div v-if="analystInfo.numberOfAnalysts" class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg text-center">
           <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('briefing.analysts') }}</div>
           <div class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ analystInfo.numberOfAnalysts }}</div>
         </div>
         <!-- Up/Downgrade -->
-        <div v-if="analystInfo.recentUpgrades || analystInfo.recentDowngrades" class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-center">
+        <div v-if="analystInfo.recentUpgrades || analystInfo.recentDowngrades" class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg text-center">
           <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('briefing.recentChanges') }}</div>
           <div class="flex justify-center gap-2">
             <span v-if="analystInfo.recentUpgrades" class="text-xs font-bold text-green-600 dark:text-green-400">
@@ -231,7 +231,7 @@ const directionBadgeClass = (direction: string) => {
     case 'lowered': return 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300'
     case 'withdrawn': return 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300'
     case 'initiated': return 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-    default: return 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+    default: return 'bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300'
   }
 }
 

@@ -3,7 +3,7 @@
     <div class="mb-4 flex items-center justify-between">
       <div class="flex items-center space-x-4">
         <div class="flex items-center">
-          <div class="w-3 h-3 bg-purple-500 rounded-full mr-2"></div>
+          <div class="w-3 h-3 bg-primary-main/100 rounded-full mr-2"></div>
           <span class="text-sm text-gray-600">Transactions</span>
         </div>
       </div>
@@ -11,7 +11,7 @@
       <div class="relative">
         <select
             v-model="selectedPeriod"
-            class="block w-full pl-3 pr-8 py-1 text-sm border-gray-300 rounded-md focus:outline-none focus:ring-purple-500 focus:border-purple-500"
+            class="block w-full pl-3 pr-8 py-1 text-sm border-gray-300 rounded-md focus:outline-none focus:ring-primary-main focus:border-primary-main"
         >
           <option value="daily">Daily</option>
           <option value="weekly">Weekly</option>

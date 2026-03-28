@@ -12,23 +12,23 @@
           v-model="searchQuery"
           type="text"
           :placeholder="t('common.search')"
-          class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-gray-800 dark:text-white"
+          class="w-full px-4 py-2 border border-gray-300 dark:border-white/10 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-white/5 dark:text-white"
           @input="debouncedSearch"
         />
       </div>
       <button
         @click="fetchUsers"
-        class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+        class="px-4 py-2 bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-white/[0.07]"
       >
         {{ t('common.refresh') }}
       </button>
     </div>
 
     <!-- Users table -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+    <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 dark:bg-gray-900">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+          <thead class="bg-gray-50 dark:bg-gray-950">
             <tr>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 {{ t('admin.user') }}
@@ -50,7 +50,7 @@
               </th>
             </tr>
           </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/10">
             <tr v-if="isLoading">
               <td colspan="6" class="px-6 py-12 text-center text-gray-500">
                 <div class="flex justify-center">
@@ -66,7 +66,7 @@
                 {{ t('admin.noUsersFound') }}
               </td>
             </tr>
-            <tr v-for="user in users" :key="user.id" class="hover:bg-gray-50 dark:hover:bg-gray-700">
+            <tr v-for="user in users" :key="user.id" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
               <td class="px-6 py-4 whitespace-nowrap">
                 <div class="flex items-center">
                   <div class="h-10 w-10 rounded-full bg-red-100 dark:bg-red-900 flex items-center justify-center">
@@ -85,7 +85,7 @@
                   <span
                     v-for="org in user.organizations"
                     :key="org.id"
-                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200"
+                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-white/5 text-gray-800 dark:text-gray-200"
                   >
                     {{ org.name }}
                   </span>
@@ -123,7 +123,7 @@
       </div>
 
       <!-- Pagination -->
-      <div v-if="pagination.totalPages > 1" class="bg-white dark:bg-gray-800 px-4 py-3 flex items-center justify-between border-t border-gray-200 dark:border-gray-700">
+      <div v-if="pagination.totalPages > 1" class="bg-white dark:bg-white/5 px-4 py-3 flex items-center justify-between border-t border-gray-200 dark:border-white/10">
         <div class="text-sm text-gray-700 dark:text-gray-300">
           {{ t('common.showing') }} {{ (pagination.page - 1) * pagination.limit + 1 }} - {{ Math.min(pagination.page * pagination.limit, pagination.total) }} {{ t('common.of') }} {{ pagination.total }}
         </div>
@@ -131,14 +131,14 @@
           <button
             @click="changePage(pagination.page - 1)"
             :disabled="pagination.page === 1"
-            class="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm disabled:opacity-50"
+            class="px-3 py-1 border border-gray-300 dark:border-white/10 rounded text-sm disabled:opacity-50"
           >
             {{ t('common.previous') }}
           </button>
           <button
             @click="changePage(pagination.page + 1)"
             :disabled="pagination.page === pagination.totalPages"
-            class="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm disabled:opacity-50"
+            class="px-3 py-1 border border-gray-300 dark:border-white/10 rounded text-sm disabled:opacity-50"
           >
             {{ t('common.next') }}
           </button>
@@ -150,7 +150,7 @@
     <div v-if="showEditModal" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
         <div class="fixed inset-0 bg-black opacity-50" @click="showEditModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl shadow-xl max-w-md w-full p-6">
           <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">{{ t('admin.editUser') }}</h3>
 
           <div class="space-y-4">
@@ -159,7 +159,7 @@
               <input
                 v-model="editingUser.name"
                 type="text"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-lg dark:bg-white/5 dark:text-white"
               />
             </div>
             <div>
@@ -167,7 +167,7 @@
               <input
                 v-model="editingUser.email"
                 type="email"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-lg dark:bg-white/5 dark:text-white"
               />
             </div>
             <div class="flex items-center">
@@ -184,7 +184,7 @@
           <div class="mt-6 flex justify-end gap-3">
             <button
               @click="showEditModal = false"
-              class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-lg"
             >
               {{ t('common.cancel') }}
             </button>
@@ -203,7 +203,7 @@
     <div v-if="showDeleteModal" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
         <div class="fixed inset-0 bg-black opacity-50" @click="showDeleteModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl shadow-xl max-w-md w-full p-6">
           <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">{{ t('admin.confirmDelete') }}</h3>
           <p class="text-gray-600 dark:text-gray-400 mb-6">
             {{ t('admin.deleteUserConfirmation', { name: deletingUser?.name }) }}
@@ -211,7 +211,7 @@
           <div class="flex justify-end gap-3">
             <button
               @click="showDeleteModal = false"
-              class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-lg"
             >
               {{ t('common.cancel') }}
             </button>

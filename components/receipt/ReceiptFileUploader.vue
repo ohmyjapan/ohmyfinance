@@ -1,20 +1,20 @@
 <template>
   <div
       class="border-2 border-dashed border-gray-300 rounded-lg p-6 flex flex-col items-center justify-center text-center h-full"
-      :class="{ 'border-purple-400 bg-purple-50': isDragging }"
+      :class="{ 'border-primary-main bg-primary-main/10': isDragging }"
       @dragenter.prevent="isDragging = true"
       @dragover.prevent="isDragging = true"
       @dragleave.prevent="isDragging = false"
       @drop.prevent="handleDrop"
   >
-    <FileText size="48" :class="isDragging ? 'text-purple-400' : 'text-gray-400'" class="mb-4" />
+    <FileText size="48" :class="isDragging ? 'text-primary-main' : 'text-gray-400'" class="mb-4" />
     <h3 class="text-lg font-medium text-gray-900 mb-2">
       {{ isDragging ? 'Drop receipts here' : 'Drag and drop receipts here' }}
     </h3>
     <p class="text-sm text-gray-500 mb-4">or click to browse from your device</p>
     <button
         @click="$refs.fileInput.click()"
-        class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+        class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
     >
       <Upload size="16" class="mr-2" />
       Upload Receipt
@@ -33,7 +33,7 @@
     <div v-if="isUploading" class="w-full mt-4">
       <div class="bg-gray-200 rounded-full h-2.5 mb-2">
         <div
-            class="bg-purple-600 h-2.5 rounded-full"
+            class="bg-primary-main h-2.5 rounded-full"
             :style="{ width: `${uploadProgress}%` }"
         ></div>
       </div>

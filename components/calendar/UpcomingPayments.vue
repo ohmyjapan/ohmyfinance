@@ -1,20 +1,20 @@
 <template>
-  <div class="bg-white dark:bg-background-darkPaper rounded-lg shadow">
-    <div class="px-4 py-3 border-b dark:border-gray-700">
+  <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm">
+    <div class="px-4 py-3 border-b dark:border-white/10">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('upcomingPayments.title') }}</h3>
     </div>
-    <div class="divide-y dark:divide-gray-700">
+    <div class="divide-y dark:divide-white/10">
       <div
         v-for="payment in payments"
         :key="payment.id"
-        class="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700"
+        class="px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
       >
         <div class="flex items-center gap-3">
           <!-- Complete button -->
           <button
             v-if="payment.status === 'pending' || payment.status === 'overdue'"
             @click.stop="$emit('mark-completed', payment)"
-            class="flex-shrink-0 p-1.5 rounded-full border-2 border-gray-300 dark:border-gray-600 hover:border-success-main hover:bg-success-light dark:hover:bg-success-dark/30 transition-all duration-200 hover:scale-110"
+            class="flex-shrink-0 p-1.5 rounded-full border-2 border-gray-300 dark:border-white/10 hover:border-success-main hover:bg-success-light dark:hover:bg-success-dark/30 transition-all duration-200 hover:scale-110"
             :title="t('calendar.markComplete')"
           >
             <Check class="h-3 w-3 text-transparent hover:text-success-main" />

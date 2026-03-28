@@ -30,7 +30,7 @@ const badgeClasses = {
   pending: 'bg-gray-100 text-gray-800',
   processing: 'bg-gray-100 text-gray-800',
   in_transit: 'bg-blue-100 text-blue-800',
-  out_for_delivery: 'bg-purple-100 text-purple-800',
+  out_for_delivery: 'bg-primary-main/20 text-primary-dark',
   delivered: 'bg-green-100 text-green-800',
   delayed: 'bg-yellow-100 text-yellow-800',
   exception: 'bg-red-100 text-red-800',

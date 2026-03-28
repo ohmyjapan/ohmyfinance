@@ -1,5 +1,5 @@
 <template>
-  <header class="bg-white dark:bg-background-darkPaper shadow-sm sticky top-0 z-10">
+  <header class="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-b border-gray-200 dark:border-white/10 sticky top-0 z-10">
     <div class="flex items-center justify-between px-4 py-3 md:py-4">
       <div class="flex items-center">
         <button
@@ -34,22 +34,22 @@
               <p class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ userStore.user?.name || t('header.adminUser') }}</p>
               <p class="text-xs text-gray-500 dark:text-gray-400">{{ userStore.user?.email || '' }}</p>
             </div>
-            <div class="h-8 w-8 rounded-full bg-primary-light dark:bg-primary-dark flex items-center justify-center text-primary-main dark:text-primary-light">
+            <div class="h-8 w-8 rounded-full bg-primary-main/20 dark:bg-primary-dark flex items-center justify-center text-primary-main dark:text-primary-light">
               {{ userStore.user?.name?.charAt(0)?.toUpperCase() || 'U' }}
             </div>
             <ChevronDown class="h-4 w-4 ml-1 text-gray-500 dark:text-gray-400" />
           </div>
 
           <div v-if="isProfileOpen"
-               class="absolute right-0 mt-2 w-48 bg-white dark:bg-background-darkPaper rounded-md shadow-lg py-1 z-10 border dark:border-gray-700"
+               class="absolute right-0 mt-2 w-48 bg-white dark:bg-white/5 rounded-xl shadow-lg py-1 z-10 border border-gray-200 dark:border-white/10"
           >
-            <NuxtLink to="/settings" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700" @click="isProfileOpen = false">
+            <NuxtLink to="/settings" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10" @click="isProfileOpen = false">
               {{ t('settings.title') }}
             </NuxtLink>
-            <NuxtLink to="/reports" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700" @click="isProfileOpen = false">
+            <NuxtLink to="/reports" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10" @click="isProfileOpen = false">
               {{ t('reports.title') }}
             </NuxtLink>
-            <NuxtLink to="/audit" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700" @click="isProfileOpen = false">
+            <NuxtLink to="/audit" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10" @click="isProfileOpen = false">
               {{ t('nav.auditLog') }}
             </NuxtLink>
           </div>

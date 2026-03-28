@@ -6,9 +6,9 @@
     </header>
 
     <!-- Filters -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 mb-6">
       <div class="flex flex-wrap gap-4">
-        <select v-model="filters.entityType" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2 text-sm">
+        <select v-model="filters.entityType" class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 text-sm">
           <option value="">{{ t('audit.allTypes') }}</option>
           <option value="transaction">{{ t('nav.transactions') }}</option>
           <option value="receipt">{{ t('nav.receipts') }}</option>
@@ -17,7 +17,7 @@
           <option value="template">{{ t('audit.templates') }}</option>
           <option value="settings">{{ t('nav.settings') }}</option>
         </select>
-        <select v-model="filters.action" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2 text-sm">
+        <select v-model="filters.action" class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 text-sm">
           <option value="">{{ t('audit.allActions') }}</option>
           <option value="create">{{ t('common.create') }}</option>
           <option value="update">{{ t('audit.update') }}</option>
@@ -27,20 +27,20 @@
           <option value="backup">{{ t('audit.backup') }}</option>
           <option value="restore">{{ t('audit.restore') }}</option>
         </select>
-        <input v-model="filters.dateFrom" type="date" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2 text-sm" />
-        <input v-model="filters.dateTo" type="date" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2 text-sm" />
-        <button @click="loadLogs" class="px-4 py-2 bg-purple-600 text-white rounded-md text-sm hover:bg-purple-700">
+        <input v-model="filters.dateFrom" type="date" class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 text-sm" />
+        <input v-model="filters.dateTo" type="date" class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 text-sm" />
+        <button @click="loadLogs" class="px-4 py-2 bg-primary-main text-white rounded-md text-sm hover:bg-primary-dark">
           {{ t('common.filter') }}
         </button>
       </div>
     </div>
 
     <!-- Log Table -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm overflow-hidden">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
       <div v-if="isLoading" class="p-8 text-center text-gray-500">{{ t('common.loading') }}</div>
       <div v-else-if="logs.length === 0" class="p-8 text-center text-gray-500">{{ t('audit.noLogs') }}</div>
-      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead class="bg-gray-50 dark:bg-gray-700">
+      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+        <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('audit.timestamp') }}</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('audit.action') }}</th>
@@ -49,8 +49,8 @@
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('audit.changes') }}</th>
           </tr>
         </thead>
-        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-          <tr v-for="log in logs" :key="log.id" class="hover:bg-gray-50 dark:hover:bg-gray-700">
+        <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/10">
+          <tr v-for="log in logs" :key="log.id" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
             <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
               {{ formatDateTime(log.timestamp) }}
             </td>
@@ -76,7 +76,7 @@
       </table>
 
       <!-- Pagination -->
-      <div v-if="pagination.totalPages > 1" class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+      <div v-if="pagination.totalPages > 1" class="px-6 py-4 border-t border-gray-200 dark:border-white/10 flex items-center justify-between">
         <div class="text-sm text-gray-500 dark:text-gray-400">
           {{ t('audit.pageInfo', { page: pagination.page, totalPages: pagination.totalPages, total: pagination.total }) }}
         </div>
@@ -84,14 +84,14 @@
           <button
             @click="changePage(pagination.page - 1)"
             :disabled="pagination.page === 1"
-            class="px-3 py-1 border dark:border-gray-600 rounded text-sm disabled:opacity-50 dark:text-gray-300"
+            class="px-3 py-1 border dark:border-white/10 rounded text-sm disabled:opacity-50 dark:text-gray-300"
           >
             {{ t('common.previous') }}
           </button>
           <button
             @click="changePage(pagination.page + 1)"
             :disabled="pagination.page === pagination.totalPages"
-            class="px-3 py-1 border dark:border-gray-600 rounded text-sm disabled:opacity-50 dark:text-gray-300"
+            class="px-3 py-1 border dark:border-white/10 rounded text-sm disabled:opacity-50 dark:text-gray-300"
           >
             {{ t('common.next') }}
           </button>
@@ -150,7 +150,7 @@ const getActionClass = (action: string) => {
     create: 'bg-green-100 text-green-700',
     update: 'bg-blue-100 text-blue-700',
     delete: 'bg-red-100 text-red-700',
-    import: 'bg-purple-100 text-purple-700',
+    import: 'bg-primary-main/20 text-primary-dark',
     export: 'bg-yellow-100 text-yellow-700',
     backup: 'bg-indigo-100 text-indigo-700',
     restore: 'bg-pink-100 text-pink-700'

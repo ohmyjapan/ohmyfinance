@@ -7,7 +7,7 @@
       </div>
       <button
           @click="openModal()"
-          class="mt-4 md:mt-0 inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+          class="mt-4 md:mt-0 inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
       >
         <Plus class="h-4 w-4 mr-2" />
         {{ t('budgets.newBudget') }}
@@ -16,34 +16,34 @@
 
     <!-- Summary Cards -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.totalBudgeted') }}</div>
-        <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ formatCurrency(stats.totalBudget) }}</div>
+        <div class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(stats.totalBudget) }}</div>
       </div>
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.totalSpent') }}</div>
-        <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ formatCurrency(stats.totalSpent) }}</div>
+        <div class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(stats.totalSpent) }}</div>
       </div>
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.remaining') }}</div>
-        <div class="text-2xl font-bold" :class="stats.remaining >= 0 ? 'text-green-600' : 'text-red-600'">
+        <div class="text-2xl font-bold font-mono" :class="stats.remaining >= 0 ? 'text-green-600' : 'text-red-600'">
           {{ formatCurrency(stats.remaining) }}
         </div>
       </div>
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.overBudget') }}</div>
-        <div class="text-2xl font-bold text-red-600">{{ stats.overBudgetCount }}</div>
+        <div class="text-2xl font-bold font-mono text-red-600">{{ stats.overBudgetCount }}</div>
       </div>
     </div>
 
     <!-- Budgets List -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
       <div v-if="isLoading" class="p-8 text-center text-gray-500">{{ t('common.loading') }}</div>
       <div v-else-if="budgets.length === 0" class="p-8 text-center text-gray-500">
         {{ t('budgets.noBudgets') }}
       </div>
-      <div v-else class="divide-y divide-gray-200 dark:divide-gray-700">
-        <div v-for="budget in budgets" :key="budget.id" class="p-4 hover:bg-gray-50 dark:hover:bg-gray-700">
+      <div v-else class="divide-y divide-gray-200 dark:divide-white/10">
+        <div v-for="budget in budgets" :key="budget.id" class="p-4 hover:bg-gray-50 dark:hover:bg-white/[0.07]">
           <div class="flex items-center justify-between mb-2">
             <div class="flex items-center space-x-3">
               <div class="flex-shrink-0">
@@ -91,7 +91,7 @@
                 {{ formatCurrency(budget.remaining) }} {{ t('budgets.remaining') }}
               </span>
             </div>
-            <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+            <div class="w-full bg-gray-200 dark:bg-slate-600 rounded-full h-2">
               <div
                   class="h-2 rounded-full transition-all"
                   :class="getProgressColor(budget)"
@@ -116,8 +116,8 @@
     <!-- Modal -->
     <div v-if="showModal" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-black/50" @click="showModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showModal = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl max-w-md w-full p-6">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
             {{ editingBudget ? t('budgets.editBudget') : t('budgets.newBudget') }}
           </h3>
@@ -129,7 +129,7 @@
                   v-model="form.name"
                   type="text"
                   required
-                  class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+                  class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
                   :placeholder="t('budgets.namePlaceholder')"
               />
             </div>
@@ -139,7 +139,7 @@
               <input
                   v-model="form.category"
                   type="text"
-                  class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+                  class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
                   :placeholder="t('budgets.categoryPlaceholder')"
               />
             </div>
@@ -151,7 +151,7 @@
                   type="number"
                   required
                   min="0"
-                  class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+                  class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
               />
             </div>
 
@@ -159,7 +159,7 @@
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('budgets.period') }}</label>
               <select
                   v-model="form.period"
-                  class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+                  class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
               >
                 <option value="monthly">{{ t('budgets.periods.monthly') }}</option>
                 <option value="quarterly">{{ t('budgets.periods.quarterly') }}</option>
@@ -174,7 +174,7 @@
                   type="number"
                   min="0"
                   max="100"
-                  class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+                  class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
               />
             </div>
 
@@ -183,7 +183,7 @@
                   v-model="form.isActive"
                   type="checkbox"
                   id="isActive"
-                  class="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                  class="h-4 w-4 text-primary-main focus:ring-primary-main border-gray-300 rounded"
               />
               <label for="isActive" class="ml-2 text-sm text-gray-700 dark:text-gray-300">{{ t('budgets.active') }}</label>
             </div>
@@ -192,13 +192,13 @@
               <button
                   type="button"
                   @click="showModal = false"
-                  class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:text-gray-900"
+                  class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-xl"
               >
                 {{ t('common.cancel') }}
               </button>
               <button
                   type="submit"
-                  class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+                  class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark"
               >
                 {{ editingBudget ? t('common.edit') : t('common.create') }}
               </button>

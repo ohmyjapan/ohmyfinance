@@ -12,7 +12,7 @@
     </div>
 
     <div v-if="isLoading" class="flex justify-center items-center h-64">
-      <Loader size="32" class="text-purple-600 animate-spin" />
+      <Loader size="32" class="text-primary-main animate-spin" />
     </div>
 
     <div v-else-if="error" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
@@ -21,7 +21,7 @@
 
     <template v-else>
       <!-- Shipment Summary Card -->
-      <div class="bg-white rounded-lg shadow-sm overflow-hidden mb-6">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden mb-6">
         <div class="p-6">
           <div class="flex flex-col md:flex-row md:justify-between md:items-center mb-6">
             <div>
@@ -34,7 +34,7 @@
               <ShipmentStatusBadge :status="shipment.status" />
               <button
                   v-if="shipment.status !== 'delivered' && shipment.status !== 'cancelled'"
-                  class="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                  class="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
                   @click="updateStatus = true"
               >
                 {{ t('shipmentPage.updateStatus') }}
@@ -57,7 +57,7 @@
               <div class="flex items-center mt-2">
                 <p class="text-sm text-gray-600 mr-2">{{ getCarrierName(shipment.carrier) }}</p>
                 <button
-                    class="text-purple-600 hover:text-purple-800 text-sm flex items-center"
+                    class="text-primary-main hover:text-primary-dark text-sm flex items-center"
                     @click="trackShipment(shipment.trackingNumber, shipment.carrier)"
                 >
                   <ExternalLink size="12" class="mr-1" />
@@ -69,7 +69,7 @@
               <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.linkedOrder') }}</p>
               <p class="text-base font-medium text-gray-800">{{ t('shipmentPage.orderNumber', { id: shipment.orderId }) }}</p>
               <p class="text-sm text-gray-600">
-                <button class="text-purple-600 hover:text-purple-800">
+                <button class="text-primary-main hover:text-primary-dark">
                   {{ t('shipmentPage.viewOrder') }}
                 </button>
               </p>
@@ -87,7 +87,7 @@
               <p class="text-base font-medium text-gray-800">{{ shipment.customer.name }}</p>
               <p class="text-sm text-gray-600">{{ shipment.customer.email }}</p>
               <p class="text-sm text-gray-600">
-                <button class="text-purple-600 hover:text-purple-800 mt-1">
+                <button class="text-primary-main hover:text-primary-dark mt-1">
                   {{ t('shipmentPage.viewCustomer') }}
                 </button>
               </p>
@@ -109,7 +109,7 @@
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Left Column - 2/3 width -->
         <div class="lg:col-span-2">
-          <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
             <div class="px-6 py-4 border-b">
               <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentPage.timeline') }}</h3>
             </div>
@@ -171,7 +171,7 @@
         <!-- Right Column - 1/3 width -->
         <div>
           <!-- Shipment Details Card -->
-          <div class="bg-white rounded-lg shadow-sm overflow-hidden mb-6">
+          <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden mb-6">
             <div class="px-6 py-4 border-b">
               <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentPage.details') }}</h3>
             </div>
@@ -206,22 +206,22 @@
           </div>
 
           <!-- Actions Card -->
-          <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
             <div class="px-6 py-4 border-b">
               <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentPage.actions') }}</h3>
             </div>
             <div class="p-6">
               <div class="space-y-4">
-                <button class="w-full inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+                <button class="w-full inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
                   <Printer class="mr-2 h-4 w-4" />
                   {{ t('shipmentPage.printLabel') }}
                 </button>
-                <button class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+                <button class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
                   <FileText class="mr-2 h-4 w-4 text-gray-500" />
                   {{ t('shipmentPage.downloadPod') }}
                 </button>
                 <button
-                    class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                    class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
                     @click="sendTrackingInfo = true"
                 >
                   <Mail class="mr-2 h-4 w-4 text-gray-500" />
@@ -251,18 +251,18 @@
     >
       <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
         <div
-            class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+            class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
             aria-hidden="true"
             @click="updateStatus = false"
         ></div>
 
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+        <div class="inline-block align-bottom bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
           <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
             <div class="sm:flex sm:items-start">
-              <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-purple-100 sm:mx-0 sm:h-10 sm:w-10">
-                <Truck class="h-6 w-6 text-purple-600" />
+              <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-primary-main/20 sm:mx-0 sm:h-10 sm:w-10">
+                <Truck class="h-6 w-6 text-primary-main" />
               </div>
               <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
                 <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
@@ -280,7 +280,7 @@
               <select
                   id="status"
                   v-model="newStatus"
-                  class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
+                  class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
               >
                 <option value="pending">{{ t('shipmentPage.statusPending') }}</option>
                 <option value="processing">{{ t('shipmentPage.statusProcessing') }}</option>
@@ -297,7 +297,7 @@
                   type="text"
                   id="location"
                   v-model="statusLocation"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                   :placeholder="t('shipmentPage.locationPlaceholder')"
               />
             </div>
@@ -307,7 +307,7 @@
                   id="notes"
                   v-model="statusNotes"
                   rows="3"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                   :placeholder="t('shipmentPage.notesPlaceholder')"
               ></textarea>
             </div>
@@ -317,7 +317,7 @@
                     id="notify-customer"
                     v-model="notifyCustomer"
                     type="checkbox"
-                    class="focus:ring-purple-500 h-4 w-4 text-purple-600 border-gray-300 rounded"
+                    class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 rounded"
                 />
               </div>
               <div class="ml-3 text-sm">
@@ -329,14 +329,14 @@
           <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
                 type="button"
-                class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-purple-600 text-base font-medium text-white hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:ml-3 sm:w-auto sm:text-sm"
+                class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-primary-main text-base font-medium text-white hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:ml-3 sm:w-auto sm:text-sm"
                 @click="updateShipmentStatus"
             >
               {{ t('shipmentPage.updateStatus') }}
             </button>
             <button
                 type="button"
-                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                class="mt-3 w-full inline-flex justify-center rounded-xl border border-gray-300 dark:border-white/10 shadow-sm px-4 py-2 bg-white dark:bg-white/5 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="updateStatus = false"
             >
               {{ t('common.cancel') }}
@@ -356,18 +356,18 @@
     >
       <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
         <div
-            class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+            class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
             aria-hidden="true"
             @click="sendTrackingInfo = false"
         ></div>
 
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+        <div class="inline-block align-bottom bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
           <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
             <div class="sm:flex sm:items-start">
-              <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-purple-100 sm:mx-0 sm:h-10 sm:w-10">
-                <Mail class="h-6 w-6 text-purple-600" />
+              <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-primary-main/20 sm:mx-0 sm:h-10 sm:w-10">
+                <Mail class="h-6 w-6 text-primary-main" />
               </div>
               <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
                 <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
@@ -386,7 +386,7 @@
                   type="email"
                   id="recipient-email"
                   v-model="recipientEmail"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                   :placeholder="shipment.customer.email"
               />
               <p class="mt-1 text-xs text-gray-500">{{ t('shipmentPage.leaveBlankForCustomer') }}</p>
@@ -397,7 +397,7 @@
                   type="text"
                   id="additional-recipients"
                   v-model="additionalRecipients"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                   placeholder="email@example.com, another@example.com"
               />
               <p class="mt-1 text-xs text-gray-500">{{ t('shipmentPage.separateEmails') }}</p>
@@ -408,7 +408,7 @@
                   id="email-message"
                   v-model="emailMessage"
                   rows="3"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                   :placeholder="t('shipmentPage.messagePlaceholder')"
               ></textarea>
             </div>
@@ -421,7 +421,7 @@
                       type="checkbox"
                       checked
                       disabled
-                      class="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                      class="h-4 w-4 text-primary-main border-gray-300 rounded focus:ring-primary-main"
                   />
                   <label for="include-tracking" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeTracking') }}</label>
                 </div>
@@ -430,7 +430,7 @@
                       id="include-eta"
                       type="checkbox"
                       checked
-                      class="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                      class="h-4 w-4 text-primary-main border-gray-300 rounded focus:ring-primary-main"
                   />
                   <label for="include-eta" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeEta') }}</label>
                 </div>
@@ -439,7 +439,7 @@
                       id="include-order"
                       type="checkbox"
                       checked
-                      class="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                      class="h-4 w-4 text-primary-main border-gray-300 rounded focus:ring-primary-main"
                   />
                   <label for="include-order" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeOrder') }}</label>
                 </div>
@@ -449,14 +449,14 @@
           <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
                 type="button"
-                class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-purple-600 text-base font-medium text-white hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:ml-3 sm:w-auto sm:text-sm"
+                class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-primary-main text-base font-medium text-white hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:ml-3 sm:w-auto sm:text-sm"
                 @click="sendTrackingEmail"
             >
               {{ t('shipmentPage.sendEmail') }}
             </button>
             <button
                 type="button"
-                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                class="mt-3 w-full inline-flex justify-center rounded-xl border border-gray-300 dark:border-white/10 shadow-sm px-4 py-2 bg-white dark:bg-white/5 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="sendTrackingInfo = false"
             >
               {{ t('common.cancel') }}
@@ -668,7 +668,7 @@ const getEventIcon = (type: string) => {
 const getEventIconBackground = (type: string) => {
   switch (type) {
     case 'created':
-      return 'bg-purple-100'
+      return 'bg-primary-main/20'
     case 'processing':
       return 'bg-gray-100'
     case 'in_transit':
@@ -689,7 +689,7 @@ const getEventIconBackground = (type: string) => {
 const getEventIconColor = (type: string) => {
   switch (type) {
     case 'created':
-      return 'text-purple-600'
+      return 'text-primary-main'
     case 'processing':
       return 'text-gray-600'
     case 'in_transit':

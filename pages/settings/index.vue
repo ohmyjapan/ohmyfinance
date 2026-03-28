@@ -7,7 +7,7 @@
 
     <div class="space-y-6">
       <!-- General Settings -->
-      <div class="bg-white rounded-lg shadow-sm">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200">
           <h2 class="text-lg font-medium text-gray-800">{{ t('settings.general') }}</h2>
         </div>
@@ -19,7 +19,7 @@
             </div>
             <button
               @click="toggleMultiCurrency"
-              :class="settings.multiCurrencyEnabled ? 'bg-purple-600' : 'bg-gray-300'"
+              :class="settings.multiCurrencyEnabled ? 'bg-primary-main' : 'bg-gray-300'"
               class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
             >
               <span :class="settings.multiCurrencyEnabled ? 'translate-x-6' : 'translate-x-1'" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform" />
@@ -32,7 +32,7 @@
             </div>
             <button
               @click="toggleDarkMode"
-              :class="settings.darkMode ? 'bg-purple-600' : 'bg-gray-300'"
+              :class="settings.darkMode ? 'bg-primary-main' : 'bg-gray-300'"
               class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
             >
               <span :class="settings.darkMode ? 'translate-x-6' : 'translate-x-1'" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform" />
@@ -54,7 +54,7 @@
       </div>
 
       <!-- Notifications -->
-      <div class="bg-white rounded-lg shadow-sm">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200">
           <h2 class="text-lg font-medium text-gray-800">{{ t('settingsPage.notifications') }}</h2>
         </div>
@@ -66,7 +66,7 @@
             </div>
             <button
               @click="settings.paymentReminders = !settings.paymentReminders; saveSettings()"
-              :class="settings.paymentReminders ? 'bg-purple-600' : 'bg-gray-300'"
+              :class="settings.paymentReminders ? 'bg-primary-main' : 'bg-gray-300'"
               class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
             >
               <span :class="settings.paymentReminders ? 'translate-x-6' : 'translate-x-1'" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform" />
@@ -87,7 +87,7 @@
       </div>
 
       <!-- Backup & Restore -->
-      <div class="bg-white rounded-lg shadow-sm">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200">
           <h2 class="text-lg font-medium text-gray-800">{{ t('settingsPage.backupRestore') }}</h2>
         </div>
@@ -97,7 +97,7 @@
               <div class="font-medium text-gray-700">{{ t('settingsPage.exportAllData') }}</div>
               <div class="text-sm text-gray-500">{{ t('settingsPage.exportAllDataDesc') }}</div>
             </div>
-            <button @click="downloadBackup" :disabled="isBackingUp" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50">
+            <button @click="downloadBackup" :disabled="isBackingUp" class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation disabled:opacity-50">
               <Download class="h-4 w-4 inline mr-2" />
               {{ isBackingUp ? t('settingsPage.downloading') : t('settingsPage.downloadBackup') }}
             </button>
@@ -111,7 +111,7 @@
                 type="file"
                 accept=".json"
                 @change="handleFileSelect"
-                class="text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
+                class="text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary-main/10 file:text-primary-dark hover:file:bg-primary-main/20"
               />
             </div>
             <div v-if="restoreFile" class="mt-4 p-4 bg-gray-50 rounded-md">
@@ -127,7 +127,7 @@
                 </label>
               </div>
               <div class="mt-4 flex space-x-3">
-                <button @click="performRestore" :disabled="isRestoring" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50">
+                <button @click="performRestore" :disabled="isRestoring" class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation disabled:opacity-50">
                   {{ isRestoring ? t('settingsPage.restoring') : t('settingsPage.restoreData') }}
                 </button>
                 <button @click="cancelRestore" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
@@ -151,10 +151,10 @@
       </div>
 
       <!-- Categories Management -->
-      <div class="bg-white rounded-lg shadow-sm">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
           <h2 class="text-lg font-medium text-gray-800">{{ t('settingsPage.categories') }}</h2>
-          <button @click="showCategoryModal = true" class="text-purple-600 hover:text-purple-700 text-sm font-medium">
+          <button @click="showCategoryModal = true" class="text-primary-main hover:text-primary-dark text-sm font-medium">
             <Plus class="h-4 w-4 inline mr-1" /> {{ t('settingsPage.addCategory') }}
           </button>
         </div>
@@ -172,7 +172,7 @@
       </div>
 
       <!-- Data Management -->
-      <div class="bg-white rounded-lg shadow-sm">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200">
           <h2 class="text-lg font-medium text-gray-800">{{ t('settingsPage.dataManagement') }}</h2>
         </div>
@@ -200,13 +200,13 @@
     </div>
 
     <!-- Category Modal -->
-    <div v-if="showCategoryModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+    <div v-if="showCategoryModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-md mx-4 p-6">
         <h3 class="text-lg font-medium text-gray-900 mb-4">{{ t('settingsPage.addCategory') }}</h3>
         <input v-model="newCategoryName" type="text" :placeholder="t('settingsPage.categoryName')" class="w-full border border-gray-300 rounded-md px-3 py-2 mb-4" />
         <div class="flex justify-end space-x-3">
-          <button @click="showCategoryModal = false; newCategoryName = ''" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700">{{ t('common.cancel') }}</button>
-          <button @click="addCategory" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">{{ t('common.add') }}</button>
+          <button @click="showCategoryModal = false; newCategoryName = ''" class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]">{{ t('common.cancel') }}</button>
+          <button @click="addCategory" class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark">{{ t('common.add') }}</button>
         </div>
       </div>
     </div>

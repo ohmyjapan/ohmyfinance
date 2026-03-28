@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white dark:bg-background-darkPaper rounded-lg shadow overflow-hidden">
+  <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
     <!-- Floating Drag Ghost (follows cursor with shadow) -->
     <Teleport to="body">
       <div
@@ -32,11 +32,11 @@
     </Teleport>
 
     <!-- Calendar Header -->
-    <div class="flex items-center justify-between px-6 py-4 border-b dark:border-gray-700 bg-gradient-to-r from-primary-light/20 to-transparent dark:from-primary-dark/20">
+    <div class="flex items-center justify-between px-6 py-4 border-b dark:border-white/10 bg-gradient-to-r from-primary-light/20 to-transparent dark:from-primary-dark/20">
       <div class="flex items-center space-x-4">
         <button
           @click="$emit('previous-month')"
-          class="p-2 hover:bg-white/50 dark:hover:bg-gray-700 rounded-full transition-all duration-200 hover:scale-110"
+          class="p-2 hover:bg-white/50 dark:hover:bg-white/[0.07] rounded-full transition-all duration-200 hover:scale-110"
         >
           <ChevronLeft class="h-5 w-5 text-gray-600 dark:text-gray-400" />
         </button>
@@ -45,7 +45,7 @@
         </h2>
         <button
           @click="$emit('next-month')"
-          class="p-2 hover:bg-white/50 dark:hover:bg-gray-700 rounded-full transition-all duration-200 hover:scale-110"
+          class="p-2 hover:bg-white/50 dark:hover:bg-white/[0.07] rounded-full transition-all duration-200 hover:scale-110"
         >
           <ChevronRight class="h-5 w-5 text-gray-600 dark:text-gray-400" />
         </button>
@@ -72,7 +72,7 @@
     </div>
 
     <!-- Days of Week -->
-    <div class="grid grid-cols-7 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+    <div class="grid grid-cols-7 border-b dark:border-white/10 bg-gray-50 dark:bg-white/5">
       <div
         v-for="(day, index) in daysOfWeek"
         :key="day"
@@ -93,7 +93,7 @@
         v-for="(day, index) in calendarDays"
         :key="index"
         :class="[
-          'min-h-[120px] p-2 border-b border-r dark:border-gray-700 transition-all duration-200 cursor-pointer group relative',
+          'min-h-[120px] p-2 border-b border-r dark:border-white/10 transition-all duration-200 cursor-pointer group relative',
           getDayBackgroundClass(day, index),
           selectedDateString === day.dateString ? 'ring-2 ring-primary-main ring-inset shadow-inner' : '',
           index % 7 === 6 ? 'border-r-0' : '',
@@ -138,7 +138,7 @@
           <button
             v-if="day.isCurrentMonth"
             @click.stop="emit('add-payment', day.dateString)"
-            class="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
+            class="p-1 hover:bg-gray-200 dark:hover:bg-white/[0.07] rounded opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
             :title="t('calendar.addPayment')"
           >
             <Plus class="h-4 w-4 text-gray-400 group-hover:text-primary-main" />
@@ -154,7 +154,7 @@
               'text-[10px] leading-tight truncate px-1 py-0.5 rounded',
               holiday.country === 'jp' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' : '',
               holiday.country === 'kr' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : '',
-              holiday.country === 'both' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' : ''
+              holiday.country === 'both' ? 'bg-primary-main/20 dark:bg-primary-main/20 text-primary-dark dark:text-primary-light' : ''
             ]"
             :title="locale === 'ko' ? holiday.name : holiday.name"
           >
@@ -244,7 +244,7 @@
           v-if="day.isCurrentMonth && day.payments.length === 0 && day.holidays.length === 0 && !draggedPayment"
           class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
         >
-          <span class="text-xs text-gray-400 dark:text-gray-500 bg-white/80 dark:bg-gray-800/80 px-2 py-1 rounded">
+          <span class="text-xs text-gray-400 dark:text-gray-500 bg-white/80 dark:bg-slate-800/80 px-2 py-1 rounded">
             {{ t('calendar.clickToAdd') }}
           </span>
         </div>
@@ -492,7 +492,7 @@ const getDayBackgroundClass = (day: CalendarDay, index: number): string => {
   if (day.isToday) {
     classes.push('bg-primary-light/30 dark:bg-primary-dark/20 hover:bg-primary-light/50 dark:hover:bg-primary-dark/30')
   } else if (!day.isCurrentMonth) {
-    classes.push('bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-700/30')
+    classes.push('bg-gray-50 dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/[0.07]')
   } else if (day.holidays.length > 0) {
     // Holiday background
     const hasJp = day.holidays.some(h => h.country === 'jp' || h.country === 'both')
@@ -514,7 +514,7 @@ const getDayBackgroundClass = (day: CalendarDay, index: number): string => {
       classes.push('bg-blue-50/30 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10')
     }
   } else {
-    classes.push('bg-white dark:bg-background-darkPaper hover:bg-gray-50 dark:hover:bg-gray-700/50')
+    classes.push('bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07]/50')
   }
 
   return classes.join(' ')
@@ -529,9 +529,9 @@ const getCategoryColors = (category: string): { bg: string; text: string; border
       border: 'border-blue-500'
     },
     'Personal': {
-      bg: 'bg-purple-100 dark:bg-purple-900/30',
-      text: 'text-purple-700 dark:text-purple-300',
-      border: 'border-purple-500'
+      bg: 'bg-primary-main/20 dark:bg-primary-main/20',
+      text: 'text-primary-dark dark:text-primary-light',
+      border: 'border-primary-main'
     },
     'Salary': {
       bg: 'bg-emerald-100 dark:bg-emerald-900/30',
@@ -574,7 +574,7 @@ const getCategoryColors = (category: string): { bg: string; text: string; border
       border: 'border-amber-500'
     },
     'Other': {
-      bg: 'bg-gray-100 dark:bg-gray-700',
+      bg: 'bg-gray-100 dark:bg-white/5',
       text: 'text-gray-700 dark:text-gray-300',
       border: 'border-gray-500'
     }
@@ -607,7 +607,7 @@ const getHandleColor = (payment: Payment): string => {
 
   const categoryHandleColors: Record<string, string> = {
     'Term Credit Card': 'text-blue-500',
-    'Personal': 'text-purple-500',
+    'Personal': 'text-primary-main',
     'Salary': 'text-emerald-500',
     'Invoice': 'text-indigo-500',
     'Utilities': 'text-orange-500',

@@ -1,6 +1,6 @@
 <template>
-  <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-    <div class="px-6 py-4 border-b dark:border-gray-700">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
+    <div class="px-6 py-4 border-b dark:border-white/10">
       <h3 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('transactions.relatedTransactions') }}</h3>
     </div>
     <div class="p-6">
@@ -8,7 +8,7 @@
         <div
             v-for="transaction in transactions"
             :key="transaction.id"
-            class="flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 p-2 rounded cursor-pointer"
+            class="flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/[0.07] p-2 rounded cursor-pointer"
             @click="navigateToTransaction(transaction.id)"
         >
           <div>
@@ -23,7 +23,7 @@
       </div>
 
       <div v-if="transactions.length > 3" class="mt-4 flex justify-center">
-        <button class="text-sm text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300">
+        <button class="text-sm text-primary-main dark:text-primary-light hover:text-primary-dark dark:hover:text-primary-light">
           {{ t('relatedTransactions.viewAll') }}
         </button>
       </div>

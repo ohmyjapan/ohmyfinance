@@ -1,7 +1,7 @@
 <template>
   <div class="overflow-x-auto">
     <table class="min-w-full divide-y divide-gray-200">
-      <thead class="bg-gray-50">
+      <thead class="bg-gray-50 dark:bg-white/5">
       <tr>
         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
           {{ t('receiptTable.receipt') }}
@@ -24,7 +24,7 @@
       </tr>
       </thead>
       <tbody class="bg-white divide-y divide-gray-200">
-      <tr v-for="receipt in receipts" :key="receipt.id" class="hover:bg-gray-50">
+      <tr v-for="receipt in receipts" :key="receipt.id" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
         <td class="px-6 py-4 whitespace-nowrap">
           <div class="flex items-center">
             <div class="h-10 w-10 flex-shrink-0 bg-gray-100 rounded">
@@ -69,14 +69,14 @@
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
           <button
               @click="$emit('view', receipt.id)"
-              class="text-purple-600 hover:text-purple-900 mr-3"
+              class="text-primary-main hover:text-primary-dark mr-3"
           >
             {{ t('common.view') }}
           </button>
           <button
               v-if="receipt.status === 'unmatched'"
               @click="$emit('match', receipt.id)"
-              class="text-purple-600 hover:text-purple-900 mr-3"
+              class="text-primary-main hover:text-primary-dark mr-3"
           >
             {{ t('receiptTable.match') }}
           </button>

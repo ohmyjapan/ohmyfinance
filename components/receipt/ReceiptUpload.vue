@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow-sm">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
     <div class="p-6">
       <div class="mb-6">
         <h2 class="text-lg font-medium text-gray-900 mb-2">{{ t('receiptUpload.title') }}</h2>
@@ -12,8 +12,8 @@
         <!-- Upload Area -->
         <div class="lg:col-span-2">
           <div
-              class="border-2 border-dashed rounded-lg p-8 flex flex-col items-center justify-center text-center h-64"
-              :class="{ 'border-purple-400 bg-purple-50': isDragging }"
+              class="border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center h-64"
+              :class="{ 'border-primary-main bg-primary-main/10': isDragging }"
               @dragenter.prevent="isDragging = true"
               @dragover.prevent="isDragging = true"
               @dragleave.prevent="isDragging = false"
@@ -21,7 +21,7 @@
           >
             <FileText
                 size="48"
-                :class="isDragging ? 'text-purple-400' : 'text-gray-400'"
+                :class="isDragging ? 'text-primary-main' : 'text-gray-400'"
                 class="mb-4"
             />
             <h3 class="text-lg font-medium text-gray-900 mb-2">
@@ -30,7 +30,7 @@
             <p class="text-sm text-gray-500 mb-4">{{ t('receiptUpload.orClickBrowse') }}</p>
             <button
                 @click="$refs.fileInput.click()"
-                class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             >
               <Upload size="16" class="mr-2" />
               {{ t('receiptUpload.uploadButton') }}
@@ -54,7 +54,7 @@
             </div>
             <div class="w-full bg-gray-200 rounded-full h-2.5">
               <div
-                  class="bg-purple-600 h-2.5 rounded-full"
+                  class="bg-primary-main h-2.5 rounded-full"
                   :style="{ width: `${uploadProgress}%` }"
               ></div>
             </div>
@@ -88,7 +88,7 @@
                     id="merchant"
                     v-model="currentReceipt.merchant"
                     type="text"
-                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
                     :placeholder="t('receiptUpload.merchantPlaceholder')"
                 />
               </div>
@@ -101,7 +101,7 @@
                     id="date"
                     v-model="currentReceipt.date"
                     type="date"
-                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
                 />
               </div>
 
@@ -119,7 +119,7 @@
                       type="number"
                       step="0.01"
                       min="0"
-                      class="block w-full pl-7 pr-12 border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                      class="block w-full pl-7 pr-12 border-gray-300 rounded-md focus:ring-primary-main focus:border-primary-main sm:text-sm"
                       placeholder="0.00"
                   />
                   <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
@@ -135,7 +135,7 @@
                 <select
                     id="category"
                     v-model="currentReceipt.category"
-                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
                 >
                   <option value="">{{ t('receiptUpload.selectCategory') }}</option>
                   <option value="office">{{ t('categories.office') }}</option>
@@ -156,7 +156,7 @@
                     id="notes"
                     v-model="currentReceipt.notes"
                     rows="3"
-                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                    class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
                     :placeholder="t('receiptUpload.notesPlaceholder')"
                 ></textarea>
               </div>
@@ -172,7 +172,7 @@
             <div class="space-y-4">
               <div class="flex items-start">
                 <div class="flex-shrink-0">
-                  <Camera class="h-5 w-5 text-purple-600" />
+                  <Camera class="h-5 w-5 text-primary-main" />
                 </div>
                 <div class="ml-3">
                   <h4 class="text-sm font-medium text-gray-900">{{ t('receiptUpload.tips.imageQuality') }}</h4>
@@ -184,7 +184,7 @@
 
               <div class="flex items-start">
                 <div class="flex-shrink-0">
-                  <CropIcon class="h-5 w-5 text-purple-600" />
+                  <CropIcon class="h-5 w-5 text-primary-main" />
                 </div>
                 <div class="ml-3">
                   <h4 class="text-sm font-medium text-gray-900">{{ t('receiptUpload.tips.cropTitle') }}</h4>
@@ -196,7 +196,7 @@
 
               <div class="flex items-start">
                 <div class="flex-shrink-0">
-                  <DollarSign class="h-5 w-5 text-purple-600" />
+                  <DollarSign class="h-5 w-5 text-primary-main" />
                 </div>
                 <div class="ml-3">
                   <h4 class="text-sm font-medium text-gray-900">{{ t('receiptUpload.tips.totalAmount') }}</h4>
@@ -208,7 +208,7 @@
 
               <div class="flex items-start">
                 <div class="flex-shrink-0">
-                  <CalendarIcon class="h-5 w-5 text-purple-600" />
+                  <CalendarIcon class="h-5 w-5 text-primary-main" />
                 </div>
                 <div class="ml-3">
                   <h4 class="text-sm font-medium text-gray-900">{{ t('receiptUpload.tips.transactionDate') }}</h4>
@@ -238,7 +238,7 @@
             </p>
             <div class="flex justify-end">
               <button
-                  class="inline-flex items-center px-3 py-1 border border-transparent rounded text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  class="inline-flex items-center px-3 py-1 border border-transparent rounded text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
                   @click="viewTransaction"
               >
                 {{ t('receiptUpload.viewTransaction') }}
@@ -251,7 +251,7 @@
       <!-- Action Buttons -->
       <div class="mt-8 flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="cancelUpload"
         >
           {{ t('common.cancel') }}
@@ -259,7 +259,7 @@
         <div>
           <button
               v-if="currentReceipt"
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="findMatchingTransactions"
               :disabled="isProcessing"
           >
@@ -274,7 +274,7 @@
           </button>
           <button
               v-else
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               :disabled="!selectedFiles.length || isUploading"
               @click="uploadReceipts"
           >
@@ -294,13 +294,13 @@
     <!-- Matching Results Modal -->
     <div v-if="showMatchingResults" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20">
-        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="showMatchingResults = false"></div>
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" @click="showMatchingResults = false"></div>
 
-        <div class="relative bg-white rounded-lg max-w-3xl w-full mx-auto shadow-xl">
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 max-w-3xl w-full mx-auto shadow-2xl">
           <div class="absolute top-0 right-0 pt-4 pr-4">
             <button
                 @click="showMatchingResults = false"
-                class="bg-white rounded-md text-gray-400 hover:text-gray-500 focus:outline-none"
+                class="rounded-xl text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 focus:outline-none"
             >
               <X class="h-6 w-6" />
             </button>

@@ -8,7 +8,7 @@
       <!-- Timeline line -->
       <div
         v-if="index < events.length - 1"
-        class="absolute left-3 top-8 w-0.5 h-full -ml-px bg-gray-200 dark:bg-gray-700"
+        class="absolute left-3 top-8 w-0.5 h-full -ml-px bg-gray-200 dark:bg-white/5"
       ></div>
 
       <!-- Timeline dot -->
@@ -56,7 +56,7 @@
                   :href="event.sourceUrl"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="hover:text-purple-600 dark:hover:text-purple-400 underline"
+                  class="hover:text-primary-main dark:hover:text-primary-main underline"
                 >{{ event.source }}</a>
                 <span v-else>{{ event.source }}</span>
               </span>
@@ -131,7 +131,7 @@ const dotClass = (impact: string) => {
     case 'positive': return 'bg-green-100 dark:bg-green-900/50 border-green-500 text-green-600 dark:text-green-400'
     case 'negative': return 'bg-red-100 dark:bg-red-900/50 border-red-500 text-red-600 dark:text-red-400'
     case 'mixed': return 'bg-yellow-100 dark:bg-yellow-900/50 border-yellow-500 text-yellow-600 dark:text-yellow-400'
-    default: return 'bg-gray-100 dark:bg-gray-700 border-gray-400 text-gray-500 dark:text-gray-400'
+    default: return 'bg-gray-100 dark:bg-white/5 border-gray-400 text-gray-500 dark:text-gray-400'
   }
 }
 
@@ -139,16 +139,16 @@ const typeBadgeClass = (type: string) => {
   const map: Record<string, string> = {
     earnings: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300',
     fda: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300',
-    merger: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300',
+    merger: 'bg-primary-main/20 dark:bg-primary-main/20/40 text-primary-dark dark:text-primary-light',
     contract: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300',
     guidance: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300',
     regulatory: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300',
     insider: 'bg-pink-100 dark:bg-pink-900/40 text-pink-700 dark:text-pink-300',
     analyst: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300',
     dividend: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300',
-    sec_filing: 'bg-slate-100 dark:bg-slate-900/40 text-slate-700 dark:text-slate-300'
+    sec_filing: 'bg-slate-100 dark:bg-gray-950/40 text-slate-700 dark:text-slate-300'
   }
-  return map[type] || 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+  return map[type] || 'bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300'
 }
 
 const impactScoreClass = (score: number) => {
@@ -156,7 +156,7 @@ const impactScoreClass = (score: number) => {
   if (score >= 1) return 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400'
   if (score <= -3) return 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300'
   if (score <= -1) return 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400'
-  return 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+  return 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-400'
 }
 
 const formatEventDate = (isoDate: string) => {

@@ -1,10 +1,10 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
+  <div class="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-900 py-12 px-4 sm:px-6 lg:px-8">
     <div class="max-w-md w-full space-y-8">
       <!-- Header -->
       <div class="text-center">
-        <div class="mx-auto h-16 w-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mb-4">
-          <svg class="h-8 w-8 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="mx-auto h-16 w-16 bg-primary-main/10 dark:bg-primary-main/20 rounded-full flex items-center justify-center mb-4">
+          <svg class="h-8 w-8 text-primary-main dark:text-primary-light" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
           </svg>
         </div>
@@ -18,7 +18,7 @@
 
       <!-- Loading State -->
       <div v-if="loading" class="text-center py-12">
-        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600 mx-auto"></div>
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-main mx-auto"></div>
         <p class="mt-4 text-gray-600 dark:text-gray-400">{{ t('invite.processing') }}</p>
       </div>
 
@@ -33,7 +33,7 @@
         <p class="text-sm text-red-700 dark:text-red-300 mb-4">{{ error }}</p>
         <NuxtLink
           to="/auth/login"
-          class="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          class="inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark transition-colors touch-manipulation"
         >
           {{ t('invite.goToLogin') }}
         </NuxtLink>
@@ -52,9 +52,9 @@
       </div>
 
       <!-- Invite Details Card -->
-      <div v-else-if="inviteDetails" class="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+      <div v-else-if="inviteDetails" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
         <!-- Organization Info -->
-        <div class="bg-red-600 px-6 py-8 text-center">
+        <div class="bg-primary-main px-6 py-8 text-center">
           <div v-if="inviteDetails.organization?.logo" class="mx-auto h-16 w-16 bg-white rounded-full flex items-center justify-center mb-4">
             <img :src="inviteDetails.organization.logo" :alt="inviteDetails.organization.name" class="h-12 w-12 object-contain" />
           </div>
@@ -72,7 +72,7 @@
           <div class="space-y-4 mb-6">
             <div class="flex items-center justify-between">
               <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('invite.invitedAs') }}</span>
-              <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200">
+              <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-primary-main/10 dark:bg-primary-main/20 text-primary-main dark:text-primary-light">
                 {{ getRoleLabel(inviteDetails.role) }}
               </span>
             </div>
@@ -88,7 +88,7 @@
 
           <!-- Already Logged In - Accept Button -->
           <div v-if="isLoggedIn && !needsRegistration">
-            <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 mb-4">
+            <div class="bg-gray-50 dark:bg-white/5 rounded-xl p-4 mb-4">
               <p class="text-sm text-gray-600 dark:text-gray-300">
                 {{ t('invite.loggedInAs') }} <strong>{{ currentUserEmail }}</strong>
               </p>
@@ -96,7 +96,7 @@
             <button
               @click="acceptInvite"
               :disabled="submitting"
-              class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              class="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main disabled:opacity-50 disabled:cursor-not-allowed transition-colors touch-manipulation"
             >
               <svg v-if="submitting" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -108,7 +108,7 @@
 
           <!-- Registration Form for New Users -->
           <form v-else @submit.prevent="handleRegistrationAndAccept" class="space-y-4">
-            <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 mb-2">
+            <div class="bg-gray-50 dark:bg-white/5 rounded-xl p-4 mb-2">
               <p class="text-sm text-gray-600 dark:text-gray-300">
                 {{ t('invite.createAccountFor') }} <strong>{{ inviteDetails.email }}</strong>
               </p>
@@ -123,7 +123,7 @@
                 v-model="form.name"
                 type="text"
                 required
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm dark:bg-white/5 dark:text-white"
                 :placeholder="t('auth.yourName')"
               />
             </div>
@@ -138,7 +138,7 @@
                 type="password"
                 required
                 minlength="6"
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm dark:bg-white/5 dark:text-white"
                 :placeholder="t('auth.minCharacters')"
               />
             </div>
@@ -152,7 +152,7 @@
                 v-model="form.confirmPassword"
                 type="password"
                 required
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm dark:bg-white/5 dark:text-white"
                 :placeholder="t('auth.confirmYourPassword')"
               />
             </div>
@@ -164,7 +164,7 @@
             <button
               type="submit"
               :disabled="submitting"
-              class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              class="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main disabled:opacity-50 disabled:cursor-not-allowed transition-colors touch-manipulation"
             >
               <svg v-if="submitting" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -180,7 +180,7 @@
               {{ t('auth.hasAccount') }}
               <NuxtLink
                 :to="`/auth/login?redirect=${encodeURIComponent(route.fullPath)}`"
-                class="font-medium text-red-600 hover:text-red-500"
+                class="font-medium text-primary-main hover:text-primary-dark"
               >
                 {{ t('auth.signIn') }}
               </NuxtLink>

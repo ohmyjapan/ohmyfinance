@@ -6,20 +6,20 @@
   >
     <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
       <!-- Backdrop -->
-      <div class="fixed inset-0 bg-gray-500 dark:bg-gray-900 bg-opacity-75 dark:bg-opacity-75 transition-opacity" @click="$emit('close')"></div>
+      <div class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" @click="$emit('close')"></div>
 
       <!-- Modal -->
-      <div class="relative bg-white dark:bg-background-darkPaper rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:max-w-lg sm:w-full">
+      <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:max-w-lg sm:w-full">
         <form @submit.prevent="handleSubmit">
           <!-- Header -->
-          <div class="px-6 py-4 border-b dark:border-gray-700 flex items-center justify-between">
+          <div class="px-6 py-4 border-b dark:border-white/10 flex items-center justify-between">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ isEditing ? t('paymentModal.editPayment') : t('paymentModal.addPayment') }}
             </h3>
             <button
               type="button"
               @click="$emit('close')"
-              class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+              class="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
             >
               <X class="h-5 w-5" />
             </button>
@@ -44,7 +44,7 @@
                   'w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-lg transition-all',
                   isScanning
                     ? 'border-primary-main bg-primary-light/20 dark:bg-primary-dark/20'
-                    : 'border-gray-300 dark:border-gray-600 hover:border-primary-main hover:bg-primary-light/10 dark:hover:bg-primary-dark/10'
+                    : 'border-gray-300 dark:border-white/10 hover:border-primary-main hover:bg-primary-light/10 dark:hover:bg-primary-dark/10'
                 ]"
               >
                 <Loader2 v-if="isScanning" class="w-5 h-5 text-primary-main animate-spin" />
@@ -57,14 +57,14 @@
             </div>
 
             <!-- Type Toggle -->
-            <div class="flex rounded-lg bg-gray-100 dark:bg-gray-700 p-1">
+            <div class="flex rounded-lg bg-gray-100 dark:bg-white/5 p-1">
               <button
                 type="button"
                 @click="form.type = 'expense'"
                 :class="[
                   'flex-1 py-2 text-sm font-medium rounded-md transition-colors',
                   form.type === 'expense'
-                    ? 'bg-white dark:bg-gray-600 text-error-main shadow'
+                    ? 'bg-white dark:bg-slate-600 text-error-main shadow'
                     : 'text-gray-500 dark:text-gray-400'
                 ]"
               >
@@ -76,7 +76,7 @@
                 :class="[
                   'flex-1 py-2 text-sm font-medium rounded-md transition-colors',
                   form.type === 'income'
-                    ? 'bg-white dark:bg-gray-600 text-success-main shadow'
+                    ? 'bg-white dark:bg-slate-600 text-success-main shadow'
                     : 'text-gray-500 dark:text-gray-400'
                 ]"
               >
@@ -93,7 +93,7 @@
                 v-model="form.title"
                 type="text"
                 required
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 :placeholder="t('paymentModal.titlePlaceholder')"
               />
             </div>
@@ -110,7 +110,7 @@
                   step="1"
                   min="0"
                   required
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                   placeholder="0"
                 />
               </div>
@@ -120,7 +120,7 @@
                 </label>
                 <select
                   v-model="form.currency"
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 >
                   <option v-for="c in CURRENCIES" :key="c.code" :value="c.code">
                     {{ c.symbol }} {{ c.code }}
@@ -139,7 +139,7 @@
                   v-model="form.dueDate"
                   type="date"
                   required
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 />
               </div>
               <div>
@@ -149,7 +149,7 @@
                 <select
                   v-model="form.category"
                   required
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 >
                   <option v-for="cat in PAYMENT_CATEGORIES" :key="cat" :value="cat">
                     {{ t(`paymentModal.categories.${cat.toLowerCase().replace(/\s+/g, '_')}`) }}
@@ -165,7 +165,7 @@
               </label>
               <select
                 v-model="form.status"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
               >
                 <option value="pending">{{ t('paymentModal.statuses.pending') }}</option>
                 <option value="paid">{{ t('paymentModal.statuses.paid') }}</option>
@@ -181,14 +181,14 @@
                 <input
                   v-model="form.recurring"
                   type="checkbox"
-                  class="rounded border-gray-300 dark:border-gray-600 text-primary-main focus:ring-primary-main"
+                  class="rounded border-gray-300 dark:border-white/10 text-primary-main focus:ring-primary-main"
                 />
                 <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">{{ t('paymentModal.recurringPayment') }}</span>
               </label>
               <select
                 v-if="form.recurring"
                 v-model="form.recurringFrequency"
-                class="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                class="px-3 py-1 text-sm border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
               >
                 <option value="weekly">{{ t('recurring.frequencies.weekly') }}</option>
                 <option value="monthly">{{ t('recurring.frequencies.monthly') }}</option>
@@ -198,7 +198,7 @@
             </div>
 
             <!-- Bank Transfer Toggle -->
-            <div class="border-t dark:border-gray-700 pt-4">
+            <div class="border-t dark:border-white/10 pt-4">
               <button
                 type="button"
                 @click="showBankTransfer = !showBankTransfer"
@@ -216,7 +216,7 @@
                     <input
                       v-model="form.bankTransfer.bankName"
                       type="text"
-                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                       :placeholder="t('paymentModal.bankNamePlaceholder')"
                     />
                   </div>
@@ -225,7 +225,7 @@
                     <input
                       v-model="form.bankTransfer.branchName"
                       type="text"
-                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                       :placeholder="t('paymentModal.branchNamePlaceholder')"
                     />
                   </div>
@@ -236,7 +236,7 @@
                     <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('paymentModal.accountType') }}</label>
                     <select
                       v-model="form.bankTransfer.accountType"
-                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                     >
                       <option value="ordinary">{{ t('paymentModal.accountTypes.ordinary') }}</option>
                       <option value="current">{{ t('paymentModal.accountTypes.current') }}</option>
@@ -248,7 +248,7 @@
                     <input
                       v-model="form.bankTransfer.accountNumber"
                       type="text"
-                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                      class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                       :placeholder="t('paymentModal.accountNumberPlaceholder')"
                     />
                   </div>
@@ -259,7 +259,7 @@
                   <input
                     v-model="form.bankTransfer.accountHolder"
                     type="text"
-                    class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                    class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                     :placeholder="t('paymentModal.accountHolderPlaceholder')"
                   />
                 </div>
@@ -274,19 +274,19 @@
               <textarea
                 v-model="form.notes"
                 rows="2"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 :placeholder="t('paymentModal.notesPlaceholder')"
               ></textarea>
             </div>
           </div>
 
           <!-- Footer -->
-          <div class="px-6 py-4 border-t dark:border-gray-700 flex justify-between">
+          <div class="px-6 py-4 border-t dark:border-white/10 flex justify-between">
             <button
               v-if="isEditing"
               type="button"
               @click="$emit('delete')"
-              class="px-4 py-2 text-sm font-medium text-error-main hover:bg-error-light dark:hover:bg-error-dark/20 rounded-md"
+              class="px-4 py-2 text-sm font-medium text-error-main hover:bg-error-light dark:hover:bg-error-dark/20 rounded-xl"
             >
               {{ t('common.delete') }}
             </button>
@@ -295,13 +295,13 @@
               <button
                 type="button"
                 @click="$emit('close')"
-                class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
+                class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-xl"
               >
                 {{ t('common.cancel') }}
               </button>
               <button
                 type="submit"
-                class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-md"
+                class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-xl"
               >
                 {{ isEditing ? t('paymentModal.update') : t('paymentModal.addPayment') }}
               </button>

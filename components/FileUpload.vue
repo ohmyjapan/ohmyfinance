@@ -1,14 +1,14 @@
 <template>
   <div>
     <div
-        class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center dark:bg-gray-800"
-        :class="{ 'border-purple-400 bg-purple-50 dark:bg-purple-900/20': isDragging }"
+        class="border-2 border-dashed border-gray-300 dark:border-white/10 rounded-lg p-8 text-center dark:bg-white/5"
+        :class="{ 'border-primary-main bg-primary-main/10 dark:bg-primary-main/20': isDragging }"
         @dragover.prevent="isDragging = true"
         @dragleave.prevent="isDragging = false"
         @drop.prevent="handleFileDrop"
     >
       <div v-if="isLoading">
-        <div class="animate-spin rounded-full h-10 w-10 border-4 border-purple-500 border-t-transparent mx-auto mb-3"></div>
+        <div class="animate-spin rounded-full h-10 w-10 border-4 border-primary-main border-t-transparent mx-auto mb-3"></div>
         <p class="text-gray-600 dark:text-gray-400">{{ t('fileUploader.processingFile') }}</p>
       </div>
       <div v-else>
@@ -20,7 +20,7 @@
         <p class="text-base mb-2 dark:text-gray-200">{{ t('fileUploader.dragDropFile') }}</p>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('fileUploader.or') }}</p>
         <button
-            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none"
+            class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation focus:outline-none"
             @click="$refs.fileInput.click()"
         >
           {{ t('fileUploader.browseFiles') }}
@@ -50,7 +50,7 @@
       <!-- Show sample of processed data -->
       <div v-if="result.data" class="mt-4">
         <h4 class="font-medium text-gray-800 dark:text-gray-200 mb-2">{{ t('fileUploader.sampleData') }}:</h4>
-        <div class="bg-white dark:bg-gray-800 p-3 rounded border dark:border-gray-600 overflow-auto max-h-60">
+        <div class="bg-white dark:bg-white/5 p-3 rounded border dark:border-white/10 overflow-auto max-h-60">
           <pre class="text-xs dark:text-gray-300">{{ JSON.stringify(getSampleData(result.data), null, 2) }}</pre>
         </div>
       </div>

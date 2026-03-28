@@ -41,13 +41,13 @@ const normalizedStatus = computed(() => {
 })
 
 // CSS classes for each status type
-const badgeClasses = {
-  completed: 'bg-green-100 text-green-800',
-  pending: 'bg-yellow-100 text-yellow-800',
-  processing: 'bg-blue-100 text-blue-800',
-  failed: 'bg-red-100 text-red-800',
-  refunded: 'bg-purple-100 text-purple-800',
-  unknown: 'bg-gray-100 text-gray-800'
+const badgeClasses: Record<string, string> = {
+  completed: 'bg-green-500/20 text-green-800 dark:text-green-400',
+  pending: 'bg-yellow-500/20 text-yellow-800 dark:text-yellow-400',
+  processing: 'bg-blue-500/20 text-blue-800 dark:text-blue-400',
+  failed: 'bg-red-500/20 text-red-800 dark:text-red-400',
+  refunded: 'bg-primary-main/20 text-primary-dark dark:text-primary-light',
+  unknown: 'bg-gray-500/20 text-gray-800 dark:text-gray-400'
 }
 
 // Icon for each status type

@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow-sm">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
     <div class="p-6">
       <div class="mb-6">
         <h2 class="text-lg font-medium text-gray-900 mb-2">{{ t('receiptMatcher.title') }}</h2>
@@ -12,8 +12,8 @@
       <div class="mb-6 border border-gray-200 rounded-lg overflow-hidden">
         <div class="p-4 bg-gray-50 border-b border-gray-200">
           <div class="flex items-center">
-            <div class="h-10 w-10 flex-shrink-0 bg-purple-100 rounded-full flex items-center justify-center">
-              <FileText class="h-5 w-5 text-purple-600" />
+            <div class="h-10 w-10 flex-shrink-0 bg-primary-main/20 rounded-full flex items-center justify-center">
+              <FileText class="h-5 w-5 text-primary-main" />
             </div>
             <div class="ml-3">
               <h3 class="text-sm font-medium text-gray-900">{{ t('receiptMatcher.receiptInfo') }}</h3>
@@ -50,7 +50,7 @@
             <input
                 v-model="searchQuery"
                 type="text"
-                class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                 :placeholder="t('receiptMatcher.searchPlaceholder')"
             />
           </div>
@@ -59,7 +59,7 @@
             <div class="relative">
               <select
                   v-model="filters.dateRange"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
               >
                 <option value="">{{ t('receiptMatcher.allDates') }}</option>
                 <option value="today">{{ t('time.today') }}</option>
@@ -72,7 +72,7 @@
             <div class="relative">
               <select
                   v-model="filters.amountRange"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
               >
                 <option value="">{{ t('receiptMatcher.anyAmount') }}</option>
                 <option value="exact">{{ t('receiptMatcher.exactMatch') }}</option>
@@ -87,7 +87,7 @@
 
       <!-- Matching Transactions -->
       <div v-if="isLoading" class="flex justify-center items-center p-12">
-        <Loader class="h-8 w-8 text-purple-600 animate-spin" />
+        <Loader class="h-8 w-8 text-primary-main animate-spin" />
         <span class="ml-2 text-gray-600">{{ t('receiptMatcher.finding') }}</span>
       </div>
 
@@ -102,7 +102,7 @@
                   v-for="transaction in suggestedMatches"
                   :key="transaction.id"
                   class="p-4 hover:bg-gray-50"
-                  :class="{'bg-purple-50 border-l-4 border-purple-500': selectedTransactionId === transaction.id}"
+                  :class="{'bg-primary-main/10 border-l-4 border-primary-main': selectedTransactionId === transaction.id}"
               >
                 <div class="flex items-center justify-between cursor-pointer" @click="selectTransaction(transaction.id)">
                   <div class="flex items-center">
@@ -151,7 +151,7 @@
                   v-for="transaction in paginatedTransactions"
                   :key="transaction.id"
                   class="p-4 hover:bg-gray-50"
-                  :class="{'bg-purple-50 border-l-4 border-purple-500': selectedTransactionId === transaction.id}"
+                  :class="{'bg-primary-main/10 border-l-4 border-primary-main': selectedTransactionId === transaction.id}"
               >
                 <div class="flex items-center justify-between cursor-pointer" @click="selectTransaction(transaction.id)">
                   <div class="flex items-center">
@@ -220,13 +220,13 @@
       <!-- Action Buttons -->
       <div class="mt-8 flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="$emit('cancel')"
         >
           {{ t('common.cancel') }}
         </button>
         <button
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             :disabled="!selectedTransactionId"
             @click="confirmMatch"
         >
@@ -461,7 +461,7 @@ const getTransactionSourceIcon = (source: string) => {
 const getTransactionSourceClass = (source: string) => {
   switch (source) {
     case 'credit_card':
-      return 'bg-purple-100';
+      return 'bg-primary-main/20';
     case 'overseas':
       return 'bg-green-100';
     case 'payment_gateway':
@@ -474,7 +474,7 @@ const getTransactionSourceClass = (source: string) => {
 const getTransactionSourceIconClass = (source: string) => {
   switch (source) {
     case 'credit_card':
-      return 'text-purple-600';
+      return 'text-primary-main';
     case 'overseas':
       return 'text-green-600';
     case 'payment_gateway':

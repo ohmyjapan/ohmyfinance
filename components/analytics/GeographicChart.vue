@@ -7,7 +7,7 @@
           <div class="relative">
             <select
                 v-model="selectedView"
-                class="block w-full pl-3 pr-8 py-1 text-sm border-gray-300 rounded-md focus:outline-none focus:ring-purple-500 focus:border-purple-500"
+                class="block w-full pl-3 pr-8 py-1 text-sm border-gray-300 rounded-md focus:outline-none focus:ring-primary-main focus:border-primary-main"
             >
               <option value="percent">Percentage</option>
               <option value="absolute">Absolute</option>

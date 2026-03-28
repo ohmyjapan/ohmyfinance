@@ -8,14 +8,14 @@
       <div class="mt-4 md:mt-0 flex space-x-3">
         <button
             @click="syncVendors"
-            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-50 dark:hover:bg-white/[0.07]"
         >
           <RefreshCw class="h-4 w-4 mr-2" :class="isSyncing ? 'animate-spin' : ''" />
           {{ t('vendors.syncFromTransactions') }}
         </button>
         <button
             @click="openModal()"
-            class="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            class="inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
         >
           <Plus class="h-4 w-4 mr-2" />
           {{ t('vendors.newVendor') }}
@@ -24,26 +24,26 @@
     </header>
 
     <!-- Search -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 mb-6">
       <input
           v-model="searchQuery"
           @input="debouncedSearch"
           type="text"
           :placeholder="t('vendors.searchPlaceholder')"
-          class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-4 py-2"
+          class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-4 py-2"
       />
     </div>
 
     <!-- Vendors Grid -->
     <div v-if="isLoading" class="text-center py-8 text-gray-500">{{ t('common.loading') }}</div>
-    <div v-else-if="vendors.length === 0" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-8 text-center text-gray-500">
+    <div v-else-if="vendors.length === 0" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-8 text-center text-gray-500">
       {{ t('vendors.noVendors') }}
     </div>
     <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <div
           v-for="vendor in vendors"
           :key="vendor.id"
-          class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 hover:shadow-md transition-shadow cursor-pointer"
+          class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 hover:shadow-md transition-shadow cursor-pointer"
           @click="viewVendor(vendor)"
       >
         <div class="flex items-start justify-between">
@@ -79,8 +79,8 @@
     <!-- Modal -->
     <div v-if="showModal" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-black/50" @click="showModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showModal = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl max-w-md w-full p-6">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
             {{ editingVendor ? t('vendors.editVendor') : t('vendors.newVendor') }}
           </h3>
@@ -88,30 +88,30 @@
           <form @submit.prevent="saveVendor" class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('vendors.vendorName') }}</label>
-              <input v-model="form.name" type="text" required class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+              <input v-model="form.name" type="text" required class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('common.category') }}</label>
-              <input v-model="form.category" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+              <input v-model="form.category" type="text" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
             </div>
             <div class="grid grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('vendors.email') }}</label>
-                <input v-model="form.email" type="email" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model="form.email" type="email" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('vendors.phone') }}</label>
-                <input v-model="form.phone" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2" />
+                <input v-model="form.phone" type="text" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2" />
               </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('vendors.notes') }}</label>
-              <textarea v-model="form.notes" rows="2" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"></textarea>
+              <textarea v-model="form.notes" rows="2" class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"></textarea>
             </div>
 
             <div class="flex justify-end space-x-3 pt-4">
-              <button type="button" @click="showModal = false" class="px-4 py-2 text-gray-700 dark:text-gray-300">{{ t('common.cancel') }}</button>
-              <button type="submit" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">{{ t('common.save') }}</button>
+              <button type="button" @click="showModal = false" class="px-4 py-2 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-100 dark:hover:bg-white/[0.07]">{{ t('common.cancel') }}</button>
+              <button type="submit" class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark">{{ t('common.save') }}</button>
             </div>
           </form>
         </div>

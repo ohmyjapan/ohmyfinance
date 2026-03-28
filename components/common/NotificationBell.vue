@@ -2,12 +2,12 @@
   <div class="relative" ref="container">
     <button
       @click="toggleDropdown"
-      class="relative p-2 text-gray-500 hover:text-gray-700 focus:outline-none"
+      class="relative p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 focus:outline-none"
     >
       <Bell class="h-5 w-5" />
       <span
         v-if="unreadCount > 0"
-        class="absolute -top-1 -right-1 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center"
+        class="absolute -top-1 -right-1 h-5 w-5 bg-primary-main text-white text-xs rounded-full flex items-center justify-center"
       >
         {{ unreadCount > 9 ? '9+' : unreadCount }}
       </span>
@@ -16,20 +16,20 @@
     <!-- Dropdown -->
     <div
       v-if="showDropdown"
-      class="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50"
+      class="absolute right-0 mt-2 w-80 bg-white dark:bg-white/5 rounded-xl shadow-lg border border-gray-200 dark:border-white/10 z-50"
     >
-      <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-        <h3 class="font-medium text-gray-900">{{ t('notifications.title') }}</h3>
-        <button @click="refresh" class="text-gray-400 hover:text-gray-600">
+      <div class="px-4 py-3 border-b border-gray-200 dark:border-white/10 flex justify-between items-center">
+        <h3 class="font-medium text-gray-900 dark:text-gray-100">{{ t('notifications.title') }}</h3>
+        <button @click="refresh" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
           <RefreshCw :class="['h-4 w-4', isLoading ? 'animate-spin' : '']" />
         </button>
       </div>
 
       <div class="max-h-96 overflow-y-auto">
-        <div v-if="isLoading && notifications.length === 0" class="p-4 text-center text-gray-500">
+        <div v-if="isLoading && notifications.length === 0" class="p-4 text-center text-gray-500 dark:text-gray-400">
           {{ t('common.loading') }}
         </div>
-        <div v-else-if="notifications.length === 0" class="p-4 text-center text-gray-500">
+        <div v-else-if="notifications.length === 0" class="p-4 text-center text-gray-500 dark:text-gray-400">
           {{ t('notifications.noNotifications') }}
         </div>
         <div v-else>
@@ -38,14 +38,14 @@
             :key="notification.id"
             :to="notification.url"
             @click="showDropdown = false"
-            class="block px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0"
+            class="block px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/[0.07] border-b border-gray-100 dark:border-white/5 last:border-0"
           >
             <div class="flex items-start">
               <div :class="getPriorityDot(notification.priority)" class="w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0"></div>
               <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium text-gray-900">{{ notification.title }}</div>
-                <div class="text-sm text-gray-500 truncate">{{ notification.message }}</div>
-                <div v-if="notification.amount" class="text-sm font-medium text-purple-600 mt-1">
+                <div class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ notification.title }}</div>
+                <div class="text-sm text-gray-500 dark:text-gray-400 truncate">{{ notification.message }}</div>
+                <div v-if="notification.amount" class="text-sm font-medium font-mono text-primary-main dark:text-primary-light mt-1">
                   {{ formatCurrency(notification.amount) }}
                 </div>
               </div>
@@ -54,8 +54,8 @@
         </div>
       </div>
 
-      <div class="px-4 py-3 border-t border-gray-200 text-center">
-        <NuxtLink to="/recurring" @click="showDropdown = false" class="text-sm text-purple-600 hover:text-purple-700">
+      <div class="px-4 py-3 border-t border-gray-200 dark:border-white/10 text-center">
+        <NuxtLink to="/recurring" @click="showDropdown = false" class="text-sm text-primary-main hover:text-primary-dark dark:text-primary-light dark:hover:text-primary-main">
           {{ t('notifications.viewAll') }}
         </NuxtLink>
       </div>
@@ -107,9 +107,9 @@ const formatCurrency = (amount: number) => {
 
 const getPriorityDot = (priority: string) => {
   switch (priority) {
-    case 'high': return 'bg-red-500'
+    case 'high': return 'bg-primary-main'
     case 'medium': return 'bg-yellow-500'
-    default: return 'bg-gray-300'
+    default: return 'bg-gray-300 dark:bg-slate-600'
   }
 }
 

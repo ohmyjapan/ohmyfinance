@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow overflow-hidden">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
     <div class="px-6 py-4 border-b">
       <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentInfo.title') }}</h3>
     </div>

@@ -1,10 +1,10 @@
 <template>
   <div class="w-full max-w-md mx-auto">
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm-lg p-8">
       <!-- Header -->
       <div class="text-center mb-6">
-        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-          <Shield class="w-8 h-8 text-purple-600 dark:text-purple-400" />
+        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-primary-main/20 dark:bg-primary-main/20 flex items-center justify-center">
+          <Shield class="w-8 h-8 text-primary-main dark:text-primary-light" />
         </div>
         <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
           {{ t('security.twoFactorAuth') }}
@@ -32,7 +32,7 @@
           maxlength="1"
           inputmode="numeric"
           pattern="[0-9]"
-          class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:bg-gray-700 dark:text-white"
+          class="w-12 h-14 text-center text-2xl font-bold font-mono border-2 border-gray-300 dark:border-white/10 rounded-lg focus:border-primary-main focus:ring-2 focus:ring-primary-main/20 dark:bg-white/5 dark:text-white"
           @input="handleCodeInput(index, $event)"
           @keydown="handleCodeKeydown(index, $event)"
           @paste="handleCodePaste"
@@ -44,7 +44,7 @@
         <input
           v-model="rememberDevice"
           type="checkbox"
-          class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500"
+          class="w-4 h-4 rounded border-gray-300 dark:border-white/10 text-primary-main focus:ring-primary-main"
         />
         <span class="text-sm text-gray-600 dark:text-gray-400">
           {{ t('security.rememberDevice') }}
@@ -55,7 +55,7 @@
       <button
         @click="verify"
         :disabled="isVerifying || verificationCode.join('').length !== 6"
-        class="w-full py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-2"
+        class="w-full py-3 bg-primary-main text-white rounded-lg hover:bg-primary-dark disabled:opacity-50 flex items-center justify-center gap-2"
       >
         <Loader2 v-if="isVerifying" class="w-5 h-5 animate-spin" />
         {{ isVerifying ? t('common.loading') : t('auth.signIn') }}

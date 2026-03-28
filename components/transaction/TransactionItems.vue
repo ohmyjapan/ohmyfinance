@@ -1,11 +1,11 @@
 <template>
-  <div class="bg-white rounded-lg shadow overflow-hidden">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
     <div class="px-6 py-4 border-b">
       <h3 class="text-lg font-medium text-gray-800">{{ t('transactionItems.title') }}</h3>
     </div>
     <div class="overflow-x-auto">
       <table class="min-w-full divide-y">
-        <thead class="bg-gray-50">
+        <thead class="bg-gray-50 dark:bg-white/5">
         <tr>
           <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
             {{ t('transactionItems.item') }}

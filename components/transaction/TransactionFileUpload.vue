@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6">
     <!-- Source Selection - Horizontal -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+    <div class="bg-white dark:bg-white/5 rounded-xl shadow-sm border border-gray-200 dark:border-white/10 p-4">
       <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
         {{ t('transactionImport.selectSource') }}
       </label>
@@ -13,12 +13,12 @@
           class="flex-1 flex items-center gap-3 p-4 rounded-xl border-2 transition-all"
           :class="selectedSource === source.id
             ? 'border-primary-main bg-primary-main/10 dark:bg-primary-main/20'
-            : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'"
+            : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-gray-500'"
           @click="$emit('source-selected', source.id)"
         >
           <div
             class="w-10 h-10 rounded-lg flex items-center justify-center"
-            :class="selectedSource === source.id ? 'bg-primary-main text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'"
+            :class="selectedSource === source.id ? 'bg-primary-main text-white' : 'bg-gray-100 dark:bg-white/5 text-gray-500'"
           >
             <component :is="source.icon" class="h-5 w-5" />
           </div>
@@ -32,12 +32,12 @@
     </div>
 
     <!-- Upload Area - Full Width -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+    <div class="bg-white dark:bg-white/5 rounded-xl shadow-sm border border-gray-200 dark:border-white/10 p-4">
       <div
         class="border-2 border-dashed rounded-xl p-8 transition-all cursor-pointer"
         :class="isDragging
           ? 'border-primary-main bg-primary-main/10'
-          : 'border-gray-300 dark:border-gray-600 hover:border-primary-main/50'"
+          : 'border-gray-300 dark:border-white/10 hover:border-primary-main/50'"
         @dragenter.prevent="isDragging = true"
         @dragover.prevent="isDragging = true"
         @dragleave.prevent="isDragging = false"
@@ -69,8 +69,8 @@
     </div>
 
     <!-- Files Table - Full Width -->
-    <div v-if="selectedFiles.length > 0" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-      <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+    <div v-if="selectedFiles.length > 0" class="bg-white dark:bg-white/5 rounded-xl shadow-sm border border-gray-200 dark:border-white/10 overflow-hidden">
+      <div class="px-4 py-3 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
         <h3 class="font-medium text-gray-900 dark:text-white">
           アップロードファイル
           <span class="ml-2 text-sm text-gray-500">{{ selectedFiles.length }}件</span>
@@ -82,7 +82,7 @@
 
       <!-- Table -->
       <table class="w-full">
-        <thead class="bg-gray-50 dark:bg-gray-700/50">
+        <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">ファイル名</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-24">形式</th>
@@ -92,8 +92,8 @@
             <th class="px-4 py-3 w-16"></th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-          <tr v-for="(file, index) in selectedFiles" :key="index" class="hover:bg-gray-50 dark:hover:bg-gray-700/30">
+        <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+          <tr v-for="(file, index) in selectedFiles" :key="index" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
             <td class="px-4 py-3">
               <div class="flex items-center gap-3">
                 <div
@@ -107,7 +107,7 @@
               </div>
             </td>
             <td class="px-4 py-3">
-              <span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-xs font-medium rounded">
+              <span class="px-2 py-1 bg-gray-100 dark:bg-white/5 text-xs font-medium rounded">
                 {{ getFileType(file.name) }}
               </span>
             </td>
@@ -170,7 +170,7 @@
         class="px-6 py-3 rounded-xl text-sm font-medium transition-all"
         :class="canContinue
           ? 'bg-primary-main text-white hover:bg-primary-dark'
-          : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'"
+          : 'bg-gray-200 dark:bg-white/5 text-gray-400 cursor-not-allowed'"
         :disabled="!canContinue"
         @click="continueToMapping"
       >

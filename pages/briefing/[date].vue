@@ -4,7 +4,7 @@
     <div class="mb-4">
       <NuxtLink
         to="/briefing"
-        class="inline-flex items-center gap-1 text-sm text-gray-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400"
+        class="inline-flex items-center gap-1 text-sm text-gray-600 dark:text-gray-400 hover:text-primary-main dark:hover:text-primary-main"
       >
         <ArrowLeft class="h-4 w-4" />
         {{ t('briefing.backToList') }}
@@ -13,7 +13,7 @@
 
     <!-- Loading -->
     <div v-if="isLoading && !currentBriefing && dateBriefings.length === 0" class="flex justify-center items-center py-20">
-      <Loader class="h-8 w-8 text-purple-600 animate-spin" />
+      <Loader class="h-8 w-8 text-primary-main animate-spin" />
       <span class="ml-3 text-gray-600 dark:text-gray-400">{{ t('common.loading') }}</span>
     </div>
 
@@ -31,7 +31,7 @@
       <!-- Date header -->
       <header class="mb-6">
         <div class="flex items-center gap-3">
-          <Calendar class="h-6 w-6 text-purple-600 dark:text-purple-400" />
+          <Calendar class="h-6 w-6 text-primary-main dark:text-primary-light" />
           <h1 class="text-xl font-semibold text-gray-800 dark:text-gray-100">
             {{ formatPageDate(dateParam) }}
           </h1>
@@ -54,7 +54,7 @@
         <div
           v-for="briefing in dateBriefings"
           :key="briefing.id"
-          class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden"
+          class="bg-white dark:bg-white/5 rounded-xl shadow-sm border border-gray-200 dark:border-white/10 overflow-hidden"
         >
           <SingleBriefingDetail :briefing="briefing" :collapsible="true" />
         </div>
@@ -68,7 +68,7 @@
       <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ error }}</p>
       <NuxtLink
         to="/briefing"
-        class="mt-4 inline-flex items-center px-4 py-2 text-sm font-medium text-purple-600 hover:text-purple-700"
+        class="mt-4 inline-flex items-center px-4 py-2 text-sm font-medium text-primary-main hover:text-primary-dark"
       >
         {{ t('briefing.backToList') }}
       </NuxtLink>
@@ -196,7 +196,7 @@ const SingleBriefingDetail = defineComponent({
       const b = props.briefing
       const pd = priceData.value
 
-      return createElement('div', { class: 'divide-y divide-gray-100 dark:divide-gray-700' }, [
+      return createElement('div', { class: 'divide-y divide-gray-100 dark:divide-white/10' }, [
         // ─── Header Section ──────────────────────
         createElement('div', {
           class: ['px-6 py-5', props.collapsible ? 'cursor-pointer' : ''].filter(Boolean).join(' '),
@@ -229,12 +229,12 @@ const SingleBriefingDetail = defineComponent({
             createElement('div', { class: 'flex items-center gap-2' }, [
               // Bookmark
               createElement('button', {
-                class: `p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 ${b.isBookmarked ? 'text-yellow-500' : 'text-gray-400'}`,
+                class: `p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.07] ${b.isBookmarked ? 'text-yellow-500' : 'text-gray-400'}`,
                 onClick: (e: Event) => { e.stopPropagation(); handleBookmark() }
               }, [createElement(Bookmark, { class: 'h-5 w-5', fill: b.isBookmarked ? 'currentColor' : 'none' })]),
               // Notes
               createElement('button', {
-                class: 'p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400',
+                class: 'p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.07] text-gray-400',
                 onClick: (e: Event) => { e.stopPropagation(); showNotes.value = !showNotes.value }
               }, [createElement(MessageSquare, { class: 'h-5 w-5' })]),
               // Delete
@@ -245,7 +245,7 @@ const SingleBriefingDetail = defineComponent({
               // Collapse toggle
               props.collapsible
                 ? createElement('button', {
-                    class: 'p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400'
+                    class: 'p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.07] text-gray-400'
                   }, [createElement(expanded.value ? ChevronUp : ChevronDown, { class: 'h-5 w-5' })])
                 : null
             ].filter(Boolean))
@@ -269,11 +269,11 @@ const SingleBriefingDetail = defineComponent({
           // User notes input
           showNotes.value
             ? createElement('div', {
-                class: 'mt-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg',
+                class: 'mt-4 p-3 bg-gray-50 dark:bg-white/5 rounded-lg',
                 onClick: (e: Event) => e.stopPropagation()
               }, [
                 createElement('textarea', {
-                  class: 'w-full p-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md text-sm resize-none focus:ring-purple-500 focus:border-purple-500',
+                  class: 'w-full p-2 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl text-sm resize-none focus:ring-primary-main focus:border-primary-main',
                   rows: 3,
                   placeholder: t('briefing.notesPlaceholder'),
                   value: notesInput.value,
@@ -285,7 +285,7 @@ const SingleBriefingDetail = defineComponent({
                     onClick: () => { showNotes.value = false }
                   }, t('common.cancel')),
                   createElement('button', {
-                    class: 'px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded hover:bg-purple-700',
+                    class: 'px-3 py-1 text-sm font-medium text-white bg-primary-main rounded hover:bg-primary-dark',
                     onClick: handleSaveNotes
                   }, t('common.save'))
                 ])
@@ -297,21 +297,21 @@ const SingleBriefingDetail = defineComponent({
         expanded.value ? createElement('div', {}, [
           // Executive Summary
           b.executiveSummary
-            ? createElement('div', { class: 'px-6 py-4 bg-purple-50 dark:bg-purple-900/10 border-b border-gray-100 dark:border-gray-700' }, [
-                createElement('h3', { class: 'text-sm font-semibold text-purple-700 dark:text-purple-300 uppercase mb-2' }, t('briefing.executiveSummary')),
+            ? createElement('div', { class: 'px-6 py-4 bg-primary-main/10 dark:bg-primary-main/20/10 border-b border-gray-100 dark:border-white/10' }, [
+                createElement('h3', { class: 'text-sm font-semibold text-primary-dark dark:text-primary-light uppercase mb-2' }, t('briefing.executiveSummary')),
                 createElement('p', { class: 'text-sm text-gray-700 dark:text-gray-300 leading-relaxed' }, b.executiveSummary)
               ])
             : null,
 
           // Primary Movers
           b.primaryMovers && b.primaryMovers.length > 0
-            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-gray-700' }, [
+            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-white/10' }, [
                 createElement('h3', { class: 'text-sm font-semibold text-gray-700 dark:text-gray-200 uppercase mb-3' }, t('briefing.whyItMoved')),
                 createElement('div', { class: 'space-y-2' },
                   b.primaryMovers.map((m, i) =>
                     createElement('div', { key: i, class: 'flex items-start gap-3' }, [
                       createElement('span', {
-                        class: 'flex-shrink-0 w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-sm font-bold flex items-center justify-center'
+                        class: 'flex-shrink-0 w-6 h-6 rounded-full bg-primary-main/20 dark:bg-primary-main/20 text-primary-main dark:text-primary-light text-sm font-bold flex items-center justify-center'
                       }, String(i + 1)),
                       createElement('p', { class: 'text-sm text-gray-700 dark:text-gray-300' }, m)
                     ])
@@ -322,7 +322,7 @@ const SingleBriefingDetail = defineComponent({
 
           // Events Timeline
           b.events && b.events.length > 0
-            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-gray-700' }, [
+            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-white/10' }, [
                 createElement('h3', { class: 'text-sm font-semibold text-gray-700 dark:text-gray-200 uppercase mb-3' },
                   `${t('briefing.keyEvents')} (${b.events.length})`
                 ),
@@ -332,7 +332,7 @@ const SingleBriefingDetail = defineComponent({
 
           // Financial Highlights
           (b.financialHighlights && b.financialHighlights.length > 0) || (b.guidance && b.guidance.length > 0)
-            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-gray-700' }, [
+            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-white/10' }, [
                 createElement('h3', { class: 'text-sm font-semibold text-gray-700 dark:text-gray-200 uppercase mb-3' }, t('briefing.financials')),
                 createElement(resolveComponent('FinancialHighlight'), {
                   highlights: b.financialHighlights || [],
@@ -344,7 +344,7 @@ const SingleBriefingDetail = defineComponent({
 
           // AI Sections
           b.sections && b.sections.length > 0
-            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-gray-700' }, [
+            ? createElement('div', { class: 'px-6 py-4 border-b border-gray-100 dark:border-white/10' }, [
                 createElement('h3', { class: 'text-sm font-semibold text-gray-700 dark:text-gray-200 uppercase mb-3' }, t('briefing.analysis')),
                 createElement('div', { class: 'space-y-4' },
                   b.sections.map((s, i) =>
@@ -353,7 +353,7 @@ const SingleBriefingDetail = defineComponent({
                       class: `p-4 rounded-lg border ${
                         s.importance === 'critical' ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10' :
                         s.importance === 'high' ? 'border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/10' :
-                        'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50'
+                        'border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5'
                       }`
                     }, [
                       createElement('div', { class: 'flex items-center gap-2 mb-2' }, [
@@ -363,7 +363,7 @@ const SingleBriefingDetail = defineComponent({
                             s.importance === 'critical' ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300' :
                             s.importance === 'high' ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300' :
                             s.importance === 'medium' ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300' :
-                            'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                            'bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300'
                           }`
                         }, s.importance)
                       ]),
@@ -376,12 +376,12 @@ const SingleBriefingDetail = defineComponent({
 
           // Tags
           b.tags && b.tags.length > 0
-            ? createElement('div', { class: 'px-6 py-3 border-b border-gray-100 dark:border-gray-700' }, [
+            ? createElement('div', { class: 'px-6 py-3 border-b border-gray-100 dark:border-white/10' }, [
                 createElement('div', { class: 'flex flex-wrap gap-1.5' },
                   b.tags.map((tag, i) =>
                     createElement('span', {
                       key: i,
-                      class: 'px-2 py-0.5 rounded-full text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
+                      class: 'px-2 py-0.5 rounded-full text-xs bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300'
                     }, `#${tag}`)
                   )
                 )

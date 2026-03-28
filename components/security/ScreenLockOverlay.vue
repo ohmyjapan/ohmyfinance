@@ -14,7 +14,7 @@
         class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-900/95 backdrop-blur-sm"
         style="pointer-events: auto;"
       >
-        <div class="w-full max-w-md mx-4 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8" style="pointer-events: auto;">
+        <div class="w-full max-w-md mx-4 bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl p-8" style="pointer-events: auto;">
           <!-- Session Expired State (from force logout or detected during unlock) -->
           <div v-if="forceLogoutRequired || sessionExpired" class="text-center">
             <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
@@ -28,7 +28,7 @@
             </p>
             <button
               @click="handleSessionExpiredLogin"
-              class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              class="w-full py-3 px-4 bg-primary-main hover:bg-primary-dark text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
             >
               <LogIn class="w-5 h-5" />
               {{ t('auth.login') }}
@@ -78,7 +78,7 @@
                   maxlength="1"
                   inputmode="numeric"
                   pattern="[0-9]"
-                  class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-gray-700 dark:text-white"
+                  class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 dark:border-white/10 rounded-lg focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-white/5 dark:text-white"
                   @input="handlePinInput(index, $event)"
                   @keydown="handlePinKeydown(index, $event)"
                   @paste="handlePinPaste"
@@ -103,7 +103,7 @@
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
                   :placeholder="t('security.password')"
-                  class="w-full px-4 py-3 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-gray-700 dark:text-white"
+                  class="w-full px-4 py-3 pr-10 border border-gray-300 dark:border-white/10 rounded-lg focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-white/5 dark:text-white"
                   @keyup.enter="unlockWithPassword"
                 />
                 <button
@@ -128,7 +128,7 @@
             <button
               @click="isPinEnabled && !requiresPassword && !showPasswordInput ? unlockWithPin() : unlockWithPassword()"
               :disabled="isUnlocking"
-              class="w-full py-3 px-4 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              class="w-full py-3 px-4 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
             >
               <Loader2 v-if="isUnlocking" class="w-5 h-5 animate-spin" />
               <Unlock v-else class="w-5 h-5" />

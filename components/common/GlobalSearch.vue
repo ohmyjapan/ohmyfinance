@@ -1,7 +1,7 @@
 <template>
   <div class="relative" ref="searchContainer">
     <div class="relative">
-      <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+      <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
       <input
         v-model="searchQuery"
         @focus="showResults = true"
@@ -9,7 +9,7 @@
         @keydown.enter="goToFirstResult"
         type="text"
         :placeholder="t('search.placeholder')"
-        class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+        class="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-sm bg-white dark:bg-white/5 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-main focus:border-transparent"
       />
       <div v-if="isLoading" class="absolute right-3 top-1/2 transform -translate-y-1/2">
         <Loader2 class="h-4 w-4 text-gray-400 animate-spin" />
@@ -19,32 +19,32 @@
     <!-- Results Dropdown -->
     <div
       v-if="showResults && (results.length > 0 || searchQuery.length >= 2)"
-      class="absolute top-full left-0 right-0 mt-2 bg-white rounded-lg shadow-lg border border-gray-200 max-h-96 overflow-y-auto z-50"
+      class="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-white/5 rounded-xl shadow-lg border border-gray-200 dark:border-white/10 max-h-96 overflow-y-auto z-50"
     >
-      <div v-if="results.length === 0 && searchQuery.length >= 2 && !isLoading" class="p-4 text-center text-gray-500 text-sm">
+      <div v-if="results.length === 0 && searchQuery.length >= 2 && !isLoading" class="p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
         {{ t('search.noResults', { query: searchQuery }) }}
       </div>
 
-      <div v-else class="divide-y divide-gray-100">
+      <div v-else class="divide-y divide-gray-100 dark:divide-white/10">
         <NuxtLink
           v-for="result in results"
           :key="`${result.type}-${result.id}`"
           :to="result.url"
           @click="closeSearch"
-          class="flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer"
+          class="flex items-center px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/[0.07] cursor-pointer"
         >
           <div class="flex-shrink-0 mr-3">
-            <component :is="getIcon(result.type)" class="h-5 w-5 text-gray-400" />
+            <component :is="getIcon(result.type)" class="h-5 w-5 text-gray-400 dark:text-gray-500" />
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center justify-between">
-              <span class="text-sm font-medium text-gray-900 truncate">{{ result.title }}</span>
-              <span v-if="result.amount" class="text-sm font-medium text-gray-700 ml-2">
+              <span class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{{ result.title }}</span>
+              <span v-if="result.amount" class="text-sm font-medium font-mono text-gray-700 dark:text-gray-300 ml-2">
                 {{ formatCurrency(result.amount) }}
               </span>
             </div>
             <div class="flex items-center justify-between mt-0.5">
-              <span class="text-xs text-gray-500 truncate">{{ result.subtitle }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ result.subtitle }}</span>
               <span :class="getStatusClass(result.status)" class="text-xs px-1.5 py-0.5 rounded">
                 {{ t(`status.${result.status}`) }}
               </span>
@@ -53,8 +53,8 @@
         </NuxtLink>
       </div>
 
-      <div v-if="hasMore" class="px-4 py-2 text-center border-t border-gray-100">
-        <span class="text-xs text-gray-500">{{ t('search.showingResults', { shown: results.length, total }) }}</span>
+      <div v-if="hasMore" class="px-4 py-2 text-center border-t border-gray-100 dark:border-white/10">
+        <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('search.showingResults', { shown: results.length, total }) }}</span>
       </div>
     </div>
   </div>
@@ -131,15 +131,15 @@ const formatCurrency = (amount: number) => {
 
 const getStatusClass = (status: string) => {
   const classes: Record<string, string> = {
-    completed: 'bg-green-100 text-green-700',
-    pending: 'bg-yellow-100 text-yellow-700',
-    processing: 'bg-blue-100 text-blue-700',
-    failed: 'bg-red-100 text-red-700',
-    active: 'bg-green-100 text-green-700',
-    matched: 'bg-green-100 text-green-700',
-    unmatched: 'bg-yellow-100 text-yellow-700'
+    completed: 'bg-green-500/20 text-green-700 dark:text-green-400',
+    pending: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400',
+    processing: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
+    failed: 'bg-red-500/20 text-red-700 dark:text-red-400',
+    active: 'bg-green-500/20 text-green-700 dark:text-green-400',
+    matched: 'bg-green-500/20 text-green-700 dark:text-green-400',
+    unmatched: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400'
   }
-  return classes[status] || 'bg-gray-100 text-gray-700'
+  return classes[status] || 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
 }
 
 const handleClickOutside = (event: MouseEvent) => {

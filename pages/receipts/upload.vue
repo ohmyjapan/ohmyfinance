@@ -6,7 +6,7 @@
     </header>
 
     <!-- Upload Section -->
-    <div class="bg-white rounded-lg shadow-sm mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-6">
       <div class="p-6">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- Left: Upload Zone -->
@@ -40,16 +40,16 @@
             </div>
 
             <div class="grid grid-cols-3 gap-4 text-center">
-              <div class="bg-gray-50 p-4 rounded-md">
-                <div class="text-purple-600 font-semibold text-2xl mb-1">{{ receiptStats.total }}</div>
+              <div class="bg-gray-50 dark:bg-white/5 p-4 rounded-xl">
+                <div class="text-primary-main font-semibold font-mono text-2xl mb-1">{{ receiptStats.total }}</div>
                 <div class="text-xs text-gray-500">{{ t('receiptUpload.totalReceipts') }}</div>
               </div>
-              <div class="bg-gray-50 p-4 rounded-md">
-                <div class="text-green-600 font-semibold text-2xl mb-1">{{ receiptStats.matched }}</div>
+              <div class="bg-gray-50 dark:bg-white/5 p-4 rounded-xl">
+                <div class="text-green-600 font-semibold font-mono text-2xl mb-1">{{ receiptStats.matched }}</div>
                 <div class="text-xs text-gray-500">{{ t('receiptUpload.matched') }}</div>
               </div>
-              <div class="bg-gray-50 p-4 rounded-md">
-                <div class="text-yellow-600 font-semibold text-2xl mb-1">{{ receiptStats.unmatched }}</div>
+              <div class="bg-gray-50 dark:bg-white/5 p-4 rounded-xl">
+                <div class="text-yellow-600 font-semibold font-mono text-2xl mb-1">{{ receiptStats.unmatched }}</div>
                 <div class="text-xs text-gray-500">{{ t('receiptUpload.unmatched') }}</div>
               </div>
             </div>
@@ -59,7 +59,7 @@
     </div>
 
     <!-- Recent Uploads Table -->
-    <div class="bg-white rounded-lg shadow-sm mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-6">
       <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
         <h2 class="text-lg font-medium text-gray-800">{{ t('receiptUpload.recentUploads') }}</h2>
         <div class="flex space-x-3">
@@ -70,12 +70,12 @@
             <input
                 v-model="searchQuery"
                 type="text"
-                class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-white/10 rounded-xl leading-5 bg-white dark:bg-white/5 dark:text-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-primary-main focus:border-primary-main sm:text-sm"
                 :placeholder="t('receiptUpload.searchReceipts')"
             />
           </div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="isFilterOpen = !isFilterOpen"
           >
             <Filter size="16" class="mr-2 text-gray-500" />
@@ -92,7 +92,7 @@
             <select
                 id="status-filter"
                 v-model="filters.status"
-                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
             >
               <option value="">{{ t('receiptUpload.allStatuses') }}</option>
               <option value="matched">{{ t('receiptUpload.matched') }}</option>
@@ -104,7 +104,7 @@
             <select
                 id="date-filter"
                 v-model="filters.dateRange"
-                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
             >
               <option value="">{{ t('common.allTime') }}</option>
               <option value="today">{{ t('common.today') }}</option>
@@ -114,7 +114,7 @@
           </div>
           <div class="flex items-end">
             <button
-                class="inline-flex items-center px-4 py-2 border border-gray-300 bg-white rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                class="inline-flex items-center px-4 py-2 border border-gray-300 bg-white rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
                 @click="resetFilters"
             >
               {{ t('common.resetFilters') }}
@@ -149,7 +149,7 @@
             <button
                 class="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium"
                 :class="page === currentPage
-                ? 'border border-transparent text-white bg-purple-600 hover:bg-purple-700'
+                ? 'border border-transparent text-white bg-primary-main hover:bg-primary-dark'
                 : 'border border-gray-300 text-gray-700 bg-white hover:bg-gray-50'"
                 @click="currentPage = page"
             >

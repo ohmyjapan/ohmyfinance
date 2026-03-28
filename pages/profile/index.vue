@@ -15,8 +15,8 @@
 
     <div v-else class="space-y-6">
       <!-- Profile Information Card -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-900 dark:text-white">{{ t('profile.profileInfo') }}</h2>
         </div>
         <div class="p-6">
@@ -66,8 +66,8 @@
       </div>
 
       <!-- Change Password Card -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-900 dark:text-white">{{ t('profile.changePassword') }}</h2>
         </div>
         <div class="p-6">
@@ -79,7 +79,7 @@
               <input
                 v-model="passwordForm.currentPassword"
                 type="password"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-white/5 dark:text-white"
                 :placeholder="t('profile.currentPasswordPlaceholder')"
               />
             </div>
@@ -90,7 +90,7 @@
               <input
                 v-model="passwordForm.newPassword"
                 type="password"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-white/5 dark:text-white"
                 :placeholder="t('profile.newPasswordPlaceholder')"
               />
               <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('auth.minCharacters') }}</p>
@@ -102,7 +102,7 @@
               <input
                 v-model="passwordForm.confirmPassword"
                 type="password"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-white/5 dark:text-white"
                 :placeholder="t('profile.confirmNewPasswordPlaceholder')"
               />
             </div>
@@ -136,18 +136,18 @@
       </div>
 
       <!-- Organizations Card -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-900 dark:text-white">{{ t('profile.organizations') }}</h2>
         </div>
-        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+        <div class="divide-y divide-gray-200 dark:divide-white/10">
           <div v-if="organizations.length === 0" class="p-6 text-center text-gray-500 dark:text-gray-400">
             {{ t('profile.noOrganizations') }}
           </div>
           <div
             v-for="org in organizations"
             :key="org.id"
-            class="p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            class="p-4 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-colors"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-3">
@@ -181,8 +181,8 @@
     <!-- Edit Profile Modal -->
     <div v-if="showEditModal" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-black opacity-50" @click="showEditModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showEditModal = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl max-w-md w-full p-6">
           <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">{{ t('profile.editProfile') }}</h3>
 
           <form @submit.prevent="saveProfile" class="space-y-4">
@@ -193,7 +193,7 @@
               <input
                 v-model="editForm.name"
                 type="text"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-white/5 dark:text-white"
               />
             </div>
             <div>
@@ -203,7 +203,7 @@
               <input
                 v-model="editForm.phone"
                 type="tel"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent dark:bg-white/5 dark:text-white"
                 :placeholder="t('profile.phonePlaceholder')"
               />
             </div>
@@ -217,14 +217,14 @@
               <button
                 type="button"
                 @click="showEditModal = false"
-                class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-xl transition-colors"
               >
                 {{ t('common.cancel') }}
               </button>
               <button
                 type="submit"
                 :disabled="isSaving"
-                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <span v-if="isSaving" class="flex items-center">
                   <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -415,8 +415,8 @@ const getRoleBadgeClass = (role: string) => {
   const classes: Record<string, string> = {
     owner: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
     admin: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-    member: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
-    viewer: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+    member: 'bg-gray-100 text-gray-800 dark:bg-white/5 dark:text-gray-200',
+    viewer: 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400'
   }
   return classes[role] || classes.member
 }

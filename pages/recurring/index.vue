@@ -10,14 +10,14 @@
         <button
           @click="processPayments"
           :disabled="isProcessing"
-          class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
         >
           <RefreshCw :class="['mr-2 h-4 w-4', isProcessing ? 'animate-spin' : '']" />
           {{ t('recurring.processDue') }}
         </button>
         <button
           @click="showCreateModal = true"
-          class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
+          class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation"
         >
           <Plus class="mr-2 h-4 w-4" />
           {{ t('recurring.addRecurring') }}
@@ -27,26 +27,26 @@
 
     <!-- Stats Cards -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-      <div class="bg-white rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500">{{ t('recurring.active') }}</div>
-        <div class="text-2xl font-semibold text-gray-800">{{ stats.active }}</div>
+        <div class="text-2xl font-semibold font-mono text-gray-800 dark:text-gray-100">{{ stats.active }}</div>
       </div>
-      <div class="bg-white rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500">{{ t('recurring.monthlyEstimate') }}</div>
-        <div class="text-2xl font-semibold text-purple-600">{{ formatCurrency(stats.activeMonthlyAmount) }}</div>
+        <div class="text-2xl font-semibold font-mono text-primary-main">{{ formatCurrency(stats.activeMonthlyAmount) }}</div>
       </div>
-      <div class="bg-white rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500">{{ t('recurring.upcoming30days') }}</div>
-        <div class="text-2xl font-semibold text-amber-600">{{ upcoming.count }}</div>
+        <div class="text-2xl font-semibold font-mono text-amber-600">{{ upcoming.count }}</div>
       </div>
-      <div class="bg-white rounded-lg shadow-sm p-4">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500">{{ t('recurring.paused') }}</div>
-        <div class="text-2xl font-semibold text-gray-400">{{ stats.paused }}</div>
+        <div class="text-2xl font-semibold font-mono text-gray-400">{{ stats.paused }}</div>
       </div>
     </div>
 
     <!-- Filters -->
-    <div class="bg-white rounded-lg shadow-sm p-4 mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 mb-6">
       <div class="flex flex-wrap gap-4">
         <select v-model="filters.status" class="border border-gray-300 rounded-md px-3 py-2 text-sm">
           <option value="">{{ t('recurring.allStatus') }}</option>
@@ -74,7 +74,7 @@
     </div>
 
     <!-- Payments List -->
-    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
       <div v-if="isLoading" class="p-8 text-center text-gray-500">
         {{ t('common.loading') }}
       </div>
@@ -82,7 +82,7 @@
         {{ t('recurring.noPayments') }}
       </div>
       <table v-else class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
+        <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('common.name') }}</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('common.amount') }}</th>
@@ -93,7 +93,7 @@
           </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200">
-          <tr v-for="payment in payments" :key="payment.id" class="hover:bg-gray-50">
+          <tr v-for="payment in payments" :key="payment.id" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
             <td class="px-6 py-4">
               <div class="text-sm font-medium text-gray-900">{{ payment.name }}</div>
               <div class="text-sm text-gray-500">{{ payment.customer?.name }}</div>
@@ -115,7 +115,7 @@
               </span>
             </td>
             <td class="px-6 py-4 text-right text-sm space-x-2">
-              <button @click="generateNow(payment)" class="text-purple-600 hover:text-purple-900" title="Generate Transaction">
+              <button @click="generateNow(payment)" class="text-primary-main hover:text-primary-dark" title="Generate Transaction">
                 <Play class="h-4 w-4 inline" />
               </button>
               <button @click="togglePause(payment)" class="text-gray-600 hover:text-gray-900" :title="payment.status === 'paused' ? 'Resume' : 'Pause'">
@@ -134,8 +134,8 @@
     </div>
 
     <!-- Create/Edit Modal -->
-    <div v-if="showCreateModal || showEditModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+    <div v-if="showCreateModal || showEditModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         <div class="px-6 py-4 border-b border-gray-200">
           <h3 class="text-lg font-medium text-gray-900">
             {{ showEditModal ? t('recurring.editRecurring') : t('recurring.newRecurring') }}
@@ -194,10 +194,10 @@
             <label for="autoGenerate" class="text-sm text-gray-700">{{ t('recurring.autoGenerate') }}</label>
           </div>
           <div class="flex justify-end space-x-3 pt-4">
-            <button type="button" @click="closeModal" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
+            <button type="button" @click="closeModal" class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10">
               {{ t('common.cancel') }}
             </button>
-            <button type="submit" :disabled="isSaving" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50">
+            <button type="submit" :disabled="isSaving" class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark disabled:opacity-50">
               {{ isSaving ? t('common.loading') : t('common.save') }}
             </button>
           </div>

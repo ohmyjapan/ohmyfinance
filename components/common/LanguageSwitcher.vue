@@ -2,7 +2,7 @@
   <div class="relative">
     <button
       @click="isOpen = !isOpen"
-      class="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
+      class="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md"
     >
       <Globe class="h-4 w-4" />
       <span>{{ currentLocaleName }}</span>
@@ -11,14 +11,14 @@
 
     <div
       v-if="isOpen"
-      class="absolute right-0 mt-1 w-32 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+      class="absolute right-0 mt-1 w-32 bg-white dark:bg-white/5 rounded-md shadow-lg border border-gray-200 dark:border-white/10 z-50"
     >
       <button
         v-for="loc in availableLocales"
         :key="loc.code"
         @click="switchLocale(loc.code)"
         :class="[
-          'w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700',
+          'w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-white/10',
           locale === loc.code ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
         ]"
       >

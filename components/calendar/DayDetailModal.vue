@@ -9,9 +9,9 @@
       <div class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" @click="$emit('close')"></div>
 
       <!-- Modal -->
-      <div class="relative bg-white dark:bg-background-darkPaper rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:max-w-lg sm:w-full">
+      <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:max-w-lg sm:w-full">
         <!-- Header -->
-        <div class="px-6 py-4 border-b dark:border-gray-700">
+        <div class="px-6 py-4 border-b dark:border-white/10">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ formattedDate }}
@@ -19,7 +19,7 @@
             <button
               type="button"
               @click="$emit('close')"
-              class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+              class="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
             >
               <X class="h-5 w-5" />
             </button>
@@ -30,7 +30,7 @@
               <span>{{ t('calendar.dayDetail.progress') }}</span>
               <span class="font-medium">{{ completedCount }}/{{ payments.length }}</span>
             </div>
-            <div class="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+            <div class="w-full h-2 bg-gray-200 dark:bg-white/5 rounded-full overflow-hidden">
               <div
                 class="h-full bg-success-main rounded-full transition-all duration-300"
                 :style="{ width: `${progressPercent}%` }"
@@ -49,7 +49,7 @@
               v-for="payment in sortedPayments"
               :key="payment.id"
               :class="[
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50',
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 cursor-pointer hover:bg-gray-50 dark:hover:bg-white/10',
                 isCompleted(payment) ? 'opacity-60' : ''
               ]"
               @click="$emit('edit-payment', payment)"
@@ -66,7 +66,7 @@
               >
                 <Check class="h-3 w-3 text-white" />
               </div>
-              <div v-else class="flex-shrink-0 w-5 h-5 rounded-full bg-gray-300 dark:bg-gray-600" />
+              <div v-else class="flex-shrink-0 w-5 h-5 rounded-full bg-gray-300 dark:bg-slate-600" />
 
               <!-- Payment Info -->
               <div class="flex-1 min-w-0">
@@ -123,7 +123,7 @@
         </div>
 
         <!-- Footer -->
-        <div class="px-6 py-4 border-t dark:border-gray-700">
+        <div class="px-6 py-4 border-t dark:border-white/10">
           <!-- Totals by currency -->
           <div v-if="payments.length > 0" class="flex flex-wrap gap-4 mb-3">
             <div v-for="(totals, currency) in currencyTotals" :key="currency" class="text-xs">
@@ -137,7 +137,7 @@
           </div>
           <button
             @click="$emit('add-payment')"
-            class="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-md transition-colors"
+            class="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-xl transition-colors"
           >
             <Plus class="h-4 w-4" />
             {{ t('calendar.addPayment') }}
@@ -224,7 +224,7 @@ const currencyTotals = computed(() => {
 const getCategoryColors = (category: string): { bg: string; text: string } => {
   const colors: Record<string, { bg: string; text: string }> = {
     'Term Credit Card': { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300' },
-    'Personal': { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300' },
+    'Personal': { bg: 'bg-primary-main/20 dark:bg-primary-main/20', text: 'text-primary-dark dark:text-primary-light' },
     'Salary': { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-300' },
     'Invoice': { bg: 'bg-indigo-100 dark:bg-indigo-900/30', text: 'text-indigo-700 dark:text-indigo-300' },
     'Utilities': { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300' },
@@ -233,7 +233,7 @@ const getCategoryColors = (category: string): { bg: string; text: string } => {
     'Insurance': { bg: 'bg-teal-100 dark:bg-teal-900/30', text: 'text-teal-700 dark:text-teal-300' },
     'Tax': { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-300' },
     'Loan': { bg: 'bg-amber-100 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-300' },
-    'Other': { bg: 'bg-gray-100 dark:bg-gray-700', text: 'text-gray-700 dark:text-gray-300' }
+    'Other': { bg: 'bg-gray-100 dark:bg-white/5', text: 'text-gray-700 dark:text-gray-300' }
   }
   return colors[category] || colors['Other']
 }
@@ -244,8 +244,8 @@ const getStatusClass = (status: string): string => {
     case 'paid':
     case 'completed': return 'bg-success-light dark:bg-success-dark/30 text-success-dark dark:text-success-light'
     case 'overdue': return 'bg-error-light dark:bg-error-dark/30 text-error-dark dark:text-error-light'
-    case 'cancelled': return 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
-    default: return 'bg-gray-100 dark:bg-gray-700 text-gray-500'
+    case 'cancelled': return 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-gray-400'
+    default: return 'bg-gray-100 dark:bg-white/5 text-gray-500'
   }
 }
 

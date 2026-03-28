@@ -7,8 +7,8 @@
 
     <div class="space-y-6">
       <!-- Screen Lock Settings -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-white">{{ t('security.screenLock') }}</h2>
         </div>
         <div class="p-6 space-y-4">
@@ -21,7 +21,7 @@
             <select
               v-model.number="securitySettings.screenLockTimeout"
               @change="saveSecuritySettings"
-              class="border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+              class="border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
             >
               <option :value="5">5 {{ t('security.minutes') }}</option>
               <option :value="10">10 {{ t('security.minutes') }}</option>
@@ -40,7 +40,7 @@
             <select
               v-model.number="securitySettings.forceLogoutTimeout"
               @change="saveSecuritySettings"
-              class="border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+              class="border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
             >
               <option :value="4">4 {{ t('security.hours') }}</option>
               <option :value="8">8 {{ t('security.hours') }}</option>
@@ -52,8 +52,8 @@
       </div>
 
       <!-- PIN Settings -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-white">{{ t('security.pinSettings') }}</h2>
         </div>
         <div class="p-6 space-y-4">
@@ -77,7 +77,7 @@
               </button>
               <button
                 @click="showSetPinModal = true"
-                class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+                class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
               >
                 {{ isPinEnabled ? t('security.changePin') : t('security.setPin') }}
               </button>
@@ -87,8 +87,8 @@
       </div>
 
       <!-- Two-Factor Authentication -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-white">{{ t('security.twoFactorAuth') }}</h2>
         </div>
         <div class="p-6 space-y-4">
@@ -103,7 +103,7 @@
             </div>
             <button
               @click="is2FAEnabled ? show2FADisableModal = true : show2FASetupModal = true"
-              :class="is2FAEnabled ? 'border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20' : 'bg-purple-600 text-white hover:bg-purple-700'"
+              :class="is2FAEnabled ? 'border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20' : 'bg-primary-main text-white hover:bg-primary-dark'"
               class="px-4 py-2 rounded-md"
             >
               {{ is2FAEnabled ? t('security.disable2FA') : t('security.enable2FA') }}
@@ -114,8 +114,8 @@
     </div>
 
     <!-- Set PIN Modal -->
-    <div v-if="showSetPinModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+    <div v-if="showSetPinModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-md mx-4 p-6">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
           {{ isPinEnabled ? t('security.changePin') : t('security.setPin') }}
         </h3>
@@ -132,7 +132,7 @@
             <input
               v-model="pinForm.password"
               type="password"
-              class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+              class="w-full border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
             />
           </div>
           <div>
@@ -145,7 +145,7 @@
               maxlength="6"
               inputmode="numeric"
               pattern="[0-9]*"
-              class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+              class="w-full border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
             />
           </div>
           <div>
@@ -158,7 +158,7 @@
               maxlength="6"
               inputmode="numeric"
               pattern="[0-9]*"
-              class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+              class="w-full border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
             />
           </div>
         </div>
@@ -166,14 +166,14 @@
         <div class="flex justify-end space-x-3 mt-6">
           <button
             @click="closeSetPinModal"
-            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300"
+            class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
           >
             {{ t('common.cancel') }}
           </button>
           <button
             @click="handleSetPin"
             :disabled="isSettingPin"
-            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+            class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark disabled:opacity-50"
           >
             {{ isSettingPin ? t('common.loading') : t('common.save') }}
           </button>
@@ -182,8 +182,8 @@
     </div>
 
     <!-- Disable PIN Modal -->
-    <div v-if="showDisablePinModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+    <div v-if="showDisablePinModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-md mx-4 p-6">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">{{ t('security.disablePin') }}</h3>
 
         <div v-if="disablePinError" class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -197,21 +197,21 @@
           <input
             v-model="disablePinPassword"
             type="password"
-            class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+            class="w-full border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
           />
         </div>
 
         <div class="flex justify-end space-x-3 mt-6">
           <button
             @click="closeDisablePinModal"
-            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300"
+            class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
           >
             {{ t('common.cancel') }}
           </button>
           <button
             @click="handleDisablePin"
             :disabled="isDisablingPin"
-            class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+            class="px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 disabled:opacity-50"
           >
             {{ isDisablingPin ? t('common.loading') : t('security.disablePin') }}
           </button>
@@ -227,8 +227,8 @@
     />
 
     <!-- 2FA Disable Modal -->
-    <div v-if="show2FADisableModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+    <div v-if="show2FADisableModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-md mx-4 p-6">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">{{ t('security.disable2FA') }}</h3>
 
         <div v-if="disable2FAError" class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -243,7 +243,7 @@
             <input
               v-model="disable2FAForm.password"
               type="password"
-              class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+              class="w-full border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
             />
           </div>
           <div>
@@ -256,7 +256,7 @@
               maxlength="6"
               inputmode="numeric"
               pattern="[0-9]*"
-              class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 dark:bg-gray-700 dark:text-white"
+              class="w-full border border-gray-300 dark:border-white/10 rounded-md px-3 py-2 dark:bg-white/5 dark:text-white"
             />
           </div>
         </div>
@@ -264,14 +264,14 @@
         <div class="flex justify-end space-x-3 mt-6">
           <button
             @click="close2FADisableModal"
-            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300"
+            class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
           >
             {{ t('common.cancel') }}
           </button>
           <button
             @click="handleDisable2FA"
             :disabled="isDisabling2FA"
-            class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+            class="px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 disabled:opacity-50"
           >
             {{ isDisabling2FA ? t('common.loading') : t('security.disable2FA') }}
           </button>

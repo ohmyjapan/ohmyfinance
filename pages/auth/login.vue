@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
+  <div class="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-900 py-12 px-4 sm:px-6 lg:px-8">
     <div class="max-w-md w-full space-y-8">
       <div>
         <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
@@ -10,12 +10,12 @@
         </p>
       </div>
 
-      <form class="mt-8 space-y-6" @submit.prevent="handleSubmit">
+      <form class="mt-8 space-y-6 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6" @submit.prevent="handleSubmit">
         <div v-if="error" class="bg-red-50 dark:bg-red-900/50 border border-red-200 dark:border-red-800 rounded-md p-4">
           <p class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
         </div>
 
-        <div class="rounded-md shadow-sm -space-y-px">
+        <div class="rounded-xl shadow-sm -space-y-px">
           <div>
             <label for="email" class="sr-only">{{ t('auth.email') }}</label>
             <input
@@ -25,7 +25,7 @@
               type="email"
               autocomplete="email"
               required
-              class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+              class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-white/10 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-white/5 rounded-t-xl focus:outline-none focus:ring-primary-main focus:border-primary-main focus:z-10 sm:text-sm"
               :placeholder="t('auth.email')"
             />
           </div>
@@ -38,7 +38,7 @@
               type="password"
               autocomplete="current-password"
               required
-              class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+              class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-white/10 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-white/5 rounded-b-xl focus:outline-none focus:ring-primary-main focus:border-primary-main focus:z-10 sm:text-sm"
               :placeholder="t('auth.password')"
             />
           </div>
@@ -51,7 +51,7 @@
               v-model="form.rememberMe"
               name="remember-me"
               type="checkbox"
-              class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-700 rounded"
+              class="h-4 w-4 text-primary-main focus:ring-primary-main border-gray-300 dark:border-white/10 rounded"
             />
             <label for="remember-me" class="ml-2 block text-sm text-gray-900 dark:text-gray-300">
               {{ t('auth.rememberMe') }}
@@ -59,7 +59,7 @@
           </div>
 
           <div class="text-sm">
-            <NuxtLink to="/auth/forgot-password" class="font-medium text-blue-600 hover:text-blue-500">
+            <NuxtLink to="/auth/forgot-password" class="font-medium text-primary-main hover:text-primary-dark">
               {{ t('auth.forgotPassword') }}
             </NuxtLink>
           </div>
@@ -69,7 +69,7 @@
           <button
             type="submit"
             :disabled="isLoading"
-            class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-xl text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
           >
             <span v-if="isLoading" class="absolute left-0 inset-y-0 flex items-center pl-3">
               <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -84,7 +84,7 @@
         <div class="text-center">
           <p class="text-sm text-gray-600 dark:text-gray-400">
             {{ t('auth.noAccount') }}
-            <NuxtLink to="/auth/register" class="font-medium text-blue-600 hover:text-blue-500">
+            <NuxtLink to="/auth/register" class="font-medium text-primary-main hover:text-primary-dark">
               {{ t('auth.signUp') }}
             </NuxtLink>
           </p>

@@ -6,15 +6,15 @@
         class="fixed inset-0 z-40 lg:hidden"
         @click="$emit('close')"
     >
-      <div class="absolute inset-0 bg-gray-600 dark:bg-gray-900 opacity-75"></div>
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
     </div>
 
     <!-- Mobile sidebar -->
     <div
         v-if="isOpen"
-        class="fixed inset-y-0 left-0 flex flex-col z-40 w-64 bg-white dark:bg-background-darkPaper shadow-lg lg:hidden transition-transform duration-300 ease-in-out"
+        class="fixed inset-y-0 left-0 flex flex-col z-40 w-64 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-r border-gray-200 dark:border-white/10 lg:hidden transition-transform duration-300 ease-in-out"
     >
-      <div class="flex items-center justify-between px-4 py-4 border-b dark:border-gray-700">
+      <div class="flex items-center justify-between px-4 py-4 border-b border-gray-200 dark:border-white/10">
         <NuxtLink to="/" class="text-xl font-bold text-primary-main">OhMyFinance</NuxtLink>
         <button
             @click="$emit('close')"
@@ -38,9 +38,9 @@
                 :to="item.route"
                 :class="[
                   isActive(item.route)
-                    ? 'bg-primary-light dark:bg-primary-dark/20 text-primary-main dark:text-primary-light'
-                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700',
-                  'flex items-center px-4 py-2 rounded-lg group'
+                    ? 'bg-primary-main/10 text-primary-main dark:text-primary-light'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10',
+                  'flex items-center px-4 py-2 rounded-xl group'
                 ]"
               >
                 <component
@@ -54,10 +54,10 @@
           </div>
         </nav>
 
-        <div class="p-4 border-t dark:border-gray-700">
+        <div class="p-4 border-t border-gray-200 dark:border-white/10">
           <div v-if="isAuthenticated && user" class="space-y-3">
             <div class="flex items-center">
-              <div class="w-8 h-8 bg-primary-light dark:bg-primary-dark rounded-full flex items-center justify-center text-primary-main dark:text-primary-light">
+              <div class="w-8 h-8 bg-primary-main/20 dark:bg-primary-dark rounded-full flex items-center justify-center text-primary-main dark:text-primary-light">
                 {{ user.name?.charAt(0)?.toUpperCase() || 'U' }}
               </div>
               <div class="ml-3 flex-1 min-w-0">
@@ -67,7 +67,7 @@
             </div>
             <button
               @click="handleLogout"
-              class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md"
+              class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-primary-main hover:bg-primary-main/10 dark:hover:bg-primary-main/20 rounded-xl touch-manipulation"
             >
               <LogOut class="h-4 w-4" />
               {{ t('auth.signOut') }}
@@ -76,7 +76,7 @@
           <div v-else>
             <NuxtLink
               to="/login"
-              class="block w-full text-center px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md"
+              class="block w-full text-center px-3 py-2 text-sm text-primary-main hover:bg-primary-main/10 dark:hover:bg-primary-main/20 rounded-xl"
             >
               {{ t('auth.signIn') }}
             </NuxtLink>
@@ -86,8 +86,8 @@
     </div>
 
     <!-- Desktop sidebar -->
-    <div class="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:z-40 lg:w-64 bg-white dark:bg-background-darkPaper shadow-md">
-      <div class="flex items-center h-16 px-4 border-b dark:border-gray-700">
+    <div class="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:z-40 lg:w-64 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-r border-gray-200 dark:border-white/10">
+      <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-white/10">
         <NuxtLink to="/" class="text-xl font-bold text-primary-main">OhMyFinance</NuxtLink>
       </div>
 
@@ -105,9 +105,9 @@
                 :to="item.route"
                 :class="[
                   isActive(item.route)
-                    ? 'bg-primary-light dark:bg-primary-dark/20 text-primary-main dark:text-primary-light'
-                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700',
-                  'flex items-center px-4 py-2 rounded-lg group'
+                    ? 'bg-primary-main/10 text-primary-main dark:text-primary-light'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10',
+                  'flex items-center px-4 py-2 rounded-xl group'
                 ]"
               >
                 <component
@@ -121,10 +121,10 @@
           </div>
         </nav>
 
-        <div class="p-4 border-t dark:border-gray-700">
+        <div class="p-4 border-t border-gray-200 dark:border-white/10">
           <div v-if="isAuthenticated && user" class="space-y-3">
             <div class="flex items-center">
-              <div class="w-8 h-8 bg-primary-light dark:bg-primary-dark rounded-full flex items-center justify-center text-primary-main dark:text-primary-light">
+              <div class="w-8 h-8 bg-primary-main/20 dark:bg-primary-dark rounded-full flex items-center justify-center text-primary-main dark:text-primary-light">
                 {{ user.name?.charAt(0)?.toUpperCase() || 'U' }}
               </div>
               <div class="ml-3 flex-1 min-w-0">
@@ -134,7 +134,7 @@
             </div>
             <button
               @click="handleLogout"
-              class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md"
+              class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-primary-main hover:bg-primary-main/10 dark:hover:bg-primary-main/20 rounded-xl touch-manipulation"
             >
               <LogOut class="h-4 w-4" />
               {{ t('auth.signOut') }}
@@ -143,7 +143,7 @@
           <div v-else>
             <NuxtLink
               to="/login"
-              class="block w-full text-center px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md"
+              class="block w-full text-center px-3 py-2 text-sm text-primary-main hover:bg-primary-main/10 dark:hover:bg-primary-main/20 rounded-xl"
             >
               {{ t('auth.signIn') }}
             </NuxtLink>

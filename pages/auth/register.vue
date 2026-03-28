@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
+  <div class="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-900 py-12 px-4 sm:px-6 lg:px-8">
     <div class="max-w-md w-full space-y-8">
       <div>
         <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
@@ -10,7 +10,7 @@
         </p>
       </div>
 
-      <form class="mt-8 space-y-6" @submit.prevent="handleSubmit">
+      <form class="mt-8 space-y-6 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6" @submit.prevent="handleSubmit">
         <div v-if="error || localError" class="bg-red-50 dark:bg-red-900/50 border border-red-200 dark:border-red-800 rounded-md p-4">
           <p class="text-sm text-red-600 dark:text-red-400">{{ localError || error }}</p>
         </div>
@@ -26,7 +26,7 @@
               name="name"
               type="text"
               required
-              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm"
+              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-white/10 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-white/5 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
               :placeholder="t('auth.yourName')"
             />
           </div>
@@ -42,7 +42,7 @@
               type="email"
               autocomplete="email"
               required
-              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm"
+              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-white/10 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-white/5 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
               placeholder="you@example.com"
             />
           </div>
@@ -58,7 +58,7 @@
               type="password"
               required
               minlength="6"
-              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm"
+              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-white/10 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-white/5 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
               :placeholder="t('auth.minCharacters')"
             />
           </div>
@@ -73,7 +73,7 @@
               name="confirmPassword"
               type="password"
               required
-              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm"
+              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-white/10 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-white/5 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
               :placeholder="t('auth.confirmYourPassword')"
             />
           </div>
@@ -86,13 +86,13 @@
             name="terms"
             type="checkbox"
             required
-            class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 dark:border-gray-700 rounded"
+            class="h-4 w-4 text-primary-main focus:ring-primary-main border-gray-300 dark:border-white/10 rounded"
           />
           <label for="terms" class="ml-2 block text-sm text-gray-900 dark:text-gray-300">
             {{ t('auth.agreeToTerms') }}
-            <a href="#" class="text-red-600 hover:text-red-500">{{ t('auth.termsOfService') }}</a>
+            <a href="#" class="text-primary-main hover:text-primary-dark">{{ t('auth.termsOfService') }}</a>
             {{ t('common.and') }}
-            <a href="#" class="text-red-600 hover:text-red-500">{{ t('auth.privacyPolicy') }}</a>
+            <a href="#" class="text-primary-main hover:text-primary-dark">{{ t('auth.privacyPolicy') }}</a>
           </label>
         </div>
 
@@ -100,7 +100,7 @@
           <button
             type="submit"
             :disabled="isLoading || !isFormValid"
-            class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-xl text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
           >
             <span v-if="isLoading" class="absolute left-0 inset-y-0 flex items-center pl-3">
               <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -115,7 +115,7 @@
         <div class="text-center">
           <p class="text-sm text-gray-600 dark:text-gray-400">
             {{ t('auth.hasAccount') }}
-            <NuxtLink to="/login" class="font-medium text-red-600 hover:text-red-500">
+            <NuxtLink to="/login" class="font-medium text-primary-main hover:text-primary-dark">
               {{ t('auth.signIn') }}
             </NuxtLink>
           </p>

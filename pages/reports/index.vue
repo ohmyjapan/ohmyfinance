@@ -28,7 +28,7 @@
 
     <div v-else-if="report" class="space-y-6">
       <!-- Period Header -->
-      <div class="bg-purple-600 text-white rounded-lg p-6">
+      <div class="bg-primary-main text-white rounded-2xl p-6">
         <div class="text-sm opacity-80">{{ t('reports.reportPeriod') }}</div>
         <div class="text-2xl font-bold">{{ report.period.label }}</div>
         <div class="text-sm opacity-80 mt-1">
@@ -38,30 +38,30 @@
 
       <!-- Summary Cards -->
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
           <div class="text-sm text-gray-500">{{ t('reports.totalTransactions') }}</div>
-          <div class="text-2xl font-bold text-gray-800">{{ report.summary.transactions.total }}</div>
-          <div class="text-lg text-purple-600">{{ formatCurrency(report.summary.transactions.totalAmount) }}</div>
+          <div class="text-2xl font-bold font-mono text-gray-800 dark:text-gray-100">{{ report.summary.transactions.total }}</div>
+          <div class="text-lg text-primary-main">{{ formatCurrency(report.summary.transactions.totalAmount) }}</div>
         </div>
-        <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
           <div class="text-sm text-gray-500">{{ t('reports.averageTransaction') }}</div>
-          <div class="text-2xl font-bold text-gray-800">{{ formatCurrency(report.summary.transactions.averageAmount) }}</div>
+          <div class="text-2xl font-bold font-mono text-gray-800 dark:text-gray-100">{{ formatCurrency(report.summary.transactions.averageAmount) }}</div>
           <div class="text-sm text-gray-500">
             {{ t('reports.min') }}: {{ formatCurrency(report.summary.transactions.minAmount) }} |
             {{ t('reports.max') }}: {{ formatCurrency(report.summary.transactions.maxAmount) }}
           </div>
         </div>
-        <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
           <div class="text-sm text-gray-500">{{ t('receipts.title') }}</div>
-          <div class="text-2xl font-bold text-gray-800">{{ report.summary.receipts.total }}</div>
+          <div class="text-2xl font-bold font-mono text-gray-800 dark:text-gray-100">{{ report.summary.receipts.total }}</div>
           <div class="text-sm">
             <span class="text-green-600">{{ report.summary.receipts.matched }} {{ t('receipts.matched') }}</span> |
             <span class="text-yellow-600">{{ report.summary.receipts.unmatched }} {{ t('reports.pending') }}</span>
           </div>
         </div>
-        <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
           <div class="text-sm text-gray-500">{{ t('nav.recurringPayments') }}</div>
-          <div class="text-2xl font-bold text-gray-800">{{ report.summary.recurring.active }} {{ t('recurring.active') }}</div>
+          <div class="text-2xl font-bold font-mono text-gray-800 dark:text-gray-100">{{ report.summary.recurring.active }} {{ t('recurring.active') }}</div>
           <div class="text-sm text-gray-500">{{ t('reports.estimated') }} {{ formatCurrency(report.summary.recurring.monthlyEstimate) }}/{{ t('reports.month') }}</div>
         </div>
       </div>
@@ -69,8 +69,8 @@
       <!-- Breakdown Charts -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- By Status -->
-        <div class="bg-white rounded-lg shadow-sm">
-          <div class="px-6 py-4 border-b border-gray-200">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+          <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
             <h3 class="text-lg font-medium text-gray-800">{{ t('reports.byStatus') }}</h3>
           </div>
           <div class="p-6">
@@ -89,8 +89,8 @@
         </div>
 
         <!-- By Source -->
-        <div class="bg-white rounded-lg shadow-sm">
-          <div class="px-6 py-4 border-b border-gray-200">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+          <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
             <h3 class="text-lg font-medium text-gray-800">{{ t('reports.bySource') }}</h3>
           </div>
           <div class="p-6">
@@ -100,7 +100,7 @@
                 <span>{{ item.count }} ({{ item.percentage }}%)</span>
               </div>
               <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div :style="{ width: item.percentage + '%' }" class="h-full bg-purple-500"></div>
+                <div :style="{ width: item.percentage + '%' }" class="h-full bg-primary-main/100"></div>
               </div>
               <div class="text-right text-xs text-gray-500 mt-1">{{ formatCurrency(item.amount) }}</div>
             </div>
@@ -110,13 +110,13 @@
       </div>
 
       <!-- Top Customers -->
-      <div class="bg-white rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h3 class="text-lg font-medium text-gray-800">{{ t('reports.topCustomers') }}</h3>
         </div>
         <div class="overflow-x-auto">
           <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
+            <thead class="bg-gray-50 dark:bg-white/5">
               <tr>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('transactions.customer') }}</th>
@@ -124,7 +124,7 @@
                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">{{ t('common.total') }}</th>
               </tr>
             </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
+            <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/5">
               <tr v-for="(customer, idx) in report.breakdown.topCustomers" :key="customer.name">
                 <td class="px-6 py-4 text-sm text-gray-500">{{ idx + 1 }}</td>
                 <td class="px-6 py-4 text-sm font-medium text-gray-900">{{ customer.name }}</td>
@@ -140,8 +140,8 @@
       </div>
 
       <!-- Daily Breakdown -->
-      <div class="bg-white rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h3 class="text-lg font-medium text-gray-800">{{ t('reports.dailyBreakdown') }}</h3>
         </div>
         <div class="p-6 overflow-x-auto">
@@ -149,7 +149,7 @@
             <div v-for="day in report.breakdown.daily" :key="day.date" class="flex flex-col items-center">
               <div class="text-xs text-gray-400 mb-1">{{ formatDayLabel(day.date) }}</div>
               <div
-                class="w-8 bg-purple-500 rounded-t"
+                class="w-8 bg-primary-main/100 rounded-t"
                 :style="{ height: getDayBarHeight(day.amount) + 'px' }"
                 :title="`${day.date}: ${formatCurrency(day.amount)} (${day.count} transactions)`"
               ></div>

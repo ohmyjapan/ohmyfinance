@@ -10,7 +10,7 @@
         <div class="relative">
           <select
               v-model="dateRange"
-              class="block w-full pl-3 pr-10 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+              class="block w-full pl-3 pr-10 py-2 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
           >
             <option value="last7days">{{ t('analytics.last7Days') }}</option>
             <option value="last30days">{{ t('analytics.last30Days') }}</option>
@@ -24,23 +24,23 @@
           <input
               v-model="customDateFrom"
               type="date"
-              class="block w-32 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+              class="block w-32 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
           />
           <input
               v-model="customDateTo"
               type="date"
-              class="block w-32 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+              class="block w-32 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
           />
         </div>
 
         <button
             @click="showCustomize = true"
-            class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
+            class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-slate-600 touch-manipulation"
         >
           <Settings class="h-4 w-4" />
         </button>
 
-        <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+        <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main touch-manipulation">
           <Download class="mr-2 h-4 w-4 text-gray-500 dark:text-gray-400" />
           {{ t('common.export') }}
         </button>
@@ -50,11 +50,11 @@
     <!-- Customization Panel -->
     <div v-if="showCustomize" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-black/50" @click="showCustomize = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-lg w-full p-6">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showCustomize = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl max-w-lg w-full p-6">
           <div class="flex justify-between items-center mb-4">
             <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">{{ t('analytics.customizeDashboard') }}</h3>
-            <button @click="showCustomize = false" class="text-gray-400 hover:text-gray-600">
+            <button @click="showCustomize = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
               <X class="h-5 w-5" />
             </button>
           </div>
@@ -63,13 +63,13 @@
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('analytics.selectWidgets') }}</p>
 
             <div class="space-y-2">
-              <label v-for="widget in availableWidgets" :key="widget.id" class="flex items-center space-x-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700">
+              <label v-for="widget in availableWidgets" :key="widget.id" class="flex items-center space-x-3 p-2 rounded-xl hover:bg-gray-50 dark:hover:bg-white/[0.07]">
                 <input
                     type="checkbox"
                     v-model="widgetSettings[widget.id]"
-                    class="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                    class="h-4 w-4 text-primary-main focus:ring-primary-main border-gray-300 dark:border-white/10 rounded"
                 />
-                <component :is="widget.icon" class="h-5 w-5 text-gray-400" />
+                <component :is="widget.icon" class="h-5 w-5 text-gray-400 dark:text-gray-500" />
                 <span class="text-sm text-gray-700 dark:text-gray-300">{{ widget.name }}</span>
               </label>
             </div>
@@ -78,13 +78,13 @@
           <div class="mt-6 flex justify-end space-x-3">
             <button
                 @click="resetWidgets"
-                class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900"
+                class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 rounded-xl"
             >
               {{ t('analytics.resetDefault') }}
             </button>
             <button
                 @click="saveWidgetSettings"
-                class="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-md hover:bg-purple-700"
+                class="px-4 py-2 bg-primary-main text-white text-sm font-medium rounded-xl hover:bg-primary-dark touch-manipulation"
             >
               {{ t('analytics.saveChanges') }}
             </button>
@@ -93,9 +93,9 @@
       </div>
     </div>
 
-    <!-- Key Metrics (OMF style) -->
+    <!-- Key Metrics -->
     <div v-if="widgetSettings.metrics" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-      <MetricCard
+      <StatCard
           title="支出合計"
           :value="formatCurrency(metrics.expenseTotal.value)"
           :change="metrics.expenseTotal.change"
@@ -103,7 +103,7 @@
           icon="CreditCard"
       />
 
-      <MetricCard
+      <StatCard
           title="入金合計"
           :value="formatCurrency(metrics.incomeTotal.value)"
           :change="metrics.incomeTotal.change"
@@ -111,7 +111,7 @@
           icon="DollarSign"
       />
 
-      <MetricCard
+      <StatCard
           title="未マッチ領収書"
           :value="metrics.pendingReceipts.value.toString()"
           :change="metrics.pendingReceipts.change"
@@ -119,11 +119,11 @@
           icon="FileText"
       />
 
-      <MetricCard
+      <StatCard
           title="取引件数"
           :value="metrics.transactionCount.value.toString()"
           :change="metrics.transactionCount.change"
-          color="purple"
+          color="primary"
           icon="BarChart3"
       />
     </div>
@@ -131,8 +131,8 @@
     <!-- Charts Row -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       <!-- Transactions Over Time Chart -->
-      <div v-if="widgetSettings.transactionChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div v-if="widgetSettings.transactionChart" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('analytics.transactionsOverTime') }}</h2>
         </div>
         <div class="p-6">
@@ -140,9 +140,9 @@
         </div>
       </div>
 
-      <!-- Transaction Type Chart (OMF style: 支出/入金) -->
-      <div v-if="widgetSettings.sourceChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <!-- Transaction Type Chart -->
+      <div v-if="widgetSettings.sourceChart" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">取引区別分布</h2>
         </div>
         <div class="p-6">
@@ -154,8 +154,8 @@
     <!-- Transaction Status and Category Distribution -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       <!-- Transaction Status Chart -->
-      <div v-if="widgetSettings.statusChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div v-if="widgetSettings.statusChart" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">取引ステータス</h2>
         </div>
         <div class="p-6">
@@ -163,9 +163,9 @@
         </div>
       </div>
 
-      <!-- Category Distribution (OMF style: 勘定科目別) -->
-      <div v-if="widgetSettings.geoChart" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <!-- Category Distribution -->
+      <div v-if="widgetSettings.geoChart" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">勘定科目別分布</h2>
         </div>
         <div class="p-6">
@@ -175,13 +175,13 @@
     </div>
 
     <!-- Recent Trends Table -->
-    <div v-if="widgetSettings.trends" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-      <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+    <div v-if="widgetSettings.trends" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+      <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
         <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('analytics.recentTrends') }}</h2>
       </div>
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 dark:bg-gray-700">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+          <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('analytics.metric') }}</th>
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('analytics.value') }}</th>
@@ -189,14 +189,14 @@
             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('analytics.change') }}</th>
           </tr>
           </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-          <tr v-for="(trend, index) in trends" :key="index">
+          <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+          <tr v-for="(trend, index) in trends" :key="index" class="hover:bg-gray-50 dark:hover:bg-white/[0.07] transition">
             <td class="px-6 py-4 whitespace-nowrap">
               <div class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ trend.name }}</div>
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ trend.period }}</div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm text-gray-900 dark:text-gray-100">{{ formatTrendValue(trend) }}</div>
+              <div class="text-sm font-mono text-gray-900 dark:text-gray-100">{{ formatTrendValue(trend) }}</div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
               <TrendSparkline
@@ -207,7 +207,7 @@
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
               <div
-                  class="text-sm font-medium"
+                  class="text-sm font-medium font-mono"
                   :class="getChangeTextColor(trend.change)"
               >
                 <span v-if="trend.change > 0">+</span>{{ trend.change }}%
@@ -272,7 +272,7 @@ const resetWidgets = () => {
   Object.assign(widgetSettings, defaultWidgetSettings)
 }
 
-// Key metrics data (OMF style)
+// Key metrics data
 const metrics = ref({
   expenseTotal: {
     value: 0,
@@ -298,8 +298,8 @@ const transactionsChartData = ref({
   datasets: [{
     label: 'Transactions',
     data: [] as number[],
-    borderColor: '#7c3aed',
-    backgroundColor: 'rgba(124, 58, 237, 0.1)',
+    borderColor: '#C0392B',
+    backgroundColor: 'rgba(192, 57, 43, 0.1)',
     tension: 0.4,
     fill: true
   }]
@@ -309,7 +309,7 @@ const sourcesChartData = ref({
   labels: [] as string[],
   datasets: [{
     data: [] as number[],
-    backgroundColor: ['#7c3aed', '#3b82f6', '#10b981', '#f59e0b', '#9ca3af'],
+    backgroundColor: ['#C0392B', '#3b82f6', '#10b981', '#f59e0b', '#9ca3af'],
     borderWidth: 0
   }]
 })
@@ -318,17 +318,17 @@ const statusChartData = ref({
   labels: [] as string[],
   datasets: [{
     data: [] as number[],
-    backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6'],
+    backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#C0392B'],
     borderWidth: 0
   }]
 })
 
-// Account category distribution (OMF style)
+// Account category distribution
 const geoChartData = ref({
   labels: ['経費', '仕入', '売上', '給与', 'その他'],
   datasets: [{
     data: [40, 25, 20, 10, 5],
-    backgroundColor: ['#7c3aed', '#3b82f6', '#10b981', '#f59e0b', '#9ca3af'],
+    backgroundColor: ['#C0392B', '#3b82f6', '#10b981', '#f59e0b', '#9ca3af'],
     borderWidth: 0
   }]
 })
@@ -336,7 +336,7 @@ const geoChartData = ref({
 // Trends data
 const trends = ref<any[]>([])
 
-// Load analytics data from API (OMF style)
+// Load analytics data from API
 const loadAnalyticsData = async () => {
   isLoading.value = true
   try {
@@ -347,7 +347,7 @@ const loadAnalyticsData = async () => {
       $fetch<any>('/api/receipts?stats=true').catch(() => null)
     ])
 
-    // Use transaction stats for metrics (OMF style)
+    // Use transaction stats for metrics
     if (statsData) {
       metrics.value = {
         expenseTotal: {
@@ -376,7 +376,6 @@ const loadAnalyticsData = async () => {
           transactionsChartData.value = analyticsData.charts.transactionsOverTime
         }
         if (analyticsData.charts.typeDistribution) {
-          // Use type distribution (支出/入金) instead of source distribution
           sourcesChartData.value = {
             labels: ['支出', '入金'],
             datasets: [{
@@ -470,11 +469,11 @@ const formatTrendValue = (trend) => {
 // Get text color based on change direction
 const getChangeTextColor = (change: number) => {
   if (change > 0) {
-    return 'text-green-600'
+    return 'text-green-600 dark:text-green-400'
   } else if (change < 0) {
-    return 'text-red-600'
+    return 'text-red-600 dark:text-red-400'
   } else {
-    return 'text-gray-500'
+    return 'text-gray-500 dark:text-gray-400'
   }
 }
 

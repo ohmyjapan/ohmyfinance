@@ -4,17 +4,17 @@
     <h2 class="text-lg font-semibold mb-4 dark:text-gray-100">{{ t('fileUploader.uploadExcelFile') }}</h2>
 
     <div
-        class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center dark:bg-gray-800"
+        class="border-2 border-dashed border-gray-300 dark:border-white/10 rounded-lg p-8 text-center dark:bg-white/5"
         @dragover.prevent="isDragging = true"
         @dragleave.prevent="isDragging = false"
         @drop.prevent="handleFileDrop"
-        :class="{ 'border-purple-400 bg-purple-50 dark:bg-purple-900/20': isDragging }"
+        :class="{ 'border-primary-main bg-primary-main/10 dark:bg-primary-main/20': isDragging }"
     >
       <div v-if="isUploading">
         <p class="dark:text-gray-200">{{ t('fileUploader.uploading', { progress: uploadProgress }) }}</p>
-        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mt-2">
+        <div class="w-full bg-gray-200 dark:bg-white/5 rounded-full h-2.5 mt-2">
           <div
-              class="bg-purple-600 h-2.5 rounded-full"
+              class="bg-primary-main h-2.5 rounded-full"
               :style="{ width: `${uploadProgress}%` }"
           ></div>
         </div>
@@ -24,7 +24,7 @@
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('fileUploader.or') }}</p>
         <button
             @click="$refs.fileInput.click()"
-            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
         >
           {{ t('fileUploader.selectFile') }}
         </button>

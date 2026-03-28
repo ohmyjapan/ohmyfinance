@@ -9,23 +9,23 @@
 
     <div v-if="isLoading" class="text-center py-12 text-gray-500">{{ t('common.loading') }}</div>
 
-    <div v-else-if="templates.length === 0" class="bg-white rounded-lg shadow-sm p-12 text-center">
+    <div v-else-if="templates.length === 0" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-12 text-center">
       <FileSpreadsheet class="h-12 w-12 text-gray-400 mx-auto mb-4" />
       <h3 class="text-lg font-medium text-gray-900 mb-2">{{ t('templates.noTemplates') }}</h3>
       <p class="text-gray-500 mb-4">{{ t('templates.noTemplatesDescription') }}</p>
-      <NuxtLink to="/transactions/import" class="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">
+      <NuxtLink to="/transactions/import" class="inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation">
         <Upload class="h-4 w-4 mr-2" />
         {{ t('templates.importTransactions') }}
       </NuxtLink>
     </div>
 
     <div v-else class="grid gap-4">
-      <div v-for="template in templates" :key="template.id" class="bg-white rounded-lg shadow-sm p-6">
+      <div v-for="template in templates" :key="template.id" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
         <div class="flex justify-between items-start">
           <div>
             <div class="flex items-center gap-2">
               <h3 class="text-lg font-medium text-gray-900">{{ template.name }}</h3>
-              <span v-if="template.isDefault" class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">{{ t('templates.default') }}</span>
+              <span v-if="template.isDefault" class="px-2 py-0.5 bg-primary-main/20 text-primary-dark text-xs rounded-full">{{ t('templates.default') }}</span>
             </div>
             <p v-if="template.description" class="text-sm text-gray-500 mt-1">{{ template.description }}</p>
             <div class="flex items-center gap-4 mt-2 text-sm text-gray-500">
@@ -38,7 +38,7 @@
             <button @click="viewTemplate(template)" class="p-2 text-gray-500 hover:text-gray-700" :title="t('templates.viewDetails')">
               <Eye class="h-4 w-4" />
             </button>
-            <button @click="setDefault(template)" v-if="!template.isDefault" class="p-2 text-gray-500 hover:text-purple-600" :title="t('templates.setAsDefault')">
+            <button @click="setDefault(template)" v-if="!template.isDefault" class="p-2 text-gray-500 hover:text-primary-main" :title="t('templates.setAsDefault')">
               <Star class="h-4 w-4" />
             </button>
             <button @click="deleteTemplate(template)" class="p-2 text-gray-500 hover:text-red-600" :title="t('common.delete')">

@@ -2,24 +2,24 @@
   <div>
     <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
       <div>
-        <h1 class="text-xl font-semibold text-gray-800">{{ t('transactions.title') }}</h1>
-        <p class="text-gray-600">{{ t('transactions.transactionDetails') }}</p>
+        <h1 class="text-xl font-semibold text-gray-800 dark:text-gray-100">{{ t('transactions.title') }}</h1>
+        <p class="text-gray-600 dark:text-gray-400">{{ t('transactions.transactionDetails') }}</p>
       </div>
 
       <div class="mt-4 md:mt-0 flex space-x-3">
-        <button class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
+        <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
           <FileText class="mr-2 h-4 w-4 text-gray-500" />
           {{ t('common.export') }} CSV
         </button>
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="router.push('/transactions/upload')"
         >
           <Upload class="mr-2 h-4 w-4 text-gray-500" />
           {{ t('common.import') }}
         </button>
         <button
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="showCreateModal = true"
         >
           <Plus class="mr-2 h-4 w-4" />
@@ -60,7 +60,7 @@
     </div>
 
     <!-- Filter & Search Bar -->
-    <div class="bg-white rounded-lg shadow-sm mb-6">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-6">
       <div class="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div class="flex flex-1 flex-col sm:flex-row gap-3">
           <div class="relative flex-1">
@@ -70,7 +70,7 @@
             <input
                 v-model="searchQuery"
                 type="text"
-                class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
+                class="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-white/10 rounded-xl leading-5 bg-white dark:bg-white/5 placeholder-gray-500 dark:text-white focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                 :placeholder="t('transactionsList.searchPlaceholder')"
             />
           </div>
@@ -79,7 +79,7 @@
             <div class="relative">
               <select
                   v-model="filters.status"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-xl dark:bg-white/5 dark:border-white/10 dark:text-white"
               >
                 <option value="">{{ t('transactionsList.allStatuses') }}</option>
                 <option value="completed">{{ t('transactions.statuses.completed') }}</option>
@@ -93,7 +93,7 @@
             <div class="relative">
               <select
                   v-model="filters.type"
-                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
+                  class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-xl dark:bg-white/5 dark:border-white/10 dark:text-white"
               >
                 <option value="">全ての区別</option>
                 <option value="支出">支出</option>
@@ -105,7 +105,7 @@
 
         <div class="flex items-center">
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="showAdvancedFilters = !showAdvancedFilters"
           >
             <Filter class="mr-2 h-4 w-4 text-gray-500" />
@@ -123,7 +123,7 @@
       </div>
 
       <!-- Advanced Filters (conditional) -->
-      <div v-if="showAdvancedFilters" class="px-4 py-3 border-t border-gray-200 bg-gray-50">
+      <div v-if="showAdvancedFilters" class="px-4 py-3 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('transactionsList.dateRange') }}</label>
@@ -181,7 +181,7 @@
     </div>
 
     <!-- Transactions Table -->
-    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
       <div v-if="isLoading" class="flex justify-center items-center p-12">
         <Loader class="h-8 w-8 text-primary-main animate-spin" />
         <span class="ml-2 text-gray-600">{{ t('transactionsList.loading') }}</span>
@@ -195,7 +195,7 @@
         </p>
         <div class="mt-6">
           <button
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="router.push('/transactions/upload')"
           >
             <Upload class="mr-2 h-4 w-4" />
@@ -204,27 +204,27 @@
         </div>
       </div>
 
-      <table v-else class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
+      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+        <thead class="bg-gray-50 dark:bg-white/5">
         <tr>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">日付</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">区別</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">勘定科目</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">金額</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">仕入れ先/顧客</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">領収書</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('common.actions') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">日付</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">区別</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">勘定科目</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">金額</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">仕入れ先/顧客</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">領収書</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('common.actions') }}</th>
         </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
+        <tbody class="divide-y divide-gray-200 dark:divide-white/10">
         <tr
             v-for="transaction in paginatedTransactions"
             :key="transaction.id"
-            class="hover:bg-gray-50"
+            class="hover:bg-gray-50 dark:hover:bg-white/[0.07]"
         >
           <td class="px-6 py-4 whitespace-nowrap">
-            <div class="text-sm font-medium text-gray-900">{{ formatDate(transaction.date) }}</div>
-            <div class="text-xs text-gray-500">{{ transaction.referenceNumber || transaction.id }}</div>
+            <div class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ formatDate(transaction.date) }}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">{{ transaction.referenceNumber || transaction.id }}</div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
             <span :class="[
@@ -235,13 +235,13 @@
             </span>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
-            <div class="text-sm text-gray-900">{{ transaction.accountCategoryId?.name || transaction.accountCategoryName || '-' }}</div>
+            <div class="text-sm text-gray-900 dark:text-gray-100">{{ transaction.accountCategoryId?.name || transaction.accountCategoryName || '-' }}</div>
             <div class="text-xs text-gray-500">{{ transaction.subAccountCategoryId?.name || transaction.subAccountCategoryName || '' }}</div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
             <div :class="[
-              'text-sm font-medium',
-              transaction.type === '入金' ? 'text-green-600' : 'text-gray-900'
+              'text-sm font-medium font-mono',
+              transaction.type === '入金' ? 'text-green-600 dark:text-green-400' : 'text-gray-900 dark:text-gray-100'
             ]">
               {{ formatCurrency(transaction.amount) }}
             </div>
@@ -286,32 +286,32 @@
 
               <div
                   v-if="openMenuId === transaction.id"
-                  class="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-10"
+                  class="origin-top-right absolute right-0 mt-2 w-48 rounded-xl shadow-lg bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 focus:outline-none z-10"
               >
                 <div class="py-1">
                   <button
                       @click="openEditModal(transaction)"
-                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
                   >
                     編集
                   </button>
                   <button
                       @click="updateTransactionStatus(transaction.id, 'completed')"
-                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
                       v-if="transaction.status !== 'completed'"
                   >
                     完了にする
                   </button>
                   <button
                       @click="updateTransactionStatus(transaction.id, 'cancelled')"
-                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
                       v-if="transaction.status !== 'cancelled'"
                   >
                     キャンセル
                   </button>
                   <button
                       @click="deleteTransactionConfirm(transaction.id)"
-                      class="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                      class="block w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-white/10"
                   >
                     削除
                   </button>
@@ -324,7 +324,7 @@
       </table>
 
       <!-- Pagination -->
-      <div v-if="filteredTransactions.length > 0" class="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
+      <div v-if="filteredTransactions.length > 0" class="bg-white dark:bg-white/5 px-4 py-3 border-t border-gray-200 dark:border-white/10 sm:px-6">
         <div class="flex items-center justify-between">
           <div class="hidden sm:block">
             <p class="text-sm text-gray-700">

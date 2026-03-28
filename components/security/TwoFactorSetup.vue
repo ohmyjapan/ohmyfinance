@@ -1,6 +1,6 @@
 <template>
-  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg mx-4 p-6 max-h-[90vh] overflow-y-auto">
+  <div class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+    <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-lg mx-4 p-6 max-h-[90vh] overflow-y-auto">
       <!-- Header -->
       <div class="flex items-center justify-between mb-6">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -22,7 +22,7 @@
       <!-- Step 1: QR Code -->
       <div v-if="currentStep === 1" class="space-y-4">
         <div v-if="isLoading" class="flex justify-center py-8">
-          <Loader2 class="w-8 h-8 animate-spin text-purple-600" />
+          <Loader2 class="w-8 h-8 animate-spin text-primary-main" />
         </div>
 
         <div v-else-if="setupData">
@@ -36,7 +36,7 @@
           </div>
 
           <!-- Manual Entry -->
-          <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 mb-4">
+          <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 mb-4">
             <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Manual entry key:</p>
             <code class="text-sm font-mono text-gray-800 dark:text-gray-200 break-all">
               {{ setupData.secret }}
@@ -56,7 +56,7 @@
               <code
                 v-for="code in setupData.backupCodes"
                 :key="code"
-                class="text-sm font-mono bg-white dark:bg-gray-800 px-2 py-1 rounded text-center"
+                class="text-sm font-mono bg-white dark:bg-white/5 px-2 py-1 rounded text-center"
               >
                 {{ code }}
               </code>
@@ -74,14 +74,14 @@
         <div class="flex justify-end gap-3 mt-6">
           <button
             @click="$emit('close')"
-            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+            class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
           >
             {{ t('common.cancel') }}
           </button>
           <button
             @click="currentStep = 2"
             :disabled="!setupData"
-            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+            class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation disabled:opacity-50"
           >
             {{ t('common.next') }}
           </button>
@@ -104,7 +104,7 @@
             maxlength="1"
             inputmode="numeric"
             pattern="[0-9]"
-            class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:bg-gray-700 dark:text-white"
+            class="w-12 h-14 text-center text-2xl font-bold font-mono border-2 border-gray-300 dark:border-white/10 rounded-lg focus:border-primary-main focus:ring-2 focus:ring-primary-main/20 dark:bg-white/5 dark:text-white"
             @input="handleCodeInput(index, $event)"
             @keydown="handleCodeKeydown(index, $event)"
             @paste="handleCodePaste"
@@ -114,14 +114,14 @@
         <div class="flex justify-end gap-3 mt-6">
           <button
             @click="currentStep = 1"
-            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+            class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
           >
             {{ t('common.back') }}
           </button>
           <button
             @click="verifyAndEnable"
             :disabled="isVerifying || verificationCode.join('').length !== 6"
-            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+            class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation disabled:opacity-50 flex items-center gap-2"
           >
             <Loader2 v-if="isVerifying" class="w-4 h-4 animate-spin" />
             {{ t('security.enable2FA') }}
@@ -142,7 +142,7 @@
         </p>
         <button
           @click="$emit('enabled')"
-          class="px-6 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+          class="px-6 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
         >
           {{ t('common.close') }}
         </button>

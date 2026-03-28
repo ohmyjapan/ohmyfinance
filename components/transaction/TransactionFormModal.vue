@@ -5,15 +5,15 @@
       <div v-if="modelValue" class="fixed inset-0 z-50 overflow-hidden">
         <!-- Backdrop -->
         <div
-          class="absolute inset-0 bg-black/50 transition-opacity"
+          class="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
           @click="close"
         />
 
         <!-- Panel -->
-        <div class="absolute inset-y-0 right-0 w-full sm:w-3/4 lg:w-1/2 flex flex-col bg-white dark:bg-gray-900 shadow-2xl border-l border-gray-200 dark:border-gray-700">
+        <div class="absolute inset-y-0 right-0 w-full sm:w-3/4 lg:w-1/2 flex flex-col bg-white dark:bg-gray-950 shadow-2xl border-l border-gray-200 dark:border-white/10">
 
               <!-- Header -->
-              <div class="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+              <div class="sticky top-0 z-10 bg-white dark:bg-gray-950 border-b border-gray-200 dark:border-white/10">
                 <div class="px-6 py-4">
                   <div class="flex items-center justify-between">
                     <div class="flex items-center gap-3">
@@ -32,7 +32,7 @@
                     </div>
                     <button
                       @click="close"
-                      class="p-2 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      class="p-2 rounded-xl text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 transition-colors"
                     >
                       <X class="w-5 h-5" />
                     </button>
@@ -47,7 +47,7 @@
                         'flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all',
                         form.type === '支出'
                           ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 ring-2 ring-red-500'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                          : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-white/10'
                       ]"
                     >
                       <TrendingDown class="w-4 h-4 inline mr-2" />
@@ -60,7 +60,7 @@
                         'flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all',
                         form.type === '入金'
                           ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 ring-2 ring-green-500'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                          : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-white/10'
                       ]"
                     >
                       <TrendingUp class="w-4 h-4 inline mr-2" />
@@ -107,7 +107,7 @@
                             required
                             @input="formatAmount"
                             placeholder="10,000"
-                            class="w-full h-11 pl-8 pr-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent transition-shadow text-right font-medium"
+                            class="w-full h-11 pl-8 pr-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent transition-shadow text-right font-medium"
                           />
                         </div>
                       </div>
@@ -139,7 +139,7 @@
                             <select
                               v-model="form.accountCategoryId"
                               @change="handleAccountCategoryChange"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                             >
                               <option value="">{{ t('common.select') }}</option>
                               <option v-for="cat in accountCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
@@ -158,16 +158,16 @@
                               @blur="onSubAccountBlur"
                               :placeholder="t('transactionForm.searchSubAccount')"
                               :disabled="!form.accountCategoryId"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent disabled:opacity-50"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent disabled:opacity-50"
                             />
                             <!-- Dropdown -->
-                            <div v-show="showSubAccountSuggestions && form.accountCategoryId" class="absolute z-20 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            <div v-show="showSubAccountSuggestions && form.accountCategoryId" class="absolute z-20 w-full mt-1 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl shadow-lg max-h-60 overflow-y-auto">
                               <!-- Create new option -->
                               <button
                                 v-if="canCreateNewSubAccount"
                                 type="button"
                                 @mousedown="openSubAccountModal()"
-                                class="w-full px-4 py-2 text-left hover:bg-primary-light dark:hover:bg-primary-dark/30 text-primary-main dark:text-primary-light flex items-center gap-2 border-b border-gray-200 dark:border-gray-700"
+                                class="w-full px-4 py-2 text-left hover:bg-primary-light dark:hover:bg-primary-dark/30 text-primary-main dark:text-primary-light flex items-center gap-2 border-b border-gray-200 dark:border-white/10"
                               >
                                 <Plus class="w-4 h-4" />
                                 <span>{{ t('common.createNew') }}: <strong>{{ subAccountSearch }}</strong></span>
@@ -178,7 +178,7 @@
                                 :key="cat.id"
                                 type="button"
                                 @mousedown="selectSubAccount(cat)"
-                                class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-white/10 text-gray-900 dark:text-gray-100"
                               >
                                 {{ cat.name }}
                               </button>
@@ -187,7 +187,7 @@
                               </div>
                             </div>
                             <!-- Selected sub-account display -->
-                            <div v-if="selectedSubAccount && !showSubAccountSuggestions" class="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg flex items-center justify-between">
+                            <div v-if="selectedSubAccount && !showSubAccountSuggestions" class="mt-2 p-2 bg-gray-50 dark:bg-white/5 rounded-lg flex items-center justify-between">
                               <div class="flex items-center gap-2">
                                 <FolderOpen class="w-4 h-4 text-gray-400" />
                                 <span class="text-sm text-gray-700 dark:text-gray-300">{{ selectedSubAccount.name }}</span>
@@ -207,7 +207,7 @@
                             </label>
                             <select
                               v-model="form.taxCategoryId"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                             >
                               <option value="">{{ t('common.select') }}</option>
                               <option v-for="cat in taxCategories" :key="cat._id || cat.id" :value="cat._id || cat.id">{{ cat.name }}</option>
@@ -221,7 +221,7 @@
                             </label>
                             <select
                               v-model="form.taxRate"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                             >
                               <option value="">{{ t('common.select') }}</option>
                               <option value="10%">10%</option>
@@ -263,18 +263,18 @@
                                 @focus="showCustomerSuggestions = true"
                                 @blur="onCustomerBlur"
                                 :placeholder="t('transactionForm.searchCustomer')"
-                                class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                               />
                               <div
                                 v-if="showCustomerSuggestions && (filteredCustomers.length > 0 || canCreateNewCustomer)"
-                                class="absolute z-20 w-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 max-h-64 overflow-auto"
+                                class="absolute z-20 w-full mt-1 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 shadow-lg border border-gray-200 dark:border-white/10 max-h-64 overflow-auto"
                               >
                                 <!-- Create new option -->
                                 <button
                                   v-if="canCreateNewCustomer"
                                   type="button"
                                   @mousedown="openCustomerModal()"
-                                  class="w-full px-4 py-2 text-left hover:bg-primary-light dark:hover:bg-primary-dark/30 text-primary-main dark:text-primary-light flex items-center gap-2 border-b border-gray-200 dark:border-gray-700"
+                                  class="w-full px-4 py-2 text-left hover:bg-primary-light dark:hover:bg-primary-dark/30 text-primary-main dark:text-primary-light flex items-center gap-2 border-b border-gray-200 dark:border-white/10"
                                 >
                                   <Plus class="w-4 h-4" />
                                   <span>{{ t('common.createNew') }}: <strong>{{ customerSearch }}</strong></span>
@@ -285,7 +285,7 @@
                                   :key="cust.id"
                                   type="button"
                                   @mousedown="selectCustomer(cust)"
-                                  class="w-full px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 last:border-0"
+                                  class="w-full px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-white/10 border-b border-gray-100 dark:border-white/10 last:border-0"
                                 >
                                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ cust.name }}</div>
                                   <div v-if="cust.invoiceNumber" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
@@ -295,7 +295,7 @@
                               </div>
                             </div>
                             <!-- Selected customer card -->
-                            <div v-if="selectedCustomer" class="mt-2 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <div v-if="selectedCustomer" class="mt-2 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/10">
                               <div class="flex items-start justify-between">
                                 <div>
                                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ selectedCustomer.name }}</div>
@@ -325,18 +325,18 @@
                                 @focus="showSupplierSuggestions = true"
                                 @blur="onSupplierBlur"
                                 :placeholder="t('transactionForm.searchSupplier')"
-                                class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                               />
                               <div
                                 v-if="showSupplierSuggestions && (filteredSuppliers.length > 0 || canCreateNewSupplier)"
-                                class="absolute z-20 w-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 max-h-64 overflow-auto"
+                                class="absolute z-20 w-full mt-1 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 shadow-lg border border-gray-200 dark:border-white/10 max-h-64 overflow-auto"
                               >
                                 <!-- Create new option -->
                                 <button
                                   v-if="canCreateNewSupplier"
                                   type="button"
                                   @mousedown="openSupplierModal()"
-                                  class="w-full px-4 py-2 text-left hover:bg-primary-light dark:hover:bg-primary-dark/30 text-primary-main dark:text-primary-light flex items-center gap-2 border-b border-gray-200 dark:border-gray-700"
+                                  class="w-full px-4 py-2 text-left hover:bg-primary-light dark:hover:bg-primary-dark/30 text-primary-main dark:text-primary-light flex items-center gap-2 border-b border-gray-200 dark:border-white/10"
                                 >
                                   <Plus class="w-4 h-4" />
                                   <span>{{ t('common.createNew') }}: <strong>{{ supplierSearch }}</strong></span>
@@ -347,7 +347,7 @@
                                   :key="supplier.id"
                                   type="button"
                                   @mousedown="selectSupplier(supplier)"
-                                  class="w-full px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 last:border-0"
+                                  class="w-full px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-white/10 border-b border-gray-100 dark:border-white/10 last:border-0"
                                 >
                                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ supplier.name }}</div>
                                   <div v-if="supplier.companyName || supplier.serviceName" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
@@ -357,7 +357,7 @@
                               </div>
                             </div>
                             <!-- Selected supplier card -->
-                            <div v-if="selectedSupplier" class="mt-2 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <div v-if="selectedSupplier" class="mt-2 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/10">
                               <div class="flex items-start justify-between">
                                 <div>
                                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ selectedSupplier.name }}</div>
@@ -408,7 +408,7 @@
                               type="text"
                               v-model="form.receiptNumber"
                               :placeholder="t('transactionForm.receiptNumberPlaceholder')"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                             />
                           </div>
 
@@ -421,7 +421,7 @@
                               type="text"
                               v-model="form.invoiceNumber"
                               placeholder="INV-12345"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                             />
                           </div>
                         </div>
@@ -435,7 +435,7 @@
                             type="text"
                             v-model="form.trackingNumber"
                             :placeholder="t('transactionForm.trackingNumberPlaceholder')"
-                            class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                            class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                           />
                         </div>
 
@@ -447,7 +447,7 @@
                             </label>
                             <select
                               v-model="form.paymentMethod"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                             >
                               <option value="">{{ t('common.select') }}</option>
                               <option value="現金">{{ t('transactionForm.paymentMethods.cash') }}</option>
@@ -468,7 +468,7 @@
                               v-model="form.cardNumber"
                               :placeholder="t('transactionForm.cardNumberPlaceholder')"
                               maxlength="4"
-                              class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                              class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                             />
                           </div>
                         </div>
@@ -482,7 +482,7 @@
                             type="text"
                             v-model="form.productName"
                             :placeholder="t('transactionForm.productNamePlaceholder')"
-                            class="w-full h-11 px-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                            class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                           />
                         </div>
 
@@ -495,7 +495,7 @@
                             v-model="form.notes"
                             rows="3"
                             :placeholder="t('transactionForm.notesPlaceholder')"
-                            class="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent resize-none"
+                            class="w-full px-3 py-2 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent resize-none"
                           />
                         </div>
                       </div>
@@ -519,7 +519,7 @@
                     <Transition name="collapse">
                       <div v-show="sections.receipt">
                         <div
-                          class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-primary-main dark:hover:border-primary-main transition-colors cursor-pointer"
+                          class="border-2 border-dashed border-gray-300 dark:border-white/10 rounded-lg p-6 text-center hover:border-primary-main dark:hover:border-primary-main transition-colors cursor-pointer"
                           @click="triggerFileUpload"
                           @dragover.prevent="isDragging = true"
                           @dragleave="isDragging = false"
@@ -557,7 +557,7 @@
               </div>
 
           <!-- Floating Actions -->
-          <div class="sticky bottom-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 px-6 py-4">
+          <div class="sticky bottom-0 bg-white dark:bg-gray-950 border-t border-gray-200 dark:border-white/10 px-6 py-4">
             <div class="flex items-center justify-between">
               <div class="text-sm text-gray-500 dark:text-gray-400">
                 <span v-if="form.amount" class="font-medium text-gray-900 dark:text-white">
@@ -568,7 +568,7 @@
                 <button
                   type="button"
                   @click="close"
-                  class="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  class="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 rounded-xl hover:bg-gray-50 dark:hover:bg-white/10 transition-colors"
                 >
                   {{ t('common.cancel') }}
                 </button>
@@ -576,7 +576,7 @@
                   type="button"
                   @click="submitForm"
                   :disabled="isSubmitting || !form.amount || !form.date"
-                  class="px-5 py-2.5 text-sm font-medium text-white bg-primary-main rounded-lg hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                  class="px-5 py-2.5 text-sm font-medium text-white bg-primary-main rounded-xl hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
                   <Loader v-if="isSubmitting" class="w-4 h-4 animate-spin" />
                   <Save v-else class="w-4 h-4" />
@@ -593,10 +593,10 @@
     <!-- Customer Modal -->
     <Transition name="modal">
       <div v-if="showCustomerModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50" @click="showCustomerModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showCustomerModal = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-md">
           <!-- Modal Header -->
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ editingCustomer ? t('customer.edit') : t('customer.create') }}
             </h3>
@@ -616,7 +616,7 @@
                 v-model="customerForm.name"
                 type="text"
                 required
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
 
@@ -633,7 +633,7 @@
                   type="text"
                   maxlength="14"
                   placeholder="1234567890123"
-                  class="w-full h-11 pl-8 pr-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent font-mono"
+                  class="w-full h-11 pl-8 pr-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent font-mono"
                 />
               </div>
             </div>
@@ -646,7 +646,7 @@
               <input
                 v-model="customerForm.company"
                 type="text"
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
 
@@ -659,7 +659,7 @@
                 <input
                   v-model="customerForm.email"
                   type="email"
-                  class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                  class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                 />
               </div>
               <div>
@@ -669,7 +669,7 @@
                 <input
                   v-model="customerForm.phone"
                   type="tel"
-                  class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                  class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
                 />
               </div>
             </div>
@@ -680,7 +680,7 @@
                 id="isForeign"
                 v-model="customerForm.isForeign"
                 type="checkbox"
-                class="w-4 h-4 text-primary-main bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded focus:ring-primary-main"
+                class="w-4 h-4 text-primary-main bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 rounded focus:ring-primary-main"
               />
               <label for="isForeign" class="text-sm text-gray-700 dark:text-gray-300">
                 {{ t('customer.isForeign') }}
@@ -689,17 +689,17 @@
           </div>
 
           <!-- Modal Footer -->
-          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
+          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-gray-950/50 rounded-b-2xl">
             <button
               @click="showCustomerModal = false"
-              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-xl transition-colors"
             >
               {{ t('common.cancel') }}
             </button>
             <button
               @click="saveCustomer"
               :disabled="!customerForm.name.trim()"
-              class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {{ t('common.save') }}
             </button>
@@ -711,10 +711,10 @@
     <!-- Supplier Modal -->
     <Transition name="modal">
       <div v-if="showSupplierModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50" @click="showSupplierModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showSupplierModal = false"></div>
+        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-md">
           <!-- Modal Header -->
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ editingSupplier ? t('supplier.edit') : t('supplier.create') }}
             </h3>
@@ -734,7 +734,7 @@
                 v-model="supplierForm.name"
                 type="text"
                 required
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
 
@@ -746,7 +746,7 @@
               <input
                 v-model="supplierForm.companyName"
                 type="text"
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
 
@@ -758,7 +758,7 @@
               <input
                 v-model="supplierForm.serviceName"
                 type="text"
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
 
@@ -775,7 +775,7 @@
                   type="text"
                   maxlength="14"
                   placeholder="1234567890123"
-                  class="w-full h-11 pl-8 pr-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent font-mono"
+                  class="w-full h-11 pl-8 pr-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent font-mono"
                 />
               </div>
             </div>
@@ -789,23 +789,23 @@
                 v-model="supplierForm.website"
                 type="url"
                 placeholder="https://"
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
           </div>
 
           <!-- Modal Footer -->
-          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
+          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-gray-950/50 rounded-b-2xl">
             <button
               @click="showSupplierModal = false"
-              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-xl transition-colors"
             >
               {{ t('common.cancel') }}
             </button>
             <button
               @click="saveSupplier"
               :disabled="!supplierForm.name.trim()"
-              class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {{ t('common.save') }}
             </button>
@@ -818,9 +818,9 @@
     <Transition name="modal">
       <div v-if="showSubAccountModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/50" @click="showSubAccountModal = false"></div>
-        <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md">
+        <div class="relative bg-white dark:bg-white/5 rounded-xl shadow-2xl w-full max-w-md">
           <!-- Modal Header -->
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ editingSubAccount ? t('subAccount.edit') : t('subAccount.create') }}
             </h3>
@@ -840,7 +840,7 @@
                 v-model="subAccountForm.name"
                 type="text"
                 required
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
 
@@ -853,7 +853,7 @@
                 v-model="subAccountForm.code"
                 type="text"
                 placeholder="001"
-                class="w-full h-11 px-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
+                class="w-full h-11 px-3 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent"
               />
             </div>
 
@@ -865,16 +865,16 @@
               <textarea
                 v-model="subAccountForm.description"
                 rows="2"
-                class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent resize-none"
+                class="w-full px-3 py-2 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-primary-main focus:border-transparent resize-none"
               />
             </div>
           </div>
 
           <!-- Modal Footer -->
-          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
+          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-gray-950/50 rounded-b-xl">
             <button
               @click="showSubAccountModal = false"
-              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors"
             >
               {{ t('common.cancel') }}
             </button>

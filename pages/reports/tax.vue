@@ -9,13 +9,13 @@
         <select
             v-model="selectedYear"
             @change="loadReport"
-            class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md px-3 py-2"
+            class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
         >
           <option v-for="year in availableYears" :key="year" :value="year">{{ year }}</option>
         </select>
         <button
             @click="exportCSV"
-            class="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            class="inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
         >
           <Download class="h-4 w-4 mr-2" />
           {{ t('taxReport.exportCSV') }}
@@ -28,22 +28,22 @@
     <div v-else-if="report">
       <!-- Summary Cards -->
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
           <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('taxReport.totalIncome') }}</div>
           <div class="text-2xl font-bold text-green-600">{{ formatCurrency(report.summary.totalIncome) }}</div>
           <div class="text-xs text-gray-400">{{ report.summary.incomeCount }} {{ t('nav.transactions') }}</div>
         </div>
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
           <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('taxReport.totalExpenses') }}</div>
           <div class="text-2xl font-bold text-red-600">{{ formatCurrency(report.summary.totalExpenses) }}</div>
           <div class="text-xs text-gray-400">{{ report.summary.expenseCount }} {{ t('nav.transactions') }}</div>
         </div>
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
           <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('taxReport.deductibleExpenses') }}</div>
-          <div class="text-2xl font-bold text-purple-600">{{ formatCurrency(report.summary.totalDeductible) }}</div>
+          <div class="text-2xl font-bold text-primary-main">{{ formatCurrency(report.summary.totalDeductible) }}</div>
           <div class="text-xs text-gray-400">{{ report.summary.deductibleCount }} {{ t('taxReport.items') }}</div>
         </div>
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
           <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('taxReport.netIncome') }}</div>
           <div class="text-2xl font-bold" :class="report.summary.netIncome >= 0 ? 'text-green-600' : 'text-red-600'">
             {{ formatCurrency(report.summary.netIncome) }}
@@ -52,13 +52,13 @@
       </div>
 
       <!-- Quarterly Summary -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm mb-6">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-6">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('taxReport.quarterlySummary') }}</h2>
         </div>
         <div class="p-6">
           <div class="grid grid-cols-4 gap-4">
-            <div v-for="q in report.quarterlyData" :key="q.quarter" class="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+            <div v-for="q in report.quarterlyData" :key="q.quarter" class="text-center p-4 bg-gray-50 dark:bg-white/5 rounded-lg">
               <div class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ q.quarter }}</div>
               <div class="mt-2">
                 <div class="text-xs text-gray-400">{{ t('taxReport.income') }}</div>
@@ -80,15 +80,15 @@
       </div>
 
       <!-- Expenses by Category -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm mb-6">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-6">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('taxReport.expensesByCategory') }}</h2>
         </div>
-        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+        <div class="divide-y divide-gray-200 dark:divide-white/10">
           <div
               v-for="(data, category) in report.expensesByCategory"
               :key="category"
-              class="px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700"
+              class="px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/[0.07]"
           >
             <div>
               <div class="font-medium text-gray-900 dark:text-gray-100 capitalize">{{ category.replace(/_/g, ' ') }}</div>
@@ -105,13 +105,13 @@
       </div>
 
       <!-- Monthly Breakdown -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
           <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('taxReport.monthlyBreakdown') }}</h2>
         </div>
         <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead class="bg-gray-50 dark:bg-gray-700">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+            <thead class="bg-gray-50 dark:bg-white/5">
               <tr>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('taxReport.month') }}</th>
                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('taxReport.income') }}</th>
@@ -119,8 +119,8 @@
                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('taxReport.net') }}</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-              <tr v-for="month in report.monthlyData" :key="month.month" class="hover:bg-gray-50 dark:hover:bg-gray-700">
+            <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+              <tr v-for="month in report.monthlyData" :key="month.month" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">{{ month.monthName }}</td>
                 <td class="px-6 py-4 text-sm text-right text-green-600">{{ formatCurrency(month.income) }}</td>
                 <td class="px-6 py-4 text-sm text-right text-red-600">{{ formatCurrency(month.expenses) }}</td>

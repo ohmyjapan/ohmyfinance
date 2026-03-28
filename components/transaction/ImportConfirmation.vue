@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+  <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm">
     <div class="p-6">
       <div class="mb-8 text-center">
         <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">{{ t('importConfirmation.title') }}</h2>
@@ -10,7 +10,7 @@
 
       <!-- Import Summary -->
       <div class="max-w-3xl mx-auto mb-8">
-        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+        <div class="bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/10 p-6">
           <h3 class="text-base font-medium text-gray-900 dark:text-gray-100 mb-4">{{ t('importConfirmation.importSummary') }}</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -21,8 +21,8 @@
                     :key="index"
                     class="flex items-center"
                 >
-                  <div class="h-8 w-8 flex-shrink-0 bg-purple-100 dark:bg-purple-900/30 rounded flex items-center justify-center">
-                    <FileText class="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                  <div class="h-8 w-8 flex-shrink-0 bg-primary-main/20 dark:bg-primary-main/20 rounded flex items-center justify-center">
+                    <FileText class="h-4 w-4 text-primary-main dark:text-primary-light" />
                   </div>
                   <div class="ml-3">
                     <p class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ file.name }}</p>
@@ -67,7 +67,7 @@
 
       <!-- Import Options -->
       <div class="max-w-3xl mx-auto mb-8">
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+        <div class="bg-white dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/10 p-6">
           <h3 class="text-base font-medium text-gray-900 dark:text-gray-100 mb-4">{{ t('importConfirmation.importOptions') }}</h3>
           <div class="space-y-4">
             <div class="flex items-start">
@@ -76,7 +76,7 @@
                     id="skip-duplicates"
                     v-model="localOptions.skipDuplicates"
                     type="checkbox"
-                    class="focus:ring-purple-500 h-4 w-4 text-purple-600 border-gray-300 rounded"
+                    class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 rounded"
                 />
               </div>
               <div class="ml-3 text-sm">
@@ -90,7 +90,7 @@
                     id="update-matches"
                     v-model="localOptions.updateMatches"
                     type="checkbox"
-                    class="focus:ring-purple-500 h-4 w-4 text-purple-600 border-gray-300 rounded"
+                    class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 rounded"
                 />
               </div>
               <div class="ml-3 text-sm">
@@ -104,7 +104,7 @@
                     id="save-template"
                     v-model="localOptions.saveTemplate"
                     type="checkbox"
-                    class="focus:ring-purple-500 h-4 w-4 text-purple-600 border-gray-300 rounded"
+                    class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 rounded"
                 />
               </div>
               <div class="ml-3 text-sm">
@@ -118,7 +118,7 @@
                     id="notify"
                     v-model="localOptions.notifyWhenComplete"
                     type="checkbox"
-                    class="focus:ring-purple-500 h-4 w-4 text-purple-600 border-gray-300 rounded"
+                    class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 rounded"
                 />
               </div>
               <div class="ml-3 text-sm">
@@ -149,14 +149,14 @@
       <!-- Action Buttons -->
       <div class="flex justify-between max-w-3xl mx-auto">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="$emit('back')"
         >
           {{ t('importConfirmation.backToPreview') }}
         </button>
         <div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="performImport"
               :disabled="isImporting"
           >

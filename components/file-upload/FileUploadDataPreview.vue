@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
     <div class="p-6">
       <div class="mb-6">
         <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">{{ t('dataPreview.title') }}</h2>
@@ -10,19 +10,19 @@
 
       <!-- Data Stats -->
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
           <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.totalRecords') }}</div>
           <div class="text-2xl font-semibold text-gray-900 dark:text-gray-100">{{ stats.totalRecords }}</div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
           <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.validRecords') }}</div>
           <div class="text-2xl font-semibold text-green-600">{{ stats.validRecords }}</div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
           <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.warningRecords') }}</div>
           <div class="text-2xl font-semibold text-yellow-600">{{ stats.warningRecords }}</div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
           <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.invalidRecords') }}</div>
           <div class="text-2xl font-semibold text-gray-900 dark:text-gray-100">{{ stats.invalidRecords }}</div>
         </div>
@@ -34,7 +34,7 @@
           <div class="relative">
             <select
                 v-model="filter.recordType"
-                class="block w-full pl-3 pr-10 py-2 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                class="block w-full pl-3 pr-10 py-2 text-sm border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-primary-main focus:border-primary-main rounded-md"
             >
               <option value="all">{{ t('dataPreview.allRecords') }}</option>
               <option value="valid">{{ t('dataPreview.validOnly') }}</option>
@@ -46,7 +46,7 @@
             </div>
           </div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="isFilterOpen = !isFilterOpen"
           >
             <Filter class="mr-2 h-4 w-4" />
@@ -55,7 +55,7 @@
         </div>
         <div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
           >
             <Download class="mr-2 h-4 w-4" />
             {{ t('dataPreview.exportPreview') }}
@@ -64,13 +64,13 @@
       </div>
 
       <!-- Additional Filters (conditionally shown) -->
-      <div v-if="isFilterOpen" class="mb-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-700">
+      <div v-if="isFilterOpen" class="mb-4 p-4 border border-gray-200 dark:border-white/10 rounded-lg bg-gray-50 dark:bg-white/5">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('dataPreview.dateRange') }}</label>
             <select
                 v-model="filter.dateRange"
-                class="block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                class="block w-full border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
             >
               <option value="">{{ t('dataPreview.allDates') }}</option>
               <option value="last30">{{ t('dataPreview.last30Days') }}</option>
@@ -86,20 +86,20 @@
                   type="number"
                   min="0"
                   :placeholder="t('dataPreview.min')"
-                  class="block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
               <input
                   v-model="filter.maxAmount"
                   type="number"
                   min="0"
                   :placeholder="t('dataPreview.max')"
-                  class="block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                  class="block w-full border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
               />
             </div>
           </div>
           <div class="flex items-end">
             <button
-                class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
                 @click="resetFilters"
             >
               {{ t('dataPreview.resetFilters') }}
@@ -109,9 +109,9 @@
       </div>
 
       <!-- Data Preview Table -->
-      <div class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto mb-6">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 dark:bg-gray-700">
+      <div class="border border-gray-200 dark:border-white/10 rounded-lg overflow-x-auto mb-6">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+          <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
               {{ t('common.status') }}
@@ -126,7 +126,7 @@
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/10">
           <tr
               v-for="(row, index) in filteredData"
               :key="index"
@@ -185,20 +185,20 @@
       <!-- Action Buttons -->
       <div class="flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="$emit('back')"
         >
           {{ t('dataPreview.backToMapping') }}
         </button>
         <div>
           <button
-              class="mr-3 inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="mr-3 inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
           >
             <RefreshCw class="mr-2 h-4 w-4" />
             {{ t('dataPreview.refreshPreview') }}
           </button>
           <button
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="$emit('continue')"
           >
             {{ t('dataPreview.continueToImport') }}

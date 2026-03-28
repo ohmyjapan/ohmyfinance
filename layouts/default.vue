@@ -1,12 +1,14 @@
 <template>
-  <div class="min-h-screen bg-background-default dark:bg-background-dark text-gray-900 dark:text-gray-100">
+  <div class="min-h-screen bg-background-default dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 text-gray-900 dark:text-gray-100">
     <AppSidebar :is-open="isSidebarOpen" @close="isSidebarOpen = false" />
 
     <div class="lg:pl-64 flex flex-col flex-1">
       <AppHeader @toggle-sidebar="isSidebarOpen = !isSidebarOpen" />
 
-      <main class="flex-1 p-4 md:p-6 bg-background-default dark:bg-background-dark">
-        <slot />
+      <main class="flex-1 p-4 md:p-6">
+        <div class="max-w-7xl mx-auto">
+          <slot />
+        </div>
       </main>
 
       <AppFooter />

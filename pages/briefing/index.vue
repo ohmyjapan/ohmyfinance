@@ -14,14 +14,14 @@
             v-model="tickerInput"
             type="text"
             :placeholder="t('briefing.tickerPlaceholder')"
-            class="block w-32 pl-3 pr-2 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-l-md focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm uppercase"
+            class="block w-32 pl-3 pr-2 py-2 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-l-md focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm uppercase"
             @keyup.enter="handleGenerate"
             :disabled="isGenerating"
           />
           <button
             @click="handleGenerate"
             :disabled="!tickerInput.trim() || isGenerating"
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-r-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-r-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Loader v-if="isGenerating" class="h-4 w-4 mr-2 animate-spin" />
             <Zap v-else class="h-4 w-4 mr-2" />
@@ -33,7 +33,7 @@
         <div class="relative">
           <select
             v-model="statusFilter"
-            class="block w-full pl-3 pr-10 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+            class="block w-full pl-3 pr-10 py-2 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
           >
             <option value="">{{ t('briefing.allStatuses') }}</option>
             <option value="completed">{{ t('briefing.statusCompleted') }}</option>
@@ -45,7 +45,7 @@
         <button
           @click="handleRefresh"
           :disabled="isLoading"
-          class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
+          class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] disabled:opacity-50"
         >
           <RefreshCw class="h-4 w-4" :class="isLoading ? 'animate-spin' : ''" />
         </button>
@@ -65,7 +65,7 @@
 
     <!-- Loading state -->
     <div v-if="isLoading && briefings.length === 0" class="flex justify-center items-center py-20">
-      <Loader class="h-8 w-8 text-purple-600 animate-spin" />
+      <Loader class="h-8 w-8 text-primary-main animate-spin" />
       <span class="ml-3 text-gray-600 dark:text-gray-400">{{ t('common.loading') }}</span>
     </div>
 
@@ -80,13 +80,13 @@
             v-model="tickerInput"
             type="text"
             :placeholder="t('briefing.tickerPlaceholder')"
-            class="block w-36 pl-3 pr-2 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm uppercase"
+            class="block w-36 pl-3 pr-2 py-2 border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm uppercase"
             @keyup.enter="handleGenerate"
           />
           <button
             @click="handleGenerate"
             :disabled="!tickerInput.trim() || isGenerating"
-            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Zap class="h-4 w-4 mr-2" />
             {{ t('briefing.generateFirst') }}
@@ -100,7 +100,7 @@
       <div v-for="group in groupedBriefings" :key="group.date">
         <!-- Date header -->
         <div class="flex items-center gap-3 mb-4">
-          <Calendar class="h-5 w-5 text-purple-600 dark:text-purple-400" />
+          <Calendar class="h-5 w-5 text-primary-main dark:text-primary-light" />
           <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
             {{ formatGroupDate(group.date) }}
           </h2>
@@ -109,7 +109,7 @@
           </span>
           <NuxtLink
             :to="`/briefing/${group.date}`"
-            class="ml-auto text-sm text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 flex items-center gap-1"
+            class="ml-auto text-sm text-primary-main dark:text-primary-light hover:text-primary-dark dark:hover:text-primary-light flex items-center gap-1"
           >
             {{ t('briefing.viewAll') }}
             <ArrowRight class="h-4 w-4" />
@@ -133,7 +133,7 @@
       <button
         @click="loadMore"
         :disabled="isLoading"
-        class="inline-flex items-center px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
+        class="inline-flex items-center px-6 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] disabled:opacity-50"
       >
         <Loader v-if="isLoading" class="h-4 w-4 mr-2 animate-spin" />
         {{ t('briefing.loadMore') }}

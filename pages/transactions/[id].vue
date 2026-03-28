@@ -5,7 +5,7 @@
       <div class="flex items-center">
         <button
             @click="router.back()"
-            class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700"
+            class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/10"
         >
           <ArrowLeft size="20" class="text-gray-600 dark:text-gray-400" />
         </button>
@@ -14,13 +14,13 @@
       <div class="flex space-x-2">
         <button
             @click="editTransaction"
-            class="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            class="px-4 py-2 text-sm bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
         >
           編集
         </button>
         <button
             @click="deleteTransactionConfirm"
-            class="px-4 py-2 text-sm border border-red-300 text-red-600 rounded-md hover:bg-red-50"
+            class="px-4 py-2 text-sm border border-red-300 text-red-600 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 touch-manipulation"
         >
           削除
         </button>
@@ -28,7 +28,7 @@
     </div>
 
     <div v-if="isLoading" class="flex justify-center items-center h-64">
-      <Loader size="32" class="text-purple-600 animate-spin" />
+      <Loader size="32" class="text-primary-main animate-spin" />
     </div>
 
     <div v-else-if="error" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
@@ -37,7 +37,7 @@
 
     <template v-else-if="transaction">
       <!-- Transaction Summary Card -->
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 mb-6">
+      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6 mb-6">
         <div class="flex items-center justify-between mb-4">
           <div>
             <span :class="[
@@ -58,7 +58,7 @@
           <div>
             <p class="text-sm text-gray-500 dark:text-gray-400">金額</p>
             <p :class="[
-              'text-2xl font-bold',
+              'text-2xl font-bold font-mono',
               transaction.type === '入金' ? 'text-green-600' : 'text-gray-900 dark:text-white'
             ]">
               {{ formatCurrency(transaction.amount) }}
@@ -99,7 +99,7 @@
         <!-- Left Column - 2/3 width -->
         <div class="lg:col-span-2 space-y-6">
           <!-- Transaction Details Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+          <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">取引詳細</h2>
 
             <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -181,7 +181,7 @@
               </div>
             </dl>
 
-            <div v-if="transaction.notes" class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div v-if="transaction.notes" class="mt-4 pt-4 border-t border-gray-200 dark:border-white/10">
               <dt class="text-sm text-gray-500 dark:text-gray-400 mb-1">メモ</dt>
               <dd class="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">
                 {{ transaction.notes }}
@@ -190,11 +190,11 @@
           </div>
 
           <!-- Items Card -->
-          <div v-if="transaction.items && transaction.items.length > 0" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+          <div v-if="transaction.items && transaction.items.length > 0" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">商品明細</h2>
 
             <div class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
                 <thead>
                   <tr>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">商品名</th>
@@ -204,11 +204,11 @@
                     <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">小計</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                <tbody class="divide-y divide-gray-200 dark:divide-white/10">
                   <tr v-for="(item, index) in transaction.items" :key="index">
                     <td class="px-4 py-3 text-sm text-gray-900 dark:text-white">
                       {{ item.productName || '-' }}
-                      <a v-if="item.productUrl" :href="item.productUrl" target="_blank" class="ml-2 text-purple-600 hover:text-purple-800">
+                      <a v-if="item.productUrl" :href="item.productUrl" target="_blank" class="ml-2 text-primary-main hover:text-primary-dark">
                         <ExternalLink class="h-3 w-3 inline" />
                       </a>
                     </td>
@@ -221,7 +221,7 @@
                   </tr>
                 </tbody>
                 <tfoot>
-                  <tr class="bg-gray-50 dark:bg-gray-700">
+                  <tr class="bg-gray-50 dark:bg-white/5">
                     <td colspan="4" class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white text-right">合計</td>
                     <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-white text-right">
                       {{ formatCurrency(calculateItemsTotal()) }}
@@ -236,14 +236,14 @@
         <!-- Right Column - 1/3 width -->
         <div class="space-y-6">
           <!-- Timeline Card -->
-          <div v-if="transaction.timeline && transaction.timeline.length > 0" class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+          <div v-if="transaction.timeline && transaction.timeline.length > 0" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">履歴</h2>
 
             <div class="flow-root">
               <ul class="-mb-8">
                 <li v-for="(event, index) in transaction.timeline" :key="index">
                   <div class="relative pb-8">
-                    <span v-if="index !== transaction.timeline.length - 1" class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200 dark:bg-gray-700" />
+                    <span v-if="index !== transaction.timeline.length - 1" class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200 dark:bg-white/5" />
                     <div class="relative flex space-x-3">
                       <div>
                         <span :class="[
@@ -270,11 +270,11 @@
           </div>
 
           <!-- Receipt Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+          <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">領収書</h2>
 
             <div v-if="transaction.hasReceipt && transaction.receiptFilePath">
-              <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-md">
+              <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-white/5 rounded-md">
                 <div class="flex items-center">
                   <FileText class="h-8 w-8 text-gray-400" />
                   <div class="ml-3">
@@ -284,7 +284,7 @@
                     </p>
                   </div>
                 </div>
-                <button class="text-purple-600 hover:text-purple-800">
+                <button class="text-primary-main hover:text-primary-dark">
                   <Download class="h-5 w-5" />
                 </button>
               </div>
@@ -294,7 +294,7 @@
               <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">領収書がありません</p>
               <button
                   @click="uploadReceipt"
-                  class="mt-3 px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
+                  class="mt-3 px-4 py-2 text-sm bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
               >
                 領収書をアップロード
               </button>
@@ -384,7 +384,7 @@ const getTimelineColor = (type: string) => {
     created: 'bg-blue-500',
     updated: 'bg-yellow-500',
     completed: 'bg-green-500',
-    imported: 'bg-purple-500',
+    imported: 'bg-primary-main/100',
     receipt_linked: 'bg-teal-500',
     failed: 'bg-red-500'
   }

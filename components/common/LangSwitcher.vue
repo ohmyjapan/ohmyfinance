@@ -1,6 +1,6 @@
 <template>
   <div class="relative">
-    <button @click="toggleDropdown" class="flex items-center px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
+    <button @click="toggleDropdown" class="flex items-center px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-md">
       <span class="mx-1">{{ languageEmoji }}</span>
       <span class="mx-1 hidden md:inline">{{ languageName }}</span>
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -9,12 +9,12 @@
     </button>
 
     <!-- Dropdown Menu -->
-    <div v-if="isOpen" class="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg z-50 border dark:border-gray-700">
+    <div v-if="isOpen" class="absolute right-0 mt-2 w-48 bg-white dark:bg-white/5 rounded-md shadow-lg z-50 border dark:border-white/10">
       <div class="py-1">
         <button
           @click="selectLanguage('ja')"
           :class="[
-            'flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700',
+            'flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-white/[0.07]',
             locale === 'ja' ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
           ]"
         >
@@ -24,7 +24,7 @@
         <button
           @click="selectLanguage('ko')"
           :class="[
-            'flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700',
+            'flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-white/[0.07]',
             locale === 'ko' ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
           ]"
         >
