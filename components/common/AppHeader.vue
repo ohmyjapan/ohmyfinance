@@ -34,7 +34,7 @@
               <p class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ userStore.user?.name || t('header.adminUser') }}</p>
               <p class="text-xs text-gray-500 dark:text-gray-400">{{ userStore.user?.email || '' }}</p>
             </div>
-            <div class="h-8 w-8 rounded-full bg-primary-main/20 dark:bg-primary-dark flex items-center justify-center text-primary-main dark:text-primary-light">
+            <div class="h-8 w-8 rounded-xl bg-gradient-to-br from-primary-main to-primary-dark flex items-center justify-center text-white text-sm font-medium shadow-sm">
               {{ userStore.user?.name?.charAt(0)?.toUpperCase() || 'U' }}
             </div>
             <ChevronDown class="h-4 w-4 ml-1 text-gray-500 dark:text-gray-400" />

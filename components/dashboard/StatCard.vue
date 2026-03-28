@@ -1,21 +1,21 @@
 <template>
-  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
-    <div class="flex items-center">
-      <div :class="[iconContainerClasses]" class="p-3 rounded-xl">
+  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+    <div class="flex items-center gap-4">
+      <div :class="[iconContainerClasses]" class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0">
         <component :is="resolvedIcon" :size="24" />
       </div>
-      <div class="ml-4">
-        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ title }}</p>
-        <p class="text-3xl font-bold font-mono text-gray-800 dark:text-gray-100">{{ value }}</p>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ title }}</p>
+        <p class="text-2xl font-bold font-mono text-gray-900 dark:text-white">{{ value }}</p>
       </div>
     </div>
-    <div v-if="showTrend" class="mt-4">
-      <div class="flex items-center">
-        <TrendingUp v-if="trendDirection === 'up'" size="18" :class="trendColorClass" />
-        <TrendingDown v-else size="18" :class="trendColorClass" />
-        <span class="text-sm font-medium font-mono ml-1" :class="trendColorClass">{{ formattedChange }}</span>
-        <span class="text-sm text-gray-500 dark:text-gray-400 ml-2">from last {{ period }}</span>
+    <div v-if="showTrend" class="mt-3 flex items-center gap-1">
+      <div :class="trendBgClass" class="flex items-center gap-0.5 px-2 py-0.5 rounded-full">
+        <TrendingUp v-if="trendDirection === 'up'" size="14" :class="trendColorClass" />
+        <TrendingDown v-else size="14" :class="trendColorClass" />
+        <span class="text-xs font-medium font-mono" :class="trendColorClass">{{ formattedChange }}</span>
       </div>
+      <span class="text-xs text-gray-500 dark:text-gray-400">from last {{ period }}</span>
     </div>
   </div>
 </template>
@@ -102,17 +102,26 @@ const iconContainerClasses = computed(() => {
     blue: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
     green: 'bg-green-500/20 text-green-600 dark:text-green-400',
     amber: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
-    red: 'bg-red-500/20 text-red-600 dark:text-red-400'
+    red: 'bg-red-500/20 text-red-600 dark:text-red-400',
+    indigo: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400',
+    purple: 'bg-primary-main/20 text-primary-main dark:text-primary-light'
   }
   return colorClasses[props.color] || colorClasses.primary
+})
+
+// Trend background pill
+const trendBgClass = computed(() => {
+  return trendDirection.value === 'up'
+    ? 'bg-green-500/10 dark:bg-green-500/20'
+    : 'bg-red-500/10 dark:bg-red-500/20'
 })
 
 // Determine the color class for the trend indicator
 const trendColorClass = computed(() => {
   if (trendDirection.value === 'up') {
-    return 'text-green-500 dark:text-green-400'
+    return 'text-green-600 dark:text-green-400'
   } else {
-    return 'text-red-500 dark:text-red-400'
+    return 'text-red-600 dark:text-red-400'
   }
 })
 </script>

@@ -1,6 +1,13 @@
 <template>
-  <div class="min-h-screen bg-gray-100 flex flex-col justify-center sm:py-12">
-    <div class="p-10 xs:p-0 mx-auto md:w-full md:max-w-md">
+  <div class="min-h-screen flex flex-col justify-center sm:py-12 relative overflow-hidden">
+    <!-- Animated background orbs -->
+    <div class="absolute inset-0 pointer-events-none">
+      <div class="absolute top-1/4 -left-20 w-72 h-72 bg-primary-main/20 rounded-full blur-3xl animate-pulse-slow"></div>
+      <div class="absolute bottom-1/4 -right-20 w-96 h-96 bg-primary-dark/15 rounded-full blur-3xl animate-pulse-slow" style="animation-delay: 2s;"></div>
+      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-amber-500/10 dark:bg-amber-500/5 rounded-full blur-3xl animate-float"></div>
+    </div>
+
+    <div class="p-10 xs:p-0 mx-auto md:w-full md:max-w-md relative z-10">
       <!-- 2FA Verification -->
       <TwoFactorVerify
         v-if="userStore.requires2FA && userStore.tempToken"
@@ -10,105 +17,106 @@
       />
 
       <!-- Regular Login Form -->
-      <div v-else class="bg-white shadow w-full rounded-lg divide-y divide-gray-200">
-        <div class="px-5 py-7">
-          <div class="text-center mb-8">
-            <h1 class="font-bold text-2xl text-red-600 mb-1">{{ t('app.name') }}</h1>
-            <p class="text-gray-500 text-sm">{{ t('auth.signInToAccount') }}</p>
-          </div>
+      <div v-else class="relative">
+        <!-- Card glow -->
+        <div class="absolute -inset-1 bg-gradient-to-r from-primary-main via-primary-dark to-primary-main rounded-3xl blur-lg opacity-0 dark:opacity-20 animate-pulse-slow"></div>
 
-          <!-- Error alert -->
-          <div v-if="error" class="bg-red-50 border-l-4 border-red-400 p-4 mb-6">
-            <div class="flex">
-              <div class="flex-shrink-0">
-                <AlertCircle class="h-5 w-5 text-red-400" />
+        <div class="relative bg-white dark:bg-slate-800/90 backdrop-blur-xl w-full rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl divide-y divide-gray-200 dark:divide-white/10">
+          <div class="px-6 py-8">
+            <div class="text-center mb-8">
+              <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary-main to-primary-dark flex items-center justify-center shadow-lg">
+                <Wallet class="w-8 h-8 text-white" />
               </div>
-              <div class="ml-3">
-                <p class="text-sm text-red-700">
-                  {{ error }}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <form @submit.prevent="handleLogin">
-            <div class="mb-4">
-              <label class="block text-gray-700 text-sm font-bold mb-2" for="email">
-                {{ t('auth.email') }}
-              </label>
-              <input
-                  v-model="email"
-                  class="border border-gray-300 rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                  id="email"
-                  type="email"
-                  :placeholder="t('loginPage.emailPlaceholder')"
-                  required
-              />
+              <h1 class="font-bold text-2xl text-gray-900 dark:text-white mb-1">{{ t('app.name') }}</h1>
+              <p class="text-gray-500 dark:text-gray-400 text-sm">{{ t('auth.signInToAccount') }}</p>
             </div>
 
-            <div class="mb-6">
-              <label class="block text-gray-700 text-sm font-bold mb-2" for="password">
-                {{ t('auth.password') }}
-              </label>
-              <div class="relative">
+            <!-- Error alert -->
+            <div v-if="error" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 mb-6">
+              <div class="flex items-center gap-3">
+                <AlertCircle class="h-5 w-5 text-red-500 flex-shrink-0" />
+                <p class="text-sm text-red-700 dark:text-red-400">{{ error }}</p>
+              </div>
+            </div>
+
+            <form @submit.prevent="handleLogin" class="space-y-5">
+              <div>
+                <label class="block text-gray-700 dark:text-gray-300 text-sm font-medium mb-2" for="email">
+                  {{ t('auth.email') }}
+                </label>
                 <input
-                    v-model="password"
-                    class="border border-gray-300 rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                    id="password"
-                    :type="showPassword ? 'text' : 'password'"
-                    placeholder="••••••••"
+                    v-model="email"
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-main/20 focus:border-primary-main transition-all"
+                    id="email"
+                    type="email"
+                    :placeholder="t('loginPage.emailPlaceholder')"
                     required
                 />
-                <div
-                    @click="showPassword = !showPassword"
-                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 cursor-pointer hover:text-gray-500"
-                >
-                  <Eye v-if="showPassword" size="20" />
-                  <EyeOff v-else size="20" />
+              </div>
+
+              <div>
+                <label class="block text-gray-700 dark:text-gray-300 text-sm font-medium mb-2" for="password">
+                  {{ t('auth.password') }}
+                </label>
+                <div class="relative">
+                  <input
+                      v-model="password"
+                      class="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-main/20 focus:border-primary-main transition-all"
+                      id="password"
+                      :type="showPassword ? 'text' : 'password'"
+                      placeholder="••••••••"
+                      required
+                  />
+                  <button
+                      type="button"
+                      @click="showPassword = !showPassword"
+                      class="absolute inset-y-0 right-0 flex items-center pr-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                  >
+                    <Eye v-if="showPassword" size="20" />
+                    <EyeOff v-else size="20" />
+                  </button>
                 </div>
               </div>
-            </div>
 
-            <div class="flex items-center justify-between mb-6">
-              <div class="flex items-center">
-                <input
-                    v-model="rememberMe"
-                    id="remember-me"
-                    type="checkbox"
-                    class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
-                />
-                <label for="remember-me" class="ml-2 block text-sm text-gray-700">
-                  {{ t('auth.rememberMe') }}
-                </label>
-              </div>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center">
+                  <input
+                      v-model="rememberMe"
+                      id="remember-me"
+                      type="checkbox"
+                      class="h-4 w-4 text-primary-main focus:ring-primary-main border-gray-300 dark:border-slate-600 rounded"
+                  />
+                  <label for="remember-me" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+                    {{ t('auth.rememberMe') }}
+                  </label>
+                </div>
 
-              <div class="text-sm">
-                <a href="#" class="font-medium text-red-600 hover:text-red-500">
+                <a href="#" class="text-sm font-medium text-primary-main hover:text-primary-dark dark:text-primary-light dark:hover:text-primary-main transition-colors">
                   {{ t('auth.forgotPassword') }}
                 </a>
               </div>
+
+              <button
+                  type="submit"
+                  class="w-full py-3 px-4 rounded-xl text-white text-sm font-medium bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg hover:shadow-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="isLoading"
+              >
+                <div v-if="isLoading" class="flex items-center justify-center gap-2">
+                  <Loader class="animate-spin h-4 w-4 text-white" />
+                  {{ t('auth.signingIn') }}
+                </div>
+                <span v-else>{{ t('auth.signIn') }}</span>
+              </button>
+            </form>
+          </div>
+
+          <div class="p-5 text-center">
+            <div class="text-sm text-gray-500 dark:text-gray-400">
+              {{ t('auth.noAccount') }}
+              <NuxtLink to="/auth/register" class="text-primary-main hover:text-primary-dark dark:text-primary-light font-medium transition-colors">
+                {{ t('auth.createAccount') }}
+              </NuxtLink>
             </div>
-
-            <button
-                type="submit"
-                class="w-full py-2 px-4 bg-red-600 hover:bg-red-700 rounded-md text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                :disabled="isLoading"
-            >
-              <div v-if="isLoading" class="flex items-center justify-center">
-                <Loader class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" />
-                {{ t('auth.signingIn') }}
-              </div>
-              <span v-else>{{ t('auth.signIn') }}</span>
-            </button>
-          </form>
-        </div>
-
-        <div class="p-5 text-center">
-          <div class="text-sm text-gray-500">
-            {{ t('auth.noAccount') }}
-            <NuxtLink to="/auth/register" class="text-red-600 hover:text-red-500 font-medium">
-              {{ t('auth.createAccount') }}
-            </NuxtLink>
           </div>
         </div>
       </div>
@@ -116,14 +124,14 @@
       <div v-if="!userStore.requires2FA" class="py-5">
         <div class="grid grid-cols-2 gap-1">
           <div class="text-center sm:text-left whitespace-nowrap">
-            <button class="px-5 py-2 mx-auto flex items-center text-sm text-gray-700 hover:text-red-600 group">
-              <Shield class="h-4 w-4 text-gray-400 group-hover:text-red-500 mr-1" />
+            <button class="px-5 py-2 mx-auto flex items-center text-sm text-gray-500 dark:text-gray-400 hover:text-primary-main dark:hover:text-primary-light group transition-colors">
+              <Shield class="h-4 w-4 text-gray-400 dark:text-gray-500 group-hover:text-primary-main dark:group-hover:text-primary-light mr-1 transition-colors" />
               {{ t('auth.termsOfService') }}
             </button>
           </div>
           <div class="text-center sm:text-right whitespace-nowrap">
-            <button class="px-5 py-2 mx-auto flex items-center justify-end text-sm text-gray-700 hover:text-red-600 group">
-              <HelpCircle class="h-4 w-4 text-gray-400 group-hover:text-red-500 mr-1" />
+            <button class="px-5 py-2 mx-auto flex items-center justify-end text-sm text-gray-500 dark:text-gray-400 hover:text-primary-main dark:hover:text-primary-light group transition-colors">
+              <HelpCircle class="h-4 w-4 text-gray-400 dark:text-gray-500 group-hover:text-primary-main dark:group-hover:text-primary-light mr-1 transition-colors" />
               {{ t('loginPage.help') }}
             </button>
           </div>
@@ -141,7 +149,8 @@ import {
   EyeOff,
   Loader,
   Shield,
-  HelpCircle
+  HelpCircle,
+  Wallet
 } from 'lucide-vue-next'
 
 const { t } = useI18n()

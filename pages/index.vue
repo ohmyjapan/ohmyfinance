@@ -2,8 +2,12 @@
   <div>
     <!-- Welcome Section -->
     <div class="mb-8">
-      <div class="bg-gradient-to-r from-primary-main to-primary-dark dark:from-primary-dark dark:to-primary-dark/80 rounded-2xl p-6 text-white">
-        <div class="flex items-center justify-between">
+      <div class="bg-gradient-to-r from-primary-main to-primary-dark dark:from-primary-dark dark:to-primary-dark/80 rounded-2xl p-6 text-white relative overflow-hidden">
+        <!-- Decorative orbs -->
+        <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
+        <div class="absolute -bottom-8 -left-8 w-32 h-32 bg-white/5 rounded-full blur-2xl"></div>
+
+        <div class="flex items-center justify-between relative z-10">
           <div>
             <h1 class="text-2xl font-bold mb-1">
               {{ dashboardData?.user?.name ? `${t('dashboard.welcome')}, ${dashboardData.user.name}` : t('dashboard.title') }}
@@ -103,49 +107,52 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
       <NuxtLink
         to="/transactions/upload"
-        class="flex items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 hover:border-primary-main/50 dark:hover:border-primary-main/30 transition-colors touch-manipulation"
+        class="flex flex-col items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-primary-main/50 dark:hover:border-primary-main/30 touch-manipulation"
       >
-        <div class="p-2 rounded-xl bg-primary-main/20 text-primary-main dark:text-primary-light">
-          <Upload class="w-5 h-5" />
+        <div class="w-12 h-12 rounded-xl bg-primary-main/20 text-primary-main dark:text-primary-light flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
+          <Upload class="w-6 h-6" />
         </div>
-        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ t('dashboard.uploadTransaction') }}</span>
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-200 text-center">{{ t('dashboard.uploadTransaction') }}</span>
       </NuxtLink>
 
       <NuxtLink
         to="/receipts/upload"
-        class="flex items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 hover:border-primary-main/50 dark:hover:border-primary-main/30 transition-colors touch-manipulation"
+        class="flex flex-col items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-green-500/50 dark:hover:border-green-500/30 touch-manipulation"
       >
-        <div class="p-2 rounded-xl bg-green-500/20 text-green-600 dark:text-green-400">
-          <Receipt class="w-5 h-5" />
+        <div class="w-12 h-12 rounded-xl bg-green-500/20 text-green-600 dark:text-green-400 flex items-center justify-center">
+          <Receipt class="w-6 h-6" />
         </div>
-        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ t('dashboard.uploadReceipt') }}</span>
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-200 text-center">{{ t('dashboard.uploadReceipt') }}</span>
       </NuxtLink>
 
       <NuxtLink
         to="/calendar"
-        class="flex items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 hover:border-primary-main/50 dark:hover:border-primary-main/30 transition-colors touch-manipulation"
+        class="flex flex-col items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-blue-500/50 dark:hover:border-blue-500/30 touch-manipulation"
       >
-        <div class="p-2 rounded-xl bg-blue-500/20 text-blue-600 dark:text-blue-400">
-          <Calendar class="w-5 h-5" />
+        <div class="w-12 h-12 rounded-xl bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+          <Calendar class="w-6 h-6" />
         </div>
-        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ t('dashboard.viewCalendar') }}</span>
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-200 text-center">{{ t('dashboard.viewCalendar') }}</span>
       </NuxtLink>
 
       <NuxtLink
         to="/analytics"
-        class="flex items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 hover:border-primary-main/50 dark:hover:border-primary-main/30 transition-colors touch-manipulation"
+        class="flex flex-col items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-amber-500/50 dark:hover:border-amber-500/30 touch-manipulation"
       >
-        <div class="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
-          <BarChart3 class="w-5 h-5" />
+        <div class="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+          <BarChart3 class="w-6 h-6" />
         </div>
-        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ t('dashboard.viewAnalytics') }}</span>
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-200 text-center">{{ t('dashboard.viewAnalytics') }}</span>
       </NuxtLink>
     </div>
 
     <!-- Recent Transactions Table -->
     <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden mb-8">
       <div class="p-6 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">{{ t('dashboard.recentTransactions') }}</h2>
+        <div class="flex items-center gap-2">
+          <CreditCard class="w-5 h-5 text-primary-main dark:text-primary-light" />
+          <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">{{ t('dashboard.recentTransactions') }}</h2>
+        </div>
         <NuxtLink
           to="/transactions"
           class="text-sm text-primary-main hover:text-primary-dark dark:text-primary-light dark:hover:text-primary-main font-medium"

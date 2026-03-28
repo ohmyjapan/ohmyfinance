@@ -15,7 +15,12 @@
         class="fixed inset-y-0 left-0 flex flex-col z-40 w-64 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-r border-gray-200 dark:border-white/10 lg:hidden transition-transform duration-300 ease-in-out"
     >
       <div class="flex items-center justify-between px-4 py-4 border-b border-gray-200 dark:border-white/10">
-        <NuxtLink to="/" class="text-xl font-bold text-primary-main">OhMyFinance</NuxtLink>
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-main to-primary-dark flex items-center justify-center shadow-sm">
+            <Wallet class="w-4 h-4 text-white" />
+          </div>
+          <NuxtLink to="/" class="text-lg font-bold text-gray-900 dark:text-white">OhMyFinance</NuxtLink>
+        </div>
         <button
             @click="$emit('close')"
             class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 focus:outline-none"
@@ -38,17 +43,18 @@
                 :to="item.route"
                 :class="[
                   isActive(item.route)
-                    ? 'bg-primary-main/10 text-primary-main dark:text-primary-light'
-                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10',
-                  'flex items-center px-4 py-2 rounded-xl group'
+                    ? 'bg-primary-main/10 text-primary-main dark:text-primary-light font-medium'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.07]',
+                  'flex items-center px-3 py-2.5 rounded-xl group transition-all duration-200 relative'
                 ]"
               >
+                <div v-if="isActive(item.route)" class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary-main rounded-r-full"></div>
                 <component
                   :is="icons[item.icon]"
-                  class="h-5 w-5 mr-3"
-                  :class="isActive(item.route) ? 'text-primary-main dark:text-primary-light' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300'"
+                  class="h-5 w-5 mr-3 transition-colors duration-200"
+                  :class="isActive(item.route) ? 'text-primary-main dark:text-primary-light' : 'text-gray-400 dark:text-gray-500 group-hover:text-gray-600 dark:group-hover:text-gray-300'"
                 />
-                <span>{{ item.name }}</span>
+                <span class="text-sm">{{ item.name }}</span>
               </NuxtLink>
             </div>
           </div>
@@ -57,7 +63,7 @@
         <div class="p-4 border-t border-gray-200 dark:border-white/10">
           <div v-if="isAuthenticated && user" class="space-y-3">
             <div class="flex items-center">
-              <div class="w-8 h-8 bg-primary-main/20 dark:bg-primary-dark rounded-full flex items-center justify-center text-primary-main dark:text-primary-light">
+              <div class="w-9 h-9 bg-gradient-to-br from-primary-main to-primary-dark rounded-xl flex items-center justify-center text-white text-sm font-medium shadow-sm">
                 {{ user.name?.charAt(0)?.toUpperCase() || 'U' }}
               </div>
               <div class="ml-3 flex-1 min-w-0">
@@ -87,8 +93,11 @@
 
     <!-- Desktop sidebar -->
     <div class="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:z-40 lg:w-64 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-r border-gray-200 dark:border-white/10">
-      <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-white/10">
-        <NuxtLink to="/" class="text-xl font-bold text-primary-main">OhMyFinance</NuxtLink>
+      <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-white/10 gap-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-main to-primary-dark flex items-center justify-center shadow-sm">
+          <Wallet class="w-4 h-4 text-white" />
+        </div>
+        <NuxtLink to="/" class="text-lg font-bold text-gray-900 dark:text-white">OhMyFinance</NuxtLink>
       </div>
 
       <div class="flex flex-col flex-grow overflow-y-auto">
@@ -105,17 +114,18 @@
                 :to="item.route"
                 :class="[
                   isActive(item.route)
-                    ? 'bg-primary-main/10 text-primary-main dark:text-primary-light'
-                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10',
-                  'flex items-center px-4 py-2 rounded-xl group'
+                    ? 'bg-primary-main/10 text-primary-main dark:text-primary-light font-medium'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.07]',
+                  'flex items-center px-3 py-2.5 rounded-xl group transition-all duration-200 relative'
                 ]"
               >
+                <div v-if="isActive(item.route)" class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary-main rounded-r-full"></div>
                 <component
                   :is="icons[item.icon]"
-                  class="h-5 w-5 mr-3"
-                  :class="isActive(item.route) ? 'text-primary-main dark:text-primary-light' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300'"
+                  class="h-5 w-5 mr-3 transition-colors duration-200"
+                  :class="isActive(item.route) ? 'text-primary-main dark:text-primary-light' : 'text-gray-400 dark:text-gray-500 group-hover:text-gray-600 dark:group-hover:text-gray-300'"
                 />
-                <span>{{ item.name }}</span>
+                <span class="text-sm">{{ item.name }}</span>
               </NuxtLink>
             </div>
           </div>
@@ -124,7 +134,7 @@
         <div class="p-4 border-t border-gray-200 dark:border-white/10">
           <div v-if="isAuthenticated && user" class="space-y-3">
             <div class="flex items-center">
-              <div class="w-8 h-8 bg-primary-main/20 dark:bg-primary-dark rounded-full flex items-center justify-center text-primary-main dark:text-primary-light">
+              <div class="w-9 h-9 bg-gradient-to-br from-primary-main to-primary-dark rounded-xl flex items-center justify-center text-white text-sm font-medium shadow-sm">
                 {{ user.name?.charAt(0)?.toUpperCase() || 'U' }}
               </div>
               <div class="ml-3 flex-1 min-w-0">

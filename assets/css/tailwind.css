@@ -91,3 +91,55 @@ textarea:focus {
 .table-row-hover {
     @apply hover:bg-gray-50 dark:hover:bg-white/[0.07] transition duration-150;
 }
+
+/* ── MK-II style effects ── */
+
+/* Card hover lift */
+.card-hover {
+    @apply transition-all duration-300;
+}
+.card-hover:hover {
+    @apply -translate-y-1 shadow-lg;
+}
+
+/* Icon container (large, colored bg) */
+.icon-box {
+    @apply w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0;
+}
+
+/* Gradient primary button */
+.btn-gradient {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-xl text-white font-medium
+           bg-gradient-to-r from-primary-main to-primary-dark
+           hover:from-primary-dark hover:to-primary-main
+           shadow-sm hover:shadow-md transition-all duration-300;
+}
+
+/* Animated background orbs */
+@keyframes float {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-20px) scale(1.05); }
+}
+@keyframes pulse-slow {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.6; }
+}
+.animate-float {
+    animation: float 8s ease-in-out infinite;
+}
+.animate-pulse-slow {
+    animation: pulse-slow 4s ease-in-out infinite;
+}
+
+/* Card glow effect */
+.card-glow {
+    @apply relative;
+}
+.card-glow::before {
+    content: '';
+    @apply absolute -inset-1 rounded-3xl blur-lg opacity-0 transition-opacity duration-500;
+    background: linear-gradient(135deg, theme('colors.primary.main'), theme('colors.primary.dark'));
+}
+.card-glow:hover::before {
+    @apply opacity-20;
+}
