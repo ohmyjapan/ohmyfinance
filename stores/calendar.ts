@@ -1,6 +1,7 @@
 // stores/calendar.ts
 import { defineStore } from 'pinia'
 import type { Payment, PaymentFormData, MonthlyStats } from '~/types/calendar'
+import { useUserStore } from '~/stores/user'
 
 // Format date to YYYY-MM-DD in local timezone (JST)
 const formatLocalDate = (date: Date): string => {
@@ -96,12 +97,20 @@ export const useCalendarStore = defineStore('calendar', {
   },
 
   actions: {
+    // Get auth headers from user store
+    _getAuthHeaders() {
+      const userStore = useUserStore()
+      return userStore.authHeader
+    },
+
     // Fetch all payments
     async fetchPayments() {
       this.isLoading = true
       this.error = null
       try {
-        const response = await $fetch<Payment[]>('/api/payments')
+        const response = await $fetch<Payment[]>('/api/payments', {
+          headers: this._getAuthHeaders()
+        })
         this.payments = response
         this.updateOverdueStatus()
       } catch (error: any) {
@@ -119,7 +128,8 @@ export const useCalendarStore = defineStore('calendar', {
       try {
         const response = await $fetch<Payment>('/api/payments', {
           method: 'POST',
-          body: paymentData
+          body: paymentData,
+          headers: this._getAuthHeaders()
         })
         this.payments.push(response)
         return response
@@ -138,7 +148,8 @@ export const useCalendarStore = defineStore('calendar', {
       try {
         const response = await $fetch<Payment>(`/api/payments/${id}`, {
           method: 'PUT',
-          body: paymentData
+          body: paymentData,
+          headers: this._getAuthHeaders()
         })
         const index = this.payments.findIndex(p => p.id === id)
         if (index !== -1) {
@@ -159,7 +170,8 @@ export const useCalendarStore = defineStore('calendar', {
       this.error = null
       try {
         await $fetch(`/api/payments/${id}`, {
-          method: 'DELETE'
+          method: 'DELETE',
+          headers: this._getAuthHeaders()
         })
         this.payments = this.payments.filter(p => p.id !== id)
       } catch (error: any) {
@@ -182,6 +194,7 @@ export const useCalendarStore = defineStore('calendar', {
       try {
         await $fetch('/api/transactions', {
           method: 'POST',
+          headers: this._getAuthHeaders(),
           body: {
             date: new Date(payment.dueDate),
             amount: payment.amount,
