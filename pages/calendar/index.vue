@@ -70,49 +70,49 @@
 
         <!-- Quick Actions (OMF style) -->
         <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">クイック追加</h3>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">{{ t('calendar.quickAdd') }}</h3>
           <div class="space-y-2">
             <button
               @click="quickAdd('expense', '地代家賃')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-md"
             >
               <Home class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">地代家賃</span>
+              <span class="text-gray-700 dark:text-gray-300">{{ t('calendar.quickItems.rent') }}</span>
             </button>
             <button
               @click="quickAdd('expense', '水道光熱費')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-md"
             >
               <Zap class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">水道光熱費</span>
+              <span class="text-gray-700 dark:text-gray-300">{{ t('calendar.quickItems.utilities') }}</span>
             </button>
             <button
               @click="quickAdd('income', '売上')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-md"
             >
               <FileText class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">売上入金</span>
+              <span class="text-gray-700 dark:text-gray-300">{{ t('calendar.quickItems.salesIncome') }}</span>
             </button>
             <button
               @click="quickAdd('expense', '給与手当')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-md"
             >
               <DollarSign class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">給与支払い</span>
+              <span class="text-gray-700 dark:text-gray-300">{{ t('calendar.quickItems.salary') }}</span>
             </button>
             <button
               @click="quickAdd('expense', 'クレジットカード')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-md"
             >
               <CreditCard class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">カード支払い</span>
+              <span class="text-gray-700 dark:text-gray-300">{{ t('calendar.quickItems.cardPayment') }}</span>
             </button>
             <button
               @click="quickAdd('expense', '通信費')"
               class="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-white/[0.07] rounded-md"
             >
               <Zap class="h-4 w-4 mr-2 text-gray-400" />
-              <span class="text-gray-700 dark:text-gray-300">通信費</span>
+              <span class="text-gray-700 dark:text-gray-300">{{ t('calendar.quickItems.communication') }}</span>
             </button>
           </div>
         </div>

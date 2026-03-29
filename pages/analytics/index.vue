@@ -96,7 +96,7 @@
     <!-- Key Metrics -->
     <div v-if="widgetSettings.metrics" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
       <StatCard
-          title="支出合計"
+          :title="t('analytics.expenseTotal')"
           :value="formatCurrency(metrics.expenseTotal.value)"
           :change="metrics.expenseTotal.change"
           color="red"
@@ -104,7 +104,7 @@
       />
 
       <StatCard
-          title="入金合計"
+          :title="t('analytics.incomeTotal')"
           :value="formatCurrency(metrics.incomeTotal.value)"
           :change="metrics.incomeTotal.change"
           color="green"
@@ -143,7 +143,7 @@
       <!-- Transaction Type Chart -->
       <div v-if="widgetSettings.sourceChart" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
-          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">取引区別分布</h2>
+          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('analytics.typeDistribution') }}</h2>
         </div>
         <div class="p-6">
           <TransactionSourcesChart :chart-data="sourcesChartData" />
@@ -156,7 +156,7 @@
       <!-- Transaction Status Chart -->
       <div v-if="widgetSettings.statusChart" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
-          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">取引ステータス</h2>
+          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('analytics.statusDistribution') }}</h2>
         </div>
         <div class="p-6">
           <StatusChart :chart-data="statusChartData" />
@@ -166,7 +166,7 @@
       <!-- Category Distribution -->
       <div v-if="widgetSettings.geoChart" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
         <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
-          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">勘定科目別分布</h2>
+          <h2 class="text-lg font-medium text-gray-800 dark:text-gray-100">{{ t('analytics.categoryDistribution') }}</h2>
         </div>
         <div class="p-6">
           <GeographicChart :chart-data="geoChartData" />
@@ -222,7 +222,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { Download, Settings, X, CreditCard, TrendingUp, PieChart, Globe, BarChart3, FileText } from 'lucide-vue-next'
 
 const { t } = useI18n()
@@ -246,14 +246,14 @@ const defaultWidgetSettings = {
 
 const widgetSettings = reactive({ ...defaultWidgetSettings })
 
-const availableWidgets = [
-  { id: 'metrics', name: '主要指標カード', icon: CreditCard },
-  { id: 'transactionChart', name: '取引推移グラフ', icon: TrendingUp },
-  { id: 'sourceChart', name: '取引区別分布', icon: PieChart },
-  { id: 'statusChart', name: '取引ステータス', icon: BarChart3 },
-  { id: 'geoChart', name: '勘定科目別分布', icon: Globe },
-  { id: 'trends', name: 'トレンド一覧', icon: FileText }
-]
+const availableWidgets = computed(() => [
+  { id: 'metrics', name: t('analytics.metricsCard'), icon: CreditCard },
+  { id: 'transactionChart', name: t('analytics.trendChart'), icon: TrendingUp },
+  { id: 'sourceChart', name: t('analytics.typeDistribution'), icon: PieChart },
+  { id: 'statusChart', name: t('analytics.statusDistribution'), icon: BarChart3 },
+  { id: 'geoChart', name: t('analytics.categoryDistribution'), icon: Globe },
+  { id: 'trends', name: t('analytics.trendList'), icon: FileText }
+])
 
 const loadWidgetSettings = () => {
   const saved = localStorage.getItem('dashboardWidgets')
@@ -325,7 +325,7 @@ const statusChartData = ref({
 
 // Account category distribution
 const geoChartData = ref({
-  labels: ['経費', '仕入', '売上', '給与', 'その他'],
+  labels: [t('analytics.chartLabels.expenses'), t('analytics.chartLabels.purchases'), t('analytics.chartLabels.sales'), t('analytics.chartLabels.salary'), t('analytics.chartLabels.other')],
   datasets: [{
     data: [40, 25, 20, 10, 5],
     backgroundColor: ['#C0392B', '#3b82f6', '#10b981', '#f59e0b', '#9ca3af'],
@@ -377,7 +377,7 @@ const loadAnalyticsData = async () => {
         }
         if (analyticsData.charts.typeDistribution) {
           sourcesChartData.value = {
-            labels: ['支出', '入金'],
+            labels: [t('analytics.chartLabels.expense'), t('analytics.chartLabels.income')],
             datasets: [{
               data: [
                 statsData?.expense?.count || 0,
@@ -399,7 +399,7 @@ const loadAnalyticsData = async () => {
     } else {
       // Build charts from stats data if analytics endpoint not available
       sourcesChartData.value = {
-        labels: ['支出', '入金'],
+        labels: [t('analytics.chartLabels.expense'), t('analytics.chartLabels.income')],
         datasets: [{
           data: [
             statsData?.expense?.count || 0,
@@ -411,7 +411,7 @@ const loadAnalyticsData = async () => {
       }
 
       statusChartData.value = {
-        labels: ['完了', '保留中', '処理中', '失敗'],
+        labels: [t('analytics.chartLabels.completed'), t('analytics.chartLabels.pending'), t('analytics.chartLabels.processing'), t('analytics.chartLabels.failed')],
         datasets: [{
           data: [
             statsData?.completed?.count || 0,

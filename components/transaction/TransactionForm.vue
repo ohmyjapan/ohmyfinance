@@ -1,14 +1,14 @@
 <!-- components/transaction/TransactionForm.vue -->
 <template>
   <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-6">
-    <h2 class="text-xl font-bold mb-6 text-gray-900 dark:text-white">{{ isEditing ? '取引を編集' : '新規取引' }}</h2>
+    <h2 class="text-xl font-bold mb-6 text-gray-900 dark:text-white">{{ isEditing ? t('transactionForm.editTitle') : t('transactionForm.createTitle') }}</h2>
 
     <form @submit.prevent="submitForm" class="space-y-6">
       <!-- Basic Information Section -->
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <!-- Date -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">日付</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.date') }}</label>
           <input
               type="date"
               v-model="form.date"
@@ -19,25 +19,25 @@
 
         <!-- Transaction Type -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">区別</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.typeLabel') }}</label>
           <select
               v-model="form.type"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
               required
           >
-            <option value="支出">支出</option>
-            <option value="入金">入金</option>
+            <option value="支出">{{ t('transactions.expense') }}</option>
+            <option value="入金">{{ t('transactions.income') }}</option>
           </select>
         </div>
 
         <!-- Amount -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">金額</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.amount') }}</label>
           <input
               type="text"
               v-model="form.amount"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-              :placeholder="'例: 10,000'"
+              :placeholder="t('transactionForm.amountPlaceholder')"
               required
               @input="formatAmount"
           />
@@ -48,31 +48,31 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <!-- Customer -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">顧客</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.customer') }}</label>
           <div class="relative">
             <select
                 v-model="form.customerId"
                 class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
-              <option value="">選択してください</option>
+              <option value="">{{ t('transactionForm.selectPlaceholder') }}</option>
               <option v-for="customer in customers" :key="customer.id" :value="customer.id">
                 {{ customer.name }}
               </option>
-              <option value="new">+ 新規顧客を追加</option>
+              <option value="new">{{ t('transactionForm.addNewCustomer') }}</option>
             </select>
           </div>
 
           <!-- New Customer Form -->
           <div v-if="form.customerId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
-            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規顧客</h3>
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">{{ t('transactionForm.newCustomerLabel') }}</h3>
             <div class="space-y-3">
               <div>
-                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">顧客名</label>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.customerNameLabel') }}</label>
                 <input
                     type="text"
                     v-model="newCustomer.name"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="顧客名を入力"
+                    :placeholder="t('transactionForm.customerPlaceholder')"
                 />
               </div>
               <div class="flex justify-end">
@@ -81,7 +81,7 @@
                     @click="addNewCustomer"
                     class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
-                  追加
+                  {{ t('common.add') }}
                 </button>
               </div>
             </div>
@@ -90,32 +90,32 @@
 
         <!-- Account Category -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">勘定科目</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.accountCategory') }}</label>
           <div class="relative">
             <select
                 v-model="form.accountCategoryId"
                 class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                 @change="handleAccountCategoryChange"
             >
-              <option value="">選択してください</option>
+              <option value="">{{ t('transactionForm.selectPlaceholder') }}</option>
               <option v-for="category in accountCategories" :key="category.id" :value="category.id">
                 {{ category.name }}
               </option>
-              <option value="new">+ 新規勘定科目を追加</option>
+              <option value="new">{{ t('transactionForm.addNewAccountCategory') }}</option>
             </select>
           </div>
 
           <!-- New Account Category Form -->
           <div v-if="form.accountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
-            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規勘定科目</h3>
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">{{ t('transactionForm.newAccountCategoryLabel') }}</h3>
             <div class="space-y-3">
               <div>
-                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">勘定科目名</label>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.accountCategoryNameLabel') }}</label>
                 <input
                     type="text"
                     v-model="newAccountCategory.name"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="勘定科目名を入力"
+                    :placeholder="t('transactionForm.accountNamePlaceholder')"
                 />
               </div>
               <div class="flex justify-end">
@@ -124,7 +124,7 @@
                     @click="addNewAccountCategory"
                     class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
-                  追加
+                  {{ t('common.add') }}
                 </button>
               </div>
             </div>
@@ -136,37 +136,37 @@
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <!-- Sub Account Category -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">補助科目</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.subAccountCategory') }}</label>
           <div class="relative">
             <select
                 v-model="form.subAccountCategoryId"
                 class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
-              <option value="">選択してください</option>
+              <option value="">{{ t('transactionForm.selectPlaceholder') }}</option>
               <option v-for="category in filteredSubAccountCategories" :key="category.id" :value="category.id">
                 {{ category.name }}
               </option>
-              <option value="new">+ 新規補助科目を追加</option>
+              <option value="new">{{ t('transactionForm.addNewSubAccountCategory') }}</option>
             </select>
           </div>
 
           <!-- New Sub Account Category Form -->
           <div v-if="form.subAccountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
-            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規補助科目</h3>
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">{{ t('transactionForm.newSubAccountCategoryLabel') }}</h3>
             <div class="space-y-3">
               <div>
-                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">補助科目名</label>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.subAccountCategoryNameLabel') }}</label>
                 <input
                     type="text"
                     v-model="newSubAccountCategory.name"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="補助科目名を入力"
+                    :placeholder="t('transactionForm.subAccountCategoryNameLabel')"
                 />
               </div>
               <!-- Credit card specific fields -->
               <div v-if="form.accountCategory === 'credit_card'">
                 <div class="mb-2">
-                  <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">カード番号（下4桁）</label>
+                  <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.cardLast4') }}</label>
                   <input
                       type="text"
                       v-model="newSubAccountCategory.cardNumber"
@@ -176,18 +176,18 @@
                   />
                 </div>
                 <div>
-                  <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">カード会社</label>
+                  <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.cardProvider') }}</label>
                   <select
                       v-model="newSubAccountCategory.cardProvider"
                       class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
                   >
-                    <option value="">選択してください</option>
+                    <option value="">{{ t('transactionForm.selectPlaceholder') }}</option>
                     <option value="VISA">VISA</option>
                     <option value="MasterCard">MasterCard</option>
                     <option value="American Express">American Express</option>
                     <option value="JCB">JCB</option>
                     <option value="Discover">Discover</option>
-                    <option value="Other">その他</option>
+                    <option value="Other">{{ t('transactionForm.otherProvider') }}</option>
                   </select>
                 </div>
               </div>
@@ -197,7 +197,7 @@
                     @click="addNewSubAccountCategory"
                     class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
-                  追加
+                  {{ t('common.add') }}
                 </button>
               </div>
             </div>
@@ -206,31 +206,31 @@
 
         <!-- Tax Category -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">税区分</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.taxCategory') }}</label>
           <div class="relative">
             <select
                 v-model="form.taxCategoryId"
                 class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
-              <option value="">選択してください</option>
+              <option value="">{{ t('transactionForm.selectPlaceholder') }}</option>
               <option v-for="category in taxCategories" :key="category.id" :value="category.name">
                 {{ category.name }}
               </option>
-              <option value="new">+ 新規税区分を追加</option>
+              <option value="new">{{ t('transactionForm.addNewTaxCategory') }}</option>
             </select>
           </div>
 
           <!-- New Tax Category Form -->
           <div v-if="form.taxCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
-            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規税区分</h3>
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">{{ t('transactionForm.newTaxCategoryLabel') }}</h3>
             <div class="space-y-3">
               <div>
-                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">税区分名</label>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.taxCategoryNameLabel') }}</label>
                 <input
                     type="text"
                     v-model="newTaxCategory.name"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="例: 課税対象 / 非課税"
+                    :placeholder="t('transactionForm.taxCategoryNamePlaceholder')"
                 />
               </div>
               <div class="flex justify-end">
@@ -239,7 +239,7 @@
                     @click="addNewTaxCategory"
                     class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
-                  追加
+                  {{ t('common.add') }}
                 </button>
               </div>
             </div>
@@ -248,31 +248,31 @@
 
         <!-- Tax Rate -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">税率</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.taxRate') }}</label>
           <div class="relative">
             <select
                 v-model="form.taxRate"
                 class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
-              <option value="">選択してください</option>
+              <option value="">{{ t('transactionForm.selectPlaceholder') }}</option>
               <option v-for="rate in taxRates" :key="rate.id" :value="rate.value">
                 {{ rate.value }}
               </option>
-              <option value="new">+ 新規税率を追加</option>
+              <option value="new">{{ t('transactionForm.addNewTaxRate') }}</option>
             </select>
           </div>
 
           <!-- New Tax Rate Form -->
           <div v-if="form.taxRate === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
-            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規税率</h3>
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">{{ t('transactionForm.newTaxRateLabel') }}</h3>
             <div class="space-y-3">
               <div>
-                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">税率</label>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.taxRate') }}</label>
                 <input
                     type="text"
                     v-model="newTaxRate.value"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="例: 10%"
+                    :placeholder="t('transactionForm.taxRatePlaceholder')"
                 />
               </div>
               <div class="flex justify-end">
@@ -281,7 +281,7 @@
                     @click="addNewTaxRate"
                     class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
-                  追加
+                  {{ t('common.add') }}
                 </button>
               </div>
             </div>
@@ -293,7 +293,7 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <!-- Supplier with autocomplete -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">仕入れ先</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.supplier') }}</label>
           <div class="relative">
             <input
                 type="text"
@@ -302,7 +302,7 @@
                 @focus="showSupplierSuggestions = true"
                 @blur="onSupplierBlur"
                 class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                placeholder="仕入れ先を入力"
+                :placeholder="t('transactionForm.supplierPlaceholder')"
             />
             <!-- Supplier suggestions dropdown -->
             <div v-if="showSupplierSuggestions && filteredSuppliers.length > 0" class="absolute z-10 w-full mt-1 bg-white dark:bg-white/5 rounded-md shadow-lg max-h-60 overflow-auto">
@@ -319,12 +319,12 @@
 
         <!-- Receipt/Order Number -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">レシート/注文番号</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.receiptOrderNumber') }}</label>
           <input
               type="text"
               v-model="form.receiptNumber"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-              placeholder="レシート/注文番号を入力"
+              :placeholder="t('transactionForm.receiptOrderNumberPlaceholder')"
           />
         </div>
       </div>
@@ -333,31 +333,31 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <!-- Category -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">区分</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.categoryLabel') }}</label>
           <div class="relative">
             <select
                 v-model="form.transactionCategoryId"
                 class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
             >
-              <option value="">選択してください</option>
+              <option value="">{{ t('transactionForm.selectPlaceholder') }}</option>
               <option v-for="category in categories" :key="category.id" :value="category.id">
                 {{ category.name }}
               </option>
-              <option value="new">+ 新規区分を追加</option>
+              <option value="new">{{ t('transactionForm.addNewCategory') }}</option>
             </select>
           </div>
 
           <!-- New Category Form -->
           <div v-if="form.transactionCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
-            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">新規区分</h3>
+            <h3 class="text-sm font-semibold mb-2 text-gray-900 dark:text-white">{{ t('transactionForm.newCategoryLabel') }}</h3>
             <div class="space-y-3">
               <div>
-                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">区分名</label>
+                <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.categoryNameLabel') }}</label>
                 <input
                     type="text"
                     v-model="newCategory.name"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="例: 仕入高 / 売上高 / 消耗費"
+                    :placeholder="t('transactionForm.categoryNamePlaceholder')"
                 />
               </div>
               <div class="flex justify-end">
@@ -366,7 +366,7 @@
                     @click="addNewCategory"
                     class="px-3 py-1 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation text-sm"
                 >
-                  追加
+                  {{ t('common.add') }}
                 </button>
               </div>
             </div>
@@ -375,12 +375,12 @@
 
         <!-- Company Info -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">法人情報</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.companyInfo') }}</label>
           <input
               type="text"
               v-model="form.companyInfo"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-              placeholder="例: 株式会社XXX"
+              :placeholder="t('transactionForm.companyInfoPlaceholder')"
           />
         </div>
       </div>
@@ -389,12 +389,12 @@
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <!-- Invoice Number -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">インボイス番号</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.invoiceNumber') }}</label>
           <input
               type="text"
               v-model="form.invoiceNumber"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-              placeholder="例: INV-12345"
+              :placeholder="t('transactionForm.invoiceNumberPlaceholder')"
           />
         </div>
 
@@ -405,18 +405,18 @@
               type="text"
               v-model="form.janCode"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-              placeholder="例: 4901234567894"
+              :placeholder="t('transactionForm.janCodePlaceholder')"
           />
         </div>
 
         <!-- Product Price -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">商品価格</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.productPrice') }}</label>
           <input
               type="text"
               v-model="form.productPrice"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-              placeholder="例: 5,000"
+              :placeholder="t('transactionForm.productPricePlaceholder')"
               @input="formatProductPrice"
           />
         </div>
@@ -426,18 +426,18 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <!-- Product Name/Code -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">商品コード/商品名</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.productCodeName') }}</label>
           <input
               type="text"
               v-model="form.productName"
               class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-              placeholder="例: PROD-001 / 商品名"
+              :placeholder="t('transactionForm.productCodePlaceholder')"
           />
         </div>
 
         <!-- Receipt Upload -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">領収書アップロード</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactionForm.receiptUpload') }}</label>
           <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-white/10 border-dashed rounded-md">
             <div class="space-y-1 text-center">
               <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
@@ -445,50 +445,50 @@
               </svg>
               <div class="flex text-sm text-gray-600 dark:text-gray-400">
                 <label for="receipt-upload" class="relative cursor-pointer bg-white dark:bg-white/5 rounded-md font-medium text-primary-main hover:text-primary-main">
-                  <span>ファイルをアップロード</span>
+                  <span>{{ t('transactionForm.uploadFile') }}</span>
                   <input id="receipt-upload" name="receipt-upload" type="file" class="sr-only" @change="handleFileUpload">
                 </label>
-                <p class="pl-1">またはドラッグ&ドロップ</p>
+                <p class="pl-1">{{ t('transactionForm.orDragDrop') }}</p>
               </div>
               <p class="text-xs text-gray-500">
-                PNG, JPG, PDF (最大10MB)
+                {{ t('transactionForm.maxFileSize') }}
               </p>
             </div>
           </div>
           <div v-if="form.receiptFile" class="mt-2 text-sm text-green-600">
-            アップロード済み: {{ form.receiptFile.name }}
+            {{ t('transactionForm.uploaded') }}: {{ form.receiptFile.name }}
           </div>
         </div>
       </div>
 
       <!-- Items Section -->
       <div>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">商品明細</h3>
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">{{ t('transactionForm.itemsTitle') }}</h3>
 
         <div class="overflow-x-auto">
           <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
             <thead class="bg-gray-50 dark:bg-white/5">
             <tr>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                商品名
+                {{ t('transactionForm.productNameHeader') }}
               </th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                JAN/商品コード
+                {{ t('transactionForm.janCodeHeader') }}
               </th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                商品URL
+                {{ t('transactionForm.productUrlHeader') }}
               </th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                数量
+                {{ t('transactionForm.quantityHeader') }}
               </th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                単価
+                {{ t('transactionForm.unitPriceHeader') }}
               </th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                小計
+                {{ t('transactionForm.subtotalHeader') }}
               </th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                アクション
+                {{ t('transactionForm.actionHeader') }}
               </th>
             </tr>
             </thead>
@@ -499,7 +499,7 @@
                     type="text"
                     v-model="item.productName"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="商品名"
+                    :placeholder="t('transactionForm.productNameHeader')"
                 />
               </td>
               <td class="px-4 py-3 whitespace-nowrap">
@@ -507,7 +507,7 @@
                     type="text"
                     v-model="item.janCode"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="JAN/商品コード"
+                    :placeholder="t('transactionForm.janCodeHeader')"
                 />
               </td>
               <td class="px-4 py-3 whitespace-nowrap">
@@ -515,7 +515,7 @@
                     type="text"
                     v-model="item.productUrl"
                     class="w-full bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="商品URL"
+                    :placeholder="t('transactionForm.productUrlHeader')"
                 />
               </td>
               <td class="px-4 py-3 whitespace-nowrap">
@@ -524,7 +524,7 @@
                     v-model.number="item.quantity"
                     min="1"
                     class="w-20 bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-900 dark:text-gray-100 rounded-md shadow-sm focus:border-primary-main focus:ring focus:ring-primary-light focus:ring-opacity-50"
-                    placeholder="数量"
+                    :placeholder="t('transactionForm.quantityHeader')"
                 />
               </td>
               <td class="px-4 py-3 whitespace-nowrap">
@@ -564,11 +564,11 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
             </svg>
-            商品を追加
+            {{ t('transactionForm.addProduct') }}
           </button>
 
           <div class="text-right">
-            <div class="text-gray-500 dark:text-gray-400">合計</div>
+            <div class="text-gray-500 dark:text-gray-400">{{ t('transactionForm.totalLabel') }}</div>
             <div class="text-xl font-bold text-gray-900 dark:text-white">{{ formatCurrency(calculateTotal()) }}</div>
           </div>
         </div>
@@ -581,7 +581,7 @@
             @click="cancel"
             class="px-4 py-2 border border-gray-300 dark:border-white/10 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-white/[0.07]"
         >
-          キャンセル
+          {{ t('common.cancel') }}
         </button>
         <button
             type="submit"
@@ -593,9 +593,9 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            保存中...
+            {{ t('transactionForm.saving') }}
           </span>
-          <span v-else>{{ isEditing ? '更新' : '保存' }}</span>
+          <span v-else>{{ isEditing ? t('transactionForm.update') : t('common.save') }}</span>
         </button>
       </div>
     </form>
@@ -604,6 +604,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+
+const { t } = useI18n()
 
 interface SubAccountCategory {
   id: string

@@ -31,28 +31,28 @@
     <!-- Stats Cards -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
       <StatCard
-          title="支出合計"
+          :title="t('transactions.expenseTotal')"
           :value="formatCurrency(transactionStats.expense?.amount || 0)"
           icon="CreditCard"
           color="red"
       />
 
       <StatCard
-          title="入金合計"
+          :title="t('transactions.incomeTotal')"
           :value="formatCurrency(transactionStats.income?.amount || 0)"
           icon="DollarSign"
           color="green"
       />
 
       <StatCard
-          title="取引件数"
+          :title="t('transactions.transactionCount')"
           :value="transactionStats.total.count.toString()"
           icon="Clock"
           color="primary"
       />
 
       <StatCard
-          title="領収書あり"
+          :title="t('transactions.hasReceipt')"
           :value="Math.round((transactionStats.receiptMatchRate || 0) * 100) + '%'"
           icon="FileText"
           color="blue"
@@ -95,9 +95,9 @@
                   v-model="filters.type"
                   class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-xl dark:bg-white/5 dark:border-white/10 dark:text-white"
               >
-                <option value="">全ての区別</option>
-                <option value="支出">支出</option>
-                <option value="入金">入金</option>
+                <option value="">{{ t('transactions.allTypes') }}</option>
+                <option value="支出">{{ t('transactions.expense') }}</option>
+                <option value="入金">{{ t('transactions.income') }}</option>
               </select>
             </div>
           </div>
@@ -164,7 +164,7 @@
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">その他のフィルター</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('transactions.otherFilters') }}</label>
             <div class="flex space-x-4">
               <label class="inline-flex items-center">
                 <input
@@ -172,7 +172,7 @@
                     type="checkbox"
                     class="rounded border-gray-300 text-primary-main shadow-sm focus:border-primary-light focus:ring focus:ring-primary-light focus:ring-opacity-50"
                 />
-                <span class="ml-2 text-sm text-gray-700">領収書あり</span>
+                <span class="ml-2 text-sm text-gray-700">{{ t('transactions.hasReceipt') }}</span>
               </label>
             </div>
           </div>
@@ -207,12 +207,12 @@
       <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
         <thead class="bg-gray-50 dark:bg-white/5">
         <tr>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">日付</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">区別</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">勘定科目</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">金額</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">仕入れ先/顧客</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">領収書</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('transactions.date') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('transactions.type') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('transactions.category') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('transactions.amount') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('transactions.vendor') }}</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('transactions.receipt') }}</th>
           <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('common.actions') }}</th>
         </tr>
         </thead>
@@ -231,7 +231,7 @@
               'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
               transaction.type === '入金' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
             ]">
-              {{ transaction.type || '支出' }}
+              {{ transaction.type || t('transactions.expense') }}
             </span>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
@@ -256,7 +256,7 @@
             <div v-if="transaction.hasReceipt" class="text-sm">
               <span class="text-green-600 inline-flex items-center">
                 <FileText class="h-4 w-4 mr-1" />
-                あり
+                {{ t('transactions.receiptExists') }}
               </span>
             </div>
             <div v-else>
@@ -265,7 +265,7 @@
                   class="text-gray-500 hover:text-gray-700 text-xs inline-flex items-center"
               >
                 <Plus class="h-3 w-3 mr-1" />
-                追加
+                {{ t('transactions.add') }}
               </button>
             </div>
           </td>
@@ -274,7 +274,7 @@
                 @click="viewTransactionDetails(transaction.id)"
                 class="text-primary-main hover:text-primary-dark mr-3"
             >
-              詳細
+              {{ t('transactions.details') }}
             </button>
             <div class="relative inline-block text-left" v-click-outside="() => closeActionsMenu(transaction.id)">
               <button
@@ -293,27 +293,27 @@
                       @click="openEditModal(transaction)"
                       class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
                   >
-                    編集
+                    {{ t('transactions.edit') }}
                   </button>
                   <button
                       @click="updateTransactionStatus(transaction.id, 'completed')"
                       class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
                       v-if="transaction.status !== 'completed'"
                   >
-                    完了にする
+                    {{ t('transactions.markCompleted') }}
                   </button>
                   <button
                       @click="updateTransactionStatus(transaction.id, 'cancelled')"
                       class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
                       v-if="transaction.status !== 'cancelled'"
                   >
-                    キャンセル
+                    {{ t('transactions.markCancelled') }}
                   </button>
                   <button
                       @click="deleteTransactionConfirm(transaction.id)"
                       class="block w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-white/10"
                   >
-                    削除
+                    {{ t('transactions.confirmDelete') }}
                   </button>
                 </div>
               </div>
@@ -537,7 +537,7 @@ const viewReceipt = (receipt: any) => {
 
 const deleteTransactionConfirm = async (id: string) => {
   closeActionsMenu(id)
-  if (confirm('この取引を削除しますか？')) {
+  if (confirm(t('transactions.deleteConfirm'))) {
     const success = await deleteTransaction(id)
     if (success) {
       await fetchTransactions()
@@ -607,7 +607,7 @@ const handleEditTransaction = async (formData: any) => {
     }
   } catch (err) {
     console.error('Failed to update transaction:', err)
-    alert('取引の更新に失敗しました')
+    alert(t('transactions.updateFailed'))
   }
 }
 

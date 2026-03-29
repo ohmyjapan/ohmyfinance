@@ -276,7 +276,7 @@ const allFieldsMapped = computed(() => {
 // Target field options for OMF (Japanese accounting style)
 const translatedTargetFieldOptions = computed(() => [
   { label: '日付 (Date)', value: 'date' },
-  { label: '区別 (Type: 支出/入金)', value: 'type' },
+  { label: t('fieldMapper.typeField'), value: 'type' },
   { label: '金額 (Amount)', value: 'amount' },
   { label: '勘定科目 (Account Category)', value: 'accountCategoryName' },
   { label: '補助科目 (Sub Account)', value: 'subAccountCategoryName' },
@@ -316,7 +316,7 @@ const translatedFormatOptions = computed(() => ({
   ],
   type: [
     { label: 'テキスト (Text)', value: 'text' },
-    { label: '区別コード (支出/入金)', value: 'type_code' }
+    { label: t('fieldMapper.typeCode'), value: 'type_code' }
   ]
 }))
 
