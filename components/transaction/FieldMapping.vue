@@ -263,7 +263,7 @@ const sampleData = ref([
 
 // Get total number of rows from all files
 const totalRows = computed(() => {
-  return props.files.reduce((total, file) => total + (file.rowCount || 0), 0)
+  return props.files.reduce((total, file) => total + (file.data?.length || file.rowCount || 0), 0)
 })
 
 // Get the source fields from the current file
@@ -343,71 +343,17 @@ watch(currentFile, () => {
   initializeMappings()
 })
 
-// Generate sample data for the selected file (OMF style)
+// Load actual data from the uploaded file
 const generateSampleData = () => {
-  // In a real app, this would load data from the file
-  // For this example, we'll generate some mock data
-
   const file = props.files.find(f => f.name === currentFile.value)
-
   if (!file) return
 
-  // Determine fields based on the file type (OMF Japanese accounting)
-  let fields = []
-
-  if (file.name.toLowerCase().includes('経費') || file.name.toLowerCase().includes('expense')) {
-    fields = ['日付', '金額', '勘定科目', '税区分', '仕入れ先', '備考']
-  } else if (file.name.toLowerCase().includes('売上') || file.name.toLowerCase().includes('sales')) {
-    fields = ['日付', '金額', '勘定科目', '顧客', '税区分', 'インボイス番号']
-  } else if (file.name.toLowerCase().includes('仕入') || file.name.toLowerCase().includes('purchase')) {
-    fields = ['日付', '金額', '勘定科目', '仕入れ先', '商品名', '税区分']
+  // Use actual parsed data from the file
+  if (file.data && file.data.length > 0) {
+    sampleData.value = file.data.slice(0, 10)
   } else {
-    // Default fields
-    fields = ['日付', '区別', '金額', '勘定科目', '税区分', '仕入れ先', '備考']
+    sampleData.value = []
   }
-
-  // Generate sample data
-  const data = []
-  const accountCategories = ['消耗品費', '通信費', '交通費', '接待交際費', '広告宣伝費']
-  const taxCategories = ['課税仕入', '課税仕入(軽減)', '非課税']
-  const suppliers = ['株式会社ABC', '○○商店', 'XYZ株式会社']
-  const customers = ['田中太郎', '鈴木花子', '山田商事']
-
-  for (let i = 0; i < 10; i++) {
-    const row = {}
-
-    fields.forEach(field => {
-      if (field === '日付' || field.includes('date')) {
-        const date = new Date()
-        date.setDate(date.getDate() - Math.floor(Math.random() * 30))
-        row[field] = date.toISOString().split('T')[0]
-      } else if (field === '金額' || field.includes('amount') || field.includes('price')) {
-        row[field] = Math.floor(Math.random() * 50000 + 1000)
-      } else if (field === '区別' || field.includes('type')) {
-        row[field] = Math.random() > 0.5 ? '支出' : '入金'
-      } else if (field === '勘定科目') {
-        row[field] = accountCategories[Math.floor(Math.random() * accountCategories.length)]
-      } else if (field === '税区分') {
-        row[field] = taxCategories[Math.floor(Math.random() * taxCategories.length)]
-      } else if (field === '仕入れ先') {
-        row[field] = suppliers[Math.floor(Math.random() * suppliers.length)]
-      } else if (field === '顧客') {
-        row[field] = customers[Math.floor(Math.random() * customers.length)]
-      } else if (field === 'インボイス番号') {
-        row[field] = `T${1000000000000 + i}`
-      } else if (field === '商品名') {
-        row[field] = `商品${i + 1}`
-      } else if (field === '備考') {
-        row[field] = `サンプル備考${i + 1}`
-      } else {
-        row[field] = `値${i}`
-      }
-    })
-
-    data.push(row)
-  }
-
-  sampleData.value = data
 }
 
 // Initialize mappings for fields (OMF style)

@@ -55,7 +55,7 @@
     <!-- Step Content -->
     <div class="transition-all duration-300">
       <!-- Step 1: File Upload -->
-      <Transition name="slide-fade" mode="out-in">
+      <Transition name="fade" mode="out-in">
         <div v-if="currentStep === 0" key="upload">
           <TransactionFileUpload
             :selected-source="selectedSource"
@@ -288,21 +288,16 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.slide-fade-enter-active {
-  transition: all 0.3s ease-out;
+.fade-enter-active {
+  transition: opacity 0.25s ease-out;
 }
 
-.slide-fade-leave-active {
-  transition: all 0.2s ease-in;
+.fade-leave-active {
+  transition: opacity 0.15s ease-in;
 }
 
-.slide-fade-enter-from {
-  transform: translateX(20px);
-  opacity: 0;
-}
-
-.slide-fade-leave-to {
-  transform: translateX(-20px);
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 </style>
