@@ -91,6 +91,7 @@
         <div>
           <button
               class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
+              @click="exportPreview"
           >
             <Download class="mr-2 h-4 w-4" />
             {{ t('dataPreview.exportPreview') }}
@@ -229,6 +230,7 @@
         <div class="flex gap-3">
           <button
               class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
+              @click="processData"
           >
             <RefreshCw class="mr-2 h-4 w-4" />
             {{ t('dataPreview.refreshPreview') }}
@@ -399,13 +401,9 @@ const processData = () => {
   // This would be more sophisticated in a real app
   // Here we're just adding validation status to each row
 
-  // Start with the parsed data (or generate some if empty)
   let data = [...props.parsedData]
 
-  if (data.length === 0) {
-    // Generate mock data
-    data = generateMockData()
-  }
+  if (data.length === 0) return
 
   // Reset validation counters
   validationIssues.value = {
@@ -425,7 +423,7 @@ const processData = () => {
     // Map each source field to target field based on mappings
     Object.keys(props.mappings).forEach(sourceField => {
       const mapping = props.mappings[sourceField]
-      if (mapping && mapping.field) {
+      if (mapping && mapping.field && mapping.field !== '' && mapping.field !== 'null') {
         newRow[mapping.field] = row[sourceField]
 
         // Apply validation based on field type
@@ -473,47 +471,34 @@ const processData = () => {
   emit('update-data', transformed)
 }
 
-// Generate mock data for preview
-const generateMockData = () => {
-  const data = []
+// Export preview data as CSV
+const exportPreview = () => {
+  if (filteredData.value.length === 0) return
 
-  for (let i = 0; i < 50; i++) {
-    const row = {}
+  const fields = previewFields.value
+  const csvRows = [fields.join(',')]
 
-    // Add some sample data
-    Object.keys(props.mappings).forEach(sourceField => {
-      if (sourceField.includes('id') || sourceField.includes('reference')) {
-        row[sourceField] = `TRX-${10000 + i}`
-      } else if (sourceField.includes('date')) {
-        const date = new Date()
-        date.setDate(date.getDate() - Math.floor(Math.random() * 30))
-        row[sourceField] = date.toISOString().split('T')[0]
-      } else if (sourceField.includes('amount') || sourceField.includes('total')) {
-        row[sourceField] = (Math.random() * 1000 + 50).toFixed(2)
-      } else if (sourceField.includes('currency')) {
-        row[sourceField] = 'USD'
-      } else if (sourceField.includes('email')) {
-        // Add some "errors" for the warning records
-        if (i < 6) {
-          row[sourceField] = ''
-        } else {
-          row[sourceField] = `customer${i}@example.com`
-        }
-      } else if (sourceField.includes('status')) {
-        const statuses = ['COMPLETED', 'PENDING', 'PROCESSING', 'FAILED']
-        row[sourceField] = statuses[Math.floor(Math.random() * statuses.length)]
-      } else if (sourceField.includes('country')) {
-        const countries = ['USA', 'Canada', 'UK', 'Australia', 'Japan']
-        row[sourceField] = countries[Math.floor(Math.random() * countries.length)]
-      } else {
-        row[sourceField] = `Value ${i}`
+  filteredData.value.forEach(row => {
+    const values = fields.map(field => {
+      const val = row[field] ?? ''
+      const str = String(val)
+      // Quote fields containing commas, quotes, or newlines
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return '"' + str.replace(/"/g, '""') + '"'
       }
+      return str
     })
+    csvRows.push(values.join(','))
+  })
 
-    data.push(row)
-  }
-
-  return data
+  const bom = '\uFEFF' // UTF-8 BOM for Excel compatibility
+  const blob = new Blob([bom + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `preview-export-${new Date().toISOString().split('T')[0]}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // Get CSS class for a row based on its status

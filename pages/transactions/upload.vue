@@ -201,32 +201,9 @@ const handleFilesSelected = (files: any[]) => {
     const allData = files.flatMap(f => f.data || [])
     const headers = files[0].headers || Object.keys(files[0].data?.[0] || {})
 
-    // Generate mappings from headers
-    const mappings: Record<string, any> = {}
-    headers.forEach((header: string) => {
-      const headerLower = header.toLowerCase()
-      if (headerLower.includes('id') || headerLower.includes('reference') || headerLower.includes('番号')) {
-        mappings[header] = { field: 'transaction_id', format: 'text' }
-      } else if (headerLower.includes('date') || headerLower.includes('日付') || headerLower.includes('日時')) {
-        mappings[header] = { field: 'transaction_date', format: 'date' }
-      } else if (headerLower.includes('amount') || headerLower.includes('金額') || headerLower.includes('total') || headerLower.includes('合計')) {
-        mappings[header] = { field: 'amount', format: 'currency' }
-      } else if (headerLower.includes('currency') || headerLower.includes('通貨')) {
-        mappings[header] = { field: 'currency_code', format: 'text' }
-      } else if (headerLower.includes('email') || headerLower.includes('メール')) {
-        mappings[header] = { field: 'customer_email', format: 'email' }
-      } else if (headerLower.includes('status') || headerLower.includes('ステータス') || headerLower.includes('状態')) {
-        mappings[header] = { field: 'transaction_status', format: 'text' }
-      } else if (headerLower.includes('name') || headerLower.includes('名前') || headerLower.includes('名称')) {
-        mappings[header] = { field: 'customer_name', format: 'text' }
-      } else if (headerLower.includes('note') || headerLower.includes('memo') || headerLower.includes('メモ') || headerLower.includes('備考')) {
-        mappings[header] = { field: 'notes', format: 'text' }
-      } else {
-        mappings[header] = { field: null, format: 'text' }
-      }
-    })
-
-    fieldMappings.value = mappings
+    // Don't pre-map here — let FieldMapping component handle auto-mapping
+    // so the user sees and controls all mapping decisions in one place
+    fieldMappings.value = {}
     parsedData.value = allData
 
     // Calculate stats

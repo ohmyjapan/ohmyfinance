@@ -173,7 +173,12 @@ try {
 }
 
 /**
- * Parse CSV file properly handling quoted fields and Japanese text
+ * Parse CSV file properly handling quoted fields, Japanese text,
+ * and comma-formatted numbers (e.g. 32,995 in unquoted fields).
+ *
+ * Strategy: parse header row to get expected column count, then for
+ * data rows with more fields than headers, rejoin excess fields
+ * (likely comma-split numbers) with their preceding field.
  */
 function parseCSV(content) {
     const lines = [];
@@ -210,7 +215,7 @@ function parseCSV(content) {
         return { headers: [], data: [] };
     }
 
-    // Parse each line into fields
+    // Parse each line into raw fields
     const parseRow = (line) => {
         const fields = [];
         let field = '';
@@ -239,12 +244,19 @@ function parseCSV(content) {
     };
 
     const headers = parseRow(lines[0]).map((h, i) => h || `Column${i + 1}`);
+    const expectedCols = headers.length;
     const data = [];
 
     for (let i = 1; i < lines.length; i++) {
-        const values = parseRow(lines[i]);
+        let values = parseRow(lines[i]);
         // Skip empty rows
         if (values.every(v => !v)) continue;
+
+        // Fix comma-formatted numbers: if row has more fields than headers,
+        // rejoin split numeric fragments (e.g. "32" + "995" → "32,995" → "32995")
+        if (values.length > expectedCols) {
+            values = repairCommaSplitNumbers(values, expectedCols);
+        }
 
         const obj = {};
         headers.forEach((header, index) => {
@@ -254,6 +266,38 @@ function parseCSV(content) {
     }
 
     return { headers, data };
+}
+
+/**
+ * Repair fields split by commas inside unquoted numbers.
+ * When a row has more fields than expected columns, look for adjacent
+ * fields where leftField ends with digits and rightField is all digits
+ * (e.g. "32" + "995" from original "32,995") and rejoin them.
+ */
+function repairCommaSplitNumbers(values, expectedCols) {
+    while (values.length > expectedCols) {
+        let repaired = false;
+        for (let j = 0; j < values.length - 1; j++) {
+            const left = values[j];
+            const right = values[j + 1];
+            // If left ends with digits (or is negative number) and right is purely digits,
+            // they were likely one comma-formatted number
+            if (/^-?\d+$/.test(left) && /^\d+$/.test(right)) {
+                // Rejoin as a plain number (remove the thousands comma)
+                values.splice(j, 2, left + right);
+                repaired = true;
+                break;
+            }
+            // Also handle: left ends with digits, right is digits followed by decimal
+            if (/^-?\d+$/.test(left) && /^\d+(\.\d+)?$/.test(right)) {
+                values.splice(j, 2, left + right);
+                repaired = true;
+                break;
+            }
+        }
+        if (!repaired) break; // Can't fix further, stop
+    }
+    return values;
 }
 
 export default defineEventHandler(async (event) => {
