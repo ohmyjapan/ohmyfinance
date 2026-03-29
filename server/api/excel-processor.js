@@ -5,6 +5,56 @@ import fs from 'node:fs/promises';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import iconv from 'iconv-lite';
+
+/**
+ * Detect if a buffer is Shift-JIS encoded.
+ * Checks for common Shift-JIS byte patterns (half-width katakana, double-byte chars).
+ * Falls back to UTF-8 if no Shift-JIS indicators found.
+ */
+function detectEncoding(buffer) {
+  // Check for UTF-8 BOM
+  if (buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+    return 'utf8';
+  }
+
+  let sjisScore = 0;
+  let utf8Score = 0;
+  const len = Math.min(buffer.length, 4096); // Check first 4KB
+
+  for (let i = 0; i < len; i++) {
+    const b = buffer[i];
+
+    // Shift-JIS double-byte lead bytes: 0x81-0x9F, 0xE0-0xFC
+    if ((b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC)) {
+      if (i + 1 < len) {
+        const b2 = buffer[i + 1];
+        // Valid Shift-JIS trail byte: 0x40-0x7E, 0x80-0xFC
+        if ((b2 >= 0x40 && b2 <= 0x7E) || (b2 >= 0x80 && b2 <= 0xFC)) {
+          sjisScore += 2;
+          i++; // skip trail byte
+          continue;
+        }
+      }
+    }
+
+    // Half-width katakana (Shift-JIS): 0xA1-0xDF
+    if (b >= 0xA1 && b <= 0xDF) {
+      sjisScore++;
+      continue;
+    }
+
+    // UTF-8 multi-byte sequences
+    if (b >= 0xC0 && b <= 0xDF && i + 1 < len) {
+      if ((buffer[i + 1] & 0xC0) === 0x80) { utf8Score++; i++; continue; }
+    }
+    if (b >= 0xE0 && b <= 0xEF && i + 2 < len) {
+      if ((buffer[i + 1] & 0xC0) === 0x80 && (buffer[i + 2] & 0xC0) === 0x80) { utf8Score += 2; i += 2; continue; }
+    }
+  }
+
+  return sjisScore > utf8Score ? 'Shift_JIS' : 'utf8';
+}
 
 // Use process.cwd() for Windows compatibility
 const rootDir = process.cwd();
@@ -274,8 +324,13 @@ export default defineEventHandler(async (event) => {
                 data = parsed.data || [];
             }
         } else if (fileExt === '.csv') {
-            // For CSV files, parse them properly
-            const csvContent = await fs.readFile(filePath, 'utf8');
+            // For CSV files, detect encoding (Shift-JIS vs UTF-8) then parse
+            const rawBuffer = await fs.readFile(filePath);
+            const encoding = detectEncoding(rawBuffer);
+            const csvContent = encoding === 'utf8'
+                ? rawBuffer.toString('utf8')
+                : iconv.decode(rawBuffer, encoding);
+            console.log('[excel-processor] CSV encoding detected:', encoding);
             const parsed = parseCSV(csvContent);
             headers = parsed.headers;
             data = parsed.data;
