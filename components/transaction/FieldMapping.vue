@@ -2,28 +2,29 @@
   <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
     <div class="p-6">
       <div class="mb-6">
-        <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">{{ t('fieldMapper.title') }}</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">{{ t('fieldMapper.title') }}</h2>
         <p class="text-sm text-gray-600 dark:text-gray-400">
           {{ t('fieldMapper.description') }}
         </p>
       </div>
 
-      <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-md">
-        <div class="flex">
-          <div class="flex-shrink-0">
-            <AlertCircle class="h-5 w-5 text-blue-400" />
+      <!-- Info Box -->
+      <div class="mb-6 p-4 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-500/10">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+            <AlertCircle class="h-5 w-5 text-blue-600 dark:text-blue-400" />
           </div>
-          <div class="ml-3 flex-1 md:flex md:justify-between">
-            <p class="text-sm text-blue-700 dark:text-blue-300">
+          <div class="flex-1 md:flex md:items-center md:justify-between">
+            <p class="text-sm font-medium text-blue-700 dark:text-blue-300">
               {{ t('fieldMapper.detectedRows', { count: totalRows }) }}
             </p>
-            <p class="mt-3 text-sm md:mt-0 md:ml-6">
+            <p class="mt-2 text-sm md:mt-0 md:ml-6">
               <button
-                  class="whitespace-nowrap font-medium text-blue-700 dark:text-blue-300 hover:text-blue-600"
+                  class="whitespace-nowrap font-medium text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors touch-manipulation"
                   @click="showSampleData = !showSampleData"
               >
                 {{ showSampleData ? t('fieldMapper.hideSampleData') : t('fieldMapper.viewSampleData') }}
-                <component :is="showSampleData ? ChevronUp : ChevronDown" class="inline h-3 w-3" />
+                <component :is="showSampleData ? ChevronUp : ChevronDown" class="inline h-3 w-3 ml-1" />
               </button>
             </p>
           </div>
@@ -31,25 +32,25 @@
       </div>
 
       <!-- Sample Data Preview -->
-      <div v-if="showSampleData" class="mb-6 overflow-x-auto border border-gray-200 rounded-lg">
-        <table class="min-w-full divide-y divide-gray-200">
+      <div v-if="showSampleData" class="mb-6 overflow-x-auto rounded-xl border border-gray-200 dark:border-white/10">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
           <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th
                 v-for="(field, index) in sourceFields"
                 :key="index"
-                class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-3 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
             >
               {{ field }}
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
-          <tr v-for="(row, rowIndex) in sampleData.slice(0, 3)" :key="rowIndex">
+          <tbody class="divide-y divide-gray-200 dark:divide-white/5">
+          <tr v-for="(row, rowIndex) in sampleData.slice(0, 3)" :key="rowIndex" class="hover:bg-gray-50 dark:hover:bg-white/[0.03]">
             <td
                 v-for="(field, fieldIndex) in sourceFields"
                 :key="fieldIndex"
-                class="px-3 py-2 whitespace-nowrap text-xs text-gray-500"
+                class="px-3 py-2 whitespace-nowrap text-xs text-gray-600 dark:text-gray-400"
             >
               {{ row[field] }}
             </td>
@@ -64,7 +65,7 @@
         <div class="relative">
           <select
               v-model="currentFile"
-              class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
+              class="block w-full pl-3 pr-10 py-2.5 text-base border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-main focus:border-primary-main rounded-xl transition-colors touch-manipulation"
           >
             <option
                 v-for="(file, index) in files"
@@ -74,39 +75,40 @@
               {{ file.name }}
             </option>
           </select>
-          <div class="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+          <div class="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none">
             <ChevronDown class="h-4 w-4 text-gray-400" />
           </div>
         </div>
       </div>
 
       <!-- Field Mapping Table -->
-      <div class="border border-gray-200 dark:border-white/10 rounded-lg overflow-hidden mb-6">
+      <div class="border border-gray-200 dark:border-white/10 rounded-xl overflow-hidden mb-6">
         <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
           <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               {{ t('fieldMapper.sourceField') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               {{ t('fieldMapper.sampleData') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               {{ t('fieldMapper.mapsTo') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               {{ t('fieldMapper.dataFormat') }}
             </th>
-            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               {{ t('common.status') }}
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/10">
+          <tbody class="divide-y divide-gray-200 dark:divide-white/5">
           <tr
               v-for="(field, index) in sourceFields"
               :key="index"
-              :class="{'bg-yellow-50 dark:bg-yellow-900/20': !isFieldMapped(field)}"
+              :class="{'bg-yellow-50 dark:bg-yellow-500/5': !isFieldMapped(field)}"
+              class="hover:bg-gray-50 dark:hover:bg-white/[0.03] transition-colors"
           >
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
               {{ field }}
@@ -118,8 +120,8 @@
               <div class="relative">
                 <select
                     v-model="localMappings[field].field"
-                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-primary-main focus:border-primary-main rounded-md"
-                    :class="{'bg-yellow-50 border-yellow-300 dark:bg-yellow-900/20': !isFieldMapped(field)}"
+                    class="block w-full pl-3 pr-10 py-1.5 text-sm border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-main focus:border-primary-main rounded-xl transition-colors"
+                    :class="{'bg-yellow-50 border-yellow-300 dark:bg-yellow-500/5 dark:border-yellow-500/20': !isFieldMapped(field)}"
                 >
                   <option value="">-- {{ t('fieldMapper.selectField') }} --</option>
                   <option
@@ -137,7 +139,7 @@
               <div class="relative">
                 <select
                     v-model="localMappings[field].format"
-                    class="block w-full pl-3 pr-10 py-1 text-sm border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-primary-main focus:border-primary-main rounded-md"
+                    class="block w-full pl-3 pr-10 py-1.5 text-sm border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-main focus:border-primary-main rounded-xl transition-colors"
                 >
                   <option
                       v-for="(option, optIndex) in translatedFormatOptions[getFieldType(field)]"
@@ -151,10 +153,10 @@
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
                 <span
-                    class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                    class="inline-flex items-center text-xs font-semibold rounded-lg px-2.5 py-1"
                     :class="isFieldMapped(field)
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'"
+                    ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                    : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'"
                 >
                   {{ isFieldMapped(field) ? t('fieldMapper.mapped') : t('fieldMapper.needsMapping') }}
                 </span>
@@ -172,25 +174,26 @@
                 id="save-template"
                 v-model="saveTemplate"
                 type="checkbox"
-                class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 rounded"
+                class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 dark:border-white/20 dark:bg-white/10 rounded transition-colors"
             />
           </div>
           <div class="ml-3 text-sm">
-            <label for="save-template" class="font-medium text-gray-700 dark:text-gray-300">{{ t('fieldMapper.saveAsTemplate') }}</label>
+            <label for="save-template" class="font-medium text-gray-700 dark:text-gray-300 cursor-pointer">{{ t('fieldMapper.saveAsTemplate') }}</label>
             <p class="text-gray-500 dark:text-gray-400">{{ t('fieldMapper.saveTemplateDescription') }}</p>
           </div>
         </div>
 
-        <div v-if="saveTemplate" class="mt-3 flex">
+        <div v-if="saveTemplate" class="mt-3 flex gap-3">
           <input
               v-model="templateName"
               type="text"
-              class="flex-1 focus:ring-primary-main focus:border-primary-main block w-full shadow-sm sm:text-sm border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-md"
+              class="flex-1 focus:ring-2 focus:ring-primary-main focus:border-primary-main block w-full shadow-sm text-sm border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 transition-colors"
               :placeholder="t('fieldMapper.templateName')"
           />
           <button
-              class="ml-3 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
               :disabled="!templateName"
+              :class="{'opacity-50 cursor-not-allowed': !templateName}"
           >
             {{ t('fieldMapper.saveTemplate') }}
           </button>
@@ -200,15 +203,16 @@
       <!-- Action Buttons -->
       <div class="flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+            class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
             @click="$emit('back')"
         >
           {{ t('fieldMapper.backToUpload') }}
         </button>
         <div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-5 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
               :disabled="!allFieldsMapped"
+              :class="{'opacity-50 cursor-not-allowed': !allFieldsMapped}"
               @click="continueToPreview"
           >
             {{ t('fieldMapper.continueToPreview') }}

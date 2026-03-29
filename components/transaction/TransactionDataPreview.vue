@@ -2,7 +2,7 @@
   <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm">
     <div class="p-6">
       <div class="mb-6">
-        <h2 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">{{ t('dataPreview.title') }}</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">{{ t('dataPreview.title') }}</h2>
         <p class="text-sm text-gray-600 dark:text-gray-400">
           {{ t('dataPreview.description') }}
         </p>
@@ -10,43 +10,78 @@
 
       <!-- Data Stats -->
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
-          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.totalRecords') }}</div>
-          <div class="text-2xl font-semibold text-gray-900 dark:text-gray-100">{{ stats.totalRecords }}</div>
+        <!-- Total Records -->
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+              <Database class="w-6 h-6 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ t('dataPreview.totalRecords') }}</p>
+              <p class="text-2xl font-bold font-mono text-gray-900 dark:text-white">{{ stats.totalRecords }}</p>
+            </div>
+          </div>
         </div>
-        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
-          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.validRecords') }}</div>
-          <div class="text-2xl font-semibold text-green-600">{{ stats.validRecords }}</div>
+
+        <!-- Valid Records -->
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
+              <CheckCircle class="w-6 h-6 text-green-600 dark:text-green-400" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ t('dataPreview.validRecords') }}</p>
+              <p class="text-2xl font-bold font-mono text-green-600 dark:text-green-400">{{ stats.validRecords }}</p>
+            </div>
+          </div>
         </div>
-        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
-          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.warningRecords') }}</div>
-          <div class="text-2xl font-semibold text-yellow-600">{{ stats.warningRecords }}</div>
+
+        <!-- Warning Records -->
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle class="w-6 h-6 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ t('dataPreview.warningRecords') }}</p>
+              <p class="text-2xl font-bold font-mono text-amber-600 dark:text-amber-400">{{ stats.warningRecords }}</p>
+            </div>
+          </div>
         </div>
-        <div class="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
-          <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('dataPreview.invalidRecords') }}</div>
-          <div class="text-2xl font-semibold text-gray-900 dark:text-gray-100">{{ stats.invalidRecords }}</div>
+
+        <!-- Invalid Records -->
+        <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-red-500/10 flex items-center justify-center flex-shrink-0">
+              <XCircle class="w-6 h-6 text-red-600 dark:text-red-400" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ t('dataPreview.invalidRecords') }}</p>
+              <p class="text-2xl font-bold font-mono text-red-600 dark:text-red-400">{{ stats.invalidRecords }}</p>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- Table Controls -->
       <div class="flex items-center justify-between mb-4">
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center gap-3">
           <div class="relative">
             <select
                 v-model="filter.recordType"
-                class="block w-full pl-3 pr-10 py-2 text-sm border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-primary-main focus:border-primary-main rounded-md"
+                class="block w-full pl-3 pr-10 py-2.5 text-sm border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-main focus:border-primary-main rounded-xl transition-colors touch-manipulation"
             >
               <option value="all">{{ t('dataPreview.allRecords') }}</option>
               <option value="valid">{{ t('dataPreview.validOnly') }}</option>
               <option value="warning">{{ t('dataPreview.warningOnly') }}</option>
               <option value="invalid">{{ t('dataPreview.invalidOnly') }}</option>
             </select>
-            <div class="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+            <div class="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none">
               <ChevronDown class="h-4 w-4 text-gray-400" />
             </div>
           </div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
               @click="isFilterOpen = !isFilterOpen"
           >
             <Filter class="mr-2 h-4 w-4" />
@@ -55,7 +90,7 @@
         </div>
         <div>
           <button
-              class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
           >
             <Download class="mr-2 h-4 w-4" />
             {{ t('dataPreview.exportPreview') }}
@@ -64,13 +99,13 @@
       </div>
 
       <!-- Additional Filters (conditionally shown) -->
-      <div v-if="isFilterOpen" class="mb-4 p-4 border border-gray-200 dark:border-white/10 rounded-lg bg-gray-50 dark:bg-white/5">
+      <div v-if="isFilterOpen" class="mb-4 p-4 border border-gray-200 dark:border-white/10 rounded-xl bg-gray-50 dark:bg-white/5">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('dataPreview.dateRange') }}</label>
             <select
                 v-model="filter.dateRange"
-                class="block w-full border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
+                class="block w-full border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-main focus:border-primary-main text-sm py-2.5 px-3 transition-colors touch-manipulation"
             >
               <option value="">{{ t('dataPreview.allDates') }}</option>
               <option value="last30">{{ t('dataPreview.last30Days') }}</option>
@@ -80,26 +115,26 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('dataPreview.amountRange') }}</label>
-            <div class="flex space-x-2">
+            <div class="flex gap-2">
               <input
                   v-model="filter.minAmount"
                   type="number"
                   min="0"
                   :placeholder="t('dataPreview.min')"
-                  class="block w-full border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
+                  class="block w-full border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-main focus:border-primary-main text-sm py-2.5 px-3 transition-colors"
               />
               <input
                   v-model="filter.maxAmount"
                   type="number"
                   min="0"
                   :placeholder="t('dataPreview.max')"
-                  class="block w-full border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main sm:text-sm"
+                  class="block w-full border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-main focus:border-primary-main text-sm py-2.5 px-3 transition-colors"
               />
             </div>
           </div>
           <div class="flex items-end">
             <button
-                class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+                class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
                 @click="resetFilters"
             >
               {{ t('dataPreview.resetFilters') }}
@@ -109,28 +144,29 @@
       </div>
 
       <!-- Data Preview Table -->
-      <div class="border border-gray-200 dark:border-white/10 rounded-lg overflow-x-auto mb-6">
+      <div class="border border-gray-200 dark:border-white/10 rounded-xl overflow-x-auto mb-6">
         <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
           <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
-            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               {{ t('common.status') }}
             </th>
             <th
                 v-for="field in previewFields"
                 :key="field"
                 scope="col"
-                class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
             >
               {{ field }}
             </th>
           </tr>
           </thead>
-          <tbody class="bg-white dark:bg-white/5 divide-y divide-gray-200 dark:divide-white/10">
+          <tbody class="divide-y divide-gray-200 dark:divide-white/5">
           <tr
               v-for="(row, index) in filteredData"
               :key="index"
               :class="getRowClass(row)"
+              class="hover:bg-gray-50 dark:hover:bg-white/[0.03] transition-colors"
           >
             <td class="px-4 py-4 whitespace-nowrap">
                 <span class="flex-shrink-0 h-4 w-4">
@@ -164,19 +200,19 @@
 
       <!-- Validation Summary -->
       <div v-if="stats.warningRecords > 0 || stats.invalidRecords > 0"
-           class="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-        <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-300 mb-2">{{ t('dataPreview.validationWarnings') }}</h3>
-        <ul class="text-sm text-yellow-700 dark:text-yellow-400 space-y-1">
+           class="mb-6 rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-500/10 p-4">
+        <h3 class="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">{{ t('dataPreview.validationWarnings') }}</h3>
+        <ul class="text-sm text-amber-700 dark:text-amber-400 space-y-1">
           <li v-if="validationIssues.missingEmails > 0" class="flex items-start">
-            <AlertCircle class="h-4 w-4 text-yellow-500 mr-2 mt-0.5" />
+            <AlertCircle class="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
             <span>{{ t('dataPreview.missingEmails', { count: validationIssues.missingEmails }) }}</span>
           </li>
           <li v-if="validationIssues.missingStatus > 0" class="flex items-start">
-            <AlertCircle class="h-4 w-4 text-yellow-500 mr-2 mt-0.5" />
+            <AlertCircle class="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
             <span>{{ t('dataPreview.missingStatus', { count: validationIssues.missingStatus }) }}</span>
           </li>
           <li v-if="validationIssues.outOfRangeDates > 0" class="flex items-start">
-            <AlertCircle class="h-4 w-4 text-yellow-500 mr-2 mt-0.5" />
+            <AlertCircle class="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
             <span>{{ t('dataPreview.outOfRangeDates', { count: validationIssues.outOfRangeDates }) }}</span>
           </li>
         </ul>
@@ -185,20 +221,20 @@
       <!-- Action Buttons -->
       <div class="flex justify-between">
         <button
-            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+            class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
             @click="$emit('back')"
         >
           {{ t('dataPreview.backToMapping') }}
         </button>
-        <div>
+        <div class="flex gap-3">
           <button
-              class="mr-3 inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
           >
             <RefreshCw class="mr-2 h-4 w-4" />
             {{ t('dataPreview.refreshPreview') }}
           </button>
           <button
-              class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
+              class="inline-flex items-center px-5 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
               @click="$emit('continue')"
           >
             {{ t('dataPreview.continueToImport') }}
@@ -218,6 +254,7 @@ import {
   Download,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   XCircle,
   RefreshCw,
   ArrowRight,
@@ -481,8 +518,8 @@ const generateMockData = () => {
 
 // Get CSS class for a row based on its status
 const getRowClass = (row) => {
-  if (row._status === 'warning') return 'bg-yellow-50'
-  if (row._status === 'invalid') return 'bg-red-50'
+  if (row._status === 'warning') return 'bg-yellow-50 dark:bg-yellow-500/5'
+  if (row._status === 'invalid') return 'bg-red-50 dark:bg-red-500/5'
   return ''
 }
 
@@ -490,34 +527,34 @@ const getRowClass = (row) => {
 const getFieldClass = (row, field) => {
   // Highlight specific fields with issues
   if (field === 'customer_email' && row._issues?.includes('invalid_email')) {
-    return 'text-yellow-800'
+    return 'text-yellow-800 dark:text-yellow-400'
   }
   if (field === 'transaction_status' && row._issues?.includes('missing_status')) {
-    return 'text-yellow-800'
+    return 'text-yellow-800 dark:text-yellow-400'
   }
   if (field === 'transaction_date' && row._issues?.includes('date_out_of_range')) {
-    return 'text-yellow-800'
+    return 'text-yellow-800 dark:text-yellow-400'
   }
 
-  return 'text-gray-500'
+  return 'text-gray-500 dark:text-gray-400'
 }
 
 // Get CSS class for status field
 const getStatusClass = (status) => {
-  if (!status) return 'text-gray-500'
+  if (!status) return 'text-gray-500 dark:text-gray-400'
 
   const statusLower = status.toLowerCase()
   if (statusLower.includes('complete') || statusLower.includes('success')) {
-    return 'inline-flex px-2 text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800'
+    return 'inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-green-500/10 text-green-600 dark:text-green-400'
   } else if (statusLower.includes('pending') || statusLower.includes('await')) {
-    return 'inline-flex px-2 text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800'
+    return 'inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
   } else if (statusLower.includes('process') || statusLower.includes('progress')) {
-    return 'inline-flex px-2 text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800'
+    return 'inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400'
   } else if (statusLower.includes('fail') || statusLower.includes('error') || statusLower.includes('decline')) {
-    return 'inline-flex px-2 text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800'
+    return 'inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-red-500/10 text-red-600 dark:text-red-400'
   }
 
-  return 'inline-flex px-2 text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800'
+  return 'inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-gray-500/10 text-gray-600 dark:text-gray-400'
 }
 
 // Format a field value based on its type
