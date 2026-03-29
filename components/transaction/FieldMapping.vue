@@ -228,18 +228,21 @@
       </div>
 
       <!-- Action Buttons -->
-      <div class="flex justify-between">
+      <div class="flex items-center justify-between">
         <button
             class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
             @click="$emit('back')"
         >
           {{ t('fieldMapper.backToUpload') }}
         </button>
-        <div>
+        <div class="flex items-center gap-3">
+          <span v-if="unmappedFieldCount > 0" class="text-xs text-yellow-600 dark:text-yellow-400">
+            {{ t('fieldMapper.unmappedWarning', { count: unmappedFieldCount }) }}
+          </span>
           <button
               class="inline-flex items-center px-5 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
-              :disabled="!allFieldsMapped"
-              :class="{'opacity-50 cursor-not-allowed': !allFieldsMapped}"
+              :disabled="!canProceed"
+              :class="{'opacity-50 cursor-not-allowed': !canProceed}"
               @click="continueToPreview"
           >
             {{ t('fieldMapper.continueToPreview') }}
@@ -350,9 +353,15 @@ const sourceFields = computed(() => {
   return Object.keys(sampleData.value[0] || {})
 })
 
-// Check if all fields are mapped
-const allFieldsMapped = computed(() => {
-  return sourceFields.value.every(field => isFieldMapped(field))
+// Check if minimum required fields are mapped (at least 1 field mapped)
+const mappedFieldCount = computed(() => {
+  return sourceFields.value.filter(field => isFieldMapped(field)).length
+})
+const unmappedFieldCount = computed(() => {
+  return sourceFields.value.filter(field => !isFieldMapped(field)).length
+})
+const canProceed = computed(() => {
+  return mappedFieldCount.value >= 1
 })
 
 // Target field options for OMF (Japanese accounting style)

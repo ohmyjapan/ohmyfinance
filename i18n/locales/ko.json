@@ -1287,6 +1287,7 @@
     "templateName": "템플릿 이름",
     "templateSaved": "저장 완료",
     "loadTemplate": "저장된 템플릿",
+    "unmappedWarning": "미매핑: {count}건 (건너뜁니다)",
     "title": "필드 매핑",
     "viewSampleData": "샘플 데이터 보기",
     "detectedRows": "감지된 행",

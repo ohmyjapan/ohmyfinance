@@ -1263,6 +1263,7 @@
     "templateName": "テンプレート名",
     "templateSaved": "保存しました",
     "loadTemplate": "保存済みテンプレート",
+    "unmappedWarning": "未マッピング: {count}件 (スキップされます)",
     "title": "フィールドマッピング",
     "viewSampleData": "サンプルデータを表示",
     "detectedRows": "検出された行",
