@@ -877,7 +877,13 @@
     "uploading": "업로드 중",
     "viewTransaction": "거래 보기",
     "linkingTo": "연결 대상",
-    "uploadCount": "업로드 수"
+    "uploadCount": "업로드 수",
+    "takePhoto": "사진 촬영",
+    "filesUploaded": "{count}건 업로드 완료",
+    "addMore": "추가하기",
+    "fileTooLarge": "파일 크기가 10MB를 초과합니다",
+    "confirmDelete": "이 영수증을 삭제하시겠습니까?",
+    "viewAll": "전체 보기"
   },
   "transactionUpload": {
     "title": "거래 데이터 가져오기",

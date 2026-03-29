@@ -1,196 +1,167 @@
 <template>
   <div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-gray-200">
-      <thead class="bg-gray-50 dark:bg-white/5">
-      <tr>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          {{ t('receiptTable.receipt') }}
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          {{ t('receiptTable.dateUploaded') }}
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          {{ t('receiptTable.amount') }}
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          {{ t('receiptTable.merchant') }}
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          {{ t('receiptTable.status') }}
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          {{ t('receiptTable.actions') }}
-        </th>
-      </tr>
+    <table class="min-w-full">
+      <thead>
+        <tr class="border-b border-gray-200 dark:border-white/10">
+          <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            {{ t('receiptTable.receipt') }}
+          </th>
+          <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            {{ t('receiptTable.dateUploaded') }}
+          </th>
+          <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            {{ t('receiptTable.amount') }}
+          </th>
+          <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            {{ t('receiptTable.merchant') }}
+          </th>
+          <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            {{ t('receiptTable.status') }}
+          </th>
+          <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            {{ t('receiptTable.actions') }}
+          </th>
+        </tr>
       </thead>
-      <tbody class="bg-white divide-y divide-gray-200">
-      <tr v-for="receipt in receipts" :key="receipt.id" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
-        <td class="px-6 py-4 whitespace-nowrap">
-          <div class="flex items-center">
-            <div class="h-10 w-10 flex-shrink-0 bg-gray-100 rounded">
-              <div class="h-10 w-10 flex items-center justify-center text-gray-500">
-                <FileIcon :filename="receipt.filename" />
+      <tbody class="divide-y divide-gray-100 dark:divide-white/5">
+        <tr
+          v-for="receipt in receipts"
+          :key="receipt.id"
+          class="group transition-colors duration-150 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
+        >
+          <td class="px-6 py-4 whitespace-nowrap">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-gray-100 dark:bg-white/10 flex items-center justify-center flex-shrink-0">
+                <component :is="getFileIcon(receipt.filename)" class="w-5 h-5 text-gray-500 dark:text-gray-400" />
+              </div>
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-[200px]">{{ receipt.filename }}</p>
+                <p class="text-xs text-gray-400 dark:text-gray-500">{{ formatFileSize(receipt.size) }}</p>
               </div>
             </div>
-            <div class="ml-4">
-              <div class="text-sm font-medium text-gray-900">{{ receipt.filename }}</div>
-              <div class="text-sm text-gray-500">{{ formatFileSize(receipt.size) }}</div>
-            </div>
-          </div>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-          <div class="text-sm text-gray-900">{{ formatDate(receipt.uploadDate) }}</div>
-          <div class="text-sm text-gray-500">{{ formatTime(receipt.uploadDate) }}</div>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-          <div class="text-sm text-gray-900" v-if="receipt.amount">
-            {{ formatCurrency(receipt.amount) }}
-          </div>
-          <div class="text-sm text-gray-500" v-else>--</div>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-          <div class="text-sm text-gray-900" v-if="receipt.merchant">
-            {{ receipt.merchant }}
-          </div>
-          <div class="text-sm text-gray-500" v-else>--</div>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap">
+            <p class="text-sm text-gray-900 dark:text-gray-200">{{ formatDate(receipt.uploadDate) }}</p>
+            <p class="text-xs text-gray-400 dark:text-gray-500">{{ formatTime(receipt.uploadDate) }}</p>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap">
+            <p v-if="receipt.amount" class="text-sm font-mono font-medium text-gray-900 dark:text-white">
+              {{ formatCurrency(receipt.amount) }}
+            </p>
+            <span v-else class="text-sm text-gray-300 dark:text-gray-600">--</span>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap">
+            <p v-if="receipt.merchant" class="text-sm text-gray-900 dark:text-gray-200">{{ receipt.merchant }}</p>
+            <span v-else class="text-sm text-gray-300 dark:text-gray-600">--</span>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap">
             <span v-if="receipt.status === 'matched'"
-                  class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-              <CheckCircle size="14" class="mr-1" />
+              class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg bg-green-500/10 text-green-600 dark:text-green-400"
+            >
+              <CheckCircle class="w-3.5 h-3.5" />
               {{ t('receiptTable.matched') }}
             </span>
-          <span v-else
-                class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
-              <AlertTriangle size="14" class="mr-1" />
+            <span v-else
+              class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400"
+            >
+              <AlertTriangle class="w-3.5 h-3.5" />
               {{ t('receiptTable.unmatched') }}
             </span>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-          <button
-              @click="$emit('view', receipt.id)"
-              class="text-primary-main hover:text-primary-dark mr-3"
-          >
-            {{ t('common.view') }}
-          </button>
-          <button
-              v-if="receipt.status === 'unmatched'"
-              @click="$emit('match', receipt.id)"
-              class="text-primary-main hover:text-primary-dark mr-3"
-          >
-            {{ t('receiptTable.match') }}
-          </button>
-          <button
-              @click="confirmDelete(receipt.id)"
-              class="text-red-600 hover:text-red-900"
-          >
-            {{ t('common.delete') }}
-          </button>
-        </td>
-      </tr>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap text-right">
+            <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+              <button
+                @click="$emit('view', receipt.id)"
+                class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10 hover:text-primary-main transition-all touch-manipulation"
+                :title="t('common.view')"
+              >
+                <Eye class="w-4 h-4" />
+              </button>
+              <button
+                v-if="receipt.status === 'unmatched'"
+                @click="$emit('match', receipt.id)"
+                class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10 hover:text-primary-main transition-all touch-manipulation"
+                :title="t('receiptTable.match')"
+              >
+                <Link class="w-4 h-4" />
+              </button>
+              <button
+                @click="confirmDelete(receipt.id)"
+                class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 transition-all touch-manipulation"
+                :title="t('common.delete')"
+              >
+                <Trash2 class="w-4 h-4" />
+              </button>
+            </div>
+          </td>
+        </tr>
 
-      <!-- Empty state -->
-      <tr v-if="receipts.length === 0">
-        <td colspan="6" class="px-6 py-12 text-center">
-          <FileText size="40" class="text-gray-300 mx-auto mb-3" />
-          <p class="text-gray-500 text-sm">{{ t('receiptTable.noReceipts') }}</p>
-        </td>
-      </tr>
+        <!-- Empty state -->
+        <tr v-if="receipts.length === 0">
+          <td colspan="6" class="px-6 py-16 text-center">
+            <div class="flex flex-col items-center">
+              <div class="w-16 h-16 rounded-2xl bg-gray-100 dark:bg-white/10 flex items-center justify-center mb-4">
+                <FileText class="w-8 h-8 text-gray-300 dark:text-gray-600" />
+              </div>
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('receiptTable.noReceipts') }}</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('receiptUpload.dragAndDrop') }}</p>
+            </div>
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>
 </template>
 
 <script setup lang="ts">
-import { FileText, CheckCircle, AlertTriangle } from 'lucide-vue-next'
+import { computed, h } from 'vue'
+import { FileText, Image, CheckCircle, AlertTriangle, Eye, Link, Trash2 } from 'lucide-vue-next'
 
 const { t, locale } = useI18n()
 
-const props = defineProps({
+defineProps({
   receipts: {
-    type: Array,
+    type: Array as () => any[],
     required: true
   }
 })
 
-const emit = defineEmits(['view', 'match', 'delete'])
+defineEmits(['view', 'match', 'delete'])
 
-// Format file size
+const getFileIcon = (filename: string) => {
+  const ext = filename?.split('.').pop()?.toLowerCase()
+  if (['jpg', 'jpeg', 'png', 'heic', 'webp'].includes(ext || '')) return Image
+  return FileText
+}
+
 const formatFileSize = (bytes: number) => {
-  if (bytes < 1024) {
-    return bytes + ' B'
-  } else if (bytes < 1024 * 1024) {
-    return (bytes / 1024).toFixed(1) + ' KB'
-  } else {
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  }
+  if (!bytes) return '--'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-// Format date
 const formatDate = (isoDate: string) => {
+  if (!isoDate) return '--'
   const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  return new Date(isoDate).toLocaleDateString(dateLocale, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  })
+  return new Date(isoDate).toLocaleDateString(dateLocale, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-// Format time
 const formatTime = (isoDate: string) => {
+  if (!isoDate) return ''
   const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  return new Date(isoDate).toLocaleTimeString(dateLocale, {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: false
-  })
+  return new Date(isoDate).toLocaleTimeString(dateLocale, { hour: 'numeric', minute: '2-digit', hour12: false })
 }
 
-// Format currency
 const formatCurrency = (amount: number) => {
   const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
   const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
-  return new Intl.NumberFormat(currencyLocale, {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 0
-  }).format(amount)
+  return new Intl.NumberFormat(currencyLocale, { style: 'currency', currency, minimumFractionDigits: 0 }).format(amount)
 }
 
-// Confirm delete
 const confirmDelete = (receiptId: string) => {
   if (confirm(t('receiptTable.confirmDelete'))) {
     emit('delete', receiptId)
   }
 }
-
-// Component to display appropriate icon based on file type
-const FileIcon = defineComponent({
-  props: {
-    filename: {
-      type: String,
-      required: true
-    }
-  },
-  setup(props) {
-    const extension = computed(() => {
-      const parts = props.filename.split('.')
-      return parts[parts.length - 1].toLowerCase()
-    })
-
-    return () => {
-      // Choose icon based on file extension
-      switch (extension.value) {
-        case 'pdf':
-          return h(FileText, { size: 20 })
-        case 'jpg':
-        case 'jpeg':
-        case 'png':
-          return h(Image, { size: 20 })
-        default:
-          return h(FileText, { size: 20 })
-      }
-    }
-  }
-})
 </script>

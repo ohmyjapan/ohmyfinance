@@ -853,7 +853,13 @@
     "uploading": "アップロード中",
     "viewTransaction": "取引を表示",
     "linkingTo": "リンク先",
-    "uploadCount": "アップロード数"
+    "uploadCount": "アップロード数",
+    "takePhoto": "写真を撮る",
+    "filesUploaded": "{count}件アップロード完了",
+    "addMore": "追加する",
+    "fileTooLarge": "ファイルサイズが10MBを超えています",
+    "confirmDelete": "この領収書を削除しますか？",
+    "viewAll": "すべて表示"
   },
   "transactionUpload": {
     "title": "取引データインポート",
