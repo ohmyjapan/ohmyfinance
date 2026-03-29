@@ -1,100 +1,152 @@
 <template>
   <div>
-    <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
-      <div>
-        <h1 class="text-xl font-semibold text-gray-800 dark:text-gray-100">{{ t('duplicates.title') }}</h1>
-        <p class="text-gray-600 dark:text-gray-400">{{ t('duplicates.description') }}</p>
-      </div>
-      <div class="mt-4 md:mt-0 flex space-x-3">
-        <select
+    <!-- Header -->
+    <header class="mb-8">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('duplicates.title') }}</h1>
+          <p class="mt-1 text-gray-500 dark:text-gray-400">{{ t('duplicates.description') }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <select
             v-model="threshold"
             @change="loadDuplicates"
-            class="border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
-        >
-          <option value="90">{{ t('duplicates.highConfidence') }}</option>
-          <option value="80">{{ t('duplicates.mediumConfidence') }}</option>
-          <option value="70">{{ t('duplicates.lowConfidence') }}</option>
-        </select>
-        <button
+            class="border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 dark:text-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main outline-none transition-all touch-manipulation"
+          >
+            <option value="90">{{ t('duplicates.highConfidence') }}</option>
+            <option value="80">{{ t('duplicates.mediumConfidence') }}</option>
+            <option value="70">{{ t('duplicates.lowConfidence') }}</option>
+          </select>
+          <button
             @click="loadDuplicates"
-            class="inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark touch-manipulation"
-        >
-          <RefreshCw class="h-4 w-4 mr-2" :class="isLoading ? 'animate-spin' : ''" />
-          {{ t('duplicates.scan') }}
-        </button>
+            class="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main text-white rounded-xl shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
+          >
+            <RefreshCw class="h-4 w-4" :class="isLoading ? 'animate-spin' : ''" />
+            {{ t('duplicates.rescan') }}
+          </button>
+        </div>
       </div>
     </header>
 
-    <!-- Summary -->
-    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 mb-6">
-      <div class="flex items-center justify-between">
-        <div>
-          <span class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ groups.length }}</span>
-          <span class="text-gray-500 dark:text-gray-400 ml-2">{{ t('duplicates.groupsFound') }}</span>
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <!-- Total Groups -->
+      <div class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 flex items-center justify-center">
+            <Copy class="w-6 h-6 text-amber-600 dark:text-amber-400" />
+          </div>
+          <div>
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('duplicates.totalGroups') }}</p>
+            <p class="text-2xl font-bold font-mono text-gray-900 dark:text-white">{{ groups.length }}</p>
+          </div>
         </div>
-        <div class="text-gray-500 dark:text-gray-400">
-          {{ t('duplicates.potentialDuplicates', { count: totalDuplicates }) }}
+      </div>
+
+      <!-- Total Pairs -->
+      <div class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-red-500/10 dark:bg-red-500/20 flex items-center justify-center">
+            <AlertTriangle class="w-6 h-6 text-red-600 dark:text-red-400" />
+          </div>
+          <div>
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('duplicates.totalPairs') }}</p>
+            <p class="text-2xl font-bold font-mono text-gray-900 dark:text-white">{{ totalDuplicates }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Threshold -->
+      <div class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 flex items-center justify-center">
+            <SlidersHorizontal class="w-6 h-6 text-blue-600 dark:text-blue-400" />
+          </div>
+          <div>
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('duplicates.threshold') }}</p>
+            <p class="text-2xl font-bold font-mono text-gray-900 dark:text-white">{{ threshold }}%</p>
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-if="isLoading" class="text-center py-8 text-gray-500">{{ t('duplicates.scanning') }}</div>
-
-    <div v-else-if="groups.length === 0" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-8 text-center text-gray-500">
-      <Check class="h-12 w-12 mx-auto text-green-500 mb-4" />
-      <p>{{ t('duplicates.noDuplicates') }}</p>
+    <!-- Loading State -->
+    <div v-if="isLoading" class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-12 text-center">
+      <div class="flex flex-col items-center gap-3">
+        <Loader2 class="w-8 h-8 text-primary-main animate-spin" />
+        <p class="text-gray-500 dark:text-gray-400">{{ t('duplicates.scanning') }}</p>
+      </div>
     </div>
 
-    <div v-else class="space-y-4">
-      <div v-for="group in groups" :key="group.key" class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
-        <div class="px-4 py-3 bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
-          <div class="flex items-center space-x-3">
-            <div
-                class="px-2 py-1 rounded text-xs font-medium"
-                :class="getConfidenceClass(group.confidence)"
-            >
-              {{ group.confidence }}% match
-            </div>
+    <!-- Empty State -->
+    <div v-else-if="groups.length === 0" class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-12 text-center">
+      <div class="w-16 h-16 rounded-2xl bg-green-500/10 dark:bg-green-500/20 flex items-center justify-center mx-auto mb-4">
+        <CheckCircle class="h-8 w-8 text-green-500" />
+      </div>
+      <p class="text-lg font-medium text-gray-900 dark:text-white mb-1">{{ t('duplicates.noDuplicates') }}</p>
+    </div>
+
+    <!-- Duplicate Groups -->
+    <div v-else class="space-y-5">
+      <div
+        v-for="group in groups"
+        :key="group.key"
+        class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
+      >
+        <!-- Group Header -->
+        <div class="px-5 py-4 bg-gray-50 dark:bg-white/[0.03] border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span :class="[
+              'inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold',
+              getConfidenceClass(group.confidence)
+            ]">
+              {{ group.confidence }}% {{ t('duplicates.match') }}
+            </span>
             <span class="text-sm text-gray-500 dark:text-gray-400">{{ group.reason }}</span>
           </div>
-          <div class="flex space-x-2">
+          <div class="flex gap-2">
             <button
-                @click="ignoreGroup(group)"
-                class="px-3 py-1 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 border border-gray-300 dark:border-white/10 rounded-xl touch-manipulation"
+              @click="ignoreGroup(group)"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-white/10 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-all duration-300 touch-manipulation"
             >
+              <X class="w-3.5 h-3.5" />
               {{ t('duplicates.notDuplicate') }}
             </button>
             <button
-                @click="openMergeModal(group)"
-                class="px-3 py-1 text-sm text-white bg-primary-main hover:bg-primary-dark rounded-xl touch-manipulation"
+              @click="openMergeModal(group)"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main rounded-xl shadow-md shadow-primary-main/20 transition-all duration-300 touch-manipulation"
             >
+              <Merge class="w-3.5 h-3.5" />
               {{ t('duplicates.merge') }}
             </button>
           </div>
         </div>
 
+        <!-- Transaction Comparison -->
         <div class="divide-y divide-gray-200 dark:divide-white/10">
           <div
-              v-for="(tx, idx) in group.transactions"
-              :key="tx.id"
-              class="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/10"
+            v-for="(tx, idx) in group.transactions"
+            :key="tx.id"
+            class="px-5 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/[0.03] transition-colors"
           >
-            <div class="flex items-center space-x-4">
-              <div class="text-xs text-gray-400">#{{ idx + 1 }}</div>
+            <div class="flex items-center gap-4">
+              <div class="w-8 h-8 rounded-lg bg-gray-100 dark:bg-white/5 flex items-center justify-center text-xs font-bold text-gray-500 dark:text-gray-400">
+                #{{ idx + 1 }}
+              </div>
               <div>
-                <div class="font-medium text-gray-900 dark:text-gray-100">{{ tx.reference }}</div>
+                <div class="font-medium text-gray-900 dark:text-white">{{ tx.reference }}</div>
                 <div class="text-sm text-gray-500 dark:text-gray-400">{{ tx.customer }}</div>
               </div>
             </div>
-            <div class="flex items-center space-x-6">
+            <div class="flex items-center gap-6">
               <div class="text-right">
-                <div class="font-medium text-gray-900 dark:text-gray-100">{{ formatCurrency(tx.amount) }}</div>
+                <div class="font-bold font-mono text-gray-900 dark:text-white">{{ formatCurrency(tx.amount) }}</div>
                 <div class="text-sm text-gray-500 dark:text-gray-400">{{ formatDate(tx.date) }}</div>
               </div>
-              <span
-                  class="px-2 py-1 text-xs rounded-full"
-                  :class="getStatusClass(tx.status)"
-              >
+              <span :class="[
+                'inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium',
+                getStatusClass(tx.status)
+              ]">
                 {{ tx.status }}
               </span>
             </div>
@@ -104,63 +156,79 @@
     </div>
 
     <!-- Merge Modal -->
-    <div v-if="showMergeModal" class="fixed inset-0 z-50 overflow-y-auto">
-      <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showMergeModal = false"></div>
-        <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl max-w-lg w-full p-6">
-          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">{{ t('duplicates.mergeTitle') }}</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
-            {{ t('duplicates.selectToKeep') }}
-          </p>
+    <Teleport to="body">
+      <div v-if="showMergeModal" class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen px-4">
+          <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showMergeModal = false"></div>
+          <div class="relative rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 shadow-2xl max-w-lg w-full p-6">
+            <div class="flex items-center gap-3 mb-5">
+              <div class="w-10 h-10 rounded-xl bg-primary-main/10 dark:bg-primary-main/20 flex items-center justify-center">
+                <Merge class="w-5 h-5 text-primary-main dark:text-primary-light" />
+              </div>
+              <div>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('duplicates.mergeTitle') }}</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('duplicates.selectToKeep') }}</p>
+              </div>
+            </div>
 
-          <div class="space-y-2 mb-6">
-            <label
+            <div class="space-y-2 mb-6">
+              <label
                 v-for="tx in selectedGroup?.transactions"
                 :key="tx.id"
-                class="flex items-center p-3 rounded border cursor-pointer"
-                :class="keepId === tx.id ? 'border-primary-main bg-primary-main/10 dark:bg-primary-main/20' : 'border-gray-200 dark:border-white/10'"
-            >
-              <input
+                class="flex items-center p-4 rounded-xl border cursor-pointer transition-all duration-200"
+                :class="keepId === tx.id
+                  ? 'border-primary-main bg-primary-main/5 dark:bg-primary-main/10 shadow-sm'
+                  : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-white/20'"
+              >
+                <input
                   type="radio"
                   v-model="keepId"
                   :value="tx.id"
-                  class="h-4 w-4 text-primary-main"
-              />
-              <div class="ml-3">
-                <div class="font-medium text-gray-900 dark:text-gray-100">{{ tx.reference }}</div>
-                <div class="text-sm text-gray-500 dark:text-gray-400">
-                  {{ tx.customer }} · {{ formatCurrency(tx.amount) }} · {{ formatDate(tx.date) }}
+                  class="h-4 w-4 text-primary-main focus:ring-primary-main/30"
+                />
+                <div class="ml-3 flex-1">
+                  <div class="font-medium text-gray-900 dark:text-white">{{ tx.reference }}</div>
+                  <div class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ tx.customer }} · <span class="font-mono">{{ formatCurrency(tx.amount) }}</span> · {{ formatDate(tx.date) }}
+                  </div>
                 </div>
-              </div>
-            </label>
-          </div>
+              </label>
+            </div>
 
-          <div class="flex justify-end space-x-3">
-            <button
+            <div class="flex justify-end gap-3">
+              <button
                 @click="showMergeModal = false"
-                class="px-4 py-2 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-100 dark:hover:bg-white/10"
-            >
-              {{ t('common.cancel') }}
-            </button>
-            <button
+                class="px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all touch-manipulation"
+              >
+                {{ t('common.cancel') }}
+              </button>
+              <button
                 @click="mergeDuplicates"
                 :disabled="!keepId"
-                class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark disabled:opacity-50 touch-manipulation"
-            >
-              {{ t('duplicates.mergeAndDelete') }}
-            </button>
+                class="px-4 py-2.5 text-sm font-medium bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main text-white rounded-xl shadow-lg shadow-primary-main/25 disabled:opacity-50 disabled:shadow-none transition-all duration-300 touch-manipulation"
+              >
+                {{ t('duplicates.mergeAndDelete') }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { RefreshCw, Check } from 'lucide-vue-next'
+import {
+  RefreshCw, CheckCircle, Copy, AlertTriangle, SlidersHorizontal,
+  X, Merge, Loader2
+} from 'lucide-vue-next'
+import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
+const getAuthHeaders = () => userStore.authHeader
+
 const isLoading = ref(false)
 const threshold = ref('80')
 const groups = ref<any[]>([])
@@ -172,7 +240,9 @@ const keepId = ref('')
 const loadDuplicates = async () => {
   isLoading.value = true
   try {
-    const data = await $fetch(`/api/transactions/duplicates?threshold=${threshold.value}`)
+    const data = await $fetch<any>(`/api/transactions/duplicates?threshold=${threshold.value}`, {
+      headers: getAuthHeaders()
+    })
     groups.value = data.groups
     totalDuplicates.value = data.totalDuplicates
   } catch (error) {
@@ -198,6 +268,7 @@ const mergeDuplicates = async () => {
   try {
     await $fetch('/api/transactions/duplicates', {
       method: 'POST',
+      headers: getAuthHeaders(),
       body: {
         action: 'merge',
         keepId: keepId.value,
@@ -215,6 +286,7 @@ const ignoreGroup = async (group: any) => {
   try {
     await $fetch('/api/transactions/duplicates', {
       method: 'POST',
+      headers: getAuthHeaders(),
       body: {
         action: 'ignore',
         transactionIds: group.transactions.map((tx: any) => tx.id)
@@ -238,19 +310,22 @@ const formatDate = (date: string) => {
 }
 
 const getConfidenceClass = (confidence: number) => {
-  if (confidence >= 90) return 'bg-red-100 text-red-700'
-  if (confidence >= 80) return 'bg-yellow-100 text-yellow-700'
-  return 'bg-gray-100 text-gray-700'
+  if (confidence >= 90) return 'bg-red-500/10 text-red-600 dark:text-red-400'
+  if (confidence >= 80) return 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+  return 'bg-gray-500/10 text-gray-600 dark:text-gray-400'
 }
 
 const getStatusClass = (status: string) => {
   const classes: Record<string, string> = {
-    completed: 'bg-green-100 text-green-700',
-    pending: 'bg-yellow-100 text-yellow-700',
-    failed: 'bg-red-100 text-red-700'
+    completed: 'bg-green-500/10 text-green-600 dark:text-green-400',
+    pending: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    failed: 'bg-red-500/10 text-red-600 dark:text-red-400'
   }
-  return classes[status] || 'bg-gray-100 text-gray-700'
+  return classes[status] || 'bg-gray-500/10 text-gray-600 dark:text-gray-400'
 }
 
-onMounted(() => loadDuplicates())
+onMounted(() => {
+  userStore.initAuth()
+  loadDuplicates()
+})
 </script>

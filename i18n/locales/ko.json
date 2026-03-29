@@ -424,7 +424,8 @@
     "searchPlaceholder": "거래처 검색...",
     "noVendors": "거래처가 없습니다",
     "active": "활성",
-    "inactive": "비활성"
+    "inactive": "비활성",
+    "uncategorized": "미분류"
   },
   "customer": {
     "title": "고객",
@@ -699,7 +700,12 @@
     "statusPaused": "일시중지",
     "upcoming30days": "30일 이내 예정",
     "weekly": "매주",
-    "yearly": "매년"
+    "yearly": "매년",
+    "noPaymentsDesc": "정기 결제를 추가하여 자동으로 거래를 생성하세요",
+    "overdue": "기한 초과",
+    "generateNow": "즉시 생성",
+    "resume": "재개",
+    "pause": "일시중지"
   },
   "audit": {
     "title": "감사 로그",
@@ -716,7 +722,26 @@
     "backup": "백업",
     "restore": "복원",
     "templates": "템플릿",
-    "update": "업데이트"
+    "update": "업데이트",
+    "totalEntries": "개 로그",
+    "noLogsDesc": "필터를 변경하거나 활동이 기록될 때까지 기다려 주세요",
+    "actions": {
+      "create": "생성",
+      "update": "업데이트",
+      "delete": "삭제",
+      "import": "가져오기",
+      "export": "내보내기",
+      "backup": "백업",
+      "restore": "복원"
+    },
+    "entityTypes": {
+      "transaction": "거래",
+      "receipt": "영수증",
+      "recurring": "정기 결제",
+      "category": "카테고리",
+      "template": "템플릿",
+      "settings": "설정"
+    }
   },
   "invite": {
     "acceptInvitation": "초대 수락",
@@ -766,7 +791,8 @@
     "net": "순액",
     "expensesByCategory": "카테고리별 지출",
     "monthlyBreakdown": "월별 내역",
-    "month": "월"
+    "month": "월",
+    "transactions": "건 거래"
   },
   "templates": {
     "title": "가져오기 템플릿",
@@ -781,10 +807,55 @@
     "viewDetails": "상세 보기",
     "setAsDefault": "기본값으로 설정"
   },
+  "transactionDetail": {
+    "title": "거래 상세",
+    "backToList": "거래 목록으로 돌아가기",
+    "amount": "금액",
+    "date": "날짜",
+    "accountCategory": "계정과목",
+    "subAccountCategory": "보조과목",
+    "receipt": "영수증",
+    "receiptExists": "있음",
+    "receiptNone": "없음",
+    "details": "거래 상세",
+    "customer": "고객",
+    "supplier": "거래처",
+    "taxCategory": "세금 구분",
+    "taxRate": "세율",
+    "transactionCategory": "구분",
+    "companyInfo": "법인 정보",
+    "invoiceNumber": "인보이스 번호",
+    "receiptNumber": "영수증/주문 번호",
+    "janCode": "JAN CODE",
+    "productName": "상품명",
+    "productPrice": "상품 가격",
+    "notes": "메모",
+    "itemDetails": "상품 명세",
+    "itemName": "상품명",
+    "itemCode": "JAN/상품코드",
+    "quantity": "수량",
+    "unitPrice": "단가",
+    "subtotal": "소계",
+    "total": "합계",
+    "timeline": "이력",
+    "receiptFile": "영수증 파일",
+    "uploaded": "업로드됨",
+    "noReceipt": "영수증이 없습니다",
+    "uploadReceipt": "영수증 업로드",
+    "edit": "편집",
+    "delete": "삭제",
+    "editInProgress": "편집 기능 준비 중입니다",
+    "deleteConfirm": "이 거래를 삭제하시겠습니까?",
+    "deleteFailed": "삭제에 실패했습니다",
+    "loadFailed": "거래 데이터 로딩에 실패했습니다",
+    "importComplete": "가져오기 완료: {count}건의 거래를 가져왔습니다",
+    "importError": "가져오기 오류: {message}"
+  },
   "duplicates": {
     "title": "중복 감지",
     "description": "중복 거래 감지 및 병합",
     "scan": "스캔",
+    "rescan": "재스캔",
     "highConfidence": "높은 신뢰도 (90% 이상)",
     "mediumConfidence": "중간 신뢰도 (80% 이상)",
     "lowConfidence": "낮은 신뢰도 (70% 이상)",
@@ -796,7 +867,13 @@
     "merge": "병합",
     "mergeTitle": "중복 병합",
     "selectToKeep": "유지할 거래를 선택하세요. 다른 거래는 삭제되고 데이터가 병합됩니다.",
-    "mergeAndDelete": "병합 후 삭제"
+    "mergeAndDelete": "병합 후 삭제",
+    "totalGroups": "중복 그룹",
+    "totalPairs": "중복 페어",
+    "resolved": "해결됨",
+    "confidence": "신뢰도",
+    "match": "일치",
+    "threshold": "임계값"
   },
   "import": {
     "title": "거래 데이터 가져오기",
@@ -1007,7 +1084,12 @@
     "roleOwner": "소유자",
     "roleAdmin": "관리자",
     "roleMember": "멤버",
-    "roleViewer": "뷰어"
+    "roleViewer": "뷰어",
+    "totalOrganizations": "조직 수",
+    "totalMembers": "총 멤버 수",
+    "activeOrganizations": "활성 조직",
+    "totalUsers": "총 사용자 수",
+    "activeUsers": "활성 사용자"
   },
   "organizationPage": {
     "noOrganization": "조직이 설정되지 않았습니다. 아래에서 조직을 만들어 주세요.",

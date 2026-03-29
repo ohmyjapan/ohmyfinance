@@ -8,45 +8,47 @@
 
     <!-- Step Navigation -->
     <div class="mb-8">
-      <div class="relative">
-        <!-- Progress Bar Background -->
-        <div class="absolute top-5 left-0 right-0 h-0.5 bg-gray-200 dark:bg-white/5" />
-        <!-- Progress Bar Fill -->
-        <div
-          class="absolute top-5 left-0 h-0.5 bg-primary-main transition-all duration-500"
-          :style="{ width: `${(currentStep / (steps.length - 1)) * 100}%` }"
-        />
+      <div class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-6">
+        <div class="relative">
+          <!-- Progress Bar Background -->
+          <div class="absolute top-5 left-0 right-0 h-1 bg-gray-200 dark:bg-white/10 rounded-full" />
+          <!-- Progress Bar Fill -->
+          <div
+            class="absolute top-5 left-0 h-1 bg-gradient-to-r from-primary-main to-primary-dark rounded-full transition-all duration-500 ease-out"
+            :style="{ width: `${(currentStep / (steps.length - 1)) * 100}%` }"
+          />
 
-        <!-- Steps -->
-        <nav class="relative flex justify-between">
-          <button
-            v-for="(step, index) in steps"
-            :key="step.id"
-            class="flex flex-col items-center group"
-            :disabled="!canNavigateToStep(index)"
-            @click="navigateToStep(index)"
-          >
-            <!-- Step Circle -->
-            <div
-              class="relative z-10 flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all duration-300"
-              :class="getStepCircleClass(index)"
+          <!-- Steps -->
+          <nav class="relative flex justify-between">
+            <button
+              v-for="(step, index) in steps"
+              :key="step.id"
+              class="flex flex-col items-center group touch-manipulation"
+              :disabled="!canNavigateToStep(index)"
+              @click="navigateToStep(index)"
             >
-              <CheckCircle v-if="completedSteps.includes(index)" class="h-5 w-5" />
-              <span v-else class="text-sm font-semibold">{{ index + 1 }}</span>
-            </div>
-            <!-- Step Label -->
-            <span
-              class="mt-2 text-xs font-medium transition-colors"
-              :class="currentStep === index
-                ? 'text-primary-main'
-                : completedSteps.includes(index)
-                  ? 'text-success-main'
-                  : 'text-gray-500 dark:text-gray-400'"
-            >
-              {{ t(`transactionUpload.steps.${step.id}`) }}
-            </span>
-          </button>
-        </nav>
+              <!-- Step Circle -->
+              <div
+                class="relative z-10 flex items-center justify-center w-10 h-10 rounded-xl border-2 transition-all duration-300"
+                :class="getStepCircleClass(index)"
+              >
+                <CheckCircle v-if="completedSteps.includes(index)" class="h-5 w-5" />
+                <component v-else :is="getStepIcon(index)" class="h-5 w-5" />
+              </div>
+              <!-- Step Label -->
+              <span
+                class="mt-2.5 text-xs font-medium transition-colors"
+                :class="currentStep === index
+                  ? 'text-primary-main dark:text-primary-light'
+                  : completedSteps.includes(index)
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-gray-500 dark:text-gray-400'"
+              >
+                {{ t(`transactionUpload.steps.${step.id}`) }}
+              </span>
+            </button>
+          </nav>
+        </div>
       </div>
     </div>
 
@@ -104,9 +106,12 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { CheckCircle } from 'lucide-vue-next'
+import { CheckCircle, Upload, GitBranch, Eye, Download } from 'lucide-vue-next'
+import { useUserStore } from '~/stores/user'
 
 const { t } = useI18n()
+const userStore = useUserStore()
+const getAuthHeaders = () => userStore.authHeader
 
 // Define steps for the import process
 const steps = [
@@ -115,6 +120,12 @@ const steps = [
   { id: 'preview' },
   { id: 'import' }
 ]
+
+// Step icons
+const getStepIcon = (index: number) => {
+  const icons = [Upload, GitBranch, Eye, Download]
+  return icons[index] || Upload
+}
 
 // State variables
 const currentStep = ref(0)
@@ -139,12 +150,12 @@ const importOptions = ref({
 // Get step circle class
 const getStepCircleClass = (index: number) => {
   if (completedSteps.value.includes(index)) {
-    return 'bg-success-main border-success-main text-white'
+    return 'bg-green-500 border-green-500 text-white shadow-lg shadow-green-500/25'
   }
   if (currentStep.value === index) {
-    return 'bg-primary-main border-primary-main text-white'
+    return 'bg-gradient-to-br from-primary-main to-primary-dark border-primary-main text-white shadow-lg shadow-primary-main/25'
   }
-  return 'bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-500 dark:text-gray-400'
+  return 'bg-white dark:bg-white/5 border-gray-300 dark:border-white/10 text-gray-400 dark:text-gray-500'
 }
 
 // Check if can navigate to step
@@ -255,6 +266,7 @@ const performImport = async () => {
   try {
     const result = await $fetch('/api/transactions/import', {
       method: 'POST',
+      headers: getAuthHeaders(),
       body: {
         data: parsedData.value,
         mappings: fieldMappings.value,
@@ -262,12 +274,17 @@ const performImport = async () => {
       }
     })
 
-    alert(`インポート完了: ${(result as any)?.results?.imported || 0}件の取引をインポートしました`)
+    const imported = (result as any)?.results?.imported || 0
+    alert(t('transactionDetail.importComplete', { count: imported }))
     navigateTo('/transactions')
   } catch (error: any) {
-    alert(`インポートエラー: ${error.message || 'インポートに失敗しました'}`)
+    alert(t('transactionDetail.importError', { message: error.message || t('common.error') }))
   }
 }
+
+onMounted(() => {
+  userStore.initAuth()
+})
 </script>
 
 <style scoped>

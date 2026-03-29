@@ -1,61 +1,77 @@
 <template>
   <div>
-    <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
-      <div>
-        <h1 class="text-xl font-semibold text-gray-800">{{ t('nav.recurringPayments') }}</h1>
-        <p class="text-gray-600">{{ t('recurring.description') }}</p>
-      </div>
-
-      <div class="mt-4 md:mt-0 flex space-x-3">
-        <button
-          @click="processPayments"
-          :disabled="isProcessing"
-          class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
-        >
-          <RefreshCw :class="['mr-2 h-4 w-4', isProcessing ? 'animate-spin' : '']" />
-          {{ t('recurring.processDue') }}
-        </button>
-        <button
-          @click="showCreateModal = true"
-          class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation"
-        >
-          <Plus class="mr-2 h-4 w-4" />
-          {{ t('recurring.addRecurring') }}
-        </button>
-      </div>
-    </header>
-
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
-        <div class="text-sm text-gray-500">{{ t('recurring.active') }}</div>
-        <div class="text-2xl font-semibold font-mono text-gray-800 dark:text-gray-100">{{ stats.active }}</div>
-      </div>
-      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
-        <div class="text-sm text-gray-500">{{ t('recurring.monthlyEstimate') }}</div>
-        <div class="text-2xl font-semibold font-mono text-primary-main">{{ formatCurrency(stats.activeMonthlyAmount) }}</div>
-      </div>
-      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
-        <div class="text-sm text-gray-500">{{ t('recurring.upcoming30days') }}</div>
-        <div class="text-2xl font-semibold font-mono text-amber-600">{{ upcoming.count }}</div>
-      </div>
-      <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
-        <div class="text-sm text-gray-500">{{ t('recurring.paused') }}</div>
-        <div class="text-2xl font-semibold font-mono text-gray-400">{{ stats.paused }}</div>
+    <!-- Page Header -->
+    <div class="mb-8">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('nav.recurringPayments') }}</h1>
+          <p class="mt-1 text-gray-500 dark:text-gray-400">{{ t('recurring.description') }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button
+            @click="processPayments"
+            :disabled="isProcessing"
+            class="inline-flex items-center px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all duration-200 touch-manipulation"
+          >
+            <RefreshCw :class="['mr-2 h-4 w-4', isProcessing ? 'animate-spin' : '']" />
+            {{ t('recurring.processDue') }}
+          </button>
+          <button
+            @click="showCreateModal = true"
+            class="inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
+          >
+            <Plus class="mr-2 h-4 w-4" />
+            {{ t('recurring.addRecurring') }}
+          </button>
+        </div>
       </div>
     </div>
 
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <StatCard
+        :title="t('recurring.active')"
+        :value="stats.active.toString()"
+        icon="Activity"
+        color="green"
+      />
+      <StatCard
+        :title="t('recurring.monthlyEstimate')"
+        :value="formatCurrency(stats.activeMonthlyAmount)"
+        icon="DollarSign"
+        color="primary"
+      />
+      <StatCard
+        :title="t('recurring.upcoming30days')"
+        :value="upcoming.count.toString()"
+        icon="CreditCard"
+        color="amber"
+      />
+      <StatCard
+        :title="t('recurring.paused')"
+        :value="stats.paused.toString()"
+        icon="Package"
+        color="red"
+      />
+    </div>
+
     <!-- Filters -->
-    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4 mb-6">
+    <div class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-4 mb-6">
       <div class="flex flex-wrap gap-4">
-        <select v-model="filters.status" class="border border-gray-300 rounded-md px-3 py-2 text-sm">
+        <select
+          v-model="filters.status"
+          class="border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors"
+        >
           <option value="">{{ t('recurring.allStatus') }}</option>
           <option value="active">{{ t('recurring.statusActive') }}</option>
           <option value="paused">{{ t('recurring.statusPaused') }}</option>
           <option value="completed">{{ t('recurring.statusCompleted') }}</option>
           <option value="cancelled">{{ t('recurring.statusCancelled') }}</option>
         </select>
-        <select v-model="filters.frequency" class="border border-gray-300 rounded-md px-3 py-2 text-sm">
+        <select
+          v-model="filters.frequency"
+          class="border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors"
+        >
           <option value="">{{ t('recurring.allFrequencies') }}</option>
           <option value="daily">{{ t('recurring.daily') }}</option>
           <option value="weekly">{{ t('recurring.weekly') }}</option>
@@ -64,69 +80,115 @@
           <option value="quarterly">{{ t('recurring.quarterly') }}</option>
           <option value="yearly">{{ t('recurring.yearly') }}</option>
         </select>
-        <input
-          v-model="filters.search"
-          type="text"
-          :placeholder="t('common.search')"
-          class="border border-gray-300 rounded-md px-3 py-2 text-sm flex-1 min-w-48"
-        />
+        <div class="relative flex-1 min-w-48">
+          <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            v-model="filters.search"
+            type="text"
+            :placeholder="t('common.search')"
+            class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors"
+          />
+        </div>
       </div>
     </div>
 
-    <!-- Payments List -->
-    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
-      <div v-if="isLoading" class="p-8 text-center text-gray-500">
-        {{ t('common.loading') }}
+    <!-- Payments Table -->
+    <div class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm overflow-hidden">
+      <div v-if="isLoading" class="p-12 text-center">
+        <div class="flex flex-col items-center gap-3">
+          <Loader2 class="w-6 h-6 animate-spin text-primary-main" />
+          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</span>
+        </div>
       </div>
-      <div v-else-if="payments.length === 0" class="p-8 text-center text-gray-500">
-        {{ t('recurring.noPayments') }}
+
+      <div v-else-if="payments.length === 0" class="p-12 text-center">
+        <div class="w-16 h-16 rounded-2xl bg-gray-100 dark:bg-white/5 flex items-center justify-center mx-auto mb-4">
+          <CreditCard class="w-8 h-8 text-gray-400 dark:text-gray-500" />
+        </div>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">{{ t('recurring.noPayments') }}</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('recurring.noPaymentsDesc') }}</p>
+        <button
+          @click="showCreateModal = true"
+          class="inline-flex items-center px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
+        >
+          <Plus class="mr-2 h-4 w-4" />
+          {{ t('recurring.addRecurring') }}
+        </button>
       </div>
-      <table v-else class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50 dark:bg-white/5">
+
+      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+        <thead class="bg-gray-50 dark:bg-white/[0.03]">
           <tr>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('common.name') }}</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('common.amount') }}</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('recurring.frequency') }}</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('recurring.nextDue') }}</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ t('common.status') }}</th>
-            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">{{ t('common.actions') }}</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('common.name') }}</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('common.amount') }}</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('recurring.frequency') }}</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('recurring.nextDue') }}</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('common.status') }}</th>
+            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('common.actions') }}</th>
           </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
-          <tr v-for="payment in payments" :key="payment.id" class="hover:bg-gray-50 dark:hover:bg-white/[0.07]">
+        <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+          <tr
+            v-for="payment in payments"
+            :key="payment.id"
+            class="group hover:bg-gray-50 dark:hover:bg-white/[0.03] transition-colors"
+          >
             <td class="px-6 py-4">
-              <div class="text-sm font-medium text-gray-900">{{ payment.name }}</div>
-              <div class="text-sm text-gray-500">{{ payment.customer?.name }}</div>
+              <div class="text-sm font-medium text-gray-900 dark:text-white">{{ payment.name }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ payment.customer?.name }}</div>
             </td>
-            <td class="px-6 py-4 text-sm text-gray-900">
+            <td class="px-6 py-4 text-sm font-mono font-bold text-gray-900 dark:text-white">
               {{ formatCurrency(payment.amount) }}
             </td>
-            <td class="px-6 py-4 text-sm text-gray-500 capitalize">
-              {{ payment.frequency }}
+            <td class="px-6 py-4">
+              <span class="bg-primary-main/10 dark:bg-primary-main/20 text-primary-main dark:text-primary-light rounded-lg px-2.5 py-1 text-xs font-medium capitalize">
+                {{ t(`recurring.${payment.frequency}`) }}
+              </span>
             </td>
             <td class="px-6 py-4 text-sm">
-              <span :class="isOverdue(payment.nextDueDate) ? 'text-red-600 font-medium' : 'text-gray-500'">
+              <span :class="isOverdue(payment.nextDueDate) ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-500 dark:text-gray-400'">
                 {{ formatDate(payment.nextDueDate) }}
+              </span>
+              <span v-if="isOverdue(payment.nextDueDate)" class="ml-1.5 bg-red-500/10 text-red-600 dark:text-red-400 rounded-lg px-2 py-0.5 text-xs font-medium">
+                {{ t('recurring.overdue') }}
               </span>
             </td>
             <td class="px-6 py-4">
-              <span :class="getStatusClass(payment.status)" class="px-2 py-1 text-xs font-medium rounded-full">
-                {{ payment.status }}
+              <span :class="getStatusBadgeClass(payment.status)" class="rounded-lg px-2.5 py-1 text-xs font-medium">
+                {{ t(`recurring.status${payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}`) }}
               </span>
             </td>
-            <td class="px-6 py-4 text-right text-sm space-x-2">
-              <button @click="generateNow(payment)" class="text-primary-main hover:text-primary-dark" title="Generate Transaction">
-                <Play class="h-4 w-4 inline" />
-              </button>
-              <button @click="togglePause(payment)" class="text-gray-600 hover:text-gray-900" :title="payment.status === 'paused' ? 'Resume' : 'Pause'">
-                <component :is="payment.status === 'paused' ? PlayCircle : PauseCircle" class="h-4 w-4 inline" />
-              </button>
-              <button @click="editPayment(payment)" class="text-blue-600 hover:text-blue-900" title="Edit">
-                <Pencil class="h-4 w-4 inline" />
-              </button>
-              <button @click="deletePayment(payment)" class="text-red-600 hover:text-red-900" title="Delete">
-                <Trash2 class="h-4 w-4 inline" />
-              </button>
+            <td class="px-6 py-4 text-right">
+              <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  @click="generateNow(payment)"
+                  class="p-2 rounded-lg text-gray-400 hover:text-primary-main hover:bg-primary-main/10 transition-colors touch-manipulation"
+                  :title="t('recurring.generateNow')"
+                >
+                  <Play class="h-4 w-4" />
+                </button>
+                <button
+                  @click="togglePause(payment)"
+                  class="p-2 rounded-lg text-gray-400 hover:text-amber-500 hover:bg-amber-500/10 transition-colors touch-manipulation"
+                  :title="payment.status === 'paused' ? t('recurring.resume') : t('recurring.pause')"
+                >
+                  <component :is="payment.status === 'paused' ? PlayCircle : PauseCircle" class="h-4 w-4" />
+                </button>
+                <button
+                  @click="editPayment(payment)"
+                  class="p-2 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 transition-colors touch-manipulation"
+                  :title="t('common.edit')"
+                >
+                  <Pencil class="h-4 w-4" />
+                </button>
+                <button
+                  @click="deletePayment(payment)"
+                  class="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-500/10 transition-colors touch-manipulation"
+                  :title="t('common.delete')"
+                >
+                  <Trash2 class="h-4 w-4" />
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -135,29 +197,32 @@
 
     <!-- Create/Edit Modal -->
     <div v-if="showCreateModal || showEditModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h3 class="text-lg font-medium text-gray-900">
+      <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
             {{ showEditModal ? t('recurring.editRecurring') : t('recurring.newRecurring') }}
           </h3>
+          <button @click="closeModal" class="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/10 transition-colors touch-manipulation">
+            <X class="h-5 w-5" />
+          </button>
         </div>
         <form @submit.prevent="savePayment" class="p-6 space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('common.name') }} *</label>
-            <input v-model="form.name" type="text" required class="w-full border border-gray-300 rounded-md px-3 py-2" />
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('common.name') }} *</label>
+            <input v-model="form.name" type="text" required class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('common.description') }}</label>
-            <input v-model="form.description" type="text" class="w-full border border-gray-300 rounded-md px-3 py-2" />
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('common.description') }}</label>
+            <input v-model="form.description" type="text" class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" />
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('common.amount') }} *</label>
-              <input v-model.number="form.amount" type="number" required min="0" class="w-full border border-gray-300 rounded-md px-3 py-2" />
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('common.amount') }} *</label>
+              <input v-model.number="form.amount" type="number" required min="0" class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" />
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('recurring.frequency') }} *</label>
-              <select v-model="form.frequency" required class="w-full border border-gray-300 rounded-md px-3 py-2">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('recurring.frequency') }} *</label>
+              <select v-model="form.frequency" required class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors">
                 <option value="daily">{{ t('recurring.daily') }}</option>
                 <option value="weekly">{{ t('recurring.weekly') }}</option>
                 <option value="biweekly">{{ t('recurring.biweekly') }}</option>
@@ -169,35 +234,43 @@
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('recurring.startDate') }} *</label>
-              <input v-model="form.startDate" type="date" required class="w-full border border-gray-300 rounded-md px-3 py-2" />
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('recurring.startDate') }} *</label>
+              <input v-model="form.startDate" type="date" required class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" />
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('recurring.endDate') }}</label>
-              <input v-model="form.endDate" type="date" class="w-full border border-gray-300 rounded-md px-3 py-2" />
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('recurring.endDate') }}</label>
+              <input v-model="form.endDate" type="date" class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" />
             </div>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('recurring.customerPayee') }} *</label>
-            <input v-model="form.customerName" type="text" required class="w-full border border-gray-300 rounded-md px-3 py-2" />
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('recurring.customerPayee') }} *</label>
+            <input v-model="form.customerName" type="text" required class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('common.category') }}</label>
-            <input v-model="form.category" type="text" class="w-full border border-gray-300 rounded-md px-3 py-2" :placeholder="t('recurring.categoryPlaceholder')" />
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('common.category') }}</label>
+            <input v-model="form.category" type="text" class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" :placeholder="t('recurring.categoryPlaceholder')" />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('common.notes') }}</label>
-            <textarea v-model="form.notes" rows="2" class="w-full border border-gray-300 rounded-md px-3 py-2"></textarea>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('common.notes') }}</label>
+            <textarea v-model="form.notes" rows="2" class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors"></textarea>
           </div>
-          <div class="flex items-center">
-            <input v-model="form.autoGenerate" type="checkbox" id="autoGenerate" class="mr-2" />
-            <label for="autoGenerate" class="text-sm text-gray-700">{{ t('recurring.autoGenerate') }}</label>
+          <div class="flex items-center gap-2">
+            <input v-model="form.autoGenerate" type="checkbox" id="autoGenerate" class="rounded border-gray-300 dark:border-white/20 text-primary-main focus:ring-primary-main/30" />
+            <label for="autoGenerate" class="text-sm text-gray-700 dark:text-gray-300">{{ t('recurring.autoGenerate') }}</label>
           </div>
-          <div class="flex justify-end space-x-3 pt-4">
-            <button type="button" @click="closeModal" class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10">
+          <div class="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-white/10">
+            <button
+              type="button"
+              @click="closeModal"
+              class="px-4 py-2.5 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10 transition-colors touch-manipulation"
+            >
               {{ t('common.cancel') }}
             </button>
-            <button type="submit" :disabled="isSaving" class="px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark disabled:opacity-50">
+            <button
+              type="submit"
+              :disabled="isSaving"
+              class="px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 disabled:opacity-50 touch-manipulation"
+            >
               {{ isSaving ? t('common.loading') : t('common.save') }}
             </button>
           </div>
@@ -209,7 +282,10 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted } from 'vue'
-import { Plus, RefreshCw, Play, Pencil, Trash2, PauseCircle, PlayCircle } from 'lucide-vue-next'
+import {
+  Plus, RefreshCw, Play, Pencil, Trash2, PauseCircle, PlayCircle,
+  Search, Loader2, CreditCard, X
+} from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
@@ -403,14 +479,14 @@ const isOverdue = (dateStr: string) => {
   return new Date(dateStr) < new Date()
 }
 
-const getStatusClass = (status: string) => {
+const getStatusBadgeClass = (status: string) => {
   const classes: Record<string, string> = {
-    active: 'bg-green-100 text-green-800',
-    paused: 'bg-yellow-100 text-yellow-800',
-    completed: 'bg-gray-100 text-gray-800',
-    cancelled: 'bg-red-100 text-red-800'
+    active: 'bg-green-500/10 text-green-600 dark:text-green-400',
+    paused: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    completed: 'bg-gray-500/10 text-gray-600 dark:text-gray-400',
+    cancelled: 'bg-red-500/10 text-red-600 dark:text-red-400'
   }
-  return classes[status] || 'bg-gray-100 text-gray-800'
+  return classes[status] || 'bg-gray-500/10 text-gray-600 dark:text-gray-400'
 }
 
 watch(filters, () => loadPayments(), { deep: true })

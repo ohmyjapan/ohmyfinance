@@ -424,7 +424,8 @@
     "searchPlaceholder": "取引先を検索...",
     "noVendors": "取引先がありません",
     "active": "アクティブ",
-    "inactive": "非アクティブ"
+    "inactive": "非アクティブ",
+    "uncategorized": "未分類"
   },
   "customer": {
     "title": "顧客",
@@ -675,7 +676,12 @@
     "statusPaused": "一時停止",
     "upcoming30days": "30日以内に予定",
     "weekly": "毎週",
-    "yearly": "毎年"
+    "yearly": "毎年",
+    "noPaymentsDesc": "定期支払いを追加して、自動的に取引を生成しましょう",
+    "overdue": "期限超過",
+    "generateNow": "今すぐ生成",
+    "resume": "再開",
+    "pause": "一時停止"
   },
   "audit": {
     "title": "監査ログ",
@@ -692,7 +698,26 @@
     "backup": "バックアップ",
     "restore": "復元",
     "templates": "テンプレート",
-    "update": "更新"
+    "update": "更新",
+    "totalEntries": "件のログ",
+    "noLogsDesc": "フィルターを変更するか、アクティビティが記録されるまでお待ちください",
+    "actions": {
+      "create": "作成",
+      "update": "更新",
+      "delete": "削除",
+      "import": "インポート",
+      "export": "エクスポート",
+      "backup": "バックアップ",
+      "restore": "復元"
+    },
+    "entityTypes": {
+      "transaction": "取引",
+      "receipt": "領収書",
+      "recurring": "定期支払い",
+      "category": "カテゴリー",
+      "template": "テンプレート",
+      "settings": "設定"
+    }
   },
   "invite": {
     "acceptInvitation": "招待を承認",
@@ -742,7 +767,8 @@
     "net": "純額",
     "expensesByCategory": "カテゴリー別支出",
     "monthlyBreakdown": "月別内訳",
-    "month": "月"
+    "month": "月",
+    "transactions": "件の取引"
   },
   "templates": {
     "title": "インポートテンプレート",
@@ -757,10 +783,55 @@
     "viewDetails": "詳細を表示",
     "setAsDefault": "デフォルトに設定"
   },
+  "transactionDetail": {
+    "title": "取引詳細",
+    "backToList": "取引一覧に戻る",
+    "amount": "金額",
+    "date": "日付",
+    "accountCategory": "勘定科目",
+    "subAccountCategory": "補助科目",
+    "receipt": "領収書",
+    "receiptExists": "あり",
+    "receiptNone": "なし",
+    "details": "取引詳細",
+    "customer": "顧客",
+    "supplier": "仕入れ先",
+    "taxCategory": "税区分",
+    "taxRate": "税率",
+    "transactionCategory": "区分",
+    "companyInfo": "法人情報",
+    "invoiceNumber": "インボイス番号",
+    "receiptNumber": "レシート/注文番号",
+    "janCode": "JAN CODE",
+    "productName": "商品名",
+    "productPrice": "商品価格",
+    "notes": "メモ",
+    "itemDetails": "商品明細",
+    "itemName": "商品名",
+    "itemCode": "JAN/商品コード",
+    "quantity": "数量",
+    "unitPrice": "単価",
+    "subtotal": "小計",
+    "total": "合計",
+    "timeline": "履歴",
+    "receiptFile": "領収書ファイル",
+    "uploaded": "アップロード",
+    "noReceipt": "領収書がありません",
+    "uploadReceipt": "領収書をアップロード",
+    "edit": "編集",
+    "delete": "削除",
+    "editInProgress": "編集機能は準備中です",
+    "deleteConfirm": "この取引を削除しますか？",
+    "deleteFailed": "削除に失敗しました",
+    "loadFailed": "取引データの読み込みに失敗しました",
+    "importComplete": "インポート完了: {count}件の取引をインポートしました",
+    "importError": "インポートエラー: {message}"
+  },
   "duplicates": {
     "title": "重複検出",
     "description": "重複した取引の検出とマージ",
     "scan": "スキャン",
+    "rescan": "再スキャン",
     "highConfidence": "高信頼度 (90%以上)",
     "mediumConfidence": "中信頼度 (80%以上)",
     "lowConfidence": "低信頼度 (70%以上)",
@@ -772,7 +843,13 @@
     "merge": "マージ",
     "mergeTitle": "重複をマージ",
     "selectToKeep": "保持する取引を選択してください。他の取引は削除され、データがマージされます。",
-    "mergeAndDelete": "マージして他を削除"
+    "mergeAndDelete": "マージして他を削除",
+    "totalGroups": "重複グループ",
+    "totalPairs": "重複ペア",
+    "resolved": "解決済み",
+    "confidence": "信頼度",
+    "match": "一致",
+    "threshold": "閾値"
   },
   "import": {
     "title": "取引データインポート",
@@ -983,7 +1060,12 @@
     "roleOwner": "オーナー",
     "roleAdmin": "管理者",
     "roleMember": "メンバー",
-    "roleViewer": "閲覧者"
+    "roleViewer": "閲覧者",
+    "totalOrganizations": "組織数",
+    "totalMembers": "総メンバー数",
+    "activeOrganizations": "有効な組織",
+    "totalUsers": "総ユーザー数",
+    "activeUsers": "有効なユーザー"
   },
   "organizationPage": {
     "noOrganization": "組織が設定されていません。下記から組織を作成してください。",
