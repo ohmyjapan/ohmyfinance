@@ -5,7 +5,6 @@ export { default as Customer } from './Customer'
 export { default as Supplier } from './Supplier'
 export { default as AccountCategory } from './AccountCategory'
 export { default as DataSource } from './DataSource'
-export { default as StockBriefing } from './StockBriefing'
 
 // Re-export interfaces
 export type { ITransaction } from './Transaction'
@@ -15,4 +14,3 @@ export type { ICustomer } from './Customer'
 export type { ISupplier } from './Supplier'
 export type { IAccountCategory } from './AccountCategory'
 export type { IDataSource } from './DataSource'
-export type { IStockBriefing } from './StockBriefing'

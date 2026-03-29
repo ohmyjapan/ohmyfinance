@@ -186,8 +186,7 @@ import {
   Users,
   Copy,
   FileCheck,
-  LogOut,
-  Newspaper
+  LogOut
 } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useUserStore } from '~/stores/user'
@@ -235,8 +234,7 @@ const icons: Record<string, any> = {
   Users,
   Copy,
   FileCheck,
-  LogOut,
-  Newspaper
+  LogOut
 }
 
 // Navigation items with i18n keys
@@ -248,12 +246,6 @@ const navItems = computed(() => [
       { name: t('nav.reports'), icon: 'BarChart3', route: '/reports' },
       { name: t('nav.taxReport'), icon: 'FileCheck', route: '/reports/tax' },
       { name: t('nav.paymentCalendar'), icon: 'Calendar', route: '/calendar' }
-    ]
-  },
-  {
-    section: t('nav.briefing'),
-    items: [
-      { name: t('nav.stockBriefing'), icon: 'Newspaper', route: '/briefing' }
     ]
   },
   {
