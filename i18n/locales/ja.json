@@ -1261,6 +1261,8 @@
       "transactionStatus": "取引ステータス"
     },
     "templateName": "テンプレート名",
+    "templateSaved": "保存しました",
+    "loadTemplate": "保存済みテンプレート",
     "title": "フィールドマッピング",
     "viewSampleData": "サンプルデータを表示",
     "detectedRows": "検出された行",

@@ -166,6 +166,31 @@
         </table>
       </div>
 
+      <!-- Load Saved Template -->
+      <div v-if="savedTemplates.length > 0" class="mb-6">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{{ t('fieldMapper.loadTemplate') }}</label>
+        <div class="flex flex-wrap gap-2">
+          <button
+              v-for="tmpl in savedTemplates"
+              :key="tmpl.name"
+              class="group inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm border transition-all duration-200 touch-manipulation"
+              :class="activeTemplate === tmpl.name
+                ? 'border-primary-main bg-primary-main/10 text-primary-main dark:text-primary-light'
+                : 'border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-300 hover:border-primary-main/50 hover:bg-primary-main/5'"
+              @click="loadTemplate(tmpl)"
+          >
+            <FileText class="w-3.5 h-3.5" />
+            {{ tmpl.name }}
+            <button
+                class="ml-1 p-0.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-500 transition-all"
+                @click.stop="deleteTemplate(tmpl.name)"
+            >
+              <Trash2 class="w-3 h-3" />
+            </button>
+          </button>
+        </div>
+      </div>
+
       <!-- Save Mapping Template -->
       <div class="mb-6">
         <div class="flex items-start">
@@ -191,11 +216,13 @@
               :placeholder="t('fieldMapper.templateName')"
           />
           <button
-              class="inline-flex items-center px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
+              class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
               :disabled="!templateName"
               :class="{'opacity-50 cursor-not-allowed': !templateName}"
+              @click="saveTemplateMapping"
           >
-            {{ t('fieldMapper.saveTemplate') }}
+            <Check v-if="templateSaved" class="w-4 h-4" />
+            {{ templateSaved ? t('fieldMapper.templateSaved') : t('fieldMapper.saveTemplate') }}
           </button>
         </div>
       </div>
@@ -230,7 +257,10 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
-  ArrowRight
+  ArrowRight,
+  Check,
+  Trash2,
+  FileText
 } from 'lucide-vue-next'
 
 const { t } = useI18n()
@@ -254,6 +284,54 @@ const currentFile = ref('')
 const localMappings = ref({...props.mappings})
 const saveTemplate = ref(false)
 const templateName = ref('')
+const templateSaved = ref(false)
+const activeTemplate = ref('')
+
+// Template storage key
+const TEMPLATE_STORAGE_KEY = 'omf-mapping-templates'
+
+// Load saved templates from localStorage
+const savedTemplates = ref<Array<{ name: string, mappings: Record<string, any> }>>([])
+
+const loadSavedTemplates = () => {
+  try {
+    const stored = localStorage.getItem(TEMPLATE_STORAGE_KEY)
+    savedTemplates.value = stored ? JSON.parse(stored) : []
+  } catch { savedTemplates.value = [] }
+}
+
+const saveTemplateMapping = () => {
+  if (!templateName.value) return
+  const template = {
+    name: templateName.value,
+    mappings: JSON.parse(JSON.stringify(localMappings.value))
+  }
+  // Replace if same name exists
+  const idx = savedTemplates.value.findIndex(t => t.name === template.name)
+  if (idx >= 0) savedTemplates.value[idx] = template
+  else savedTemplates.value.push(template)
+  localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(savedTemplates.value))
+  templateSaved.value = true
+  activeTemplate.value = template.name
+  setTimeout(() => { templateSaved.value = false }, 2000)
+}
+
+const loadTemplate = (tmpl: { name: string, mappings: Record<string, any> }) => {
+  activeTemplate.value = tmpl.name
+  // Apply saved mappings to current source fields
+  sourceFields.value.forEach(field => {
+    if (tmpl.mappings[field]) {
+      localMappings.value[field] = { ...tmpl.mappings[field] }
+    }
+  })
+  emit('update-mappings', localMappings.value)
+}
+
+const deleteTemplate = (name: string) => {
+  savedTemplates.value = savedTemplates.value.filter(t => t.name !== name)
+  localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(savedTemplates.value))
+  if (activeTemplate.value === name) activeTemplate.value = ''
+}
 
 // Sample data for the current file
 const sampleData = ref([
@@ -326,6 +404,7 @@ const translatedFormatOptions = computed(() => ({
 
 // Initialize component
 onMounted(() => {
+  loadSavedTemplates()
   if (props.files.length > 0) {
     currentFile.value = props.files[0].name
 
