@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { useUserStore } from '~/stores/user'
 import { Receipt } from '~/types/receipt'
 
 interface ReceiptState {
@@ -110,13 +111,20 @@ export const useReceiptStore = defineStore('receipt', {
     },
 
     actions: {
+        _getAuthHeaders() {
+            const userStore = useUserStore()
+            return userStore.authHeader
+        },
+
         // Fetch all receipts
         async fetchReceipts() {
             this.isLoading = true
             this.error = null
 
             try {
-                const response = await $fetch('/api/receipts')
+                const response = await $fetch('/api/receipts', {
+                    headers: this._getAuthHeaders()
+                })
                 this.receipts = response
             } catch (err: any) {
                 this.error = err.message || 'Failed to fetch receipts'
@@ -132,7 +140,9 @@ export const useReceiptStore = defineStore('receipt', {
             this.error = null
 
             try {
-                const response = await $fetch(`/api/receipts/${id}`)
+                const response = await $fetch(`/api/receipts/${id}`, {
+                    headers: this._getAuthHeaders()
+                })
                 this.currentReceipt = response
                 return response
             } catch (err: any) {
@@ -152,7 +162,8 @@ export const useReceiptStore = defineStore('receipt', {
             try {
                 const response = await $fetch('/api/receipts', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: this._getAuthHeaders()
                 })
 
                 // Add to local state
@@ -175,7 +186,8 @@ export const useReceiptStore = defineStore('receipt', {
             try {
                 const response = await $fetch(`/api/receipts/${id}`, {
                     method: 'PATCH',
-                    body: data
+                    body: data,
+                    headers: this._getAuthHeaders()
                 })
 
                 // Update in the array
@@ -207,7 +219,8 @@ export const useReceiptStore = defineStore('receipt', {
             try {
                 const response = await $fetch(`/api/receipts/${receiptId}/match`, {
                     method: 'POST',
-                    body: { transactionId }
+                    body: { transactionId },
+                    headers: this._getAuthHeaders()
                 })
 
                 // Update in the array
@@ -246,7 +259,8 @@ export const useReceiptStore = defineStore('receipt', {
 
             try {
                 const response = await $fetch(`/api/receipts/${receiptId}/match`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: this._getAuthHeaders()
                 })
 
                 // Update in the array
@@ -285,7 +299,8 @@ export const useReceiptStore = defineStore('receipt', {
 
             try {
                 await $fetch(`/api/receipts/${id}`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: this._getAuthHeaders()
                 })
 
                 // Remove from local state
@@ -312,7 +327,9 @@ export const useReceiptStore = defineStore('receipt', {
             this.error = null
 
             try {
-                const response = await $fetch(`/api/receipts/${receiptId}/matches`)
+                const response = await $fetch(`/api/receipts/${receiptId}/matches`, {
+                    headers: this._getAuthHeaders()
+                })
                 return response
             } catch (err: any) {
                 this.error = err.message || 'Failed to find matching transactions'

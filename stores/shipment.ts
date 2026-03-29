@@ -1,5 +1,6 @@
 // stores/shipment.ts
 import { defineStore } from 'pinia'
+import { useUserStore } from '~/stores/user'
 
 export interface ShipmentAddress {
     name: string
@@ -168,12 +169,19 @@ export const useShipmentStore = defineStore('shipment', {
     },
 
     actions: {
+        _getAuthHeaders() {
+            const userStore = useUserStore()
+            return userStore.authHeader
+        },
+
         async fetchShipments() {
             this.isLoading = true
             this.error = null
 
             try {
-                const data = await $fetch<Shipment[]>('/api/shipments')
+                const data = await $fetch<Shipment[]>('/api/shipments', {
+                    headers: this._getAuthHeaders()
+                })
                 this.shipments = data
 
                 // Fetch statistics
@@ -191,7 +199,9 @@ export const useShipmentStore = defineStore('shipment', {
             this.error = null
 
             try {
-                const data = await $fetch<Shipment>(`/api/shipments/${id}`)
+                const data = await $fetch<Shipment>(`/api/shipments/${id}`, {
+                    headers: this._getAuthHeaders()
+                })
                 this.currentShipment = data
             } catch (error: any) {
                 this.error = error.message || `Failed to fetch shipment ${id}`
@@ -208,7 +218,8 @@ export const useShipmentStore = defineStore('shipment', {
             try {
                 const { data } = await useFetch('/api/shipments/create', {
                     method: 'POST',
-                    body: shipmentData
+                    body: shipmentData,
+                    headers: this._getAuthHeaders()
                 })
 
                 const newShipment = data.value as Shipment
@@ -236,7 +247,8 @@ export const useShipmentStore = defineStore('shipment', {
             try {
                 const { data } = await useFetch(`/api/shipments/${id}/update`, {
                     method: 'POST',
-                    body: shipmentData
+                    body: shipmentData,
+                    headers: this._getAuthHeaders()
                 })
 
                 const updatedShipment = data.value as Shipment
@@ -280,7 +292,8 @@ export const useShipmentStore = defineStore('shipment', {
 
                 const { data } = await useFetch(`/api/shipments/${id}/update`, {
                     method: 'POST',
-                    body: eventData
+                    body: eventData,
+                    headers: this._getAuthHeaders()
                 })
 
                 const updatedShipment = data.value as Shipment
@@ -316,7 +329,8 @@ export const useShipmentStore = defineStore('shipment', {
             try {
                 const { data } = await useFetch(`/api/shipments/${shipmentId}/tracking`, {
                     method: 'POST',
-                    body: eventData
+                    body: eventData,
+                    headers: this._getAuthHeaders()
                 })
 
                 const updatedShipment = data.value as Shipment
@@ -344,7 +358,9 @@ export const useShipmentStore = defineStore('shipment', {
 
         async fetchStats() {
             try {
-                const { data } = await useFetch('/api/shipments/stats')
+                const { data } = await useFetch('/api/shipments/stats', {
+                    headers: this._getAuthHeaders()
+                })
                 this.stats = data.value
             } catch (error: any) {
                 console.error('Error fetching shipment stats:', error)

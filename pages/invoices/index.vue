@@ -168,8 +168,10 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { Plus, FileText, Edit, Trash2, X } from 'lucide-vue-next'
+import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
 
 const isLoading = ref(false)
 const showModal = ref(false)
@@ -193,7 +195,7 @@ const loadInvoices = async () => {
   try {
     const params = new URLSearchParams()
     if (statusFilter.value) params.set('status', statusFilter.value)
-    const data = await $fetch(`/api/invoices?${params.toString()}`)
+    const data = await $fetch(`/api/invoices?${params.toString()}`, { headers: userStore.authHeader })
     invoices.value = data.invoices
   } catch (error) {
     console.error('Failed to load invoices:', error)
@@ -245,12 +247,14 @@ const saveInvoice = async () => {
     if (editingInvoice.value) {
       await $fetch(`/api/invoices/${editingInvoice.value.id}`, {
         method: 'PUT',
-        body: { ...form, items }
+        body: { ...form, items },
+        headers: userStore.authHeader
       })
     } else {
       await $fetch('/api/invoices', {
         method: 'POST',
-        body: { ...form, items }
+        body: { ...form, items },
+        headers: userStore.authHeader
       })
     }
     showModal.value = false
@@ -263,7 +267,7 @@ const saveInvoice = async () => {
 const deleteInvoice = async (id: string) => {
   if (!confirm('Delete this invoice?')) return
   try {
-    await $fetch(`/api/invoices/${id}`, { method: 'DELETE' })
+    await $fetch(`/api/invoices/${id}`, { method: 'DELETE', headers: userStore.authHeader })
     loadInvoices()
   } catch (error) {
     console.error('Failed to delete:', error)

@@ -123,8 +123,10 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { Plus, RefreshCw } from 'lucide-vue-next'
+import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
 
 const isLoading = ref(false)
 const isSyncing = ref(false)
@@ -152,7 +154,7 @@ const loadVendors = async () => {
   try {
     const params = new URLSearchParams()
     if (searchQuery.value) params.set('search', searchQuery.value)
-    const data = await $fetch(`/api/vendors?${params.toString()}`)
+    const data = await $fetch(`/api/vendors?${params.toString()}`, { headers: userStore.authHeader })
     vendors.value = data.vendors
   } catch (error) {
     console.error('Failed to load vendors:', error)
@@ -164,7 +166,7 @@ const loadVendors = async () => {
 const syncVendors = async () => {
   isSyncing.value = true
   try {
-    await $fetch('/api/vendors?sync=true')
+    await $fetch('/api/vendors?sync=true', { headers: userStore.authHeader })
     loadVendors()
   } catch (error) {
     console.error('Failed to sync:', error)
@@ -195,9 +197,9 @@ const openModal = (vendor?: any) => {
 const saveVendor = async () => {
   try {
     if (editingVendor.value) {
-      await $fetch(`/api/vendors/${editingVendor.value.id}`, { method: 'PUT', body: form })
+      await $fetch(`/api/vendors/${editingVendor.value.id}`, { method: 'PUT', body: form, headers: userStore.authHeader })
     } else {
-      await $fetch('/api/vendors', { method: 'POST', body: form })
+      await $fetch('/api/vendors', { method: 'POST', body: form, headers: userStore.authHeader })
     }
     showModal.value = false
     loadVendors()

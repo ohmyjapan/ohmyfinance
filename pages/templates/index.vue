@@ -65,8 +65,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { FileSpreadsheet, Upload, Eye, Star, Trash2 } from 'lucide-vue-next'
+import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
 const isLoading = ref(false)
 const templates = ref<any[]>([])
 const expandedTemplate = ref<string | null>(null)
@@ -74,7 +76,7 @@ const expandedTemplate = ref<string | null>(null)
 const loadTemplates = async () => {
   isLoading.value = true
   try {
-    templates.value = await $fetch('/api/templates')
+    templates.value = await $fetch('/api/templates', { headers: userStore.authHeader })
   } catch (error) {
     console.error('Failed to load templates:', error)
   } finally {
@@ -93,14 +95,16 @@ const setDefault = async (template: any) => {
     if (currentDefault) {
       await $fetch(`/api/templates/${currentDefault.id}`, {
         method: 'PUT',
-        body: { isDefault: false }
+        body: { isDefault: false },
+        headers: userStore.authHeader
       })
     }
 
     // Set new default
     await $fetch(`/api/templates/${template.id}`, {
       method: 'PUT',
-      body: { isDefault: true }
+      body: { isDefault: true },
+      headers: userStore.authHeader
     })
 
     await loadTemplates()
@@ -114,7 +118,7 @@ const deleteTemplate = async (template: any) => {
   if (!confirm(`Delete template "${template.name}"?`)) return
 
   try {
-    await $fetch(`/api/templates/${template.id}`, { method: 'DELETE' })
+    await $fetch(`/api/templates/${template.id}`, { method: 'DELETE', headers: userStore.authHeader })
     await loadTemplates()
   } catch (error) {
     console.error('Failed to delete:', error)

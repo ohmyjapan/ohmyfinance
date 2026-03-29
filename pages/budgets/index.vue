@@ -213,8 +213,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { Plus, Wallet, Edit, Trash2, AlertTriangle } from 'lucide-vue-next'
+import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
 
 const isLoading = ref(false)
 const showModal = ref(false)
@@ -245,7 +247,7 @@ const stats = computed(() => {
 const loadBudgets = async () => {
   isLoading.value = true
   try {
-    const data = await $fetch('/api/budgets?active=true')
+    const data = await $fetch('/api/budgets?active=true', { headers: userStore.authHeader })
     budgets.value = data.budgets
   } catch (error) {
     console.error('Failed to load budgets:', error)
@@ -280,12 +282,14 @@ const saveBudget = async () => {
     if (editingBudget.value) {
       await $fetch(`/api/budgets/${editingBudget.value.id}`, {
         method: 'PUT',
-        body: form
+        body: form,
+        headers: userStore.authHeader
       })
     } else {
       await $fetch('/api/budgets', {
         method: 'POST',
-        body: form
+        body: form,
+        headers: userStore.authHeader
       })
     }
     showModal.value = false
@@ -298,7 +302,7 @@ const saveBudget = async () => {
 const deleteBudget = async (id: string) => {
   if (!confirm('Are you sure you want to delete this budget?')) return
   try {
-    await $fetch(`/api/budgets/${id}`, { method: 'DELETE' })
+    await $fetch(`/api/budgets/${id}`, { method: 'DELETE', headers: userStore.authHeader })
     loadBudgets()
   } catch (error) {
     console.error('Failed to delete budget:', error)

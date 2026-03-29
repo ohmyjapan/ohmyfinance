@@ -210,8 +210,10 @@
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted } from 'vue'
 import { Plus, RefreshCw, Play, Pencil, Trash2, PauseCircle, PlayCircle } from 'lucide-vue-next'
+import { useUserStore } from '~/stores/user'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
 
 const isLoading = ref(false)
 const isSaving = ref(false)
@@ -250,7 +252,7 @@ const loadPayments = async () => {
     if (filters.frequency) params.set('frequency', filters.frequency)
     if (filters.search) params.set('search', filters.search)
 
-    payments.value = await $fetch(`/api/recurring?${params.toString()}`)
+    payments.value = await $fetch(`/api/recurring?${params.toString()}`, { headers: userStore.authHeader })
   } catch (error) {
     console.error('Failed to load payments:', error)
   } finally {
@@ -260,7 +262,7 @@ const loadPayments = async () => {
 
 const loadStats = async () => {
   try {
-    const data = await $fetch('/api/recurring?stats=true')
+    const data = await $fetch('/api/recurring?stats=true', { headers: userStore.authHeader })
     stats.value = data
   } catch (error) {
     console.error('Failed to load stats:', error)
@@ -269,7 +271,7 @@ const loadStats = async () => {
 
 const loadUpcoming = async () => {
   try {
-    const data = await $fetch('/api/recurring/process')
+    const data = await $fetch('/api/recurring/process', { headers: userStore.authHeader })
     upcoming.value = data
   } catch (error) {
     console.error('Failed to load upcoming:', error)
@@ -293,9 +295,9 @@ const savePayment = async () => {
     }
 
     if (showEditModal.value && editingId.value) {
-      await $fetch(`/api/recurring/${editingId.value}`, { method: 'PUT', body: payload })
+      await $fetch(`/api/recurring/${editingId.value}`, { method: 'PUT', body: payload, headers: userStore.authHeader })
     } else {
-      await $fetch('/api/recurring', { method: 'POST', body: payload })
+      await $fetch('/api/recurring', { method: 'POST', body: payload, headers: userStore.authHeader })
     }
 
     closeModal()
@@ -327,7 +329,7 @@ const editPayment = (payment: any) => {
 const deletePayment = async (payment: any) => {
   if (!confirm(`Delete "${payment.name}"?`)) return
   try {
-    await $fetch(`/api/recurring/${payment.id}`, { method: 'DELETE' })
+    await $fetch(`/api/recurring/${payment.id}`, { method: 'DELETE', headers: userStore.authHeader })
     await loadPayments()
     await loadStats()
   } catch (error) {
@@ -339,7 +341,7 @@ const deletePayment = async (payment: any) => {
 const togglePause = async (payment: any) => {
   try {
     const newStatus = payment.status === 'paused' ? 'active' : 'paused'
-    await $fetch(`/api/recurring/${payment.id}`, { method: 'PUT', body: { status: newStatus } })
+    await $fetch(`/api/recurring/${payment.id}`, { method: 'PUT', body: { status: newStatus }, headers: userStore.authHeader })
     await loadPayments()
     await loadStats()
   } catch (error) {
@@ -349,7 +351,7 @@ const togglePause = async (payment: any) => {
 
 const generateNow = async (payment: any) => {
   try {
-    await $fetch(`/api/recurring/${payment.id}`, { method: 'POST' })
+    await $fetch(`/api/recurring/${payment.id}`, { method: 'POST', headers: userStore.authHeader })
     alert('Transaction generated successfully')
     await loadPayments()
   } catch (error: any) {
@@ -361,7 +363,7 @@ const generateNow = async (payment: any) => {
 const processPayments = async () => {
   isProcessing.value = true
   try {
-    const result = await $fetch('/api/recurring/process', { method: 'POST' })
+    const result = await $fetch('/api/recurring/process', { method: 'POST', headers: userStore.authHeader })
     alert(result.message)
     await loadPayments()
     await loadStats()
