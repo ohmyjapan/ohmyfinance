@@ -94,9 +94,18 @@
             :files="uploadedFiles"
             :stats="importStats"
             :options="importOptions"
+            :source="selectedSource"
             @update-options="updateImportOptions"
             @back="previousStep"
             @import="performImport"
+          />
+        </div>
+
+        <!-- Step 5: Results -->
+        <div v-else-if="currentStep === 4" key="results">
+          <TransactionImportResults
+            :result="importResult"
+            @import-more="resetWizard"
           />
         </div>
       </Transition>
@@ -106,7 +115,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { CheckCircle, Upload, GitBranch, Eye, Download } from 'lucide-vue-next'
+import { CheckCircle, Upload, GitBranch, Eye, Download, BarChart3 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 
 const { t } = useI18n()
@@ -118,12 +127,13 @@ const steps = [
   { id: 'upload' },
   { id: 'mapping' },
   { id: 'preview' },
-  { id: 'import' }
+  { id: 'import' },
+  { id: 'results' }
 ]
 
 // Step icons
 const getStepIcon = (index: number) => {
-  const icons = [Upload, GitBranch, Eye, Download]
+  const icons = [Upload, GitBranch, Eye, Download, BarChart3]
   return icons[index] || Upload
 }
 
@@ -146,6 +156,7 @@ const importOptions = ref({
   saveTemplate: true,
   notifyWhenComplete: true
 })
+const importResult = ref<any>(null)
 
 // Get step circle class
 const getStepCircleClass = (index: number) => {
@@ -247,16 +258,41 @@ const performImport = async () => {
       body: {
         data: parsedData.value,
         mappings: fieldMappings.value,
-        options: importOptions.value
+        options: importOptions.value,
+        source: selectedSource.value,
+        fileName: uploadedFiles.value[0]?.name || ''
       }
     })
-
-    const imported = (result as any)?.results?.imported || 0
-    alert(t('transactionDetail.importComplete', { count: imported }))
-    navigateTo('/transactions')
+    importResult.value = result
+    // Advance to results step
+    if (!completedSteps.value.includes(currentStep.value)) {
+      completedSteps.value.push(currentStep.value)
+    }
+    currentStep.value = 4
   } catch (error: any) {
-    alert(t('transactionDetail.importError', { message: error.message || t('common.error') }))
+    // Show error in importResult
+    importResult.value = {
+      success: false,
+      error: error.message || t('common.error')
+    }
+    if (!completedSteps.value.includes(currentStep.value)) {
+      completedSteps.value.push(currentStep.value)
+    }
+    currentStep.value = 4
   }
+}
+
+// Reset wizard to start over
+const resetWizard = () => {
+  currentStep.value = 0
+  completedSteps.value = []
+  selectedSource.value = 'credit_card'
+  uploadedFiles.value = []
+  fieldMappings.value = {}
+  parsedData.value = []
+  importResult.value = null
+  importStats.value = { totalRecords: 0, validRecords: 0, warningRecords: 0, invalidRecords: 0 }
+  importOptions.value = { skipDuplicates: true, updateMatches: false, saveTemplate: true, notifyWhenComplete: true }
 }
 
 onMounted(() => {

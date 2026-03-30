@@ -24,6 +24,7 @@
     "submit": "送信",
     "back": "戻る",
     "next": "次へ",
+    "prev": "前へ",
     "previous": "前へ",
     "close": "閉じる",
     "open": "開く",
@@ -945,7 +946,8 @@
       "upload": "ファイルアップロード",
       "mapping": "フィールドマッピング",
       "preview": "データプレビュー",
-      "import": "インポート"
+      "import": "インポート",
+      "results": "結果"
     }
   },
   "paymentModal": {
@@ -1212,7 +1214,14 @@
     "warningRecords": "警告レコード",
     "missingEmails": "メールなし",
     "missingStatus": "ステータスなし",
-    "outOfRangeDates": "範囲外の日付"
+    "outOfRangeDates": "範囲外の日付: {count}件",
+    "invalidAmounts": "無効な金額: {count}件",
+    "invalidDates": "無効な日付: {count}件",
+    "invalidTypes": "無効な区別: {count}件",
+    "newEntitiesNotice": "以下の取引先は新規作成されます",
+    "newSuppliers": "新規仕入れ先",
+    "newCustomers": "新規顧客",
+    "showingRows": "{from}〜{to} / {total}件を表示"
   },
   "fieldMapper": {
     "backToUpload": "アップロードに戻る",
@@ -1326,7 +1335,20 @@
     "updateMatchesDesc": "既存の取引とマッチするレコードを更新",
     "description": "インポート内容を確認してください",
     "records": "レコード",
-    "warningRecords": "警告レコード"
+    "warningRecords": "警告レコード",
+    "confirmTitle": "インポート確認",
+    "confirmMessage": "{count}件の取引をインポートしますか？"
+  },
+  "importResults": {
+    "successTitle": "インポート完了",
+    "errorTitle": "インポートエラー",
+    "imported": "インポート済み",
+    "skipped": "スキップ",
+    "errors": "エラー",
+    "batchId": "バッチID",
+    "viewTransactions": "取引を表示",
+    "importMore": "追加インポート",
+    "showErrors": "エラーを表示 ({count}件)"
   },
   "loginPage": {
     "emailPlaceholder": "メールアドレスを入力",

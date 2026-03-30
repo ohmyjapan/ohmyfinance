@@ -305,14 +305,10 @@ const processFiles = async (files: File[]) => {
       const formData = new FormData()
       formData.append('file', file)
 
-      console.log('Uploading file:', file.name, 'size:', file.size, 'type:', file.type)
-
       const res = await fetch('/api/excel-processor', {
         method: 'POST',
         body: formData
       }).then(r => r.json())
-
-      console.log('Response:', JSON.stringify(res, null, 2))
 
       const idx = selectedFiles.value.findIndex(f => f.name === file.name)
       if (idx !== -1) {
@@ -325,7 +321,6 @@ const processFiles = async (files: File[]) => {
             headers: res.headers,
             data: res.data
           }
-          console.log('File processed successfully:', file.name, 'rows:', res.data.length)
         } else {
           const errorMsg = res.error || res.statusMessage || (res.data?.length === 0 ? t('transactionImport.emptyData') : t('transactionImport.processFailed'))
           selectedFiles.value[idx] = {

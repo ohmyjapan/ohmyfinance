@@ -63,6 +63,22 @@
         </div>
       </div>
 
+      <!-- New Entities Warning -->
+      <div v-if="newEntities.newSuppliers.length > 0 || newEntities.newCustomers.length > 0" class="mb-6 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-500/10 p-4">
+        <div class="flex items-start gap-3">
+          <Info class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p class="text-sm font-medium text-blue-800 dark:text-blue-300 mb-1">{{ t('dataPreview.newEntitiesNotice') }}</p>
+            <p v-if="newEntities.newSuppliers.length > 0" class="text-sm text-blue-700 dark:text-blue-400">
+              {{ t('dataPreview.newSuppliers') }}: {{ newEntities.newSuppliers.join(', ') }}
+            </p>
+            <p v-if="newEntities.newCustomers.length > 0" class="text-sm text-blue-700 dark:text-blue-400">
+              {{ t('dataPreview.newCustomers') }}: {{ newEntities.newCustomers.join(', ') }}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <!-- Table Controls -->
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-3">
@@ -164,7 +180,7 @@
           </thead>
           <tbody class="divide-y divide-gray-200 dark:divide-white/5">
           <tr
-              v-for="(row, index) in filteredData"
+              v-for="(row, index) in paginatedData"
               :key="index"
               :class="getRowClass(row)"
               class="hover:bg-gray-50 dark:hover:bg-white/[0.03] transition-colors"
@@ -199,22 +215,46 @@
         </table>
       </div>
 
+      <!-- Pagination -->
+      <div v-if="totalPages > 1" class="flex items-center justify-between mb-6">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          {{ t('dataPreview.showingRows', { from: (currentPage - 1) * pageSize + 1, to: Math.min(currentPage * pageSize, filteredData.length), total: filteredData.length }) }}
+        </p>
+        <div class="flex items-center gap-2">
+          <button
+            :disabled="currentPage <= 1"
+            @click="currentPage--"
+            class="px-3 py-1.5 border border-gray-200 dark:border-white/10 rounded-lg text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >{{ t('common.prev') }}</button>
+          <span class="text-sm text-gray-500 dark:text-gray-400">{{ currentPage }} / {{ totalPages }}</span>
+          <button
+            :disabled="currentPage >= totalPages"
+            @click="currentPage++"
+            class="px-3 py-1.5 border border-gray-200 dark:border-white/10 rounded-lg text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >{{ t('common.next') }}</button>
+        </div>
+      </div>
+
       <!-- Validation Summary -->
       <div v-if="stats.warningRecords > 0 || stats.invalidRecords > 0"
            class="mb-6 rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-500/10 p-4">
         <h3 class="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">{{ t('dataPreview.validationWarnings') }}</h3>
         <ul class="text-sm text-amber-700 dark:text-amber-400 space-y-1">
-          <li v-if="validationIssues.missingEmails > 0" class="flex items-start">
+          <li v-if="validationIssues.invalidAmounts > 0" class="flex items-start">
             <AlertCircle class="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
-            <span>{{ t('dataPreview.missingEmails', { count: validationIssues.missingEmails }) }}</span>
+            <span>{{ t('dataPreview.invalidAmounts', { count: validationIssues.invalidAmounts }) }}</span>
           </li>
-          <li v-if="validationIssues.missingStatus > 0" class="flex items-start">
+          <li v-if="validationIssues.invalidDates > 0" class="flex items-start">
             <AlertCircle class="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
-            <span>{{ t('dataPreview.missingStatus', { count: validationIssues.missingStatus }) }}</span>
+            <span>{{ t('dataPreview.invalidDates', { count: validationIssues.invalidDates }) }}</span>
           </li>
           <li v-if="validationIssues.outOfRangeDates > 0" class="flex items-start">
             <AlertCircle class="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
             <span>{{ t('dataPreview.outOfRangeDates', { count: validationIssues.outOfRangeDates }) }}</span>
+          </li>
+          <li v-if="validationIssues.invalidTypes > 0" class="flex items-start">
+            <AlertCircle class="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
+            <span>{{ t('dataPreview.invalidTypes', { count: validationIssues.invalidTypes }) }}</span>
           </li>
         </ul>
       </div>
@@ -249,7 +289,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import {
   ChevronDown,
   Filter,
@@ -260,7 +300,8 @@ import {
   XCircle,
   RefreshCw,
   ArrowRight,
-  Database
+  Database,
+  Info
 } from 'lucide-vue-next'
 
 const { t, locale } = useI18n()
@@ -301,10 +342,14 @@ const stats = ref({
 
 // Validation issues summary
 const validationIssues = ref({
-  missingEmails: 0,
-  missingStatus: 0,
-  outOfRangeDates: 0
+  invalidAmounts: 0,
+  invalidDates: 0,
+  outOfRangeDates: 0,
+  invalidTypes: 0
 })
+
+// New entities that will be auto-created
+const newEntities = ref({ newSuppliers: [], newCustomers: [] })
 
 // Preview data
 const previewData = ref([])
@@ -386,6 +431,20 @@ const filteredData = computed(() => {
   return result
 })
 
+// Pagination
+const currentPage = ref(1)
+const pageSize = 50
+
+const paginatedData = computed(() => {
+  const start = (currentPage.value - 1) * pageSize
+  return filteredData.value.slice(start, start + pageSize)
+})
+
+const totalPages = computed(() => Math.ceil(filteredData.value.length / pageSize))
+
+// Reset pagination when filter changes
+watch(() => filter.value.recordType, () => { currentPage.value = 1 })
+
 // Reset filters
 const resetFilters = () => {
   filter.value = {
@@ -397,19 +456,17 @@ const resetFilters = () => {
 }
 
 // Process the raw data for preview
-const processData = () => {
-  // This would be more sophisticated in a real app
-  // Here we're just adding validation status to each row
-
+const processData = async () => {
   let data = [...props.parsedData]
 
   if (data.length === 0) return
 
   // Reset validation counters
   validationIssues.value = {
-    missingEmails: 0,
-    missingStatus: 0,
-    outOfRangeDates: 0
+    invalidAmounts: 0,
+    invalidDates: 0,
+    outOfRangeDates: 0,
+    invalidTypes: 0
   }
 
   // Create a transformed dataset with mapped fields
@@ -426,28 +483,37 @@ const processData = () => {
       if (mapping && mapping.field && mapping.field !== '' && mapping.field !== 'null') {
         newRow[mapping.field] = row[sourceField]
 
-        // Apply validation based on field type
-        if (mapping.field === 'customer_email') {
-          if (!row[sourceField] || !isValidEmail(row[sourceField])) {
-            newRow._status = 'warning'
-            newRow._issues.push('invalid_email')
-            validationIssues.value.missingEmails++
+        // Validate amount field
+        if (mapping.field === 'amount') {
+          const rawVal = String(row[sourceField] || '').replace(/,/g, '')
+          if (!rawVal || isNaN(parseFloat(rawVal))) {
+            newRow._status = 'invalid'
+            newRow._issues.push('invalid_amount')
+            validationIssues.value.invalidAmounts++
           }
-        } else if (mapping.field === 'transaction_status') {
-          if (!row[sourceField]) {
+        } else if (mapping.field === 'date') {
+          const dateStr = String(row[sourceField] || '').replace(/\//g, '-')
+          const date = new Date(dateStr)
+          if (!row[sourceField] || isNaN(date.getTime())) {
             newRow._status = 'warning'
-            newRow._issues.push('missing_status')
-            validationIssues.value.missingStatus++
+            newRow._issues.push('invalid_date')
+            validationIssues.value.invalidDates++
+          } else {
+            // Check if date is unreasonably old (>2 years)
+            const twoYearsAgo = new Date()
+            twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2)
+            if (date < twoYearsAgo) {
+              newRow._status = 'warning'
+              newRow._issues.push('date_out_of_range')
+              validationIssues.value.outOfRangeDates++
+            }
           }
-        } else if (mapping.field === 'transaction_date') {
-          const date = new Date(row[sourceField])
-          const now = new Date()
-          const oneYearAgo = new Date(now.setFullYear(now.getFullYear() - 1))
-
-          if (isNaN(date.getTime()) || date < oneYearAgo) {
+        } else if (mapping.field === 'type') {
+          const val = row[sourceField]
+          if (val && val !== '支出' && val !== '入金') {
             newRow._status = 'warning'
-            newRow._issues.push('date_out_of_range')
-            validationIssues.value.outOfRangeDates++
+            newRow._issues.push('invalid_type')
+            validationIssues.value.invalidTypes++
           }
         }
       }
@@ -467,6 +533,25 @@ const processData = () => {
     invalidRecords: transformed.filter(row => row._status === 'invalid').length
   }
 
+  // Check for new entities that will be auto-created
+  const supplierField = Object.keys(props.mappings).find(k => props.mappings[k]?.field === 'supplierName')
+  const customerField = Object.keys(props.mappings).find(k => props.mappings[k]?.field === 'customerName')
+
+  const supplierNames = supplierField ? [...new Set(props.parsedData.map(r => r[supplierField]).filter(Boolean))] : []
+  const customerNames = customerField ? [...new Set(props.parsedData.map(r => r[customerField]).filter(Boolean))] : []
+
+  if (supplierNames.length > 0 || customerNames.length > 0) {
+    try {
+      const preview = await $fetch('/api/transactions/import-preview', {
+        method: 'POST',
+        body: { supplierNames, customerNames }
+      })
+      newEntities.value = preview
+    } catch (e) {
+      // silently ignore
+    }
+  }
+
   // Emit the transformed data for parent component
   emit('update-data', transformed)
 }
@@ -480,7 +565,7 @@ const exportPreview = () => {
 
   filteredData.value.forEach(row => {
     const values = fields.map(field => {
-      const val = row[field] ?? ''
+      const val = formatFieldValue(field, row[field])
       const str = String(val)
       // Quote fields containing commas, quotes, or newlines
       if (str.includes(',') || str.includes('"') || str.includes('\n')) {
@@ -510,14 +595,13 @@ const getRowClass = (row) => {
 
 // Get CSS class for a field based on its validation status
 const getFieldClass = (row, field) => {
-  // Highlight specific fields with issues
-  if (field === 'customer_email' && row._issues?.includes('invalid_email')) {
+  if (field === 'amount' && row._issues?.includes('invalid_amount')) {
+    return 'text-red-800 dark:text-red-400'
+  }
+  if (field === 'date' && (row._issues?.includes('invalid_date') || row._issues?.includes('date_out_of_range'))) {
     return 'text-yellow-800 dark:text-yellow-400'
   }
-  if (field === 'transaction_status' && row._issues?.includes('missing_status')) {
-    return 'text-yellow-800 dark:text-yellow-400'
-  }
-  if (field === 'transaction_date' && row._issues?.includes('date_out_of_range')) {
+  if (field === 'type' && row._issues?.includes('invalid_type')) {
     return 'text-yellow-800 dark:text-yellow-400'
   }
 
@@ -587,8 +671,4 @@ const formatDate = (value) => {
   }
 }
 
-// Validate email format
-const isValidEmail = (email) => {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-}
 </script>

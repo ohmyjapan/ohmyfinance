@@ -1,16 +1,18 @@
 import { defineEventHandler, readBody, createError } from 'h3'
+import crypto from 'crypto'
 import { createTransaction } from '../../services/transactionService'
 import AccountCategory from '../../models/AccountCategory'
 import TaxCategory from '../../models/TaxCategory'
 import Supplier from '../../models/Supplier'
 import TransactionCategory from '../../models/TransactionCategory'
 import Customer from '../../models/Customer'
+import Transaction from '../../models/Transaction'
 import { ensureConnection } from '../../config/database'
 
 /**
  * POST /api/transactions/import
  * Import pre-parsed transactions with field mappings applied.
- * Receives JSON body: { data: [...], mappings: {...}, options: {...} }
+ * Receives JSON body: { data: [...], mappings: {...}, options: {...}, source?: string, fileName?: string }
  * Data comes from the excel-processor API (already parsed).
  * Auth: handled by api.ts middleware for /api/transactions/* routes
  */
@@ -36,6 +38,11 @@ export default defineEventHandler(async (event) => {
 
     const mappings = body.mappings || {}
     const options = body.options || {}
+    const importSource = body.source || ''
+    const importFileName = body.fileName || ''
+
+    // Generate batch ID for this import
+    const batchId = `IMP-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
 
     try {
         // Apply field mappings to raw data
@@ -61,6 +68,64 @@ export default defineEventHandler(async (event) => {
         // Ensure MongoDB connection
         await ensureConnection()
 
+        // --- Lookup cache: pre-load all reference documents to avoid N+1 queries ---
+        const [allAccountCategories, allTaxCategories, allTransactionCategories, allSuppliers, allCustomers] = await Promise.all([
+            AccountCategory.find({}).lean(),
+            TaxCategory.find({}).lean(),
+            TransactionCategory.find({}).lean(),
+            Supplier.find({}).lean(),
+            Customer.find({}).lean(),
+        ])
+
+        const accountCategoryMap = new Map<string, any>()
+        for (const doc of allAccountCategories) accountCategoryMap.set((doc as any).name, (doc as any)._id)
+
+        const taxCategoryMap = new Map<string, any>()
+        for (const doc of allTaxCategories) taxCategoryMap.set((doc as any).name, (doc as any)._id)
+
+        const transactionCategoryMap = new Map<string, any>()
+        for (const doc of allTransactionCategories) transactionCategoryMap.set((doc as any).name, (doc as any)._id)
+
+        const supplierMap = new Map<string, any>()
+        for (const doc of allSuppliers) supplierMap.set((doc as any).name, (doc as any)._id)
+
+        const customerMap = new Map<string, any>()
+        for (const doc of allCustomers) customerMap.set((doc as any).name, (doc as any)._id)
+
+        // Cached lookup helpers
+        const findAccountCategory = (name: string) => {
+            if (!name) return null
+            return accountCategoryMap.get(name) || null
+        }
+
+        const findTaxCategory = (name: string) => {
+            if (!name) return null
+            return taxCategoryMap.get(name) || null
+        }
+
+        const findTransactionCategory = (name: string) => {
+            if (!name) return null
+            return transactionCategoryMap.get(name) || null
+        }
+
+        const findSupplier = async (name: string) => {
+            if (!name) return null
+            if (supplierMap.has(name)) return supplierMap.get(name)
+            // Auto-create and cache
+            const supplier = await Supplier.create({ name, isActive: true })
+            supplierMap.set(name, supplier._id)
+            return supplier._id
+        }
+
+        const findCustomer = async (name: string) => {
+            if (!name) return null
+            if (customerMap.has(name)) return customerMap.get(name)
+            // Auto-create and cache
+            const customer = await Customer.create({ name, isActive: true })
+            customerMap.set(name, customer._id)
+            return customer._id
+        }
+
         // Track import results
         const importResults = {
             total: parsedData.length,
@@ -72,43 +137,6 @@ export default defineEventHandler(async (event) => {
 
         // Process each record
         const importedTransactions: any[] = []
-
-        // Helper function to find or create related records by name
-        const findAccountCategory = async (name: string) => {
-            if (!name) return null
-            const cat = await AccountCategory.findOne({ name })
-            return cat?._id || null
-        }
-
-        const findTaxCategory = async (name: string) => {
-            if (!name) return null
-            const cat = await TaxCategory.findOne({ name })
-            return cat?._id || null
-        }
-
-        const findSupplier = async (name: string) => {
-            if (!name) return null
-            let supplier = await Supplier.findOne({ name })
-            if (!supplier) {
-                supplier = await Supplier.create({ name, isActive: true })
-            }
-            return supplier._id
-        }
-
-        const findCustomer = async (name: string) => {
-            if (!name) return null
-            let customer = await Customer.findOne({ name })
-            if (!customer) {
-                customer = await Customer.create({ name, isActive: true })
-            }
-            return customer._id
-        }
-
-        const findTransactionCategory = async (name: string) => {
-            if (!name) return null
-            const cat = await TransactionCategory.findOne({ name })
-            return cat?._id || null
-        }
 
         for (const record of parsedData) {
             try {
@@ -126,13 +154,20 @@ export default defineEventHandler(async (event) => {
                 }
 
                 // Parse date — handle YYYY/MM/DD format
-                let transactionDate = new Date()
+                let transactionDate: Date
                 if (record.date) {
                     const dateStr = String(record.date).replace(/\//g, '-')
                     transactionDate = new Date(dateStr)
                     if (isNaN(transactionDate.getTime())) {
-                        transactionDate = new Date()
+                        // Invalid date → push to errors instead of silently using today
+                        importResults.errors.push({
+                            record,
+                            error: `無効な日付です: ${record.date} (Invalid date)`
+                        })
+                        continue
                     }
+                } else {
+                    transactionDate = new Date()
                 }
 
                 // Parse type (支出/入金)
@@ -141,13 +176,31 @@ export default defineEventHandler(async (event) => {
                     transactionType = parsedAmount < 0 ? '支出' : '入金'
                 }
 
-                // Resolve related IDs by name
-                const accountCategoryId = await findAccountCategory(record.accountCategoryName)
-                const subAccountCategoryId = await findAccountCategory(record.subAccountCategoryName)
-                const taxCategoryId = await findTaxCategory(record.taxCategoryName)
+                // Skip duplicates check
+                if (options.skipDuplicates) {
+                    const existing = await Transaction.findOne({
+                        date: transactionDate,
+                        amount: Math.abs(parsedAmount),
+                        notes: record.notes || ''
+                    })
+                    if (existing) {
+                        importResults.skipped++
+                        continue
+                    }
+                }
+
+                // Resolve related IDs by name (using cached lookups)
+                const accountCategoryId = findAccountCategory(record.accountCategoryName)
+                const subAccountCategoryId = findAccountCategory(record.subAccountCategoryName)
+                const taxCategoryId = findTaxCategory(record.taxCategoryName)
                 const supplierId = await findSupplier(record.supplierName)
                 const customerId = await findCustomer(record.customerName)
-                const transactionCategoryId = await findTransactionCategory(record.transactionCategoryName)
+                const transactionCategoryId = findTransactionCategory(record.transactionCategoryName)
+
+                // Build timeline description
+                const timelineDesc = importFileName
+                    ? `${importSource || 'CSV'}インポート (${importFileName})`
+                    : `${importSource || 'CSV'}インポート`
 
                 // Create a new transaction (OMF style)
                 const transactionData = {
@@ -171,13 +224,17 @@ export default defineEventHandler(async (event) => {
                     janCode: record.janCode || '',
                     notes: record.notes || '',
                     hasReceipt: false,
-                    tags: ['imported'],
+                    tags: ['imported', `batch:${batchId}`],
+                    metadata: {
+                        importBatchId: batchId,
+                        importSource: importSource || undefined,
+                    },
                     timeline: [
                         {
                             type: 'imported',
                             title: 'インポート完了',
                             timestamp: new Date(),
-                            description: 'CSVインポート'
+                            description: timelineDesc
                         }
                     ]
                 }
@@ -196,6 +253,7 @@ export default defineEventHandler(async (event) => {
 
         return {
             success: true,
+            batchId,
             results: importResults,
             transactions: importedTransactions
         }

@@ -179,6 +179,21 @@
       </div>
     </div>
   </div>
+
+  <!-- Confirmation Dialog -->
+  <Teleport to="body">
+    <div v-if="showConfirmDialog" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="fixed inset-0 bg-black/50" @click="cancelImport" />
+      <div class="relative z-10 bg-white dark:bg-gray-800 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ t('importConfirmation.confirmTitle') }}</h3>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-6">{{ t('importConfirmation.confirmMessage', { count: stats.validRecords + stats.warningRecords }) }}</p>
+        <div class="flex justify-end gap-3">
+          <button @click="cancelImport" class="px-4 py-2 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all">{{ t('common.cancel') }}</button>
+          <button @click="confirmImport" class="px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all">{{ t('importConfirmation.startImport') }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -215,6 +230,10 @@ const props = defineProps({
       saveTemplate: true,
       notifyWhenComplete: true
     })
+  },
+  source: {
+    type: String,
+    default: ''
   }
 })
 
@@ -223,6 +242,7 @@ const emit = defineEmits(['update-options', 'back', 'import'])
 // Local state
 const localOptions = ref({...props.options})
 const isImporting = ref(false)
+const showConfirmDialog = ref(false)
 
 // Watch for changes to localOptions
 watch(localOptions.value, (newOptions) => {
@@ -231,17 +251,9 @@ watch(localOptions.value, (newOptions) => {
 
 // Get source type label
 const getSourceTypeLabel = () => {
-  // Try to detect source type from filenames
-  const firstFile = props.files[0]?.name || ''
-
-  if (firstFile.toLowerCase().includes('credit') || firstFile.toLowerCase().includes('card')) {
-    return t('importConfirmation.creditCardFiles')
-  } else if (firstFile.toLowerCase().includes('payment') || firstFile.toLowerCase().includes('gateway')) {
-    return t('importConfirmation.paymentGateway')
-  } else if (firstFile.toLowerCase().includes('overseas') || firstFile.toLowerCase().includes('order')) {
-    return t('importConfirmation.overseasOrders')
-  }
-
+  if (props.source === 'credit_card') return t('importConfirmation.creditCardFiles')
+  if (props.source === 'payment_gateway') return t('importConfirmation.paymentGateway')
+  if (props.source === 'overseas') return t('importConfirmation.overseasOrders')
   return t('importConfirmation.transactionFiles')
 }
 
@@ -279,22 +291,22 @@ const getDataQualityBadgeClass = () => {
   }
 }
 
-// Perform the import
-const performImport = async () => {
+// Perform the import — show confirmation dialog first
+const performImport = () => {
+  showConfirmDialog.value = true
+}
+
+const confirmImport = async () => {
+  showConfirmDialog.value = false
   isImporting.value = true
-
   try {
-    // In a real app, this would make an API call to start the import
-    // For demo purposes, we'll simulate an import with a delay
-    await new Promise(resolve => setTimeout(resolve, 2000))
-
-    // Emit the import event
     emit('import', localOptions.value)
-  } catch (error) {
-    console.error('Import failed:', error)
-    // Handle error
   } finally {
     isImporting.value = false
   }
+}
+
+const cancelImport = () => {
+  showConfirmDialog.value = false
 }
 </script>

@@ -24,6 +24,7 @@
     "submit": "제출",
     "back": "뒤로",
     "next": "다음",
+    "prev": "이전",
     "previous": "이전",
     "close": "닫기",
     "open": "열기",
@@ -969,7 +970,8 @@
       "upload": "파일 업로드",
       "mapping": "필드 매핑",
       "preview": "데이터 미리보기",
-      "import": "가져오기"
+      "import": "가져오기",
+      "results": "결과"
     }
   },
   "profile": {
@@ -1236,7 +1238,14 @@
     "warningRecords": "경고 레코드",
     "missingEmails": "이메일 없음",
     "missingStatus": "상태 없음",
-    "outOfRangeDates": "범위를 벗어난 날짜"
+    "outOfRangeDates": "범위를 벗어난 날짜: {count}건",
+    "invalidAmounts": "유효하지 않은 금액: {count}건",
+    "invalidDates": "유효하지 않은 날짜: {count}건",
+    "invalidTypes": "유효하지 않은 유형: {count}건",
+    "newEntitiesNotice": "다음 거래처가 새로 생성됩니다",
+    "newSuppliers": "신규 거래처",
+    "newCustomers": "신규 고객",
+    "showingRows": "{from}~{to} / {total}건 표시"
   },
   "fieldMapper": {
     "backToUpload": "업로드로 돌아가기",
@@ -1350,7 +1359,20 @@
     "updateMatchesDesc": "기존 거래와 일치하는 레코드 업데이트",
     "description": "가져오기 내용을 확인하세요",
     "records": "레코드",
-    "warningRecords": "경고 레코드"
+    "warningRecords": "경고 레코드",
+    "confirmTitle": "가져오기 확인",
+    "confirmMessage": "{count}건의 거래를 가져오시겠습니까?"
+  },
+  "importResults": {
+    "successTitle": "가져오기 완료",
+    "errorTitle": "가져오기 오류",
+    "imported": "가져온 항목",
+    "skipped": "건너뛴 항목",
+    "errors": "오류",
+    "batchId": "배치 ID",
+    "viewTransactions": "거래 보기",
+    "importMore": "추가 가져오기",
+    "showErrors": "오류 보기 ({count}건)"
   },
   "loginPage": {
     "emailPlaceholder": "이메일 주소 입력",

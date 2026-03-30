@@ -7,6 +7,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import iconv from 'iconv-lite';
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 /**
  * Detect if a buffer is Shift-JIS encoded.
  * Checks for common Shift-JIS byte patterns (half-width katakana, double-byte chars).
@@ -60,7 +62,8 @@ function detectEncoding(buffer) {
 const rootDir = process.cwd();
 
 /**
- * Process Excel file using a child process to avoid ESM issues
+ * Process Excel file using a child process to avoid ESM issues.
+ * Paths are passed via process.argv to prevent script injection.
  */
 async function processExcelWithChildProcess(filePath, outputDir) {
     await fs.mkdir(outputDir, { recursive: true });
@@ -69,16 +72,21 @@ async function processExcelWithChildProcess(filePath, outputDir) {
     const scriptPath = path.join(rootDir, `temp-excel-proc-${Date.now()}.cjs`);
     const outputPath = path.join(outputDir, `${path.basename(fileName, path.extname(fileName))}.json`);
 
-    const escapedFilePath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedOutputPath = outputPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-
-    // Script that converts Excel to JSON with proper headers
+    // Script reads paths from process.argv — no string interpolation of user data
     const scriptContent = `
 const XLSX = require('xlsx');
 const fs = require('fs');
 
+const inputPath = process.argv[2];
+const outputPath = process.argv[3];
+
+if (!inputPath || !outputPath) {
+    console.error('ERROR: Missing inputPath or outputPath arguments');
+    process.exit(1);
+}
+
 try {
-    const workbook = XLSX.readFile('${escapedFilePath}', {
+    const workbook = XLSX.readFile(inputPath, {
         cellStyles: true,
         cellFormulas: true,
         cellDates: true,
@@ -99,7 +107,7 @@ try {
     });
 
     if (rawData.length === 0) {
-        fs.writeFileSync('${escapedOutputPath}', JSON.stringify({ headers: [], data: [] }));
+        fs.writeFileSync(outputPath, JSON.stringify({ headers: [], data: [] }));
         console.log('SUCCESS');
         process.exit(0);
     }
@@ -136,7 +144,7 @@ try {
         allSheetNames: workbook.SheetNames
     };
 
-    fs.writeFileSync('${escapedOutputPath}', JSON.stringify(result, null, 2));
+    fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
     console.log('SUCCESS');
     process.exit(0);
 } catch (error) {
@@ -148,7 +156,8 @@ try {
     writeFileSync(scriptPath, scriptContent, 'utf8');
 
     return new Promise((resolve, reject) => {
-        const child = spawn('node', [scriptPath]);
+        // Pass file paths as arguments instead of embedding in script
+        const child = spawn('node', [scriptPath, filePath, outputPath]);
         let stderr = '';
         let stdout = '';
 
@@ -292,6 +301,15 @@ export default defineEventHandler(async (event) => {
             });
         }
 
+        // Server-side file size limit: 10MB
+        if (file.data && file.data.length > MAX_FILE_SIZE) {
+            throw createError({
+                statusCode: 413,
+                statusMessage: 'ファイルサイズが大きすぎます (File too large)',
+                message: `File size ${(file.data.length / 1024 / 1024).toFixed(1)}MB exceeds 10MB limit`
+            });
+        }
+
         const fileExt = path.extname(file.filename).toLowerCase();
 
         // Validate file type
@@ -346,8 +364,25 @@ export default defineEventHandler(async (event) => {
             await fs.writeFile(processedFilePath, JSON.stringify({ headers, data }, null, 2));
         }
 
-        // Clean up the original uploaded file after processing (optional)
-        // await fs.unlink(filePath);
+        // Clean up the original uploaded file after processing
+        try {
+            await fs.unlink(filePath);
+        } catch (e) {
+            console.warn('[excel-processor] Failed to clean up uploaded file:', filePath, e.message);
+        }
+
+        // Schedule cleanup of processed JSON file after 24 hours
+        if (processedFilePath) {
+            const cleanupPath = processedFilePath;
+            setTimeout(async () => {
+                try {
+                    await fs.unlink(cleanupPath);
+                    console.log('[excel-processor] Cleaned up processed file:', cleanupPath);
+                } catch (e) {
+                    // File may already be deleted — ignore
+                }
+            }, 24 * 60 * 60 * 1000);
+        }
 
         console.log('[excel-processor] Success! Headers:', headers.length, 'Data rows:', data.length);
 
@@ -364,8 +399,8 @@ export default defineEventHandler(async (event) => {
         console.error('[excel-processor] Error:', error.message || error);
 
         throw createError({
-            statusCode: 500,
-            statusMessage: error.message || 'Failed to process file'
+            statusCode: error.statusCode || 500,
+            statusMessage: error.statusMessage || error.message || 'Failed to process file'
         });
     }
 });
