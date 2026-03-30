@@ -1,10 +1,4 @@
-import { defineEventHandler, readMultipartFormData, createError } from 'h3'
-import { v4 as uuidv4 } from 'uuid'
-import * as Papa from 'papaparse'
-import { writeFile, mkdir, unlink, readFile } from 'fs/promises'
-import { join, basename, extname } from 'path'
-import { spawn } from 'child_process'
-import { writeFileSync, unlinkSync } from 'fs'
+import { defineEventHandler, readBody, createError } from 'h3'
 import { createTransaction } from '../../services/transactionService'
 import AccountCategory from '../../models/AccountCategory'
 import TaxCategory from '../../models/TaxCategory'
@@ -15,72 +9,14 @@ import { ensureConnection } from '../../config/database'
 import { requireAuth } from '../../middleware/auth'
 
 /**
- * Process Excel file using a child process to avoid ESM issues
- */
-async function processExcelFile(filePath: string, outputDir: string): Promise<string> {
-    await mkdir(outputDir, { recursive: true })
-
-    const fileName = basename(filePath)
-    const scriptPath = join(process.cwd(), `temp-excel-import-${Date.now()}.cjs`)
-    const outputPath = join(outputDir, `${basename(fileName, extname(fileName))}.json`)
-
-    // Escape paths for Windows compatibility
-    const escapedFilePath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-    const escapedOutputPath = outputPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-
-    const scriptContent = `
-const XLSX = require('xlsx');
-const fs = require('fs');
-
-try {
-    const workbook = XLSX.readFile('${escapedFilePath}', {
-        cellStyles: true,
-        cellDates: true,
-        cellNF: true
-    });
-
-    // Get first sheet and convert to JSON with headers
-    const firstSheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[firstSheetName];
-    const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-
-    fs.writeFileSync('${escapedOutputPath}', JSON.stringify({ data, sheetName: firstSheetName }, null, 2));
-    console.log('SUCCESS');
-    process.exit(0);
-} catch (error) {
-    console.error('ERROR:', error.message);
-    process.exit(1);
-}
-`
-
-    writeFileSync(scriptPath, scriptContent, 'utf8')
-
-    return new Promise((resolve, reject) => {
-        const child = spawn('node', [scriptPath])
-        let stderr = ''
-
-        child.stderr.on('data', (data) => {
-            stderr += data.toString()
-        })
-
-        child.on('close', (code) => {
-            try { unlinkSync(scriptPath) } catch (e) {}
-
-            if (code === 0) {
-                resolve(outputPath)
-            } else {
-                reject(new Error(`Excel processing failed: ${stderr}`))
-            }
-        })
-    })
-}
-
-/**
  * POST /api/transactions/import
- * Import transactions from CSV or Excel files
+ * Import pre-parsed transactions with field mappings applied.
+ * Receives JSON body: { data: [...], mappings: {...}, options: {...} }
+ * Data comes from the excel-processor API (already parsed).
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
+
     if (event.method !== 'POST') {
         throw createError({
             statusCode: 405,
@@ -89,100 +25,32 @@ export default defineEventHandler(async (event) => {
         })
     }
 
-    // Parse multipart form data (file upload)
-    const formData = await readMultipartFormData(event)
+    const body = await readBody(event)
 
-    if (!formData || formData.length === 0) {
+    if (!body || !body.data || !Array.isArray(body.data)) {
         throw createError({
             statusCode: 400,
             statusMessage: 'Bad Request',
-            message: 'No file uploaded'
+            message: 'Missing data array in request body'
         })
     }
 
-    // Get the file and options data
-    const file = formData.find(part => part.name === 'file')
-    const optionsParam = formData.find(part => part.name === 'options')
-    const mappingsParam = formData.find(part => part.name === 'mappings')
-
-    if (!file || !file.data) {
-        throw createError({
-            statusCode: 400,
-            statusMessage: 'Bad Request',
-            message: 'Invalid file upload'
-        })
-    }
-
-    // Parse options and mappings
-    const options = optionsParam ? JSON.parse(optionsParam.data.toString()) : {}
-    const mappings = mappingsParam ? JSON.parse(mappingsParam.data.toString()) : {}
-
-    // Determine file type
-    const fileName = file.filename || ''
-    const isCSV = fileName.toLowerCase().endsWith('.csv')
-    const isExcel = fileName.toLowerCase().endsWith('.xlsx') || fileName.toLowerCase().endsWith('.xls')
-
-    if (!isCSV && !isExcel) {
-        throw createError({
-            statusCode: 400,
-            statusMessage: 'Bad Request',
-            message: 'Unsupported file format. Please upload a CSV or Excel file.'
-        })
-    }
+    const mappings = body.mappings || {}
+    const options = body.options || {}
 
     try {
-        // Parse the file based on type
-        let parsedData = []
+        // Apply field mappings to raw data
+        let parsedData = body.data
 
-        if (isCSV) {
-            // Parse CSV
-            const csvString = file.data.toString()
-            const parseResult = Papa.parse(csvString, {
-                header: true,
-                skipEmptyLines: true,
-                dynamicTyping: true
-            })
-
-            parsedData = parseResult.data
-        } else if (isExcel) {
-            // Process Excel file using child process to avoid ESM issues
-            const uploadDir = join(process.cwd(), 'server/data/download')
-            const processedDir = join(process.cwd(), 'server/data/processed')
-
-            await mkdir(uploadDir, { recursive: true })
-
-            // Save uploaded file temporarily
-            const timestamp = Date.now()
-            const safeFileName = `${timestamp}-${fileName.replace(/[^a-zA-Z0-9.-]/g, '_')}`
-            const tempFilePath = join(uploadDir, safeFileName)
-
-            await writeFile(tempFilePath, file.data)
-
-            try {
-                // Process Excel file
-                const jsonPath = await processExcelFile(tempFilePath, processedDir)
-                const jsonContent = await readFile(jsonPath, 'utf8')
-                const result = JSON.parse(jsonContent)
-
-                parsedData = result.data || []
-
-                // Clean up processed JSON
-                try { await unlink(jsonPath) } catch (e) {}
-            } finally {
-                // Clean up temp file
-                try { await unlink(tempFilePath) } catch (e) {}
-            }
-        }
-
-        // Apply field mappings if provided
         if (mappings && Object.keys(mappings).length > 0) {
-            parsedData = parsedData.map(row => {
-                const mappedRow = {}
+            parsedData = parsedData.map((row: any) => {
+                const mappedRow: Record<string, any> = {}
 
                 Object.keys(mappings).forEach(sourceField => {
-                    const targetField = mappings[sourceField].field
+                    const mapping = mappings[sourceField]
+                    const targetField = mapping?.field
 
-                    if (targetField && row[sourceField] !== undefined) {
+                    if (targetField && targetField !== '' && targetField !== 'null' && row[sourceField] !== undefined) {
                         mappedRow[targetField] = row[sourceField]
                     }
                 })
@@ -245,27 +113,33 @@ export default defineEventHandler(async (event) => {
 
         for (const record of parsedData) {
             try {
-                // Validate required fields (OMF style)
-                if (!record.amount && record.amount !== 0) {
+                // Parse amount — strip commas from formatted numbers like "32,995"
+                const rawAmount = String(record.amount || '').replace(/,/g, '')
+                const parsedAmount = parseFloat(rawAmount)
+
+                // Validate required fields
+                if (isNaN(parsedAmount)) {
                     importResults.errors.push({
                         record,
-                        error: '金額は必須です (Missing required field: amount)'
+                        error: '金額は必須です (Missing or invalid amount)'
                     })
                     continue
                 }
 
-                // Parse date
+                // Parse date — handle YYYY/MM/DD format
                 let transactionDate = new Date()
                 if (record.date) {
-                    transactionDate = new Date(record.date)
+                    const dateStr = String(record.date).replace(/\//g, '-')
+                    transactionDate = new Date(dateStr)
+                    if (isNaN(transactionDate.getTime())) {
+                        transactionDate = new Date()
+                    }
                 }
 
                 // Parse type (支出/入金)
                 let transactionType = record.type || '支出'
                 if (transactionType !== '支出' && transactionType !== '入金') {
-                    // Try to infer from amount sign or default
-                    const amount = parseFloat(record.amount)
-                    transactionType = amount < 0 ? '支出' : '入金'
+                    transactionType = parsedAmount < 0 ? '支出' : '入金'
                 }
 
                 // Resolve related IDs by name
@@ -280,7 +154,7 @@ export default defineEventHandler(async (event) => {
                 const transactionData = {
                     referenceNumber: record.referenceNumber || `IMP-${Date.now()}-${importResults.imported}`,
                     date: transactionDate,
-                    amount: Math.abs(parseFloat(record.amount)),
+                    amount: Math.abs(parsedAmount),
                     type: transactionType,
                     status: 'completed',
                     accountCategoryId,
