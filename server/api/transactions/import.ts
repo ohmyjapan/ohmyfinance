@@ -6,16 +6,15 @@ import Supplier from '../../models/Supplier'
 import TransactionCategory from '../../models/TransactionCategory'
 import Customer from '../../models/Customer'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
 
 /**
  * POST /api/transactions/import
  * Import pre-parsed transactions with field mappings applied.
  * Receives JSON body: { data: [...], mappings: {...}, options: {...} }
  * Data comes from the excel-processor API (already parsed).
+ * Auth: handled by api.ts middleware for /api/transactions/* routes
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
 
     if (event.method !== 'POST') {
         throw createError({
