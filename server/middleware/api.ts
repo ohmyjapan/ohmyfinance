@@ -33,7 +33,7 @@ export default defineEventHandler(async (event) => {
 
         // Check for protected API routes that require authentication
         if (
-            path.startsWith('/api/transactions') ||
+            (path.startsWith('/api/transactions') && !path.includes('/import-preview')) ||
             path.startsWith('/api/receipts') ||
             path.startsWith('/api/shipments') ||
             path.startsWith('/api/admin')
