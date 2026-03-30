@@ -177,7 +177,7 @@ export default defineEventHandler(async (event) => {
                             type: 'imported',
                             title: 'インポート完了',
                             timestamp: new Date(),
-                            description: `${fileName}からインポート`
+                            description: 'CSVインポート'
                         }
                     ]
                 }
@@ -200,12 +200,12 @@ export default defineEventHandler(async (event) => {
             transactions: importedTransactions
         }
 
-    } catch (error) {
+    } catch (error: any) {
         console.error('Transaction import error:', error)
         throw createError({
             statusCode: 500,
             statusMessage: 'Internal Server Error',
-            message: `Failed to process file: ${error.message}`
+            message: `Failed to process file: ${error?.message || error}`
         })
     }
 })
