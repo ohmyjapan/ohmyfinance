@@ -7,7 +7,7 @@ import { addToBlacklist, isBlacklisted } from './tokenBlacklistService'
 import { logAudit } from '../utils/audit'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ohmyfinance-secret-key-change-in-production'
-const JWT_EXPIRES_IN = '15m'      // Short-lived access token
+const JWT_EXPIRES_IN = '30m'      // Short-lived access token
 const JWT_REFRESH_EXPIRES_IN = '7d' // Refresh token
 
 // Failed login protection
@@ -48,7 +48,7 @@ export async function generateTokens(payload: TokenPayload): Promise<AuthTokens>
   return {
     accessToken,
     refreshToken,
-    expiresIn: 15 * 60 // 15 minutes in seconds
+    expiresIn: 30 * 60 // 30 minutes in seconds
   }
 }
 

@@ -15,20 +15,22 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Refresh token is required' })
   }
 
+  // Infra problems (db down mid-restart etc.) must NOT read as an invalid token —
+  // the client logs out only on a definitive 401. Report them as 503 so it retries.
   try {
     await ensureConnection()
-
-    const tokens = await refreshTokens(refreshToken)
-
-    if (!tokens) {
-      throw createError({ statusCode: 401, statusMessage: 'Invalid or expired refresh token' })
-    }
-
-    return {
-      success: true,
-      tokens
-    }
   } catch (error: any) {
-    throw createError({ statusCode: 401, statusMessage: error.message || 'Token refresh failed' })
+    throw createError({ statusCode: 503, statusMessage: 'Service temporarily unavailable' })
+  }
+
+  const tokens = await refreshTokens(refreshToken)
+
+  if (!tokens) {
+    throw createError({ statusCode: 401, statusMessage: 'Invalid or expired refresh token' })
+  }
+
+  return {
+    success: true,
+    tokens
   }
 })

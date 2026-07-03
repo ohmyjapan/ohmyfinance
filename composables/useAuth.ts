@@ -75,6 +75,15 @@ const error = ref<string | null>(null)
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 const TOKEN_REFRESH_MARGIN = 60 // Refresh 1 minute before expiry
 
+// Absolute expiry of the current access token (ms epoch). setTimeout freezes in
+// background tabs / during sleep, so the wake-up handlers compare against this.
+let tokenExpiresAt = 0
+// Wake-up listeners registered once per app lifetime
+let wakeListenersInstalled = false
+
+const REFRESH_RETRY_MAX = 3
+const REFRESH_RETRY_DELAY_MS = 3000
+
 /**
  * Composable for handling authentication
  */
@@ -129,10 +138,13 @@ export function useAuth() {
           } else {
             // Token is invalid, try to refresh
             const refreshed = await refreshToken()
-            if (!refreshed) {
+            if (refreshed === 'rejected') {
+              // Refresh token definitively invalid — session is over
               await logout()
               return false
             }
+            // true = refreshed; false = transient failure — keep the stored session,
+            // the wake/online handlers will retry rather than punting to the login page
             return true
           }
         }
@@ -288,37 +300,52 @@ export function useAuth() {
   }
 
   /**
-   * Refresh access token
+   * Refresh access token.
+   * Retries transient failures (network error, 5xx) up to REFRESH_RETRY_MAX times;
+   * the 7-day refresh token stays valid through server restarts and blips, so only a
+   * definitive 401/403 from the refresh endpoint means the session is truly over.
+   * Returns: true = refreshed, false = transient failure (KEEP session), 'rejected' =
+   * refresh token invalid (caller logs out).
    */
-  const refreshToken = async () => {
-    if (!tokens.value?.refreshToken) return false
+  const refreshToken = async (): Promise<boolean | 'rejected'> => {
+    if (!tokens.value?.refreshToken) return 'rejected'
 
-    try {
-      const response = await fetch('/api/auth/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          refreshToken: tokens.value.refreshToken
+    for (let attempt = 1; attempt <= REFRESH_RETRY_MAX; attempt++) {
+      try {
+        const response = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            refreshToken: tokens.value.refreshToken
+          })
         })
-      })
 
-      if (!response.ok) return false
+        if (response.status === 401 || response.status === 403) {
+          return 'rejected'   // definitively invalid — the only path to logout
+        }
 
-      const data = await response.json()
-      tokens.value = data.tokens
+        if (response.ok) {
+          const data = await response.json()
+          tokens.value = data.tokens
 
-      if (process.client) {
-        localStorage.setItem('auth_tokens', JSON.stringify(data.tokens))
+          if (process.client) {
+            localStorage.setItem('auth_tokens', JSON.stringify(data.tokens))
+          }
+
+          // Schedule next refresh
+          scheduleTokenRefresh()
+
+          return true
+        }
+        // 5xx / unexpected status → transient, retry
+      } catch (err) {
+        console.error(`Token refresh attempt ${attempt}/${REFRESH_RETRY_MAX} failed:`, err)
       }
-
-      // Schedule next refresh
-      scheduleTokenRefresh()
-
-      return true
-    } catch (err) {
-      console.error('Token refresh error:', err)
-      return false
+      if (attempt < REFRESH_RETRY_MAX) {
+        await new Promise(r => setTimeout(r, REFRESH_RETRY_DELAY_MS * attempt))
+      }
     }
+    return false   // transient — keep the session; a wake/online event retries later
   }
 
   /**
@@ -333,19 +360,47 @@ export function useAuth() {
 
     if (!tokens.value?.expiresIn) return
 
+    tokenExpiresAt = Date.now() + tokens.value.expiresIn * 1000
+    installWakeListeners()
+
     // Calculate when to refresh (1 minute before expiry)
     const refreshInMs = (tokens.value.expiresIn - TOKEN_REFRESH_MARGIN) * 1000
 
     // Only schedule if refresh time is positive
     if (refreshInMs > 0) {
       refreshTimer = setTimeout(async () => {
-        const success = await refreshToken()
-        if (!success) {
-          // Token refresh failed, logout user
+        const result = await refreshToken()
+        if (result === 'rejected') {
+          // Refresh token definitively invalid — session is over
           await logout()
         }
+        // Transient failure: keep the session; wake/online handlers retry
       }, refreshInMs)
     }
+  }
+
+  /**
+   * Refresh immediately when the tab wakes or the network returns and the token is
+   * expired or close to it — setTimeout does not fire reliably in backgrounded tabs
+   * or across laptop sleep, which used to log users out after any idle period.
+   */
+  const refreshIfStale = async () => {
+    if (!tokens.value?.refreshToken) return
+    if (Date.now() < tokenExpiresAt - TOKEN_REFRESH_MARGIN * 1000) return
+    const result = await refreshToken()
+    if (result === 'rejected') {
+      await logout()
+    }
+  }
+
+  const installWakeListeners = () => {
+    if (!process.client || wakeListenersInstalled) return
+    wakeListenersInstalled = true
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void refreshIfStale()
+    })
+    window.addEventListener('online', () => { void refreshIfStale() })
+    window.addEventListener('focus', () => { void refreshIfStale() })
   }
 
   /**
