@@ -48,7 +48,7 @@ async function tick() {
     for(const item of queued) {await status('running','Sending a previously downloaded statement');await upload(config,account,item);}
     if(!queued.length) {
       const settings=config.accounts?.[account.primaryCard] || {};
-      const item=await collectStatement(account,settings,directory,status);await status('running','Sending the downloaded statement to OMF');await upload(config,account,item);
+      const item=await collectStatement(account,settings,directory,status,{gmail:config.gmail});await status('running','Sending the downloaded statement to OMF');await upload(config,account,item);
     }
     clearInterval(heartbeat);await status('complete','Statement saved in OMF for review');
   } catch(error) {
