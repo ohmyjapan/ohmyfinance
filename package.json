@@ -12,7 +12,9 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "test:auth": "node --test scripts/auth-regression.test.cjs",
-    "test:auth:integration": "node scripts/auth-integration.cjs"
+    "test:auth:integration": "node scripts/auth-integration.cjs",
+    "test:finance": "node --test scripts/finance-regression.test.mjs",
+    "test:finance:integration": "node scripts/finance-integration.cjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

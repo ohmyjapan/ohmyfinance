@@ -1,0 +1,9 @@
+{
+  "name": "ohmyfinance-collector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node index.mjs", "test": "node --test test/*.test.mjs" },
+  "dependencies": { "googleapis": "171.4.0", "puppeteer-real-browser": "1.4.4" },
+  "engines": { "node": ">=22" }
+}
