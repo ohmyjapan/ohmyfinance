@@ -12,7 +12,7 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
 
   // Initialize auth state from localStorage if not already done
   if (!userStore.isAuthenticated) {
-    userStore.initAuth()
+    await userStore.ensureSession()
   }
 
   // First check if user is authenticated
@@ -27,7 +27,7 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
   // Check if user has admin or owner role
   const user = userStore.user
   const allowedRoles = ['admin', 'owner']
-  const hasAdminAccess = user && allowedRoles.includes(user.role)
+  const hasAdminAccess = user && allowedRoles.includes(user.role || '')
 
   if (!hasAdminAccess) {
     console.log('[Admin Middleware] User does not have admin access, redirecting to home')

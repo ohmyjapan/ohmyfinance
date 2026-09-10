@@ -126,6 +126,7 @@
 </template>
 
 <script setup lang="ts">
+import type { AuthSessionResponse } from '~/utils/auth-session'
 import { ref, computed } from 'vue'
 
 const { t } = useI18n()
@@ -179,7 +180,7 @@ const handleSubmit = async () => {
 
   try {
     // Call register API directly
-    const response = await $fetch('/api/auth/register', {
+    const response = await $fetch<AuthSessionResponse>('/api/auth/register', {
       method: 'POST',
       body: {
         name: form.value.name,
@@ -189,15 +190,7 @@ const handleSubmit = async () => {
     })
 
     if (response.success) {
-      // Store auth data
-      if (process.client) {
-        localStorage.setItem('auth_token', response.tokens.accessToken)
-        localStorage.setItem('auth_refresh_token', response.tokens.refreshToken)
-        localStorage.setItem('auth_user', JSON.stringify(response.user))
-      }
-
-      // Update store
-      userStore.initAuth()
+      userStore.acceptSession(response)
 
       // Redirect to dashboard
       router.push('/')

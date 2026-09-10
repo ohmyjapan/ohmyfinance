@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // Try to get auth, but allow unauthenticated access with limited data
-  const auth = event.context.auth
+  const auth = requireAuth(event)
 
   try {
     await ensureConnection()
@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
     let organization = null
     let organizationId = auth?.organizationId
 
-    if (auth?.isAuthenticated && auth?.userId) {
+    if (auth.userId) {
       user = await User.findById(auth.userId).lean()
 
       if (organizationId) {

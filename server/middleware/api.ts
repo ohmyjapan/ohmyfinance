@@ -1,4 +1,5 @@
 import { defineEventHandler, getRequestHeaders, createError, appendHeader, getMethod } from 'h3'
+import { verifyAccessToken } from '../services/authService'
 
 /**
  * API Middleware for Transaction Middleware System
@@ -60,9 +61,8 @@ export default defineEventHandler(async (event) => {
                 })
             }
 
-            // In a real app, you would validate the token here
-            // This is simplified for the example
-            if (token === 'invalid_token') {
+            // This middleware runs before auth.ts; verify signature and token purpose here.
+            if (!verifyAccessToken(token)) {
                 throw createError({
                     statusCode: 401,
                     statusMessage: 'Unauthorized',

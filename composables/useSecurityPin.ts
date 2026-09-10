@@ -40,12 +40,16 @@ export function useSecurityPin() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokens.value.accessToken}`
+          'Authorization': `Bearer ${userStore.token}`
         },
         body: JSON.stringify({ pin })
       })
 
       const data = await response.json()
+
+      if (!response.ok) {
+        return { valid: false, error: data.statusMessage || 'Unable to verify PIN. Please try again.' }
+      }
 
       if (data.valid) {
         pinAttempts.value = 0
@@ -82,7 +86,7 @@ export function useSecurityPin() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokens.value.accessToken}`
+          'Authorization': `Bearer ${userStore.token}`
         },
         body: JSON.stringify({ pin, password: currentPassword })
       })
@@ -91,6 +95,8 @@ export function useSecurityPin() {
 
       if (response.ok) {
         pinEnabled.value = true
+        if (userStore.user?.securityPreferences) userStore.user.securityPreferences.pinEnabled = true
+        userStore.persistSession()
         return { success: true }
       } else {
         return { success: false, error: data.statusMessage || 'Failed to set PIN' }
@@ -113,7 +119,7 @@ export function useSecurityPin() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokens.value.accessToken}`
+          'Authorization': `Bearer ${userStore.token}`
         },
         body: JSON.stringify({ password: currentPassword })
       })
@@ -122,6 +128,8 @@ export function useSecurityPin() {
 
       if (response.ok) {
         pinEnabled.value = false
+        if (userStore.user?.securityPreferences) userStore.user.securityPreferences.pinEnabled = false
+        userStore.persistSession()
         return { success: true }
       } else {
         return { success: false, error: data.statusMessage || 'Failed to disable PIN' }

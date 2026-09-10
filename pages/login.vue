@@ -158,6 +158,7 @@ const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 
+
 // State
 const email = ref('')
 const password = ref('')
@@ -172,15 +173,16 @@ definePageMeta({
 })
 
 // Redirect if already authenticated
-onMounted(() => {
-  if (userStore.isAuthenticated) {
-    const redirect = route.query.redirect as string || '/'
+onMounted(async () => {
+  if (await userStore.ensureSession()) {
+    const redirect = safeRedirect(route.query.redirect)
     router.push(redirect)
   }
 })
 
 // Handle login
 const handleLogin = async () => {
+  if (isLoading.value) return
   isLoading.value = true
   error.value = ''
 
@@ -204,7 +206,7 @@ const handleLogin = async () => {
 
     if (result === true) {
       // Redirect to the intended page or dashboard
-      const redirect = route.query.redirect as string || '/'
+      const redirect = safeRedirect(route.query.redirect)
       router.push(redirect)
     } else {
       throw new Error(userStore.error || t('auth.loginFailed'))
@@ -219,8 +221,12 @@ const handleLogin = async () => {
 
 // Handle 2FA verification success
 const handle2FAVerified = (data: { user: any; organizations: any[]; tokens: any; deviceId?: string }) => {
-  userStore.complete2FA(data)
-  const redirect = route.query.redirect as string || '/'
+  try { userStore.complete2FA(data) } catch (err: any) {
+    userStore.cancel2FA()
+    error.value = err.message || t('auth.loginFailed')
+    return
+  }
+  const redirect = safeRedirect(route.query.redirect)
   router.push(redirect)
 }
 

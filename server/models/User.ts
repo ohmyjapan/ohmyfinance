@@ -131,6 +131,10 @@ UserSchema.set('toJSON', {
   virtuals: true,
   transform: (doc, ret) => {
     delete ret.password
+    delete ret.twoFactorSecret
+    delete ret.twoFactorBackupCodes
+    delete ret.trustedDevices
+    if (ret.securityPreferences) delete ret.securityPreferences.pinHash
     delete ret.__v
     return ret
   }

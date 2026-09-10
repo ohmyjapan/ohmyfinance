@@ -5,8 +5,17 @@ import User from '../models/User'
 import Organization from '../models/Organization'
 import { addToBlacklist, isBlacklisted } from './tokenBlacklistService'
 import { logAudit } from '../utils/audit'
+import { hashDeviceId } from './twoFactorService'
+import { existsSync } from 'node:fs'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'ohmyfinance-secret-key-change-in-production'
+// PM2 starts the built Node server directly; Nuxt's build-time .env loading does
+// not populate that process. Preserve explicitly supplied test/service variables.
+if (!process.env.JWT_SECRET && existsSync('.env')) process.loadEnvFile('.env')
+const configuredSecret = process.env.JWT_SECRET
+if (!configuredSecret || configuredSecret === 'ohmyfinance-secret-key-change-in-production') {
+  throw new Error('Configure JWT_SECRET before starting OhMyFinance')
+}
+const JWT_SECRET: string = configuredSecret
 const JWT_EXPIRES_IN = '30m'      // Short-lived access token
 const JWT_REFRESH_EXPIRES_IN = '7d' // Refresh token
 
@@ -20,6 +29,7 @@ export interface TokenPayload {
   organizationId?: string
   role?: string
   jti?: string // JWT ID for revocation
+  type?: 'access' | 'refresh' | '2fa_pending' | 'invite'
 }
 
 export interface AuthTokens {
@@ -59,6 +69,12 @@ export function verifyToken(token: string): TokenPayload | null {
   } catch (error) {
     return null
   }
+}
+
+export function verifyAccessToken(token: string): TokenPayload | null {
+  const payload = verifyToken(token)
+  if (!payload?.userId || (payload.type && payload.type !== 'access') || (payload.jti && isBlacklisted(payload.jti))) return null
+  return payload
 }
 
 export async function registerUser(data: {
@@ -116,7 +132,7 @@ export async function registerUser(data: {
   }
 }
 
-export async function loginUser(email: string, password: string): Promise<{
+export async function loginUser(email: string, password: string, deviceId?: string): Promise<{
   user: any
   organizations: any[]
   tokens: AuthTokens
@@ -195,7 +211,11 @@ export async function loginUser(email: string, password: string): Promise<{
   await user.save()
 
   // Check if 2FA is enabled
-  if (user.twoFactorEnabled && user.twoFactorSecret) {
+  const deviceHash = hashDeviceId(deviceId)
+  const trustedDevice = deviceHash && user.trustedDevices?.some((device: { deviceId: string; expiresAt: Date }) =>
+    device.deviceId === deviceHash && device.expiresAt > new Date()
+  )
+  if (user.twoFactorEnabled && user.twoFactorSecret && !trustedDevice) {
     // Generate temporary token for 2FA verification
     const tempToken = jwt.sign(
       {
@@ -433,19 +453,24 @@ export async function inviteUser(
 export async function acceptInvite(inviteToken: string, userData?: {
   name?: string
   password?: string
-}): Promise<{ user: any; organization: any; tokens: AuthTokens }> {
+}, authenticatedUserId?: string): Promise<{ user: any; organization: any; tokens: AuthTokens }> {
   const payload = verifyToken(inviteToken) as any
   if (!payload || payload.type !== 'invite') {
     throw new Error('Invalid or expired invite')
   }
 
   const organization = await Organization.findById(payload.organizationId)
-  if (!organization) {
+  if (!organization || !organization.isActive) {
     throw new Error('Organization not found')
   }
 
   // Find or create user
   let user = await User.findOne({ email: payload.email })
+
+  // An invitation proves access to the link, not authentication of an existing account.
+  if (user && (!user.isActive || String(user._id) !== authenticatedUserId)) {
+    throw Object.assign(new Error('Sign in to the invited account first'), { statusCode: 401 })
+  }
 
   if (!user) {
     if (!userData?.name || !userData?.password) {

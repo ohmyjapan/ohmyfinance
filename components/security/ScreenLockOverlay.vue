@@ -65,7 +65,7 @@
             </div>
 
             <!-- PIN Input (if enabled and not requiring password) -->
-            <div v-if="isPinEnabled && !requiresPassword" class="mb-4">
+            <div v-if="isPinEnabled && !requiresPassword && !showPasswordInput" class="mb-4">
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 {{ t('security.enterPin') }}
               </label>
@@ -76,6 +76,7 @@
                   ref="pinInputs"
                   type="password"
                   maxlength="1"
+                  :value="pinDigits[index]"
                   inputmode="numeric"
                   pattern="[0-9]"
                   class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 dark:border-white/10 rounded-lg focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-white/5 dark:text-white"
@@ -262,6 +263,7 @@ const handlePinPaste = (event: ClipboardEvent) => {
 
 // Unlock with PIN
 const unlockWithPin = async () => {
+  if (isUnlocking.value) return
   const pin = pinDigits.value.join('')
   if (pin.length < 4) {
     errorMessage.value = t('security.pinTooShort')
@@ -290,6 +292,7 @@ const unlockWithPin = async () => {
 
 // Unlock with password
 const unlockWithPassword = async () => {
+  if (isUnlocking.value) return
   if (!password.value) {
     errorMessage.value = t('security.passwordRequired')
     return
@@ -300,13 +303,14 @@ const unlockWithPassword = async () => {
 
   try {
     // Try to refresh token first in case it expired while locked
-    let tokenValid = false
-    if (userStore.refreshToken) {
-      tokenValid = await userStore.refreshAuthToken()
-    }
+    const refreshResult = await userStore.refreshAuthToken()
 
     // If token refresh failed, session is expired
-    if (!tokenValid || !userStore.token) {
+    if (refreshResult === 'unavailable') {
+      errorMessage.value = t('security.connectionRetry')
+      return
+    }
+    if (refreshResult === 'rejected' || !userStore.token) {
       sessionExpired.value = true
       password.value = ''
       return

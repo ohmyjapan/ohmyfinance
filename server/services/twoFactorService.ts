@@ -49,8 +49,8 @@ export function verifyToken(secret: string, token: string): boolean {
       secret,
       token,
       strategy: 'totp',
-      epochTolerance: 1 // Allow 1 period tolerance for clock drift
-    })
+      epochTolerance: 30 // Seconds: allow one 30-second step of clock drift.
+    }).valid
   } catch {
     return false
   }
@@ -101,4 +101,9 @@ export async function verifyBackupCode(code: string, hashedCodes: string[]): Pro
  */
 export function generateDeviceId(): string {
   return crypto.randomBytes(32).toString('hex')
+}
+
+export function hashDeviceId(deviceId: unknown): string | null {
+  if (typeof deviceId !== 'string' || !/^[a-f0-9]{64}$/.test(deviceId)) return null
+  return 'sha256:' + crypto.createHash('sha256').update(deviceId).digest('hex')
 }

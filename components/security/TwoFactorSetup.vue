@@ -102,6 +102,7 @@
             ref="codeInputs"
             type="text"
             maxlength="1"
+            :value="verificationCode[index]"
             inputmode="numeric"
             pattern="[0-9]"
             class="w-12 h-14 text-center text-2xl font-bold font-mono border-2 border-gray-300 dark:border-white/10 rounded-lg focus:border-primary-main focus:ring-2 focus:ring-primary-main/20 dark:bg-white/5 dark:text-white"
@@ -277,7 +278,7 @@ const handleCodePaste = (event: ClipboardEvent) => {
 // Verify and enable 2FA
 const verifyAndEnable = async () => {
   const code = verificationCode.value.join('')
-  if (code.length !== 6) return
+  if (isVerifying.value || code.length !== 6) return
 
   isVerifying.value = true
   errorMessage.value = ''

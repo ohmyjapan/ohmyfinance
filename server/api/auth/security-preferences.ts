@@ -51,7 +51,11 @@ export default defineEventHandler(async (event) => {
 
     return {
       success: true,
-      securityPreferences: user.securityPreferences
+      securityPreferences: {
+        pinEnabled: user.securityPreferences.pinEnabled,
+        screenLockTimeout: user.securityPreferences.screenLockTimeout,
+        forceLogoutTimeout: user.securityPreferences.forceLogoutTimeout
+      }
     }
   } catch (error: any) {
     if (error.statusCode) throw error

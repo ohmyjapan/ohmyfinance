@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody(event)
-  const { email, password } = body
+  const { email, password, deviceId } = body
 
   if (!email || !password) {
     throw createError({ statusCode: 400, statusMessage: 'Email and password are required' })
@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
   try {
     await ensureConnection()
 
-    const result = await loginUser(email, password)
+    const result = await loginUser(email, password, deviceId)
 
     // Check if 2FA is required
     if (result.requires2FA) {

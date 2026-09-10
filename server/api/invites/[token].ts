@@ -2,6 +2,7 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Invite from '../../models/Invite'
+import User from '../../models/User'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'GET') {
@@ -48,6 +49,7 @@ export default defineEventHandler(async (event) => {
 
     return {
       success: true,
+      requiresLogin: !!(await User.exists({ email: invite.email })),
       invite: {
         email: invite.email,
         role: invite.role,

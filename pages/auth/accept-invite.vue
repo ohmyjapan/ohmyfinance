@@ -32,7 +32,7 @@
         </div>
         <p class="text-sm text-red-700 dark:text-red-300 mb-4">{{ error }}</p>
         <NuxtLink
-          to="/auth/login"
+          :to="`/login?redirect=${encodeURIComponent(route.fullPath)}`"
           class="inline-flex items-center px-4 py-2 bg-primary-main text-white rounded-xl hover:bg-primary-dark transition-colors touch-manipulation"
         >
           {{ t('invite.goToLogin') }}
@@ -193,6 +193,9 @@
 </template>
 
 <script setup lang="ts">
+import type { AuthSessionResponse } from '~/utils/auth-session'
+type InviteResponse = Partial<AuthSessionResponse> & { success: boolean; requiresRegistration?: boolean; requiresLogin?: boolean }
+
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -233,30 +236,12 @@ const form = ref({
   confirmPassword: ''
 })
 
+const userStore = useUserStore()
 const token = computed(() => route.query.token as string)
 
 // Check if user is logged in
-const isLoggedIn = computed(() => {
-  if (process.client) {
-    return !!localStorage.getItem('auth_token')
-  }
-  return false
-})
-
-const currentUserEmail = computed(() => {
-  if (process.client) {
-    const userStr = localStorage.getItem('auth_user')
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr)
-        return user.email
-      } catch {
-        return ''
-      }
-    }
-  }
-  return ''
-})
+const isLoggedIn = computed(() => userStore.isAuthenticated)
+const currentUserEmail = computed(() => userStore.user?.email || '')
 
 const getRoleLabel = (role: string) => {
   const roleLabels: Record<string, string> = {
@@ -285,7 +270,7 @@ const fetchInviteDetails = async () => {
   }
 
   try {
-    const response = await $fetch(`/api/invites/${token.value}`)
+    const response = await $fetch<{ success: boolean; requiresLogin?: boolean; invite: NonNullable<typeof inviteDetails.value> }>(`/api/invites/${token.value}`)
 
     if (response.success) {
       inviteDetails.value = response.invite
@@ -298,7 +283,10 @@ const fetchInviteDetails = async () => {
         })
         inviteDetails.value = null
       } else if (!isLoggedIn.value) {
-        // Not logged in - check if user exists
+        if (response.requiresLogin) {
+          await router.replace({ path: '/login', query: { redirect: route.fullPath } })
+          return
+        }
         needsRegistration.value = true
       }
     }
@@ -310,26 +298,28 @@ const fetchInviteDetails = async () => {
 }
 
 const acceptInvite = async () => {
+  if (submitting.value) return
   submitting.value = true
   formError.value = null
 
   try {
     const authToken = localStorage.getItem('auth_token')
-    const response = await $fetch('/api/invites/accept', {
+    const response = await $fetch<InviteResponse>('/api/invites/accept', {
       method: 'POST',
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       body: { token: token.value }
     })
 
+    if (response.requiresLogin) {
+      await router.push({ path: '/login', query: { redirect: route.fullPath } })
+      return
+    }
     if (response.success) {
       success.value = t('invite.acceptedSuccess', { org: response.organization?.name })
 
       // Store tokens and redirect
-      if (response.tokens) {
-        localStorage.setItem('auth_token', response.tokens.accessToken)
-        localStorage.setItem('auth_refresh_token', response.tokens.refreshToken)
-        localStorage.setItem('auth_user', JSON.stringify(response.user))
-        localStorage.setItem('current_organization_id', response.organization.id)
+      if (response.tokens && response.user) {
+        userStore.acceptSession({ ...response, tokens: response.tokens, user: response.user })
       }
 
       setTimeout(() => {
@@ -344,6 +334,7 @@ const acceptInvite = async () => {
 }
 
 const handleRegistrationAndAccept = async () => {
+  if (submitting.value) return
   formError.value = null
 
   // Validate passwords match
@@ -360,7 +351,7 @@ const handleRegistrationAndAccept = async () => {
   submitting.value = true
 
   try {
-    const response = await $fetch('/api/invites/accept', {
+    const response = await $fetch<InviteResponse>('/api/invites/accept', {
       method: 'POST',
       body: {
         token: token.value,
@@ -373,16 +364,15 @@ const handleRegistrationAndAccept = async () => {
       success.value = t('invite.accountCreatedAndJoined', { org: response.organization?.name })
 
       // Store tokens and redirect
-      if (response.tokens) {
-        localStorage.setItem('auth_token', response.tokens.accessToken)
-        localStorage.setItem('auth_refresh_token', response.tokens.refreshToken)
-        localStorage.setItem('auth_user', JSON.stringify(response.user))
-        localStorage.setItem('current_organization_id', response.organization.id)
+      if (response.tokens && response.user) {
+        userStore.acceptSession({ ...response, tokens: response.tokens, user: response.user })
       }
 
       setTimeout(() => {
         router.push('/')
       }, 2000)
+    } else if (response.requiresLogin) {
+      await router.push({ path: '/login', query: { redirect: route.fullPath } })
     } else if (response.requiresRegistration) {
       needsRegistration.value = true
     }
@@ -393,7 +383,8 @@ const handleRegistrationAndAccept = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await userStore.ensureSession()
   fetchInviteDetails()
 })
 </script>

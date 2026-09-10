@@ -7,6 +7,7 @@ const lockedAt = ref<number | null>(null)
 const isInitialized = ref(false)
 const screenLockTimeout = ref(15) // minutes, configurable
 const forceLogoutTimeout = ref(8) // hours, configurable
+const clock = ref(Date.now())
 
 // Constants
 const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click']
@@ -18,6 +19,17 @@ const STORAGE_KEY_LAST_ACTIVITY = 'ohmyfinance_last_activity'
 let broadcastChannel: BroadcastChannel | null = null
 let checkInterval: ReturnType<typeof setInterval> | null = null
 let throttledUpdateHandler: (() => void) | null = null
+
+export function resetActivitySession() {
+  lockedAt.value = null
+  lastActivityTime.value = Date.now()
+  clock.value = Date.now()
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(STORAGE_KEY_LOCKED)
+    window.localStorage.setItem(STORAGE_KEY_LAST_ACTIVITY, String(lastActivityTime.value))
+  }
+  broadcastChannel?.postMessage({ type: 'unlock', timestamp: lastActivityTime.value })
+}
 
 /**
  * Composable for tracking user activity and managing screen lock
@@ -32,14 +44,14 @@ export function useActivityTracker() {
   // Computed: should force full logout (8 hours of being locked)
   const forceLogoutRequired = computed(() => {
     if (!lockedAt.value) return false
-    const hoursLocked = (Date.now() - lockedAt.value) / (1000 * 60 * 60)
+    const hoursLocked = (clock.value - lockedAt.value) / (1000 * 60 * 60)
     return hoursLocked >= forceLogoutTimeout.value
   })
 
   // Computed: time remaining until lock (in seconds)
   const timeUntilLock = computed(() => {
     if (isLocked.value) return 0
-    const elapsed = (Date.now() - lastActivityTime.value) / 1000
+    const elapsed = (clock.value - lastActivityTime.value) / 1000
     const timeoutSeconds = screenLockTimeout.value * 60
     return Math.max(0, timeoutSeconds - elapsed)
   })
@@ -91,6 +103,7 @@ export function useActivityTracker() {
 
   // Check if screen should be locked
   const checkLock = () => {
+    clock.value = Date.now()
     if (isLocked.value) return
 
     const elapsed = Date.now() - lastActivityTime.value
@@ -122,7 +135,7 @@ export function useActivityTracker() {
         }
         break
       case 'lock':
-        if (!isLocked.value) {
+        if (!isLocked.value && timestamp >= lastActivityTime.value) {
           lockedAt.value = timestamp
         }
         break
@@ -210,10 +223,7 @@ export function useActivityTracker() {
     isInitialized.value = false
   }
 
-  // Auto-initialize on mount if in browser
-  onMounted(() => {
-    init()
-  })
+  // The authenticated layout owns initialization, not the login page.
 
   // Don't cleanup on unmount - singleton should persist
   // Only cleanup when user logs out or explicitly calls cleanup

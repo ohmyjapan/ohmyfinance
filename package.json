@@ -10,7 +10,9 @@
     "postinstall": "nuxt prepare",
     "seed": "npx tsx scripts/seed.ts",
     "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "test:auth": "node --test scripts/auth-regression.test.cjs",
+    "test:auth:integration": "node scripts/auth-integration.cjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

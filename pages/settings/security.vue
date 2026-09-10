@@ -343,7 +343,7 @@ const loadSecuritySettings = async () => {
 // Save security settings
 const saveSecuritySettings = async () => {
   try {
-    await fetch('/api/auth/security-preferences', {
+    const response = await fetch('/api/auth/security-preferences', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -354,6 +354,13 @@ const saveSecuritySettings = async () => {
         forceLogoutTimeout: securitySettings.forceLogoutTimeout
       })
     })
+
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.statusMessage || 'Unable to save security settings')
+    if (userStore.user) {
+      userStore.user.securityPreferences = data.securityPreferences
+      userStore.persistSession()
+    }
 
     // Update activity tracker configuration
     configureActivityTracker({
@@ -444,8 +451,8 @@ const closeDisablePinModal = () => {
 // Handle 2FA enabled
 const handle2FAEnabled = () => {
   show2FASetupModal.value = false
-  // Reload user data to update 2FA status
-  window.location.reload()
+  if (userStore.user) userStore.user.twoFactorEnabled = true
+  userStore.persistSession()
 }
 
 // Handle disable 2FA
@@ -476,7 +483,8 @@ const handleDisable2FA = async () => {
 
     if (response.ok) {
       close2FADisableModal()
-      window.location.reload()
+      if (userStore.user) userStore.user.twoFactorEnabled = false
+      userStore.persistSession()
     } else {
       disable2FAError.value = data.statusMessage || t('common.error')
     }

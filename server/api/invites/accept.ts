@@ -4,7 +4,7 @@ import { ensureConnection } from '../../config/database'
 import Organization from '../../models/Organization'
 import Invite from '../../models/Invite'
 import User from '../../models/User'
-import { generateTokens, verifyToken } from '../../services/authService'
+import { generateTokens, verifyAccessToken } from '../../services/authService'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'POST') {
@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const authToken = authHeader.substring(7)
-      const payload = verifyToken(authToken)
+      const payload = verifyAccessToken(authToken)
       if (payload && payload.userId) {
         currentUser = await User.findById(payload.userId)
       }
@@ -57,6 +57,10 @@ export default defineEventHandler(async (event) => {
 
     // Find or create user
     let user = await User.findOne({ email: invite.email })
+
+    if (user && (!currentUser || !currentUser.isActive)) {
+      return { success: false, requiresLogin: true }
+    }
 
     if (!user) {
       // New user - requires name and password

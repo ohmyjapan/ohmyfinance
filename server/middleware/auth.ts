@@ -1,6 +1,6 @@
 // server/middleware/auth.ts
 import { defineEventHandler, getHeader, createError, H3Event } from 'h3'
-import { verifyToken, TokenPayload } from '../services/authService'
+import { verifyAccessToken, type TokenPayload } from '../services/authService'
 import { isBlacklisted } from '../services/tokenBlacklistService'
 
 // Extend H3Event to include auth context
@@ -68,9 +68,9 @@ export default defineEventHandler(async (event: H3Event) => {
   const token = authHeader.substring(7) // Remove 'Bearer '
 
   try {
-    const payload = verifyToken(token)
+    const payload = verifyAccessToken(token)
 
-    if (!payload) {
+    if (!payload || (payload.type && payload.type !== 'access')) {
       event.context.auth = {
         isAuthenticated: false,
         userId: '',

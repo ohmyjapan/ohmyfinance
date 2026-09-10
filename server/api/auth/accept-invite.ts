@@ -1,7 +1,7 @@
 // server/api/auth/accept-invite.ts
-import { defineEventHandler, readBody, createError } from 'h3'
+import { defineEventHandler, readBody, createError, getHeader } from 'h3'
 import { ensureConnection } from '../../config/database'
-import { acceptInvite } from '../../services/authService'
+import { acceptInvite, verifyAccessToken } from '../../services/authService'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'POST') {
@@ -18,7 +18,9 @@ export default defineEventHandler(async (event) => {
   try {
     await ensureConnection()
 
-    const result = await acceptInvite(inviteToken, { name, password })
+    const header = getHeader(event, 'authorization')
+    const auth = header?.startsWith('Bearer ') ? verifyAccessToken(header.slice(7)) : null
+    const result = await acceptInvite(inviteToken, { name, password }, auth?.userId)
 
     return {
       success: true,
@@ -28,6 +30,7 @@ export default defineEventHandler(async (event) => {
       tokens: result.tokens
     }
   } catch (error: any) {
+    if (error.statusCode) throw createError({ statusCode: error.statusCode, statusMessage: error.message })
     if (error.message.includes('Invalid') || error.message.includes('expired')) {
       throw createError({ statusCode: 400, statusMessage: error.message })
     }
