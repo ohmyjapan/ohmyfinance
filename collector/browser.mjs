@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -10,6 +10,7 @@ import { ensureLogin, LoginClaims } from './login.mjs';
 import { LoginMailbox } from './mail.mjs';
 import { click, onSurface, poll } from './interaction.mjs';
 import { latestClosed, statementSnapshot, STATEMENT, verifyStatement } from './statement.mjs';
+import { cachedEndpoint, endpointAt, rememberEndpoint } from './endpoint.mjs';
 export { ensureLogin, LOGIN } from './login.mjs';
 
 const require = createRequire(import.meta.url);
@@ -20,11 +21,23 @@ const GLOBAL = 'https://global.americanexpress.com', STATEMENT_PATH = '/activity
 export async function browserFor(profile) {
   if (sessions.get(profile)?.connected) return sessions.get(profile);
   await mkdir(profile, { recursive: true });
-  const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./windows/browser-process.ps1', import.meta.url)), '-Profile', profile], { windowsHide: true, timeout: 15000 });
-  const running = JSON.parse(stdout.trim() || '[]');
+  const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./windows/browser-process.ps1', import.meta.url)), '-ProfilePath', profile], { windowsHide: true, timeout: 15000 });
+  const probe = JSON.parse(stdout.trim()), running = probe.matches;
   if (running.length > 1 || running.some(p => !p.port)) throw new Error('Close the duplicate or non-debuggable Amex profile before retrying');
   const options = { defaultViewport: null, protocolTimeout: 30000 };
-  const browser = running.length ? await puppeteer.connect({ browserURL: `http://127.0.0.1:${running[0].port}`, ...options }) : (await connect({ headless: false, turnstile: false, args: ['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8'], customConfig: { userDataDir: profile }, connectOption: options })).browser;
+  // Cache only identities discovered by an exact profile-path match. A lower-privilege
+  // collector can then reuse that browser without reading its protected command line.
+  const endpoint = running.length ? await endpointAt(running[0].port) : await cachedEndpoint(profile, probe.pids);
+  let browser;
+  if (endpoint) {
+    browser = await puppeteer.connect({ browserWSEndpoint: endpoint, ...options });
+    if (running.length) await rememberEndpoint(profile, running[0], endpoint);
+  } else {
+    const existingProfile = await access(path.join(profile, 'Default')).then(() => true, () => false);
+    const registeredProfile = await access(path.join(profile, '.omf-collector-browser.json')).then(() => true, () => false);
+    if (existingProfile && probe.unreadable.length && !registeredProfile) throw new Error('Chrome hides this profile from the collector. Register its existing browser session before retrying');
+    browser = (await connect({ headless: false, turnstile: false, args: ['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8'], customConfig: { userDataDir: profile }, connectOption: options })).browser;
+  }
   sessions.set(profile, browser);
   browser.on('disconnected', () => sessions.delete(profile));
   return browser;
