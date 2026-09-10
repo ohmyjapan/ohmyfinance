@@ -58,7 +58,7 @@ async function tick() {
   } finally {clearInterval(heartbeat);running=false;}
 }
 async function json(req) {let text='';for await(const data of req){text+=data;if(Buffer.byteLength(text)>20000)throw new Error('Request too large');}return JSON.parse(text);}
-async function main() {
+export async function startCollector() {
   await mkdir(directory,{recursive:true});
   const port=Number(process.env.OMF_COLLECTOR_PORT || 47831);if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid setup port');
   const origin=`http://127.0.0.1:${port}`;
@@ -80,4 +80,4 @@ async function main() {
   console.log(`OMF collector listening on 127.0.0.1:${port}; setup link saved in the private collector directory`);
   setInterval(tick,10000);tick();
 }
-if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(()=>{console.error('OMF collector could not start. Check the setup port and Windows credential vault.');process.exitCode=1;});
+if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url))startCollector().catch(()=>{console.error('OMF collector could not start. Check the setup port and Windows credential vault.');process.exitCode=1;});

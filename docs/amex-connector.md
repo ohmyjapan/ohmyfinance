@@ -6,7 +6,7 @@ The `/connections` page keeps Amex account configuration, original statement fil
 
 1. Add an Amex account in **カード連携**, using its five-digit CSV card identifiers. Group supplementary cards under their parent account. The CSV's leading hyphen is preserved in the original fields and removed for account matching.
 2. Select that account when issuing a collector token. The token permits account status, job claiming and CSV upload for only the selected accounts. It cannot read the ledger or commit expenses. Revocation is immediate.
-3. On the collection PC, run `npm ci --prefix collector`, then `node collector/index.mjs`. Windows and Node 22 or newer are required. Read the private `setup-link.txt` in `%LOCALAPPDATA%/OhMyFinance/collector` and open it locally. Pair the OMF address and collector token, then save each Amex login there.
+3. On the collection PC, run `npm ci --prefix collector`, then `node collector/run.mjs` (also use this entry point with PM2). Windows and Node 22 or newer are required. Read the private `setup-link.txt` in `%LOCALAPPDATA%/OhMyFinance/collector` and open it locally. Pair the OMF address and collector token, then save each Amex login there.
 4. Choose **確定明細を取得** in OMF. Keep the PC signed into Windows. The collector opens or reuses installed Chrome. Complete any unrecognized authentication challenge in that window. A successful file appears in the review list; downloading does not post expenses.
 5. Review the rows and choose which spending to register. Possible legacy matches can be linked without modifying the existing transaction. Repayments and unresolved credits remain in the source evidence for later reconciliation.
 
