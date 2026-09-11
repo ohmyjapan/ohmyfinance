@@ -80,6 +80,8 @@ export function missingFields(values) {
 export function transactionValues(values) {
   const { purpose, ...transaction } = values;
   const clean = Object.fromEntries(Object.entries(transaction).filter(([, v]) => !isEmpty(v)));
+  // An explicitly cleared note must override the older importer's merchant-note default.
+  clean.notes = values.notes;
   clean.items = values.items.map(item => Object.fromEntries(Object.entries(item).filter(([, v]) => !isEmpty(v))));
   clean.tags = [...new Set(['imported', 'amex', ...values.tags])];
   return clean;

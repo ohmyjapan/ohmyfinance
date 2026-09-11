@@ -178,4 +178,17 @@ module.exports = async function draftChecks({ db, call, request, upload, token, 
       pass('real Chrome: all draft controls, save/reload, posting gate, private attachment display and mobile/desktop light/dark layouts work');
     } finally { if (page) await page.close(); await browser.disconnect(); }
   }
+  const blankDraft = (await get(3)).data;
+  const blankValues = { ...full, referenceNumber: '', notes: '', productPrice: 0, tags: [], items: [] };
+  let blankResult = await request(`imports/${batchId}/drafts/3`, saveBody(blankDraft, blankValues, true), 'PUT');
+  assert.equal(blankResult.status, 200, JSON.stringify(blankResult));
+  const blankRevision = blankResult.data.revision;
+  blankResult = await request(`imports/${batchId}/commit`, { decisions: [{ line: 3, action: 'import', draftRevision: blankRevision }] });
+  assert.equal(blankResult.status, 200, JSON.stringify(blankResult));
+  const blankEntry = await db.collection('financeentries').findOne({ importId: batch._id, line: 3 });
+  const blankTransaction = await db.collection('transactions').findOne({ _id: blankEntry.transactionId });
+  assert.equal(blankTransaction.notes, ''); assert.equal(blankTransaction.productPrice, 0);
+  assert.deepEqual(blankTransaction.items, []); assert.deepEqual(blankTransaction.tags, ['imported', 'amex']);
+  assert.equal(blankTransaction.referenceNumber, `AMEX-${blankEntry._id}`);
+  pass('explicitly cleared notes, empty products/tags and zero product prices survive posting; a blank reference still receives its generated ID');
 };
