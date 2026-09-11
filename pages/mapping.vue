@@ -6,6 +6,7 @@
         <p class="text-gray-600 dark:text-gray-400">カード明細の顧客・区分と、元シートの照合結果を確認します。</p>
       </div>
       <div class="flex flex-wrap items-center gap-3">
+        <NuxtLink to="/learning" class="btn btn-secondary text-sm shadow-sm">学習ノート</NuxtLink>
         <NuxtLink to="/connections" class="btn btn-secondary text-sm shadow-sm">
           <CreditCard class="mr-2 h-4 w-4" aria-hidden="true" />カード連携
         </NuxtLink>

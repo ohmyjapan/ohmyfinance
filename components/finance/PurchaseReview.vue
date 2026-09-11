@@ -11,6 +11,15 @@
         <p v-for="signal in data.study.signals" :key="signal" class="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ signal }}</p>
         <details class="text-xs text-gray-500 dark:text-gray-400"><summary class="cursor-pointer py-1 text-primary-main">推定の根拠 · 過去 {{ data.study.historyCount }}件</summary><p class="mt-2">{{ data.study.historyScope }}</p><div v-for="(h, i) in data.study.hypotheses" :key="i" class="mt-3"><p class="font-medium text-gray-700 dark:text-gray-300">{{ h.label }}</p><p class="mt-1">{{ h.reason }}</p></div><p v-if="data.study.nearby.length" class="mt-3">前後2日以内の明細も参考にできます。同じ顧客の購入であることを示す根拠ではありません。</p><p v-for="n in data.study.nearby" :key="n.line" class="mt-1">{{ n.date }} · {{ n.description }} · ¥{{ Number(n.amount).toLocaleString('ja-JP') }}</p></details>
       </div>
+      <div v-if="data.study.learning" class="mt-4 rounded-xl border border-gray-200 p-3 dark:border-white/10">
+        <NuxtLink to="/learning" class="text-xs text-primary-main">学習ノートの元データを参照中 ↗</NuxtLink>
+        <div v-for="rule in data.study.learning.rules" :key="rule.id" class="mt-3 text-xs">
+          <NuxtLink :to="{path:'/learning',query:{pattern:rule.id}}" class="font-medium text-green-700 dark:text-green-400">A · 確認済みの顧客・用途ルール</NuxtLink>
+          <p class="mt-1 text-gray-700 dark:text-gray-300">{{ rule.decision.purpose==='company' ? '会社経費' : draft.references.customers.find((c:any)=>c._id===rule.decision.customerId)?.name || '顧客購入' }} · {{ rule.decision.effectiveFrom }}以降</p>
+          <p class="mt-1 whitespace-pre-wrap break-words text-gray-500 dark:text-gray-400">{{ rule.decision.note }}</p>
+          <p class="mt-1 text-gray-500 dark:text-gray-400">今回の購入に当てはまるか確認して、下書きに入力してください。</p>
+        </div>
+      </div>
       <div v-if="!data.review" class="mt-4 border-t border-gray-200 pt-4 dark:border-white/10">
         <p class="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ data.study.question }}</p>
         <button type="button" class="btn btn-secondary mt-4 text-sm" :disabled="busy || dirty || draft.locked || !data.connected" @click="ask">Slackで確認する</button>

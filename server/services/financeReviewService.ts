@@ -3,6 +3,7 @@ import { getHeader, type H3Event } from 'h3'
 import { FinanceReview, FinanceReviewAgent, FinanceHistory } from '../models/FinanceReview'
 import { FinancialAccount } from '../models/Finance'
 import { FinanceDraft } from '../models/FinanceDraft'
+import { learningEvidence } from './financeLearningService'
 import User from '../models/User'
 import { ready, fail, id, ownedImport } from './financeService'
 import { readDraft, saveDraft } from './financeDraftService'
@@ -32,7 +33,8 @@ export async function createReviewAgent(ownerId: string, body: any) {
 export async function reviewContext(ownerId: string, importId: string, line: number) {
   const draft = await readDraft(ownerId, importId, line)
   const accountId = draft.source.account.id, merchant = normalizeMerchant(draft.source.description)
-  const history = await FinanceHistory.find({ ownerId, accountId, merchant, date: { $lt: draft.source.purchaseDate } }).sort({ date: -1 }).limit(1000).lean()
+  const learning = await learningEvidence(ownerId, accountId, merchant, draft.source.purchaseDate)
+  const history = learning?.history ?? await FinanceHistory.find({ ownerId, accountId, merchant, date: { $lt: draft.source.purchaseDate } }).sort({ date: -1 }).limit(1000).lean()
   const candidates = await FinanceReview.find({ ownerId, accountId, status: 'resolved', 'memory.merchant': merchant, 'context.source.purchaseDate': { $lt: draft.source.purchaseDate } }).select('memory context.source importId line proposal').sort({ resolvedAt: -1 }).limit(200).lean()
   const saved = candidates.length ? await FinanceDraft.find({ ownerId, $or: candidates.map(c => ({ importId: c.importId, line: c.line })) }).select('importId line values').lean() : []
   // A subsequent web correction withdraws the older Slack observation from future proposals.
@@ -45,7 +47,8 @@ export async function reviewContext(ownerId: string, importId: string, line: num
   const batch = await ownedImport(ownerId, importId)
   const targetDate = Date.parse(draft.source.purchaseDate)
   const nearby = batch.rows.filter((r: any) => r.kind === 'expense' && r.line !== line && Math.abs(Date.parse(r.purchaseDate) - targetDate) <= 2 * 86400000).slice(0, 5).map((r: any) => ({ description: r.description, amount: r.amount, date: r.purchaseDate, line: r.line }))
-  const study = studyPurchase(draft, studiedHistory, memories.map(m => m.memory), nearby)
+  const study: any = studyPurchase(draft, studiedHistory, memories.map(m => m.memory), nearby)
+  if (learning) study.learning = { datasetId: learning.datasetId, rules: learning.rules }
   const customers = draft.references.customers.map((c: any) => ({ id: c._id.toString(), name: c.name }))
   return { draft, study, customers }
 }

@@ -1,0 +1,100 @@
+<template>
+  <div class="learning">
+    <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div><h1 class="text-xl font-semibold text-gray-800 dark:text-gray-100">学習ノート</h1><p class="mt-1 text-sm text-gray-500 dark:text-gray-400">元の記録をたどり、次の判断に使うルールを育てます。</p></div>
+      <NuxtLink to="/mapping" class="btn btn-secondary self-start text-sm"><ArrowLeft class="mr-2 h-4 w-4" />明細マッピング</NuxtLink>
+    </header>
+    <p v-if="error" role="alert" class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">{{ error }}</p>
+    <p v-if="loading" role="status" class="card p-12 text-center text-sm text-gray-500">学習ノートを読み込んでいます…</p>
+    <div v-else-if="!overview?.dataset" class="card p-12 text-center"><BookOpen class="mx-auto mb-4 h-10 w-10 text-gray-300" /><h2 class="font-medium">学習元の記録を準備しています</h2><p class="mt-2 text-sm text-gray-500">スプレッドシートの読み込みが完了すると、根拠とルール案がここに並びます。</p></div>
+    <template v-else>
+      <div class="mb-6 grid gap-4 sm:grid-cols-3">
+        <StatCard title="保存したシート" :value="`${overview.dataset.sheets.length}`" icon="FileText" color="blue" />
+        <StatCard title="主台帳の支出記録" :value="number(overview.dataset.summary.outflowRows)" icon="CreditCard" color="primary" />
+        <StatCard title="確認したルール" :value="number(overview.counts.confirmed)" icon="FileCheck" color="green" />
+      </div>
+      <section v-if="overview.dataset.instructions?.length" class="card mb-6 p-4 sm:p-6">
+        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">あなたからの指示</h2>
+        <div v-for="(instruction,i) in overview.dataset.instructions" :key="i" class="mt-3 border-l-2 border-primary-main/30 pl-3"><p class="text-sm text-gray-800 dark:text-gray-200">{{ instruction.text }}</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ instruction.note }}</p></div>
+      </section>
+      <nav class="mb-4 flex gap-2" aria-label="学習ノートの表示">
+        <button v-for="tab in tabs" :key="tab.key" type="button" class="rounded-lg px-4 py-2.5 text-sm font-medium" :class="view===tab.key?'bg-primary-main/10 text-primary-main':'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5'" :aria-pressed="view===tab.key" @click="changeView(tab.key)">{{ tab.label }}</button>
+      </nav>
+      <template v-if="view==='patterns'">
+        <section class="card mb-4 p-4">
+          <div class="grid gap-3 md:grid-cols-[1fr_180px_180px]">
+            <label class="text-xs font-medium text-gray-500 dark:text-gray-400">利用先・カード・顧客<input v-model="search" type="search" class="learning-input mt-1" placeholder="ISSEY、ZOZOTOWN、AMEX…" maxlength="120" @input="scheduleSearch"></label>
+            <label class="text-xs font-medium text-gray-500 dark:text-gray-400">確認状態<select v-model="status" class="learning-input mt-1" @change="loadPatterns(1)"><option value="">すべて</option><option value="proposed">未確認</option><option value="confirmed">確認済み</option><option value="deferred">保留</option></select></label>
+            <label class="text-xs font-medium text-gray-500 dark:text-gray-400">過去記録の傾向<select v-model="grade" class="learning-input mt-1" @change="loadPatterns(1)"><option value="">すべて</option><option value="B">B · 傾向あり</option><option value="C">C · 分類が混在</option><option value="D">D · 根拠不足</option></select></label>
+          </div>
+          <p class="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">Aはあなたが確認した顧客・用途ルール。B〜Dは主台帳に記録された顧客の傾向です。確率や税務判断の正確さを表す点数ではありません。</p>
+        </section>
+        <div class="grid items-start gap-4" :class="detail?'lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]':''">
+          <section class="card overflow-hidden" :class="detail?'hidden lg:block':''" aria-label="ルール案">
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-white/10"><p class="text-sm font-medium">{{ number(patterns.total) }}件のルール案</p><span v-if="busy" role="status" class="text-xs text-gray-500">読込中…</span></div>
+            <p v-if="!patterns.items.length" class="p-10 text-center text-sm text-gray-500">条件に一致する記録がありません。</p>
+            <button v-for="p in patterns.items" :key="p._id" type="button" class="block w-full border-b border-gray-100 p-4 text-left transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-main dark:border-white/10 dark:hover:bg-white/5" :class="detail?.pattern._id===p._id?'bg-primary-main/5':''" @click="openPattern(p._id)">
+              <div class="flex items-start justify-between gap-3"><h2 class="min-w-0 break-words text-sm font-semibold text-gray-900 dark:text-gray-100">{{ p.merchantLabel }}</h2><span class="shrink-0 rounded-md px-2 py-1 text-xs font-medium" :class="gradeClass(p.status==='confirmed'?'A':p.grade)">{{ p.status==='confirmed'?'A · 確認済み':gradeText[p.grade] }}</span></div>
+              <p class="mt-1 break-words text-xs text-gray-500 dark:text-gray-400">{{ p.cards.filter(Boolean).join(' / ') || 'カード記録なし' }} · {{ p.payment || '支払方法未記録' }}</p>
+              <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"><span v-for="c in p.customers.slice(0,3)" :key="c.label" class="text-gray-600 dark:text-gray-300">{{ c.label || '顧客空欄' }} <strong class="font-medium tabular-nums">{{ number(c.count) }}</strong></span><span v-if="p.customers.length>3" class="text-gray-400">ほか{{ p.customers.length-3 }}分類</span></div>
+              <p class="mt-2 text-xs text-gray-400">{{ p.from }} ～ {{ p.to }} · {{ number(p.total) }}件 <span v-if="p.status==='deferred'">· 保留中</span></p>
+            </button>
+            <div class="flex items-center justify-between p-4"><button class="btn btn-secondary text-xs" :disabled="busy || patterns.page<=1" @click="loadPatterns(patterns.page-1)">前へ</button><span class="text-xs text-gray-500">{{ patterns.page }} / {{ Math.max(1,Math.ceil(patterns.total/30)) }}</span><button class="btn btn-secondary text-xs" :disabled="busy || patterns.page*30>=patterns.total" @click="loadPatterns(patterns.page+1)">次へ</button></div>
+          </section>
+          <section v-if="detail" class="card min-w-0 p-4 sm:p-6" aria-label="ルールの根拠と確認">
+            <button type="button" class="mb-4 flex items-center gap-1 text-xs text-primary-main" @click="closeDetail"><ArrowLeft class="h-3 w-3" />一覧へ戻る</button>
+            <h2 ref="detailTitle" tabindex="-1" class="break-words text-base font-semibold text-gray-900 outline-none dark:text-gray-100">{{ detail.pattern.merchantLabel }}</h2>
+            <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ detail.pattern.cards.filter(Boolean).join(' / ') || 'カード記録なし' }} · {{ detail.pattern.payment || '支払方法未記録' }}<br>利用先の表記が完全に一致する主台帳の記録を集めています。</p>
+            <div class="mt-5 grid gap-4 sm:grid-cols-2"><div><h3 class="text-xs font-semibold text-gray-800 dark:text-gray-200">記録されていた顧客</h3><p v-for="c in detail.pattern.customers" :key="c.label" class="mt-2 flex justify-between gap-3 text-xs text-gray-600 dark:text-gray-400"><span class="break-words">{{ c.label || '空欄 · 未確認' }}</span><span class="shrink-0 tabular-nums">{{ number(c.count) }}件</span></p></div><div><h3 class="text-xs font-semibold text-gray-800 dark:text-gray-200">記録されていた区分</h3><p v-for="c in detail.pattern.categories" :key="c.label" class="mt-2 flex justify-between gap-3 text-xs text-gray-600 dark:text-gray-400"><span>{{ c.label || '空欄' }}</span><span class="shrink-0 tabular-nums">{{ number(c.count) }}件</span></p></div></div>
+            <form class="mt-6 space-y-3 border-t border-gray-200 pt-5 dark:border-white/10" @submit.prevent="save('confirmed')">
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">この条件の顧客・用途を教える</h3>
+              <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">確認すると購入内容のレビューに根拠として表示します。過去の分類や帳簿は書き換えません。品目・区分・勘定科目・税区分は個別に確認します。</p>
+              <div class="grid gap-3 sm:grid-cols-2"><label class="text-xs font-medium text-gray-600 dark:text-gray-400">用途<select v-model="form.purpose" class="learning-input mt-1"><option value="">選択してください</option><option value="customer">顧客購入</option><option value="company">会社経費</option></select></label><label v-if="form.purpose==='customer'" class="text-xs font-medium text-gray-600 dark:text-gray-400">顧客<select v-model="form.customerId" class="learning-input mt-1"><option value="">顧客を選択</option><option v-for="c in overview.customers" :key="c._id" :value="c._id">{{ c.name }}</option></select></label><label class="text-xs font-medium text-gray-600 dark:text-gray-400">このルールを使う購入日<input v-model="form.effectiveFrom" type="date" class="learning-input mt-1"></label></div>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400">理由・例外<textarea v-model="form.note" rows="3" maxlength="1500" class="learning-input mt-1" placeholder="例：このカードでの購入は、この日以降この顧客からの依頼。例外があれば記入。" /></label>
+              <p v-if="saveError" role="alert" class="text-xs text-red-600">{{ saveError }}</p><p v-if="saved" role="status" class="text-xs text-green-700 dark:text-green-400">確認内容を保存しました。</p>
+              <div class="flex flex-wrap gap-2"><button type="submit" class="btn btn-primary text-xs" :disabled="saving || !form.note.trim() || !form.purpose || !form.effectiveFrom || (form.purpose==='customer' && !form.customerId)">この条件で確認する</button><button type="button" class="btn btn-secondary text-xs" :disabled="saving || !form.note.trim()" @click="save('deferred')">理由を残して保留</button><button v-if="detail.pattern.status!=='proposed'" type="button" class="px-2 py-2 text-xs text-gray-500" :disabled="saving || !form.note.trim()" @click="save('proposed')">確認を取り消す</button></div>
+              <details v-if="detail.pattern.audit?.length" class="text-xs text-gray-500"><summary class="cursor-pointer py-2">確認履歴 · {{ detail.pattern.audit.length }}回</summary><div v-for="entry in [...detail.pattern.audit].reverse()" :key="entry.revision" class="mt-2 border-l border-gray-200 pl-3"><p>{{ dateTime(entry.at) }} · {{ statusText[entry.decision.status] }}</p><p class="mt-1 whitespace-pre-wrap break-words">{{ entry.decision.note }}</p></div></details>
+            </form>
+            <div class="mt-6 border-t border-gray-200 pt-5 dark:border-white/10"><h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">根拠となる元の行</h3><p class="mt-1 text-xs text-gray-500">同額・同日の行も、別の購入の可能性があるため残しています。</p><div v-for="r in detail.items" :key="r._id" class="mt-3 border-b border-gray-100 pb-3 dark:border-white/10"><button type="button" class="w-full text-left text-xs" @click="openRow(r._id)"><div class="flex justify-between gap-3"><span class="text-gray-700 dark:text-gray-300">{{ r.date }} · {{ r.parsed.customer || '顧客空欄' }}</span><span class="tabular-nums text-gray-800 dark:text-gray-200">¥{{ number(r.parsed.amount) }}</span></div><p class="mt-1 text-primary-main">{{ r.sheet }} · {{ r.row }}行 · 全項目を見る</p></button><LearningSourceRow v-if="source?.row._id===r._id" :source="source" /></div><div class="mt-4 flex items-center justify-between"><button class="btn btn-secondary text-xs" :disabled="busy || detail.page<=1" @click="detailPage(detail.page-1)">前へ</button><span class="text-xs text-gray-500">{{ detail.page }} / {{ Math.max(1,Math.ceil(detail.total/30)) }}</span><button class="btn btn-secondary text-xs" :disabled="busy || detail.page*30>=detail.total" @click="detailPage(detail.page+1)">次へ</button></div></div>
+          </section>
+        </div>
+      </template>
+      <template v-else>
+        <section class="card mb-4 p-4 sm:p-6"><h2 class="text-sm font-semibold">{{ overview.dataset.title }}</h2><p class="mt-2 text-xs leading-relaxed text-gray-500">{{ overview.dataset.summary.dateFrom }} ～ {{ overview.dataset.summary.dateTo }} · {{ number(overview.dataset.summary.rowCount) }}行・{{ number(overview.dataset.summary.cellCount) }}セルを保存<br>主台帳「{{ overview.dataset.primarySheet }}」だけをパターン集計に使用。その他のシートは参照用です。空欄・未見出しの列・数式も確認できます。</p><a :href="overview.dataset.sourceUrl" target="_blank" rel="noopener noreferrer" class="mt-3 inline-flex items-center gap-1 text-xs text-primary-main">元のGoogle Sheetsを開く<ExternalLink class="h-3 w-3" /></a><details class="mt-3 text-xs text-gray-500"><summary class="cursor-pointer">読み込み元の識別情報</summary><p class="mt-2 break-all">SHA-256 · {{ overview.dataset.sourceHash }}</p></details></section>
+        <section class="card p-4 sm:p-6"><div class="grid gap-3 sm:grid-cols-2"><label class="text-xs font-medium text-gray-500">シート<select v-model="sheet" class="learning-input mt-1" @change="loadRows(1)"><option v-for="s in overview.dataset.sheets" :key="s.name" :value="s.name">{{ s.name }} · {{ number(s.populatedRows) }}行 · {{ s.role==='primary'?'集計対象':'参照のみ' }}</option></select></label><form class="flex items-end gap-2" @submit.prevent="loadRows(1)"><label class="min-w-0 flex-1 text-xs font-medium text-gray-500">行番号<input v-model="rowSearch" type="number" min="1" class="learning-input mt-1" placeholder="すべての行"></label><button class="btn btn-secondary text-xs" type="submit">表示</button></form></div><p v-if="!rows.items.length" class="py-12 text-center text-sm text-gray-500">保存された行がありません。</p><div v-for="r in rows.items" :key="r._id" class="mt-4 border-t border-gray-100 pt-3 dark:border-white/10"><button class="block w-full text-left text-xs" @click="openRow(r._id)"><span class="text-primary-main">{{ r.sheet }} · {{ r.row }}行</span><p class="mt-1 break-words text-gray-700 dark:text-gray-300">{{ r.date || '日付未解析' }} · {{ r.parsed.merchant || '見出し・補助記録' }} · {{ r.parsed.customer || '顧客空欄' }}<span v-if="r.parsed.amount!==null"> · ¥{{ number(r.parsed.amount) }}</span></p></button><LearningSourceRow v-if="source?.row._id===r._id" :source="source" /></div><div class="mt-5 flex items-center justify-between"><button class="btn btn-secondary text-xs" :disabled="busy || rows.page<=1" @click="loadRows(rows.page-1)">前へ</button><span class="text-xs text-gray-500">{{ rows.page }} / {{ Math.max(1,Math.ceil(rows.total/30)) }}</span><button class="btn btn-secondary text-xs" :disabled="busy || rows.page*30>=rows.total" @click="loadRows(rows.page+1)">次へ</button></div></section>
+      </template>
+    </template>
+  </div>
+</template>
+<script setup lang="ts">
+import { ArrowLeft, BookOpen, ExternalLink } from 'lucide-vue-next'
+import StatCard from '~/components/dashboard/StatCard.vue'
+import LearningSourceRow from '~/components/finance/LearningSourceRow.vue'
+import { useUserStore } from '~/stores/user'
+const user=useUserStore(), route=useRoute(), overview=ref<any>(null), loading=ref(true), busy=ref(false), error=ref(''), view=ref('patterns')
+const tabs=[{key:'patterns',label:'ルールを確認'},{key:'sources',label:'すべての元データ'}]
+const patterns=ref<any>({items:[],total:0,page:1}), detail=ref<any>(null), source=ref<any>(null), rows=ref<any>({items:[],total:0,page:1})
+const search=ref(''), status=ref(''), grade=ref(''), sheet=ref(''), rowSearch=ref(''), detailTitle=ref<HTMLElement|null>(null)
+const saving=ref(false), saved=ref(false), saveError=ref(''), form=reactive({purpose:'',customerId:'',effectiveFrom:new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),note:''})
+const gradeText:Record<string,string>={B:'B · 傾向あり',C:'C · 分類が混在',D:'D · 根拠不足'}, statusText:Record<string,string>={confirmed:'確認済み',proposed:'未確認',deferred:'保留'}
+const gradeClass=(g:string)=>g==='A'?'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300':g==='C'?'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300':'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300'
+const number=(n:any)=>Number(n || 0).toLocaleString('ja-JP'), dateTime=(s:string)=>new Date(s).toLocaleString('ja-JP')
+const api=(path:string,options:any={})=>$fetch<any>('/api/finance-learning/'+path,{...options,headers:user.authHeader})
+const message=(e:any)=>e.data?.data?.message || e.data?.statusMessage || '読み込みに失敗しました。もう一度お試しください。'
+let searchTimer:ReturnType<typeof setTimeout>|undefined, requestId=0, detailId=0, rowId=0
+async function loadPatterns(page=1) { const ticket=++requestId; busy.value=true; error.value=''; try { const data=await api('patterns',{query:{q:search.value,status:status.value,grade:grade.value,page}}); if(ticket===requestId) patterns.value=data } catch(e:any) {if(ticket===requestId) error.value=message(e)} finally {if(ticket===requestId) busy.value=false} }
+function scheduleSearch(){clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadPatterns(1),300)}
+async function openPattern(id:string) { const ticket=++detailId; busy.value=true; source.value=null; saveError.value=''; saved.value=false; try { const data=await api('patterns/'+id); if(ticket!==detailId)return; detail.value=data; const d=data.pattern.decision; Object.assign(form,{purpose:d?.purpose || '',customerId:d?.customerId || '',effectiveFrom:d?.effectiveFrom || new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),note:d?.note || ''}); await nextTick(); detailTitle.value?.focus() } catch(e:any) { error.value=message(e) } finally { if(ticket===detailId) busy.value=false } }
+function closeDetail(){detailId++;detail.value=null;source.value=null;saved.value=false;busy.value=false}
+async function detailPage(page:number){if(!detail.value)return; const id=detail.value.pattern._id,ticket=++detailId;busy.value=true;source.value=null;try {const data=await api('patterns/'+id,{query:{page}});if(ticket===detailId)detail.value=data} catch(e:any){error.value=message(e)} finally{if(ticket===detailId)busy.value=false}}
+async function openRow(id:string){if(source.value?.row._id===id){source.value=null;rowId++;return}const ticket=++rowId;try{const data=await api('rows/'+id);if(ticket===rowId)source.value=data}catch(e:any){error.value=message(e)}}
+async function save(state:string){if(!detail.value)return; saving.value=true;saveError.value='';saved.value=false;const id=detail.value.pattern._id;try{const result=await api('patterns/'+id,{method:'PUT',body:{...form,status:state,revision:detail.value.pattern.revision}});if(detail.value?.pattern._id===id){detail.value.pattern=result.pattern;saved.value=true}overview.value=await api('overview');await loadPatterns(patterns.value.page)}catch(e:any){saveError.value=message(e)}finally{saving.value=false}}
+async function loadRows(page=1){busy.value=true;source.value=null;try{rows.value=await api('rows',{query:{sheet:sheet.value,row:rowSearch.value,page}})}catch(e:any){error.value=message(e)}finally{busy.value=false}}
+async function changeView(key:string){view.value=key;source.value=null;if(key==='sources')await loadRows(1)}
+onMounted(async()=>{try{overview.value=await api('overview');if(overview.value.dataset){sheet.value=overview.value.dataset.primarySheet;await loadPatterns();if(typeof route.query.pattern==='string')await openPattern(route.query.pattern)}}catch(e:any){error.value=message(e)}finally{loading.value=false}})
+onBeforeUnmount(()=>{clearTimeout(searchTimer);requestId++;detailId++;rowId++})
+</script>
+<style scoped>
+.learning-input { @apply block w-full min-w-0 rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-normal text-gray-900 placeholder-gray-400 focus:border-primary-main focus:ring-primary-main dark:border-white/10 dark:bg-white/5 dark:text-gray-100; }
+button:disabled { @apply cursor-not-allowed opacity-50; }
+</style>
