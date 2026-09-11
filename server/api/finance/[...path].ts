@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
 import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
@@ -64,6 +65,33 @@ export default defineEventHandler(async event => {
         if (!device) fail(404, 'Collector not found')
         return { success: true }
       }
+    }
+    if (parts[0] === 'documents' && parts.length === 3 && parts[2] === 'file' && method === 'GET') {
+      const { doc, bytes } = await downloadDocument(ownerId, parts[1])
+      setHeader(event, 'Content-Type', doc.mimeType)
+      setHeader(event, 'Content-Disposition', "attachment; filename=\"document\"; filename*=UTF-8''" + encodeURIComponent(doc.name))
+      setHeader(event, 'X-Content-Type-Options', 'nosniff')
+      return bytes
+    }
+    if (parts[0] === 'imports' && parts[2] === 'references' && parts.length === 3 && method === 'POST') {
+      let body: any
+      try { body = JSON.parse((await boundedBody(event, 10000)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; fail(400, 'Invalid reference JSON') }
+      return await createDraftReference(ownerId, parts[1], body)
+    }
+    if (parts[0] === 'imports' && parts[2] === 'drafts' && parts.length >= 4) {
+      const line = Number(parts[3])
+      if (parts.length === 6 && parts[4] === 'documents' && method === 'DELETE') {
+        let body: any
+        try { body = JSON.parse((await boundedBody(event, 10000)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; fail(400, 'Invalid document JSON') }
+        return await removeDocument(ownerId, parts[1], line, parts[5], body)
+      }
+      if (parts.length === 4 && method === 'GET') return await readDraft(ownerId, parts[1], line)
+      if (parts.length === 4 && method === 'PUT') {
+        let body: any
+        try { body = JSON.parse((await boundedBody(event, 1024 * 1024)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; fail(400, 'Invalid draft JSON') }
+        return await saveDraft(ownerId, parts[1], line, body)
+      }
+      if (parts.length === 5 && parts[4] === 'documents' && method === 'POST') return await addDocument(ownerId, parts[1], line, getQuery(event), await boundedBody(event, 10 * 1024 * 1024), getHeader(event, 'content-type') || '')
     }
     if (parts[0] === 'imports') {
       if (parts.length === 1 && method === 'GET') {

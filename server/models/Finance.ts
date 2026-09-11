@@ -1,4 +1,5 @@
 import mongoose, { Schema } from 'mongoose'
+import { FinanceDraft, FinanceDocument } from './FinanceDraft'
 
 const oid = Schema.Types.ObjectId
 const common = { timestamps: true, toJSON: { virtuals: true } }
@@ -37,6 +38,7 @@ const entry = new Schema({
   occurrence: Number, coverage: { type: String, required: true },
   importId: { type: oid, required: true }, line: Number,
   transactionId: { type: oid, required: true }, state: { type: String, default: 'reserved' },
+  draftSnapshot: Schema.Types.Mixed,
   row: { type: Schema.Types.Mixed, required: true }, linkedExisting: { type: Boolean, default: false }
 }, common)
 entry.index({ accountId: 1, key: 1 }, { unique: true })
@@ -48,5 +50,5 @@ export const FinanceImport = (mongoose.models.FinanceImport as mongoose.Model<mo
 export const FinanceEntry = (mongoose.models.FinanceEntry as mongoose.Model<mongoose.InferSchemaType<typeof entry>>) || mongoose.model('FinanceEntry', entry)
 
 export async function initializeFinance() {
-  await Promise.all([FinancialAccount.init(), FinanceCollector.init(), FinanceImport.init(), FinanceEntry.init()])
+  await Promise.all([FinancialAccount.init(), FinanceCollector.init(), FinanceImport.init(), FinanceEntry.init(), FinanceDraft.init(), FinanceDocument.init()])
 }

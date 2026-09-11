@@ -12,13 +12,14 @@ import AccountCategoryModel, { type IAccountCategory } from '../models/AccountCa
 import { FinancialAccount, FinanceCollector, FinanceImport, FinanceEntry, initializeFinance } from '../models/Finance'
 import { parseAmex, period, digest, MAX_BYTES, type AmexRow } from '../../shared/amex.mjs'
 
+import { FinanceDraft } from '../models/FinanceDraft'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 
 const User = UserModel as mongoose.Model<IUser>
 const Transaction = TransactionModel as mongoose.Model<ITransaction>
 const AccountCategory = AccountCategoryModel as mongoose.Model<IAccountCategory>
 
-export const fail = (statusCode: number, message: string): never => { throw createError({ statusCode, statusMessage: message }) }
+export const fail = (statusCode: number, message: string): never => { throw createError({ statusCode, statusMessage: /[^\x20-\x7e]/.test(message) ? 'Finance request failed' : message, data: { message } }) }
 export function id(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f\d]{24}$/i.test(value)) fail(400, 'Invalid identifier')
   return value as string
@@ -98,7 +99,7 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
 }
 
 async function candidates(account: any, rows: AmexRow[]) {
-  const dates = [...new Set(rows.map(row => row.purchaseDate))]
+  const dates = [...new Set(rows.flatMap(row => [row.purchaseDate, row.processingDate]))]
   const cards = account.cardIdentifiers.map((v: string) => v.slice(-4))
   const sorted = dates.sort()
   if (!sorted.length) return []
@@ -116,7 +117,7 @@ export async function reviewImport(ownerId: string, importId: string) {
   const view = rows.map(row => {
     const entry: any = byKey.get(row.key)
     const manual: any = byKey.get(`${row.key}:manual:${batch._id}:${row.line}`)
-    const matches = legacy.filter(v => [new Date(v.date).toISOString().slice(0, 10), new Date(new Date(v.date).getTime()+9*3600000).toISOString().slice(0,10)].includes(row.purchaseDate) && v.amount === Math.abs(row.amount)).slice(0,10)
+    const matches = legacy.filter(v => [new Date(v.date).toISOString().slice(0, 10), new Date(new Date(v.date).getTime()+9*3600000).toISOString().slice(0,10)].some(date => date === row.purchaseDate || date === row.processingDate) && v.amount === Math.abs(row.amount)).slice(0,10)
     let state = row.kind === 'repayment' ? 'repayment' : row.kind === 'credit_review' ? 'credit_review' : 'new'
     if (entry) state = entry.importId.toString() === batch._id.toString() ? entry.state === 'posted' ? 'posted' : entry.linkedExisting ? 'legacy_review' : 'new' : entry.state !== 'posted' ? 'in_progress' : entry.coverage === batch.period.key ? 'duplicate' : 'overlap_review'
     else if (matches.length && row.kind === 'expense') state = 'legacy_review'
@@ -133,14 +134,23 @@ export async function reviewMapping(ownerId: string, importId: string) {
   const account = await ownedAccount(ownerId, batch.accountId.toString())
   let rows: ReturnType<typeof mappingRows>
   try { rows = mappingRows(batch) } catch { fail(409, 'Saved mapping does not match the original statement; review the source before continuing') }
-  return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, rows: rows! }
+  const drafts: any[] = await FinanceDraft.find({ ownerId, importId: batch._id }).select('line revision approvedAt values.purpose values.customerId values.transactionCategoryId').lean()
+  const { draftReferences } = await import('./financeDraftService')
+  const refs = drafts.length ? await draftReferences() : null
+  return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, rows: rows!.map(row => {
+    const draft = drafts.find(d => d.line === row.line)
+    if (!draft) return row
+    const customer = refs?.customers.find((r: any) => r._id.toString() === draft.values.customerId)
+    const category = refs?.transactionCategories.find((r: any) => r._id.toString() === draft.values.transactionCategoryId)
+    return { ...row, purpose: draft.values.purpose, clientCode: customer?.name || '', clientName: '', category: category?.name || '', draft: { revision: draft.revision, approved: !!draft.approvedAt } }
+  }) }
 }
 
 export async function commitImport(ownerId: string, importId: string, body: any) {
   if (!Array.isArray(body?.decisions) || !body.decisions.length || body.decisions.length > 5000) fail(400, 'Select rows to review')
   const initial = await ownedImport(ownerId, importId)
   // External client/category labels are preview data, not ledger ObjectIds.
-  if (initial.mappingPreview && body.decisions.some((decision: any) => decision?.action === 'import')) fail(409, 'This statement has a classification preview; ledger posting requires the client and category mappings to be finalized')
+  if (initial.mappingPreview && body.decisions.some((decision: any) => decision?.action === 'import' && !Number.isSafeInteger(decision.draftRevision))) fail(409, 'This statement has a classification preview; ledger posting requires the client and category mappings to be finalized')
   const lease = randomUUID(), now = new Date()
   const locked = await FinancialAccount.findOneAndUpdate({ _id: initial.accountId, ownerId, $or: [{ commitLeaseUntil: { $exists: false } }, { commitLeaseUntil: null }, { commitLeaseUntil: { $lte: now } }] }, { $set: { commitLease: lease, commitLeaseUntil: new Date(Date.now() + 60000) } }, { new: true })
   if (!locked) fail(409, 'Another import is being reviewed; retry shortly')
@@ -149,6 +159,7 @@ export async function commitImport(ownerId: string, importId: string, body: any)
     const view = await reviewImport(ownerId, importId)
     const rows = new Map(view.rows.map(r => [r.line, r]))
     const seen = new Set<number>()
+    const snapshots = new Map<number, any>()
     if (body.accountCategoryId && !await AccountCategory.exists({ _id: id(body.accountCategoryId) })) fail(400, 'Unknown accounting category')
     // Validate the complete request before recording any decision. Writes remain resumable after an interruption.
     for (const decision of body.decisions) {
@@ -160,6 +171,16 @@ export async function commitImport(ownerId: string, importId: string, body: any)
       if (row.kind !== 'expense') fail(400, 'Repayments and credits are retained for reconciliation; only spending can be posted here')
       if (['legacy_review','overlap_review','correction_review'].includes(row.state) && decision.confirmNew !== true && decision.action !== 'link') fail(409, 'Resolve the possible duplicate before posting')
       if (decision.action === 'link' && (row.state !== 'legacy_review' || !row.existing.some(v => v.id === decision.transactionId))) fail(400, 'Choose an exact historical candidate')
+      if (decision.action === 'import') {
+        const reserved: any = await FinanceEntry.findOne({ ownerId, importId: initial._id, line: row.line }).lean()
+        if (reserved?.draftSnapshot) {
+          if (reserved.draftSnapshot.revision !== decision.draftRevision) fail(409, 'Resume the previously approved draft revision')
+          snapshots.set(row.line, reserved.draftSnapshot)
+        } else if (decision.draftRevision !== undefined) {
+          const { draftSnapshot } = await import('./financeDraftService')
+          snapshots.set(row.line, await draftSnapshot(ownerId, initial, row, decision.draftRevision))
+        } else if (await FinanceDraft.exists({ ownerId, importId: initial._id, line: row.line })) fail(409, 'Review and approve the saved draft before posting')
+      }
     }
     for (const decision of body.decisions) {
       const row = rows.get(decision.line)!
@@ -176,7 +197,7 @@ export async function commitImport(ownerId: string, importId: string, body: any)
         if (!selected || row.state !== 'legacy_review') fail(400, 'Choose an exact historical candidate')
         transactionId = new mongoose.Types.ObjectId(id(decision.transactionId))
       }
-      const entry: any = await FinanceEntry.findOneAndUpdate({ accountId: initial.accountId, key }, { $setOnInsert: { ownerId, fingerprint: row.fingerprint, occurrence: row.occurrence, coverage: initial.period.key, importId: initial._id, line: row.line, transactionId, row, linkedExisting: decision.action === 'link', state: 'reserved' } }, { upsert: true, new: true })
+      const entry: any = await FinanceEntry.findOneAndUpdate({ accountId: initial.accountId, key }, { $setOnInsert: { ownerId, fingerprint: row.fingerprint, occurrence: row.occurrence, coverage: initial.period.key, importId: initial._id, line: row.line, transactionId, row, draftSnapshot: snapshots.get(row.line), linkedExisting: decision.action === 'link', state: 'reserved' } }, { upsert: true, new: true })
       if (entry.importId.toString() !== initial._id.toString()) fail(409, 'Source row was claimed by another import; refresh the review')
       if (entry.state === 'posted') { skipped++; continue }
       if (entry.linkedExisting !== (decision.action === 'link') || (entry.linkedExisting && entry.transactionId.toString() !== decision.transactionId)) fail(409, 'Resume the previously selected action for this row')
@@ -186,10 +207,13 @@ export async function commitImport(ownerId: string, importId: string, body: any)
         linked++
       } else {
         await Transaction.updateOne({ _id: entry.transactionId }, { $setOnInsert: {
-          referenceNumber: `AMEX-${entry._id}`, date: new Date(row.purchaseDate), amount: row.amount, type: '支出', status: 'completed',
-          accountCategoryId: body.accountCategoryId || undefined, paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
+          referenceNumber: `AMEX-${entry._id}`, date: new Date(row.purchaseDate), status: 'completed',
+          accountCategoryId: body.accountCategoryId || undefined,
           hasReceipt: false, notes: row.description, items: [], attachments: [], tags: ['imported','amex'],
-          metadata: { financeEntryId: entry._id.toString(), financialAccountId: initial.accountId.toString(), importBatchId: initial._id.toString(), importSource: 'amex', originalCardIdentifier: row.cardIdentifier, processingDate: row.processingDate, currency: row.currency, foreignAmount: row.foreignAmount, exchangeRate: row.exchangeRate },
+          ...(entry.draftSnapshot?.transaction || {}),
+          // CSV amount, card and transaction type cannot be overridden by a draft.
+          amount: row.amount, type: '支出', paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
+          metadata: { financeEntryId: entry._id.toString(), financialAccountId: initial.accountId.toString(), importBatchId: initial._id.toString(), importSource: 'amex', originalCardIdentifier: row.cardIdentifier, processingDate: row.processingDate, currency: row.currency, foreignAmount: row.foreignAmount, exchangeRate: row.exchangeRate, ...(entry.draftSnapshot ? { financeDraftId: entry.draftSnapshot.draftId, financeDraftRevision: entry.draftSnapshot.revision, mappingPurpose: entry.draftSnapshot.purpose, mappingEvidence: entry.draftSnapshot.evidence, financeDocuments: entry.draftSnapshot.documents } : {}) },
           timeline: [{ type: 'imported', title: 'Amex取込', timestamp: new Date(), description: `${view.account.name} / ${initial.period.start} - ${initial.period.end}` }]
         } }, { upsert: true, runValidators: true })
         posted++

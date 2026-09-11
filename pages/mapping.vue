@@ -66,7 +66,7 @@
           <header class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-4 dark:border-white/10 sm:px-6">
             <div class="flex flex-wrap items-center gap-3">
               <h2 id="mapping-list-title" class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ filterLabel }}</h2>
-              <span class="badge-status bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300">確認用プレビュー</span>
+              <span class="badge-status bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300">取引の下書き</span>
             </div>
             <span role="status" class="text-sm tabular-nums text-gray-500 dark:text-gray-400">{{ filteredRows.length }} / {{ rows.length }} 件</span>
           </header>
@@ -109,14 +109,15 @@
                   <div class="min-w-0 text-sm">
                     <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400 xl:hidden">区分案</span>
                     <p :class="needsReview(row) ? 'text-amber-700 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'">{{ row.category || (row.status === 'repayment' ? '支出対象外' : '未設定') }}</p>
-                    <span class="badge-status mt-2" :class="needsReview(row) ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400' : row.status === 'proposed' ? 'bg-green-100 text-green-800 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300'">{{ statuses[row.status] }}</span>
+                    <span class="badge-status mt-2" :class="needsReview(row) ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400' : row.status === 'proposed' ? 'bg-green-100 text-green-800 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300'">{{ row.draft ? (row.draft.approved ? '内容確認済み' : '下書き保存済み') : statuses[row.status] }}</span>
+                    <NuxtLink :to="`/mapping-draft/${row.importId}/${row.line}`" class="mt-3 block py-2 text-sm font-medium text-primary-main dark:text-primary-light">{{ ['repayment', 'credit_review'].includes(row.purpose) ? '明細を確認' : '取引の下書きを開く →' }}</NuxtLink>
                   </div>
                 </div>
               </article>
             </div>
           </div>
           <footer class="space-y-2 border-t border-gray-200 bg-gray-50 px-4 py-4 text-xs leading-relaxed text-gray-500 dark:border-white/10 dark:bg-white/5 dark:text-gray-400 sm:px-6">
-            <p>確認用プレビューのため帳簿には登録されません。会社経費の顧客IDは空欄です。日付は元シートの処理日を基準とし、利用日も保持しています。</p>
+            <p>各明細から取引の全項目を確認・修正できます。下書きの保存では帳簿に登録されません。会社経費の顧客IDは空欄です。</p>
             <p v-for="batch in batches" :key="batch.id">{{ batch.account.name }} · {{ batch.period.start }} ～ {{ batch.period.end }}</p>
           </footer>
         </section>
@@ -130,7 +131,8 @@
 import { CreditCard, RefreshCw, Search, FileText, Loader2, Info } from 'lucide-vue-next'
 import StatCard from '~/components/dashboard/StatCard.vue'
 import { useUserStore } from '~/stores/user'
-import type { MappingRow } from '~/shared/finance-mapping.mjs'
+import type { MappingRow as SourceMappingRow } from '~/shared/finance-mapping.mjs'
+type MappingRow = SourceMappingRow & { draft?: { revision: number; approved: boolean } }
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '明細マッピング | OhMyFinance' })
 interface Batch { id: string; account: { id: string; name: string }; period: { start: string; end: string }; preparedAt: string | null; rows: MappingRow[] }
@@ -142,7 +144,7 @@ const api = (url: string): Promise<any> => $fetch('/api/finance/' + url, { heade
 const accountName = (id: string) => accounts.value.find(account => account._id === id)?.name || 'Amex'
 const yen = (amount: number) => new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(amount)
 const statuses: Record<string, string> = { proposed: '分類案あり', needs_client: '顧客・用途を確認', needs_category: '区分を確認', repayment: '返済・支出対象外', credit_review: '返金など・確認待ち' }
-const needsReview = (row: MappingRow) => ['needs_client', 'needs_category', 'credit_review'].includes(row.status)
+const needsReview = (row: MappingRow) => row.draft ? !row.draft.approved : ['needs_client', 'needs_category', 'credit_review'].includes(row.status)
 const rows = computed(() => batches.value.flatMap(batch => batch.rows.map(row => ({ ...row, importId: batch.id, accountName: batch.account.name }))).sort((a, b) => b.processingDate.localeCompare(a.processingDate) || a.importId.localeCompare(b.importId) || a.line - b.line))
 const matchesFilter = (row: MappingRow, value: string) => value === 'all' || (value === 'review' ? needsReview(row) : row.purpose === value)
 const filters = computed(() => [{ value: 'all', label: 'すべて' }, { value: 'customer', label: '顧客購入' }, { value: 'company', label: '会社経費' }, { value: 'review', label: '要確認' }, { value: 'repayment', label: 'カード返済' }].map(item => ({ ...item, count: rows.value.filter(row => matchesFilter(row, item.value)).length })))

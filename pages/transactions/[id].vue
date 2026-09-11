@@ -336,7 +336,8 @@
               <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('transactionDetail.receipt') }}</h2>
             </div>
 
-            <div v-if="transaction.hasReceipt && transaction.receiptFilePath">
+            <DocumentList v-if="transaction.metadata?.financeDraftId && transaction.attachments?.length" :documents="transaction.attachments" />
+            <div v-else-if="transaction.hasReceipt && transaction.receiptFilePath">
               <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-white/[0.03] rounded-xl border border-gray-200 dark:border-white/10">
                 <div class="flex items-center gap-3">
                   <div class="w-10 h-10 rounded-lg bg-primary-main/10 dark:bg-primary-main/20 flex items-center justify-center">
@@ -383,6 +384,7 @@ import {
   Upload, Receipt
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import DocumentList from '~/components/finance/DocumentList.vue'
 
 const { t } = useI18n()
 const route = useRoute()
