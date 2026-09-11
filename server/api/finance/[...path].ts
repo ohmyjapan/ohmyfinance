@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, createCollector, csvBody, acceptImport, reviewImport, commitImport, originalFile } from '../../services/financeService'
+import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
 
 export default defineEventHandler(async event => {
   const parts = (event.path.split('?')[0].split('/api/finance/')[1] || '').split('/').filter(Boolean)
@@ -33,6 +33,7 @@ export default defineEventHandler(async event => {
     }
 
     const ownerId = await financeUser(event)
+    setHeader(event, 'Cache-Control', 'no-store')
     if (parts[0] === 'accounts' && parts.length === 1) {
       if (method === 'GET') return { accounts: await FinancialAccount.find({ ownerId }).select('-commitLease -commitLeaseUntil').sort({ createdAt: 1 }).lean() }
       if (method === 'POST') return { account: await FinancialAccount.create({ ownerId, ...accountInput(await readBody(event)) }) }
@@ -68,9 +69,10 @@ export default defineEventHandler(async event => {
       if (parts.length === 1 && method === 'GET') {
         const accountId = getQuery(event).accountId
         if (accountId) await ownedAccount(ownerId, id(accountId))
-        return { imports: await FinanceImport.find({ ownerId, ...(accountId ? { accountId } : {}) }).select('-rows -decisions').sort({ createdAt: -1 }).limit(100).lean() }
+        return { imports: await FinanceImport.find({ ownerId, ...(accountId ? { accountId } : {}) }).select('-rows -decisions -mappingPreview').sort({ createdAt: -1 }).limit(100).lean() }
       }
       if (parts.length === 2 && method === 'GET') return await reviewImport(ownerId, parts[1])
+      if (parts[2] === 'mapping' && parts.length === 3 && method === 'GET') return await reviewMapping(ownerId, parts[1])
       if (parts[2] === 'commit' && parts.length === 3 && method === 'POST') return await commitImport(ownerId, parts[1], await readBody(event))
       if (parts[2] === 'file' && parts.length === 3 && method === 'GET') {
         const batch = await ownedImport(ownerId, parts[1])

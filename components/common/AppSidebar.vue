@@ -253,6 +253,7 @@ const navItems = computed(() => [
     items: [
       { name: t('nav.allTransactions'), icon: 'CreditCard', route: '/transactions' },
       { name: 'カード連携', icon: 'RefreshCw', route: '/connections' },
+      { name: '明細マッピング', icon: 'FileCheck', route: '/mapping' },
       { name: t('nav.importData'), icon: 'Upload', route: '/transactions/upload' },
       { name: t('nav.recurringPayments'), icon: 'RefreshCw', route: '/recurring' },
       { name: t('nav.duplicates'), icon: 'Copy', route: '/transactions/duplicates' }

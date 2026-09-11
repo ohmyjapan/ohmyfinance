@@ -12,6 +12,8 @@ import AccountCategoryModel, { type IAccountCategory } from '../models/AccountCa
 import { FinancialAccount, FinanceCollector, FinanceImport, FinanceEntry, initializeFinance } from '../models/Finance'
 import { parseAmex, period, digest, MAX_BYTES, type AmexRow } from '../../shared/amex.mjs'
 
+import { mappingRows } from '../../shared/finance-mapping.mjs'
+
 const User = UserModel as mongoose.Model<IUser>
 const Transaction = TransactionModel as mongoose.Model<ITransaction>
 const AccountCategory = AccountCategoryModel as mongoose.Model<IAccountCategory>
@@ -123,12 +125,22 @@ export async function reviewImport(ownerId: string, importId: string) {
     return { ...row, state, skipped: batch.decisions?.[String(row.line)] === 'skip', transactionId: manual?.transactionId || entry?.transactionId, existing: matches.map(v => ({ id: v._id.toString(), date: v.date, amount: v.amount, description: v.notes || v.productName || '', cardNumber: v.cardNumber || '' })) }
   })
   const { commitLease: _lease, commitLeaseUntil: _leaseUntil, ...visibleAccount } = account
-  return { id: batch._id.toString(), account: visibleAccount, period: batch.period, rowCount: batch.rowCount, downloadedAt: batch.downloadedAt, hash: batch.hash, rows: view }
+  return { id: batch._id.toString(), account: visibleAccount, period: batch.period, rowCount: batch.rowCount, downloadedAt: batch.downloadedAt, hash: batch.hash, mappingPreview: !!batch.mappingPreview, rows: view }
+}
+
+export async function reviewMapping(ownerId: string, importId: string) {
+  const batch = await ownedImport(ownerId, importId)
+  const account = await ownedAccount(ownerId, batch.accountId.toString())
+  let rows: ReturnType<typeof mappingRows>
+  try { rows = mappingRows(batch) } catch { fail(409, 'Saved mapping does not match the original statement; review the source before continuing') }
+  return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, rows: rows! }
 }
 
 export async function commitImport(ownerId: string, importId: string, body: any) {
   if (!Array.isArray(body?.decisions) || !body.decisions.length || body.decisions.length > 5000) fail(400, 'Select rows to review')
   const initial = await ownedImport(ownerId, importId)
+  // External client/category labels are preview data, not ledger ObjectIds.
+  if (initial.mappingPreview && body.decisions.some((decision: any) => decision?.action === 'import')) fail(409, 'This statement has a classification preview; ledger posting requires the client and category mappings to be finalized')
   const lease = randomUUID(), now = new Date()
   const locked = await FinancialAccount.findOneAndUpdate({ _id: initial.accountId, ownerId, $or: [{ commitLeaseUntil: { $exists: false } }, { commitLeaseUntil: null }, { commitLeaseUntil: { $lte: now } }] }, { $set: { commitLease: lease, commitLeaseUntil: new Date(Date.now() + 60000) } }, { new: true })
   if (!locked) fail(409, 'Another import is being reviewed; retry shortly')

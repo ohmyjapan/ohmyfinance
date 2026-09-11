@@ -1,6 +1,7 @@
 <template>
   <div class="connections">
     <header><div><h1>カード連携</h1><p>Amexの明細を取り込み、内容を確認してから取引に登録します。</p></div><button :disabled="busy" @click="run(refresh)">更新</button></header>
+    <NuxtLink class="mapping-link" to="/mapping">顧客・区分のマッピングを確認 →</NuxtLink>
     <p v-if="message" role="status" class="notice">{{ message }}</p>
     <div class="account-grid">
       <section v-for="account in accounts" :key="account._id">
@@ -32,13 +33,14 @@
     </section>
     <section v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件</p></div><button :disabled="busy" @click="run(downloadOriginal)">元のCSV</button></header>
       <p>口座振替はカードへの返済として保管します。返金などのマイナス明細は確認待ちです。同じ取引の可能性がある行は、既存取引への紐付け・別の支出として登録・保留から選んでください。</p>
+      <p v-if="selected.mappingPreview" class="notice">この明細の顧客・区分は分類案の確認中です。<NuxtLink :to="{ path: '/mapping', query: { import: selected.id } }">マッピングを確認 →</NuxtLink></p>
       <div class="review-list"><article v-for="row in selected.rows" :key="row.line" :class="{ muted: ['posted','duplicate'].includes(row.state) }">
         <div><strong>{{ row.description }}</strong><p>{{ row.purchaseDate }} · 処理日 {{ row.processingDate }} · カード {{ row.cardIdentifier.slice(-4) }}</p><small v-if="row.foreignAmount">外貨 {{ row.foreignAmount }} · レート {{ row.exchangeRate }}</small></div>
         <div><strong>{{ yen(row.amount) }}</strong><p>{{ states[row.state] || row.state }}{{ row.skipped ? '（保留済み）' : '' }}</p></div>
-        <label v-if="row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)">この行の処理
+        <label v-if="!selected.mappingPreview && row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)">この行の処理
           <select v-model="choices[row.line]"><option value="">選択してください</option><option value="skip">保留する</option><option value="import">{{ ['legacy_review','overlap_review','correction_review'].includes(row.state) ? '別の支出と確認して登録する' : '取引に登録する' }}</option><option v-for="existing in row.existing" :key="existing.id" :value="'link:' + existing.id">既存取引に紐付け: {{ existing.description }} · {{ yen(existing.amount) }}</option></select>
         </label>
-      </article></div><button :disabled="busy || !decisionCount" @click="run(commit)">選択した {{ decisionCount }} 件を処理</button>
+      </article></div><button v-if="!selected.mappingPreview" :disabled="busy || !decisionCount" @click="run(commit)">選択した {{ decisionCount }} 件を処理</button>
     </section>
   </div>
 </template>
@@ -79,5 +81,6 @@ onUnmounted(() => clearInterval(poll))
 </script>
 
 <style scoped>
+.mapping-link{display:inline-block;color:#acd0ff;padding:14px 0}.notice a{color:#acd0ff;text-decoration:underline}
 .connections{max-width:1200px;margin:auto;padding:16px;color:#e2e8f0;background:#0f172a;min-height:100vh;border-radius:16px}.connections h1{font-size:26px;font-weight:700}.connections h2{font-size:19px;font-weight:600}.connections p,.connections small{color:#aabbd1;line-height:1.6;margin:8px 0}.connections header>button{flex-shrink:0;white-space:nowrap}.connections header{display:flex;gap:16px;align-items:start;justify-content:space-between}.connections section,.panel{background:#182338;border:1px solid #344158;border-radius:12px;padding:18px;margin:16px 0;min-width:0}.connections button,.connections input,.connections select{border:1px solid #52647f;border-radius:8px;background:#101b2d;color:#edf2fa;padding:11px;max-width:100%}.connections button{background:#254f9b;cursor:pointer;margin-top:10px}.connections button:disabled{opacity:.5;cursor:default}.connections label{display:block;margin:12px 0}.connections label input,.connections select{display:block;width:100%;margin-top:6px}.connections .inline{display:flex;gap:10px}.connections .inline input{width:auto}.connections details{margin-top:16px}.connections summary{cursor:pointer;min-height:30px}.notice{padding:14px;background:#26374e;border-radius:8px;overflow-wrap:anywhere}.history{display:block;width:100%;text-align:left}.review-list article{border-top:1px solid #344158;padding:18px 0;display:grid;gap:12px;overflow-wrap:anywhere}.review-list strong{display:block}.muted{opacity:.6}.account-grid{display:grid;gap:16px}.account-grid section{margin-bottom:0}@media(min-width:760px){.account-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.review-list article{grid-template-columns:2fr 1fr 2fr}}
 </style>
