@@ -1,5 +1,6 @@
 import mongoose, { Schema } from 'mongoose'
 import { FinanceDraft, FinanceDocument } from './FinanceDraft'
+import { FinanceReview, FinanceReviewAgent, FinanceHistory } from './FinanceReview'
 
 const oid = Schema.Types.ObjectId
 const common = { timestamps: true, toJSON: { virtuals: true } }
@@ -50,5 +51,5 @@ export const FinanceImport = (mongoose.models.FinanceImport as mongoose.Model<mo
 export const FinanceEntry = (mongoose.models.FinanceEntry as mongoose.Model<mongoose.InferSchemaType<typeof entry>>) || mongoose.model('FinanceEntry', entry)
 
 export async function initializeFinance() {
-  await Promise.all([FinancialAccount.init(), FinanceCollector.init(), FinanceImport.init(), FinanceEntry.init(), FinanceDraft.init(), FinanceDocument.init()])
+  await Promise.all([FinancialAccount.init(), FinanceCollector.init(), FinanceImport.init(), FinanceEntry.init(), FinanceDraft.init(), FinanceDocument.init(), FinanceReview.init(), FinanceReviewAgent.init(), FinanceHistory.init()])
 }

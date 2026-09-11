@@ -20,6 +20,7 @@
       </section>
       <p v-if="!isExpense" class="card p-6 text-sm text-gray-600 dark:text-gray-300">この明細は照合用に保持されています。返済・返金を支出として登録することはできません。</p>
       <template v-else>
+        <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
         <div v-if="draft.suggestions.length && !draft.locked" class="card mb-6 p-4 sm:p-6">
           <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">追加の候補</h2><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">保存済みの値はそのままです。必要な候補だけを反映できます。</p>
           <div v-for="suggestion in draft.suggestions" :key="suggestion.field" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-3 text-sm dark:border-white/10"><div class="min-w-0"><p>{{ labelFor(suggestion.field) }}: {{ displayValue(suggestion.field, suggestion.value) }}</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ suggestion.evidence.reason }}</p></div><button type="button" class="btn btn-secondary text-xs" :disabled="busy" @click="applySuggestion(suggestion)">反映する</button></div>
@@ -88,6 +89,7 @@ import { ArrowLeft, Loader2 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import DraftField from '~/components/finance/DraftField.vue'
 import DocumentList from '~/components/finance/DocumentList.vue'
+import PurchaseReview from '~/components/finance/PurchaseReview.vue'
 import { fields, sameValue, missingFields, type DraftField as Field } from '~/shared/finance-draft.mjs'
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '取引の下書き | OhMyFinance' })
@@ -111,7 +113,7 @@ const possibleDuplicate = computed(() => ['legacy_review', 'overlap_review', 'co
 const itemsTotal = computed(() => values.value.items?.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0), 0) || 0)
 const yen = (amount: number) => new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(amount)
 const labelFor = (key: string) => fields.find(f => f.key === key)?.label || key
-const historyLabel = (action: string) => ({ saved: '下書きを保存', approved: '内容を確認', document_added: '書類を添付', document_removed: '書類を削除' }[action] || action)
+const historyLabel = (action: string) => ({ slack_review: 'Slackで購入内容を確認', saved: '下書きを保存', approved: '内容を確認', document_added: '書類を添付', document_removed: '書類を削除' }[action] || action)
 function optionsFor(field: Field) { const options = draft.value.references[field.ref!] || []; return field.key === 'accountCategoryId' ? options.filter((v: any) => !v.parentId) : field.key === 'subAccountCategoryId' ? options.filter((v: any) => v.parentId === values.value.accountCategoryId) : options }
 function displayValue(key: string, value: any): string { if (value === null || value === undefined || value === '') return '空欄'; const field = fields.find(f => f.key === key); if (field?.ref) return draft.value.references[field.ref]?.find((v: any) => v._id === value)?.name || String(value); if (key === 'purpose') return ({ customer: '顧客購入', company: '会社経費', unresolved: '未確認' } as any)[value] || value; if (key === 'items') return `${value.length || 0}商品`; return Array.isArray(value) ? value.join(', ') : String(value) }
 function receive(data: any) { draft.value = data; values.value = clone(data.values); tagText.value = data.values.tags.join(', '); remember.value = [...data.rememberedFields]; documentEvidence.value = clone(originalDocuments.value); posting.value = ''; conflict.value = false }

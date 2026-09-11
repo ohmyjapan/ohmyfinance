@@ -171,10 +171,11 @@ async function writable(ctx: any, revision: unknown, key: unknown, hash: unknown
   const review = await reviewImport(ctx.ownerId, ctx.importId)
   if (['posted', 'duplicate', 'in_progress'].includes(review.rows.find((r: any) => r.line === ctx.line)!.state)) fail(409, '登録済みまたは他の取込で使用中の明細です。')
 }
-export async function saveDraft(ownerId: string, importId: string, line: number, body: any) {
+export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean }) {
   const initial = await context(ownerId, importId, line)
   return withLease(initial, async check => {
     const ctx = await context(ownerId, importId, line)
+    if (reviewAnswer && ctx.saved?.history.some((h: any) => h.reviewId === reviewAnswer.reviewId && h.replyTs === reviewAnswer.replyTs)) return view(ctx)
     await writable(ctx, body?.revision, body?.key, body?.sourceHash)
     let values: any
     try { values = validateValues(body.values) } catch (error: any) { fail(400, error.message) }
@@ -198,9 +199,10 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
         evidence[key] = { ...evidence[key], documentId, source: documentId ? 'document' : 'user', reason: documentId ? 'あなたが書類を参照して入力・確認した値。自動抽出ではありません。' : 'あなたが入力・確認した値。', at }
       }
     }
+    if (reviewAnswer) for (const key of reviewAnswer.fields) evidence[key] = { ...evidence[key], state: isEmpty(values[key]) ? 'not_applicable' : 'confirmed', source: 'slack', reason: 'Slackで提案内容を確認済み。', reviewId: reviewAnswer.reviewId, replyTs: reviewAnswer.replyTs, at }
     // No separate rule write: approval and remembered values commit atomically with the draft.
     const memory = body.confirm && body.remember.length ? { fields: body.remember, merchant: normalizeMerchant(ctx.row.description), purpose: values.purpose, customerId: values.customerId, values: Object.fromEntries(body.remember.map((key: string) => [key, values[key]])), at } : undefined
-    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [] }]
+    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: reviewAnswer ? 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}) }]
     if (history.length > 500) fail(409, 'この明細の変更履歴が上限に達しました。管理者に確認してください。')
     await check()
     const set = { ownerId, accountId: ctx.account._id, importId, line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: (ctx.saved?.revision || 0) + 1, values, evidence, history, approvedAt: body.confirm ? at : null, memory: memory || null }
