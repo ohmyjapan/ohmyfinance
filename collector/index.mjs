@@ -6,11 +6,21 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Vault } from './vault.mjs';
 import { collectStatement } from './browser.mjs';
+import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
 
 const directory=path.resolve(process.env.OMF_COLLECTOR_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(),'OhMyFinance','collector'));
 const vault=new Vault(directory), setupKey=randomBytes(32).toString('hex');
 let message='Save the login details for each account. Start a download from OMF after pairing.', running=false;
+let yayoiState={state:'idle',message:'Save your Yayoi login, then open Yayoi in Chrome.'};
+async function runYayoi() {
+  running=true;
+  const status=async(state,message)=>{yayoiState={state,message};};
+  await status('running','Opening Yayoi in real Chrome.');
+  try { await openYayoi(await vault.read(),directory,status); }
+  catch { await status('attention','Yayoi could not finish signing in. Check that one Yayoi tab is open, then retry from this screen.'); }
+  finally {running=false;}
+}
 export function validateOrigin(value) {
   const u=new URL(value);
   if(u.username || u.password || u.search || u.hash || u.pathname!=='/' || !['https:','http:'].includes(u.protocol))throw new Error('Use only the OMF site address');
@@ -57,7 +67,7 @@ async function tick() {
     if(account && config)await api(config,'status',{accountId:account._id,jobId:account.jobId,state:'failed',message:'Open the collector setup screen on Ryzen 7 for details'}).catch(()=>{});
   } finally {clearInterval(heartbeat);running=false;}
 }
-async function json(req) {let text='';for await(const data of req){text+=data;if(Buffer.byteLength(text)>20000)throw new Error('Request too large');}return JSON.parse(text);}
+async function json(req) {let text='';for await(const data of req){text+=data;if(Buffer.byteLength(text)>20000)throw new Error('Request too large');}try{return JSON.parse(text);}catch{throw new Error('Invalid setup request');}}
 export async function startCollector() {
   await mkdir(directory,{recursive:true});
   const port=Number(process.env.OMF_COLLECTOR_PORT || 47831);if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid setup port');
@@ -69,9 +79,26 @@ export async function startCollector() {
       if(req.headers.host!==`127.0.0.1:${port}` || (req.headers.origin && req.headers.origin!==origin))return reply(403,{error:'Local setup access required'});
       if(req.method==='GET' && ['/','/setup.js'].includes(req.url)) {res.setHeader('Content-Type',req.url==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');res.end(await readFile(fileURLToPath(new URL(req.url==='/'?'./setup.html':'./setup.js',import.meta.url))));return;}
       if(req.headers['x-setup-key']!==setupKey)return reply(403,{error:'Reopen the setup screen from the collector launch link'});
-      if(req.method==='GET' && req.url==='/status') {const config=await vault.read();let info=config.accountInfo || [];if(config.token)try{info=(await api(config,'accounts')).accounts;}catch{}return reply(200,{message,baseUrl:config.baseUrl,accounts:info.map(a=>({id:a.primaryCard,name:a.name,hasCredentials:!!config.accounts?.[a.primaryCard]?.password}))});}
+      if(req.method==='GET' && req.url==='/status') {const config=await vault.read();let info=config.accountInfo || [];if(config.token)try{info=(await api(config,'accounts')).accounts;}catch{}return reply(200,{message,baseUrl:config.baseUrl,busy:running,yayoi:{...yayoiState,hasCredentials:!!config.services?.yayoi?.password},accounts:info.map(a=>({id:a.primaryCard,name:a.name,hasCredentials:!!config.accounts?.[a.primaryCard]?.password}))});}
       if(req.method==='POST' && req.url==='/pair') {const body=await json(req);if(!/^omfc_[a-f\d]{64}$/.test(body.token))throw new Error('Invalid collector token');const config={baseUrl:validateOrigin(body.baseUrl),token:body.token};const {accounts}=await api(config,'accounts');await vault.update(old=>({...old,...config,accountInfo:accounts.map(a=>({primaryCard:a.primaryCard,name:a.name}))}));return reply(200,{saved:true});}
       if(req.method==='POST' && req.url==='/credentials') {const body=await json(req);if(!/^\d{5}$/.test(body.accountId)||![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256))throw new Error('Enter both Amex user ID and password');await vault.update(old=>{if(!old.accountInfo?.some(a=>a.primaryCard===body.accountId))throw new Error('Unknown account');return {...old,accounts:{...old.accounts,[body.accountId]:{...old.accounts?.[body.accountId],username:body.username,password:body.password}}};});return reply(200,{saved:true});}
+      if(req.method==='GET' && req.url==='/yayoi/status') {const config=await vault.read();return reply(200,{busy:running,yayoi:{...yayoiState,hasCredentials:!!config.services?.yayoi?.password}});}
+      if(req.method==='POST' && req.url==='/yayoi/credentials') {
+        if(running)return reply(409,{error:'Wait for the current collector action to finish'});
+        const credentials=yayoiCredentials(await json(req));
+        await vault.update(old=>({...old,services:{...old.services,yayoi:{...old.services?.yayoi,...credentials}}}));
+        yayoiState={state:'idle',message:'Yayoi login saved encrypted. Open Yayoi when ready.'};
+        return reply(200,{saved:true});
+      }
+      if(req.method==='POST' && req.url==='/yayoi/open') {
+        if(running)return reply(409,{error:'Wait for the current collector action to finish'});
+        const config=await vault.read();
+        if(!config.services?.yayoi?.password)return reply(400,{error:'Save your Yayoi login first'});
+        if(running)return reply(409,{error:'Wait for the current collector action to finish'});
+        // No credentials or arbitrary target URL can be supplied to the browser action.
+        void runYayoi();
+        return reply(202,{started:true});
+      }
       reply(404,{error:'Unknown setup endpoint'});
     }catch(error){reply(400,{error:error.message});}
   });

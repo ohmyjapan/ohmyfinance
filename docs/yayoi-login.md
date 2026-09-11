@@ -1,0 +1,13 @@
+# Yayoi saved login on the collection PC
+
+The collector setup screen includes a Yayoi section. Enter the Yayoi ID (email) and password there, choose **Save encrypted login**, then **Open Yayoi**. A separate OMF pairing is not required to save or use the Yayoi login. The setup link is read from the collector's private `setup-link.txt`; it changes when the collector restarts.
+
+Credentials are stored under `services.yayoi` in the existing Windows DPAPI CurrentUser vault on the collection PC. They are never sent to the hosted OMF application or returned by status endpoints. Saving preserves the Amex accounts, pairing token, mailbox connection, and any other stored services. The form clears its password field after saving and never prefills saved credentials.
+
+Opening Yayoi reuses an explicitly configured Yayoi profile, otherwise the first configured Amex browser profile; if neither exists it uses a persistent Yayoi profile in the private collector directory. It reuses a single existing Yayoi tab, and refuses to choose between multiple Yayoi tabs. The collector serializes this action with Amex jobs. Use one collector process per private directory.
+
+The verified two-step login at `myaccount.yayoi-kk.co.jp/login` is supported. The adapter checks the exact HTTPS origin, form destination, expected account and visible controls inside the browser before filling. It submits each stage at most once per explicit action. A saved session is recognized only on the accounting or Smart Import application with its logout control and the saved email visible in the header. Separate account-linking sign-in (`/external/authz`), account mismatches, OTP, consent and unfamiliar pages require manual attention in Chrome. No account-linking consent, financial settings, imports or ledger entries are changed by this feature. Real credential acceptance and any extra verification require the user's login; synthetic tests do not establish that a real password is valid.
+
+Run `npm test --prefix collector`. The optional real-Chrome setup test uses `OMF_TEST_CHROME_PROFILE` to attach to a known persistent profile, then creates and closes an isolated context. All credentials are synthetic and stored in a temporary vault. Its simulated Yayoi login requests are intercepted locally. Set `OMF_TEST_SCREENSHOT` to save the empty local form screenshot. Do not put private profiles, credentials or screenshots of financial data into this public repository.
+
+Collector-only changes take effect when `OhMyFinance-collector` is restarted on Ryzen 7 from committed code. The hosted Nuxt service does not execute this local credential form or login adapter.
