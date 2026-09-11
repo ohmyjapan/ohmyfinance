@@ -9,7 +9,7 @@
       <summary class="cursor-pointer py-1 focus-visible:outline-primary-main">値の根拠</summary>
       <div class="mt-1 space-y-2 rounded-lg bg-gray-50 p-3 leading-relaxed dark:bg-white/5">
         <p>{{ evidence?.reason || '資料または入力が必要です。' }}</p>
-        <div v-if="evidence?.state === 'conflict' && alternativeLabel" class="flex flex-wrap items-center justify-between gap-2"><span>記憶した値: {{ alternativeLabel }}</span><button v-if="!disabled" type="button" class="py-1 font-medium text-primary-main dark:text-primary-light" @click="$emit('alternative')">この候補を反映する</button></div>
+        <div v-if="evidence?.state === 'conflict' && alternativeLabel" class="flex flex-wrap items-center justify-between gap-2"><span>別の候補: {{ alternativeLabel }}</span><button v-if="!disabled" type="button" class="py-1 font-medium text-primary-main dark:text-primary-light" @click="$emit('alternative')">この候補を反映する</button></div>
         <p v-if="evidence?.sheet">{{ evidence.sheet.sheet }} · {{ evidence.sheet.rows.join(', ') }}行</p>
         <p v-if="evidence?.previous?.reason">前の根拠: {{ evidence.previous.reason }}</p>
         <label v-if="documents.length" class="block">参照した書類
@@ -30,6 +30,6 @@
 import type { DraftField } from '~/shared/finance-draft.mjs'
 const props = defineProps<{ field: DraftField; evidence?: any; changed?: boolean; remembered?: boolean; disabled?: boolean; documents: any[]; documentId: string; alternativeLabel?: string }>()
 defineEmits<{ remember: [value: boolean]; document: [value: string]; alternative: [] }>()
-const state = computed(() => props.changed ? 'editing' : props.evidence?.state || 'missing')
-const states: Record<string, string> = { source: '元データ', suggested: '候補・要確認', confirmed: '確認済み', missing: '未設定', not_applicable: '対象外・空欄', conflict: '根拠の相違', editing: '変更あり' }
+const state = computed(() => props.changed ? 'editing' : props.evidence?.state === 'suggested' && props.evidence?.grade ? props.evidence.grade === 'A' ? 'rule_answer' : 'history_answer' : props.evidence?.state || 'missing')
+const states: Record<string, string> = { rule_answer: 'A · 確認済みの指示', history_answer: 'B · 過去の傾向', source: '元データ', suggested: '候補・要確認', confirmed: '確認済み', missing: '未設定', not_applicable: '対象外・空欄', conflict: '根拠の相違', editing: '変更あり' }
 </script>

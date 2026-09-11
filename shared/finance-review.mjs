@@ -1,4 +1,5 @@
 import { normalizeMerchant } from './finance-draft.mjs';
+import { purchaseQuestions } from './finance-answers.mjs';
 
 export const reviewPatchFields = ['purpose', 'customerId', 'productName'];
 export const escapeSlack = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -32,7 +33,7 @@ export function studyPurchase(draft, history = [], memories = [], nearby = []) {
   const past = history.filter(h => normalizeMerchant(h.merchant) === merchant && h.date < date);
   const counts = new Map();
   for (const h of past) {
-    const key = `${h.purpose}:${h.customerId || ''}`;
+    const key = `${h.purpose}:${h.customerId || ''}:${h.purpose === 'unresolved' ? normalizeMerchant(h.customerLabel) : ''}`;
     const count = counts.get(key) || { purpose: h.purpose, customerId: h.customerId || '', label: h.customerLabel || '', count: 0 };
     count.count++; counts.set(key, count);
   }
@@ -53,17 +54,13 @@ export function studyPurchase(draft, history = [], memories = [], nearby = []) {
   const reusable = memories.filter(m => m.reusable && m.merchant === merchant).slice(0, 5);
   for (const m of reusable) hypotheses.push({ purpose: m.purpose, customerId: m.customerId, label: labels[m.purpose], reason: `이전에 패턴으로 기억하도록 확인한 답변: ${m.summary}`, strength: 'confirmed_pattern' });
   if (!hypotheses.length) hypotheses.push({ purpose: 'unresolved', label: '고객의 별도 요청 또는 회사 사용', reason: '품목·용도를 판단할 근거가 부족합니다.', strength: 'weak' });
-  const question = current.purpose === 'customer'
-    ? '이 결제는 해당 고객이 따로 요청한 구매였나요? 어떤 물건이었는지 알려주세요. 다른 용도였다면 함께 말씀해 주세요.'
-    : current.purpose === 'company'
-      ? '시트에는 회사 사용으로 기록되어 있어요. 어떤 물건이나 서비스였고, 어디에 쓰셨나요? 고객 요청 구매였다면 고객도 알려주세요.'
-      : '고객이 요청한 구매였나요, 회사에서 쓸 물건·서비스였나요? 구매 내용과 고객이 있다면 고객도 알려주세요.';
-  return { version: 1, merchant, historyCount: past.length, historyScope: '같은 계정·정확히 같은 이용처 표기·구매일 이전의 저장된 기록', median, patterns, signals, hypotheses, nearby: nearby.slice(0, 5), question };
+  const questions = purchaseQuestions(draft);
+  return { version: 2, merchant, historyCount: past.length, historyScope: '같은 계정·정확히 같은 이용처 표기·구매일 이전의 저장된 기록', median, patterns, signals, hypotheses, nearby: nearby.slice(0, 5), ...questions };
 }
 export function questionText(review, baseUrl) {
   const s = review.context.source, study = review.context.study;
   const lines = ['*OMF 구매 확인*', `${escapeSlack(s.purchaseDate)} · ${escapeSlack(s.description)} · ¥${Number(s.amount).toLocaleString('ja-JP')}`,
-    ...study.signals.slice(0, 2).map(escapeSlack), `현재 추정: ${escapeSlack(study.hypotheses[0].label)} — 확인이 필요해요.`, escapeSlack(study.question),
+    ...(study.answered || []).map(a => `${escapeSlack(a.label)}: ${escapeSlack(a.value)}`), ...study.signals.slice(0, 2).map(escapeSlack), escapeSlack(study.question),
     '이 스레드에 편하게 답해 주세요. 기억이 안 나면 ‘보류’라고 하셔도 돼요.', `<${baseUrl}/mapping-draft/${review.importId}/${review.line}|OMF 초안 보기>`];
   return lines.join('\n');
 }

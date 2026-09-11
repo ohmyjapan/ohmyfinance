@@ -1,6 +1,6 @@
 # Spreadsheet learning notebook
 
-The learning notebook at `/learning` preserves an owner's workbook as source evidence and exposes merchant/payment/card pattern candidates for review. It does not create or modify ledger entries. The mapper's purchase review can use the full primary-sheet history and display explicitly confirmed customer/purpose rules.
+The learning notebook at `/learning` preserves an owner's workbook as source evidence and exposes merchant/payment/card pattern candidates for review. It does not create or modify ledger entries. The mapper uses confirmed instructions and consistent earlier history to prepare customer/purpose answers, then asks only about unresolved purchase details.
 
 ## Source and inference boundaries
 
@@ -16,7 +16,13 @@ Grades apply to the customer/purpose decision, not every transaction field. A me
 
 Confirmation requires a registered customer or company purpose, an effective purchase date and a reason. Confirmation, deferral and withdrawal are stored with optimistic revision checks and an audit trail. They are bound to the reviewed dataset. A new dataset starts with proposed patterns and does not silently inherit approvals from different evidence. Old datasets and their review histories remain stored.
 
-The current milestone displays applicable confirmations in purchase review for the user to apply to the draft. It does not auto-fill fields, infer product contents, execute the free-text instruction notes or implement an AI chat. Notes preserve the user's stated policies and unresolved scope for the next teaching stage.
+Confirmed customer/purpose rules now fill compatible unsaved draft fields. Consistent earlier history can prepare a B-grade suggestion when there are at least five examples, at least 90% support, no other nonblank classification and no amount outside one-third to three times the historical median. These checks are review criteria, not calibrated confidence. Missing identity, mixed purpose/customer evidence, deferred patterns and ambiguous payment scopes abstain. Product contents and accounting/tax fields are not invented.
+
+The learning page prepares its form from an applicable instruction or supported pattern, including the reason. It does not turn historical suggestions into confirmed rules on read. Draft proposals never write to the ledger or save a draft merely by opening a page. Saved corrections retain their values; new proposals remain separately available and customer/purpose changes are applied together. A source classification that contradicts an automatic answer remains unchanged and surfaces the disagreement.
+
+Explicit session instructions can be stored as owner-scoped `FinanceLearningPolicy` records with an exact, verified merchant-alias list, optional account IDs and effective date, a registered customer/purpose, the original user quote and revision/audit history. They survive dataset replacement. The page lists their scope and allows revision-checked stop/resume. A confirmed merchant/account exception takes priority over a broader instruction; conflicting instructions at the same scope abstain. Inactive customers and out-of-scope dates/accounts cannot receive an answer. Free-text notes do not become executable conditions.
+
+Purchase review shows the fields already answered. It asks one focused question about the next unresolved field: a classification conflict, missing purpose, missing customer, then missing item information. A known customer is not re-asked because an item name is missing. Product names, JAN codes or identified line items can resolve the item question. Complete purchase details have no question action and cannot be queued. Pending questions are re-evaluated before a worker claims them. Explicit posting approval and the existing accounting-field validation remain required. This change does not activate Slack or introduce general AI chat.
 
 For explicitly bound accounts, full primary-sheet evidence replaces the older `FinanceHistory` subset. Purchase studies use the same account and exact merchant, and strictly earlier source dates; same-day and future examples are excluded. Confirmed rules respect their effective date, current status and active customer reference. Multiple payment scopes for the same account/merchant withhold the reusable rule until a transaction-level choice is available. Existing Slack observation correction/withdrawal behavior remains intact.
 
@@ -40,12 +46,12 @@ node scripts/finance-learning-import.mjs load /private/new-bundle.json
 
 The loader checks the payload hash, owner and active references, creates owner-scoped indexes, inserts data in bounded batches and verifies record counts. A staged dataset cannot appear through the API. The active library pointer changes only after loading finishes. Retries of the same bundle preserve review decisions. Replacing an active dataset requires its identifier as the last CLI argument, and activation checks its revision. Keep the workbook and bundle in private backups.
 
-`GET /api/finance-learning/overview`, `patterns`, `patterns/:id`, `rows` and `rows/:id` require an authenticated OMF user. `PUT patterns/:id` accepts only a reviewed customer/purpose decision. Collector tokens have no learning authority. All source/detail queries are owner-scoped, paginated and uncached.
+`GET /api/finance-learning/overview`, `patterns`, `patterns/:id`, `rows` and `rows/:id` require an authenticated OMF user. `PUT patterns/:id` accepts only a reviewed customer/purpose decision; `PUT policies/:id` changes an existing instruction's active/deferred status with a revision check. Collector tokens have no learning authority. All source/detail queries are owner-scoped, paginated and uncached.
 
 ## Validation
 
 ```text
-node --test scripts/finance-learning.test.mjs scripts/finance-regression.test.mjs scripts/finance-mapping.test.mjs scripts/finance-review.test.mjs
+node --test scripts/finance-answers.test.mjs scripts/finance-learning.test.mjs scripts/finance-regression.test.mjs scripts/finance-mapping.test.mjs scripts/finance-review.test.mjs
 npm run build
 node scripts/finance-integration.cjs
 ```

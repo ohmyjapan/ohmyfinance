@@ -33,7 +33,7 @@ export async function createReviewAgent(ownerId: string, body: any) {
 export async function reviewContext(ownerId: string, importId: string, line: number) {
   const draft = await readDraft(ownerId, importId, line)
   const accountId = draft.source.account.id, merchant = normalizeMerchant(draft.source.description)
-  const learning = await learningEvidence(ownerId, accountId, merchant, draft.source.purchaseDate)
+  const learning = await learningEvidence(ownerId, accountId, merchant, draft.source.purchaseDate, draft.source.amount)
   const history = learning?.history ?? await FinanceHistory.find({ ownerId, accountId, merchant, date: { $lt: draft.source.purchaseDate } }).sort({ date: -1 }).limit(1000).lean()
   const candidates = await FinanceReview.find({ ownerId, accountId, status: 'resolved', 'memory.merchant': merchant, 'context.source.purchaseDate': { $lt: draft.source.purchaseDate } }).select('memory context.source importId line proposal').sort({ resolvedAt: -1 }).limit(200).lean()
   const saved = candidates.length ? await FinanceDraft.find({ ownerId, $or: candidates.map(c => ({ importId: c.importId, line: c.line })) }).select('importId line values').lean() : []
@@ -61,6 +61,7 @@ export async function getReview(ownerId: string, importId: string, line: number)
 export async function queueReview(ownerId: string, importId: string, line: number, body: any) {
   const { draft, study, customers } = await reviewContext(ownerId, importId, line)
   if (draft.locked || draft.source.kind !== 'expense') fail(409, 'This transaction cannot be reviewed')
+  if (!study.needsQuestion) fail(409, 'Purchase details are already answered; no question is needed')
   if (body?.revision !== draft.revision || body?.key !== draft.key || body?.sourceHash !== draft.sourceHash) fail(409, 'Save and reload the latest draft first')
   const agent = await FinanceReviewAgent.findOne({ ownerId, accountIds: draft.source.account.id, enabled: true, revokedAt: null }).lean()
   if (!agent) fail(409, 'Slack review worker is not connected')
@@ -89,7 +90,12 @@ export async function claimQuestion(agent: any, reviewId: string) {
     await FinanceReview.updateOne({ ...scope(agent, reviewId), status: 'queued' }, { $set: { status: 'conflict' } })
     fail(409, 'The draft changed before the question was sent')
   }
-  const review = await FinanceReview.findOneAndUpdate({ ...scope(agent, reviewId), status: 'queued' }, { $set: { status: 'sending', sendId: randomUUID() } }, { new: true }).lean()
+  const refreshed = await reviewContext(agent.ownerId.toString(), queued.importId.toString(), queued.line)
+  if (!refreshed.study.needsQuestion) {
+    await FinanceReview.updateOne({ ...scope(agent, reviewId), status: 'queued' }, { $set: { status: 'deferred' } })
+    fail(409, 'The question has already been answered')
+  }
+  const review = await FinanceReview.findOneAndUpdate({ ...scope(agent, reviewId), status: 'queued' }, { $set: { status: 'sending', sendId: randomUUID(), context: { source: refreshed.draft.source, values: refreshed.draft.values, customers: refreshed.customers, study: refreshed.study } } }, { new: true }).lean()
   if (!review) fail(409, 'Question has already been claimed')
   return { review }
 }

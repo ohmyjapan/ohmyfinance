@@ -1,0 +1,68 @@
+const assert=require('node:assert/strict'),{ObjectId}=require('mongodb'),path=require('node:path');
+module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,csv,row,pause})=>{
+ const owner=(await db.collection('users').findOne({email:'finance-a@example.invalid'}))._id,account=await db.collection('financialaccounts').findOne({ownerId:owner,name:'Synthetic Amex'}),customer=new ObjectId(),policyId=new ObjectId();
+ await db.collection('customers').insertOne({_id:customer,name:'Answer test customer',isActive:true});
+ const policies=db.collection('financelearningpolicies'),policy={_id:policyId,ownerId:owner,key:'synthetic-instruction',title:'Synthetic confirmed instruction',merchants:['instruction retailer'],accountIds:[],decision:{purpose:'customer',customerId:String(customer)},reason:'Explicit test instruction',sourceQuote:'Customer purchases from this retailer',status:'active',revision:1,audit:[]};
+ await policies.insertOne(policy);
+ const imports=await upload(csv([row({2:'Instruction retailer',5:'1000'}),row({2:'Predictable retailer',5:'1000'})]));assert.equal(imports.status,200);const importId=imports.data.id;
+ const endpoint=line=>'/api/finance/imports/'+importId+'/drafts/'+line,review=line=>'/api/finance-review/imports/'+importId+'/drafts/'+line;
+ const get=async line=>(await call(endpoint(line),{token})).data;
+ const bind=d=>({revision:d.revision,key:d.key,sourceHash:d.sourceHash});
+ const change=(body,auth=token)=>call('/api/finance-learning/policies/'+policyId,{method:'PUT',token:auth,body});
+ const before={tx:await db.collection('transactions').countDocuments(),entries:await db.collection('financeentries').countDocuments(),drafts:await db.collection('financedrafts').countDocuments()};
+ let draft=await get(2);assert.equal(draft.values.customerId,String(customer));assert.equal(draft.evidence.customerId.grade,'A');assert.equal(draft.values.productName,'');assert.equal(draft.values.accountCategoryId,'');
+ let study=(await call(review(2),{token})).data.study;assert.deepEqual(study.openFields,['productName']);assert.ok(study.question.includes('상품'));assert.equal(study.answered.find(a=>a.field==='customerId').value,'Answer test customer');
+ assert.equal(await db.collection('financedrafts').countDocuments(),before.drafts);
+ assert.equal((await change({revision:1,status:'deferred'},other)).status,404);assert.equal((await change({revision:1,status:'deferred'},deviceToken)).status,401);
+ assert.equal((await change({revision:1,status:'deferred'})).status,200);assert.equal((await get(2)).values.purpose,'unresolved');assert.equal((await change({revision:1,status:'active'})).status,409);
+ assert.equal((await change({revision:2,status:'active'})).status,200);assert.equal((await get(2)).values.customerId,String(customer));
+ await policies.updateOne({_id:policyId},{$set:{effectiveFrom:'2026-08-02'}});assert.equal((await get(2)).values.purpose,'unresolved');await policies.updateOne({_id:policyId},{$unset:{effectiveFrom:''}});
+ await policies.updateOne({_id:policyId},{$set:{accountIds:[new ObjectId()]}});assert.equal((await get(2)).values.purpose,'unresolved');await policies.updateOne({_id:policyId},{$set:{accountIds:[]}});
+ pass('confirmed instructions answer draft classification, respect owner/account/date scope and withdraw immediately without read-time writes');
+ draft=await get(2);const saved=await call(endpoint(2),{method:'PUT',token,body:{...bind(draft),values:{...draft.values,purpose:'company',customerId:'',productName:'Explicitly corrected purchase'},remember:[],confirm:false}});assert.equal(saved.status,200,JSON.stringify(saved));
+ draft=await get(2);assert.equal(draft.values.purpose,'company');assert.equal(draft.values.customerId,'');assert.equal(draft.evidence.purpose.source,'user');assert.ok(draft.suggestions.some(s=>s.field==='customerId'&&s.evidence.classification.customerId===String(customer)));
+ study=(await call(review(2),{token})).data.study;assert.equal(study.needsQuestion,false);assert.equal(study.question,'');assert.equal((await call(review(2),{method:'POST',token,body:bind(draft)})).status,409);
+ pass('saved transaction corrections win over reusable instructions; complete purchase details produce no question and cannot be queued');
+ const library=await db.collection('financelearninglibraries').findOne({ownerId:owner}),datasetId=library.datasetId,patternId=new ObjectId(),patternKey='synthetic-supported-answer';
+ const pattern={_id:patternId,ownerId:owner,datasetId,key:patternKey,merchant:'predictable retailer',merchantLabel:'Predictable retailer',accountId:String(account._id),card:'test card',payment:'card',cards:['Test card'],total:6,from:'2021-01-01',to:'2021-01-06',customers:[{label:'Answer test customer',purpose:'customer',customerId:String(customer),count:6}],categories:[],grade:'B',status:'proposed',revision:0,audit:[]};
+ await db.collection('financelearningpatterns').insertOne(pattern);
+ const records=Array.from({length:6},(_,i)=>({ownerId:owner,datasetId,sheet:'data',row:2000+i,patternKey,merchant:'predictable retailer',accountId:String(account._id),date:`2021-01-0${i+1}`,eligible:true,purpose:'customer',customerId:String(customer),customerName:'Answer test customer',parsed:{amount:1000,customer:'Answer test customer',category:'',merchant:'Predictable retailer'},cells:[]}));
+ await db.collection('financelearningrows').insertMany(records);
+ draft=await get(3);assert.equal(draft.values.customerId,String(customer));assert.equal(draft.evidence.customerId.grade,'B');assert.deepEqual((await call(review(3),{token})).data.study.openFields,['productName']);
+ const detail=(await call('/api/finance-learning/patterns/'+patternId,{token})).data;assert.equal(detail.pattern.answer.values.customerId,String(customer));
+ await db.collection('financelearningrows').updateMany({datasetId,patternKey},{$set:{date:'2026-08-02'}});assert.equal((await get(3)).values.purpose,'unresolved');
+ for(const r of records)await db.collection('financelearningrows').updateOne({datasetId,sheet:'data',row:r.row},{$set:{date:r.date}});
+ await db.collection('financelearningrows').updateOne({datasetId,sheet:'data',row:2000},{$set:{purpose:'company',customerId:'','parsed.customer':'Company'}});assert.equal((await get(3)).values.purpose,'unresolved');
+ await db.collection('financelearningrows').updateOne({datasetId,sheet:'data',row:2000},{$set:{purpose:'customer',customerId:String(customer),'parsed.customer':'Answer test customer'}});
+ await db.collection('financelearningpatterns').updateOne({_id:patternId},{$set:{status:'deferred'}});assert.equal((await get(3)).values.purpose,'unresolved');await db.collection('financelearningpatterns').updateOne({_id:patternId},{$set:{status:'proposed'}});
+ assert.equal(await db.collection('transactions').countDocuments(),before.tx);assert.equal(await db.collection('financeentries').countDocuments(),before.entries);
+ pass('historical answers use only earlier consistent evidence, prepare the learning form and abstain on conflicting or deferred classifications');
+ const queuedImport=await upload(csv([row({2:'Queued instruction retailer',5:'1000'})]));assert.equal(queuedImport.status,200);
+ const queuePath='/api/finance-review/imports/'+queuedImport.data.id+'/drafts/2',queueDraft=(await call('/api/finance/imports/'+queuedImport.data.id+'/drafts/2',{token})).data;
+ const agent=await call('/api/finance-review/agents',{method:'POST',token,body:{teamId:'TANSWERS1',userId:'UANSWERS1',channelId:'DANSWERS1',accountIds:[String(account._id)]}});assert.equal(agent.status,200);
+ const queued=await call(queuePath,{method:'POST',token,body:bind(queueDraft)});assert.equal(queued.status,200,JSON.stringify(queued));assert.equal(queued.data.review.context.study.openFields[0],'purpose');
+ await policies.insertOne({...policy,_id:new ObjectId(),key:'queued-instruction',merchants:['queued instruction retailer']});
+ const claimed=await call('/api/finance-review/worker/'+queued.data.review._id+'/claim',{method:'POST',token:agent.data.token,body:{}});assert.equal(claimed.status,200,JSON.stringify(claimed));assert.deepEqual(claimed.data.review.context.study.openFields,['productName']);assert.equal(claimed.data.review.context.values.customerId,String(customer));
+ pass('a newly confirmed instruction narrows an already queued question before delivery without sending any Slack message');
+ if(process.env.OMF_TEST_CHROME_PORT){
+  const {createRequire}=require('node:module'),req=createRequire(path.join(root,'collector/package.json')),p=req('rebrowser-puppeteer-core'),browser=await p.connect({browserURL:'http://127.0.0.1:'+Number(process.env.OMF_TEST_CHROME_PORT),defaultViewport:null});let page;
+  try{
+   page=await browser.newPage();await page.setViewport({width:390,height:844});await page.goto(origin+'/learning?pattern='+patternId,{waitUntil:'networkidle2'});
+   const waitFor=async fn=>{for(let i=0;i<100;i++){if(await page.evaluate(fn))return;await pause(100)}throw Error('Prepared-answer browser condition timed out')};
+   await waitFor(()=>!!document.querySelector('section[aria-label="ルールの根拠と確認"] select'));
+   assert.deepEqual(await page.evaluate(()=>[...document.querySelectorAll('section[aria-label="ルールの根拠と確認"] form select')].map(e=>e.value)),['customer',String(customer)]);
+   assert.ok(await page.evaluate(()=>document.querySelector('section[aria-label="ルールの根拠と確認"] textarea').value.includes('6件')));
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-prepared-learning.png'),captureBeyondViewport:false});
+   await page.goto(origin+'/mapping-draft/'+importId+'/3',{waitUntil:'networkidle2'});await waitFor(()=>document.querySelector('section[aria-label="購入内容の確認"]')?.textContent.includes('OMFが判断できた項目'));
+   const text=await page.evaluate(()=>document.querySelector('section[aria-label="購入内容の確認"]').textContent);assert.ok(text.includes('Answer test customer'));assert.equal(text.includes('어느 고객'),false);assert.equal(await page.evaluate(()=>document.querySelector('#draft-customerId').value),String(customer));
+   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-prepared-draft.png'),captureBeyondViewport:false});
+   await page.goto(origin+'/mapping-draft/'+importId+'/2',{waitUntil:'networkidle2'});await waitFor(()=>document.querySelector('section[aria-label="購入内容の確認"]')?.textContent.includes('追加の質問はありません'));
+   assert.equal(await page.evaluate(()=>[...document.querySelectorAll('section[aria-label="購入内容の確認"] button')].some(e=>e.textContent.includes('Slackで確認する'))),false);
+   assert.equal(await page.evaluate(()=>[...document.querySelectorAll('section[aria-label="購入内容の確認"] a')].find(e=>e.textContent.includes('確認済みの顧客・用途ルール')).getAttribute('href')),'/learning');
+   await page.evaluate(()=>[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='反映する').click());
+   assert.equal(await page.evaluate(()=>document.querySelector('#draft-purpose').value),'customer');assert.equal(await page.evaluate(()=>document.querySelector('#draft-customerId').value),String(customer));
+   pass('real Chrome: answers arrive prefilled, known customers are not re-asked, complete purchases hide questions and classification corrections apply together');
+  }finally{if(page)await page.close();await browser.disconnect()}
+ }
+};

@@ -14,3 +14,13 @@ export const FinanceLearningDataset = mongoose.models.FinanceLearningDataset || 
 export const FinanceLearningLibrary = mongoose.models.FinanceLearningLibrary || mongoose.model('FinanceLearningLibrary',librarySchema)
 export const FinanceLearningRow = mongoose.models.FinanceLearningRow || mongoose.model('FinanceLearningRow',rowSchema)
 export const FinanceLearningPattern = mongoose.models.FinanceLearningPattern || mongoose.model('FinanceLearningPattern',patternSchema)
+
+const policySchema = new Schema({
+  ownerId:{type:oid,required:true}, key:{type:String,required:true}, title:String,
+  merchants:[String], accountIds:[oid], decision:mixed, effectiveFrom:String,
+  reason:String, sourceQuote:String, status:{type:String,enum:['active','deferred'],default:'active'},
+  revision:{type:Number,default:1}, audit:[mixed]
+},{timestamps:true})
+policySchema.index({ownerId:1,key:1},{unique:true})
+policySchema.index({ownerId:1,status:1,merchants:1})
+export const FinanceLearningPolicy = mongoose.models.FinanceLearningPolicy || mongoose.model('FinanceLearningPolicy',policySchema)

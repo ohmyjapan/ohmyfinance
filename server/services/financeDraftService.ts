@@ -5,6 +5,8 @@ import os from 'node:os'
 import mongoose from 'mongoose'
 import { getHeader, type H3Event } from 'h3'
 import { FinanceDraft, FinanceDocument } from '../models/FinanceDraft'
+import { learningEvidence } from './financeLearningService'
+import { applyClassification } from '../../shared/finance-answers.mjs'
 import { FinancialAccount, FinanceEntry } from '../models/Finance'
 import CustomerModel from '../models/Customer'
 import SupplierModel from '../models/Supplier'
@@ -99,6 +101,8 @@ async function propose(ctx: any, references: any) {
     if (category) assign('transactionCategoryId', category._id.toString(), sourceEvidence('spreadsheet', `元の区分「${mapped.category}」との一致。`, { sheet: mapped.source }))
     else if (mapped.category) evidence.transactionCategoryId = { state: 'missing', source: 'spreadsheet', reason: `元の区分は「${mapped.category}」。登録済みの区分を選択してください。`, sheet: mapped.source }
   }
+  const learning = row.kind === 'expense' ? await learningEvidence(ownerId, account._id.toString(), normalizeMerchant(row.description), row.purchaseDate, row.amount) : null
+  applyClassification(values, evidence, learning?.answer)
   const supplier = matched(references.suppliers, row.description, ['name', 'companyName', 'serviceName'])
   if (supplier) {
     assign('supplierId', supplier._id.toString(), sourceEvidence('supplier', 'CSVの利用先と仕入れ先台帳が完全一致。'))
@@ -120,7 +124,7 @@ async function propose(ctx: any, references: any) {
       else assign(key, value, learned)
     }
   }
-  return { values, evidence }
+  return { values, evidence, automation: learning?.answer || null }
 }
 async function documents(ctx: any) {
   const docs: any[] = await FinanceDocument.find({ ownerId: ctx.ownerId, importId: ctx.importId, line: ctx.line }).sort({ createdAt: 1 }).lean()
@@ -148,7 +152,7 @@ async function view(ctx: any) {
   const row = review.rows.find((r: any) => r.line === ctx.line)!
   const reserved = await FinanceEntry.exists({ ownerId: ctx.ownerId, importId: ctx.importId, line: ctx.line })
   const suggestions = saved ? fields.filter(f => !sameValue(proposed.values[f.key], values[f.key]) && !['amex', 'default'].includes(proposed.evidence[f.key]?.source) && !['missing', 'not_applicable'].includes(proposed.evidence[f.key]?.state)).map(f => ({ field: f.key, value: proposed.values[f.key], evidence: proposed.evidence[f.key] })) : []
-  return { importId: ctx.importId, line: ctx.line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: saved?.revision || 0, values, evidence, references, suggestions,
+  return { importId: ctx.importId, line: ctx.line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: saved?.revision || 0, values, evidence, references, suggestions, automation: proposed.automation,
     approvedAt: saved?.approvedAt || null, rememberedFields: saved?.memory?.fields || [], history: [...(saved?.history || [])].reverse(),
     missing: missingFields(values), locked: !!reserved || ['posted', 'duplicate', 'in_progress'].includes(row.state),
     source: { ...ctx.mapped, kind: ctx.row.kind, paymentMethod: 'クレジットカード', type: '支出', currency: ctx.row.currency, foreignAmount: ctx.row.foreignAmount, exchangeRate: ctx.row.exchangeRate, account: { id: ctx.account._id.toString(), name: ctx.account.name } },
