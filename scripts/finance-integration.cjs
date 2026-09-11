@@ -103,8 +103,13 @@ async function main(){
    const browser=await p.connect({browserURL:'http://127.0.0.1:'+Number(process.env.OMF_TEST_CHROME_PORT),defaultViewport:null});let page;
    try{
     page=await browser.newPage();await page.setViewport({width:390,height:844});await page.goto(origin+'/login',{waitUntil:'networkidle2'});
+    await page.evaluate(()=>localStorage.setItem('theme','light'));await page.reload({waitUntil:'networkidle2'});
     const waitFor=async fn=>{for(let i=0;i<100;i++){if(await page.evaluate(fn))return;await pause(100);}throw Error('Browser condition timed out');};
     await page.evaluate(()=>document.querySelector('#email').focus());await page.keyboard.type('finance-a@example.invalid');await page.evaluate(()=>document.querySelector('#password').focus());await page.keyboard.type('Synthetic-password-Only1!');await page.evaluate(()=>document.querySelector('button[type="submit"]').click());await waitFor(()=>location.pathname==='/');
+    await page.goto(origin+'/transactions',{waitUntil:'networkidle2'});await waitFor(()=>!!document.querySelector('main h1'));
+    const designStyles=()=>{const title=getComputedStyle(document.querySelector('main h1')),card=getComputedStyle(document.querySelector('main .rounded-2xl, main .card'));return {fontSize:title.fontSize,fontWeight:title.fontWeight,fontFamily:title.fontFamily,titleColor:title.color,cardBackground:card.backgroundColor,cardBorder:card.borderColor,cardRadius:card.borderRadius};};
+    const referenceDesign=await page.evaluate(designStyles);assert.equal(referenceDesign.cardBackground,'rgb(255, 255, 255)');
+    if(process.env.OMF_TEST_SCREENSHOT){await page.setViewport({width:1440,height:1000});await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-transactions-reference.png'),fullPage:true});await page.setViewport({width:390,height:844});}
     await page.goto(origin+'/connections',{waitUntil:'networkidle2'});await waitFor(()=>!!document.querySelector('.account-grid section'));
     const result=await page.evaluate(()=>({title:document.querySelector('.connections h1')?.textContent,overflow:document.documentElement.scrollWidth>innerWidth,accounts:document.querySelectorAll('.account-grid section').length}));assert.equal(result.title,'カード連携');assert.equal(result.accounts,1);assert.equal(result.overflow,false);
     await page.evaluate(id=>document.querySelector('[data-import-id="'+id+'"]').click(),overlapping.data.id);await waitFor(()=>!!document.querySelector('.review-list article select'));
@@ -112,6 +117,8 @@ async function main(){
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await page.goto(origin+'/mapping?import='+mappingId,{waitUntil:'networkidle2'});await waitFor(()=>document.querySelectorAll('.mapping-list article').length===4);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    assert.deepEqual(await page.evaluate(designStyles),referenceDesign,'Mapping must use the transaction page typography and shared card surfaces');
+    assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('.mapping')).backgroundColor),'rgba(0, 0, 0, 0)');
     assert.equal(await page.evaluate(()=>document.querySelector('[data-filter="review"] strong').textContent),'1件');
     assert.equal(await page.evaluate(()=>document.querySelectorAll('.repeat').length),2);
     await page.evaluate(()=>document.querySelector('[data-filter="review"]').click());await waitFor(()=>document.querySelectorAll('.mapping-list article').length===1);
@@ -120,9 +127,15 @@ async function main(){
     await page.evaluate(()=>document.querySelector('input[type="search"]').focus());await page.keyboard.type('CLIENT-A');await waitFor(()=>document.querySelectorAll('.mapping-list article').length===2);
     await page.keyboard.down('Control');await page.keyboard.press('a');await page.keyboard.up('Control');await page.keyboard.press('Backspace');await waitFor(()=>document.querySelectorAll('.mapping-list article').length===4);
     await page.evaluate(()=>document.querySelector('details.evidence').open=true);
-    if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-mapping-mobile.png'),fullPage:true});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);if(process.env.OMF_TEST_SCREENSHOT){await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-mapping-mobile.png'),captureBeyondViewport:false});await page.evaluate(()=>document.querySelector('.mapping-list').scrollIntoView());await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-mapping-mobile-rows.png'),captureBeyondViewport:false});}
     await page.reload({waitUntil:'networkidle2'});await waitFor(()=>document.querySelectorAll('.mapping-list article').length===4);
     await page.setViewport({width:1440,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.evaluate(()=>document.querySelector('header.sticky button.p-1').click());await waitFor(()=>document.documentElement.classList.contains('dark'));
+    await page.evaluate(()=>Promise.all(document.querySelector('main .rounded-2xl, main .card').getAnimations().map(animation=>animation.finished)));const darkDesign=await page.evaluate(designStyles);assert.notEqual(darkDesign.cardBackground,referenceDesign.cardBackground);assert.notEqual(darkDesign.titleColor,referenceDesign.titleColor);
+    if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-dark.png'),fullPage:true});
+    await page.reload({waitUntil:'networkidle2'});await waitFor(()=>document.querySelectorAll('.mapping-list article').length===4);assert.equal(await page.evaluate(()=>document.documentElement.classList.contains('dark')),true);
+    await page.evaluate(()=>document.querySelector('header.sticky button.p-1').click());await waitFor(()=>!document.documentElement.classList.contains('dark'));await page.evaluate(()=>Promise.all(document.querySelector('main .rounded-2xl, main .card').getAnimations().map(animation=>animation.finished)));assert.deepEqual(await page.evaluate(designStyles),referenceDesign);
+    pass('real Chrome: mapping matches transaction typography and cards, follows the app theme toggle and preserves the theme after reload');
     pass('real Chrome: mapping filters, search, evidence, reload and mobile/desktop layouts work');
     if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT,fullPage:true});pass('real Chrome: mobile login, account list and transaction review render without horizontal overflow');
    }finally{if(page)await page.close();await browser.disconnect();}
