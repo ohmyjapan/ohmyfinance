@@ -24,6 +24,7 @@
         <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
         <CardAccounting v-if="draft.cardAccounting" :card="draft.cardAccounting" :account-name="draft.source.account.name" :values="values" :references="draft.references" :changed="draft.cardAccountingChanged" />
         <section v-if="draft.purchaseHistory?.status === 'review'" class="card mb-6 p-4 sm:p-6" data-purchase-account-review><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">購入科目の確認</h2><p class="mt-2 text-xs text-amber-700 dark:text-amber-400">{{ draft.purchaseHistory.reason }}</p><PurchaseAccountEvidence :history="draft.purchaseHistory" /></section>
+        <PurchaseAccountingAssessment :assessment="purchaseAssessment" :note="accountingNote" :disabled="busy || draft.locked" @update:note="value => accountingAnswer = {key:purchaseAssessment.key,note:value}" />
         <AccountingReview :draft="draft" :values="values" />
         <div class="mb-6"><SupplierMemory :import-id="importId" :line="line" :disabled="dirty || busy" @changed="load" /></div>
         <div v-if="draft.suggestions.length && !draft.locked" class="card mb-6 p-4 sm:p-6">
@@ -100,6 +101,8 @@ import SupplierMemory from '~/components/finance/SupplierMemory.vue'
 import AccountingReview from '~/components/finance/AccountingReview.vue'
 import CardAccounting from '~/components/finance/CardAccounting.vue'
 import PurchaseAccountEvidence from '~/components/finance/PurchaseAccountEvidence.vue'
+import PurchaseAccountingAssessment from '~/components/finance/PurchaseAccountingAssessment.vue'
+import { assessPurchaseAccounting } from '~/shared/finance-accounting-assessment.mjs'
 import { clearChangedPurchaseContext } from '~/shared/finance-purchase-accounts.mjs'
 import { fields, sameValue, missingFields, type DraftField as Field } from '~/shared/finance-draft.mjs'
 definePageMeta({ middleware: 'auth' })
@@ -110,6 +113,10 @@ const assistant=useAssistantStore(),assistantPath='/mapping-draft/'+importId+'/'
 const draft = ref<any>(null), values = ref<any>({}), remember = ref<string[]>([]), documentEvidence = ref<Record<string, string>>({})
 const loading = ref(true), busy = ref(false), error = ref(''), message = ref(''), conflict = ref(false), reloadOffered = ref(false)
 const tagText = ref('')
+const accountingAnswer = ref<any>(null)
+const purchaseAssessment = computed(() => assessPurchaseAccounting({ ...draft.value, values: values.value }))
+const accountingNote = computed(() => accountingAnswer.value?.key === purchaseAssessment.value.key ? accountingAnswer.value.note : '')
+const originalAccountingNote = computed(() => draft.value?.accountingResponse?.key === purchaseAssessment.value.key ? draft.value.accountingResponse.note : '')
 const documentKind = ref('receipt'), posting = ref(''), linkId = ref(''), confirmNew = ref(false)
 const addField = ref(''), newName = ref(''), newRate = ref<number | null>(null), referenceError = ref('')
 const groups = [{ key: 'classification', label: '用途・分類' }, { key: 'basic', label: '取引の基本情報' }, { key: 'supplier', label: '仕入れ先・書類情報' }, { key: 'product', label: '商品情報' }, { key: 'notes', label: '備考・タグ' }]
@@ -117,7 +124,7 @@ const statuses = [{ value: 'completed', label: '完了' }, { value: 'pending', l
 const itemLabels: Record<string, string> = { productName: '商品名', janCode: 'JANコード', productUrl: '商品URL', quantity: '数量', unitPrice: '単価' }
 const clone = (value: any) => JSON.parse(JSON.stringify(value))
 const originalDocuments = computed(() => Object.fromEntries(fields.map(f => [f.key, draft.value?.evidence[f.key]?.documentId || ''])))
-const dirty = computed(() => !!draft.value && (!sameValue(values.value, draft.value.values) || !sameValue([...remember.value].sort(), [...draft.value.rememberedFields].sort()) || !sameValue(documentEvidence.value, originalDocuments.value)))
+const dirty = computed(() => !!draft.value && (!sameValue(values.value, draft.value.values) || accountingNote.value !== originalAccountingNote.value || !sameValue([...remember.value].sort(), [...draft.value.rememberedFields].sort()) || !sameValue(documentEvidence.value, originalDocuments.value)))
 const missing = computed(() => draft.value ? missingFields(values.value) : [])
 const isExpense = computed(() => draft.value?.source.kind === 'expense')
 const posted = computed(() => ['posted', 'duplicate'].includes(draft.value?.review.state))
@@ -128,7 +135,7 @@ const labelFor = (key: string) => fields.find(f => f.key === key)?.label || key
 const historyLabel = (action: string) => ({ chat_review: '会話で購入内容を確認', teaching_status: '学習ルールの適用を変更', slack_review: 'Slackで購入内容を確認', saved: '下書きを保存', approved: '内容を確認', document_added: '書類を添付', document_removed: '書類を削除' }[action] || action)
 function optionsFor(field: Field) { const options = draft.value.references[field.ref!] || []; return field.key === 'accountCategoryId' ? options.filter((v: any) => !v.parentId) : field.key === 'subAccountCategoryId' ? options.filter((v: any) => v.parentId === values.value.accountCategoryId) : options }
 function displayValue(key: string, value: any): string { if (value === null || value === undefined || value === '') return '空欄'; const field = fields.find(f => f.key === key); if (field?.ref) return draft.value.references[field.ref]?.find((v: any) => v._id === value)?.name || String(value); if (key === 'purpose') return ({ customer: '顧客購入', company: '会社経費', unresolved: '未確認' } as any)[value] || value; if (key === 'items') return `${value.length || 0}商品`; return Array.isArray(value) ? value.join(', ') : String(value) }
-function receive(data: any) { draft.value = data; values.value = clone(data.values); tagText.value = data.values.tags.join(', '); remember.value = [...data.rememberedFields]; documentEvidence.value = clone(originalDocuments.value); posting.value = ''; conflict.value = false }
+function receive(data: any) { draft.value = data; values.value = clone(data.values); tagText.value = data.values.tags.join(', '); remember.value = [...data.rememberedFields]; documentEvidence.value = clone(originalDocuments.value); accountingAnswer.value = data.accountingResponse ? clone(data.accountingResponse) : null; posting.value = ''; conflict.value = false }
 function errorMessage(e: any) { return e.data?.data?.message || e.data?.statusMessage || e.message || '処理に失敗しました。再試行してください。' }
 async function run(action: () => Promise<void>) { busy.value = true; error.value = ''; message.value = ''; try { await action() } catch (e: any) { error.value = errorMessage(e); conflict.value = (e.statusCode || e.status) === 409 } finally { busy.value = false } }
 async function load() { loading.value = true; reloadOffered.value = false; await run(async () => receive(await $fetch(endpoint, { headers: user.authHeader }))); loading.value = false }
@@ -136,7 +143,7 @@ function changedField(key: string) { if (['purpose','customerId'].includes(key))
 function rememberField(key: string, checked: boolean) { remember.value = checked ? [...new Set([...remember.value, key])] : remember.value.filter(f => f !== key) }
 function applySuggestion(suggestion: any) { const pair = suggestion.evidence?.classification; if (pair && ['purpose','customerId'].includes(suggestion.field)) { values.value.purpose = pair.purpose; values.value.customerId = pair.customerId; changedField('customerId'); return } values.value[suggestion.field] = clone(suggestion.value); changedField(suggestion.field) }
 const identity = () => ({ revision: draft.value.revision, key: draft.value.key, sourceHash: draft.value.sourceHash, cardAccountingKey: draft.value.cardAccounting?.key })
-async function save(confirm: boolean) { await run(async () => { receive(await $fetch(endpoint, { method: 'PUT', headers: user.authHeader, body: { ...identity(), values: values.value, remember: remember.value, confirm, documentEvidence: documentEvidence.value } })); message.value = confirm ? '内容を確認して保存しました。まだ帳簿には登録されていません。' : '下書きを保存しました。' }) }
+async function save(confirm: boolean) { await run(async () => { receive(await $fetch(endpoint, { method: 'PUT', headers: user.authHeader, body: { ...identity(), values: values.value, remember: remember.value, confirm, documentEvidence: documentEvidence.value, accountingResponse: accountingNote.value.trim() ? {key:purchaseAssessment.value.key,note:accountingNote.value} : null } })); message.value = confirm ? '内容を確認して保存しました。まだ帳簿には登録されていません。' : '下書きを保存しました。' }) }
 async function uploadDocument(event: Event) { const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return; await run(async () => { if (file.size > 10 * 1024 * 1024) throw Error('書類は10MB以内で選択してください。'); receive(await $fetch(`${endpoint}/documents`, { method: 'POST', query: { ...identity(), kind: documentKind.value, name: file.name }, headers: { ...user.authHeader, 'Content-Type': file.type }, body: file })); message.value = '書類を添付しました。内容を確認して保存してください。' }); input.value = '' }
 async function removeDocument(doc: any) { await run(async () => receive(await $fetch(`${endpoint}/documents/${doc.id}`, { method: 'DELETE', headers: user.authHeader, body: identity() }))) }
 async function addReference() { busy.value = true; referenceError.value = ''; try { const result: any = await $fetch(`/api/finance/imports/${importId}/references`, { method: 'POST', headers: user.authHeader, body: { field: addField.value, name: newName.value, parentId: values.value.accountCategoryId, rate: newRate.value } }); draft.value.references = result.references; values.value[addField.value] = result.id; changedField(addField.value); addField.value = '' } catch (e: any) { referenceError.value = errorMessage(e) } finally { busy.value = false } }

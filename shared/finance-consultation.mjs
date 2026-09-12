@@ -1,3 +1,4 @@
+import { assessPurchaseAccounting } from './finance-accounting-assessment.mjs';
 import { fields, isEmpty } from './finance-draft.mjs';
 import { taxAndInvoice } from './finance-preparation.mjs';
 
@@ -16,6 +17,7 @@ export function consultationEvidence(draft) {
   return {
     version: 2,
     accountingReview: taxAndInvoice(draft),
+    purchaseAccountingReview: assessPurchaseAccounting(draft),
     fields: fields.map(field => {
       const value = fieldValue(field, draft.values?.[field.key]), proof = draft.evidence?.[field.key];
       const proofForReply = field.key === 'transactionCategoryId' && proof?.source === 'spreadsheet'

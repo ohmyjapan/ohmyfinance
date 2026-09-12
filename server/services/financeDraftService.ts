@@ -21,6 +21,7 @@ import DataSourceModel from '../models/DataSource'
 import { fail, id, ownedImport, ownedAccount, reviewImport } from './financeService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { digest } from '../../shared/amex.mjs'
+import { assessPurchaseAccounting } from '../../shared/finance-accounting-assessment.mjs'
 import { sourceCategoryChoices, draftReadiness } from '../../shared/finance-preparation.mjs'
 import { fields, learnedFields, emptyValues, normalizeMerchant, sameValue, isEmpty, validateValues, missingFields, transactionValues } from '../../shared/finance-draft.mjs'
 
@@ -163,7 +164,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
       const proposed = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, { ...references, merchantLinks: links }) : { values: emptyValues(row), evidence: {} }
       const values = draft?.values || proposed.values, evidence = draft?.evidence || proposed.evidence
       const card = entries.find((e: any) => e.line === row.line)?.draftSnapshot?.transaction?.cardAccounting || cardAccounting(account, row, references)
-      const preparation = draftReadiness({ purchaseHistory: proposed.purchaseHistory, cardAccounting: card, values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: approvedCardMatches(draft, card) ? draft?.approvedAt : null, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
+      const preparation = draftReadiness({ importId, line: row.line, sourceHash: batch.hash, purchaseHistory: proposed.purchaseHistory, accountingResponse: draft?.accountingResponse, cardAccounting: card, values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: approvedCardMatches(draft, card) ? draft?.approvedAt : null, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
       if (row.kind !== 'expense') { rows[index] = { ...source, preparation }; continue }
       const customer = references.customers.find((r: any) => r._id.toString() === values.customerId)
       const category = references.transactionCategories.find((r: any) => r._id.toString() === values.transactionCategoryId)
@@ -235,7 +236,7 @@ async function view(ctx: any) {
   const cardChanged = !!saved?.approvedAt && !approvedCardMatches(saved, currentCard)
   const suggestions = saved ? fields.filter(f => !sameValue(proposed.values[f.key], values[f.key]) && !['amex', 'default'].includes(proposed.evidence[f.key]?.source) && !['missing', 'not_applicable'].includes(proposed.evidence[f.key]?.state)).map(f => ({ field: f.key, value: proposed.values[f.key], evidence: proposed.evidence[f.key] })) : []
   return { importId: ctx.importId, line: ctx.line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: saved?.revision || 0, values, evidence, references, suggestions, automation: proposed.automation,
-    purchaseHistory: proposed.purchaseHistory, cardAccounting: currentCard, cardAccountingChanged: cardChanged,
+    purchaseHistory: proposed.purchaseHistory, accountingResponse: saved?.accountingResponse || null, purchaseAccountingReview: assessPurchaseAccounting({ importId: ctx.importId, line: ctx.line, sourceHash: ctx.batch.hash, values, source: { ...ctx.mapped, kind: ctx.row.kind }, purchaseHistory: proposed.purchaseHistory, accountingResponse: saved?.accountingResponse }, references), cardAccounting: currentCard, cardAccountingChanged: cardChanged,
     approvedAt: cardChanged ? null : saved?.approvedAt || null, rememberedFields: saved?.memory?.fields || [], history: [...(saved?.history || [])].reverse(),
     missing: missingFields(values), locked: !!reserved || ['posted', 'duplicate', 'in_progress'].includes(row.state),
     source: { ...ctx.mapped, kind: ctx.row.kind, paymentMethod: 'クレジットカード', type: '支出', currency: ctx.row.currency, foreignAmount: ctx.row.foreignAmount, exchangeRate: ctx.row.exchangeRate, account: { id: ctx.account._id.toString(), name: ctx.account.name } },
@@ -300,6 +301,20 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
       for (const proofKey of ['registration', 'supplierKey', 'supplierId', 'linkId', 'linkRevision']) delete evidence[key][proofKey]
     }
     if (reviewAnswer) for (const key of reviewAnswer.fields) evidence[key] = { ...evidence[key], state: isEmpty(values[key]) ? 'not_applicable' : 'confirmed', source: reviewAnswer.channel === 'web' ? 'chat' : 'slack', reason: reviewAnswer.channel === 'web' ? 'ページ上の会話で提案内容を確認済み。' : 'Slackで提案内容を確認済み。', reviewId: reviewAnswer.reviewId, replyTs: reviewAnswer.replyTs, at }
+    const assessmentHistory = (await propose(ctx, references)).purchaseHistory
+    const assessment = assessPurchaseAccounting({ importId: ctx.importId, line: ctx.line, sourceHash: ctx.batch.hash, values, source: { ...ctx.mapped, kind: ctx.row.kind }, purchaseHistory: assessmentHistory }, references)
+    let accountingResponse = ctx.saved?.accountingResponse?.key === assessment.key ? ctx.saved.accountingResponse : null
+    if (body.accountingResponse !== undefined) {
+      const answer = body.accountingResponse
+      if (answer === null) accountingResponse = null
+      else {
+        if (!answer || typeof answer !== 'object' || Array.isArray(answer) || Object.keys(answer).some(k => !['key','note'].includes(k)) || typeof answer.note !== 'string' || answer.note.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(answer.note)) fail(400, '会計判断の理由を確認してください。')
+        if (!assessment.key || answer.key !== assessment.key) fail(409, '用途・科目が変更されました。判断理由を再確認してください。')
+        const note = answer.note.trim()
+        accountingResponse = note ? accountingResponse?.note === note ? accountingResponse : { key: assessment.key, note, at } : null
+      }
+    }
+    if (!sameValue(accountingResponse, ctx.saved?.accountingResponse || null)) changes.push({ action: 'accounting_reason', before: ctx.saved?.accountingResponse || null, after: accountingResponse, assessment })
     // No separate rule write: approval and remembered values commit atomically with the draft.
     const memory = body.confirm && body.remember.length ? { fields: body.remember, merchant: normalizeMerchant(ctx.row.description), purpose: values.purpose, customerId: values.customerId, values: Object.fromEntries(body.remember.map((key: string) => [key, values[key]])), at } : undefined
     const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: reviewAnswer ? reviewAnswer.channel === 'web' ? 'chat_review' : 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}) }]
@@ -312,7 +327,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
       decision: { purpose: values.purpose, customerId: values.customerId }, summary: reviewAnswer.summary, quote: reviewAnswer.text, at
     }
     await check()
-    const set = { ownerId, accountId: ctx.account._id, importId, line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: (ctx.saved?.revision || 0) + 1, values, evidence, history, cardAccounting: card, approvedAt: body.confirm ? at : null, memory: memory || null, teachingMemory }
+    const set = { ownerId, accountId: ctx.account._id, importId, line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: (ctx.saved?.revision || 0) + 1, values, evidence, history, accountingResponse, cardAccounting: card, approvedAt: body.confirm ? at : null, memory: memory || null, teachingMemory }
     if (ctx.saved) {
       const result = await FinanceDraft.updateOne({ _id: ctx.saved._id, revision: body.revision }, { $set: set })
       if (!result.matchedCount) fail(409, '下書きが更新されました。再読込してください。')
@@ -333,7 +348,7 @@ export async function draftSnapshot(ownerId: string, batch: any, row: any, revis
   if (card.status === 'review' || !approvedCardMatches(draft, card)) fail(409, 'カード側の科目が変更されました。下書きを再確認してください。')
   const docs = await documents({ ownerId, importId: batch._id.toString(), line: row.line })
   const receipt = docs.find(d => d.kind === 'receipt' || d.kind === 'invoice')
-  return { draftId: draft._id.toString(), revision, sourceHash: batch.hash, evidence: draft.evidence, purpose: values.purpose,
+  return { draftId: draft._id.toString(), revision, sourceHash: batch.hash, evidence: draft.evidence, purpose: values.purpose, accountingResponse: draft.accountingResponse || null, purchaseAccountingReview: assessPurchaseAccounting({ importId: batch._id.toString(), line: row.line, sourceHash: batch.hash, values, source: row, accountingResponse: draft.accountingResponse }, references),
     transaction: { ...transactionValues(values), ...(card.status === 'configured' ? { cardAccounting: card } : {}), hasReceipt: !!receipt, ...(receipt ? { receiptFilePath: receipt.url, receiptUploadedAt: receipt.uploadedAt } : {}), attachments: docs.map(doc => ({ originalName: doc.name, filename: doc.id, path: doc.url, size: doc.size, mimeType: doc.mimeType, uploadedAt: doc.uploadedAt })) },
     documents: docs.map(doc => ({ id: doc.id, kind: doc.kind, hash: doc.hash })) }
 }

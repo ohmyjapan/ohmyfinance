@@ -12,6 +12,7 @@ const draftSchema = new Schema({
   history: { type: [Schema.Types.Mixed], default: [] },
   approvedAt: Date,
   cardAccounting: Schema.Types.Mixed,
+  accountingResponse: Schema.Types.Mixed,
   // Only explicitly approved, reusable decisions are candidates for another draft.
   memory: Schema.Types.Mixed,
   teachingMemory: Schema.Types.Mixed
