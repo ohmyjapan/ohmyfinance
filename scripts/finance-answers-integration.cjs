@@ -57,7 +57,8 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
    await page.goto(origin+'/mapping-draft/'+importId+'/3',{waitUntil:'networkidle2'});await waitFor(()=>document.querySelector('section[aria-label="購入内容の確認"]')?.textContent.includes('OMFが判断できた項目'));
    const text=await page.evaluate(()=>document.querySelector('section[aria-label="購入内容の確認"]').textContent);assert.ok(text.includes('Answer test customer'));assert.equal(text.includes('어느 고객'),false);assert.equal(await page.evaluate(()=>document.querySelector('#draft-customerId').value),String(customer));
    if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-prepared-draft.png'),captureBeyondViewport:false});
-   await page.goto(origin+'/mapping-draft/'+importId+'/2',{waitUntil:'networkidle2'});await waitFor(()=>document.querySelector('section[aria-label="購入内容の確認"]')?.textContent.includes('追加の質問はありません'));
+   await page.goto(origin+'/mapping-draft/'+importId+'/2',{waitUntil:'networkidle2'});await waitFor(()=>document.querySelector('section[aria-label="購入内容の確認"]')?.textContent.includes('用途・購入内容の追加質問はありません'));
+   assert.ok(await page.evaluate(()=>document.querySelector('section[aria-label="消費税とインボイスの確認"]')?.textContent.includes('インボイス登録番号')));
    assert.equal(await page.evaluate(()=>[...document.querySelectorAll('section[aria-label="購入内容の確認"] button')].some(e=>e.textContent.includes('Slackで確認する'))),false);
    assert.equal(await page.evaluate(()=>[...document.querySelectorAll('section[aria-label="購入内容の確認"] a')].find(e=>e.textContent.includes('確認済みの顧客・用途ルール')).getAttribute('href')),'/learning');
    await page.evaluate(()=>[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='反映する').click());

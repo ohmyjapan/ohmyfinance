@@ -134,16 +134,8 @@ export async function reviewMapping(ownerId: string, importId: string) {
   const account = await ownedAccount(ownerId, batch.accountId.toString())
   let rows: ReturnType<typeof mappingRows>
   try { rows = mappingRows(batch) } catch { fail(409, 'Saved mapping does not match the original statement; review the source before continuing') }
-  const drafts: any[] = await FinanceDraft.find({ ownerId, importId: batch._id }).select('line revision approvedAt values.purpose values.customerId values.transactionCategoryId').lean()
-  const { draftReferences } = await import('./financeDraftService')
-  const refs = drafts.length ? await draftReferences() : null
-  return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, rows: rows!.map(row => {
-    const draft = drafts.find(d => d.line === row.line)
-    if (!draft) return row
-    const customer = refs?.customers.find((r: any) => r._id.toString() === draft.values.customerId)
-    const category = refs?.transactionCategories.find((r: any) => r._id.toString() === draft.values.transactionCategoryId)
-    return { ...row, purpose: draft.values.purpose, clientCode: customer?.name || '', clientName: '', category: category?.name || '', draft: { revision: draft.revision, approved: !!draft.approvedAt } }
-  }) }
+  const { mappingPreparation } = await import('./financeDraftService')
+  return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, ...await mappingPreparation(ownerId, batch, account, rows!) }
 }
 
 export async function commitImport(ownerId: string, importId: string, body: any) {

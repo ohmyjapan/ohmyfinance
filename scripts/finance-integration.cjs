@@ -121,6 +121,16 @@ async function main(){
     assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('.mapping')).backgroundColor),'rgba(0, 0, 0, 0)');
     assert.equal(await page.evaluate(()=>document.querySelector('[data-filter="review"] strong').textContent),'1件');
     assert.equal(await page.evaluate(()=>document.querySelectorAll('.repeat').length),2);
+    assert.equal(await page.evaluate(()=>document.querySelectorAll('[data-tax-review]').length),3);
+    assert.equal(await page.evaluate(()=>document.querySelectorAll('[data-invoice-review]').length),3);
+    await page.evaluate(()=>document.querySelector('[data-source-categories]').click());await waitFor(()=>!document.querySelector('[data-source-categories]'));
+    assert.equal(await db.collection('transactions').countDocuments(),mappingLedgerBefore);
+    await page.evaluate(()=>document.querySelector('[data-preparation-filter="preparation:accounting"]').click());await waitFor(()=>document.querySelectorAll('.mapping-list article').length===2);
+    assert.ok((await page.evaluate(()=>document.querySelector('[data-tax-review]').textContent)).includes('未設定'));
+    assert.ok((await page.evaluate(()=>document.querySelector('[data-invoice-review]').textContent)).includes('未取得'));
+    await page.evaluate(()=>document.querySelector('[data-filter="all"]').click());await waitFor(()=>document.querySelectorAll('.mapping-list article').length===4);
+    pass('real Chrome: source category registration, preparation filters, invoice numbers and consumption-tax gaps are visible');
+
     await page.evaluate(()=>document.querySelector('[data-filter="review"]').click());await waitFor(()=>document.querySelectorAll('.mapping-list article').length===1);
     assert.ok((await page.evaluate(()=>document.querySelector('.mapping-list article').textContent)).includes('Unclassified company expense'));
     await page.evaluate(()=>document.querySelector('[data-filter="all"]').click());await waitFor(()=>document.querySelectorAll('.mapping-list article').length===4);
@@ -146,6 +156,7 @@ async function main(){
   await require('./finance-answers-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-chat-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-assistant-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
+  await require('./finance-preparation-integration.cjs')({ db, call, request, upload, token, other, deviceToken, pass, csv, row });
   console.log(`${checks} finance integration checks passed`);
  }catch(error){console.error(error);console.error(logs.slice(-3500));process.exitCode=1;}
  finally{if(child && child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended;}if(client)await client.close();if(mongo)await mongo.stop();if(directory){if(!path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe test cleanup');await fsp.rm(directory,{recursive:true,force:true});}}

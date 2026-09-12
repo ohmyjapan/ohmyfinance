@@ -11,7 +11,7 @@
         <h3 class="text-xs font-semibold text-gray-800 dark:text-gray-200">OMFが判断できた項目</h3>
         <div v-for="answer in data.study.answered" :key="answer.field" class="mt-2 text-xs"><p class="font-medium text-gray-700 dark:text-gray-300">{{ answer.label }} · {{ answer.value }} <span v-if="['A','B'].includes(answer.grade)" class="ml-1 text-primary-main">{{ answer.grade==='A'?'確認済みの指示':'過去の傾向' }}</span></p><p class="mt-1 leading-relaxed text-gray-500 dark:text-gray-400">{{ answer.reason }}</p></div>
       </div>
-      <p v-if="!data.study.needsQuestion" class="mt-4 text-sm text-green-700 dark:text-green-400">購入内容は判断できています。追加の質問はありません。</p>
+      <p v-if="!data.study.needsQuestion" class="mt-4 text-sm text-green-700 dark:text-green-400">用途・購入内容の追加質問はありません。会計項目・消費税・インボイスは下の確認欄に残しています。</p>
       <div class="mt-4 space-y-3">
         <p v-for="signal in data.study.signals" :key="signal" class="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ signal }}</p>
         <details class="text-xs text-gray-500 dark:text-gray-400"><summary class="cursor-pointer py-1 text-primary-main">推定の根拠 · 過去 {{ data.study.historyCount }}件</summary><p class="mt-2">{{ data.study.historyScope }}</p><div v-for="(h, i) in data.study.hypotheses" :key="i" class="mt-3"><p class="font-medium text-gray-700 dark:text-gray-300">{{ h.label }}</p><p class="mt-1">{{ h.reason }}</p></div><p v-if="data.study.nearby.length" class="mt-3">前後2日以内の明細も参考にできます。同じ顧客の購入であることを示す根拠ではありません。</p><p v-for="n in data.study.nearby" :key="n.line" class="mt-1">{{ n.date }} · {{ n.description }} · ¥{{ Number(n.amount).toLocaleString('ja-JP') }}</p></details>

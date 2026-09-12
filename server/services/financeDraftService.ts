@@ -17,6 +17,7 @@ import DataSourceModel from '../models/DataSource'
 import { fail, id, ownedImport, ownedAccount, reviewImport } from './financeService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { digest } from '../../shared/amex.mjs'
+import { sourceCategoryChoices, draftReadiness } from '../../shared/finance-preparation.mjs'
 import { fields, learnedFields, emptyValues, normalizeMerchant, sameValue, isEmpty, validateValues, missingFields, transactionValues } from '../../shared/finance-draft.mjs'
 
 const Customer = CustomerModel as mongoose.Model<any>
@@ -126,6 +127,68 @@ async function propose(ctx: any, references: any) {
   }
   return { values, evidence, automation: learning?.answer || null }
 }
+// Batch projection uses the same proposals as the editor, with one reference/review snapshot.
+export async function mappingPreparation(ownerId: string, batch: any, account: any, mapped: any[]) {
+  const importId = batch._id.toString()
+  const [references, saved, review, entries] = await Promise.all([
+    draftReferences(), FinanceDraft.find({ ownerId, importId }).lean(), reviewImport(ownerId, importId),
+    FinanceEntry.find({ ownerId, importId }).select('line').lean()
+  ])
+  const savedByLine = new Map(saved.map((d: any) => [d.line, d]))
+  const rowByLine = new Map(batch.rows.map((r: any) => [r.line, r]))
+  const reviewByLine = new Map(review.rows.map((r: any) => [r.line, r]))
+  const reserved = new Set(entries.map((e: any) => e.line))
+  const rows: any[] = new Array(mapped.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(6, mapped.length) }, async () => {
+    while (next < mapped.length) {
+      const index = next++, source = mapped[index], row: any = rowByLine.get(source.line), draft: any = savedByLine.get(source.line)
+      if (draft && (draft.key !== row.key || draft.sourceHash !== batch.hash)) fail(409, '下書きと元ファイルが一致しません。')
+      const proposed = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, references) : { values: emptyValues(row), evidence: {} }
+      const values = draft?.values || proposed.values, evidence = draft?.evidence || proposed.evidence
+      const preparation = draftReadiness({ values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: draft?.approvedAt, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
+      if (row.kind !== 'expense') { rows[index] = { ...source, preparation }; continue }
+      const customer = references.customers.find((r: any) => r._id.toString() === values.customerId)
+      const category = references.transactionCategories.find((r: any) => r._id.toString() === values.transactionCategoryId)
+      const sourceCustomer = !draft && evidence.customerId?.source === 'spreadsheet'
+      rows[index] = { ...source, purpose: values.purpose,
+        clientCode: values.purpose === 'customer' ? customer?.name || (sourceCustomer ? source.clientCode : '') : '',
+        clientName: values.purpose === 'customer' && sourceCustomer ? source.clientName : '',
+        category: category?.name || (!draft && evidence.transactionCategoryId?.source === 'spreadsheet' ? source.category : ''),
+        ...(draft ? { draft: { revision: draft.revision, approved: !!draft.approvedAt } } : {}), preparation }
+    }
+  }))
+  return { rows, sourceCategories: sourceCategoryChoices(mapped, references), mappingKey: digest(JSON.stringify(mapped)), sourceHash: batch.hash }
+}
+
+export async function prepareSourceCategories(ownerId: string, importId: string, body: any) {
+  const batch = await ownedImport(ownerId, importId)
+  await ownedAccount(ownerId, batch.accountId.toString())
+  let mapped: any[]
+  try { mapped = mappingRows(batch) } catch { fail(409, '元データとの照合をやり直してください。') }
+  if (body?.sourceHash !== batch.hash || body?.mappingKey !== digest(JSON.stringify(mapped!))) fail(409, '照合内容が更新されています。再読込してください。')
+  if (!Array.isArray(body.names) || !body.names.length || body.names.length > 30 || body.names.some((n: any) => typeof n !== 'string') || new Set(body.names.map(normalizeMerchant)).size !== body.names.length) fail(400, '追加する元シートの区分を選択してください。')
+  const choices = sourceCategoryChoices(mapped!, await draftReferences())
+  const selected = body.names.map((name: string) => choices.find(c => c.name === name))
+  if (selected.some((c: any) => !c)) fail(400, 'この明細の元シートにある区分だけを追加できます。')
+  if (selected.some((c: any) => c.matches > 1)) fail(409, '同名の区分が複数あります。区分設定を確認してください。')
+  const categories = []
+  for (const choice of selected) {
+    // A stable identifier makes concurrent retries idempotent without changing
+    // the legacy shared category collection or rewriting existing records.
+    const current: any[] = await TransactionCategory.find({}).select('name').lean()
+    const matches = current.filter(r => normalizeMerchant(r.name) === normalizeMerchant(choice.name))
+    if (matches.length > 1) fail(409, '同名の区分が複数あります。区分設定を確認してください。')
+    if (matches.length) { categories.push({ name: matches[0].name, id: matches[0]._id.toString(), created: false }); continue }
+    const categoryId = new mongoose.Types.ObjectId(digest('omf-source-category:' + normalizeMerchant(choice.name)).slice(0, 24)), at = new Date()
+    const result = await TransactionCategory.updateOne({ _id: categoryId }, { $setOnInsert: { name: choice.name, description: '元シートの区分名を登録', createdAt: at, updatedAt: at } }, { upsert: true, runValidators: true, timestamps: false })
+    const record: any = await TransactionCategory.findById(categoryId).lean()
+    if (!record || normalizeMerchant(record.name) !== normalizeMerchant(choice.name)) fail(409, '区分の登録内容を確認してください。')
+    categories.push({ name: record.name, id: categoryId.toString(), created: !!result.upsertedCount })
+  }
+  return { categories }
+}
+
 async function documents(ctx: any) {
   const docs: any[] = await FinanceDocument.find({ ownerId: ctx.ownerId, importId: ctx.importId, line: ctx.line }).sort({ createdAt: 1 }).lean()
   return docs.map(doc => ({ id: doc._id.toString(), name: doc.name, mimeType: doc.mimeType, size: doc.size, hash: doc.hash, kind: doc.kind, uploadedAt: doc.createdAt, url: `/api/finance/documents/${doc._id}/file` }))

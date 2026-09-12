@@ -7,7 +7,7 @@ export const fields = [
   { key: 'subAccountCategoryId', label: '補助科目', group: 'classification', kind: 'reference', ref: 'accountCategories', learn: true },
   { key: 'transactionCategoryId', label: '区分', group: 'classification', kind: 'reference', ref: 'transactionCategories', learn: true },
   { key: 'taxCategoryId', label: '税区分', group: 'classification', kind: 'reference', ref: 'taxCategories', learn: true },
-  { key: 'taxRate', label: '税率 (%)', group: 'classification', kind: 'number', learn: true },
+  { key: 'taxRate', label: '消費税率 (%)', group: 'classification', kind: 'number', learn: true },
   { key: 'date', label: '計上日', group: 'basic', kind: 'date' },
   { key: 'status', label: '取引ステータス', group: 'basic', kind: 'status' },
   { key: 'referenceNumber', label: '取引番号', group: 'basic', kind: 'text' },

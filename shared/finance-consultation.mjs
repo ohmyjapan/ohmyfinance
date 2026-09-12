@@ -1,4 +1,5 @@
 import { fields, isEmpty } from './finance-draft.mjs';
+import { taxAndInvoice } from './finance-preparation.mjs';
 
 const pick = (value, keys) => Object.fromEntries(keys.filter(key => value?.[key] !== undefined).map(key => [key, value[key]]));
 const evidence = value => pick(value, ['state', 'source', 'reason', 'grade']);
@@ -13,7 +14,8 @@ const fieldValue = (field, value) => field.key === 'items'
 export function consultationEvidence(draft) {
   const references = draft.references || {}, source = draft.source || {};
   return {
-    version: 1,
+    version: 2,
+    accountingReview: taxAndInvoice(draft),
     fields: fields.map(field => {
       const value = fieldValue(field, draft.values?.[field.key]), proof = draft.evidence?.[field.key];
       const proofForReply = field.key === 'transactionCategoryId' && proof?.source === 'spreadsheet'

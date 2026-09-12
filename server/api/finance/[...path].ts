@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, downloadDocument, boundedBody } from '../../services/financeDraftService'
+import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
 import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
@@ -72,6 +72,11 @@ export default defineEventHandler(async event => {
       setHeader(event, 'Content-Disposition', "attachment; filename=\"document\"; filename*=UTF-8''" + encodeURIComponent(doc.name))
       setHeader(event, 'X-Content-Type-Options', 'nosniff')
       return bytes
+    }
+    if (parts[0] === 'imports' && parts[2] === 'source-categories' && parts.length === 3 && method === 'POST') {
+      let body: any
+      try { body = JSON.parse((await boundedBody(event, 10000)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; fail(400, 'Invalid source category JSON') }
+      return await prepareSourceCategories(ownerId, parts[1], body)
     }
     if (parts[0] === 'imports' && parts[2] === 'references' && parts.length === 3 && method === 'POST') {
       let body: any

@@ -22,6 +22,7 @@
       <template v-else>
         <button type="button" class="btn btn-secondary mb-6 text-sm" data-open-purchase-assistant @click="assistant.show({kind:'draft',importId,line})">この購入をOMFに相談</button>
         <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
+        <AccountingReview :draft="draft" :values="values" />
         <div v-if="draft.suggestions.length && !draft.locked" class="card mb-6 p-4 sm:p-6">
           <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">追加の候補</h2><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">保存済みの値はそのままです。必要な候補だけを反映できます。</p>
           <div v-for="suggestion in draft.suggestions" :key="suggestion.field" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-3 text-sm dark:border-white/10"><div class="min-w-0"><p>{{ labelFor(suggestion.field) }}: {{ displayValue(suggestion.field, suggestion.value) }}</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ suggestion.evidence.reason }}</p></div><button type="button" class="btn btn-secondary text-xs" :disabled="busy" @click="applySuggestion(suggestion)">反映する</button></div>
@@ -38,7 +39,7 @@
                   <textarea v-else-if="field.kind === 'textarea'" :id="`draft-${field.key}`" v-model="values[field.key]" rows="3" maxlength="10000" class="draft-control" />
                   <input v-else-if="field.kind === 'tags'" :id="`draft-${field.key}`" v-model="tagText" class="draft-control" placeholder="カンマで区切って入力" @input="values.tags = ($event.target as HTMLInputElement).value.split(',').map(v => v.trim()).filter(Boolean)">
                   <input v-else-if="field.kind === 'number'" :id="`draft-${field.key}`" :value="values[field.key]" type="number" min="0" :max="field.key === 'taxRate' ? 100 : undefined" step="any" class="draft-control" @input="values[field.key] = ($event.target as HTMLInputElement).value === '' ? null : Number(($event.target as HTMLInputElement).value)">
-                  <input v-else :id="`draft-${field.key}`" v-model="values[field.key]" :type="field.kind === 'date' ? 'date' : 'text'" maxlength="1000" class="draft-control" :placeholder="field.key === 'referenceNumber' ? '空欄で自動採番' : ''">
+                  <input v-else :id="`draft-${field.key}`" v-model="values[field.key]" :type="field.kind === 'date' ? 'date' : 'text'" maxlength="1000" class="draft-control" :placeholder="field.key === 'referenceNumber' ? '空欄で自動採番' : field.key === 'invoiceNumber' ? 'T＋13桁の数字（注文番号とは別）' : ''">
                   <button v-if="field.kind === 'reference' && field.key !== 'sourceId' && !draft.locked && !(field.key === 'customerId' && values.purpose !== 'customer')" type="button" class="mt-2 py-1 text-xs text-primary-main dark:text-primary-light" @click="addField = field.key; newName = ''; newRate = null">＋ {{ field.label }}を追加</button>
                 </DraftField>
               </div>
@@ -92,6 +93,7 @@ import DraftField from '~/components/finance/DraftField.vue'
 import DocumentList from '~/components/finance/DocumentList.vue'
 import {useAssistantStore} from '~/stores/assistant'
 import PurchaseReview from '~/components/finance/PurchaseReview.vue'
+import AccountingReview from '~/components/finance/AccountingReview.vue'
 import { fields, sameValue, missingFields, type DraftField as Field } from '~/shared/finance-draft.mjs'
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '取引の下書き | OhMyFinance' })
