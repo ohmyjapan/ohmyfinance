@@ -81,6 +81,8 @@ import { ArrowLeft, BookOpen, ExternalLink } from 'lucide-vue-next'
 import StatCard from '~/components/dashboard/StatCard.vue'
 import LearningSourceRow from '~/components/finance/LearningSourceRow.vue'
 import { useUserStore } from '~/stores/user'
+import {useAssistantStore} from '~/stores/assistant'
+const assistant=useAssistantStore()
 const user=useUserStore(), route=useRoute(), overview=ref<any>(null), loading=ref(true), busy=ref(false), error=ref(''), view=ref('patterns')
 const tabs=[{key:'patterns',label:'ルールを確認'},{key:'sources',label:'すべての元データ'}]
 const patterns=ref<any>({items:[],total:0,page:1}), detail=ref<any>(null), source=ref<any>(null), rows=ref<any>({items:[],total:0,page:1})
@@ -104,7 +106,8 @@ async function changeView(key:string){view.value=key;source.value=null;if(key===
 const customerName=(id:string)=>overview.value?.customers.find((c:any)=>c._id===id)?.name || '顧客購入'
 async function togglePolicy(policy:any){saving.value=true;error.value='';try{await api((policy.kind==='teaching'?'lessons/':'policies/')+policy._id,{method:'PUT',body:{revision:policy.revision,status:policy.status==='active'?'deferred':'active'}});overview.value=await api('overview');await loadPatterns(patterns.value.page);if(detail.value)await openPattern(detail.value.pattern._id)}catch(e:any){error.value=message(e)}finally{saving.value=false}}
 onMounted(async()=>{try{overview.value=await api('overview');if(overview.value.dataset){sheet.value=overview.value.dataset.primarySheet;await loadPatterns();if(typeof route.query.pattern==='string')await openPattern(route.query.pattern)}}catch(e:any){error.value=message(e)}finally{loading.value=false}})
-onBeforeUnmount(()=>{clearTimeout(searchTimer);requestId++;detailId++;rowId++})
+watch(()=>detail.value?.pattern,p=>{assistant.pageSelection={path:'/learning',...(p?{patternId:p._id,label:p.merchantLabel}:{})}},{immediate:true})
+onBeforeUnmount(()=>{if(assistant.pageSelection?.path==='/learning')assistant.pageSelection=null;clearTimeout(searchTimer);requestId++;detailId++;rowId++})
 </script>
 <style scoped>
 .learning-input { @apply block w-full min-w-0 rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-normal text-gray-900 placeholder-gray-400 focus:border-primary-main focus:ring-primary-main dark:border-white/10 dark:bg-white/5 dark:text-gray-100; }

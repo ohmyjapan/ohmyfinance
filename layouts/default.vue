@@ -14,6 +14,8 @@
       <AppFooter />
     </div>
 
+    <AssistantPanel />
+
     <!-- Screen Lock Overlay -->
     <ScreenLockOverlay />
   </div>
@@ -21,6 +23,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
+import AssistantPanel from '~/components/finance/AssistantPanel.vue'
 import { useThemeStore } from '../stores/theme'
 import { useLanguageStore } from '../stores/language'
 import { useActivityTracker } from '~/composables/useActivityTracker'

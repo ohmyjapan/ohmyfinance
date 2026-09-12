@@ -1,10 +1,10 @@
 <template>
- <section class="card mb-6 overflow-hidden" aria-label="OMFと相談">
-  <header class="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6">
+ <section :class="panel ? 'flex min-h-0 flex-1 flex-col' : 'card mb-6 overflow-hidden'" aria-label="OMFと相談">
+  <header v-if="!panel" class="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6">
    <div class="flex items-center gap-3"><span class="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-main/10 text-primary-main"><MessageCircle class="h-4 w-4" /></span><div><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">OMFと相談</h2><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">購入の説明も、判断の修正も、ここから。</p></div></div>
    <NuxtLink to="/learning" class="shrink-0 py-1 text-xs text-primary-main">学習ノート ↗</NuxtLink>
   </header>
-  <div ref="transcript" class="max-h-[520px] space-y-5 overflow-y-auto px-4 py-5 sm:px-6" role="log" aria-live="polite">
+  <div ref="transcript" :class="panel ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5' : 'max-h-[520px] space-y-5 overflow-y-auto px-4 py-5 sm:px-6'" role="log" aria-live="polite">
    <div v-if="!turns.length" class="text-sm leading-relaxed text-gray-600 dark:text-gray-300"><p>{{ opening }}</p><p class="mt-2 text-xs text-gray-500 dark:text-gray-400">한국어・日本語で説明できます。会話はこの明細に保存されます。</p></div>
    <article v-for="turn in turns" :key="turn.id" :data-chat-turn="turn.id" class="space-y-3">
     <div class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
@@ -24,7 +24,7 @@
    <p v-if="waiting" role="status" class="flex items-center gap-2 text-xs text-gray-500"><Loader2 class="h-3.5 w-3.5 animate-spin text-primary-main" />{{ conversation?.state==='confirming'?'下書きへの反映を確認しています…':'元の明細と過去の判断を確認しています…' }}</p>
    <div v-if="conversation?.state==='failed'" class="text-xs text-amber-700 dark:text-amber-400"><p>回答を取得できませんでした。メッセージは保存されています。</p><button type="button" class="mt-2 text-primary-main underline" :disabled="busy || unavailable" @click="retry">もう一度回答を取得</button></div>
   </div>
-  <form class="border-t border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6" @submit.prevent="send">
+  <form class="shrink-0 border-t border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6" @submit.prevent="send">
    <p v-if="error" role="alert" class="mb-3 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
    <p v-if="data?.stale" class="mb-3 text-xs leading-relaxed text-amber-700 dark:text-amber-400">下書きや判断の根拠が更新されています。最新の内容で新しいメッセージを送信してください。</p>
    <label for="purchase-chat-message" class="sr-only">購入内容を説明する</label>
@@ -36,10 +36,13 @@
 <script setup lang="ts">
 import { MessageCircle, Loader2, Send } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
 import { purchaseQuestions } from '~/shared/finance-answers.mjs'
 import { reusableClassification } from '~/shared/finance-chat.mjs'
-const props=defineProps<{draft:any,dirty:boolean}>(),emit=defineEmits<{saved:[draft:any]}>(),user=useUserStore()
-const data=ref<any>(null),text=ref(''),error=ref(''),busy=ref(false),remember=ref(false),transcript=ref<HTMLElement|null>(null)
+const props=withDefaults(defineProps<{draft:any,dirty:boolean,panel?:boolean,active?:boolean}>(),{panel:false,active:true}),emit=defineEmits<{saved:[draft:any]}>(),user=useUserStore()
+const assistant=useAssistantStore(),bufferKey='draft:'+props.draft.importId+':'+props.draft.line
+const text=computed({get:()=>assistant.buffers[bufferKey]||'',set:v=>assistant.buffers[bufferKey]=v})
+const data=ref<any>(null),error=ref(''),busy=ref(false),remember=ref(false),transcript=ref<HTMLElement|null>(null)
 const endpoint=computed(()=>'/api/finance-chat/imports/'+props.draft.importId+'/drafts/'+props.draft.line)
 const conversation=computed(()=>data.value?.conversation),turns=computed(()=>conversation.value?.turns || [])
 const current=computed(()=>turns.value.find((t:any)=>t.id===conversation.value?.currentId))
@@ -52,14 +55,16 @@ const labels:Record<string,string>={purpose:'用途',customerId:'顧客',product
 const display=(key:string,value:any)=>key==='purpose'?({customer:'顧客購入',company:'会社経費',unresolved:'未確認'}[value]||value):key==='customerId'?props.draft.references.customers.find((c:any)=>c._id===value)?.name || '空欄':value
 const bind=()=>({revision:props.draft.revision,key:props.draft.key,sourceHash:props.draft.sourceHash,chatRevision:conversation.value?.revision||0})
 const message=(e:any)=>e.data?.data?.message||'会話を取得できませんでした。もう一度お試しください。'
+let loadTicket=0
 let timer:ReturnType<typeof setTimeout>|undefined,disposed=false,request:{id:string,text:string}|null=null
-async function load(){try{data.value=await $fetch(endpoint.value,{headers:user.authHeader})}catch(e){error.value=message(e)}}
-function schedule(){timer=setTimeout(async()=>{if(disposed)return;if(!busy.value)await load();if(!disposed)schedule()},4000)}
-async function act(action:()=>Promise<void>){busy.value=true;error.value='';try{await action();await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})}catch(e){error.value=message(e)}finally{busy.value=false}}
+async function load(){const ticket=++loadTicket;try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadTicket)data.value=result}catch(e){if(!disposed&&ticket===loadTicket)error.value=message(e)}}
+function schedule(){timer=setTimeout(async()=>{if(disposed)return;if(props.active&&!busy.value)await load();if(!disposed)schedule()},4000)}
+async function act(action:()=>Promise<void>){busy.value=true;loadTicket++;error.value='';try{await action();await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})}catch(e){error.value=message(e)}finally{busy.value=false}}
 async function send(){if(!text.value.trim()||unavailable.value||waiting.value||busy.value)return;await act(async()=>{if(!request||request.text!==text.value.trim())request={id:Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join(''),text:text.value.trim()};data.value=await $fetch(endpoint.value,{method:'POST',headers:user.authHeader,body:{...bind(),text:request.text,requestId:request.id}});text.value='';request=null;remember.value=false})}
 async function confirm(){await act(async()=>{const result:any=await $fetch(endpoint.value+'/confirm',{method:'POST',headers:user.authHeader,body:{...bind(),turnId:current.value.id,remember:remember.value}});data.value=result;emit('saved',result.draft);remember.value=false})}
 async function retry(){await act(async()=>{data.value=await $fetch(endpoint.value+'/retry',{method:'POST',headers:user.authHeader,body:bind()})})}
-onMounted(async()=>{await load();schedule()});onBeforeUnmount(()=>{disposed=true;clearTimeout(timer)})
+onMounted(async()=>{await load();if(!disposed)schedule()});onBeforeUnmount(()=>{disposed=true;loadTicket++;clearTimeout(timer)})
+watch(()=>props.active,value=>{if(value)load()})
 watch(()=>props.draft.revision,()=>{remember.value=false;load()})
 watch(()=>current.value?.answeredAt,async()=>{await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})})
 </script>

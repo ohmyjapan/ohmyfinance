@@ -18,7 +18,7 @@ test('company clears customer and uncertain messages cannot change fields',()=>{
  assert.throws(()=>validateChatProposal({kind:'unclear',summary:'모름',patch:{purpose:'company'},quotes:{purpose:'모름'}},context,'모름'));
 });
 test('teaching worker reports a failed interpretation without logging reply text or changing drafts',async()=>{
- const calls=[],logs=[];const worker=new TeachingWorker({baseUrl:'http://100.64.0.1:8080',token:'private'},{request:async(url,o)=>{calls.push({url,body:JSON.parse(o.body)});return {ok:true,json:async()=>url.endsWith('/claim')?{job:{id:'job',lease:'lease',text:'private user text'}}:{success:true}}},interpret:async()=>{throw Error('private error')},log:s=>logs.push(s)});
- await worker.cycle();assert.equal(calls.length,2);assert.deepEqual(calls[1].body,{lease:'lease',failed:true});assert.ok(!JSON.stringify(logs).includes('private'));assert.ok(calls.every(c=>c.url.includes('/worker/')));
+ const calls=[],logs=[];const worker=new TeachingWorker({baseUrl:'http://100.64.0.1:8080',token:'private'},{request:async(url,o)=>{calls.push({url,body:JSON.parse(o.body)});return {ok:true,json:async()=>url.endsWith('/workspace-claim')?{job:null}:url.endsWith('/claim')?{job:{id:'job',lease:'lease',text:'private user text'}}:{success:true}}},interpret:async()=>{throw Error('private error')},log:s=>logs.push(s)});
+ await worker.cycle();assert.equal(calls.length,3);assert.deepEqual(calls[2].body,{lease:'lease',failed:true});assert.ok(!JSON.stringify(logs).includes('private'));assert.ok(calls.every(c=>c.url.includes('/worker/')));
  for(const url of ['http://example.com','http://user@127.0.0.1','https://example.com/path','https://example.com?token=secret'])assert.throws(()=>teachingOrigin(url));
 });

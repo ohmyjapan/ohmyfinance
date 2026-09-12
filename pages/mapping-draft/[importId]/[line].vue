@@ -20,7 +20,7 @@
       </section>
       <p v-if="!isExpense" class="card p-6 text-sm text-gray-600 dark:text-gray-300">この明細は照合用に保持されています。返済・返金を支出として登録することはできません。</p>
       <template v-else>
-        <PurchaseChat :draft="draft" :dirty="dirty" @saved="receive" />
+        <button type="button" class="btn btn-secondary mb-6 text-sm" data-open-purchase-assistant @click="assistant.show({kind:'draft',importId,line})">この購入をOMFに相談</button>
         <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
         <div v-if="draft.suggestions.length && !draft.locked" class="card mb-6 p-4 sm:p-6">
           <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">追加の候補</h2><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">保存済みの値はそのままです。必要な候補だけを反映できます。</p>
@@ -90,13 +90,14 @@ import { ArrowLeft, Loader2 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import DraftField from '~/components/finance/DraftField.vue'
 import DocumentList from '~/components/finance/DocumentList.vue'
-import PurchaseChat from '~/components/finance/PurchaseChat.vue'
+import {useAssistantStore} from '~/stores/assistant'
 import PurchaseReview from '~/components/finance/PurchaseReview.vue'
 import { fields, sameValue, missingFields, type DraftField as Field } from '~/shared/finance-draft.mjs'
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '取引の下書き | OhMyFinance' })
 const route = useRoute(), user = useUserStore(), importId = String(route.params.importId), line = Number(route.params.line)
 const endpoint = `/api/finance/imports/${importId}/drafts/${line}`
+const assistant=useAssistantStore(),assistantPath='/mapping-draft/'+importId+'/'+line
 const draft = ref<any>(null), values = ref<any>({}), remember = ref<string[]>([]), documentEvidence = ref<Record<string, string>>({})
 const loading = ref(true), busy = ref(false), error = ref(''), message = ref(''), conflict = ref(false), reloadOffered = ref(false)
 const tagText = ref('')
@@ -134,7 +135,9 @@ async function commit() { await run(async () => { await $fetch(`/api/finance/imp
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
 onBeforeRouteLeave(() => !dirty.value || window.confirm('未保存の変更があります。この画面を離れますか？'))
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); load() })
-onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
+watch([draft,dirty,busy],()=>{assistant.draftPage={path:assistantPath,draft:draft.value,dirty:dirty.value,busy:busy.value}},{immediate:true})
+watch(()=>assistant.saved,update=>{if(!update||update.draft.importId!==importId||update.draft.line!==line)return;if(dirty.value||busy.value){reloadOffered.value=true;return}receive(update.draft)})
+onBeforeUnmount(()=>{window.removeEventListener('beforeunload',beforeUnload);if(assistant.draftPage?.path===assistantPath)assistant.draftPage=null})
 </script>
 
 <style>

@@ -1,5 +1,7 @@
+import {validateAssistantReply} from './finance-assistant.mjs';
 import { validateReplyProposal } from './finance-review.mjs';
 export function validateChatProposal(input, context, text) {
+ if(context.mode==='workspace')return validateAssistantReply(input);
  const result=validateReplyProposal(input,context.customers,text);
  if(result.patch.customerId && !result.patch.purpose) { result.patch.purpose='customer'; result.quotes.purpose=result.quotes.customerId; }
  const values={...context.values,...result.patch};

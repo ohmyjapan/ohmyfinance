@@ -1,3 +1,4 @@
+import {getAssistant,sendAssistant,retryAssistant,claimAssistant,finishAssistant} from '../../services/financeAssistantService'
 import { defineEventHandler, setHeader } from 'h3'
 import { financeUser,fail,id } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
@@ -11,11 +12,15 @@ export default defineEventHandler(async event=>{
   if(parts[0]==='worker'){
    const agent=await chatAgent(event)
    if(event.method==='POST'&&parts.length===2&&parts[1]==='heartbeat')return {success:true}
+   if(event.method==='POST'&&parts.length===2&&parts[1]==='workspace-claim')return await claimAssistant(agent)
+   if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='result')return await finishAssistant(agent,parts[2],await body())
    if(event.method==='POST'&&parts.length===2&&parts[1]==='claim')return await claimChat(agent)
    if(event.method==='POST'&&parts.length===3&&parts[2]==='result')return await finishChat(agent,parts[1],await body())
    fail(404,'Teaching worker endpoint not found')
   }
   const ownerId=await financeUser(event)
+  if(parts[0]==='workspace'&&parts.length===1){if(event.method==='GET')return await getAssistant(ownerId);if(event.method==='POST')return await sendAssistant(ownerId,await body())}
+  if(parts[0]==='workspace'&&parts.length===2&&parts[1]==='retry'&&event.method==='POST')return await retryAssistant(ownerId,await body())
   if(parts[0]==='agents'&&parts.length===1&&event.method==='POST')return await createChatAgent(ownerId,await body())
   if(parts[0]==='agents'&&parts.length===2&&event.method==='DELETE'){
    const r=await FinanceChatAgent.updateOne({_id:id(parts[1]),ownerId},{$set:{enabled:false,revokedAt:new Date()}})

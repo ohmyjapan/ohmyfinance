@@ -68,6 +68,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
    const browserImport=await upload(csv([row({2:'Browser conversation retailer',5:'931'})]));assert.equal(browserImport.status,200);
    page=await browser.newPage();await page.setViewport({width:390,height:844});await page.goto(origin+'/mapping-draft/'+browserImport.data.id+'/2',{waitUntil:'networkidle2'});
    const waitFor=async fn=>{for(let i=0;i<100;i++){if(await page.evaluate(fn))return;await pause(100)}throw Error('Chat browser condition timed out')};
+   await waitFor(()=>!!document.querySelector('[data-open-purchase-assistant]'));await page.evaluate(()=>document.querySelector('[data-open-purchase-assistant]').click());
    await waitFor(()=>!!document.querySelector('#purchase-chat-message')&&!document.querySelector('#purchase-chat-message').disabled);
    await page.evaluate(()=>document.querySelector('#purchase-chat-message').focus());await page.keyboard.type('OMJ10-CHAT-TEST의 코트');await page.evaluate(()=>document.querySelector('[data-chat-send]').click());
    await waitFor(()=>document.querySelectorAll('[data-chat-turn]').length===1);let browserJob=(await workerCall('claim')).data.job;assert.ok(browserJob);await workerCall(browserJob.id+'/result',{lease:browserJob.lease,proposal});

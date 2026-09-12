@@ -1,0 +1,5 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {assistantPage,assistantTarget,validateAssistantReply} from '../shared/finance-assistant.mjs';
+test('general assistant replies cannot contain draft edits',()=>{const valid={kind:'unclear',summary:'説明です',patch:{},quotes:{}};assert.deepEqual(validateAssistantReply(valid),valid);for(const bad of [{...valid,kind:'proposal'},{...valid,patch:{purpose:'company'}},{...valid,quotes:{purpose:'invented'}},{...valid,summary:''}])assert.throws(()=>validateAssistantReply(bad));});
+test('restored targets require a valid source identifier and row',()=>{assert.equal(assistantPage('/mapping-draft/abc/2'),'draft');assert.equal(assistantPage('/transactions/upload'),'transactions');assert.equal(assistantPage('/login'),'other');assert.deepEqual(assistantTarget({kind:'draft',importId:'not-an-id',line:2}),{kind:'workspace'});assert.equal(assistantTarget({kind:'draft',importId:'111111111111111111111111',line:2}).kind,'draft');assert.equal(assistantTarget({kind:'draft',importId:'111111111111111111111111',line:-1}).kind,'workspace');});

@@ -111,7 +111,7 @@
                     <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400 xl:hidden">区分案</span>
                     <p :class="needsReview(row) ? 'text-amber-700 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'">{{ row.category || (row.status === 'repayment' ? '支出対象外' : '未設定') }}</p>
                     <span class="badge-status mt-2" :class="needsReview(row) ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400' : row.status === 'proposed' ? 'bg-green-100 text-green-800 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300'">{{ row.draft ? (row.draft.approved ? '内容確認済み' : '下書き保存済み') : statuses[row.status] }}</span>
-                    <NuxtLink :to="`/mapping-draft/${row.importId}/${row.line}`" class="mt-3 block py-2 text-sm font-medium text-primary-main dark:text-primary-light">{{ ['repayment', 'credit_review'].includes(row.purpose) ? '明細を確認' : '取引の下書きを開く →' }}</NuxtLink>
+                    <button v-if="['customer','company','unresolved'].includes(row.purpose)" type="button" data-row-assistant class="mt-3 block text-xs font-medium text-primary-main" @click="assistant.show({kind:'draft',importId:row.importId,line:row.line})">OMFに相談</button><NuxtLink :to="`/mapping-draft/${row.importId}/${row.line}`" class="mt-3 block py-2 text-sm font-medium text-primary-main dark:text-primary-light">{{ ['repayment', 'credit_review'].includes(row.purpose) ? '明細を確認' : '取引の下書きを開く →' }}</NuxtLink>
                   </div>
                 </div>
               </article>
@@ -132,12 +132,13 @@
 import { CreditCard, RefreshCw, Search, FileText, Loader2, Info } from 'lucide-vue-next'
 import StatCard from '~/components/dashboard/StatCard.vue'
 import { useUserStore } from '~/stores/user'
+import {useAssistantStore} from '~/stores/assistant'
 import type { MappingRow as SourceMappingRow } from '~/shared/finance-mapping.mjs'
 type MappingRow = SourceMappingRow & { draft?: { revision: number; approved: boolean } }
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '明細マッピング | OhMyFinance' })
 interface Batch { id: string; account: { id: string; name: string }; period: { start: string; end: string }; preparedAt: string | null; rows: MappingRow[] }
-const user = useUserStore(), route = useRoute()
+const user = useUserStore(), route = useRoute(), assistant=useAssistantStore()
 const imports = ref<any[]>([]), accounts = ref<any[]>([]), batches = ref<Batch[]>([])
 const loading = ref(true), error = ref(''), search = ref(''), filter = ref('all')
 const batchChoice = ref(typeof route.query.import === 'string' ? route.query.import : 'latest')
@@ -162,5 +163,7 @@ async function fetchSelection() {
 async function run(action: () => Promise<void>) { loading.value = true; error.value = ''; batches.value = []; try { await action() } catch (e: any) { error.value = e.data?.statusMessage || e.message || '明細を読み込めませんでした。更新して再試行してください。' } finally { loading.value = false } }
 async function refresh() { await run(async () => { const [a, i] = await Promise.all([api('accounts'), api('imports')]); accounts.value = a.accounts; imports.value = i.imports; await fetchSelection() }) }
 async function loadSelection() { await run(fetchSelection) }
+watch(batchChoice,value=>{assistant.pageSelection={path:'/mapping',...(value!=='latest'?{importId:value}:{})}},{immediate:true})
+onBeforeUnmount(()=>{if(assistant.pageSelection?.path==='/mapping')assistant.pageSelection=null})
 onMounted(refresh)
 </script>
