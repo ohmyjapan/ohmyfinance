@@ -10,6 +10,8 @@ import { applyClassification } from '../../shared/finance-answers.mjs'
 import { FinancialAccount, FinanceEntry } from '../models/Finance'
 import CustomerModel from '../models/Customer'
 import SupplierModel from '../models/Supplier'
+import { supplierReferences, merchantLinks } from './financeSupplierService'
+import { resolveSupplier } from '../../shared/finance-supplier.mjs'
 import AccountCategoryModel from '../models/AccountCategory'
 import TransactionCategoryModel from '../models/TransactionCategory'
 import TaxCategoryModel from '../models/TaxCategory'
@@ -31,7 +33,7 @@ export async function draftReferences() {
   // Legacy reference records are shared by Transactions. Never expose source credentials.
   const [customers, suppliers, accountCategories, transactionCategories, taxCategories, sources] = await Promise.all([
     Customer.find({ isActive: { $ne: false } }).select('name company').sort({ name: 1 }).lean(),
-    Supplier.find({}).select('name companyName serviceName companyInfo invoiceNumber').sort({ name: 1 }).lean(),
+    supplierReferences(),
     AccountCategory.find({ isActive: { $ne: false } }).select('name code parentId type').sort({ order: 1, name: 1 }).lean(),
     TransactionCategory.find({}).select('name').sort({ name: 1 }).lean(),
     TaxCategory.find({}).select('name rate').sort({ name: 1 }).lean(),
@@ -104,10 +106,15 @@ async function propose(ctx: any, references: any) {
   }
   const learning = row.kind === 'expense' ? await learningEvidence(ownerId, account._id.toString(), normalizeMerchant(row.description), row.purchaseDate, row.amount) : null
   applyClassification(values, evidence, learning?.answer)
-  const supplier = matched(references.suppliers, row.description, ['name', 'companyName', 'serviceName'])
+  const supplierMatch = row.kind === 'expense' ? resolveSupplier(row.description, references.suppliers, references.merchantLinks || await merchantLinks(ownerId, account._id.toString())) : null
+  const supplier = supplierMatch?.supplier
   if (supplier) {
-    assign('supplierId', supplier._id.toString(), sourceEvidence('supplier', 'CSVの利用先と仕入れ先台帳が完全一致。'))
-    for (const key of ['companyInfo', 'invoiceNumber']) if (supplier[key]) assign(key, supplier[key], sourceEvidence('supplier', '一致した仕入れ先の登録情報。'))
+    const proof = sourceEvidence(supplierMatch.status === 'linked' ? 'supplier_memory' : 'supplier', supplierMatch.reason, {
+      supplierId: supplier._id.toString(), supplierKey: supplier.identityKey, registration: supplier.registration,
+      ...(supplierMatch.link ? { linkId: supplierMatch.link._id.toString(), linkRevision: supplierMatch.link.revision } : {})
+    })
+    assign('supplierId', supplier._id.toString(), proof)
+    for (const key of ['companyInfo', 'invoiceNumber']) if (supplier[key]) assign(key, supplier[key], { ...proof })
   }
   const scope = ctx.saved?.values || values
   const memories: any[] = await FinanceDraft.find({ ownerId, accountId: account._id, 'memory.merchant': normalizeMerchant(row.description), 'memory.purpose': scope.purpose, 'memory.customerId': scope.customerId }).select('memory importId line').sort({ 'memory.at': -1, _id: -1 }).limit(200).lean()
@@ -130,9 +137,9 @@ async function propose(ctx: any, references: any) {
 // Batch projection uses the same proposals as the editor, with one reference/review snapshot.
 export async function mappingPreparation(ownerId: string, batch: any, account: any, mapped: any[]) {
   const importId = batch._id.toString()
-  const [references, saved, review, entries] = await Promise.all([
+  const [references, saved, review, entries, links] = await Promise.all([
     draftReferences(), FinanceDraft.find({ ownerId, importId }).lean(), reviewImport(ownerId, importId),
-    FinanceEntry.find({ ownerId, importId }).select('line').lean()
+    FinanceEntry.find({ ownerId, importId }).select('line').lean(), merchantLinks(ownerId, account._id.toString())
   ])
   const savedByLine = new Map(saved.map((d: any) => [d.line, d]))
   const rowByLine = new Map(batch.rows.map((r: any) => [r.line, r]))
@@ -144,7 +151,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
     while (next < mapped.length) {
       const index = next++, source = mapped[index], row: any = rowByLine.get(source.line), draft: any = savedByLine.get(source.line)
       if (draft && (draft.key !== row.key || draft.sourceHash !== batch.hash)) fail(409, '下書きと元ファイルが一致しません。')
-      const proposed = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, references) : { values: emptyValues(row), evidence: {} }
+      const proposed = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, { ...references, merchantLinks: links }) : { values: emptyValues(row), evidence: {} }
       const values = draft?.values || proposed.values, evidence = draft?.evidence || proposed.evidence
       const preparation = draftReadiness({ values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: draft?.approvedAt, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
       if (row.kind !== 'expense') { rows[index] = { ...source, preparation }; continue }
@@ -265,6 +272,11 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
         changes.push({ field: key, action: 'evidence', before: evidence[key]?.documentId || '', after: documentId })
         evidence[key] = { ...evidence[key], documentId, source: documentId ? 'document' : 'user', reason: documentId ? 'あなたが書類を参照して入力・確認した値。自動抽出ではありません。' : 'あなたが入力・確認した値。', at }
       }
+    }
+    // Retain the old proof in history, but do not attach it to a changed identity.
+    const changedSupplier = !sameValue(base.values.supplierId, values.supplierId)
+    for (const key of ['supplierId', 'invoiceNumber', 'companyInfo']) if (changedSupplier || !sameValue(base.values[key], values[key])) {
+      for (const proofKey of ['registration', 'supplierKey', 'supplierId', 'linkId', 'linkRevision']) delete evidence[key][proofKey]
     }
     if (reviewAnswer) for (const key of reviewAnswer.fields) evidence[key] = { ...evidence[key], state: isEmpty(values[key]) ? 'not_applicable' : 'confirmed', source: reviewAnswer.channel === 'web' ? 'chat' : 'slack', reason: reviewAnswer.channel === 'web' ? 'ページ上の会話で提案内容を確認済み。' : 'Slackで提案内容を確認済み。', reviewId: reviewAnswer.reviewId, replyTs: reviewAnswer.replyTs, at }
     // No separate rule write: approval and remembered values commit atomically with the draft.

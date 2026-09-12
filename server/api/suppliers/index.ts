@@ -38,6 +38,10 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    // Official verification is server-maintained evidence, not a user-entered badge.
+    if (body.metadata?.invoiceVerification !== undefined || Object.keys(body).some(key => key.startsWith('metadata.'))) {
+      throw createError({ statusCode: 400, message: '公表情報の確認記録はこの画面から登録できません。' })
+    }
     const supplier = new Supplier(body)
     await supplier.save()
 

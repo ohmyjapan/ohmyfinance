@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readMerchantLink, saveMerchantLink } from '../../services/financeSupplierService'
 import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
@@ -72,6 +73,14 @@ export default defineEventHandler(async event => {
       setHeader(event, 'Content-Disposition', "attachment; filename=\"document\"; filename*=UTF-8''" + encodeURIComponent(doc.name))
       setHeader(event, 'X-Content-Type-Options', 'nosniff')
       return bytes
+    }
+    if (parts[0] === 'imports' && parts[2] === 'merchant-links' && parts.length === 4) {
+      if (method === 'GET') return await readMerchantLink(ownerId, parts[1], Number(parts[3]))
+      if (method === 'PUT') {
+        let body: any
+        try { body = JSON.parse((await boundedBody(event, 10000)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; fail(400, 'Invalid merchant link JSON') }
+        return await saveMerchantLink(ownerId, parts[1], Number(parts[3]), body)
+      }
     }
     if (parts[0] === 'imports' && parts[2] === 'source-categories' && parts.length === 3 && method === 'POST') {
       let body: any

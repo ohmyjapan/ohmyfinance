@@ -1,3 +1,4 @@
+import { draftSupplierRegistration } from './finance-supplier.mjs';
 import { fields, isEmpty, missingFields, normalizeMerchant, validateValues } from './finance-draft.mjs';
 const find = (refs, key, value) => (refs[key] || []).find(r => String(r._id || r.id) === String(value));
 
@@ -28,10 +29,10 @@ export function taxAndInvoice(draft, references = draft.references || {}) {
     : ['taxCategoryId', 'taxRate'].some(k => e[k]?.state === 'conflict') ? 'conflict'
     : ['taxCategoryId', 'taxRate'].every(k => e[k]?.state === 'confirmed') ? 'confirmed' : 'recorded';
   return {
-    invoice: { number, status: invoiceStatus, label: { missing: '未取得・要確認', format_review: '番号の形式を確認', conflict: '根拠の相違を確認', recorded: '登録情報・確認待ち', confirmed: '入力確認済み' }[invoiceStatus],
+    invoice: { number, registry: draftSupplierRegistration(v, references), status: invoiceStatus, label: { missing: '未取得・要確認', format_review: '番号の形式を確認', conflict: '根拠の相違を確認', recorded: '登録情報・確認待ち', confirmed: '入力確認済み' }[invoiceStatus],
       reason: !number ? '登録番号が未取得か、保存要件の特例などに該当するかを確認します。空欄だけでは判断できません。'
         : invoiceStatus === 'format_review' ? '適格請求書発行事業者の登録番号はTと13桁の数字です。レシート・注文番号とは別の項目です。'
-        : '登録番号の記録です。公表サイトでの登録状況や、この取引の仕入税額控除は自動判定していません。' },
+        : '登録番号の入力状況です。公表情報の確認記録は別に表示します。この取引の税率・書類も確認してください。' },
     tax: { category: tax?.name || '', rate, status: taxStatus,
       rateLabel: rate === null ? '未設定' : String(rate) + '%',
       reason: taxStatus === 'missing' ? '税区分・消費税率を請求書などの根拠と照合してください。未設定は0%ではありません。'

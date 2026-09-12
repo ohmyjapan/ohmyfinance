@@ -134,8 +134,9 @@
                 <div v-if="row.preparation && ['customer','company','unresolved'].includes(row.purpose)" class="mt-4 grid gap-3 rounded-xl bg-gray-50 p-3 text-xs dark:bg-white/5 sm:grid-cols-2 xl:grid-cols-3" data-accounting-review>
                   <div><p class="font-medium text-gray-700 dark:text-gray-300">{{ row.preparation.label }}</p><p v-if="row.preparation.missing.length" class="mt-1 leading-relaxed text-amber-700 dark:text-amber-400">未設定・要確認: {{ row.preparation.missing.map((f:any) => f.label).join('、') }}</p><p v-if="row.preparation.conflicts.length" class="mt-1 text-amber-700 dark:text-amber-400">根拠の相違: {{ row.preparation.conflicts.map((f:any) => f.label).join('、') }}</p></div>
                   <div data-tax-review><p class="text-gray-500 dark:text-gray-400">消費税</p><p class="mt-1 font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.tax.category || '税区分 未設定' }} · {{ row.preparation.tax.rateLabel }}</p><p v-if="row.preparation.tax.status === 'conflict'" class="mt-1 text-amber-700 dark:text-amber-400">税区分・税率の根拠を確認</p></div>
-                  <div data-invoice-review><p class="text-gray-500 dark:text-gray-400">インボイス登録番号</p><p class="mt-1 break-all font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.invoice.number || '未取得' }}</p><p class="mt-1 text-gray-500 dark:text-gray-400">{{ row.preparation.invoice.label }}</p></div>
+                  <div data-invoice-review><p class="text-gray-500 dark:text-gray-400">インボイス登録番号</p><p class="mt-1 break-all font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.invoice.number || '未取得' }}</p><p class="mt-1 text-gray-500 dark:text-gray-400">{{ row.preparation.invoice.label }}</p><SupplierVerification :registration="row.preparation.invoice.registry" /></div>
                 </div>
+                <SupplierMemory v-if="['customer','company','unresolved'].includes(row.purpose)" :import-id="row.importId" :line="row.line" @changed="refreshSupplierRows" />
               </article>
             </div>
           </div>
@@ -153,6 +154,8 @@
 
 <script setup lang="ts">
 import { CreditCard, RefreshCw, Search, FileText, Loader2, Info } from 'lucide-vue-next'
+import SupplierMemory from '~/components/finance/SupplierMemory.vue'
+import SupplierVerification from '~/components/finance/SupplierVerification.vue'
 import StatCard from '~/components/dashboard/StatCard.vue'
 import { useUserStore } from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
@@ -202,6 +205,7 @@ async function fetchSelection() {
 }
 async function run(action: () => Promise<void>) { loading.value = true; error.value = ''; batches.value = []; try { await action() } catch (e: any) { error.value = e.data?.statusMessage || e.message || '明細を読み込めませんでした。更新して再試行してください。' } finally { loading.value = false } }
 async function refresh() { await run(async () => { const [a, i] = await Promise.all([api('accounts'), api('imports')]); accounts.value = a.accounts; imports.value = i.imports; await fetchSelection() }) }
+async function refreshSupplierRows() { try { await fetchSelection() } catch (e: any) { error.value = e.data?.statusMessage || e.message || '明細を再読込してください。' } }
 async function loadSelection() { await run(fetchSelection) }
 watch(batchChoice,value=>{assistant.pageSelection={path:'/mapping',...(value!=='latest'?{importId:value}:{})}},{immediate:true})
 onBeforeUnmount(()=>{if(assistant.pageSelection?.path==='/mapping')assistant.pageSelection=null})
