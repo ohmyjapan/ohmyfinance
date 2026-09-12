@@ -12,10 +12,13 @@ const draftSchema = new Schema({
   history: { type: [Schema.Types.Mixed], default: [] },
   approvedAt: Date,
   // Only explicitly approved, reusable decisions are candidates for another draft.
-  memory: Schema.Types.Mixed
+  memory: Schema.Types.Mixed,
+  teachingMemory: Schema.Types.Mixed
 }, { timestamps: true })
 draftSchema.index({ ownerId: 1, importId: 1, line: 1 }, { unique: true })
 draftSchema.index({ ownerId: 1, accountId: 1, 'memory.merchant': 1 })
+
+draftSchema.index({ ownerId: 1, accountId: 1, 'teachingMemory.merchant': 1 })
 
 const documentSchema = new Schema({
   ownerId: { type: oid, required: true, index: true },

@@ -19,7 +19,7 @@
       <div v-if="data.study.learning" class="mt-4 rounded-xl border border-gray-200 p-3 dark:border-white/10">
         <NuxtLink to="/learning" class="text-xs text-primary-main">学習ノートの元データを参照中 ↗</NuxtLink>
         <div v-for="rule in data.study.learning.rules" :key="rule.id" class="mt-3 text-xs">
-          <NuxtLink :to="rule.kind === 'policy' ? {path:'/learning'} : {path:'/learning',query:{pattern:rule.id}}" class="font-medium text-green-700 dark:text-green-400">A · 確認済みの顧客・用途ルール</NuxtLink>
+          <NuxtLink :to="rule.kind !== 'pattern' ? {path:'/learning'} : {path:'/learning',query:{pattern:rule.id}}" class="font-medium text-green-700 dark:text-green-400">A · 確認済みの顧客・用途ルール</NuxtLink>
           <p class="mt-1 text-gray-700 dark:text-gray-300">{{ rule.decision.purpose==='company' ? '会社経費' : draft.references.customers.find((c:any)=>c._id===rule.decision.customerId)?.name || '顧客購入' }} · {{ rule.decision.effectiveFrom ? rule.decision.effectiveFrom+'以降' : '未登録の下書きに適用' }}</p>
           <p class="mt-1 whitespace-pre-wrap break-words text-gray-500 dark:text-gray-400">{{ rule.decision.note }}</p>
           <p class="mt-1 text-gray-500 dark:text-gray-400">元資料や保存済みの修正と相違がなければ、下書きに反映します。</p>

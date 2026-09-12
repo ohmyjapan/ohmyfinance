@@ -28,7 +28,7 @@ export function patternAnswer(pattern, policies=[], activeCustomers=[]) {
   if (pattern.status==='deferred') return {blocked:true,reason:'この条件の判断を保留しています。'};
   const valid=c=>known(c)&&(c.purpose!=='customer'||activeCustomers.includes(String(c.customerId)));
   const applicable=policies.filter(p=>p.status==='active'&&p.merchants.includes(pattern.merchant)&&(!p.accountIds.length||p.accountIds.map(String).includes(pattern.accountId))&&valid(p.decision));
-  const rules=applicable.map(p=>({id:String(p._id),kind:'policy',revision:p.revision,decision:{...p.decision,note:p.reason,effectiveFrom:p.effectiveFrom || ''}}));
+  const rules=applicable.map(p=>({id:String(p._id),kind:p.kind || 'policy',revision:p.revision,decision:{...p.decision,note:p.reason,effectiveFrom:p.effectiveFrom || ''}}));
   if(pattern.status==='confirmed'&&valid(pattern.decision)) return ruleAnswer([{id:String(pattern._id),revision:pattern.revision,decision:pattern.decision}]);
   const answer=ruleAnswer(rules);if(answer)return answer;
   const labelled=pattern.customers.filter(c=>c.label?.trim());

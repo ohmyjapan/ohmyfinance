@@ -10,10 +10,10 @@ rowSchema.index({ownerId:1,datasetId:1,accountId:1,merchant:1,date:1})
 const patternSchema = new Schema({ownerId:{type:oid,required:true},datasetId:{type:oid,required:true},key:String,merchant:String,merchantLabel:String,card:String,accountId:String,payment:String,cards:[String],total:Number,from:String,to:String,customers:[mixed],categories:[mixed],grade:String,status:String,revision:Number,decision:mixed,audit:[mixed]}, {timestamps:true})
 patternSchema.index({ownerId:1,datasetId:1,key:1},{unique:true})
 patternSchema.index({ownerId:1,datasetId:1,total:-1,key:1})
-export const FinanceLearningDataset = mongoose.models.FinanceLearningDataset || mongoose.model('FinanceLearningDataset',datasetSchema)
-export const FinanceLearningLibrary = mongoose.models.FinanceLearningLibrary || mongoose.model('FinanceLearningLibrary',librarySchema)
-export const FinanceLearningRow = mongoose.models.FinanceLearningRow || mongoose.model('FinanceLearningRow',rowSchema)
-export const FinanceLearningPattern = mongoose.models.FinanceLearningPattern || mongoose.model('FinanceLearningPattern',patternSchema)
+export const FinanceLearningDataset: mongoose.Model<mongoose.InferSchemaType<typeof datasetSchema>> = (mongoose.models.FinanceLearningDataset as any) || mongoose.model('FinanceLearningDataset',datasetSchema)
+export const FinanceLearningLibrary: mongoose.Model<mongoose.InferSchemaType<typeof librarySchema>> = (mongoose.models.FinanceLearningLibrary as any) || mongoose.model('FinanceLearningLibrary',librarySchema)
+export const FinanceLearningRow: mongoose.Model<mongoose.InferSchemaType<typeof rowSchema>> = (mongoose.models.FinanceLearningRow as any) || mongoose.model('FinanceLearningRow',rowSchema)
+export const FinanceLearningPattern: mongoose.Model<mongoose.InferSchemaType<typeof patternSchema>> = (mongoose.models.FinanceLearningPattern as any) || mongoose.model('FinanceLearningPattern',patternSchema)
 
 const policySchema = new Schema({
   ownerId:{type:oid,required:true}, key:{type:String,required:true}, title:String,
@@ -23,4 +23,4 @@ const policySchema = new Schema({
 },{timestamps:true})
 policySchema.index({ownerId:1,key:1},{unique:true})
 policySchema.index({ownerId:1,status:1,merchants:1})
-export const FinanceLearningPolicy = mongoose.models.FinanceLearningPolicy || mongoose.model('FinanceLearningPolicy',policySchema)
+export const FinanceLearningPolicy: mongoose.Model<mongoose.InferSchemaType<typeof policySchema>> = (mongoose.models.FinanceLearningPolicy as any) || mongoose.model('FinanceLearningPolicy',policySchema)
