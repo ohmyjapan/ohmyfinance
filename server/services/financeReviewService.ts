@@ -3,7 +3,7 @@ import { getHeader, type H3Event } from 'h3'
 import { FinanceReview, FinanceReviewAgent, FinanceHistory } from '../models/FinanceReview'
 import { FinancialAccount } from '../models/Finance'
 import { FinanceDraft } from '../models/FinanceDraft'
-import { learningEvidence } from './financeLearningService'
+import { learningEvidence, customerContextEvidence } from './financeLearningService'
 import User from '../models/User'
 import { ready, fail, id, ownedImport } from './financeService'
 import { readDraft, saveDraft } from './financeDraftService'
@@ -49,6 +49,7 @@ export async function reviewContext(ownerId: string, importId: string, line: num
   const nearby = batch.rows.filter((r: any) => r.kind === 'expense' && r.line !== line && Math.abs(Date.parse(r.purchaseDate) - targetDate) <= 2 * 86400000).slice(0, 5).map((r: any) => ({ description: r.description, amount: r.amount, date: r.purchaseDate, line: r.line }))
   const study: any = studyPurchase(draft, studiedHistory, memories.map(m => m.memory), nearby)
   if (learning) study.learning = { datasetId: learning.datasetId, rules: learning.rules }
+  study.customerPurchaseContexts = draft.values.purpose === 'customer' && draft.values.customerId ? await customerContextEvidence(ownerId,draft.values.customerId) : []
   const customers = draft.references.customers.map((c: any) => ({ id: c._id.toString(), name: c.name }))
   return { draft, study, customers }
 }

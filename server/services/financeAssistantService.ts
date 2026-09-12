@@ -13,6 +13,7 @@ async function pageContext(ownerId:string,input:any){
  if(!input||!Object.hasOwn(assistantPages,input.page))fail(400,'Invalid assistant page')
  const context:any={mode:'workspace',page:input.page,pageName:assistantPages[input.page],currency:'JPY',capabilities:['Explain supplied evidence and page purpose','For purchase changes select a statement and confirm its proposal','Never change ledger or settings from general conversation'],facts:{}}
  const overview=await learningOverview(ownerId)
+ context.facts.customerPurchaseContexts=overview.customerPurchaseContexts
  context.facts.learning=overview.dataset?{title:overview.dataset.title,summary:overview.dataset.summary,counts:overview.counts}:null
  context.facts.instructions=overview.policies.filter((p:any)=>p.status==='active').slice(0,30).map((p:any)=>({title:p.title,reason:p.reason,scope:p.accountName||'指定された口座範囲',decision:p.decision,effectiveFrom:p.effectiveFrom||''}))
  context.facts.customers=overview.customers.map((c:any)=>({id:String(c._id),name:c.name}))

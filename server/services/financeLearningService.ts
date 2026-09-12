@@ -1,11 +1,20 @@
 import { FinanceDraft } from '../models/FinanceDraft'
 import { FinanceLearningDataset as Dataset, FinanceLearningLibrary as Library, FinanceLearningRow as Row, FinanceLearningPattern as Pattern, FinanceLearningPolicy as Policy } from '../models/FinanceLearning'
 import mongoose from 'mongoose'
+import { FinanceCustomerContext } from '../models/FinanceCustomerContext'
+import { customerPurchaseContexts } from '../../shared/finance-customer-context.mjs'
 import CustomerModel from '../models/Customer'
 const Customer = CustomerModel as mongoose.Model<any>
 import { fail, id } from './financeService'
 import { norm, decisionInput } from '../../shared/finance-learning.mjs'
 import { historicalAnswer, ruleAnswer, patternAnswer } from '../../shared/finance-answers.mjs'
+export async function customerContextEvidence(ownerId:string,customerId?:string) {
+ const [records,customers] = await Promise.all([
+  FinanceCustomerContext.find({ownerId,kind:'purchase_workflow',status:'confirmed',...(customerId===undefined?{}:{customerId})}).select('-audit').sort({confirmedAt:-1}).limit(100).lean(),
+  Customer.find({isActive:{$ne:false}}).select('name').lean()
+ ])
+ return customerPurchaseContexts(records,customers,customerId)
+}
 export async function learningDataset(ownerId:string):Promise<any> {
   const library:any = await Library.findOne({ownerId}).lean()
   return library?.datasetId ? await Dataset.findOne({_id:library.datasetId,ownerId,status:'ready'}).lean() : null
@@ -32,7 +41,7 @@ export async function saveTeachingStatus(ownerId:string,draftId:string,body:any)
 export async function learningOverview(ownerId:string) {
  const dataset=await learningDataset(ownerId),counts:any={},policies=[...await Policy.find({ownerId}).sort({createdAt:1}).lean(),...await teachingPolicies(ownerId)]
  if(dataset)for(const status of ['proposed','confirmed','deferred'])counts[status]=await Pattern.countDocuments({ownerId,datasetId:dataset._id,status})
- return {dataset,counts,customers:await Customer.find({isActive:true}).select('name').sort({name:1}).lean(),policies}
+ return {dataset,counts,customers:await Customer.find({isActive:true}).select('name').sort({name:1}).lean(),policies,customerPurchaseContexts:await customerContextEvidence(ownerId)}
 }
 export async function learningPatterns(ownerId:string,query:any) {
   const dataset = await learningDataset(ownerId), page = pageNumber(query.page)

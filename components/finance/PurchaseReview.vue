@@ -7,6 +7,7 @@
     <p v-if="error" role="alert" class="mt-3 text-sm text-red-600 dark:text-red-400">{{ error }}</p>
     <p v-if="loading" class="mt-4 text-xs text-gray-500">過去の記録を確認しています…</p>
     <template v-if="data">
+      <CustomerPurchaseContext v-if="!dirty" :contexts="data.study.customerPurchaseContexts || []" class="mt-4" />
       <div v-if="data.study.answered?.length" class="mt-4 rounded-xl bg-gray-50 p-3 dark:bg-white/5">
         <h3 class="text-xs font-semibold text-gray-800 dark:text-gray-200">OMFが判断できた項目</h3>
         <div v-for="answer in data.study.answered" :key="answer.field" class="mt-2 text-xs"><p class="font-medium text-gray-700 dark:text-gray-300">{{ answer.label }} · {{ answer.value }} <span v-if="['A','B'].includes(answer.grade)" class="ml-1 text-primary-main">{{ answer.grade==='A'?'確認済みの指示':'過去の傾向' }}</span></p><p class="mt-1 leading-relaxed text-gray-500 dark:text-gray-400">{{ answer.reason }}</p></div>

@@ -164,6 +164,7 @@ async function main(){
   await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token, other, origin, pass, root, csv, row, pause });
   await require('./finance-purchase-accounts-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });
   await require('./finance-accounting-assessment-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });
+  await require('./finance-customer-context-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });
   console.log(`${checks} finance integration checks passed`);
  }catch(error){console.error(error);console.error(logs.slice(-3500));process.exitCode=1;}
  finally{if(child && child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended;}if(client)await client.close();if(mongo)await mongo.stop();if(directory){if(!path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe test cleanup');await fsp.rm(directory,{recursive:true,force:true});}}

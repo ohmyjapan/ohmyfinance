@@ -5,6 +5,7 @@
       <NuxtLink to="/mapping" class="btn btn-secondary self-start text-sm"><ArrowLeft class="mr-2 h-4 w-4" />明細マッピング</NuxtLink>
     </header>
     <p v-if="error" role="alert" class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">{{ error }}</p>
+    <CustomerPurchaseContext v-if="overview?.customerPurchaseContexts?.length" :contexts="overview.customerPurchaseContexts" class="card mb-6 p-4 sm:p-6" />
     <p v-if="loading" role="status" class="card p-12 text-center text-sm text-gray-500">学習ノートを読み込んでいます…</p>
     <div v-else-if="!overview?.dataset" class="card p-12 text-center"><BookOpen class="mx-auto mb-4 h-10 w-10 text-gray-300" /><h2 class="font-medium">学習元の記録を準備しています</h2><p class="mt-2 text-sm text-gray-500">スプレッドシートの読み込みが完了すると、根拠とルール案がここに並びます。</p></div>
     <template v-else>
