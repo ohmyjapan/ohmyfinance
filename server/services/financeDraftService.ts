@@ -21,6 +21,7 @@ import DataSourceModel from '../models/DataSource'
 import { fail, id, ownedImport, ownedAccount, reviewImport } from './financeService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { digest } from '../../shared/amex.mjs'
+import {recurringServiceCandidate,serviceReviewBinding,serviceReviewApplied,serviceUseConfirmation} from '../../shared/finance-service-review.mjs'
 import { assessPurchaseAccounting } from '../../shared/finance-accounting-assessment.mjs'
 import { documentDisplayReading, documentSuggestions } from '../../shared/finance-document-evidence.mjs'
 import { sourceCategoryChoices, draftReadiness } from '../../shared/finance-preparation.mjs'
@@ -260,11 +261,12 @@ async function writable(ctx: any, revision: unknown, key: unknown, hash: unknown
   const review = await reviewImport(ctx.ownerId, ctx.importId)
   if (['posted', 'duplicate', 'in_progress'].includes(review.rows.find((r: any) => r.line === ctx.line)!.state)) fail(409, '登録済みまたは他の取込で使用中の明細です。')
 }
-export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean, channel?: 'web' }) {
+export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean, channel?: 'web' }, serviceReviewKey?: string) {
   const initial = await context(ownerId, importId, line)
   return withLease(initial, async check => {
     const ctx = await context(ownerId, importId, line)
     if (reviewAnswer && ctx.saved?.history.some((h: any) => h.reviewId === reviewAnswer.reviewId && h.replyTs === reviewAnswer.replyTs)) return view(ctx)
+    if(serviceReviewKey && ctx.saved && serviceReviewApplied({...ctx.saved,history:ctx.saved.history},serviceReviewKey))return view(ctx)
     await writable(ctx, body?.revision, body?.key, body?.sourceHash)
     let values: any
     try { values = validateValues(body.values) } catch (error: any) { fail(400, error.message) }
@@ -277,6 +279,14 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     const missing = missingFields(values)
     if (body.confirm && missing.length) fail(400, `${missing.map(f => f.label).join('・')}を確認してください。`)
     const base = ctx.saved || await propose(ctx, references)
+    let serviceReview:any=null
+    if(serviceReviewKey){
+      const current={importId,line,key:ctx.row.key,sourceHash:ctx.batch.hash,revision:ctx.saved?.revision||0,values:base.values,evidence:base.evidence,references,source:{...ctx.mapped,kind:ctx.row.kind},purchaseHistory:(await propose(ctx,references)).purchaseHistory,accountingResponse:ctx.saved?.accountingResponse,approvedAt:ctx.saved?.approvedAt,rememberedFields:ctx.saved?.memory?.fields||[],cardAccounting:card},candidate=recurringServiceCandidate(current)
+      if(!candidate||digest(serviceReviewBinding(current,candidate))!==serviceReviewKey)fail(409,'確認した候補が変更されました。')
+      const expected={...base.values};for(const field of candidate.fields)expected[field.key]=field.value
+      if(!sameValue(values,expected)||body.confirm!==false||body.remember.length)fail(400,'候補以外の変更は個別の下書きで確認してください。')
+      serviceReview={key:serviceReviewKey,...candidate}
+    }
     const evidence: any = structuredClone(base.evidence), changes: any[] = [], at = new Date()
     const docs = await documents(ctx)
     if (body.documentEvidence && (typeof body.documentEvidence !== 'object' || Array.isArray(body.documentEvidence) || Object.entries(body.documentEvidence).some(([key, value]) => !fields.some(f => f.key === key) || (value !== '' && !docs.some(d => d.id === value))))) fail(400, '根拠として選択した書類を確認してください。')
@@ -285,7 +295,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
       const key = field.key, changed = !sameValue(base.values[key], values[key])
       if (changed) changes.push({ field: key, before: base.values[key], after: values[key], previousEvidence: evidence[key] })
       if (changed || body.confirm) evidence[key] = { ...evidence[key], state: isEmpty(values[key]) ? 'not_applicable' : 'confirmed', source: changed ? 'user' : evidence[key]?.source || 'user', reason: changed ? 'あなたが修正した値。' : '内容を確認済み。', previous: { state: base.evidence[key]?.state, source: base.evidence[key]?.source, reason: base.evidence[key]?.reason }, at }
-      if (changed) delete evidence[key].extraction
+      if (changed) { delete evidence[key].extraction; delete evidence[key].serviceReview }
       const documentId = body.documentEvidence?.[key]
       if (documentId !== undefined && documentId !== (evidence[key]?.documentId || '')) {
         delete evidence[key].extraction
@@ -308,6 +318,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
       evidence[key] = {...evidence[key],documentId:selection.documentId,extraction:proof,source:'document',state:'confirmed',reason:'書類の読み取り候補をあなたが選択・保存した値。読取精度や登録番号の公的確認とは別です。',at}
     }
     function documentIdFor(key:string) { return body.documentEvidence?.[key] ?? evidence[key]?.documentId }
+    if(['purpose','customerId','productName'].some(k=>!sameValue(base.values[k],values[k])))for(const key of ['accountCategoryId','transactionCategoryId'])if(evidence[key]?.serviceReview){changes.push({field:key,action:'service_context_changed',previousEvidence:evidence[key]});evidence[key]={...evidence[key],reason:'購入内容が変更されました。以前のサービス利用確認は今回の根拠として引き継ぎません。'};delete evidence[key].serviceReview}
     // A historical account example does not establish the same account in a changed purchase context.
     for (const key of ['accountCategoryId', 'subAccountCategoryId']) if (base.evidence[key]?.source === 'yayoi_history' && (values[key] !== base.values[key] || values.purpose !== base.values.purpose || values.customerId !== base.values.customerId)) {
       if (values[key] === base.values[key]) changes.push({ field: key, action: 'purchase_context_changed', before: values[key], after: values[key], previousEvidence: base.evidence[key] })
@@ -333,10 +344,14 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
         accountingResponse = note ? accountingResponse?.note === note ? accountingResponse : { key: assessment.key, note, at } : null
       }
     }
+    if(serviceReview){
+      accountingResponse={key:assessment.key,note:serviceUseConfirmation,at}
+      for(const field of serviceReview.fields)evidence[field.key]={...evidence[field.key],state:'confirmed',source:'user',reason:'サービス利用料の候補をまとめて確認し、下書きに保存しました。'+serviceUseConfirmation,serviceReview:{key:serviceReviewKey,rule:serviceReview.rule,sources:serviceReview.sources},at}
+    }
     if (!sameValue(accountingResponse, ctx.saved?.accountingResponse || null)) changes.push({ action: 'accounting_reason', before: ctx.saved?.accountingResponse || null, after: accountingResponse, assessment })
     // No separate rule write: approval and remembered values commit atomically with the draft.
     const memory = body.confirm && body.remember.length ? { fields: body.remember, merchant: normalizeMerchant(ctx.row.description), purpose: values.purpose, customerId: values.customerId, values: Object.fromEntries(body.remember.map((key: string) => [key, values[key]])), at } : undefined
-    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: reviewAnswer ? reviewAnswer.channel === 'web' ? 'chat_review' : 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}) }]
+    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: serviceReview ? 'service_review' : reviewAnswer ? reviewAnswer.channel === 'web' ? 'chat_review' : 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}),...(serviceReview?{serviceReview}:{}) }]
     if (history.length > 500) fail(409, 'この明細の変更履歴が上限に達しました。管理者に確認してください。')
     let teachingMemory = ctx.saved?.teachingMemory || null
     if (teachingMemory && (teachingMemory.decision.purpose !== values.purpose || teachingMemory.decision.customerId !== values.customerId)) teachingMemory = { ...teachingMemory, enabled: false, withdrawnAt: at }

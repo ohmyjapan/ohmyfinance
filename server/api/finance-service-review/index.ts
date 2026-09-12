@@ -1,0 +1,5 @@
+import {defineEventHandler,getQuery,setHeader} from 'h3'
+import {financeUser,fail} from '../../services/financeService'
+import {boundedBody} from '../../services/financeDraftService'
+import {serviceReviewPreview,saveServiceReview} from '../../services/financeServiceReviewService'
+export default defineEventHandler(async event=>{setHeader(event,'Cache-Control','no-store');try{const ownerId=await financeUser(event);if(event.method==='GET'){const imports=getQuery(event).imports;if(typeof imports!=='string'||imports.length>260)fail(400,'明細を選択してください。');return await serviceReviewPreview(ownerId,imports.split(','))}if(event.method==='POST'){let body;try{body=JSON.parse((await boundedBody(event,15000)).toString('utf8'))}catch(e:any){if(e.statusCode)throw e;fail(400,'確認内容を読み取れません。')}return await saveServiceReview(ownerId,body)}fail(404,'Review endpoint not found')}catch(e:any){if(e.statusCode)throw e;console.error('[Service mapping review] request failed',e.name||'Error');fail(500,'候補の確認に失敗しました。')}})

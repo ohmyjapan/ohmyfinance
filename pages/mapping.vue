@@ -35,6 +35,7 @@
           <StatCard title="カード返済" :value="String(countFor('repayment'))" icon="DollarSign" color="green" />
         </div>
 
+        <ServiceMappingReview :import-ids="batches.map(batch => batch.id)" @saved="refreshSupplierRows" />
         <DocumentMatches v-for="batch in batches" :key="'docs-'+batch.id" :import-id="batch.id" :account-name="batch.account.name" />
         <CardAccounting v-for="batch in batches.filter(b => b.cardAccounting)" :key="batch.id" :card="batch.cardAccounting" :account-name="batch.account.name" />
 
@@ -163,6 +164,7 @@ import SupplierVerification from '~/components/finance/SupplierVerification.vue'
 import StatCard from '~/components/dashboard/StatCard.vue'
 import CardAccounting from '~/components/finance/CardAccounting.vue'
 import DocumentMatches from '~/components/finance/DocumentMatches.vue'
+import ServiceMappingReview from '~/components/finance/ServiceMappingReview.vue'
 import PurchaseAccountEvidence from '~/components/finance/PurchaseAccountEvidence.vue'
 import { useUserStore } from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
