@@ -73,7 +73,7 @@ export function draftReadiness(draft, references = draft.references || {}, revie
   else if (['missing', 'format_review', 'conflict'].includes(accounting.invoice.status)) state = 'invoice';
   else if (!draft.approvedAt) state = 'confirmation';
   else state = 'ready';
-  return { state, label: preparationStates[state], cardAccounting: draft.cardAccounting || null, missing: [...problems.values()], conflicts, invalid, ...accounting };
+  return { state, label: preparationStates[state], purchaseAccount: { name: main?.name || '', subName: sub?.name || '', source: e.accountCategoryId?.source || '', evidence: e.accountCategoryId || null, history: draft.purchaseHistory || null }, cardAccounting: draft.cardAccounting || null, missing: [...problems.values()], conflicts, invalid, ...accounting };
 }
 export const preparationStates = { decision: '分類の判断', accounting: '会計項目の入力', invoice: 'インボイス確認', confirmation: '内容の確認', ready: '入力・確認済み', reconciliation: '重複・既存取引の照合', held: '取込対象外に指定', posted: '登録済み・重複', excluded: '返済・返金など' };
 

@@ -9,6 +9,7 @@
       <summary class="cursor-pointer py-1 focus-visible:outline-primary-main">値の根拠</summary>
       <div class="mt-1 space-y-2 rounded-lg bg-gray-50 p-3 leading-relaxed dark:bg-white/5">
         <p>{{ evidence?.reason || '資料または入力が必要です。' }}</p>
+        <PurchaseAccountEvidence v-if="evidence?.examples" :history="evidence" />
         <div v-if="evidence?.state === 'conflict' && alternativeLabel" class="flex flex-wrap items-center justify-between gap-2"><span>別の候補: {{ alternativeLabel }}</span><button v-if="!disabled" type="button" class="py-1 font-medium text-primary-main dark:text-primary-light" @click="$emit('alternative')">この候補を反映する</button></div>
         <p v-if="evidence?.sheet">{{ evidence.sheet.sheet }} · {{ evidence.sheet.rows.join(', ') }}行</p>
         <p v-if="evidence?.previous?.reason">前の根拠: {{ evidence.previous.reason }}</p>
@@ -28,6 +29,7 @@
 
 <script setup lang="ts">
 import type { DraftField } from '~/shared/finance-draft.mjs'
+import PurchaseAccountEvidence from './PurchaseAccountEvidence.vue'
 const props = defineProps<{ field: DraftField; evidence?: any; changed?: boolean; remembered?: boolean; disabled?: boolean; documents: any[]; documentId: string; alternativeLabel?: string }>()
 defineEmits<{ remember: [value: boolean]; document: [value: string]; alternative: [] }>()
 const state = computed(() => props.changed ? 'editing' : props.evidence?.state === 'suggested' && props.evidence?.grade ? props.evidence.grade === 'A' ? 'rule_answer' : 'history_answer' : props.evidence?.state || 'missing')

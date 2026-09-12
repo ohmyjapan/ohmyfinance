@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { cardAccounting, approvedCardMatches } from './financeAccountingService'
+import { purchaseAccountHistory } from '../../shared/finance-purchase-accounts.mjs'
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -133,7 +134,14 @@ async function propose(ctx: any, references: any) {
       else assign(key, value, learned)
     }
   }
-  return { values, evidence, automation: learning?.answer || null }
+  // Explicitly remembered corrections outrank historical book examples, including a blank subsidiary.
+  const purchaseHistory = cardAccounting(account, row, references).status === 'configured'
+    ? purchaseAccountHistory(account.accounting?.purchaseExamples, row, scope, references) : { status: 'none', examples: [], reason: '' }
+  const memoryWins = used.has('accountCategoryId') || used.has('subAccountCategoryId')
+  if (!memoryWins && purchaseHistory.status === 'suggested' && !['purpose', 'customerId'].some(k => evidence[k]?.state === 'conflict')) {
+    for (const key of ['accountCategoryId', 'subAccountCategoryId']) assign(key, purchaseHistory[key], sourceEvidence('yayoi_history', purchaseHistory.reason, { grade: 'B', scope: purchaseHistory.scope, examples: purchaseHistory.examples, exampleCount: purchaseHistory.exampleCount, sourceHash: purchaseHistory.sourceHash }))
+  }
+  return { values, evidence, automation: learning?.answer || null, purchaseHistory: memoryWins ? { ...purchaseHistory, status: 'remembered', reason: 'あなたが記憶した科目を優先しています。' } : purchaseHistory }
 }
 // Batch projection uses the same proposals as the editor, with one reference/review snapshot.
 export async function mappingPreparation(ownerId: string, batch: any, account: any, mapped: any[]) {
@@ -155,7 +163,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
       const proposed = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, { ...references, merchantLinks: links }) : { values: emptyValues(row), evidence: {} }
       const values = draft?.values || proposed.values, evidence = draft?.evidence || proposed.evidence
       const card = entries.find((e: any) => e.line === row.line)?.draftSnapshot?.transaction?.cardAccounting || cardAccounting(account, row, references)
-      const preparation = draftReadiness({ cardAccounting: card, values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: approvedCardMatches(draft, card) ? draft?.approvedAt : null, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
+      const preparation = draftReadiness({ purchaseHistory: proposed.purchaseHistory, cardAccounting: card, values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: approvedCardMatches(draft, card) ? draft?.approvedAt : null, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
       if (row.kind !== 'expense') { rows[index] = { ...source, preparation }; continue }
       const customer = references.customers.find((r: any) => r._id.toString() === values.customerId)
       const category = references.transactionCategories.find((r: any) => r._id.toString() === values.transactionCategoryId)
@@ -227,7 +235,7 @@ async function view(ctx: any) {
   const cardChanged = !!saved?.approvedAt && !approvedCardMatches(saved, currentCard)
   const suggestions = saved ? fields.filter(f => !sameValue(proposed.values[f.key], values[f.key]) && !['amex', 'default'].includes(proposed.evidence[f.key]?.source) && !['missing', 'not_applicable'].includes(proposed.evidence[f.key]?.state)).map(f => ({ field: f.key, value: proposed.values[f.key], evidence: proposed.evidence[f.key] })) : []
   return { importId: ctx.importId, line: ctx.line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: saved?.revision || 0, values, evidence, references, suggestions, automation: proposed.automation,
-    cardAccounting: currentCard, cardAccountingChanged: cardChanged,
+    purchaseHistory: proposed.purchaseHistory, cardAccounting: currentCard, cardAccountingChanged: cardChanged,
     approvedAt: cardChanged ? null : saved?.approvedAt || null, rememberedFields: saved?.memory?.fields || [], history: [...(saved?.history || [])].reverse(),
     missing: missingFields(values), locked: !!reserved || ['posted', 'duplicate', 'in_progress'].includes(row.state),
     source: { ...ctx.mapped, kind: ctx.row.kind, paymentMethod: 'クレジットカード', type: '支出', currency: ctx.row.currency, foreignAmount: ctx.row.foreignAmount, exchangeRate: ctx.row.exchangeRate, account: { id: ctx.account._id.toString(), name: ctx.account.name } },
@@ -279,6 +287,12 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
         changes.push({ field: key, action: 'evidence', before: evidence[key]?.documentId || '', after: documentId })
         evidence[key] = { ...evidence[key], documentId, source: documentId ? 'document' : 'user', reason: documentId ? 'あなたが書類を参照して入力・確認した値。自動抽出ではありません。' : 'あなたが入力・確認した値。', at }
       }
+    }
+    // A historical account example does not establish the same account in a changed purchase context.
+    for (const key of ['accountCategoryId', 'subAccountCategoryId']) if (base.evidence[key]?.source === 'yayoi_history' && (values[key] !== base.values[key] || values.purpose !== base.values.purpose || values.customerId !== base.values.customerId)) {
+      if (values[key] === base.values[key]) changes.push({ field: key, action: 'purchase_context_changed', before: values[key], after: values[key], previousEvidence: base.evidence[key] })
+      for (const proof of ['examples', 'exampleCount', 'sourceHash', 'scope', 'grade']) delete evidence[key][proof]
+      evidence[key].source = 'user'; evidence[key].reason = 'あなたが修正・確認した科目。過去の記帳例は今回の根拠として引き継ぎません。'
     }
     // Retain the old proof in history, but do not attach it to a changed identity.
     const changedSupplier = !sameValue(base.values.supplierId, values.supplierId)

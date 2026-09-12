@@ -133,8 +133,9 @@
                     <button v-if="['customer','company','unresolved'].includes(row.purpose)" type="button" data-row-assistant class="mt-3 block text-xs font-medium text-primary-main" @click="assistant.show({kind:'draft',importId:row.importId,line:row.line})">OMFに相談</button><NuxtLink :to="`/mapping-draft/${row.importId}/${row.line}`" class="mt-3 block py-2 text-sm font-medium text-primary-main dark:text-primary-light">{{ ['repayment', 'credit_review'].includes(row.purpose) ? '明細を確認' : '取引の下書きを開く →' }}</NuxtLink>
                   </div>
                 </div>
-                <div v-if="row.preparation && ['customer','company','unresolved'].includes(row.purpose)" class="mt-4 grid gap-3 rounded-xl bg-gray-50 p-3 text-xs dark:bg-white/5 sm:grid-cols-2 xl:grid-cols-3" data-accounting-review>
+                <div v-if="row.preparation && ['customer','company','unresolved'].includes(row.purpose)" class="mt-4 grid gap-3 rounded-xl bg-gray-50 p-3 text-xs dark:bg-white/5 sm:grid-cols-2 xl:grid-cols-4" data-accounting-review>
                   <div><p class="font-medium text-gray-700 dark:text-gray-300">{{ row.preparation.label }}</p><p v-if="row.preparation.missing.length" class="mt-1 leading-relaxed text-amber-700 dark:text-amber-400">未設定・要確認: {{ row.preparation.missing.map((f:any) => f.label).join('、') }}</p><p v-if="row.preparation.conflicts.length" class="mt-1 text-amber-700 dark:text-amber-400">根拠の相違: {{ row.preparation.conflicts.map((f:any) => f.label).join('、') }}</p></div>
+                  <div data-purchase-account><p class="text-gray-500 dark:text-gray-400">借方 · 購入科目</p><p class="mt-1 font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.purchaseAccount?.name || '勘定科目 未設定' }}<span v-if="row.preparation.purchaseAccount?.subName"> / {{ row.preparation.purchaseAccount.subName }}</span></p><p v-if="row.preparation.purchaseAccount?.source === 'yayoi_history'" class="mt-1 text-gray-500 dark:text-gray-400">B · 弥生の記帳例からの候補</p><PurchaseAccountEvidence :history="row.preparation.purchaseAccount?.evidence?.examples ? row.preparation.purchaseAccount.evidence : row.preparation.purchaseAccount?.history" /></div>
                   <div data-tax-review><p class="text-gray-500 dark:text-gray-400">消費税</p><p class="mt-1 font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.tax.category || '税区分 未設定' }} · {{ row.preparation.tax.rateLabel }}</p><p v-if="row.preparation.tax.status === 'conflict'" class="mt-1 text-amber-700 dark:text-amber-400">税区分・税率の根拠を確認</p></div>
                   <div data-invoice-review><p class="text-gray-500 dark:text-gray-400">インボイス登録番号</p><p class="mt-1 break-all font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.invoice.number || '未取得' }}</p><p class="mt-1 text-gray-500 dark:text-gray-400">{{ row.preparation.invoice.label }}</p><SupplierVerification :registration="row.preparation.invoice.registry" /></div>
                 </div>
@@ -160,6 +161,7 @@ import SupplierMemory from '~/components/finance/SupplierMemory.vue'
 import SupplierVerification from '~/components/finance/SupplierVerification.vue'
 import StatCard from '~/components/dashboard/StatCard.vue'
 import CardAccounting from '~/components/finance/CardAccounting.vue'
+import PurchaseAccountEvidence from '~/components/finance/PurchaseAccountEvidence.vue'
 import { useUserStore } from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
 import { preparationStates } from '~/shared/finance-preparation.mjs'
