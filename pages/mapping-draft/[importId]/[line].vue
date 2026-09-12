@@ -24,7 +24,7 @@
         <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
         <CardAccounting v-if="draft.cardAccounting" :card="draft.cardAccounting" :account-name="draft.source.account.name" :values="values" :references="draft.references" :changed="draft.cardAccountingChanged" />
         <section v-if="draft.purchaseHistory?.status === 'review'" class="card mb-6 p-4 sm:p-6" data-purchase-account-review><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">購入科目の確認</h2><p class="mt-2 text-xs text-amber-700 dark:text-amber-400">{{ draft.purchaseHistory.reason }}</p><PurchaseAccountEvidence :history="draft.purchaseHistory" /></section>
-        <PurchaseAccountingAssessment :assessment="purchaseAssessment" :note="accountingNote" :disabled="busy || draft.locked" @update:note="value => accountingAnswer = {key:purchaseAssessment.key,note:value}" />
+        <PurchaseAccountingAssessment :assessment="purchaseAssessment" :note="accountingNote" :disabled="busy || draft.locked" @update:note="value => accountingAnswer = {key:purchaseAssessment.key,note:value}" @choose="chooseAccounting" />
         <AccountingReview :draft="draft" :values="values" />
         <div class="mb-6"><SupplierMemory :import-id="importId" :line="line" :disabled="dirty || busy" @changed="load" /></div>
         <div v-if="draft.suggestions.length && !draft.locked" class="card mb-6 p-4 sm:p-6">
@@ -102,7 +102,7 @@ import AccountingReview from '~/components/finance/AccountingReview.vue'
 import CardAccounting from '~/components/finance/CardAccounting.vue'
 import PurchaseAccountEvidence from '~/components/finance/PurchaseAccountEvidence.vue'
 import PurchaseAccountingAssessment from '~/components/finance/PurchaseAccountingAssessment.vue'
-import { assessPurchaseAccounting } from '~/shared/finance-accounting-assessment.mjs'
+import { assessPurchaseAccounting, applyAccountingChoice } from '~/shared/finance-accounting-assessment.mjs'
 import { clearChangedPurchaseContext } from '~/shared/finance-purchase-accounts.mjs'
 import { fields, sameValue, missingFields, type DraftField as Field } from '~/shared/finance-draft.mjs'
 definePageMeta({ middleware: 'auth' })
@@ -140,6 +140,7 @@ function errorMessage(e: any) { return e.data?.data?.message || e.data?.statusMe
 async function run(action: () => Promise<void>) { busy.value = true; error.value = ''; message.value = ''; try { await action() } catch (e: any) { error.value = errorMessage(e); conflict.value = (e.statusCode || e.status) === 409 } finally { busy.value = false } }
 async function load() { loading.value = true; reloadOffered.value = false; await run(async () => receive(await $fetch(endpoint, { headers: user.authHeader }))); loading.value = false }
 function changedField(key: string) { if (['purpose','customerId'].includes(key)) clearChangedPurchaseContext(values.value, draft.value.values, draft.value.evidence); if (key === 'purpose' && values.value.purpose !== 'customer') values.value.customerId = ''; if (key === 'accountCategoryId') values.value.subAccountCategoryId = ''; if (key === 'taxCategoryId') values.value.taxRate = draft.value.references.taxCategories.find((v: any) => v._id === values.value.taxCategoryId)?.rate ?? null }
+function chooseAccounting(id: string) { if (!busy.value && !draft.value.locked) applyAccountingChoice(values.value, purchaseAssessment.value, id) }
 function rememberField(key: string, checked: boolean) { remember.value = checked ? [...new Set([...remember.value, key])] : remember.value.filter(f => f !== key) }
 function applySuggestion(suggestion: any) { const pair = suggestion.evidence?.classification; if (pair && ['purpose','customerId'].includes(suggestion.field)) { values.value.purpose = pair.purpose; values.value.customerId = pair.customerId; changedField('customerId'); return } values.value[suggestion.field] = clone(suggestion.value); changedField(suggestion.field) }
 const identity = () => ({ revision: draft.value.revision, key: draft.value.key, sourceHash: draft.value.sourceHash, cardAccountingKey: draft.value.cardAccounting?.key })

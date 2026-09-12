@@ -4,6 +4,7 @@
     <div class="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><p class="text-gray-500 dark:text-gray-400">現在の選択</p><p class="mt-1 text-gray-800 dark:text-gray-200">{{ assessment.selected.account || '勘定科目 未設定' }}<span v-if="assessment.selected.subsidiary"> / {{ assessment.selected.subsidiary }}</span> · 区分 {{ assessment.selected.classification || '未設定' }}</p></div><div v-if="assessment.history.length"><p class="text-gray-500 dark:text-gray-400">過去の記帳例</p><p class="mt-1 text-gray-800 dark:text-gray-200">{{ [...new Set(assessment.history.map((h:any)=>h.account))].join('、') }}</p></div></div>
     <p class="mt-3 text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ assessment.reason }}</p>
     <p v-if="assessment.alternatives.length" class="mt-2 text-xs text-gray-600 dark:text-gray-400">業務利用の場合の候補: {{ assessment.alternatives.join(' / ') }}</p>
+    <div v-if="assessment.choices?.length && !disabled" class="mt-3 flex flex-wrap gap-2" data-accounting-choices><button v-for="choice in assessment.choices" :key="choice.id" type="button" class="btn btn-secondary text-xs" :data-accounting-choice="choice.id" @click="$emit('choose', choice.id)">{{ choice.name }}を選択</button><p class="w-full text-xs text-gray-500 dark:text-gray-400">選択後、下書きを保存して反映します。</p></div>
     <p v-if="assessment.question" class="mt-3 text-sm font-medium text-gray-800 dark:text-gray-200">{{ assessment.question }}</p>
     <label for="accounting-response" class="mt-4 block text-xs text-gray-600 dark:text-gray-400">用途・科目を選んだ理由</label>
     <textarea id="accounting-response" :value="note" :disabled="disabled" rows="2" maxlength="1000" class="draft-control mt-2" placeholder="実際の使い道や、継続している会計方針を記録できます" @input="$emit('update:note', ($event.target as HTMLTextAreaElement).value)" />
@@ -13,5 +14,5 @@
 </template>
 <script setup lang="ts">
 defineProps<{assessment:any;note:string;disabled?:boolean}>()
-defineEmits<{ 'update:note':[value:string] }>()
+defineEmits<{ 'update:note':[value:string]; choose:[id:string] }>()
 </script>
