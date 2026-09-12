@@ -42,11 +42,22 @@ export function studyPurchase(draft, history = [], memories = [], nearby = []) {
   const median = amounts.length ? amounts[Math.floor(amounts.length / 2)] : null;
   const signals = [];
   if (past.length < 3) signals.push(`이 이용처 표기와 정확히 일치하는 과거 기록은 ${past.length}건입니다. 다른 지점·표기는 포함하지 않았어요.`);
-  if (patterns.length > 1) signals.push('같은 이용처에서도 고객 구매와 회사 사용 또는 고객별 분류가 달랐습니다.');
+  const classified = patterns.filter(p => p.purpose === 'company' || (p.purpose === 'customer' && p.customerId));
+  if (classified.length > 1) signals.push('같은 이용처에서도 고객 구매와 회사 사용 또는 고객별 분류가 달랐습니다.');
+  const unclassifiedCount = patterns.filter(p => !classified.includes(p)).reduce((sum, p) => sum + p.count, 0);
+  if (unclassifiedCount) signals.push(`이전 기록 중 ${unclassifiedCount}건은 고객·용도가 미확인입니다. 다른 고객이나 회사 사용으로 확인된 기록은 아닙니다.`);
+  const categories = new Map();
+  for (const row of past) {
+    const category = typeof row.category === 'string' ? row.category.trim() : '';
+    if (category) categories.set(category, (categories.get(category) || 0) + 1);
+  }
+  const categoryCounts = [...categories].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+  const historicalCategories = { field: 'transactionCategoryId', label: '区分', counts: categoryCounts, unknownCount: past.length - categoryCounts.reduce((sum, c) => sum + c.count, 0) };
   if (median && amounts.length >= 5 && (draft.source.amount > median * 3 || draft.source.amount < median / 3)) signals.push(`이번 금액은 같은 이용처의 과거 중앙값(¥${median.toLocaleString('ja-JP')})과 차이가 큽니다.`);
   const current = draft.values;
   if (current.purpose === 'customer' && past.length >= 3 && !past.some(h => h.customerId === current.customerId)) signals.push('기록된 고객의 기존 구매가 이 이용처에서는 확인되지 않습니다. 별도 요청이었는지 확인이 필요해요.');
-  if (!current.productName) signals.push('구매한 품목은 아직 확인되지 않았습니다.');
+  const questions = purchaseQuestions(draft);
+  if (questions.openFields.includes('productName')) signals.push('구매한 품목은 아직 확인되지 않았습니다.');
   const hypotheses = [];
   const labels = { customer: '고객 요청 구매', company: '회사에서 사용할 물건·서비스', unresolved: '용도 미확인' };
   if (current.purpose !== 'unresolved') hypotheses.push({ purpose: current.purpose, customerId: current.customerId, label: labels[current.purpose], reason: '현재 초안과 원본 시트의 분류', strength: 'source' });
@@ -54,8 +65,7 @@ export function studyPurchase(draft, history = [], memories = [], nearby = []) {
   const reusable = memories.filter(m => m.reusable && m.merchant === merchant).slice(0, 5);
   for (const m of reusable) hypotheses.push({ purpose: m.purpose, customerId: m.customerId, label: labels[m.purpose], reason: `이전에 패턴으로 기억하도록 확인한 답변: ${m.summary}`, strength: 'confirmed_pattern' });
   if (!hypotheses.length) hypotheses.push({ purpose: 'unresolved', label: '고객의 별도 요청 또는 회사 사용', reason: '품목·용도를 판단할 근거가 부족합니다.', strength: 'weak' });
-  const questions = purchaseQuestions(draft);
-  return { version: 2, merchant, historyCount: past.length, historyScope: '같은 계정·정확히 같은 이용처 표기·구매일 이전의 저장된 기록', median, patterns, signals, hypotheses, nearby: nearby.slice(0, 5), ...questions };
+  return { version: 3, merchant, historicalCategories, historyCount: past.length, historyScope: '같은 계정·정확히 같은 이용처 표기·구매일 이전의 저장된 기록', median, patterns, signals, hypotheses, nearby: nearby.slice(0, 5), ...questions };
 }
 export function questionText(review, baseUrl) {
   const s = review.context.source, study = review.context.study;

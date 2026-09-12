@@ -19,6 +19,11 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  assert.equal((await call(base,{method:'POST',token,body:{...body,chatRevision:1,requestId:crypto.randomUUID()}})).status,409);
  assert.equal(await db.collection('financedrafts').countDocuments({importId:new ObjectId(importId)}),0);
  const claimed=await workerCall('claim');assert.ok(claimed.data.job);const job=claimed.data.job;
+ assert.equal(job.context.mapping.version,1);assert.equal(job.context.mapping.fields.length,22);
+ assert.equal(job.context.mapping.fields.find(f=>f.key==='purpose').presence,'unresolved');
+ assert.equal(job.context.mapping.fields.find(f=>f.key==='accountCategoryId').presence,'missing');
+ assert.equal(job.context.mapping.documents.contentsAvailable,false);assert.equal(job.context.study.version,3);
+ assert.deepEqual(job.context.study.historicalCategories,{field:'transactionCategoryId',label:'区分',counts:[],unknownCount:0});
  assert.equal((await workerCall('claim')).data.job,null);
  const proposal={kind:'proposal',summary:'OMJ10 고객의 코트 구매로 제안합니다.',patch:{purpose:'customer',customerId:String(customer),productName:'코트'},quotes:{purpose:'OMJ10-CHAT-TEST',customerId:'OMJ10-CHAT-TEST',productName:'코트'}};
  assert.equal((await workerCall(job.id+'/result',{lease:'wrong',proposal})).status,409);

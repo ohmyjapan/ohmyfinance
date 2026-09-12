@@ -8,6 +8,7 @@ import { ready, fail, id } from './financeService'
 import { readDraft, saveDraft } from './financeDraftService'
 import { reviewContext } from './financeReviewService'
 import { validateChatProposal, reusableClassification } from '../../shared/finance-chat.mjs'
+import { consultationEvidence } from '../../shared/finance-consultation.mjs'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 const fingerprint=(v:any)=>hash(JSON.stringify(v))
 const pending=['queued','working','confirming']
@@ -58,7 +59,7 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')
  if(await Chat.countDocuments({ownerId,state:{$in:['queued','working']}})>=3)fail(409,'他の会話への回答を待ってから送信してください。')
  if(!c){try{c=(await Chat.create({...scope,accountId:d.source.account.id})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
- const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,
+ const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),
   messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt}))}
  const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date()}}},{new:true}).lean()
  if(!updated)fail(409,'会話が更新されました。再読込してください。')
