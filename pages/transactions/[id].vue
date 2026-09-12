@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- Back Button + Title Header -->
-    <div class="mb-6 flex items-center justify-between">
+    <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
       <div class="flex items-center gap-3">
         <button
           @click="router.back()"
@@ -11,7 +11,7 @@
         </button>
         <div>
           <h1 class="text-xl font-semibold text-gray-800 dark:text-white">{{ t('transactionDetail.title') }}</h1>
-          <p v-if="transaction" class="text-sm text-gray-500 dark:text-gray-400">
+          <p v-if="transaction" class="break-all text-sm text-gray-500 dark:text-gray-400">
             {{ transaction.referenceNumber || transaction.id }}
           </p>
         </div>
@@ -116,6 +116,12 @@
                 {{ transaction.subAccountCategoryId?.name || transaction.subAccountCategoryName }}
               </p>
             </div>
+          </div>
+
+          <div v-if="transaction.cardAccounting" class="min-w-0" data-transaction-card-accounting>
+            <p class="text-sm text-gray-500 dark:text-gray-400">貸方 · カード</p>
+            <p class="mt-1 break-words text-lg font-semibold text-gray-900 dark:text-white">{{ transaction.cardAccounting.accountName }}</p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ transaction.cardAccounting.subAccountName }} · {{ transaction.cardAccounting.taxCategory }}</p>
           </div>
 
           <!-- Receipt Status -->

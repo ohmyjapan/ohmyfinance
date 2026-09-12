@@ -1,5 +1,6 @@
 // server/services/transactionService.ts
 import Transaction from '../models/Transaction'
+import { createError } from 'h3'
 import type { ITransaction } from '../models/Transaction'
 import { ensureConnection } from '../config/database'
 
@@ -137,6 +138,7 @@ export async function getTransactionById(id: string) {
 export async function createTransaction(data: Partial<ITransaction>) {
   await ensureConnection()
   try {
+    if (data.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting is assigned through the reviewed import.' })
     // Add initial timeline event
     if (!data.timeline) {
       data.timeline = []
@@ -178,6 +180,12 @@ export async function updateTransaction(id: string, data: Partial<ITransaction>)
     // Don't allow changing certain fields
     const { _id, createdAt, ...updateData } = data as any
 
+    if (Object.keys(updateData).some(k => k.startsWith('$') || k.includes('.')) || updateData.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting cannot be replaced by a transaction edit.' })
+    const current: any = await Transaction.findById(id).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
+    if (current?.cardAccounting) {
+      for (const key of ['amount', 'type', 'paymentMethod', 'cardNumber']) if (updateData[key] !== undefined && updateData[key] !== current[key]) throw createError({ statusCode: 409, message: 'Imported card source values cannot be changed.' })
+      if (updateData.metadata !== undefined) updateData.metadata = { ...updateData.metadata, ...current.metadata }
+    }
     // Add timeline event for update
     const updateTimeline = {
       type: 'updated',

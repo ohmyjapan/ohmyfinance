@@ -65,6 +65,7 @@ export interface ITransaction extends Document {
   attachments?: IAttachment[]
   notes?: string
   tags?: string[]
+  cardAccounting?: Record<string, any>
   metadata?: Record<string, any>
   createdAt: Date
   updatedAt: Date
@@ -139,6 +140,7 @@ const TransactionSchema = new Schema<ITransaction>({
   attachments: [AttachmentSchema],
   notes: String,
   tags: [String],
+  cardAccounting: Schema.Types.Mixed,
   metadata: Schema.Types.Mixed
 }, {
   timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },

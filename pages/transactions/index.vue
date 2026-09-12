@@ -237,6 +237,7 @@
           <td class="px-6 py-4 whitespace-nowrap">
             <div class="text-sm text-gray-900 dark:text-gray-100">{{ transaction.accountCategoryId?.name || transaction.accountCategoryName || '-' }}</div>
             <div class="text-xs text-gray-500">{{ transaction.subAccountCategoryId?.name || transaction.subAccountCategoryName || '' }}</div>
+            <div v-if="transaction.cardAccounting" class="mt-1 max-w-xs whitespace-normal break-words text-xs text-gray-500">貸方 {{ transaction.cardAccounting.accountName }} / {{ transaction.cardAccounting.subAccountName }}</div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
             <div :class="[

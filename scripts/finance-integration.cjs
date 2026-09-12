@@ -43,6 +43,7 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
+  if(process.env.OMF_TEST_ACCOUNTING_ONLY){await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token, other, origin, pass, root, csv, row, pause });console.log(`${checks} targeted finance accounting checks passed`);return;}
   assert.equal((await upload(csv([row({4:'99999'})]))).status,400);
   const first=await upload(bytes);assert.equal(first.status,200,JSON.stringify(first));const batchId=first.data.id;
   const repeated=await upload(bytes);assert.equal(repeated.data.id,batchId);assert.equal(repeated.data.duplicateFile,true);assert.equal(await db.collection('financeimports').countDocuments(),1);
@@ -158,6 +159,7 @@ async function main(){
   await require('./finance-assistant-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-preparation-integration.cjs')({ db, call, request, upload, token, other, deviceToken, pass, csv, row });
   await require('./finance-supplier-integration.cjs')({ db, call, request, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
+  await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token, other, origin, pass, root, csv, row, pause });
   console.log(`${checks} finance integration checks passed`);
  }catch(error){console.error(error);console.error(logs.slice(-3500));process.exitCode=1;}
  finally{if(child && child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended;}if(client)await client.close();if(mongo)await mongo.stop();if(directory){if(!path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe test cleanup');await fsp.rm(directory,{recursive:true,force:true});}}

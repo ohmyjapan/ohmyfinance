@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
       searchQuery.parentId = query.parentId
     } else if (query.topLevel === 'true') {
       // Only top-level categories (no parent)
-      searchQuery.parentId = { $exists: false }
+      searchQuery.parentId = null
     }
 
     // Filter by type

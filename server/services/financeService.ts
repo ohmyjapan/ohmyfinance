@@ -171,7 +171,7 @@ export async function commitImport(ownerId: string, importId: string, body: any)
         } else if (decision.draftRevision !== undefined) {
           const { draftSnapshot } = await import('./financeDraftService')
           snapshots.set(row.line, await draftSnapshot(ownerId, initial, row, decision.draftRevision))
-        } else if (await FinanceDraft.exists({ ownerId, importId: initial._id, line: row.line })) fail(409, 'Review and approve the saved draft before posting')
+        } else if (locked.accounting || await FinanceDraft.exists({ ownerId, importId: initial._id, line: row.line })) fail(409, 'Review and approve the saved draft before posting')
       }
     }
     for (const decision of body.decisions) {

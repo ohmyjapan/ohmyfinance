@@ -92,7 +92,7 @@ export default defineEventHandler(async (event) => {
     for (const subCat of defaultSubCategories) {
       const parentId = parentMap[subCat.parentName]
       if (parentId) {
-        const existing = await AccountCategory.findOne({ name: subCat.name, parentId })
+        const existing = await AccountCategory.findOne({ name: subCat.name, $or: [{ parentId }, { parentId: null, 'metadata.accountingStandard': 'yayoi' }] })
         if (!existing) {
           await AccountCategory.create({
             name: subCat.name,

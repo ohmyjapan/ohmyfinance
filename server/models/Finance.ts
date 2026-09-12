@@ -13,6 +13,7 @@ const account = new Schema({
   forwarded: { type: Boolean, default: false }, active: { type: Boolean, default: true },
   jobId: String, jobState: { type: String, default: 'idle' }, jobRequestedAt: Date,
   jobDeviceId: oid, jobLeaseUntil: Date, lastAttemptAt: Date, lastSuccessAt: Date, lastMessage: String,
+  accounting: Schema.Types.Mixed,
   commitLease: String, commitLeaseUntil: Date
 }, common)
 account.index({ ownerId: 1, provider: 1, cardIdentifiers: 1 }, { unique: true })

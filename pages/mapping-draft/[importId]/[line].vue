@@ -22,6 +22,7 @@
       <template v-else>
         <button type="button" class="btn btn-secondary mb-6 text-sm" data-open-purchase-assistant @click="assistant.show({kind:'draft',importId,line})">この購入をOMFに相談</button>
         <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
+        <CardAccounting v-if="draft.cardAccounting" :card="draft.cardAccounting" :account-name="draft.source.account.name" :values="values" :references="draft.references" :changed="draft.cardAccountingChanged" />
         <AccountingReview :draft="draft" :values="values" />
         <div class="mb-6"><SupplierMemory :import-id="importId" :line="line" :disabled="dirty || busy" @changed="load" /></div>
         <div v-if="draft.suggestions.length && !draft.locked" class="card mb-6 p-4 sm:p-6">
@@ -96,6 +97,7 @@ import {useAssistantStore} from '~/stores/assistant'
 import PurchaseReview from '~/components/finance/PurchaseReview.vue'
 import SupplierMemory from '~/components/finance/SupplierMemory.vue'
 import AccountingReview from '~/components/finance/AccountingReview.vue'
+import CardAccounting from '~/components/finance/CardAccounting.vue'
 import { fields, sameValue, missingFields, type DraftField as Field } from '~/shared/finance-draft.mjs'
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '取引の下書き | OhMyFinance' })
@@ -130,7 +132,7 @@ async function load() { loading.value = true; reloadOffered.value = false; await
 function changedField(key: string) { if (key === 'purpose' && values.value.purpose !== 'customer') values.value.customerId = ''; if (key === 'accountCategoryId') values.value.subAccountCategoryId = ''; if (key === 'taxCategoryId') values.value.taxRate = draft.value.references.taxCategories.find((v: any) => v._id === values.value.taxCategoryId)?.rate ?? null }
 function rememberField(key: string, checked: boolean) { remember.value = checked ? [...new Set([...remember.value, key])] : remember.value.filter(f => f !== key) }
 function applySuggestion(suggestion: any) { const pair = suggestion.evidence?.classification; if (pair && ['purpose','customerId'].includes(suggestion.field)) { values.value.purpose = pair.purpose; values.value.customerId = pair.customerId; return } values.value[suggestion.field] = clone(suggestion.value); changedField(suggestion.field) }
-const identity = () => ({ revision: draft.value.revision, key: draft.value.key, sourceHash: draft.value.sourceHash })
+const identity = () => ({ revision: draft.value.revision, key: draft.value.key, sourceHash: draft.value.sourceHash, cardAccountingKey: draft.value.cardAccounting?.key })
 async function save(confirm: boolean) { await run(async () => { receive(await $fetch(endpoint, { method: 'PUT', headers: user.authHeader, body: { ...identity(), values: values.value, remember: remember.value, confirm, documentEvidence: documentEvidence.value } })); message.value = confirm ? '内容を確認して保存しました。まだ帳簿には登録されていません。' : '下書きを保存しました。' }) }
 async function uploadDocument(event: Event) { const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return; await run(async () => { if (file.size > 10 * 1024 * 1024) throw Error('書類は10MB以内で選択してください。'); receive(await $fetch(`${endpoint}/documents`, { method: 'POST', query: { ...identity(), kind: documentKind.value, name: file.name }, headers: { ...user.authHeader, 'Content-Type': file.type }, body: file })); message.value = '書類を添付しました。内容を確認して保存してください。' }); input.value = '' }
 async function removeDocument(doc: any) { await run(async () => receive(await $fetch(`${endpoint}/documents/${doc.id}`, { method: 'DELETE', headers: user.authHeader, body: identity() }))) }

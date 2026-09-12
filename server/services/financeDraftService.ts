@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { cardAccounting, approvedCardMatches } from './financeAccountingService'
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -139,7 +140,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
   const importId = batch._id.toString()
   const [references, saved, review, entries, links] = await Promise.all([
     draftReferences(), FinanceDraft.find({ ownerId, importId }).lean(), reviewImport(ownerId, importId),
-    FinanceEntry.find({ ownerId, importId }).select('line').lean(), merchantLinks(ownerId, account._id.toString())
+    FinanceEntry.find({ ownerId, importId }).select('line draftSnapshot.transaction.cardAccounting').lean(), merchantLinks(ownerId, account._id.toString())
   ])
   const savedByLine = new Map(saved.map((d: any) => [d.line, d]))
   const rowByLine = new Map(batch.rows.map((r: any) => [r.line, r]))
@@ -153,7 +154,8 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
       if (draft && (draft.key !== row.key || draft.sourceHash !== batch.hash)) fail(409, '下書きと元ファイルが一致しません。')
       const proposed = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, { ...references, merchantLinks: links }) : { values: emptyValues(row), evidence: {} }
       const values = draft?.values || proposed.values, evidence = draft?.evidence || proposed.evidence
-      const preparation = draftReadiness({ values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: draft?.approvedAt, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
+      const card = entries.find((e: any) => e.line === row.line)?.draftSnapshot?.transaction?.cardAccounting || cardAccounting(account, row, references)
+      const preparation = draftReadiness({ cardAccounting: card, values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: approvedCardMatches(draft, card) ? draft?.approvedAt : null, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))
       if (row.kind !== 'expense') { rows[index] = { ...source, preparation }; continue }
       const customer = references.customers.find((r: any) => r._id.toString() === values.customerId)
       const category = references.transactionCategories.find((r: any) => r._id.toString() === values.transactionCategoryId)
@@ -165,7 +167,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
         ...(draft ? { draft: { revision: draft.revision, approved: !!draft.approvedAt } } : {}), preparation }
     }
   }))
-  return { rows, sourceCategories: sourceCategoryChoices(mapped, references), mappingKey: digest(JSON.stringify(mapped)), sourceHash: batch.hash }
+  return { rows, cardAccounting: cardAccounting(account, { kind: 'expense', cardIdentifier: account.primaryCard }, references), sourceCategories: sourceCategoryChoices(mapped, references), mappingKey: digest(JSON.stringify(mapped)), sourceHash: batch.hash }
 }
 
 export async function prepareSourceCategories(ownerId: string, importId: string, body: any) {
@@ -220,10 +222,13 @@ async function view(ctx: any) {
   const values = saved?.values || proposed.values, evidence = saved?.evidence || proposed.evidence
   const review = await reviewImport(ctx.ownerId, ctx.importId)
   const row = review.rows.find((r: any) => r.line === ctx.line)!
-  const reserved = await FinanceEntry.exists({ ownerId: ctx.ownerId, importId: ctx.importId, line: ctx.line })
+  const reserved: any = await FinanceEntry.findOne({ ownerId: ctx.ownerId, importId: ctx.importId, line: ctx.line }).select('draftSnapshot.transaction.cardAccounting').lean()
+  const currentCard = reserved?.draftSnapshot?.transaction?.cardAccounting || cardAccounting(ctx.account, ctx.row, references)
+  const cardChanged = !!saved?.approvedAt && !approvedCardMatches(saved, currentCard)
   const suggestions = saved ? fields.filter(f => !sameValue(proposed.values[f.key], values[f.key]) && !['amex', 'default'].includes(proposed.evidence[f.key]?.source) && !['missing', 'not_applicable'].includes(proposed.evidence[f.key]?.state)).map(f => ({ field: f.key, value: proposed.values[f.key], evidence: proposed.evidence[f.key] })) : []
   return { importId: ctx.importId, line: ctx.line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: saved?.revision || 0, values, evidence, references, suggestions, automation: proposed.automation,
-    approvedAt: saved?.approvedAt || null, rememberedFields: saved?.memory?.fields || [], history: [...(saved?.history || [])].reverse(),
+    cardAccounting: currentCard, cardAccountingChanged: cardChanged,
+    approvedAt: cardChanged ? null : saved?.approvedAt || null, rememberedFields: saved?.memory?.fields || [], history: [...(saved?.history || [])].reverse(),
     missing: missingFields(values), locked: !!reserved || ['posted', 'duplicate', 'in_progress'].includes(row.state),
     source: { ...ctx.mapped, kind: ctx.row.kind, paymentMethod: 'クレジットカード', type: '支出', currency: ctx.row.currency, foreignAmount: ctx.row.foreignAmount, exchangeRate: ctx.row.exchangeRate, account: { id: ctx.account._id.toString(), name: ctx.account.name } },
     review: { state: row.state, existing: row.existing, transactionId: row.transactionId }, documents: await documents(ctx) }
@@ -257,6 +262,8 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     await validateReferences(values, references)
     if (!Array.isArray(body.remember) || body.remember.some((f: any) => !learnedFields.includes(f)) || new Set(body.remember).size !== body.remember.length) fail(400, '記憶する項目を確認してください。')
     if (body.confirm !== true && body.confirm !== false) fail(400, '確認状態が不正です。')
+    const card = cardAccounting(ctx.account, ctx.row, references)
+    if (body.confirm && card.status !== 'missing' && (card.status !== 'configured' || body.cardAccountingKey !== card.key)) fail(409, 'カード側の科目を再読込して確認してください。')
     const missing = missingFields(values)
     if (body.confirm && missing.length) fail(400, `${missing.map(f => f.label).join('・')}を確認してください。`)
     const base = ctx.saved || await propose(ctx, references)
@@ -291,7 +298,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
       decision: { purpose: values.purpose, customerId: values.customerId }, summary: reviewAnswer.summary, quote: reviewAnswer.text, at
     }
     await check()
-    const set = { ownerId, accountId: ctx.account._id, importId, line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: (ctx.saved?.revision || 0) + 1, values, evidence, history, approvedAt: body.confirm ? at : null, memory: memory || null, teachingMemory }
+    const set = { ownerId, accountId: ctx.account._id, importId, line, key: ctx.row.key, sourceHash: ctx.batch.hash, revision: (ctx.saved?.revision || 0) + 1, values, evidence, history, cardAccounting: card, approvedAt: body.confirm ? at : null, memory: memory || null, teachingMemory }
     if (ctx.saved) {
       const result = await FinanceDraft.updateOne({ _id: ctx.saved._id, revision: body.revision }, { $set: set })
       if (!result.matchedCount) fail(409, '下書きが更新されました。再読込してください。')
@@ -306,11 +313,14 @@ export async function draftSnapshot(ownerId: string, batch: any, row: any, revis
   let values: any
   try { values = validateValues(draft.values) } catch { fail(409, '下書きの項目を確認してください。') }
   if (missingFields(values).length) fail(409, '必須項目の確認が必要です。')
-  await validateReferences(values, await draftReferences())
+  const references = await draftReferences()
+  await validateReferences(values, references)
+  const account = await ownedAccount(ownerId, batch.accountId.toString()), card = cardAccounting(account, row, references)
+  if (card.status === 'review' || !approvedCardMatches(draft, card)) fail(409, 'カード側の科目が変更されました。下書きを再確認してください。')
   const docs = await documents({ ownerId, importId: batch._id.toString(), line: row.line })
   const receipt = docs.find(d => d.kind === 'receipt' || d.kind === 'invoice')
   return { draftId: draft._id.toString(), revision, sourceHash: batch.hash, evidence: draft.evidence, purpose: values.purpose,
-    transaction: { ...transactionValues(values), hasReceipt: !!receipt, ...(receipt ? { receiptFilePath: receipt.url, receiptUploadedAt: receipt.uploadedAt } : {}), attachments: docs.map(doc => ({ originalName: doc.name, filename: doc.id, path: doc.url, size: doc.size, mimeType: doc.mimeType, uploadedAt: doc.uploadedAt })) },
+    transaction: { ...transactionValues(values), ...(card.status === 'configured' ? { cardAccounting: card } : {}), hasReceipt: !!receipt, ...(receipt ? { receiptFilePath: receipt.url, receiptUploadedAt: receipt.uploadedAt } : {}), attachments: docs.map(doc => ({ originalName: doc.name, filename: doc.id, path: doc.url, size: doc.size, mimeType: doc.mimeType, uploadedAt: doc.uploadedAt })) },
     documents: docs.map(doc => ({ id: doc.id, kind: doc.kind, hash: doc.hash })) }
 }
 

@@ -40,7 +40,7 @@ export default defineEventHandler(async (event) => {
       'taxCategory', 'taxRate', 'supplier', 'customer',
       'transactionCategory', 'companyInfo', 'invoiceNumber',
       'receiptNumber', 'productName', 'productPrice', 'janCode',
-      'hasReceipt', 'notes', 'tags'
+      'hasReceipt', 'notes', 'tags', 'cardAccountCategory', 'cardSubAccountCategory', 'cardTaxCategory'
     ]
 
     const headers: Record<string, string> = {
@@ -65,7 +65,7 @@ export default defineEventHandler(async (event) => {
       janCode: 'JANコード',
       hasReceipt: '領収書',
       notes: '備考',
-      tags: 'タグ'
+      tags: 'タグ', cardAccountCategory: '貸方勘定科目（カード）', cardSubAccountCategory: '貸方補助科目（カード）', cardTaxCategory: '貸方税区分（カード）'
     }
 
     // Transform data for export (OMF style)
@@ -79,7 +79,7 @@ export default defineEventHandler(async (event) => {
       accountCategory: transaction.accountCategoryId?.name || '',
       subAccountCategory: transaction.subAccountCategoryId?.name || '',
       taxCategory: transaction.taxCategoryId?.name || '',
-      taxRate: transaction.taxRate ? `${transaction.taxRate}%` : '',
+      taxRate: transaction.taxRate === null || transaction.taxRate === undefined ? '' : String(transaction.taxRate) + '%',
       supplier: transaction.supplierId?.name || '',
       customer: transaction.customerId?.name || '',
       transactionCategory: transaction.transactionCategoryId?.name || '',
@@ -91,7 +91,10 @@ export default defineEventHandler(async (event) => {
       janCode: transaction.janCode || '',
       hasReceipt: transaction.hasReceipt ? 'あり' : 'なし',
       notes: transaction.notes || '',
-      tags: Array.isArray(transaction.tags) ? transaction.tags.join(', ') : ''
+      tags: Array.isArray(transaction.tags) ? transaction.tags.join(', ') : '',
+      cardAccountCategory: transaction.cardAccounting?.accountName || '',
+      cardSubAccountCategory: transaction.cardAccounting?.subAccountName || '',
+      cardTaxCategory: transaction.cardAccounting?.taxCategory || ''
     }))
 
     const timestamp = new Date().toISOString().split('T')[0]
