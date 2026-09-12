@@ -28,7 +28,9 @@ const documentSchema = new Schema({
   line: { type: Number, required: true },
   name: { type: String, required: true }, mimeType: { type: String, required: true },
   size: { type: Number, required: true }, hash: { type: String, required: true },
-  kind: { type: String, required: true, enum: ['receipt', 'invoice', 'shipping', 'other'] }
+  kind: { type: String, required: true, enum: ['receipt', 'invoice', 'shipping', 'other'] },
+  extraction: Schema.Types.Mixed,
+  selectedRecord: Schema.Types.Mixed
 }, { timestamps: true })
 documentSchema.index({ ownerId: 1, importId: 1, line: 1 })
 

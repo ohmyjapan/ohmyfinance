@@ -22,6 +22,7 @@ import { fail, id, ownedImport, ownedAccount, reviewImport } from './financeServ
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { digest } from '../../shared/amex.mjs'
 import { assessPurchaseAccounting } from '../../shared/finance-accounting-assessment.mjs'
+import { documentDisplayReading, documentSuggestions } from '../../shared/finance-document-evidence.mjs'
 import { sourceCategoryChoices, draftReadiness } from '../../shared/finance-preparation.mjs'
 import { fields, learnedFields, emptyValues, normalizeMerchant, sameValue, isEmpty, validateValues, missingFields, transactionValues } from '../../shared/finance-draft.mjs'
 
@@ -209,7 +210,7 @@ export async function prepareSourceCategories(ownerId: string, importId: string,
 
 async function documents(ctx: any) {
   const docs: any[] = await FinanceDocument.find({ ownerId: ctx.ownerId, importId: ctx.importId, line: ctx.line }).sort({ createdAt: 1 }).lean()
-  return docs.map(doc => ({ id: doc._id.toString(), name: doc.name, mimeType: doc.mimeType, size: doc.size, hash: doc.hash, kind: doc.kind, uploadedAt: doc.createdAt, url: `/api/finance/documents/${doc._id}/file` }))
+  return docs.map(doc => ({ id: doc._id.toString(), name: doc.name, mimeType: doc.mimeType, size: doc.size, hash: doc.hash, kind: doc.kind, selectedRecord:doc.selectedRecord || null, reading:documentDisplayReading(doc), uploadedAt: doc.createdAt, url: `/api/finance/documents/${doc._id}/file` }))
 }
 async function validateReferences(values: any, references: any) {
   for (const field of fields.filter(f => f.ref)) if (values[field.key] && !references[field.ref!].some((r: any) => r._id.toString() === values[field.key])) fail(400, `${field.label}を登録済みの項目から選択してください。`)
@@ -279,16 +280,34 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     const evidence: any = structuredClone(base.evidence), changes: any[] = [], at = new Date()
     const docs = await documents(ctx)
     if (body.documentEvidence && (typeof body.documentEvidence !== 'object' || Array.isArray(body.documentEvidence) || Object.entries(body.documentEvidence).some(([key, value]) => !fields.some(f => f.key === key) || (value !== '' && !docs.some(d => d.id === value))))) fail(400, '根拠として選択した書類を確認してください。')
+    if (body.documentSelections !== undefined && (!body.documentSelections || typeof body.documentSelections !== 'object' || Array.isArray(body.documentSelections) || Object.keys(body.documentSelections).some(key => !fields.some(f => f.key === key)))) fail(400, '書類候補の選択を確認してください。')
     for (const field of fields) {
       const key = field.key, changed = !sameValue(base.values[key], values[key])
       if (changed) changes.push({ field: key, before: base.values[key], after: values[key], previousEvidence: evidence[key] })
       if (changed || body.confirm) evidence[key] = { ...evidence[key], state: isEmpty(values[key]) ? 'not_applicable' : 'confirmed', source: changed ? 'user' : evidence[key]?.source || 'user', reason: changed ? 'あなたが修正した値。' : '内容を確認済み。', previous: { state: base.evidence[key]?.state, source: base.evidence[key]?.source, reason: base.evidence[key]?.reason }, at }
+      if (changed) delete evidence[key].extraction
       const documentId = body.documentEvidence?.[key]
       if (documentId !== undefined && documentId !== (evidence[key]?.documentId || '')) {
+        delete evidence[key].extraction
         changes.push({ field: key, action: 'evidence', before: evidence[key]?.documentId || '', after: documentId })
         evidence[key] = { ...evidence[key], documentId, source: documentId ? 'document' : 'user', reason: documentId ? 'あなたが書類を参照して入力・確認した値。自動抽出ではありません。' : 'あなたが入力・確認した値。', at }
       }
     }
+    for (const [key, selection] of Object.entries(body.documentSelections || {}) as [string, any][]) {
+      if (selection === null) {
+        if (evidence[key]?.extraction) { changes.push({field:key,action:'document_selection_removed',previousEvidence:evidence[key]}); delete evidence[key].extraction; evidence[key].reason='あなたが書類を参照して入力・確認した値。'; }
+        continue
+      }
+      if (!selection || typeof selection !== 'object' || Array.isArray(selection) || Object.keys(selection).some(k => !['documentId','hash','record'].includes(k))) fail(400, '書類候補の選択が不正です。')
+      const doc = docs.find(d => d.id === selection.documentId && d.hash === selection.hash)
+      const record = doc?.reading?.state === 'ready' && doc.reading.complete ? doc.reading.records.find((r:any) => r.index === selection.record) : null
+      const suggestion = record && documentSuggestions(record).find((f:any) => f.key === key)
+      if (!suggestion || !sameValue(suggestion.value,values[key]) || documentIdFor(key) !== selection.documentId) fail(409, '書類の候補と保存する値を再確認してください。')
+      const proof = {hash:doc!.hash,record:selection.record,page:suggestion.page,quote:suggestion.quote,value:suggestion.value}
+      if (!sameValue(evidence[key]?.extraction,proof)) changes.push({field:key,action:'document_selection',before:evidence[key]?.extraction || null,after:proof})
+      evidence[key] = {...evidence[key],documentId:selection.documentId,extraction:proof,source:'document',state:'confirmed',reason:'書類の読み取り候補をあなたが選択・保存した値。読取精度や登録番号の公的確認とは別です。',at}
+    }
+    function documentIdFor(key:string) { return body.documentEvidence?.[key] ?? evidence[key]?.documentId }
     // A historical account example does not establish the same account in a changed purchase context.
     for (const key of ['accountCategoryId', 'subAccountCategoryId']) if (base.evidence[key]?.source === 'yayoi_history' && (values[key] !== base.values[key] || values.purpose !== base.values.purpose || values.customerId !== base.values.customerId)) {
       if (values[key] === base.values[key]) changes.push({ field: key, action: 'purchase_context_changed', before: values[key], after: values[key], previousEvidence: base.evidence[key] })

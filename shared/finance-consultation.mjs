@@ -1,3 +1,4 @@
+import { documentConsultation } from './finance-document-evidence.mjs';
 import { assessPurchaseAccounting } from './finance-accounting-assessment.mjs';
 import { fields, isEmpty } from './finance-draft.mjs';
 import { taxAndInvoice } from './finance-preparation.mjs';
@@ -11,9 +12,10 @@ const fieldValue = (field, value) => field.key === 'items'
   : value ?? null;
 
 // Only mapped values and their evidence cross the inference boundary. Reference
-// credentials, document contents, product URLs and unrelated rows are excluded.
+// credentials, raw document text, product URLs and unrelated rows are excluded.
 export function consultationEvidence(draft) {
   const references = draft.references || {}, source = draft.source || {};
+  const excerpts = documentConsultation(draft.documents, draft.evidence);
   return {
     version: 2,
     accountingReview: taxAndInvoice(draft),
@@ -44,7 +46,7 @@ export function consultationEvidence(draft) {
       const value = fieldValue(field, item.value);
       return { field: item.field, value, displayValue: display(field, value, references), evidence: evidence(item.evidence) };
     }),
-    documents: { count: (draft.documents || []).length, contentsAvailable: false },
+    documents: { count: (draft.documents || []).length, contentsAvailable: excerpts.length > 0, ...(excerpts.length ? {excerpts} : {}) },
     saved: draft.revision > 0,
     approved: !!draft.approvedAt
   };

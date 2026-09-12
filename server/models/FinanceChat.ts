@@ -7,6 +7,6 @@ const chat=new Schema({
 },{timestamps:true})
 chat.index({ownerId:1,importId:1,line:1},{unique:true})
 chat.index({ownerId:1,accountId:1,state:1,updatedAt:1})
-const agent=new Schema({ownerId:{type:oid,required:true},accountIds:[oid],tokenHash:{type:String,required:true,unique:true},enabled:{type:Boolean,default:true},workspaceEnabled:{type:Boolean,default:false},lastSeenAt:Date,revokedAt:Date},{timestamps:true})
+const agent=new Schema({ownerId:{type:oid,required:true},accountIds:[oid],tokenHash:{type:String,required:true,unique:true},enabled:{type:Boolean,default:true},workspaceEnabled:{type:Boolean,default:false},documentEnabled:{type:Boolean,default:false},lastSeenAt:Date,revokedAt:Date},{timestamps:true})
 export const FinanceChat: mongoose.Model<mongoose.InferSchemaType<typeof chat>> = (mongoose.models.FinanceChat as any) || mongoose.model('FinanceChat',chat)
 export const FinanceChatAgent: mongoose.Model<mongoose.InferSchemaType<typeof agent>> = (mongoose.models.FinanceChatAgent as any) || mongoose.model('FinanceChatAgent',agent)

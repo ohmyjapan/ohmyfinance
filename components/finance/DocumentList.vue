@@ -5,14 +5,16 @@
       <div class="min-w-0 flex-1"><p class="break-words text-sm font-medium text-gray-900 dark:text-gray-100">{{ doc.name || doc.originalName }}</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ labels[doc.kind] || '添付書類' }} · {{ Math.ceil(doc.size / 1024) }} KB</p></div>
       <button type="button" class="btn btn-secondary text-xs" :disabled="busy" @click="download(doc)">ダウンロード</button>
       <button v-if="removable" type="button" class="px-2 py-2 text-xs text-red-600 dark:text-red-400" :disabled="busy" @click="$emit('remove', doc)">削除</button>
+      <DocumentReader v-if="readable" class="w-full" :document="doc" :values="values || {}" :disabled="disabled" @select="$emit('select',$event)" @reading="$emit('reading',$event)" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import DocumentReader from './DocumentReader.vue'
 import { useUserStore } from '~/stores/user'
-defineProps<{ documents: any[]; removable?: boolean }>()
-defineEmits<{ remove: [document: any] }>()
+defineProps<{ documents: any[]; removable?: boolean; readable?: boolean; disabled?: boolean; values?: any }>()
+defineEmits<{ remove: [document: any]; select:[selection:any]; reading:[document:any] }>()
 const user = useUserStore(), error = ref(''), busy = ref(false)
 const labels: Record<string, string> = { receipt: '領収書', invoice: '請求書', shipping: '発送・顧客照合資料', other: 'その他' }
 async function download(doc: any) {

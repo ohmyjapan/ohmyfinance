@@ -29,7 +29,7 @@ export async function createChatAgent(ownerId:string,body:any){
  if(!Array.isArray(body?.accountIds)||!body.accountIds.length||body.accountIds.length>30)fail(400,'Choose accounts')
  const accountIds=[...new Set(body.accountIds.map(id))]
  if(await FinancialAccount.countDocuments({ownerId,_id:{$in:accountIds},active:true})!==accountIds.length)fail(400,'Unknown account')
- const token='omft_'+randomBytes(32).toString('hex'),agent=await Agent.create({ownerId,accountIds,tokenHash:hash(token),workspaceEnabled:body.workspaceEnabled===true})
+ const token='omft_'+randomBytes(32).toString('hex'),agent=await Agent.create({ownerId,accountIds,tokenHash:hash(token),workspaceEnabled:body.workspaceEnabled===true,documentEnabled:body.documentEnabled===true})
  return {id:String(agent._id),token}
 }
 export async function getChat(ownerId:string,importId:string,line:number){
