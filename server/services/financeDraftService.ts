@@ -355,7 +355,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
         accountingResponse = note ? accountingResponse?.note === note ? accountingResponse : { key: assessment.key, note, at } : null
       }
     }
-    if(customerReview)for(const field of customerReview.fields)evidence[field.key]={...evidence[field.key],state:'confirmed',source:'user',reason:'商品代金の取引内容をあなたが確認しました。'+customerReview.confirmation,customerReview:{key:customerReview.key,treatment:customerReview.treatment,confirmation:customerReview.confirmation,sources:customerReview.sources},at}
+    if(customerReview)for(const field of customerReview.fields)evidence[field.key]={...evidence[field.key],state:'confirmed',source:'user',reason:'商品代金の取引内容をあなたが確認しました。'+customerReview.confirmation+(customerReview.context.historyGap?'過去の記帳例の顧客・用途は未確認のままです。今回の確認を根拠にしています。':''),customerReview:{key:customerReview.key,treatment:customerReview.treatment,confirmation:customerReview.confirmation,sources:customerReview.sources,...(customerReview.context.historyGap?{historyGap:customerReview.context.historyGap}:{})},at}
     if(serviceReview){
       accountingResponse={key:assessment.key,note:serviceUseConfirmation,at}
       for(const field of serviceReview.fields)evidence[field.key]={...evidence[field.key],state:'confirmed',source:'user',reason:'サービス利用料の候補をまとめて確認し、下書きに保存しました。'+serviceUseConfirmation,serviceReview:{key:serviceReviewKey,rule:serviceReview.rule,sources:serviceReview.sources},at}

@@ -13,7 +13,19 @@ export function purchaseAccountHistory(bundle, row, scope, references) {
   const examples = (scoped.length ? scoped : matching).slice().sort((a,b) => b.date.localeCompare(a.date)).slice(0,5).map(e => ({ date:e.date, amount:e.amount, accountName:e.accountName, subAccountName:e.subAccountName || '', sourceRows:(Array.isArray(e.sourceRows) ? e.sourceRows.filter(r=>r && typeof r === 'object') : []).slice(0,10).map(r=>({sheet:r.sheet,row:r.row})) }));
   const review = reason => ({ status:'review', reason, examples });
   if (scope.purpose === 'customer' && !(references.customers || []).some(c=>String(c._id || c.id) === scope.customerId && c.isActive !== false)) return review('顧客台帳との対応を再確認してください。');
-  if (!scoped.length) return review('同じ用途・顧客を確認できる記帳例がありません。購入内容を確認してください。');
+  if (!scoped.length) {
+    // Unlinked journals contain no contrary customer assertion. They stay unverified;
+    // a separately confirmed current purchase may use the manual review workflow.
+    const unlinked = scope.purpose === 'customer' && matching.every(e => {
+      const main = ref(references,e.accountCategoryId), sub = e.subAccountCategoryId ? ref(references,e.subAccountCategoryId) : null;
+      return e.purpose === 'unresolved' && !e.customerId && e.disposition === 'review'
+        && Array.isArray(e.sourceRows) && e.sourceRows.length === 0 && Number.isFinite(e.amount) && e.amount > 0
+        && oid(e.accountCategoryId) && main && main.isActive !== false && !main.parentId && ['expense','asset'].includes(main.type) && main.name === e.accountName
+        && (!e.subAccountCategoryId || oid(e.subAccountCategoryId) && sub && sub.isActive !== false && String(sub.parentId) === e.accountCategoryId && sub.name === e.subAccountName);
+    }) && new Set(matching.map(e=>JSON.stringify([e.accountCategoryId,e.subAccountCategoryId || '']))).size === 1;
+    if (unlinked) return { ...review('過去の記帳例には元シートの対応がなく、顧客・用途は未確認です。今回の明細の根拠と確認に基づいて科目を選べます。'), reviewCode:'unlinked_context', sourceHash:bundle.sourceHash, exampleCount:matching.length };
+    return review('同じ用途・顧客を確認できる記帳例がありません。購入内容を確認してください。');
+  }
   if (scoped.some(e => e.disposition !== 'suggest')) return review(scoped.find(e=>e.disposition !== 'suggest').reason || '過去の勘定科目は再確認が必要です。');
   for (const e of scoped) {
     const main = ref(references,e.accountCategoryId), sub = e.subAccountCategoryId ? ref(references,e.subAccountCategoryId) : null;
