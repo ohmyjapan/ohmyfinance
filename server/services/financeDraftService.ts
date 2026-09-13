@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { activeImportRows, purposeEvidence } from '../../shared/finance-import-overlap.mjs'
 import { cardAccounting, approvedCardMatches } from './financeAccountingService'
 import { purchaseAccountHistory } from '../../shared/finance-purchase-accounts.mjs'
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises'
@@ -18,7 +19,7 @@ import AccountCategoryModel from '../models/AccountCategory'
 import TransactionCategoryModel from '../models/TransactionCategory'
 import TaxCategoryModel from '../models/TaxCategory'
 import DataSourceModel from '../models/DataSource'
-import { fail, id, ownedImport, ownedAccount, reviewImport } from './financeService'
+import { fail, id, ownedImport, ownedAccount, reviewImport, assertEditableImportRow } from './financeService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { digest } from '../../shared/amex.mjs'
 import {customerPurchaseCandidate,customerReviewBinding,customerReviewApplied} from '../../shared/finance-customer-review.mjs'
@@ -78,6 +79,7 @@ async function context(ownerId: string, importId: string, line: number) {
   const account = await ownedAccount(ownerId, batch.accountId.toString())
   const row = batch.rows.find((r: any) => r.line === line)
   if (!row) fail(404, '明細が見つかりません。')
+  assertEditableImportRow(batch, line)
   let mapped: any
   try { mapped = mappingRows(batch).find((r: any) => r.line === line) } catch { fail(409, '元データとの照合をやり直してください。') }
   const saved: any = await FinanceDraft.findOne({ ownerId, importId, line }).lean()
@@ -172,7 +174,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
       const customer = references.customers.find((r: any) => r._id.toString() === values.customerId)
       const category = references.transactionCategories.find((r: any) => r._id.toString() === values.transactionCategoryId)
       const sourceCustomer = !draft && evidence.customerId?.source === 'spreadsheet'
-      rows[index] = { ...source, purpose: values.purpose,
+      rows[index] = { ...source, classification: purposeEvidence(values, evidence), purpose: values.purpose,
         clientCode: values.purpose === 'customer' ? customer?.name || (sourceCustomer ? source.clientCode : '') : '',
         clientName: values.purpose === 'customer' && sourceCustomer ? source.clientName : '',
         category: category?.name || (!draft && evidence.transactionCategoryId?.source === 'spreadsheet' ? source.category : ''),
@@ -186,7 +188,8 @@ export async function prepareSourceCategories(ownerId: string, importId: string,
   const batch = await ownedImport(ownerId, importId)
   await ownedAccount(ownerId, batch.accountId.toString())
   let mapped: any[]
-  try { mapped = mappingRows(batch) } catch { fail(409, '元データとの照合をやり直してください。') }
+  const activeLines = new Set(activeImportRows(batch).map(r => r.line))
+  try { mapped = mappingRows(batch).filter(r => activeLines.has(r.line)) } catch { fail(409, '元データとの照合をやり直してください。') }
   if (body?.sourceHash !== batch.hash || body?.mappingKey !== digest(JSON.stringify(mapped!))) fail(409, '照合内容が更新されています。再読込してください。')
   if (!Array.isArray(body.names) || !body.names.length || body.names.length > 30 || body.names.some((n: any) => typeof n !== 'string') || new Set(body.names.map(normalizeMerchant)).size !== body.names.length) fail(400, '追加する元シートの区分を選択してください。')
   const choices = sourceCategoryChoices(mapped!, await draftReferences())
@@ -383,6 +386,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
 }
 
 export async function draftSnapshot(ownerId: string, batch: any, row: any, revision: unknown) {
+  assertEditableImportRow(batch, row.line)
   const draft: any = await FinanceDraft.findOne({ ownerId, importId: batch._id, line: row.line }).lean()
   if (!Number.isSafeInteger(revision) || !draft || draft.revision !== revision || !draft.approvedAt || draft.key !== row.key || draft.sourceHash !== batch.hash) fail(409, '最新の下書きを保存して内容を確認してください。')
   let values: any

@@ -31,7 +31,8 @@ const batch = new Schema({
   rows: { type: [Schema.Types.Mixed], required: true }, rowCount: Number,
   state: { type: String, default: 'review' }, downloadedAt: Date, collectorId: oid,
   decisions: { type: Schema.Types.Mixed, default: {} },
-  mappingPreview: { type: Schema.Types.Mixed }
+  mappingPreview: { type: Schema.Types.Mixed },
+  sourceReferences: Schema.Types.Mixed
 }, common)
 batch.index({ accountId: 1, hash: 1 }, { unique: true })
 

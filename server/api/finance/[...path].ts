@@ -29,7 +29,7 @@ export default defineEventHandler(async event => {
         const account: any = await FinancialAccount.findOne({ ...scope, _id: { $in: device.accountIds, $eq: id(query.accountId) }, jobId: query.jobId, jobDeviceId: device._id, jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $gt: new Date() } }).lean()
         if (!account) fail(409, 'Job is unavailable or expired')
         if (!getHeader(event,'content-type')?.startsWith('text/csv')) fail(415, 'CSV required')
-        return await acceptImport(device.ownerId.toString(), account, await csvBody(event), { kind: query.kind, start: query.start, end: query.end, pageCount: query.pageCount }, device._id.toString())
+        return await acceptImport(device.ownerId.toString(), account, await csvBody(event), { kind: query.kind, start: query.start, end: query.end, fiscalStart: query.fiscalStart, fiscalEnd: query.fiscalEnd, pageCount: query.pageCount }, device._id.toString())
       }
       fail(404, 'Collector endpoint not found')
     }
@@ -111,7 +111,7 @@ export default defineEventHandler(async event => {
       if (parts.length === 1 && method === 'GET') {
         const accountId = getQuery(event).accountId
         if (accountId) await ownedAccount(ownerId, id(accountId))
-        return { imports: await FinanceImport.find({ ownerId, ...(accountId ? { accountId } : {}) }).select('-rows -decisions -mappingPreview').sort({ createdAt: -1 }).limit(100).lean() }
+        return { imports: await FinanceImport.find({ ownerId, ...(accountId ? { accountId } : {}) }).select('-rows -decisions -mappingPreview -sourceReferences').sort({ createdAt: -1 }).limit(100).lean() }
       }
       if (parts.length === 2 && method === 'GET') return await reviewImport(ownerId, parts[1])
       if (parts[2] === 'mapping' && parts.length === 3 && method === 'GET') return await reviewMapping(ownerId, parts[1])

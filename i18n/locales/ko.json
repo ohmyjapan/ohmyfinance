@@ -1,4 +1,20 @@
 {
+  "mappingImport": {
+    "evidenceTitle": "용도·고객 판단 근거",
+    "evidenceHint": "용도와 고객에 대한 제안입니다. 계정과목·소비세·인보이스는 별도로 확인합니다.",
+    "supported": "근거가 있는 제안",
+    "tentative": "B · 과거 패턴에 따른 제안",
+    "unresolved": "용도·고객 확인 필요",
+    "conflict": "현재 기록과 과거 패턴이 다릅니다",
+    "confirmedRule": "A · 확인된 규칙",
+    "spreadsheet": "원본 시트와 대조",
+    "customRange": "수집 기간 {start} ~ {end}",
+    "fiscalYear": "회계연도 {start} ~ {end}",
+    "referenceCount": "기존 매핑 유지 · {count}건",
+    "referenceHint": "이번 파일에도 포함된 내역입니다. 새 확인 건수에서 제외하며 원래 매핑에서 수정합니다. 동일한 반복 결제는 그룹으로 참조합니다.",
+    "overlapHeld": "건수나 원본 내역이 다릅니다. 새 거래로 처리하지 말고 원본 내역을 확인해 주세요.",
+    "openOriginal": "원래 매핑 열기"
+  },
   "app": {
     "name": "OhMyFinance",
     "tagline": "재무 관리 시스템"

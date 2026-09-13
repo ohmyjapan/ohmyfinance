@@ -13,4 +13,4 @@ export function dateOnly(value: unknown): string;
 export function parseAmount(value: unknown): number;
 export function csvRows(text: string): string[][];
 export function parseAmex(bytes: Uint8Array, cardIdentifiers: string[]): { parserVersion: string; encoding: string; sha256: string; rows: AmexRow[] };
-export function period(value: any): { kind: 'statement' | 'recent'; start: string; end: string; key: string };
+export function period(value: any): { kind: 'statement' | 'recent' | 'custom'; start: string; end: string; key: string; fiscalPeriod?: { start: string; end: string } };

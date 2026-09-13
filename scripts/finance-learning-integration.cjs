@@ -29,7 +29,8 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  assert.equal((await api('patterns/'+pattern._id)).data.pattern.audit.length,1);
  await loadLearningBundle(db,bundle);assert.equal((await api('patterns/'+pattern._id)).data.pattern.revision,1);assert.equal(await db.collection('financelearningrows').countDocuments({datasetId:new ObjectId(imported.datasetId)}),bundle.rows.length);
  assert.deepEqual(await counts(),before);pass('rule confirmations are revision-checked, audited and preserved by import retries without changing drafts or ledger');
- const uploaded=await upload(csv([row({2:'Synthetic shop',5:'1234'})]));assert.equal(uploaded.status,200);
+ // A distinct purchase: the initial importer fixture already contains the 1234 charge.
+ const uploaded=await upload(csv([row({2:'Synthetic shop',5:'1235'})]));assert.equal(uploaded.status,200);
  const reviewRoute='/api/finance-review/imports/'+uploaded.data.id+'/drafts/2';
  let reviewed=await call(reviewRoute,{token});assert.equal(reviewed.status,200,JSON.stringify(reviewed));assert.equal(reviewed.data.study.historyCount,9);assert.equal(reviewed.data.study.learning.rules.length,0,'Future effective date must not apply');
  // Same-day and future source rows must be excluded, even if the dataset was imported later.

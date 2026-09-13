@@ -1,3 +1,4 @@
+import {activeImportRows} from '../../shared/finance-import-overlap.mjs'
 import {readDraft,saveDraft} from './financeDraftService'
 import {id,fail,ownedImport} from './financeService'
 import {digest} from '../../shared/amex.mjs'
@@ -6,7 +7,7 @@ function publicCandidate(d:any){const proposal=recurringServiceCandidate(d);retu
 export async function serviceReviewPreview(ownerId:string,importIds:any){
  if(!Array.isArray(importIds)||!importIds.length||importIds.length>10||new Set(importIds).size!==importIds.length)fail(400,'表示する明細を選択してください。')
  const batches=[];for(const importId of importIds)batches.push(await ownedImport(ownerId,id(importId)))
- const candidates=batches.flatMap(b=>b.rows.filter((r:any)=>r.kind==='expense'&&recurringServiceDescriptor({...r,kind:'expense'})).map((r:any)=>({importId:String(b._id),line:r.line}))),rows=[];
+ const candidates=batches.flatMap(b=>activeImportRows(b).filter((r:any)=>r.kind==='expense'&&recurringServiceDescriptor({...r,kind:'expense'})).map((r:any)=>({importId:String(b._id),line:r.line}))),rows=[];
  for(const row of candidates.slice(0,60)){const candidate=publicCandidate(await readDraft(ownerId,row.importId,row.line));if(candidate)rows.push(candidate)}
  return {rows,truncated:candidates.length>60,confirmation:serviceUseConfirmation}
 }

@@ -35,6 +35,28 @@
           <StatCard title="カード返済" :value="String(countFor('repayment'))" icon="DollarSign" color="green" />
         </div>
 
+        <section class="card mb-6 p-4 sm:p-6" aria-label="分類の根拠">
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('mappingImport.evidenceTitle') }}</h2>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('mappingImport.evidenceHint') }}</p>
+          <nav class="mt-4 flex flex-wrap gap-2">
+            <button v-for="item in purposeFilters" :key="item.value" type="button" :data-purpose-filter="item.value" :aria-pressed="filter === item.value" class="min-h-10 rounded-lg px-3 py-2 text-xs font-medium" :class="filter === item.value ? 'bg-primary-main/10 text-primary-main' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 dark:bg-white/5 dark:text-gray-300'" @click="filter = item.value">{{ item.label }} <strong class="ml-1 tabular-nums">{{ item.count }}</strong></button>
+          </nav>
+          <p v-for="batch in batches.filter(b => b.period.kind === 'custom')" :key="batch.id" class="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400" data-custom-coverage>
+            {{ batch.account.name }} · {{ t('mappingImport.customRange', { start: batch.period.start, end: batch.period.end }) }}
+            <span v-if="batch.period.fiscalPeriod"> · {{ t('mappingImport.fiscalYear', batch.period.fiscalPeriod) }}</span>
+          </p>
+        </section>
+
+        <details v-if="referenceCount" class="card mb-6 p-4 sm:p-6" data-source-references>
+          <summary class="cursor-pointer text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('mappingImport.referenceCount', { count: referenceCount }) }}</summary>
+          <p class="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('mappingImport.referenceHint') }}</p>
+          <div v-for="group in referenceGroups" :key="group.importId + group.fingerprint" class="mt-3 border-t border-gray-200 pt-3 text-xs dark:border-white/10">
+            <p class="break-words font-medium text-gray-700 dark:text-gray-300">{{ group.accountName }} · {{ group.description }} · {{ group.lines.length }}件</p>
+            <p v-if="group.state === 'source_overlap_review'" class="mt-1 text-amber-700 dark:text-amber-400">{{ t('mappingImport.overlapHeld') }}</p>
+            <NuxtLink v-for="target in group.targets" :key="target.importId" :to="{path: '/mapping', query: {import: target.importId}}" class="mt-2 block py-1 text-primary-main">{{ t('mappingImport.openOriginal') }} · {{ target.period.start }} ～ {{ target.period.end }}</NuxtLink>
+          </div>
+        </details>
+
         <CustomerMappingReview :import-ids="batches.map(batch => batch.id)" @saved="refreshSupplierRows" />
         <ServiceMappingReview :import-ids="batches.map(batch => batch.id)" @saved="refreshSupplierRows" />
         <DocumentMatches v-for="batch in batches" :key="'docs-'+batch.id" :import-id="batch.id" :account-name="batch.account.name" />
@@ -108,15 +130,17 @@
                   <div class="col-span-2 min-w-0 xl:col-span-1">
                     <p class="break-words text-sm font-medium text-gray-900 dark:text-gray-100">{{ row.description }}</p>
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ row.accountName }} · {{ row.cardLast4 }}</p>
-                    <details v-if="row.source || row.reason" class="evidence mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    <p v-if="row.classification" class="mt-2 text-xs" :class="['tentative', 'conflict', 'unresolved'].includes(row.classification.state) ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'" data-purpose-evidence>{{ purposeLabel(row) }}</p>
+                    <details v-if="row.source || row.reason || row.classification?.reason" class="evidence mt-2 text-xs text-gray-500 dark:text-gray-400">
                       <summary class="cursor-pointer py-1 text-primary-main focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-main dark:text-primary-light">照合根拠<span v-if="row.source && row.source.rows.length > 1" class="repeat ml-2 text-gray-500 dark:text-gray-400">同額 {{ row.source.rows.length }}件</span></summary>
                       <div class="mt-2 space-y-2 rounded-lg bg-gray-50 p-3 leading-relaxed dark:bg-white/5">
                         <p v-if="row.reason">{{ row.reason }}</p>
+                        <p v-if="row.classification?.reason">{{ row.classification.reason }}</p>
                         <p>元CSV {{ row.line }}行 · 利用カード {{ row.cardLast4 }}</p>
                         <template v-if="row.source">
                           <p>元シート {{ row.source.sheet }} · 行 {{ row.source.rows.join(', ') }}</p>
                           <p>元の顧客「{{ row.source.client || '空欄' }}」 · 区分「{{ row.source.category || '空欄' }}」 · カード「{{ row.source.card || '空欄' }}」</p>
-                          <p v-if="row.source.rows.length > 1" class="text-amber-700 dark:text-amber-400">件数と分類は一致していますが、個々の行の対応は未確定です。各明細は別の取引として保持しています。</p>
+                          <p v-if="row.source.rows.length > 1" class="text-amber-700 dark:text-amber-400">候補行の根拠をまとめて表示しています。個々の行の対応が未確定でも、各カード明細は別の取引として保持しています。</p>
                         </template>
                       </div>
                     </details>
@@ -172,11 +196,12 @@ import { useUserStore } from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
 import { preparationStates } from '~/shared/finance-preparation.mjs'
 import type { MappingRow as SourceMappingRow } from '~/shared/finance-mapping.mjs'
-type MappingRow = SourceMappingRow & { draft?: { revision: number; approved: boolean }; preparation?: any }
+type MappingRow = SourceMappingRow & { draft?: { revision: number; approved: boolean }; preparation?: any; classification?: {state: string; source: string; grade: string; reason: string} }
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '明細マッピング | OhMyFinance' })
-interface Batch { id: string; account: { id: string; name: string }; period: { start: string; end: string }; preparedAt: string | null; rows: MappingRow[]; sourceHash: string; mappingKey: string; sourceCategories: {name: string; count: number; matches: number}[] }
+interface Batch { id: string; account: { id: string; name: string }; period: { kind?: string; start: string; end: string; fiscalPeriod?: {start: string; end: string} }; sourceReferences?: any[]; preparedAt: string | null; rows: MappingRow[]; sourceHash: string; mappingKey: string; sourceCategories: {name: string; count: number; matches: number}[] }
 const user = useUserStore(), route = useRoute(), assistant=useAssistantStore()
+const { t } = useI18n()
 const imports = ref<any[]>([]), accounts = ref<any[]>([]), batches = ref<Batch[]>([])
 const loading = ref(true), error = ref(''), search = ref(''), filter = ref('all')
 const preparing = ref(false), preparationError = ref(''), preparationMessage = ref('')
@@ -187,15 +212,19 @@ const yen = (amount: number) => new Intl.NumberFormat('ja-JP', { style: 'currenc
 const statuses: Record<string, string> = { proposed: '分類案あり', needs_client: '顧客・用途を確認', needs_category: '区分を確認', repayment: '返済・支出対象外', credit_review: '返金など・確認待ち' }
 const needsReview = (row: MappingRow) => row.draft ? !row.draft.approved : ['needs_client', 'needs_category', 'credit_review'].includes(row.status)
 const rows = computed(() => batches.value.flatMap(batch => batch.rows.map(row => ({ ...row, importId: batch.id, accountName: batch.account.name }))).sort((a, b) => b.processingDate.localeCompare(a.processingDate) || a.importId.localeCompare(b.importId) || a.line - b.line))
-const matchesFilter = (row: MappingRow, value: string) => value === 'all' || (value.startsWith('preparation:') ? row.preparation?.state === value.slice(12) : value === 'review' ? needsReview(row) : row.purpose === value)
+const matchesFilter = (row: MappingRow, value: string) => value === 'all' || (value === 'purpose:review' ? ['unresolved','conflict'].includes(row.classification?.state || '') : value.startsWith('purpose:') ? row.classification?.state === value.slice(8) : false) || (value.startsWith('preparation:') ? row.preparation?.state === value.slice(12) : value === 'review' ? needsReview(row) : row.purpose === value)
 const filters = computed(() => [{ value: 'all', label: 'すべて' }, { value: 'customer', label: '顧客購入' }, { value: 'company', label: '会社経費' }, { value: 'review', label: '分類要確認' }, { value: 'repayment', label: 'カード返済' }].map(item => ({ ...item, count: rows.value.filter(row => matchesFilter(row, item.value)).length })))
+const purposeFilters = computed(() => [{value: 'purpose:supported', label: t('mappingImport.supported')}, {value: 'purpose:tentative', label: t('mappingImport.tentative')}, {value: 'purpose:review', label: t('mappingImport.unresolved')}].map(item => ({...item, count: rows.value.filter(row => matchesFilter(row, item.value)).length})))
+const purposeLabel = (row: MappingRow) => t('mappingImport.' + (row.classification?.state === 'conflict' ? 'conflict' : row.classification?.state === 'unresolved' ? 'unresolved' : row.classification?.state === 'tentative' ? 'tentative' : row.classification?.source === 'learning_rule' ? 'confirmedRule' : row.classification?.source === 'spreadsheet' ? 'spreadsheet' : 'supported'))
+const referenceGroups = computed(() => batches.value.flatMap(batch => (batch.sourceReferences || []).map(group => ({...group, importId: batch.id, accountName: batch.account.name}))))
+const referenceCount = computed(() => referenceGroups.value.reduce((n, group) => n + group.lines.length, 0))
 const countFor = (value: string) => filters.value.find(item => item.value === value)?.count || 0
 const preparationFilters = computed(() => Object.entries(preparationStates).map(([key,label]) => ({ value: 'preparation:' + key, label, count: rows.value.filter(row => row.preparation?.state === key).length })))
 const taxMissing = computed(() => rows.value.filter(row => ['customer','company','unresolved'].includes(row.purpose) && row.preparation?.tax.rate === null).length)
 const invoicePending = computed(() => rows.value.filter(row => ['customer','company','unresolved'].includes(row.purpose) && row.preparation?.invoice.status !== 'confirmed').length)
 const missingCategories = (batch: Batch) => (batch.sourceCategories || []).filter(c => c.matches === 0)
 const categoryBatches = computed(() => batches.value.filter(batch => missingCategories(batch).length))
-const filterLabel = computed(() => [...filters.value, ...preparationFilters.value].find(item => item.value === filter.value)?.label || 'すべて')
+const filterLabel = computed(() => [...filters.value, ...purposeFilters.value, ...preparationFilters.value].find(item => item.value === filter.value)?.label || 'すべて')
 async function prepareCategories(batch: Batch) {
   if (preparing.value) return
   preparing.value = true; preparationError.value = ''; preparationMessage.value = ''
@@ -220,5 +249,6 @@ async function refreshSupplierRows() { try { await fetchSelection() } catch (e: 
 async function loadSelection() { await run(fetchSelection) }
 watch(batchChoice,value=>{assistant.pageSelection={path:'/mapping',...(value!=='latest'?{importId:value}:{})}},{immediate:true})
 onBeforeUnmount(()=>{if(assistant.pageSelection?.path==='/mapping')assistant.pageSelection=null})
+watch(() => route.query.import, value => { if (typeof value === 'string' && value !== batchChoice.value) { batchChoice.value = value; void loadSelection() } })
 onMounted(refresh)
 </script>

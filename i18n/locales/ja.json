@@ -1,4 +1,20 @@
 {
+  "mappingImport": {
+    "evidenceTitle": "用途・顧客の判断根拠",
+    "evidenceHint": "用途・顧客の候補です。勘定科目・消費税・インボイスは別途確認します。",
+    "supported": "根拠のある候補",
+    "tentative": "B · 過去の傾向からの候補",
+    "unresolved": "用途・顧客を確認",
+    "conflict": "今回の記録と過去の傾向が不一致",
+    "confirmedRule": "A · 確認済みのルール",
+    "spreadsheet": "元シートとの照合",
+    "customRange": "取得期間 {start} ～ {end}",
+    "fiscalYear": "会計年度 {start} ～ {end}",
+    "referenceCount": "既存のマッピングを保持 · {count}件",
+    "referenceHint": "この取得ファイルにも含まれる明細です。新しい確認件数には含めず、元のマッピングで編集します。同一内容の繰り返しはグループで参照します。",
+    "overlapHeld": "件数や元の明細に相違があります。新規取引として扱わず、元の明細を確認してください。",
+    "openOriginal": "元のマッピングを開く"
+  },
   "app": {
     "name": "OhMyFinance",
     "tagline": "財務管理システム"

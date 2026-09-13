@@ -82,8 +82,14 @@ export function parseAmex(bytes, cardIdentifiers) {
 }
 
 export function period(value) {
-  if (!value || !['statement', 'recent'].includes(value.kind)) throw new Error('対象期間を指定してください');
+  if (!value || !['statement', 'recent', 'custom'].includes(value.kind)) throw new Error('対象期間を指定してください');
   const start = dateOnly(value.start), end = dateOnly(value.end);
   if (start > end || (Date.parse(end) - Date.parse(start)) / 86400000 > 370) throw new Error('対象期間が正しくありません');
-  return { kind: value.kind, start, end, key: `${value.kind}:${start}:${end}` };
+  let fiscalPeriod;
+  if (value.fiscalStart !== undefined || value.fiscalEnd !== undefined) {
+    const fiscalStart = dateOnly(value.fiscalStart), fiscalEnd = dateOnly(value.fiscalEnd);
+    if (value.kind !== 'custom' || fiscalStart > start || fiscalEnd < end || (Date.parse(fiscalEnd) - Date.parse(fiscalStart)) / 86400000 > 370) throw Error('会計年度と取得期間を確認してください');
+    fiscalPeriod = { start: fiscalStart, end: fiscalEnd };
+  }
+  return { kind: value.kind, start, end, key: `${value.kind}:${start}:${end}`, ...(fiscalPeriod ? { fiscalPeriod } : {}) };
 }

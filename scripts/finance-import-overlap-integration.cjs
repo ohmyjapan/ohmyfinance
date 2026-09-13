@@ -1,0 +1,48 @@
+const assert=require('node:assert/strict');
+const {ObjectId}=require('mongodb');
+module.exports=async({db,call,request,upload,token,other,pass,csv,row,origin,root})=>{
+ const originalBytes=csv([row(),row(),row({2:'DIGITALOCEAN.COM',5:'54'}),row({2:'前回分口座振替金額',5:'-2500'})]);
+ const original=await upload(originalBytes);assert.equal(original.status,200,JSON.stringify(original));const oldId=original.data.id;
+ const d=(await request(`imports/${oldId}/drafts/4`,undefined,'GET')).data;
+ const saved=await request(`imports/${oldId}/drafts/4`,{revision:d.revision,key:d.key,sourceHash:d.sourceHash,values:{...d.values,purpose:'company',notes:'Existing evidence must survive'},confirm:false,remember:[]},'PUT');assert.equal(saved.status,200,JSON.stringify(saved));
+ const oldBatch=await db.collection('financeimports').findOne({_id:new ObjectId(oldId)}),beforeDraft=await db.collection('financedrafts').findOne({importId:new ObjectId(oldId),line:4});
+ const annualCsv=csv([row({2:'Additional shop',5:'42'}),row(),row(),row({2:'DIGITALOCEAN.COM',5:'54'}),row({2:'前回分口座振替金額',5:'-2500'})]);
+ const query='?kind=custom&start=2025-11-01&end=2026-09-13&fiscalStart=2025-11-01&fiscalEnd=2026-10-31';
+ const annual=await upload(annualCsv,query);assert.equal(annual.status,200,JSON.stringify(annual));const annualId=annual.data.id;
+ const batch=await db.collection('financeimports').findOne({_id:new ObjectId(annualId)});
+ assert.equal(batch.rows.length,5);assert.equal(batch.period.kind,'custom');assert.equal(batch.period.fiscalPeriod.end,'2026-10-31');
+ assert.equal(batch.sourceReferences.groups.reduce((n,g)=>n+g.lines.length,0),4);
+ assert.equal((await call(`/api/finance/imports/${annualId}/file`,{token})).data,annualCsv.toString());
+ const mapping=await request(`imports/${annualId}/mapping`,undefined,'GET');assert.equal(mapping.status,200,JSON.stringify(mapping));assert.deepEqual(mapping.data.rows.map(r=>r.line),[2]);
+ assert.equal(mapping.data.sourceReferences.length,3);assert.ok(mapping.data.sourceReferences.every(g=>g.targets.every(t=>t.importId===oldId)));
+ assert.deepEqual(await db.collection('financeimports').findOne({_id:new ObjectId(oldId)}),oldBatch);
+ assert.deepEqual(await db.collection('financedrafts').findOne({_id:beforeDraft._id}),beforeDraft);
+ assert.equal((await upload(annualCsv,query)).data.id,annualId);pass('annual originals stay intact; repeated groups reuse existing mappings and retain saved draft evidence');
+ for(const line of [3,4,5]){
+  assert.equal((await request(`imports/${annualId}/drafts/${line}`,undefined,'GET')).status,409);
+  assert.equal((await request(`imports/${annualId}/drafts/${line}`,{revision:0,key:batch.rows.find(r=>r.line===line).key,sourceHash:batch.hash,values:d.values,confirm:true,remember:[]},'PUT')).status,409);
+  assert.equal((await request(`imports/${annualId}/merchant-links/${line}`,{enabled:false},'PUT')).status,409);
+  assert.equal((await call(`/api/finance-chat/imports/${annualId}/drafts/${line}`,{token,method:'GET'})).status,409);
+  for(const action of ['import','link'])assert.equal((await request(`imports/${annualId}/commit`,{decisions:[{line,action,confirmNew:true}]})).status,409);
+ }
+ assert.equal(await db.collection('financeentries').countDocuments(),0);assert.equal(await db.collection('transactions').countDocuments(),0);assert.equal(await db.collection('financedrafts').countDocuments(),1);
+ assert.equal((await call(`/api/finance/imports/${annualId}/mapping`,{token:other})).status,404);pass('draft, supplier, AI, and posting APIs cannot write through duplicate sources or cross owner boundaries');
+ const fresh=(await request(`imports/${annualId}/drafts/2`,undefined,'GET')).data;
+ assert.equal((await request(`imports/${annualId}/drafts/2`,{revision:0,key:fresh.key,sourceHash:fresh.sourceHash,values:{...fresh.values,purpose:'company'},confirm:false,remember:[]},'PUT')).status,200);
+ const partial=await upload(csv([row()]),query);assert.equal(partial.status,200);
+ const held=await request(`imports/${partial.data.id}/mapping`,undefined,'GET');assert.equal(held.data.rows.length,0);assert.equal(held.data.sourceReferences[0].state,'source_overlap_review');
+ assert.equal((await request(`imports/${partial.data.id}/commit`,{decisions:[{line:2,action:'import',confirmNew:true}]})).status,409);pass('new purchases remain editable while unequal repeated groups cannot be forced into the ledger');
+ const corrupt=structuredClone(batch.sourceReferences);corrupt.groups[0].targets[0].sourceHash='0'.repeat(64);
+ await db.collection('financeimports').updateOne({_id:batch._id},{$set:{sourceReferences:corrupt}});
+ assert.equal((await request(`imports/${annualId}/mapping`,undefined,'GET')).status,409);
+ await db.collection('financeimports').updateOne({_id:batch._id},{$set:{sourceReferences:batch.sourceReferences}});pass('stale source bindings fail closed');
+ const accountId=String(batch.accountId),account=await db.collection('financialaccounts').findOne({_id:batch.accountId});
+ await db.collection('financialaccounts').updateOne({_id:batch.accountId},{$set:{commitLease:'synthetic-lock',commitLeaseUntil:new Date(Date.now()+60000)}});
+ assert.equal((await upload(csv([row({2:'Concurrent new source'})]),query)).status,409);
+ await db.collection('financialaccounts').updateOne({_id:batch.accountId},{$unset:{commitLease:'',commitLeaseUntil:''}});
+ const concurrentCsv=csv([row({2:'Concurrent purchase',5:'37'})]);
+ const attempts=await Promise.all([upload(concurrentCsv,query),upload(concurrentCsv,query)]);assert.ok(attempts.some(r=>r.status===200));assert.ok(attempts.every(r=>[200,409].includes(r.status)));
+ const retry=await upload(concurrentCsv,query);assert.equal(retry.status,200);assert.equal(await db.collection('financeimports').countDocuments({'rows.description':'Concurrent purchase'}),1);
+ assert.deepEqual(await db.collection('financedrafts').findOne({_id:beforeDraft._id}),beforeDraft);pass('account lease serializes concurrent imports and retries preserve original drafts');
+ if(process.env.OMF_TEST_CHROME_PORT)await require('./finance-import-overlap-browser.cjs')({origin,root,annualId,oldId,pass});
+};

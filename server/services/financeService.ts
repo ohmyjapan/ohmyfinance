@@ -14,6 +14,7 @@ import { parseAmex, period, digest, MAX_BYTES, type AmexRow } from '../../shared
 
 import { FinanceDraft } from '../models/FinanceDraft'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
+import { buildSourceReferences, sourceReferenceGroups, sourceReferenceAt, verifySourceReferences, activeImportRows } from '../../shared/finance-import-overlap.mjs'
 
 const User = UserModel as mongoose.Model<IUser>
 const Transaction = TransactionModel as mongoose.Model<ITransaction>
@@ -79,23 +80,53 @@ function archivePath(hash: string) {
   return path.join(process.env.OMF_DATA_DIR || path.join(os.homedir(), '.ohmyfinance'), 'imports', hash.slice(0, 2), `${hash}.csv`)
 }
 export async function originalFile(batch: any) { return readFile(archivePath(batch.hash)) }
+export async function importSourceReferences(batch: any) {
+  try {
+    const groups = sourceReferenceGroups(batch)
+    if (!groups.length) return []
+    const ids = [...new Set(groups.flatMap(g => g.targets.map(t => t.importId)))]
+    const targets: any[] = await FinanceImport.find({ ownerId: batch.ownerId, accountId: batch.accountId, _id: { $in: ids } }).select('ownerId accountId hash rows sourceReferences period').lean()
+    verifySourceReferences(batch, targets)
+    return groups.map(group => ({ ...group, description: batch.rows.find((r: any) => r.fingerprint === group.fingerprint).description,
+      targets: group.targets.map(t => ({ ...t, period: targets.find(b => String(b._id) === t.importId).period })) }))
+  } catch { fail(409, 'Original import references changed; review the source files before continuing') }
+}
+export function assertEditableImportRow(batch: any, line: number) {
+  let reference
+  try { reference = sourceReferenceAt(batch, line) } catch { fail(409, 'Import source references are invalid') }
+  if (reference) fail(409, 'This source group is already in an earlier import; open its original mapping')
+}
 export async function acceptImport(ownerId: string, account: any, bytes: Buffer, metadata: any, collectorId?: string) {
   let parsed: ReturnType<typeof parseAmex>, coverage: ReturnType<typeof period>
   try { parsed = parseAmex(bytes, account.cardIdentifiers); coverage = period(metadata) } catch (error: any) { fail(400, error.message) }
   if (metadata.pageCount !== undefined && (!Number.isSafeInteger(Number(metadata.pageCount)) || Number(metadata.pageCount) !== parsed!.rows.length)) fail(400, 'CSV row count does not match Amex page')
-  const existing: any = await FinanceImport.findOne({ accountId: account._id, hash: parsed!.sha256 }).select('_id rowCount').lean()
+  const lookup = { ownerId, accountId: account._id, hash: parsed!.sha256 }
+  const existing: any = await FinanceImport.findOne(lookup).select('_id rowCount').lean()
   if (existing) return { id: existing._id.toString(), rowCount: existing.rowCount, duplicateFile: true }
-  const target = archivePath(parsed!.sha256); await mkdir(path.dirname(target), { recursive: true })
-  const temporary = `${target}.${randomUUID()}.partial`
-  await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 })
-  try { await link(temporary, target) } catch (error: any) { if (error.code !== 'EEXIST') throw error; if (digest(await readFile(target)) !== parsed!.sha256) fail(500, 'Archived file integrity mismatch') }
-  finally { await unlink(temporary) }
-  let batch: any
+  // Import creation and posting/draft writes share the same account lease.
+  const lease = randomUUID()
+  const locked = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ commitLeaseUntil: { $exists: false } }, { commitLeaseUntil: null }, { commitLeaseUntil: { $lte: new Date() } }] }, { $set: { commitLease: lease, commitLeaseUntil: new Date(Date.now() + 60000) } }, { new: true }).lean()
+  if (!locked) fail(409, 'Another import or draft is being saved; retry shortly')
   try {
-    batch = await FinanceImport.create({ ownerId, accountId: account._id, hash: parsed!.sha256, originalName: 'amex-activity.csv', bytes: bytes.length, encoding: parsed!.encoding, parserVersion: parsed!.parserVersion, period: coverage!, rows: parsed!.rows, rowCount: parsed!.rows.length, downloadedAt: new Date(), collectorId })
-  } catch (error: any) { if (error.code !== 11000) throw error; batch = await FinanceImport.findOne({ accountId: account._id, hash: parsed!.sha256 }) }
-  await FinancialAccount.updateOne({ _id: account._id, ownerId }, { $set: { lastSuccessAt: new Date(), lastMessage: `${parsed!.rows.length} rows downloaded` } })
-  return { id: batch._id.toString(), rowCount: batch.rowCount, duplicateFile: false }
+    // Validate against the live card membership after obtaining the lease.
+    try { parsed = parseAmex(bytes, locked.cardIdentifiers) } catch (error: any) { fail(400, error.message) }
+    const retry: any = await FinanceImport.findOne(lookup).select('_id rowCount').lean()
+    if (retry) return { id: String(retry._id), rowCount: retry.rowCount, duplicateFile: true }
+    const previous: any[] = await FinanceImport.find({ ownerId, accountId: account._id, 'rows.fingerprint': { $in: parsed!.rows.map(r => r.fingerprint) } }).select('ownerId accountId hash rows sourceReferences period').limit(101).lean()
+    if (previous.length > 100) fail(409, 'Too many overlapping imports; review the source history first')
+    for (const prior of previous) await importSourceReferences(prior)
+    const data = { _id: new mongoose.Types.ObjectId(), ownerId, accountId: account._id, hash: parsed!.sha256, originalName: 'amex-activity.csv', bytes: bytes.length, encoding: parsed!.encoding, parserVersion: parsed!.parserVersion, period: coverage!, rows: parsed!.rows, rowCount: parsed!.rows.length, downloadedAt: new Date(), collectorId }
+    const sourceReferences = buildSourceReferences(data, previous)
+    const target = archivePath(parsed!.sha256); await mkdir(path.dirname(target), { recursive: true })
+    const temporary = target + '.' + randomUUID() + '.partial'
+    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 })
+    try { await link(temporary, target) } catch (error: any) { if (error.code !== 'EEXIST') throw error; if (digest(await readFile(target)) !== parsed!.sha256) fail(500, 'Archived file integrity mismatch') }
+    finally { await unlink(temporary) }
+    if (!await FinancialAccount.exists({ _id: account._id, ownerId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } })) fail(409, 'Import lease expired; retry')
+    const batch = await FinanceImport.create({ ...data, sourceReferences })
+    await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: lease }, { $set: { lastSuccessAt: new Date(), lastMessage: parsed!.rows.length + ' rows downloaded' } })
+    return { id: batch._id.toString(), rowCount: batch.rowCount, duplicateFile: false }
+  } finally { await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: lease }, { $unset: { commitLease: '', commitLeaseUntil: '' } }) }
 }
 
 async function candidates(account: any, rows: AmexRow[]) {
@@ -111,6 +142,7 @@ export async function reviewImport(ownerId: string, importId: string) {
   const batch = await ownedImport(ownerId, importId)
   const account = await ownedAccount(ownerId, batch.accountId.toString())
   const rows: AmexRow[] = batch.rows
+  const references = await importSourceReferences(batch)
   const [entries, legacy] = await Promise.all([FinanceEntry.find({ accountId: account._id, $or: [{ fingerprint: { $in: rows.map(r => r.fingerprint) } }, { 'row.purchaseDate': { $in: rows.map(r => r.purchaseDate) }, 'row.amount': { $in: rows.map(r => r.amount) } }] }).limit(20001).lean(), candidates(account, rows)])
   if (entries.length > 20000) fail(409, 'Too many source matches; split the import period')
   const byKey = new Map(entries.map((entry: any) => [entry.key, entry]))
@@ -123,7 +155,9 @@ export async function reviewImport(ownerId: string, importId: string) {
     else if (matches.length && row.kind === 'expense') state = 'legacy_review'
     else if (row.kind === 'expense' && entries.some((e: any) => e.fingerprint !== row.fingerprint && e.row.purchaseDate === row.purchaseDate && e.row.cardIdentifier === row.cardIdentifier && e.row.amount === row.amount && e.row.description.normalize('NFC') === row.description.normalize('NFC'))) state = 'correction_review'
     if (manual?.state === 'posted') state = 'posted'
-    return { ...row, state, skipped: batch.decisions?.[String(row.line)] === 'skip', transactionId: manual?.transactionId || entry?.transactionId, existing: matches.map(v => ({ id: v._id.toString(), date: v.date, amount: v.amount, description: v.notes || v.productName || '', cardNumber: v.cardNumber || '' })) }
+    const sourceReference = references.find(g => g.lines.includes(row.line))
+    if (sourceReference) state = sourceReference.state
+    return { ...row, state, ...(sourceReference ? { sourceReference } : {}), skipped: batch.decisions?.[String(row.line)] === 'skip', transactionId: manual?.transactionId || entry?.transactionId, existing: matches.map(v => ({ id: v._id.toString(), date: v.date, amount: v.amount, description: v.notes || v.productName || '', cardNumber: v.cardNumber || '' })) }
   })
   const { commitLease: _lease, commitLeaseUntil: _leaseUntil, ...visibleAccount } = account
   return { id: batch._id.toString(), account: visibleAccount, period: batch.period, rowCount: batch.rowCount, downloadedAt: batch.downloadedAt, hash: batch.hash, mappingPreview: !!batch.mappingPreview, rows: view }
@@ -133,9 +167,11 @@ export async function reviewMapping(ownerId: string, importId: string) {
   const batch = await ownedImport(ownerId, importId)
   const account = await ownedAccount(ownerId, batch.accountId.toString())
   let rows: ReturnType<typeof mappingRows>
-  try { rows = mappingRows(batch) } catch { fail(409, 'Saved mapping does not match the original statement; review the source before continuing') }
+  const sourceReferences = await importSourceReferences(batch)
+  const activeLines = new Set(activeImportRows(batch).map(r => r.line))
+  try { rows = mappingRows(batch).filter(r => activeLines.has(r.line)) } catch { fail(409, 'Saved mapping does not match the original statement; review the source before continuing') }
   const { mappingPreparation } = await import('./financeDraftService')
-  return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, ...await mappingPreparation(ownerId, batch, account, rows!) }
+  return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, sourceReferences, ...await mappingPreparation(ownerId, batch, account, rows!) }
 }
 
 export async function commitImport(ownerId: string, importId: string, body: any) {
@@ -158,6 +194,7 @@ export async function commitImport(ownerId: string, importId: string, body: any)
       const row = rows.get(decision?.line)
       if (!row || seen.has(decision.line) || !['import','skip','link'].includes(decision.action)) fail(400, 'Invalid review decision')
       seen.add(decision.line)
+      if (decision.action !== 'skip') assertEditableImportRow(initial, row.line)
       if (['posted','duplicate'].includes(row.state) || decision.action === 'skip') continue
       if (row.state === 'in_progress') fail(409, 'An earlier import must finish before this row can be reviewed')
       if (row.kind !== 'expense') fail(400, 'Repayments and credits are retained for reconciliation; only spending can be posted here')
@@ -176,6 +213,7 @@ export async function commitImport(ownerId: string, importId: string, body: any)
     }
     for (const decision of body.decisions) {
       const row = rows.get(decision.line)!
+      if (decision.action !== 'skip') assertEditableImportRow(initial, row.line)
       if (row.state === 'posted' || row.state === 'duplicate') { skipped++; continue }
       if (decision.action === 'skip') { await FinanceImport.updateOne({ _id: initial._id, ownerId }, { $set: { [`decisions.${row.line}`]: 'skip' } }); skipped++; continue }
       if (row.kind !== 'expense') fail(400, 'Repayments and credits are retained for reconciliation; only spending can be posted here')

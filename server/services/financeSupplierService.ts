@@ -2,7 +2,7 @@ import mongoose from 'mongoose'
 import SupplierModel from '../models/Supplier'
 import { FinanceMerchantLink } from '../models/FinanceMerchantLink'
 import { FinanceDraft } from '../models/FinanceDraft'
-import { ownedImport, ownedAccount, fail, id } from './financeService'
+import { ownedImport, ownedAccount, fail, id, assertEditableImportRow } from './financeService'
 import { digest } from '../../shared/amex.mjs'
 import { normalizeMerchant } from '../../shared/finance-draft.mjs'
 import { supplierRegistration, resolveSupplier, evidenceUrl } from '../../shared/finance-supplier.mjs'
@@ -20,6 +20,7 @@ async function linkContext(ownerId: string, importId: string, line: number) {
   if (!Number.isSafeInteger(line)) fail(400, '明細行が不正です。')
   const row = batch.rows.find((r: any) => r.line === line)
   if (!row) fail(404, '明細が見つかりません。')
+  assertEditableImportRow(batch, line)
   if (row.kind !== 'expense') fail(400, '支出明細から仕入れ先を確認してください。')
   const merchant = normalizeMerchant(row.description)
   if (!merchant || merchant.length > 1000) fail(400, '利用先の表記を確認してください。')

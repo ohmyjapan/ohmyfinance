@@ -1,3 +1,4 @@
+import {activeImportRows} from '../../shared/finance-import-overlap.mjs'
 import {readDraft,saveDraft} from './financeDraftService'
 import {id,fail,ownedImport} from './financeService'
 import {customerContextEvidence} from './financeLearningService'
@@ -7,7 +8,7 @@ const choice=(d:any,treatment:string)=>{const proposal=customerPurchaseCandidate
 export async function customerReviewPreview(ownerId:string,importIds:any){
  if(!Array.isArray(importIds)||!importIds.length||importIds.length>10||new Set(importIds).size!==importIds.length)fail(400,'表示する明細を選択してください。')
  const batches=[];for(const importId of importIds)batches.push(await ownedImport(ownerId,id(importId)))
- const candidates=batches.flatMap(b=>b.rows.filter((r:any)=>r.kind==='expense').map((r:any)=>({importId:String(b._id),line:r.line}))),limit=candidates.slice(0,160),drafts:any[]=new Array(limit.length);let next=0;
+ const candidates=batches.flatMap(b=>activeImportRows(b).filter((r:any)=>r.kind==='expense').map((r:any)=>({importId:String(b._id),line:r.line}))),limit=candidates.slice(0,160),drafts:any[]=new Array(limit.length);let next=0;
  await Promise.all(Array.from({length:Math.min(4,limit.length)},async()=>{while(next<limit.length){const i=next++,r=limit[i];drafts[i]=await readDraft(ownerId,r.importId,r.line)}}))
  const contexts=await customerContextEvidence(ownerId),groups=new Map<string,any>();
  for(const d of drafts){const context=customerGoodsContext(d);if(!context)continue;const groupId=digest(customerReviewGroup(context));if(!groups.has(groupId))groups.set(groupId,{id:groupId,...context,workflow:contexts.filter((c:any)=>c.customerId===context.customerId),rows:[]});groups.get(groupId).rows.push({importId:d.importId,line:d.line,date:d.source.purchaseDate,amount:d.source.amount,mappingReason:context.mappingReason,originalCategory:context.originalCategory,historyGap:context.historyGap||null,choices:customerTreatments.map(t=>choice(d,t.id)).filter(Boolean)})}

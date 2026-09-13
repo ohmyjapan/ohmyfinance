@@ -43,6 +43,7 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
+  if(process.env.OMF_TEST_IMPORT_OVERLAP_ONLY){await require('./finance-import-overlap-integration.cjs')({db,call,request,upload,token,other,pass,csv,row,origin,root});console.log(checks+' targeted source overlap checks passed');return;}
   if(process.env.OMF_TEST_CUSTOMER_REVIEW_ONLY){await require('./finance-customer-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted customer review checks passed');return;}
   if(process.env.OMF_TEST_SERVICE_REVIEW_ONLY){await require('./finance-service-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted service review checks passed');return;}
   if(process.env.OMF_TEST_DOCUMENTS_ONLY){await require('./finance-document-evidence-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted document checks passed');return;}
@@ -63,7 +64,7 @@ async function main(){
   assert.equal((await request('imports/'+batchId+'/commit',{decisions})).status,200);assert.equal(await db.collection('transactions').countDocuments(),3);
   const tx=await db.collection('transactions').findOne({cardNumber:'3456'});assert.equal(tx.type,'支出');assert.equal(tx.metadata.originalCardIdentifier,'23456');assert.equal(tx.metadata.processingDate,'2026-08-03');pass('repayments cannot post; concurrent retries preserve identical purchases and supplementary-card attribution');
   const overlapping=await upload(csv([row(),row({2:'New purchase',5:'42'})]),'?kind=recent&start=2026-08-01&end=2026-08-31');
-  const overlapView=(await request('imports/'+overlapping.data.id,undefined,'GET')).data;assert.equal(overlapView.rows[0].state,'overlap_review');
+  const overlapView=(await request('imports/'+overlapping.data.id,undefined,'GET')).data;assert.equal(overlapView.rows[0].state,'source_overlap_review');
   assert.equal((await request('imports/'+overlapping.data.id+'/commit',{decisions:[{line:2,action:'import'}]})).status,409);
   await request('imports/'+overlapping.data.id+'/commit',{decisions:[{line:2,action:'skip'}]});
   assert.equal((await request('imports/'+overlapping.data.id+'/commit',{decisions:[{line:2,action:'import'}]})).status,409);pass('overlapping snapshots require an explicit decision even after a row was deferred');
