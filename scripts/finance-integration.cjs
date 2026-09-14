@@ -44,6 +44,7 @@ async function main(){
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
   if(process.env.OMF_TEST_IMPORT_OVERLAP_ONLY){await require('./finance-import-overlap-integration.cjs')({db,call,request,upload,token,other,pass,csv,row,origin,root});console.log(checks+' targeted source overlap checks passed');return;}
+  if(process.env.OMF_TEST_INVENTORY_REVIEW_ONLY){await require('./finance-inventory-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted inventory review checks passed');return;}
   if(process.env.OMF_TEST_CUSTOMER_REVIEW_ONLY){await require('./finance-customer-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted customer review checks passed');return;}
   if(process.env.OMF_TEST_SERVICE_REVIEW_ONLY){await require('./finance-service-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted service review checks passed');return;}
   if(process.env.OMF_TEST_DOCUMENTS_ONLY){await require('./finance-document-evidence-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted document checks passed');return;}
@@ -172,6 +173,7 @@ async function main(){
   await require('./finance-document-evidence-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
   await require('./finance-customer-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
   await require('./finance-service-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
+  await require('./finance-inventory-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
   console.log(`${checks} finance integration checks passed`);
  }catch(error){console.error(error);console.error(logs.slice(-3500));process.exitCode=1;}
  finally{if(child && child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended;}if(client)await client.close();if(mongo)await mongo.stop();if(directory){if(!path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe test cleanup');await fsp.rm(directory,{recursive:true,force:true});}}

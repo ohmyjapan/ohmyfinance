@@ -57,6 +57,7 @@
           </div>
         </details>
 
+        <InventoryMatches :import-ids="batches.map(batch => batch.id)" />
         <CustomerMappingReview :import-ids="batches.map(batch => batch.id)" @saved="refreshSupplierRows" />
         <ServiceMappingReview :import-ids="batches.map(batch => batch.id)" @saved="refreshSupplierRows" />
         <DocumentMatches v-for="batch in batches" :key="'docs-'+batch.id" :import-id="batch.id" :account-name="batch.account.name" />
@@ -190,6 +191,7 @@ import StatCard from '~/components/dashboard/StatCard.vue'
 import CardAccounting from '~/components/finance/CardAccounting.vue'
 import DocumentMatches from '~/components/finance/DocumentMatches.vue'
 import CustomerMappingReview from '~/components/finance/CustomerMappingReview.vue'
+import InventoryMatches from '~/components/finance/InventoryMatches.vue'
 import ServiceMappingReview from '~/components/finance/ServiceMappingReview.vue'
 import PurchaseAccountEvidence from '~/components/finance/PurchaseAccountEvidence.vue'
 import { useUserStore } from '~/stores/user'

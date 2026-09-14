@@ -51,3 +51,15 @@ npm run test:finance:integration
 ```
 
 Integration tests use synthetic records and an isolated temporary MongoDB. They cover source binding, owner boundaries, field validation, concurrent saves, scoped learning, private files, full-field posting, recovery, and historical links. Set `OMF_TEST_CHROME_PORT` to an existing real Chrome debugging port for form interaction, save/reload, attachment display and mobile/desktop theme checks. `OMF_TEST_SCREENSHOT` optionally writes screenshots to a private location.
+
+## Inventory item review
+
+Mapping and draft pages show privately seeded inventory candidates from `financeinventorymatches`. The packet includes stock rows, publication sources, capture time and estimated item/shipping amounts. Null shipping keeps the order total and difference unknown. Catalog amounts never fill transaction prices, tax or invoice fields.
+
+Each record is owner/account/import/line scoped and bound to the immutable row key, file hash and packet hash. GET is read-only. User decisions require both review and draft revisions, the current customer/purpose context and the account commit lease. Posted or reserved rows are locked. Confirm/correct/reject/pending decisions retain history in this collection and do not approve or post transactions. A separate button stages only the chosen product name in the existing draft form; saving remains explicit.
+
+Future candidate reviews retrieve prior decisions only for the same owner, account, normalized merchant, exact recorded product code and unchanged customer/purpose context. Rejections are shown as negative evidence. Returning a decision to pending removes it from reuse. Past decisions are displayed for review, never silently applied to another purchase.
+
+Operator preparation must validate packets with `validateInventoryPacket`, bind them against the original statement, check source overlap, and use insert-only writes. Back up private packets and this collection outside the public repository. Never commit real customer data or overwrite an existing decision when refreshing evidence.
+
+Verification: build, then `OMF_TEST_INVENTORY_REVIEW_ONLY=1 node scripts/finance-integration.cjs`; optional `OMF_TEST_CHROME_PORT` exercises real Chrome with synthetic data and an isolated MongoDB.

@@ -265,6 +265,16 @@ async function writable(ctx: any, revision: unknown, key: unknown, hash: unknown
   const review = await reviewImport(ctx.ownerId, ctx.importId)
   if (['posted', 'duplicate', 'in_progress'].includes(review.rows.find((r: any) => r.line === ctx.line)!.state)) fail(409, '登録済みまたは他の取込で使用中の明細です。')
 }
+// Inventory decisions share the account lease with draft saves and ledger posting.
+// The callback stores review history only; applying a name remains an explicit draft edit.
+export async function withWritableDraft<T>(ownerId: string, importId: string, line: number, identity: any, action: (draft: any, check: () => Promise<void>) => Promise<T>) {
+  return withLease(await context(ownerId, importId, line), async check => {
+    const ctx = await context(ownerId, importId, line)
+    await writable(ctx, identity.revision, identity.key, identity.sourceHash)
+    return action(await view(ctx), check)
+  })
+}
+
 export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean, channel?: 'web' }, serviceReviewKey?: string, customerReviewChoice?: {key:string,treatment:string}) {
   const initial = await context(ownerId, importId, line)
   return withLease(initial, async check => {

@@ -1,4 +1,5 @@
 import mongoose, { Schema } from 'mongoose'
+import { FinanceInventoryMatch } from './FinanceInventoryMatch'
 import { FinanceMerchantLink } from './FinanceMerchantLink'
 import { FinanceDraft, FinanceDocument } from './FinanceDraft'
 import { FinanceReview, FinanceReviewAgent, FinanceHistory } from './FinanceReview'
@@ -54,5 +55,5 @@ export const FinanceImport = (mongoose.models.FinanceImport as mongoose.Model<mo
 export const FinanceEntry = (mongoose.models.FinanceEntry as mongoose.Model<mongoose.InferSchemaType<typeof entry>>) || mongoose.model('FinanceEntry', entry)
 
 export async function initializeFinance() {
-  await Promise.all([FinanceMerchantLink.init(), FinancialAccount.init(), FinanceCollector.init(), FinanceImport.init(), FinanceEntry.init(), FinanceDraft.init(), FinanceDocument.init(), FinanceReview.init(), FinanceReviewAgent.init(), FinanceHistory.init()])
+  await Promise.all([FinanceInventoryMatch.init(), FinanceMerchantLink.init(), FinancialAccount.init(), FinanceCollector.init(), FinanceImport.init(), FinanceEntry.init(), FinanceDraft.init(), FinanceDocument.init(), FinanceReview.init(), FinanceReviewAgent.init(), FinanceHistory.init()])
 }

@@ -21,6 +21,7 @@
       <p v-if="!isExpense" class="card p-6 text-sm text-gray-600 dark:text-gray-300">この明細は照合用に保持されています。返済・返金を支出として登録することはできません。</p>
       <template v-else>
         <button type="button" class="btn btn-secondary mb-6 text-sm" data-open-purchase-assistant @click="assistant.show({kind:'draft',importId,line})">この購入をOMFに相談</button>
+        <InventoryMatches :draft="draft" :disabled="dirty || busy" @use-name="useInventoryName" />
         <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
         <CardAccounting v-if="draft.cardAccounting" :card="draft.cardAccounting" :account-name="draft.source.account.name" :values="values" :references="draft.references" :changed="draft.cardAccountingChanged" />
         <section v-if="draft.purchaseHistory?.status === 'review'" class="card mb-6 p-4 sm:p-6" data-purchase-account-review><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">購入科目の確認</h2><p class="mt-2 text-xs text-amber-700 dark:text-amber-400">{{ draft.purchaseHistory.reason }}</p><PurchaseAccountEvidence :history="draft.purchaseHistory" /></section>
@@ -97,6 +98,7 @@ import DraftField from '~/components/finance/DraftField.vue'
 import DocumentList from '~/components/finance/DocumentList.vue'
 import {useAssistantStore} from '~/stores/assistant'
 import PurchaseReview from '~/components/finance/PurchaseReview.vue'
+import InventoryMatches from '~/components/finance/InventoryMatches.vue'
 import SupplierMemory from '~/components/finance/SupplierMemory.vue'
 import AccountingReview from '~/components/finance/AccountingReview.vue'
 import CardAccounting from '~/components/finance/CardAccounting.vue'
@@ -145,6 +147,7 @@ function chooseAccounting(id: string) { if (!busy.value && !draft.value.locked) 
 function rememberField(key: string, checked: boolean) { remember.value = checked ? [...new Set([...remember.value, key])] : remember.value.filter(f => f !== key) }
 function applySuggestion(suggestion: any) { const pair = suggestion.evidence?.classification; if (pair && ['purpose','customerId'].includes(suggestion.field)) { values.value.purpose = pair.purpose; values.value.customerId = pair.customerId; changedField('customerId'); return } values.value[suggestion.field] = clone(suggestion.value); changedField(suggestion.field) }
 function updateDocument(doc:any) { const index=draft.value.documents.findIndex((d:any)=>d.id===doc.id);if(index>=0)draft.value.documents[index]=doc }
+function useInventoryName(name: string) { if (dirty.value || busy.value || draft.value.locked) return; values.value.productName = name; changedField('productName'); message.value = '商品名を反映しました。下書きを保存してください。' }
 function useDocument(selection:any) { for(const field of selection.fields){values.value[field.key]=clone(field.value);documentEvidence.value[field.key]=selection.documentId;documentSelections.value[field.key]={documentId:selection.documentId,hash:selection.hash,record:selection.record}} message.value='書類候補を反映しました。内容を確認して下書きを保存してください。' }
 watch([values,documentEvidence],()=>{for(const [key,selection] of Object.entries(documentSelections.value)){if(!selection)continue;const doc=draft.value?.documents.find((d:any)=>d.id===selection.documentId),field=doc?.reading?.records?.find((r:any)=>r.index===selection.record)?.fields.find((f:any)=>f.key===key);if(!field||!sameValue(values.value[key],field.value)||documentEvidence.value[key]!==selection.documentId)documentSelections.value[key]=null}},{deep:true})
 const identity = () => ({ revision: draft.value.revision, key: draft.value.key, sourceHash: draft.value.sourceHash, cardAccountingKey: draft.value.cardAccounting?.key })
