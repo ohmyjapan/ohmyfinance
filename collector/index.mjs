@@ -79,9 +79,20 @@ export async function startCollector() {
       if(req.headers.host!==`127.0.0.1:${port}` || (req.headers.origin && req.headers.origin!==origin))return reply(403,{error:'Local setup access required'});
       if(req.method==='GET' && ['/','/setup.js'].includes(req.url)) {res.setHeader('Content-Type',req.url==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');res.end(await readFile(fileURLToPath(new URL(req.url==='/'?'./setup.html':'./setup.js',import.meta.url))));return;}
       if(req.headers['x-setup-key']!==setupKey)return reply(403,{error:'Reopen the setup screen from the collector launch link'});
-      if(req.method==='GET' && req.url==='/status') {const config=await vault.read();let info=config.accountInfo || [];if(config.token)try{info=(await api(config,'accounts')).accounts;}catch{}return reply(200,{message,baseUrl:config.baseUrl,busy:running,yayoi:{...yayoiState,hasCredentials:!!config.services?.yayoi?.password},accounts:info.map(a=>({id:a.primaryCard,name:a.name,hasCredentials:!!config.accounts?.[a.primaryCard]?.password}))});}
+      if(req.method==='GET' && req.url==='/status') {const config=await vault.read();let info=config.accountInfo || [];if(config.token)try{info=(await api(config,'accounts')).accounts;}catch{}return reply(200,{message,baseUrl:config.baseUrl,busy:running,aplus:{hasCredentials:!!config.services?.aplus?.password},yayoi:{...yayoiState,hasCredentials:!!config.services?.yayoi?.password},accounts:info.map(a=>({id:a.primaryCard,name:a.name,hasCredentials:!!config.accounts?.[a.primaryCard]?.password}))});}
       if(req.method==='POST' && req.url==='/pair') {const body=await json(req);if(!/^omfc_[a-f\d]{64}$/.test(body.token))throw new Error('Invalid collector token');const config={baseUrl:validateOrigin(body.baseUrl),token:body.token};const {accounts}=await api(config,'accounts');await vault.update(old=>({...old,...config,accountInfo:accounts.map(a=>({primaryCard:a.primaryCard,name:a.name}))}));return reply(200,{saved:true});}
       if(req.method==='POST' && req.url==='/credentials') {const body=await json(req);if(!/^\d{5}$/.test(body.accountId)||![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256))throw new Error('Enter both Amex user ID and password');await vault.update(old=>{if(!old.accountInfo?.some(a=>a.primaryCard===body.accountId))throw new Error('Unknown account');return {...old,accounts:{...old.accounts,[body.accountId]:{...old.accounts?.[body.accountId],username:body.username,password:body.password}}};});return reply(200,{saved:true});}
+      if(req.method==='GET' && req.url==='/aplus/status') {const config=await vault.read();return reply(200,{busy:running,aplus:{hasCredentials:!!config.services?.aplus?.password}});}
+      if(req.method==='POST' && req.url==='/aplus/credentials') {
+        if(running)return reply(409,{error:'Wait for the current collector action to finish'});
+        const body=await json(req);
+        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['username','password'].includes(k)) || ![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256) || !body.username.trim())throw new Error('Enter both Aplus ID and password');
+        await vault.update(old=>{
+          if(running)throw new Error('Wait for the current collector action to finish');
+          return {...old,services:{...old.services,aplus:{...old.services?.aplus,username:body.username.trim(),password:body.password}}};
+        });
+        return reply(200,{saved:true});
+      }
       if(req.method==='GET' && req.url==='/yayoi/status') {const config=await vault.read();return reply(200,{busy:running,yayoi:{...yayoiState,hasCredentials:!!config.services?.yayoi?.password}});}
       if(req.method==='POST' && req.url==='/yayoi/credentials') {
         if(running)return reply(409,{error:'Wait for the current collector action to finish'});

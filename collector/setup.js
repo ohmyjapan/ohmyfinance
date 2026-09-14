@@ -5,7 +5,7 @@ async function call(route,body) {
   const data=await response.json(); if(!response.ok)throw Error(data.error || 'Request failed');return data;
 }
 async function refresh() {
-  const data=await call('/status');status.textContent=data.message;showYayoi(data.yayoi,data.busy);
+  const data=await call('/status');status.textContent=data.message;showYayoi(data.yayoi,data.busy);showAplus(data.aplus,data.busy);
   document.querySelector('#url').value=data.baseUrl || '';
   const main=document.querySelector('#accounts');main.replaceChildren();
   for(const account of data.accounts) {
@@ -45,4 +45,19 @@ document.querySelector('#yayoi-open').onclick=async()=>{
   const button=document.querySelector('#yayoi-open');button.disabled=true;
   try{await call('/yayoi/open',{});await refreshYayoi();}catch(error){showYayoiError(error);button.disabled=false;}
 };
-refresh().catch(error=>{status.textContent=error.message;showYayoiError(error);});
+let aplusTimer;
+function showAplus(data,busy) {
+  document.querySelector('#aplus-saved').textContent=data.hasCredentials?'Login saved encrypted. Enter both fields to replace it.':'Enter the login you use for My APLUS.';
+  document.querySelector('#aplus-save').disabled=!!busy;
+  clearTimeout(aplusTimer);
+  if(busy)aplusTimer=setTimeout(()=>refreshAplus().catch(error=>{document.querySelector('#aplus-status').textContent=error.message;}),2000);
+}
+async function refreshAplus() {const data=await call('/aplus/status');showAplus(data.aplus,data.busy);}
+document.querySelector('#aplus-form').onsubmit=async e=>{
+  e.preventDefault();const button=document.querySelector('#aplus-save'),username=document.querySelector('#aplus-username'),password=document.querySelector('#aplus-password');
+  button.disabled=true;
+  try {await call('/aplus/credentials',{username:username.value,password:password.value});username.value='';password.value='';document.querySelector('#aplus-status').textContent='Aplus login saved encrypted on this computer.';await refreshAplus();}
+  catch(error){document.querySelector('#aplus-status').textContent=error.message;button.disabled=false;}
+  finally{password.value='';}
+};
+refresh().catch(error=>{status.textContent=error.message;showYayoiError(error);document.querySelector('#aplus-status').textContent=error.message;});
