@@ -31,11 +31,21 @@ Jobs are owner/account scoped and leased to one worker. Expired work retries onc
 
 Public fetches permit only HTTPS public IPv4 destinations, pin DNS results, bound sizes/time, and refuse registry scraping. Public browser pages use the same request checks. Browser sign-in expiry, missing connections, rate limits, and ambiguous purchase evidence can still require attention; unsupported fields remain unresolved.
 
+## Purpose proposals and correction
+
+Purpose uses three stored choices: **customer** for a customer purchase, **company** for the company's own operating use or expense, and **unresolved** when available evidence cannot distinguish them. The output schema restricts the JSON-encoded purpose to those choices. Explanations belong in the finding reason. Generic business spending does not identify which purpose applies.
+
+The schema, research prompt and correction feedback share these meanings with draft validation. Customer and purpose findings are validated together; an unregistered customer or a nonempty customer under another purpose is rejected. Applying only an inconsistent subset remains blocked. Unknown customer identity stays empty and needs clarification.
+
+New failed evaluations can retain validated captured sources, runtime and a bounded failure code. The page explains the failure and whether correction was attempted. Failed outputs never become reports or scores. Older runs retain their original records and generic failure state. Missing or rejected diagnostic evidence falls back to a failure without those details.
+
+These checks establish output compatibility and validation behavior. A new run with unchanged references is still needed to measure real purchase agreement. A prompt reminder about incomplete spreadsheet searches does not prove that explanations correctly respect those limits.
+
 ## Validation
 
 ```powershell
 npm run build
-node --test scripts/finance-research.test.mjs scripts/finance-supplier.test.mjs
+node --test scripts/finance-research.test.mjs scripts/finance-research-purpose.test.mjs scripts/finance-supplier.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
 ```

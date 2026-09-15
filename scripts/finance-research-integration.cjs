@@ -5,6 +5,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
  const base='/api/finance-research/imports/'+importId+'/drafts/2',draftPath='/api/finance/imports/'+importId+'/drafts/2';
  const getDraft=async()=>(await call(draftPath,{token})).data,bind=d=>({revision:d.revision,key:d.key,sourceHash:d.sourceHash});
  assert.equal((await call(base)).status,401);assert.equal((await call(base,{token:other})).status,404);assert.equal((await call(base,{token:deviceToken})).status,401);
+ const customerId=(await db.collection('customers').insertOne({name:'Synthetic customer',isActive:true})).insertedId.toString();
  const counts={tx:await db.collection('transactions').countDocuments(),entries:await db.collection('financeentries').countDocuments()};
  const workerInfo=await call('/api/finance-chat/agents',{method:'POST',token,body:{accountIds:[String(account._id)],researchEnabled:true}});assert.equal(workerInfo.status,200);
  const worker=workerInfo.data.token,workerCall=(route,body={})=>call('/api/finance-research/worker/'+route,{method:'POST',token:worker,body});
@@ -54,6 +55,13 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
 
  const original=await fetch(origin+'/api/finance-research/'+job.id+'/artifacts/'+artifact.artifactId,{headers:{Authorization:'Bearer '+token}});assert.equal(original.status,200);assert.deepEqual(Buffer.from(await original.arrayBuffer()),pdf);
  assert.equal((await call('/api/finance-research/'+job.id+'/artifacts/'+artifact.artifactId,{token:other})).status,404);
+ const pairImport=await upload(csv([row({2:'Synthetic customer-purpose pairing',5:'4600'})]));assert.equal(pairImport.status,200);const pairBase='/api/finance-research/imports/'+pairImport.data.id+'/drafts/2',pairDraftPath='/api/finance/imports/'+pairImport.data.id+'/drafts/2',pairDraft=(await call(pairDraftPath,{token})).data;
+ const pairQueued=await call(pairBase,{method:'POST',token,body:{...bind(pairDraft),researchRevision:0,requestId:crypto.randomUUID(),instruction:'Synthetic paired classification'}});assert.equal(pairQueued.status,200);const pairJob=(await workerCall('claim')).data.job;assert(pairJob.context.references.customers.some(c=>c._id===customerId));
+ const pairReport={summary:'Synthetic paired classification',question:'',supplier:null,findings:[['customerId',customerId],['purpose','customer']].map(([field,value])=>({field,valueJson:JSON.stringify(value),reason:'Synthetic customer purchase',basis:'reasoned',citations:[citation]}))};
+ assert.equal((await workerCall(pairJob.id+'/result',{lease:pairJob.lease,sources:[...pairJob.sources,source],report:pairReport})).status,200);const pairView=(await call(pairBase,{token})).data,applyPair={...bind(pairDraft),researchRevision:pairView.research.revision,confirm:true};
+ const badSubset=await call(pairBase+'/apply',{method:'POST',token,body:{...applyPair,fields:['customerId']}});assert(badSubset.status>=400);assert.equal((await call(pairDraftPath,{token})).data.revision,pairDraft.revision);
+ const appliedPair=await call(pairBase+'/apply',{method:'POST',token,body:{...applyPair,fields:['customerId','purpose']}});assert.equal(appliedPair.status,200,JSON.stringify(appliedPair));assert.equal(appliedPair.data.draft.values.purpose,'customer');assert.equal(appliedPair.data.draft.values.customerId,customerId);assert.equal(appliedPair.data.draft.approvedAt,null);
+ pass('customer and purpose proposals are accepted together while inconsistent selected subsets cannot change the draft');
  const confirmation={...bind(d),researchRevision:view.research.revision,confirm:true,fields:['productName','invoiceNumber']};
  const applied=await call(base+'/apply',{method:'POST',token,body:confirmation});assert.equal(applied.status,200,JSON.stringify(applied));assert.equal(applied.data.draft.values.productName,'Table');assert.equal(applied.data.draft.approvedAt,null);assert.equal(applied.data.draft.evidence.productName.source,'research');
  const repeated=await call(base+'/apply',{method:'POST',token,body:confirmation});assert.equal(repeated.status,200);assert.equal(repeated.data.draft.revision,1);

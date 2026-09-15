@@ -9,7 +9,7 @@ caseSchema.index({ownerId:1,importId:1,line:1},{unique:true})
 const runSchema=new Schema({
  ownerId:{type:oid,required:true},accountId:{type:oid,required:true},caseId:{type:oid,required:true},caseRevision:Number,
  batchId:{type:String,required:true},selectionHash:String,title:String,definition:mixed,context:mixed,binding:mixed,
- state:{type:String,default:'queued'},sources:{type:[mixed],default:[]},report:mixed,score:mixed,runtime:mixed,
+ state:{type:String,default:'queued'},sources:{type:[mixed],default:[]},report:mixed,score:mixed,runtime:mixed,diagnostic:mixed,
  agentId:oid,lease:String,leaseUntil:Date,attempts:{type:Number,default:0},events:{type:[mixed],default:[]},failure:String
 },{timestamps:true})
 runSchema.index({ownerId:1,batchId:1,caseId:1},{unique:true})

@@ -1,5 +1,10 @@
 // The mapper and its editor share the same explicit transaction field contract.
 // Financial source values are immutable; only accounting decisions are editable.
+export const purposeChoices = [
+  { value: 'customer', label: '顧客購入', meaning: 'Purchased for a customer, including goods acquired for that customer’s order or resale. Use only when evidence supports customer use; a generic business purchase is insufficient.' },
+  { value: 'company', label: '自社経費', meaning: 'Purchased for the company’s own operating use or expense. Business-related spending alone does not distinguish this from a customer purchase.' },
+  { value: 'unresolved', label: '未確認', meaning: 'Evidence cannot distinguish customer purchase from company operating use. Keep unresolved or omit the finding; do not guess from the word business or from unassigned resale stock.' }
+];
 export const fields = [
   { key: 'purpose', label: '用途', group: 'classification', kind: 'purpose' },
   { key: 'customerId', label: '顧客', group: 'classification', kind: 'reference', ref: 'customers' },
@@ -65,7 +70,7 @@ export function validateValues(input) {
       });
     } else values[field.key] = text(v, field.kind === 'textarea' ? 10000 : 1000);
   }
-  if (!['customer', 'company', 'unresolved'].includes(values.purpose)) throw Error('用途を選択してください。');
+  if (!purposeChoices.some(choice => choice.value === values.purpose)) throw Error('用途を選択してください。');
   if (values.purpose !== 'customer' && values.customerId) throw Error('顧客購入以外の顧客IDは空欄にしてください。');
   if (!['completed', 'pending', 'processing', 'failed', 'cancelled'].includes(values.status)) throw Error('取引ステータスを選択してください。');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(values.date) || !Number.isFinite(Date.parse(values.date)) || new Date(values.date).toISOString().slice(0, 10) !== values.date) throw Error('有効な計上日を入力してください。');

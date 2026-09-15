@@ -1,4 +1,5 @@
 export interface DraftField { key: string; label: string; group: string; kind: string; ref?: string; learn?: boolean }
+export const purposeChoices: {value: string; label: string; meaning: string}[];
 export const fields: DraftField[];
 export const learnedFields: string[];
 export function normalizeMerchant(value: unknown): string;

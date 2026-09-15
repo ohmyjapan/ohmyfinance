@@ -5,7 +5,7 @@ import {FinanceDraft} from '../models/FinanceDraft'
 import {ready,fail,id} from './financeService'
 import {readDraft,downloadDocument} from './financeDraftService'
 import {digest} from '../../shared/amex.mjs'
-import {validateSources,validateReport,parseRegistry} from '../../shared/finance-research.mjs'
+import {validateSources,validateReport,parseRegistry,validateDiagnostic} from '../../shared/finance-research.mjs'
 import {validateEvaluationCase,evaluationContext,scoreEvaluation,evaluationSummary} from '../../shared/finance-evaluation.mjs'
 const uuid=(v:any)=>typeof v==='string'&&/^[a-f0-9-]{36}$/.test(v)
 async function init(){await ready();await Promise.all([Case.init(),Run.init()])}
@@ -83,16 +83,23 @@ export async function evaluationDocument(agent:any,runId:string,body:any){
 }
 export async function finishEvaluation(agent:any,runId:string,body:any){
  const filter=workerFilter(agent,runId,body.lease),r:any=await Run.findOne(filter).lean();if(!r)fail(409,'Evaluation lease expired')
- let report=null,sources=r.sources,score=null,runtime=null
- if(body.failed!==true){try{
+ let report=null,sources=r.sources,score=null,runtime=null,diagnostic=null
+ try{
+ if(body.failed!==true||body.sources!==undefined){
   sources=validateSources(body.sources)
   if(sources[0]?.id!=='s0'||sources[0]?.kind!=='context'||sources[0]?.text!==r.sources[0].text||sources[0]?.hash!==r.sources[0].hash||sources.reduce((n:number,s:any)=>n+s.text.length,0)>400000||sources.some((s:any)=>digest(s.text)!==s.hash||Date.parse(s.capturedAt)>Date.now()||s.documentId&&!r.context.documents.some((d:any)=>d.id===s.documentId)))throw Error('Evidence changed')
+ }
+ if(body.failed!==true){
   report=validateReport(body.report,r.context,sources)
   if(body.registry){const s=sources.find((s:any)=>s.id===body.registry.sourceId&&s.kind==='registry');if(!s||s.url!=='https://web-api.invoice-kohyo.nta.go.jp/1/valid'||body.registry.date!==r.context.source.purchaseDate)throw Error('Registry evidence changed');parseRegistry(JSON.parse(s.text),body.registry.number,body.registry.date)}
   score=scoreEvaluation(r.definition,report,sources)
+ }
+ if(body.failed!==true||body.runtime!==undefined){
   const m=body.runtime;if(!m||!Array.isArray(m.models)||m.models.length>8||m.models.some((x:any)=>typeof x!=='string'||!/^[a-zA-Z0-9_.:[\]-]{1,100}$/.test(x))||!/^[a-f0-9]{64}$/.test(m.promptHash)||!/^[a-f0-9]{64}$/.test(m.implementationHash)||!Number.isFinite(m.durationMs)||m.durationMs<0||m.durationMs>600000)throw Error('Missing evaluation runtime')
   runtime={models:m.models,promptHash:m.promptHash,implementationHash:m.implementationHash,durationMs:m.durationMs}
- }catch{fail(400,'評価結果の引用・項目・実行情報を検証できません。')}}
- const saved=await Run.updateOne(filter,{$set:{state:report?'complete':'failed',report,sources,score,runtime,failure:report?'':'research_failed'},$unset:{lease:'',leaseUntil:''}})
+ }
+ if(body.failed===true&&body.diagnostic!==undefined)diagnostic=validateDiagnostic(body.diagnostic)
+ }catch{fail(400,'評価結果の引用・項目・実行情報を検証できません。')}
+ const saved=await Run.updateOne(filter,{$set:{state:report?'complete':'failed',report,sources,score,runtime,diagnostic,failure:report?'':'research_failed'},$unset:{lease:'',leaseUntil:''}})
  if(!saved.matchedCount)fail(409,'Evaluation changed');return {success:true}
 }
