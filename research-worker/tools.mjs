@@ -8,13 +8,14 @@ import {interpretDocument} from '../teaching-worker/document-interpreter.mjs';
 import {publicGet,htmlText} from './http.mjs';
 import {readBrowserPage} from './browser.mjs';
 import {searchBrowserSheet} from './sheets.mjs';
+import {matchSheetRows} from './search-evidence.mjs';
 import {parseRegistry} from '../shared/finance-research.mjs';
 const require=createRequire(new URL('../collector/package.json',import.meta.url));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const obj=properties=>({type:'object',properties,additionalProperties:false,required:Object.keys(properties)});
 const str={type:'string'};
 export const toolDefinitions=[
- {name:'search_spreadsheet',description:'Search an authorized finance or inventory spreadsheet. Returns literal rows and row numbers; missing prices remain unknown.',inputSchema:obj({source:{type:'string',enum:['finance','inventory','shipping']},terms:{type:'array',items:str,maxItems:5},withinPurchaseWindow:{type:'boolean'}})},
+ {name:'search_spreadsheet',description:'Search an authorized finance, inventory or shipping spreadsheet. ALL terms must match the same row (AND). Use fewer terms for broader discovery. The optional window requires a parseable row date within seven days of purchase. Returns rows plus query scope and omissions; zero matches never proves absence, and missing prices remain unknown.',inputSchema:obj({source:{type:'string',enum:['finance','inventory','shipping']},terms:{type:'array',items:str,maxItems:5},withinPurchaseWindow:{type:'boolean'}})},
  {name:'read_browser_page',description:'Read a JavaScript supplier or receipt page in real Chrome. GET-only requests; optional receipt PDF preservation.',inputSchema:obj({url:str,preservePdf:{type:'boolean'}})},
  {name:'read_page',description:'Read a public supplier or company HTTPS page and capture literal text. No government registry scraping.',inputSchema:obj({url:str})},
  {name:'search_mail',description:'Search authorized purchase mail within seven days of this purchase; only merchant/order terms.',inputSchema:obj({terms:str})},
@@ -66,11 +67,11 @@ export class ResearchTools {
    if(!Array.isArray(args.terms)||!args.terms.length||args.terms.length>5||args.terms.some(t=>typeof t!=='string'||!t.trim()||t.length>100))throw Error('Use one to five specific spreadsheet terms');
    if(this.config.spreadsheetBrowserProfile){const result=await searchBrowserSheet(this.config,args.source,args.terms,this.job.context.source.purchaseDate,args.withinPurchaseWindow!==false);return this.add('spreadsheet',args.source+' / '+result.sheet,JSON.stringify(result),'https://docs.google.com/spreadsheets/d/'+spreadsheetId+'/edit#gid='+result.gid);}
    await this.mailbox();const {google}=require('googleapis'),sheets=google.sheets({version:'v4',auth:this.googleAuth});this.sheetsCache ||= new Map();
-   let sheet=this.sheetsCache.get(spreadsheetId);
-   if(!sheet){try{const meta=await sheets.spreadsheets.get({spreadsheetId,fields:'sheets.properties'});const title=meta.data.sheets[0].properties.title,range="'"+title.replaceAll("'","''")+"'!A1:AZ50000";const response=await sheets.spreadsheets.values.get({spreadsheetId,range,valueRenderOption:'FORMATTED_VALUE'});sheet={title,rows:response.data.values||[]};this.sheetsCache.set(spreadsheetId,sheet)}catch{throw Error('Spreadsheet access is not authorized on this connection')}}
-   const norm=v=>String(v).normalize('NFKC').toLowerCase().replace(/[ ,\t]/g,''),terms=args.terms.map(norm),matches=[];
-   for(let i=0;i<sheet.rows.length;i++){const text=norm(sheet.rows[i].join(' | '));if(terms.every(t=>text.includes(t)))matches.push({row:i+1,values:sheet.rows[i]})}
-   return this.add('spreadsheet',args.source+' / '+sheet.title,JSON.stringify({sheet:sheet.title,firstRows:sheet.rows.slice(0,3),matches:matches.slice(0,25),matchCount:matches.length,truncated:matches.length>25||sheet.rows.length===50000}),'https://docs.google.com/spreadsheets/d/'+spreadsheetId+'/edit');
+   const title=this.config.spreadsheetTabs?.[args.source];if(!title)throw Error('Configured spreadsheet tab is unavailable');
+   const cacheKey=JSON.stringify([spreadsheetId,title]);let sheet=this.sheetsCache.get(cacheKey);
+   if(!sheet){try{const meta=await sheets.spreadsheets.get({spreadsheetId,fields:'sheets.properties'}),selected=meta.data.sheets.find(s=>s.properties.title===title);if(!selected)throw Error('Missing tab');const range="'"+title.replaceAll("'","''")+"'!A1:AZ50000",response=await sheets.spreadsheets.values.get({spreadsheetId,range,valueRenderOption:'FORMATTED_VALUE'});sheet={title,gid:selected.properties.sheetId,rows:response.data.values||[]};this.sheetsCache.set(cacheKey,sheet)}catch{throw Error('Configured spreadsheet tab is not accessible on this connection')}}
+   const result=matchSheetRows(sheet.rows,{terms:args.terms,purchaseDate:this.job.context.source.purchaseDate,windowed:args.withinPurchaseWindow!==false,exportMode:'sheets_api',range:'A1:AZ50000'});
+   return this.add('spreadsheet',args.source+' / '+sheet.title,JSON.stringify({sheet:sheet.title,gid:sheet.gid,...result}),'https://docs.google.com/spreadsheets/d/'+spreadsheetId+'/edit#gid='+sheet.gid);
   }
   if(name==='read_browser_page'){
    const page=await readBrowserPage(path.join(this.config.researchDirectory||path.dirname(path.dirname(this.directory)),'browser'),args.url,{print:args.preservePdf===true});
@@ -96,7 +97,9 @@ export class ResearchTools {
     const received=Number(m.internalDate);if(received<after*1000||received>=before*1000)continue;
     this.messages.set(m.id,true);results.push({messageId:m.id,...headers});
    }
-   await this.persist('mail');return {messages:results,limit:20,windowDays:7};
+   const coverage={version:1,terms:args.terms,dateWindow:{after:new Date(after*1000).toISOString(),beforeExclusive:new Date(before*1000).toISOString()},returnedCount:results.length,candidateCount:(data.data.messages||[]).length,hasMore:!!data.data.nextPageToken,absenceProven:false,limitations:['Only these merchant/order terms and the purchase-date window were searched.','Trash, spam and authentication subjects are excluded. Message metadata is not a receipt or proof of purchase.',...(data.data.nextPageToken?['Further result pages were not fetched.']:[])]};
+   const source=await this.add('search','購入メール検索',JSON.stringify({searchType:'mail',coverage,messages:results}));
+   return {messages:results,limit:20,windowDays:7,coverage,source};
   }
   if(name==='read_mail'){
    if(!this.messages.has(args.messageId))throw Error('Search the purchase mailbox first');

@@ -16,10 +16,11 @@ export const reportSchema={
 };
 const purposeError=(code,message)=>Object.assign(Error(message),{code});
 export function validationFeedback(error){
+ if(error?.code==='search_scope_invalid')return {code:error.code,issues:error.issues||[],instruction:'Correct the identified search-scope overstatements in the actual phrases. Restrict conclusions to the captured returned evidence, and leave absence or exhaustive agreement unverified. A later disclaimer does not repair an earlier absolute claim. Preserve supported findings and exact quotations. Do not introduce or change mapped values; omit a finding if its reasoning cannot be supported.'};
  const code=['purpose_invalid','purpose_customer_conflict'].includes(error?.code)?error.code:'output_invalid';
  return {code,message:code==='purpose_invalid'?'purpose must be one of the exact accepted values.':code==='purpose_customer_conflict'?'A nonempty customerId requires purpose customer in the combined proposal.':String(error?.message||'Invalid report').slice(0,300),fields:code==='purpose_invalid'?['purpose']:code==='purpose_customer_conflict'?['purpose','customerId']:[],purposeChoices,instruction:purposeContract};
 }
-const diagnosticMessages={purpose_invalid:'用途の選択肢が正しくないため、結果を保存できませんでした。',purpose_customer_conflict:'用途と顧客の組み合わせを確認できなかったため、結果を保存できませんでした。',output_invalid:'提案の項目または引用を検証できませんでした。',evidence_invalid:'取得した資料を検証できませんでした。',interpreter_failed:'AIの調査を完了できませんでした。',timed_out:'調査が制限時間内に完了しませんでした。',delivery_failed:'調査結果の送信または受理を完了できませんでした。'};
+const diagnosticMessages={search_scope_invalid:'検索範囲を超える断定が残ったため、結果を保存できませんでした。',search_review_failed:'検索結果の説明を確認できなかったため、結果を保存できませんでした。',purpose_invalid:'用途の選択肢が正しくないため、結果を保存できませんでした。',purpose_customer_conflict:'用途と顧客の組み合わせを確認できなかったため、結果を保存できませんでした。',output_invalid:'提案の項目または引用を検証できませんでした。',evidence_invalid:'取得した資料を検証できませんでした。',interpreter_failed:'AIの調査を完了できませんでした。',timed_out:'調査が制限時間内に完了しませんでした。',delivery_failed:'調査結果の送信または受理を完了できませんでした。'};
 export function validateDiagnostic(input){
  if(!input||Object.keys(input).some(k=>!['code','correctionAttempted'].includes(k))||!Object.hasOwn(diagnosticMessages,input.code)||typeof input.correctionAttempted!=='boolean')throw Error('Invalid research diagnostic');
  return {code:input.code,correctionAttempted:input.correctionAttempted};
@@ -30,7 +31,7 @@ export function validateSources(input) {
  if(!Array.isArray(input)||input.length>30)throw Error('Too many research sources');
  const seen=new Set();
  return input.map(s=>{
-  if(!s||!/^s[0-9]{1,3}$/.test(s.id)||seen.has(s.id)||!['context','web','mail','document','registry','spreadsheet'].includes(s.kind))throw Error('Invalid research source');
+  if(!s||!/^s[0-9]{1,3}$/.test(s.id)||seen.has(s.id)||!['context','web','mail','document','registry','spreadsheet','search'].includes(s.kind))throw Error('Invalid research source');
   seen.add(s.id);
   const text=string(s.text,80000),title=string(s.title,300),url=string(s.url||'',2000);
   if(url){const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw Error('Invalid source URL')}

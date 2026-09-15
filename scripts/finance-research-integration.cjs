@@ -28,12 +28,14 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
  assert.equal((await workerCall(job.id+'/result',{lease:job.lease,sources:[...job.sources,source],report:{...report,findings:[{...report.findings[0],citations:[{sourceId:'s1',quote:'invented'}]}]}})).status,400);
  const raw={count:'1',announcement:[{registratedNumber:'T1234567890123',name:'Synthetic Research Corporation',registrationDate:'2023-10-01',disposalDate:'',expireDate:'',address:'Synthetic address'}]},registryText=JSON.stringify(raw);
  const registrySource={id:'s2',kind:'registry',title:'Synthetic registry response',url:'https://web-api.invoice-kohyo.nta.go.jp/1/valid',text:registryText,hash:crypto.createHash('sha256').update(registryText).digest('hex'),capturedAt:new Date().toISOString()};
+ const searchText=JSON.stringify({searchType:'mail',coverage:{terms:'Synthetic',returnedCount:1,hasMore:true,absenceProven:false},messages:[{subject:'Synthetic subject 10%'}]}),searchSource={id:'s3',kind:'search',title:'Synthetic mail search',url:'',text:searchText,hash:crypto.createHash('sha256').update(searchText).digest('hex'),capturedAt:new Date().toISOString()};
+ assert.equal((await workerCall(job.id+'/result',{lease:job.lease,sources:[...job.sources,searchSource],report:{summary:'Synthetic search metadata',question:'',supplier:null,findings:[{field:'taxRate',valueJson:'10',reason:'Search subject only',basis:'literal',citations:[{sourceId:'s3',quote:'10%'}]}]}})).status,400);
  const pdf=Buffer.from('%PDF-1.4\nSynthetic original receipt bytes\n%%EOF');
  const query=new URLSearchParams({lease:job.lease,sourceId:'s1',name:'Synthetic-receipt.pdf',mimeType:'application/pdf'});
  const artifactResponse=await fetch(origin+'/api/finance-research/worker/'+job.id+'/artifact?'+query,{method:'POST',headers:{Authorization:'Bearer '+worker,'Content-Type':'application/pdf'},body:pdf});
  assert.equal(artifactResponse.status,200,await artifactResponse.clone().text());const artifact=await artifactResponse.json();
- const finished=await workerCall(job.id+'/result',{lease:job.lease,sources:[...job.sources,source,registrySource],report,registry:{sourceId:'s2',number:'T1234567890123',date:job.context.source.purchaseDate}});assert.equal(finished.status,200,JSON.stringify(finished));
- view=(await call(base,{token})).data;assert.equal(view.research.state,'ready');assert.equal(view.stale,false);assert.equal((await getDraft()).revision,0);
+ const finished=await workerCall(job.id+'/result',{lease:job.lease,sources:[...job.sources,source,registrySource,searchSource],report,registry:{sourceId:'s2',number:'T1234567890123',date:job.context.source.purchaseDate}});assert.equal(finished.status,200,JSON.stringify(finished));
+ view=(await call(base,{token})).data;assert.equal(view.research.state,'ready');assert.equal(view.research.sources.find(s=>s.id==='s3').text,searchText);assert.equal(view.stale,false);assert.equal((await getDraft()).revision,0);
  pass('research is owner scoped, claims are exclusive, citations are checked and research does not save draft values');
  if(process.env.OMF_TEST_RESEARCH_BROWSER){
   const path=require('path'),os=require('os'),{pathToFileURL}=require('url');
