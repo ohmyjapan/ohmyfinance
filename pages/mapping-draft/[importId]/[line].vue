@@ -22,6 +22,7 @@
       <p v-if="!isExpense" class="card p-6 text-sm text-gray-600 dark:text-gray-300">この明細は照合用に保持されています。返済・返金・日付未記載などの明細は、個別確認が必要です。</p>
       <template v-else>
         <button type="button" class="btn btn-secondary mb-6 text-sm" data-open-purchase-assistant @click="assistant.show({kind:'draft',importId,line})">この購入をOMFに相談</button>
+        <PurchaseResearch :draft="draft" :disabled="dirty || busy || draft.locked" @changed="receive" />
         <InventoryMatches :draft="draft" :disabled="dirty || busy" @use-name="useInventoryName" />
         <PurchaseReview :draft="draft" :dirty="dirty" @reload="reloadOffered = true" />
         <CardAccounting v-if="draft.cardAccounting" :card="draft.cardAccounting" :account-name="draft.source.account.name" :values="values" :references="draft.references" :changed="draft.cardAccountingChanged" />
@@ -99,6 +100,7 @@ import DraftField from '~/components/finance/DraftField.vue'
 import DocumentList from '~/components/finance/DocumentList.vue'
 import {useAssistantStore} from '~/stores/assistant'
 import PurchaseReview from '~/components/finance/PurchaseReview.vue'
+import PurchaseResearch from '~/components/finance/PurchaseResearch.vue'
 import InventoryMatches from '~/components/finance/InventoryMatches.vue'
 import SupplierMemory from '~/components/finance/SupplierMemory.vue'
 import AccountingReview from '~/components/finance/AccountingReview.vue'

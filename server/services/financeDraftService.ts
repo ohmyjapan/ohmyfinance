@@ -275,7 +275,7 @@ export async function withWritableDraft<T>(ownerId: string, importId: string, li
   })
 }
 
-export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean, channel?: 'web' }, serviceReviewKey?: string, customerReviewChoice?: {key:string,treatment:string}) {
+export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean, channel?: 'web' | 'research', researchEvidence?: any[] }, serviceReviewKey?: string, customerReviewChoice?: {key:string,treatment:string}) {
   const initial = await context(ownerId, importId, line)
   return withLease(initial, async check => {
     const ctx = await context(ownerId, importId, line)
@@ -355,7 +355,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     for (const key of ['supplierId', 'invoiceNumber', 'companyInfo']) if (changedSupplier || !sameValue(base.values[key], values[key])) {
       for (const proofKey of ['registration', 'supplierKey', 'supplierId', 'linkId', 'linkRevision']) delete evidence[key][proofKey]
     }
-    if (reviewAnswer) for (const key of reviewAnswer.fields) evidence[key] = { ...evidence[key], state: isEmpty(values[key]) ? 'not_applicable' : 'confirmed', source: reviewAnswer.channel === 'web' ? 'chat' : 'slack', reason: reviewAnswer.channel === 'web' ? 'ページ上の会話で提案内容を確認済み。' : 'Slackで提案内容を確認済み。', reviewId: reviewAnswer.reviewId, replyTs: reviewAnswer.replyTs, at }
+    if (reviewAnswer) for (const key of reviewAnswer.fields) evidence[key] = { ...evidence[key], state: isEmpty(values[key]) ? 'not_applicable' : 'confirmed', source: reviewAnswer.channel === 'research' ? 'research' : reviewAnswer.channel === 'web' ? 'chat' : 'slack', reason: reviewAnswer.channel === 'research' ? '調査の引用と推論を確認して選択した値。公的確認・税務判断の確定とは別です。' : reviewAnswer.channel === 'web' ? 'ページ上の会話で提案内容を確認済み。' : 'Slackで提案内容を確認済み。', ...(reviewAnswer.channel === 'research' ? {research:reviewAnswer.researchEvidence?.find(f=>f.field===key)} : {}), reviewId: reviewAnswer.reviewId, replyTs: reviewAnswer.replyTs, at }
     const assessmentHistory = (await propose(ctx, references)).purchaseHistory
     const assessment = assessPurchaseAccounting({ importId: ctx.importId, line: ctx.line, sourceHash: ctx.batch.hash, values, source: { ...ctx.mapped, kind: ctx.row.kind }, purchaseHistory: assessmentHistory }, references)
     let accountingResponse = ctx.saved?.accountingResponse?.key === assessment.key ? ctx.saved.accountingResponse : null
@@ -377,7 +377,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     if (!sameValue(accountingResponse, ctx.saved?.accountingResponse || null)) changes.push({ action: 'accounting_reason', before: ctx.saved?.accountingResponse || null, after: accountingResponse, assessment })
     // No separate rule write: approval and remembered values commit atomically with the draft.
     const memory = body.confirm && body.remember.length ? { fields: body.remember, merchant: normalizeMerchant(ctx.row.description), purpose: values.purpose, customerId: values.customerId, values: Object.fromEntries(body.remember.map((key: string) => [key, values[key]])), at } : undefined
-    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: customerReview ? 'customer_review' : serviceReview ? 'service_review' : reviewAnswer ? reviewAnswer.channel === 'web' ? 'chat_review' : 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}),...(serviceReview?{serviceReview}:{}),...(customerReview?{customerReview}:{}) }]
+    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: reviewAnswer?.channel === 'research' ? 'research_review' : customerReview ? 'customer_review' : serviceReview ? 'service_review' : reviewAnswer ? reviewAnswer.channel === 'web' ? 'chat_review' : 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}),...(serviceReview?{serviceReview}:{}),...(customerReview?{customerReview}:{}) }]
     if (history.length > 500) fail(409, 'この明細の変更履歴が上限に達しました。管理者に確認してください。')
     let teachingMemory = ctx.saved?.teachingMemory || null
     if (teachingMemory && (teachingMemory.decision.purpose !== values.purpose || teachingMemory.decision.customerId !== values.customerId)) teachingMemory = { ...teachingMemory, enabled: false, withdrawnAt: at }

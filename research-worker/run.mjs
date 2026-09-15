@@ -1,0 +1,12 @@
+import os from 'node:os';
+import path from 'node:path';
+import {Vault} from '../collector/vault.mjs';
+import {ResearchWorker} from './worker.mjs';
+import {startResearchSettings} from './settings.mjs';
+const directory=process.env.OMF_RESEARCH_DATA_DIR||path.join(os.homedir(),'.ohmyfinance-research');
+const config=await new Vault(directory).read();
+if(!config.enabled||!/^omft_[a-f0-9]{64}$/.test(config.token||'')||!config.cliPath||!config.inferenceDirectory)throw Error('Research worker is not configured');
+const worker=new ResearchWorker(config,directory);let settings;const reportStatus=async()=>worker.api('status',{settingsUrl:settings.url,ntaConfigured:!!config.ntaApplicationId});settings=await startResearchSettings(directory,config,()=>reportStatus().catch(()=>{}));await reportStatus();let stopped=false;
+process.on('SIGINT',()=>stopped=true);process.on('SIGTERM',()=>stopped=true);
+do{try{await worker.cycle()}catch{console.error('Research worker connection unavailable')}if(process.argv.includes('--once'))break;if(!stopped)await new Promise(r=>setTimeout(r,3000))}while(!stopped);
+settings.close();

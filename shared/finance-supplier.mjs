@@ -1,3 +1,4 @@
+import { parseRegistry } from './finance-research.mjs';
 import { normalizeMerchant } from './finance-draft.mjs';
 const text = value => typeof value === 'string' ? value.trim() : '';
 const date = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
@@ -14,11 +15,12 @@ export function supplierRegistration(supplier, now = Date.now()) {
   if (!sameIdentity) return { ...empty, status: 'mismatch', label: '会社名・登録番号の再確認が必要' };
   const checked = Date.parse(proof.checkedAt), source = evidenceUrl(proof.sourceUrl);
   const canonical = 'https://www.invoice-kohyo.nta.go.jp/regno-search/detail?selRegNo=' + number.slice(1);
-  if (proof.version !== 1 || !/^T[0-9]{13}$/.test(number) || proof.source !== 'nta_public_site' || proof.method !== 'browser_review'
+  if (![1,2].includes(proof.version) || !/^T[0-9]{13}$/.test(number) || (proof.version === 1 ? proof.source !== 'nta_public_site' || proof.method !== 'browser_review' : proof.source !== 'nta_api' || proof.method !== 'api_valid_date')
     || proof.scope !== 'issuer_registration_only' || proof.status !== 'active_at_check' || source !== canonical
     || !Number.isFinite(checked) || checked > now || !date(proof.asOf) || !date(proof.registeredFrom)
     || proof.asOf > new Date(checked).toISOString().slice(0,10) || proof.registeredFrom > proof.asOf
     || !text(proof.evidence?.text) || !/^[a-f0-9]{64}$/.test(proof.evidence?.sha256 || '')) return empty;
+  if (proof.version === 2) { try { const row = parseRegistry(JSON.parse(proof.evidence.text),number,proof.asOf); if (!row.active || normalizeMerchant(row.legalName) !== normalizeMerchant(company) || row.registeredFrom !== proof.registeredFrom) return empty; } catch { return empty; } }
   return { status: 'verified', label: '国税庁で確認済み', number, legalName: text(proof.legalName), registeredAddress: text(proof.registeredAddress),
     registeredFrom: proof.registeredFrom, asOf: proof.asOf, checkedAt: new Date(checked).toISOString(), sourceUrl: canonical, scope: 'issuer_registration_only' };
 }

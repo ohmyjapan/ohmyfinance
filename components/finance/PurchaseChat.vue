@@ -5,6 +5,7 @@
    <NuxtLink to="/learning" class="shrink-0 py-1 text-xs text-primary-main">学習ノート ↗</NuxtLink>
   </header>
   <div ref="transcript" :class="panel ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5' : 'max-h-[520px] space-y-5 overflow-y-auto px-4 py-5 sm:px-6'" role="log" aria-live="polite">
+   <details v-if="panel" class="text-xs"><summary class="cursor-pointer py-2 font-medium text-primary-main">会社・購入内容を調査する</summary><PurchaseResearch :draft="draft" :disabled="dirty || busy || draft.locked" @changed="value => emit('saved',value)" /></details>
    <div v-if="!turns.length" class="text-sm leading-relaxed text-gray-600 dark:text-gray-300"><p>{{ opening }}</p><p class="mt-2 text-xs text-gray-500 dark:text-gray-400">한국어・日本語で説明できます。会話はこの明細に保存されます。</p></div>
    <article v-for="turn in turns" :key="turn.id" :data-chat-turn="turn.id" class="space-y-3">
     <div class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
@@ -34,6 +35,7 @@
  </section>
 </template>
 <script setup lang="ts">
+import PurchaseResearch from '~/components/finance/PurchaseResearch.vue'
 import { MessageCircle, Loader2, Send } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
