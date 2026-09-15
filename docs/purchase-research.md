@@ -41,3 +41,26 @@ node scripts/finance-integration.cjs
 ```
 
 The integration suite uses isolated synthetic owners, card data, and MongoDB. It covers authorization, exclusive claims, source/citation rejection, draft-only confirmation, supplier proof, original receipt storage and deduplication, repeat research, connection status, and stale-result rejection. Optional `OMF_TEST_RESEARCH_BROWSER=1` exercises the visible page in real Chrome; set `OMF_TEST_SCREENSHOT` to a private output path. Live connection probes must remain outside the repository.
+
+## Repeatable evaluation
+
+Open **AI調査の評価** from a purchase's research panel, or visit /research-evaluation. Choose saved purchases and register reference answers. Each field distinguishes a previous explicit decision, an attached document, or a newly owner-confirmed answer. Prior accounting choices measure agreement, not accounting correctness. Do not label an inference as a verified answer. The editor also supports abstention references and required evidence sources.
+
+Choose up to 12 cases and run them through the same research worker. Regular research is checked first. Case versions, input snapshots, reference answers, sources, model IDs, base-prompt hash and worker implementation hash remain with each run. Editing a case never changes historical scores. A changed purchase must be reviewed and saved as a new case version before another run.
+
+Expected answers, case titles, reference notes, saved mapped values and target-row teaching history are withheld from the worker. Only explicitly selected known fields, source statement facts, document identifiers and registered reference names are supplied. Authorized external sheets and mail remain searchable: this is an open-book evaluation of the current system, not a held-out model benchmark. Do not put answers in the AI instruction field.
+
+Results separate wrong answers, missing answers, answering when abstention was expected, missing sources, and question presence. Question checks do not judge question wording or semantic quality. Citation checks establish that quoted text exists; human review is still needed for purchase association, reasoning, legal identity and accounting treatment. Failed runs remain visible outside the completed-field denominator. Repeated runs can differ as the default CLI model or live sources change. No model is pinned by this feature.
+
+Evaluation writes only evaluation cases and runs. It cannot apply proposals, teach merchant memory, attach downloaded documents or post to the ledger. Downloaded document text is retained as evidence; new original receipt files are not added to OMF by evaluation.
+
+Run focused checks after building:
+
+```powershell
+node --test scripts/finance-evaluation.test.mjs
+$env:OMF_TEST_EVALUATION_ONLY='1'
+$env:OMF_TEST_EVALUATION_BROWSER='1' # optional real Chrome
+node scripts/finance-integration.cjs
+```
+
+The isolated suite covers hidden answers, owner/account boundaries, leases, duplicate runs, frozen scores, stale case rejection, document access, scoring, runtime metadata and unchanged purchase collections. Private real cases and live outputs must never be committed.

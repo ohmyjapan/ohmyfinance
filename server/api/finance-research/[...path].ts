@@ -2,6 +2,7 @@ import {defineEventHandler,setHeader,getQuery} from 'h3'
 import {uploadResearchArtifact,downloadResearchArtifact,attachResearchArtifact} from '../../services/financeResearchDocumentService'
 import {financeUser,fail} from '../../services/financeService'
 import {boundedBody} from '../../services/financeDraftService'
+import {claimEvaluation,evaluationProgress,evaluationDocument,finishEvaluation} from '../../services/financeEvaluationService'
 import {FinanceChatAgent} from '../../models/FinanceChat'
 import {chatAgent} from '../../services/financeChatService'
 import {researchView,queueResearch,claimResearch,researchProgress,researchDocument,finishResearch,applyResearch,saveResearchSupplier} from '../../services/financeResearchService'
@@ -14,6 +15,13 @@ export default defineEventHandler(async event=>{
    const agent=await chatAgent(event)
    if(event.method!=='POST')fail(404,'Research endpoint not found')
    if(parts.length===2&&parts[1]==='status'){const status=await body();if(!agent.researchEnabled||!/^http:\/\/127\.0\.0\.1:[0-9]+\/setup\/[a-f0-9]{64}$/.test(status.settingsUrl||'')||typeof status.ntaConfigured!=='boolean')fail(400,'Invalid research status');await FinanceChatAgent.updateOne({_id:agent._id},{$set:{researchStatus:{settingsUrl:status.settingsUrl,ntaConfigured:status.ntaConfigured}}});return {success:true}}
+   if(parts[1]==='evaluation'){
+    if(parts.length===3&&parts[2]==='claim')return claimEvaluation(agent)
+    if(parts.length===4&&parts[3]==='progress')return evaluationProgress(agent,parts[2],await body())
+    if(parts.length===4&&parts[3]==='result')return finishEvaluation(agent,parts[2],await body())
+    if(parts.length===4&&parts[3]==='document'){const doc=await evaluationDocument(agent,parts[2],await body());setHeader(event,'Content-Type',doc.doc.mimeType);return doc.bytes}
+    fail(404,'Evaluation worker endpoint not found')
+   }
    if(parts.length===2&&parts[1]==='claim')return await claimResearch(agent)
    if(parts.length===3&&parts[2]==='progress')return await researchProgress(agent,parts[1],await body())
    if(parts.length===3&&parts[2]==='result')return await finishResearch(agent,parts[1],await body())

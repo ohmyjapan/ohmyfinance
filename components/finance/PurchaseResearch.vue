@@ -7,6 +7,7 @@
   <p v-if="error" role="alert" class="mt-3 text-xs text-red-600 dark:text-red-400">{{ error }} <button class="underline" type="button" @click="load">再読込</button></p>
   <p v-if="!data?.connected" class="mt-3 text-xs text-amber-700 dark:text-amber-400">調査担当との接続を確認しています。保存済みの結果は確認できます。</p>
   <p v-if="data?.settings" class="mt-3 text-xs text-gray-500">国税庁の照合 {{ data.settings.ntaConfigured ? '設定済み' : '未設定' }} · <a :href="data.settings.settingsUrl" target="_blank" rel="noopener noreferrer" class="text-primary-main underline">Ryzen 7で接続設定を開く</a></p>
+  <NuxtLink :to="{path:'/research-evaluation',query:{importId:draft.importId,line:draft.line}}" class="mt-3 inline-block text-xs text-primary-main underline">この購入をAI調査の評価に使う</NuxtLink>
   <form class="mt-4" @submit.prevent="start">
    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300">調べたいこと・追加で分かったこと（任意）
     <textarea v-model="instruction" rows="2" maxlength="2000" :disabled="pending || busy" class="mt-2 block w-full rounded-xl border-gray-300 bg-white text-sm text-gray-900 placeholder-gray-400 focus:border-primary-main focus:ring-primary-main dark:border-white/10 dark:bg-white/5 dark:text-gray-100" placeholder="例：運営会社とインボイス番号を調べて。購入メールも確認して。" />
