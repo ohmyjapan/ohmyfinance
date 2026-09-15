@@ -11,7 +11,7 @@ export default defineEventHandler(async event => {
   try {
     if (parts[0] === 'collector') {
       const device = await financeDevice(event)
-      const scope = { ownerId: device.ownerId, _id: { $in: device.accountIds }, active: true }
+      const scope = { ownerId: device.ownerId, _id: { $in: device.accountIds }, active: true, provider: 'amex' }
       if (parts[1] === 'accounts' && parts.length === 2 && method === 'GET') return { accounts: await FinancialAccount.find(scope).select('-commitLease -commitLeaseUntil').lean() }
       if (parts[1] === 'claim' && parts.length === 2 && method === 'POST') {
         const account = await FinancialAccount.findOneAndUpdate({ ...scope, $or: [{ jobState: 'queued' }, { jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $lt: new Date() } }] }, { $set: { jobState: 'running', jobDeviceId: device._id, jobLeaseUntil: new Date(Date.now() + 180000), lastAttemptAt: new Date(), lastMessage: 'Connecting to Amex' } }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
@@ -43,11 +43,13 @@ export default defineEventHandler(async event => {
     if (parts[0] === 'accounts' && parts.length >= 2) {
       const account = await ownedAccount(ownerId, parts[1])
       if (parts.length === 2 && method === 'PATCH') {
-        const input = accountInput(await readBody(event))
+        const input = accountInput({ provider: account.provider || 'amex', ...await readBody(event) })
+        if (input.provider !== (account.provider || 'amex')) fail(400, 'The provider of an existing card account cannot be changed')
         if (await FinanceImport.exists({ accountId: account._id }) && account.cardIdentifiers.some((v: string) => !input.cardIdentifiers.includes(v))) fail(409, 'Imported card identifiers cannot be removed')
         return { account: await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId }, { $set: input }, { new: true }) }
       }
       if (parts[2] === 'sync' && parts.length === 3 && method === 'POST') {
+        if (account.provider === 'aplus') fail(400, 'Upload the finalized Aplus CSV from Card connections')
         if (!await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null })) fail(409, 'Pair a collector for this account first')
         const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: new Date(), lastMessage: 'Waiting for collector' }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
         if (!updated) fail(409, 'A synchronization is already queued or running')
@@ -119,7 +121,7 @@ export default defineEventHandler(async event => {
       if (parts[2] === 'file' && parts.length === 3 && method === 'GET') {
         const batch = await ownedImport(ownerId, parts[1])
         setHeader(event,'Content-Type',`text/csv; charset=${batch.encoding === 'utf-8' ? 'UTF-8' : 'Shift_JIS'}`)
-        setHeader(event,'Content-Disposition',`attachment; filename="amex-${batch.period.start}-${batch.period.end}.csv"`)
+        setHeader(event,'Content-Disposition',`attachment; filename="${batch.provider || 'amex'}-${batch.period.start}-${batch.period.end}.csv"`)
         setHeader(event,'Cache-Control','no-store')
         return await originalFile(batch)
       }

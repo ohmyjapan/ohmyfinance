@@ -7,4 +7,4 @@ export function isEmpty(value: unknown): boolean;
 export function emptyValues(row: any): Record<string, any>;
 export function validateValues(input: any): Record<string, any>;
 export function missingFields(values: any): {key: string; label: string}[];
-export function transactionValues(values: any): Record<string, any>;
+export function transactionValues(values: any, provider?: 'amex' | 'aplus'): Record<string, any>;

@@ -8,9 +8,9 @@ const oid = Schema.Types.ObjectId
 const common = { timestamps: true, toJSON: { virtuals: true } }
 const account = new Schema({
   ownerId: { type: oid, required: true, index: true },
-  name: { type: String, required: true }, provider: { type: String, default: 'amex', enum: ['amex'] },
+  name: { type: String, required: true }, provider: { type: String, default: 'amex', enum: ['amex', 'aplus'] },
   cardIdentifiers: { type: [String], required: true }, primaryCard: { type: String, required: true },
-  otpRecipient: { type: String, required: true }, otpMailbox: { type: String, required: true },
+  otpRecipient: { type: String, required: function (this: any) { return this.provider !== 'aplus' } }, otpMailbox: { type: String, required: function (this: any) { return this.provider !== 'aplus' } },
   forwarded: { type: Boolean, default: false }, active: { type: Boolean, default: true },
   jobId: String, jobState: { type: String, default: 'idle' }, jobRequestedAt: Date,
   jobDeviceId: oid, jobLeaseUntil: Date, lastAttemptAt: Date, lastSuccessAt: Date, lastMessage: String,
@@ -28,6 +28,7 @@ const collector = new Schema({
 const batch = new Schema({
   ownerId: { type: oid, required: true, index: true }, accountId: { type: oid, required: true, index: true },
   hash: { type: String, required: true }, originalName: String, bytes: Number,
+  provider: { type: String, enum: ['amex', 'aplus'] }, reconciliation: Schema.Types.Mixed,
   encoding: String, parserVersion: String, period: { type: Schema.Types.Mixed, required: true },
   rows: { type: [Schema.Types.Mixed], required: true }, rowCount: Number,
   state: { type: String, default: 'review' }, downloadedAt: Date, collectorId: oid,

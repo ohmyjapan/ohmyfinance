@@ -77,12 +77,13 @@ export function missingFields(values) {
   if (values.purpose === 'customer') required.push('customerId');
   return required.filter(key => key === 'purpose' || isEmpty(values[key])).map(key => ({ key, label: fields.find(f => f.key === key).label }));
 }
-export function transactionValues(values) {
+export function transactionValues(values, provider = 'amex') {
+  if (!['amex', 'aplus'].includes(provider)) throw Error('Unsupported card provider');
   const { purpose, ...transaction } = values;
   const clean = Object.fromEntries(Object.entries(transaction).filter(([, v]) => !isEmpty(v)));
   // An explicitly cleared note must override the older importer's merchant-note default.
   clean.notes = values.notes;
   clean.items = values.items.map(item => Object.fromEntries(Object.entries(item).filter(([, v]) => !isEmpty(v))));
-  clean.tags = [...new Set(['imported', 'amex', ...values.tags])];
+  clean.tags = [...new Set(['imported', provider, ...values.tags])];
   return clean;
 }

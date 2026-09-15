@@ -125,7 +125,7 @@
               <article v-for="row in filteredRows" :key="row.importId + ':' + row.key" :data-line="row.line" :data-status="row.status" :data-preparation="row.preparation?.state" class="table-row-hover px-4 py-4 sm:px-6">
                 <div class="grid grid-cols-2 items-start gap-x-4 gap-y-3 xl:grid-cols-[7rem_minmax(0,2fr)_7rem_minmax(0,1fr)_minmax(0,1fr)] xl:gap-x-6">
                   <div class="col-span-2 text-sm xl:col-span-1">
-                    <time class="font-medium text-gray-900 dark:text-gray-100">{{ row.processingDate }}</time>
+                    <time class="font-medium text-gray-900 dark:text-gray-100">{{ row.processingDate || row.purchaseDate || '日付未記載' }}</time>
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">利用 {{ row.purchaseDate }}</p>
                   </div>
                   <div class="col-span-2 min-w-0 xl:col-span-1">
@@ -152,13 +152,13 @@
                     <template v-if="row.purpose === 'customer'"><p class="font-medium text-gray-900 dark:text-gray-100">{{ row.clientCode || 'ID未確認' }}</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ row.clientName }}</p></template>
                     <template v-else-if="row.purpose === 'company'"><p class="text-gray-400">—</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">会社経費</p></template>
                     <template v-else-if="row.purpose === 'unresolved'"><p class="text-amber-700 dark:text-amber-400">未確認</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">用途・顧客を確認</p></template>
-                    <template v-else><p class="text-gray-400">—</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ row.purpose === 'repayment' ? 'カードへの返済' : '返金など' }}</p></template>
+                    <template v-else><p class="text-gray-400">—</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ row.purpose === 'repayment' ? 'カードへの返済' : row.purpose === 'statement_review' ? '明細の個別確認' : '返金など' }}</p></template>
                   </div>
                   <div class="min-w-0 text-sm">
                     <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400 xl:hidden">区分案</span>
                     <p :class="needsReview(row) ? 'text-amber-700 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'">{{ row.category || (row.status === 'repayment' ? '支出対象外' : '未設定') }}</p>
                     <span class="badge-status mt-2" :class="needsReview(row) ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400' : row.status === 'proposed' ? 'bg-green-100 text-green-800 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300'">{{ row.draft ? (row.draft.approved ? '内容確認済み' : '下書き保存済み') : statuses[row.status] }}</span>
-                    <button v-if="['customer','company','unresolved'].includes(row.purpose)" type="button" data-row-assistant class="mt-3 block text-xs font-medium text-primary-main" @click="assistant.show({kind:'draft',importId:row.importId,line:row.line})">OMFに相談</button><NuxtLink :to="`/mapping-draft/${row.importId}/${row.line}`" class="mt-3 block py-2 text-sm font-medium text-primary-main dark:text-primary-light">{{ ['repayment', 'credit_review'].includes(row.purpose) ? '明細を確認' : '取引の下書きを開く →' }}</NuxtLink>
+                    <button v-if="['customer','company','unresolved'].includes(row.purpose)" type="button" data-row-assistant class="mt-3 block text-xs font-medium text-primary-main" @click="assistant.show({kind:'draft',importId:row.importId,line:row.line})">OMFに相談</button><NuxtLink :to="`/mapping-draft/${row.importId}/${row.line}`" class="mt-3 block py-2 text-sm font-medium text-primary-main dark:text-primary-light">{{ ['repayment', 'credit_review', 'statement_review'].includes(row.purpose) ? '明細を確認' : '取引の下書きを開く →' }}</NuxtLink>
                   </div>
                 </div>
                 <div v-if="row.preparation && ['customer','company','unresolved'].includes(row.purpose)" class="mt-4 grid gap-3 rounded-xl bg-gray-50 p-3 text-xs dark:bg-white/5 sm:grid-cols-2 xl:grid-cols-4" data-accounting-review>
@@ -211,9 +211,9 @@ const batchChoice = ref(typeof route.query.import === 'string' ? route.query.imp
 const api = (url: string): Promise<any> => $fetch('/api/finance/' + url, { headers: user.authHeader })
 const accountName = (id: string) => accounts.value.find(account => account._id === id)?.name || 'Amex'
 const yen = (amount: number) => new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(amount)
-const statuses: Record<string, string> = { proposed: '分類案あり', needs_client: '顧客・用途を確認', needs_category: '区分を確認', repayment: '返済・支出対象外', credit_review: '返金など・確認待ち' }
-const needsReview = (row: MappingRow) => row.draft ? !row.draft.approved : ['needs_client', 'needs_category', 'credit_review'].includes(row.status)
-const rows = computed(() => batches.value.flatMap(batch => batch.rows.map(row => ({ ...row, importId: batch.id, accountName: batch.account.name }))).sort((a, b) => b.processingDate.localeCompare(a.processingDate) || a.importId.localeCompare(b.importId) || a.line - b.line))
+const statuses: Record<string, string> = { proposed: '分類案あり', needs_client: '顧客・用途を確認', needs_category: '区分を確認', repayment: '返済・支出対象外', credit_review: '返金など・確認待ち', statement_review: '明細・確認待ち' }
+const needsReview = (row: MappingRow) => row.draft ? !row.draft.approved : ['needs_client', 'needs_category', 'credit_review', 'statement_review'].includes(row.status)
+const rows = computed(() => batches.value.flatMap(batch => batch.rows.map(row => ({ ...row, importId: batch.id, accountName: batch.account.name }))).sort((a, b) => (b.processingDate || b.purchaseDate || b.statementMonth || '').localeCompare(a.processingDate || a.purchaseDate || a.statementMonth || '') || a.importId.localeCompare(b.importId) || a.line - b.line))
 const matchesFilter = (row: MappingRow, value: string) => value === 'all' || (value === 'purpose:review' ? ['unresolved','conflict'].includes(row.classification?.state || '') : value.startsWith('purpose:') ? row.classification?.state === value.slice(8) : false) || (value.startsWith('preparation:') ? row.preparation?.state === value.slice(12) : value === 'review' ? needsReview(row) : row.purpose === value)
 const filters = computed(() => [{ value: 'all', label: 'すべて' }, { value: 'customer', label: '顧客購入' }, { value: 'company', label: '会社経費' }, { value: 'review', label: '分類要確認' }, { value: 'repayment', label: 'カード返済' }].map(item => ({ ...item, count: rows.value.filter(row => matchesFilter(row, item.value)).length })))
 const purposeFilters = computed(() => [{value: 'purpose:supported', label: t('mappingImport.supported')}, {value: 'purpose:tentative', label: t('mappingImport.tentative')}, {value: 'purpose:review', label: t('mappingImport.unresolved')}].map(item => ({...item, count: rows.value.filter(row => matchesFilter(row, item.value)).length})))

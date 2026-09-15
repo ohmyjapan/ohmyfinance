@@ -8,7 +8,7 @@ export function cardAccounting(account: any, row: any, references: any) {
     const value = { status, sourceAccountId, reason, ...extra }
     return { ...value, key: digest(JSON.stringify(value)) }
   }
-  if (row.kind !== 'expense') return result('excluded', '返済・返金は別途照合します。')
+  if (row.kind !== 'expense') return result('excluded', '返済・返金・日付未記載などの明細は別途照合します。')
   const p = account.accounting
   if (!p) return result('missing', 'カードの勘定科目・補助科目が未設定です。')
   const main = references.accountCategories.find((r: any) => String(r._id) === p.accountCategoryId)

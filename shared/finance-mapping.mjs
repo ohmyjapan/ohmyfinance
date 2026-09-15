@@ -9,9 +9,9 @@ export function mappingRows(batch) {
     for (const item of preview.rows) {
       const row = source.get(item.line);
       if (!row || row.key !== item.key || mappings.has(item.line)) throw Error('Mapping row does not match this import');
-      if (!['customer', 'company', 'unresolved', 'repayment', 'credit_review'].includes(item.purpose)) throw Error('Invalid mapping purpose');
+      if (!['customer', 'company', 'unresolved', 'repayment', 'credit_review', 'statement_review'].includes(item.purpose)) throw Error('Invalid mapping purpose');
       if (row.kind !== 'expense' && item.purpose !== row.kind) throw Error('Repayments and credits cannot be mapped as spending');
-      if (row.kind === 'expense' && ['repayment', 'credit_review'].includes(item.purpose)) throw Error('Spending cannot be mapped as a repayment or credit');
+      if (row.kind === 'expense' && ['repayment', 'credit_review', 'statement_review'].includes(item.purpose)) throw Error('Spending cannot be mapped as a repayment or credit');
       for (const field of ['clientCode', 'clientName', 'category', 'reason']) if (typeof item[field] !== 'string' || item[field].length > 1000) throw Error('Invalid mapping label');
       if (item.purpose !== 'customer' && (item.clientCode || item.clientName)) throw Error('Only customer purchases can have a client');
       if (row.kind !== 'expense' && item.category) throw Error('Repayments and credits cannot have an expense category');
@@ -29,8 +29,8 @@ export function mappingRows(batch) {
     const status = row.kind !== 'expense' ? row.kind : purpose === 'unresolved' || (purpose === 'customer' && !clientCode) ? 'needs_client' : !category ? 'needs_category' : 'proposed';
     return {
       line: row.line, key: row.key, purchaseDate: row.purchaseDate, processingDate: row.processingDate,
-      description: row.description, amount: row.amount, cardLast4: row.cardIdentifier.slice(-4),
-      purpose, clientCode, clientName, category, status, reason: item?.reason || '',
+      description: row.description, amount: row.amount, cardLast4: row.cardIdentifier?.slice(-4) || '', ...(row.statementMonth ? { statementMonth: row.statementMonth } : {}),
+      purpose, clientCode, clientName, category, status, reason: item?.reason || row.sourceReviewReason || '',
       source: item?.source ? { sheet: item.source.sheet, rows: item.source.rows, client: item.source.client, category: item.source.category, card: item.source.card } : null
     };
   });
