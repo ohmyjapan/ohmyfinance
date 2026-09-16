@@ -43,6 +43,28 @@ function inventorySource(rows,extra={}){
  const text=JSON.stringify(sheet);return {id:'s8',kind:'spreadsheet',title:'inventory / Synthetic inventory',url:'https://docs.google.com/spreadsheets/d/synthetic/edit#gid=10',text,hash:hash(text)};
 }
 const variantOrder=()=>({...order(),items:[{...order().items[0],color:'BLUE (no.01)'}]});
+function prefixSource(reference,rows=[['SYN-1','01-2'],['SYN-2','01-2']]){
+ const source=inventorySource(rows),raw=JSON.parse(source.text);
+ for(const row of raw.matches)row.values[4]=reference;
+ source.text=JSON.stringify(raw);source.hash=hash(source.text);return source;
+}
+test('warehouse-prefixed references match the exact order and preserve captured source text',()=>{
+ for(const reference of ['OSAKA YAMATO 1234567',' osaka  yamato  1234567 ']){
+  const r=fixture(variantOrder());r.sources.push(prefixSource(reference));const c=purchaseCandidates(r,payment)[0];
+  assert.equal(c.inventoryCount,2);assert.equal(c.requiresInventoryReview,false);
+  assert.equal(JSON.parse(c.evidence.find(s=>s.id==='s8').text).matches[0].values[4],reference);
+ }
+});
+test('prefixed references reject different orders, multiple numbers and arbitrary text',()=>{
+ for(const reference of ['OSAKA YAMATO 12345678','OSAKA YAMATO 1234567 / 1234568','OTHER 1234567','1234567 EXTRA']){
+  const r=fixture(variantOrder());r.sources.push(prefixSource(reference));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0);
+ }
+});
+test('prefix support retains variant, duplicate ID and quantity checks',()=>{
+ for(const rows of [[['SYN-1','02-2']],[['SYN-1','01-3']],[['SYN-1','01-2'],['SYN-1','01-2']],[['SYN-1','01-2'],['SYN-2','01-2'],['SYN-3','01-2']]]){
+  const r=fixture(variantOrder());r.sources.push(prefixSource('OSAKA YAMATO 1234567',rows));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0);
+ }
+});
 test('spreadsheet joins normalize full hyphenated models and preserve a missing-size review requirement',()=>{
  const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01'],['SYN-2','1']]));const c=purchaseCandidates(r,payment)[0];assert.equal(c.inventoryCount,2);assert.equal(c.requiresInventoryReview,true);assert(c.order.inventoryLinks.every(i=>i.requiresReview&&i.status==='candidate'));assert.equal(c.order.inventoryLinks[0].source.inventoryCell,'B3');assert(c.evidence.some(s=>s.id==='s8'));
 });

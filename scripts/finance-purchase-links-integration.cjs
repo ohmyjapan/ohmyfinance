@@ -20,7 +20,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
   const text=JSON.stringify(order),detail={id:'s2',kind:'search',title:'Synthetic order',url,text,hash:hash(text),capturedAt:new Date().toISOString()};
   const query=new URLSearchParams({lease:job.lease,sourceId:'s1',name:'Synthetic-order.png',mimeType:'image/png'});
   const uploaded=await fetch(origin+'/api/finance-research/worker/'+job.id+'/artifact?'+query,{method:'POST',headers:{Authorization:'Bearer '+worker,'Content-Type':'image/png'},body:original});assert.equal(uploaded.status,200,await uploaded.clone().text());
-  const sources=[...job.sources,document,detail];if(fromSheet){const text=JSON.stringify({sheet:'Synthetic inventory',snapshotHash:'c'.repeat(64),exportMode:'original_csv',firstRows:[['','','','','주문번호 혹은 구매처','','','색상/사이즈']],matches:stockIds.map((id,i)=>({row:i+3,values:['',id,'','',number,'','AB12-CD345','01']}))});sources.push({id:'s3',kind:'spreadsheet',title:'inventory / Synthetic inventory',url:'https://docs.google.com/spreadsheets/d/synthetic/edit#gid=10',text,hash:hash(text),capturedAt:new Date().toISOString()})}
+  const sources=[...job.sources,document,detail];if(fromSheet){const text=JSON.stringify({sheet:'Synthetic inventory',snapshotHash:'c'.repeat(64),exportMode:'original_csv',firstRows:[['','','','','주문번호 혹은 구매처','','','색상/사이즈']],matches:stockIds.map((id,i)=>({row:i+3,values:['',id,'','','OSAKA YAMATO '+number,'','AB12-CD345','01']}))});sources.push({id:'s3',kind:'spreadsheet',title:'inventory / Synthetic inventory',url:'https://docs.google.com/spreadsheets/d/synthetic/edit#gid=10',text,hash:hash(text),capturedAt:new Date().toISOString()})}
   const finished=await workerCall(job.id+'/result',{lease:job.lease,sources,report:{summary:'Synthetic connection evidence',question:'',findings:[],supplier:null}});assert.equal(finished.status,200,JSON.stringify(finished));
   const current=await view(line);assert.equal(current.candidates.length,1);return {job,order,draft,current};
  }
@@ -38,7 +38,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
  const saved=await call(base(2),{method:'POST',token,body});assert.equal(saved.status,200,JSON.stringify(saved));const link=saved.data.saved[0];assert.equal(link.status,'linked');assert.equal(link.order.inventoryLinks.length,2);assert.equal(link.originals.length,1);
  const repeat=await call(base(2),{method:'POST',token,body});assert.equal(repeat.status,200);assert.equal(repeat.data.saved[0].revision,1);
  const download='/api/finance-purchases/'+link.id+'/originals/'+hash(original),bytes=await fetch(origin+download,{headers:{Authorization:'Bearer '+token}});assert.equal(bytes.status,200);assert.deepEqual(Buffer.from(await bytes.arrayBuffer()),original);assert.equal((await call(download,{token:other})).status,404);
- pass('date-offset order with two inventory items saves one original and repeat confirmation is idempotent');
+ pass('warehouse-prefixed inventory links save with the original and repeat confirmation is idempotent');
  if(process.env.OMF_TEST_PURCHASE_BROWSER){
   const path=require('path'),os=require('os'),{pathToFileURL}=require('url'),{browserFor}=await import(pathToFileURL(path.resolve('collector/browser.mjs')));
   const browser=await browserFor(path.join(os.homedir(),'.ohmyfinance-purchase-ui-test'));let page;

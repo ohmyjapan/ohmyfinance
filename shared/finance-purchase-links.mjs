@@ -6,6 +6,8 @@ const text=(v,max=500)=>typeof v==='string'&&v.length<=max;
 const date=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
 const historyUrl='https://www.isseymiyake.com/pages/orders';
 const normalize=v=>String(v||'').normalize('NFKC').toUpperCase().trim();
+// Accept the observed warehouse prefix while preserving the original source cell.
+const orderReference=v=>normalize(v).replace(/\s+/g,' ').match(/^(?:OSAKA YAMATO )?(\d{4,15})$/)?.[1]||'';
 const model=v=>normalize(v).replace(/[-\s]/g,'').match(/[A-Z]{2}\d{2}[A-Z]{2}\d{3}/)?.[0]||'';
 const option=v=>/^\d+$/.test(normalize(v))?String(Number(v)):normalize(v);
 // The configured inventory's captured header identifies this layout. Retain only
@@ -30,7 +32,7 @@ function sheetInventory(order,sources){
  const links=[],evidence=new Map();
  for(const {row,source,sheet} of rows.values()){
   const v=row.values,code=normalize(v[6]).replace(/[-\s]/g,''),variant=normalize(v[7]).match(/^(\d{1,3})(?:[-/](\d+|[A-Z]+|-))?$/);
-  if(normalize(v[4])!==order.orderNumber||counts.get(v[1])!==1||duplicateIds.has(v[1])||!variant||!/^[A-Z]{2}\d{2}[A-Z]{2}\d{3}$/.test(code))continue;
+  if(orderReference(v[4])!==order.orderNumber||counts.get(v[1])!==1||duplicateIds.has(v[1])||!variant||!/^[A-Z]{2}\d{2}[A-Z]{2}\d{3}$/.test(code))continue;
   const items=order.items.filter(i=>model(i.product)===code&&option(i.color.match(/no\.\s*(\d+)/i)?.[1])===option(variant[1])&&(!variant[2]||option(i.size)===option(variant[2])));
   if(items.length!==1)continue;
   const item=items[0],shipments=[],seenShipments=new Set();

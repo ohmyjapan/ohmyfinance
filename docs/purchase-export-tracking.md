@@ -7,6 +7,11 @@ orders. Allocations bind a saved purchase, its item identity and one inventory I
 with quantity one. This matches the current inventory sheet's one-ID-per-unit
 layout; unidentified quantities stay pending.
 
+Inventory order references accept a bare order number or `OSAKA YAMATO` followed
+by that exact number. The captured source text stays intact. Multiple numbers or
+other prefixes remain unresolved; model, color, size and quantity checks still
+apply before an inventory unit can be connected.
+
 The purchase panel shows exported / purchased quantities, shipment references,
 invoice and export-permit downloads, and documented returns/cancellations.
 Purchase cost and customer-submitted declared value are independent. Saving
