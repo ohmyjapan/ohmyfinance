@@ -38,3 +38,22 @@ test('competing same-total orders remain separate, and mismatched totals stay vi
 test('conflicting snapshots of the same order cannot be combined into one complete original',()=>{
  const a=fixture(order(),2),raw=JSON.parse(a.sources[3].text);raw.total=50000;a.sources[3].text=JSON.stringify(raw);a.sources[3].hash=hash(a.sources[3].text);assert.equal(purchaseCandidates(a,payment).length,0);
 });
+function inventorySource(rows,extra={}){
+ const sheet={sheet:'Synthetic inventory',snapshotHash:'c'.repeat(64),exportMode:'original_csv',firstRows:[['','','','','주문번호 혹은 구매처','','','색상/사이즈']],matches:rows.map((v,i)=>({row:i+3,values:['',v[0],'','','1234567','','AB12-CD345',v[1]]})),...extra};
+ const text=JSON.stringify(sheet);return {id:'s8',kind:'spreadsheet',title:'inventory / Synthetic inventory',url:'https://docs.google.com/spreadsheets/d/synthetic/edit#gid=10',text,hash:hash(text)};
+}
+const variantOrder=()=>({...order(),items:[{...order().items[0],color:'BLUE (no.01)'}]});
+test('spreadsheet joins normalize full hyphenated models and preserve a missing-size review requirement',()=>{
+ const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01'],['SYN-2','1']]));const c=purchaseCandidates(r,payment)[0];assert.equal(c.inventoryCount,2);assert.equal(c.requiresInventoryReview,true);assert(c.order.inventoryLinks.every(i=>i.requiresReview&&i.status==='candidate'));assert.equal(c.order.inventoryLinks[0].source.inventoryCell,'B3');assert(c.evidence.some(s=>s.id==='s8'));
+});
+test('explicit variant mismatch, excess quantities and duplicate inventory identifiers remain unresolved',()=>{
+ for(const rows of [[['SYN-1','02-2']],[['SYN-1','01-3']],[['SYN-1','01-2'],['SYN-2','01-2'],['SYN-3','01-2']],[['SYN-1','01-2'],['SYN-1','01-2']]]){const r=fixture(variantOrder());r.sources.push(inventorySource(rows));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0)}
+ const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01-2']]));assert.equal(purchaseCandidates(r,payment)[0].requiresInventoryReview,false);
+});
+test('spreadsheet snapshot conflicts, wrong headers and lossy exports cannot create inventory connections',()=>{
+ for(const extra of [{firstRows:[]},{exportMode:'query_csv_fallback'}]){const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01-2']],extra));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0)}
+ const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01-2']]),inventorySource([['SYN-1','01-2']],{snapshotHash:'d'.repeat(64)}));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0);
+});
+test('shipping evidence joins only by exact inventory ID in the same captured workbook',()=>{
+ const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01-2']]));const cells=Array(52).fill('');cells[1]='2026/09/25';cells[14]='Synthetic tracking';cells[19]='SYN-1';const header=Array(52).fill('');header[19]='재고번호';const text=JSON.stringify({sheet:'Synthetic shipping',snapshotHash:'e'.repeat(64),exportMode:'original_csv',firstRows:[[],header],matches:[{row:5,values:cells}]});const s={id:'s9',kind:'spreadsheet',title:'shipping / Synthetic shipping',url:'https://docs.google.com/spreadsheets/d/synthetic/edit#gid=0',text,hash:hash(text)};r.sources.push(s);assert.equal(purchaseCandidates(r,payment)[0].order.inventoryLinks[0].shipments[0].tracking,'Synthetic tracking');s.url='https://docs.google.com/spreadsheets/d/another/edit#gid=0';assert.equal(purchaseCandidates(r,payment)[0].order.inventoryLinks[0].shipments.length,0);
+});

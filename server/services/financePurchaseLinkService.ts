@@ -27,12 +27,13 @@ export async function purchaseLinkView(ownerId:string,importId:string,line:numbe
 }
 export async function savePurchaseLink(ownerId:string,importId:string,line:number,body:any){
  await init()
- if(!body||Object.keys(body).some(k=>!['revision','key','sourceHash','researchRevision','candidateHash','archiveId','linkRevision','confirm'].includes(k))||body.confirm!==true||!/^[a-f0-9]{64}$/.test(body.archiveId||'')||!Number.isSafeInteger(body.linkRevision)||body.linkRevision<0)fail(400,'注文と明細の対応を確認してください。')
+ if(!body||Object.keys(body).some(k=>!['revision','key','sourceHash','researchRevision','candidateHash','archiveId','linkRevision','confirm','confirmInventory'].includes(k))||body.confirm!==true||!/^[a-f0-9]{64}$/.test(body.archiveId||'')||!Number.isSafeInteger(body.linkRevision)||body.linkRevision<0)fail(400,'注文と明細の対応を確認してください。')
  await withWritableDraft(ownerId,importId,line,body,async(d,check)=>{
   const r:any=await Research.findOne({ownerId,importId,line}).lean()
   if(r?.revision!==body.researchRevision)fail(409,'調査が更新されています。再読込してください。')
   const candidate=purchaseCandidates(r,d).find(c=>c.order.archiveId===body.archiveId&&c.candidateHash===body.candidateHash)
   if(!candidate?.documentsComplete||!candidate.amountMatches)fail(409,'金額が一致する注文と全ページの原本を確認してください。')
+  if(candidate.requiresInventoryReview&&body.confirmInventory!==true)fail(409,'サイズ記載のない在庫候補と注文の商品を確認してください。')
   const old:any=await Link.findOne({ownerId,archiveId:body.archiveId}).lean()
   if(old&&old.status==='linked'&&(String(old.importId)!==importId||old.line!==line))fail(409,'この注文は別の明細に接続済みです。')
   if(old?.status==='linked'&&old.candidateHash===candidate.candidateHash)return

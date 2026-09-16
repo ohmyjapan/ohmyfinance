@@ -151,6 +151,14 @@ the document. Updated research can refresh the saved connection after review.
 Undo releases the payment/inventory association while retaining the order original
 and history. Include this collection and storage directory in normal data backups.
 
+Captured original-CSV or Sheets-API inventory rows can supply missing archive links.
+The join checks the known sheet headers, exact order number, full normalized product
+code and color; an explicitly different size is excluded. Missing size is displayed
+and requires a separate inventory confirmation. Captured shipping rows join by exact
+inventory ID in the same workbook. Conflicting snapshots, duplicate stock IDs and
+excess quantities remain unresolved. Source rows and snapshot hashes are retained
+with the connection; a keyword search never proves that no other inventory exists.
+
 Validation: `finance-purchase-links.test.mjs` covers evidence binding, date windows,
 quantity limits, competing orders and missing parts; run the isolated application
 suite with `OMF_TEST_PURCHASE_LINKS_ONLY=1`. Add `OMF_TEST_PURCHASE_BROWSER=1` for
