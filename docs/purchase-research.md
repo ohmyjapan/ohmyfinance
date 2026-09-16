@@ -45,12 +45,18 @@ These checks establish output compatibility and validation behavior. A new run w
 
 ```powershell
 npm run build
-node --test scripts/finance-research.test.mjs scripts/finance-research-purpose.test.mjs scripts/finance-search-evidence.test.mjs scripts/finance-search-review.test.mjs scripts/finance-search-contract.test.mjs scripts/finance-supplier.test.mjs
+node --test scripts/finance-research.test.mjs scripts/finance-research-purpose.test.mjs scripts/finance-research-accounting.test.mjs scripts/finance-search-evidence.test.mjs scripts/finance-search-review.test.mjs scripts/finance-search-contract.test.mjs scripts/finance-supplier.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
 ```
 
 The integration suite uses isolated synthetic owners, card data, and MongoDB. It covers authorization, exclusive claims, source/citation rejection, draft-only confirmation, supplier proof, original receipt storage and deduplication, repeat research, connection status, and stale-result rejection. Optional `OMF_TEST_RESEARCH_BROWSER=1` exercises the visible page in real Chrome; set `OMF_TEST_SCREENSHOT` to a private output path. Live connection probes must remain outside the repository.
+
+## Accounting guidance in research
+
+Research receives the same conditional accounting guidance used on the mapping page, rebuilt only from its supplied purchase facts, known values and registered references. This also works for frozen evaluation inputs without exposing hidden answers, historical mappings or target-row lessons. The worker distinguishes company/customer purpose, purchase-side ledger account, subsidiary, transaction classification and the separately configured card liability. A historical broad expense label alone is not treated as proof of a specific ledger account.
+
+Guidance remains advisory: service names do not prove the contract, use, accounting period or tax treatment. Existing company policies and supported alternatives remain relevant. Its links are reading leads, not captured evidence or a live recheck; findings still require captured purchase evidence. Private job traces save the supplied guidance, and implementation hashes include both the guidance adapter and the shared accounting rules.
 
 ## Repeatable evaluation
 
