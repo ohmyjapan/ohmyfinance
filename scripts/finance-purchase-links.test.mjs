@@ -68,6 +68,28 @@ test('prefix support retains variant, duplicate ID and quantity checks',()=>{
 test('spreadsheet joins normalize full hyphenated models and preserve a missing-size review requirement',()=>{
  const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01'],['SYN-2','1']]));const c=purchaseCandidates(r,payment)[0];assert.equal(c.inventoryCount,2);assert.equal(c.requiresInventoryReview,true);assert(c.order.inventoryLinks.every(i=>i.requiresReview&&i.status==='candidate'));assert.equal(c.order.inventoryLinks[0].source.inventoryCell,'B3');assert(c.evidence.some(s=>s.id==='s8'));
 });
+
+test('empty size after a delimiter remains a reviewable inventory candidate',()=>{
+ for(const variant of ['01-','01/']){
+  const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1',variant]]));const c=purchaseCandidates(r,payment)[0];
+  assert.equal(c.inventoryCount,1);assert.equal(c.requiresInventoryReview,true);
+  assert.equal(c.order.inventoryLinks[0].requiresReview,true);assert.equal(c.order.inventoryLinks[0].status,'candidate');
+  assert.equal(c.order.items[0].size,'2');
+  assert.equal(JSON.parse(c.evidence.find(s=>s.id==='s8').text).matches[0].values[7],variant);
+ }
+});
+
+test('empty-size candidates retain identity, ambiguity, quantity and duplicate checks',()=>{
+ for(const rows of [[['SYN-1','02-']],[['SYN-1','01-'],['SYN-1','01-']],[['SYN-1','01-'],['SYN-2','01-'],['SYN-3','01-']],[['SYN-1','01/-']]]){
+  const r=fixture(variantOrder());r.sources.push(inventorySource(rows));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0);
+ }
+ for(const [column,value] of [[4,'1234568'],[6,'AB12CD346']]){
+  const source=inventorySource([['SYN-1','01-']]),raw=JSON.parse(source.text);raw.matches[0].values[column]=value;source.text=JSON.stringify(raw);source.hash=hash(source.text);
+  const r=fixture(variantOrder());r.sources.push(source);assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0);
+ }
+ const ambiguous=variantOrder();ambiguous.items.push({...ambiguous.items[0],line:2,size:'3'});
+ const r=fixture(ambiguous);r.sources.push(inventorySource([['SYN-1','01-']]));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0);
+});
 test('explicit variant mismatch, excess quantities and duplicate inventory identifiers remain unresolved',()=>{
  for(const rows of [[['SYN-1','02-2']],[['SYN-1','01-3']],[['SYN-1','01-2'],['SYN-2','01-2'],['SYN-3','01-2']],[['SYN-1','01-2'],['SYN-1','01-2']]]){const r=fixture(variantOrder());r.sources.push(inventorySource(rows));assert.equal(purchaseCandidates(r,payment)[0].inventoryCount,0)}
  const r=fixture(variantOrder());r.sources.push(inventorySource([['SYN-1','01-2']]));assert.equal(purchaseCandidates(r,payment)[0].requiresInventoryReview,false);

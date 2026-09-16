@@ -10,7 +10,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
  const workerInfo=await call('/api/finance-chat/agents',{method:'POST',token,body:{accountIds:[String(account._id)],researchEnabled:true}});assert.equal(workerInfo.status,200);const worker=workerInfo.data.token;
  const workerCall=(route,body={})=>call('/api/finance-research/worker/'+route,{method:'POST',token:worker,body});
  const original=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),Buffer.from('Synthetic purchase original')]);
- async function prepare(line,number,stockIds=[],fromSheet=false){
+ async function prepare(line,number,stockIds=[],fromSheet=false,variant='01'){
   assert.equal((await call('/api/finance-chat/worker/heartbeat',{method:'POST',token:worker,body:{}})).status,200);
   const draft=await getDraft(line),r=(await call(researchBase(line),{token})).data;
   const queued=await call(researchBase(line),{method:'POST',token,body:{...bind(draft),researchRevision:r.research?.revision||0,requestId:crypto.randomUUID(),instruction:'Synthetic purchase connection'}});assert.equal(queued.status,200,JSON.stringify(queued));
@@ -20,12 +20,12 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
   const text=JSON.stringify(order),detail={id:'s2',kind:'search',title:'Synthetic order',url,text,hash:hash(text),capturedAt:new Date().toISOString()};
   const query=new URLSearchParams({lease:job.lease,sourceId:'s1',name:'Synthetic-order.png',mimeType:'image/png'});
   const uploaded=await fetch(origin+'/api/finance-research/worker/'+job.id+'/artifact?'+query,{method:'POST',headers:{Authorization:'Bearer '+worker,'Content-Type':'image/png'},body:original});assert.equal(uploaded.status,200,await uploaded.clone().text());
-  const sources=[...job.sources,document,detail];if(fromSheet){const text=JSON.stringify({sheet:'Synthetic inventory',snapshotHash:'c'.repeat(64),exportMode:'original_csv',firstRows:[['','','','','주문번호 혹은 구매처','','','색상/사이즈']],matches:stockIds.map((id,i)=>({row:i+3,values:['',id,'','','OSAKA YAMATO '+number,'','AB12-CD345','01']}))});sources.push({id:'s3',kind:'spreadsheet',title:'inventory / Synthetic inventory',url:'https://docs.google.com/spreadsheets/d/synthetic/edit#gid=10',text,hash:hash(text),capturedAt:new Date().toISOString()})}
+  const sources=[...job.sources,document,detail];if(fromSheet){const text=JSON.stringify({sheet:'Synthetic inventory',snapshotHash:'c'.repeat(64),exportMode:'original_csv',firstRows:[['','','','','주문번호 혹은 구매처','','','색상/사이즈']],matches:stockIds.map((id,i)=>({row:i+3,values:['',id,'','','OSAKA YAMATO '+number,'','AB12-CD345',variant]}))});sources.push({id:'s3',kind:'spreadsheet',title:'inventory / Synthetic inventory',url:'https://docs.google.com/spreadsheets/d/synthetic/edit#gid=10',text,hash:hash(text),capturedAt:new Date().toISOString()})}
   const finished=await workerCall(job.id+'/result',{lease:job.lease,sources,report:{summary:'Synthetic connection evidence',question:'',findings:[],supplier:null}});assert.equal(finished.status,200,JSON.stringify(finished));
   const current=await view(line);assert.equal(current.candidates.length,1);return {job,order,draft,current};
  }
  const input=async line=>{const d=await getDraft(line),v=await view(line),c=v.candidates[0];return {...bind(d),researchRevision:v.researchRevision,candidateHash:c.candidateHash,archiveId:c.order.archiveId,linkRevision:c.linkRevision,confirm:true,confirmInventory:true}};
- const first=await prepare(2,'1234567',['SYN-1','SYN-2'],true);assert.equal(first.current.candidates[0].dateOffsetDays,-2);assert.equal(first.current.candidates[0].inventoryCount,2);assert.equal(first.current.saved.length,0);assert.equal(first.current.candidates[0].requiresInventoryReview,true);
+ const first=await prepare(2,'1234567',['SYN-1','SYN-2'],true,'01-');assert.equal(first.current.candidates[0].dateOffsetDays,-2);assert.equal(first.current.candidates[0].inventoryCount,2);assert.equal(first.current.saved.length,0);assert.equal(first.current.candidates[0].requiresInventoryReview,true);
  const body=await input(2);
  assert.equal((await call(base(2),{method:'POST',token,body:{...body,candidateHash:'f'.repeat(64)}})).status,409);
  assert.equal((await call(base(2),{method:'POST',token,body:{...body,confirm:false}})).status,400);

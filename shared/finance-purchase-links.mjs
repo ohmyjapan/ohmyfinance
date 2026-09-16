@@ -31,7 +31,8 @@ function sheetInventory(order,sources){
  const counts=new Map();for(const {row} of rows.values())counts.set(row.values[1],(counts.get(row.values[1])||0)+1);
  const links=[],evidence=new Map();
  for(const {row,source,sheet} of rows.values()){
-  const v=row.values,code=normalize(v[6]).replace(/[-\s]/g,''),variant=normalize(v[7]).match(/^(\d{1,3})(?:[-/](\d+|[A-Z]+|-))?$/);
+  // A trailing separator supplies no size; keep the same review gate as a bare color.
+  const v=row.values,code=normalize(v[6]).replace(/[-\s]/g,''),variant=normalize(v[7]).match(/^(\d{1,3})(?:[-/](\d+|[A-Z]+|-)?)?$/);
   if(orderReference(v[4])!==order.orderNumber||counts.get(v[1])!==1||duplicateIds.has(v[1])||!variant||!/^[A-Z]{2}\d{2}[A-Z]{2}\d{3}$/.test(code))continue;
   const items=order.items.filter(i=>model(i.product)===code&&option(i.color.match(/no\.\s*(\d+)/i)?.[1])===option(variant[1])&&(!variant[2]||option(i.size)===option(variant[2])));
   if(items.length!==1)continue;
