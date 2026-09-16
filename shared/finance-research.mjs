@@ -15,7 +15,9 @@ export const reportSchema={
  }
 };
 const purposeError=(code,message)=>Object.assign(Error(message),{code});
+const evidenceError=(message,target)=>Object.assign(Error(message),{code:'finding_evidence_invalid',target});
 export function validationFeedback(error){
+ if(error?.code==='finding_evidence_invalid')return {code:error.code,message:error.message,fields:[error.target],instruction:'Repair the rejected citations using captured evidence or withdraw the unsupported finding. A tax percentage requires printed purchase mail or document evidence. Preserve already valid values and citations.'};
  if(['search_scope_invalid','question_repeated'].includes(error?.code))return {code:error.code,issues:error.issues||[],instruction:'Correct the identified evidence-scope or repeated-answer issues in the actual phrases. Use supplied settled facts to remove repeated questions, preserving questions about still-missing details and concrete conflicts. Restrict conclusions to the captured returned evidence, and leave absence or exhaustive agreement unverified. A later disclaimer does not repair an earlier absolute claim. Preserve supported findings and exact quotations. Do not introduce or change mapped values; omit a finding if its reasoning cannot be supported.'};
  const code=['purpose_invalid','purpose_customer_conflict'].includes(error?.code)?error.code:'output_invalid';
  return {code,message:code==='purpose_invalid'?'purpose must be one of the exact accepted values.':code==='purpose_customer_conflict'?'A nonempty customerId requires purpose customer in the combined proposal.':String(error?.message||'Invalid report').slice(0,300),fields:code==='purpose_invalid'?['purpose']:code==='purpose_customer_conflict'?['purpose','customerId']:[],purposeChoices,instruction:purposeContract};
@@ -42,9 +44,9 @@ export function validateSources(input) {
 export function validateReport(raw,context,sources) {
  if(!raw||typeof raw!=='object'||Object.keys(raw).some(k=>!['summary','question','findings','supplier'].includes(k)))throw Error('Invalid research report');
  const summary=string(raw.summary,600),question=string(raw.question,300);
- function citations(input){
-  if(!Array.isArray(input)||!input.length||input.length>8)throw Error('Citations required');
-  return input.map(c=>{const source=sources.find(s=>s.id===c.sourceId),quote=string(c.quote,4000);if(!source||!quote||!source.text.includes(quote))throw Error('Citation is not in captured evidence');return {sourceId:source.id,quote}});
+ function citations(input,target){
+  if(!Array.isArray(input)||!input.length||input.length>8)throw evidenceError('Citations required',target);
+  return input.map(c=>{const source=sources.find(s=>s.id===c.sourceId),quote=string(c.quote,4000);if(!source||!quote||!source.text.includes(quote))throw evidenceError('Citation is not in captured evidence',target);return {sourceId:source.id,quote}});
  }
  if(!Array.isArray(raw.findings)||raw.findings.length>researchFields.length)throw Error('Invalid findings');
  const found=new Set(),parsed=raw.findings.map(f=>{
@@ -57,18 +59,18 @@ export function validateReport(raw,context,sources) {
  const combined={...context.values,...Object.fromEntries(parsed.map(f=>[f.field,f.value]))};
  if(combined.purpose!=='customer'&&combined.customerId)throw purposeError('purpose_customer_conflict','Customer requires customer purpose');
  const validated=validateValues(combined),findings=parsed.map(f=>{
-  const field=researchFields.find(x=>x.key===f.field),value=f.value,proof=citations(f.citations),reason=string(f.reason,1200);
+  const field=researchFields.find(x=>x.key===f.field),value=f.value,proof=citations(f.citations,f.field),reason=string(f.reason,1200);
   if(JSON.stringify(validated[f.field])!==JSON.stringify(value))throw Error('Invalid field value');
   if(field.ref&&value&&!context.references[field.ref]?.some(r=>String(r._id)===value))throw Error('Unregistered reference');
-  if(f.basis==='literal'&&['productName','companyInfo','receiptNumber','trackingNumber','janCode'].includes(f.field)&&typeof value==='string'&&value&&!proof.some(c=>c.quote.includes(value)))throw Error('Literal field must appear in its quote');
-  if(f.field==='invoiceNumber'&&(!/^T[0-9]{13}$/.test(value)||!proof.some(c=>c.quote.includes(value))))throw Error('Invoice number needs literal evidence');
-  if(f.field==='taxRate'&&!proof.some(c=>['mail','document'].includes(sources.find(s=>s.id===c.sourceId).kind)&&new RegExp('(?:^|[^0-9.])'+String(value).replace('.','\\.')+'\\s*[%％]').test(c.quote)))throw Error('Tax rate needs a printed purchase percentage');
+  if(f.basis==='literal'&&['productName','companyInfo','receiptNumber','trackingNumber','janCode'].includes(f.field)&&typeof value==='string'&&value&&!proof.some(c=>c.quote.includes(value)))throw evidenceError('Literal field must appear in its quote',f.field);
+  if(f.field==='invoiceNumber'&&(!/^T[0-9]{13}$/.test(value)||!proof.some(c=>c.quote.includes(value))))throw evidenceError('Invoice number needs literal evidence',f.field);
+  if(f.field==='taxRate'&&!proof.some(c=>['mail','document'].includes(sources.find(s=>s.id===c.sourceId).kind)&&new RegExp('(?:^|[^0-9.])'+String(value).replace('.','\\.')+'\\s*[%％]').test(c.quote)))throw evidenceError('Tax rate needs a printed purchase percentage',f.field);
   return {field:f.field,value,valueJson:f.valueJson,basis:f.basis,reason,citations:proof};
  });
  let supplier=null;
  if(raw.supplier){
-  const p=raw.supplier,proof=citations(p.citations),shopName=string(p.shopName,200),legalName=string(p.legalName,200),invoiceNumber=string(p.invoiceNumber,14);
-  if(!shopName||!legalName||!proof.some(c=>c.quote.includes(legalName))||(invoiceNumber&&(!/^T[0-9]{13}$/.test(invoiceNumber)||!proof.some(c=>c.quote.includes(invoiceNumber)))))throw Error('Supplier identity needs literal evidence');
+  const p=raw.supplier,proof=citations(p.citations,'supplier'),shopName=string(p.shopName,200),legalName=string(p.legalName,200),invoiceNumber=string(p.invoiceNumber,14);
+  if(!shopName||!legalName||!proof.some(c=>c.quote.includes(legalName))||(invoiceNumber&&(!/^T[0-9]{13}$/.test(invoiceNumber)||!proof.some(c=>c.quote.includes(invoiceNumber)))))throw evidenceError('Supplier identity needs literal evidence','supplier');
   supplier={shopName,legalName,invoiceNumber,citations:proof};
  }
  return {summary,question,findings,supplier};
