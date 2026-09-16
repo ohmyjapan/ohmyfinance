@@ -46,16 +46,16 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
  const failedDetail=(await call(base+'/runs/'+failedJob.id,{token})).data.run;assert.deepEqual(failedDetail.diagnostic,failedResult.diagnostic);assert.equal(failedDetail.sources.length,2);assert.deepEqual(failedDetail.runtime,result.runtime);assert.equal(failedDetail.report,null);assert.equal(failedDetail.score,null);assert.equal((await call(base+'/runs/'+failedJob.id,{token:other})).status,404);
  const failedView=(await call(base+'/overview?batchId='+diagnosticBatch.batchId,{token})).data;assert.equal(failedView.summary.failed,1);assert.equal(failedView.summary.matched,0);assert.deepEqual(await snapshot(),before);
  pass('failed evaluations retain validated diagnostic evidence and runtime without reports, scores or purchase mutations');
- for(const code of ['search_scope_invalid','search_review_failed']){
+ for(const code of ['search_scope_invalid','search_review_failed','question_repeated']){
   const searchBatch={batchId:crypto.randomUUID(),cases:[{id:c._id,revision:2}]};assert.equal((await post(base+'/runs',searchBatch)).status,200);const searchJob=(await work('claim')).data.job;
   const searchText=JSON.stringify({searchType:'mail',coverage:{terms:'Synthetic',returnedCount:0,hasMore:true,absenceProven:false},messages:[]}),searchSource={id:'s1',kind:'search',title:'Synthetic mail search',url:'',text:searchText,hash:crypto.createHash('sha256').update(searchText).digest('hex'),capturedAt:new Date().toISOString()};
-  const searchFailure={lease:searchJob.lease,failed:true,diagnostic:{code,correctionAttempted:code==='search_scope_invalid'},sources:[...searchJob.sources,searchSource],runtime:result.runtime};
+  const searchFailure={lease:searchJob.lease,failed:true,diagnostic:{code,correctionAttempted:code!=='search_review_failed'},sources:[...searchJob.sources,searchSource],runtime:result.runtime};
   assert.equal((await work(searchJob.id+'/result',{...searchFailure,diagnostic:{code:'arbitrary',correctionAttempted:false}})).status,400);
   assert.equal((await work(searchJob.id+'/result',searchFailure)).status,200);const searchDetail=(await call(base+'/runs/'+searchJob.id,{token})).data.run;
   assert.deepEqual(searchDetail.diagnostic,searchFailure.diagnostic);assert.equal(searchDetail.sources[1].text,searchText);assert.equal(searchDetail.report,null);assert.equal(searchDetail.score,null);
  }
  assert.deepEqual(await snapshot(),before);
- pass('search review failures retain bounded diagnostics and search metadata without proposals or purchase changes');
+ pass('search and repeated-question failures retain bounded diagnostics and evidence without proposals or purchase changes');
  d=await getDraft();const changed=await call(draftPath,{method:'PUT',token,body:{...bind(d),values:{...d.values,productName:'New purchase correction'},confirm:false,remember:[]}});assert.equal(changed.status,200);assert.equal((await post(base+'/runs',{...second,batchId:crypto.randomUUID()})).status,409);
  pass('reference edits preserve old scores, expired work retries once, and stale cases cannot be rerun');
  if(process.env.OMF_TEST_EVALUATION_BROWSER){

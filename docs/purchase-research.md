@@ -46,6 +46,7 @@ These checks establish output compatibility and validation behavior. A new run w
 ```powershell
 npm run build
 node --test scripts/finance-research.test.mjs scripts/finance-research-purpose.test.mjs scripts/finance-research-accounting.test.mjs scripts/finance-search-evidence.test.mjs scripts/finance-search-review.test.mjs scripts/finance-search-contract.test.mjs scripts/finance-supplier.test.mjs
+node --test scripts/finance-research-questions.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
 ```
@@ -57,6 +58,14 @@ The integration suite uses isolated synthetic owners, card data, and MongoDB. It
 Research receives the same conditional accounting guidance used on the mapping page, rebuilt only from its supplied purchase facts, known values and registered references. This also works for frozen evaluation inputs without exposing hidden answers, historical mappings or target-row lessons. The worker distinguishes company/customer purpose, purchase-side ledger account, subsidiary, transaction classification and the separately configured card liability. A historical broad expense label alone is not treated as proof of a specific ledger account.
 
 Guidance remains advisory: service names do not prove the contract, use, accounting period or tax treatment. Existing company policies and supported alternatives remain relevant. Its links are reading leads, not captured evidence or a live recheck; findings still require captured purchase evidence. Private job traces save the supplied guidance, and implementation hashes include both the guidance adapter and the shared accounting rules.
+
+## Questions that reuse saved answers
+
+Research builds a compact question guide from current confirmed draft fields, applicable approved purpose/customer teachings, and the current saved accounting explanation. A teaching must still appear in the server's applicable rules, agree with the supplied values and be effective for the purchase date. Conflicting or superseded values, deferred rules, unaccepted suggestions and prior-purchase patterns do not become settled answers. A selected account alone does not establish the contract or tax treatment.
+
+The existing tool-free wording review also checks questions against this guide, including reports with no search sources. A repeated-answer issue must quote the actual question and cite captured context. The single wording correction can remove an answered clause while keeping the missing detail; it preserves original proposed values, citations and supplier. Questions that still repeat settled answers fail instead of being delivered. Unanswered purchase details and concrete contradictions remain valid reasons to ask. This is a bounded AI check, not a guarantee that every question is necessary or perfectly phrased.
+
+Frozen evaluations use only their explicitly supplied non-target inputs; hidden reference answers, target-row mappings and saved explanations remain excluded. Normal research uses the current purchase context. The private `question-guidance.json` trace records that distinction. Worker hashes cover the guide, and the review uses the existing deadline and correction allowance without an extra review call when search review already applies.
 
 ## Repeatable evaluation
 
