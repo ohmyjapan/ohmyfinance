@@ -1,10 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {webcrypto} from 'node:crypto';
 import {matchSheetRows} from '../research-worker/search-evidence.mjs';
 import {searchCsv} from '../research-worker/sheets.mjs';
 import {ResearchTools} from '../research-worker/tools.mjs';
@@ -27,15 +25,11 @@ test('zero matches and omitted rows preserve the limits of the evidence',()=>{
  assert.equal(many.matchCount,64);assert(many.matches.length<25);assert.equal(many.coverage.returnedCount,many.matches.length);assert.equal(many.truncated,true);assert(many.coverage.limitations.some(x=>x.includes('omitted')));
  assert.equal(matchSheetRows(Array.from({length:50000},()=>['unrelated']),{...options,windowed:false}).coverage.rowLimitReached,true);
 });
-test('real-browser serialized CSV parser retains quoted commas/newlines and fallback coverage',async()=>{
- for(const fallback of [false,true]){
-  const urls=[],csv='date,shop,item\r\n2026/04/10,Synthetic,"One, two\nthree"\r\n2026/04/11,Other,item';
-  const sandbox={fetch:async url=>{urls.push(url);return {ok:!(fallback&&urls.length===1),text:async()=>csv}},crypto:webcrypto,TextEncoder};
-  const script='('+searchCsv.toString()+')('+['sheetid','0',['synthetic'],'2026-04-10',true,'Tab'].map(JSON.stringify).join(',')+',('+matchSheetRows.toString()+'))';
-  const result=JSON.parse(await vm.runInNewContext(script,sandbox));
-  assert.equal(result.matches[0].values[2],'One, two\nthree');assert.equal(result.matches[0].row,2);
-  assert.equal(result.exportMode,fallback?'google_query_csv':'original_csv');assert.equal(result.coverage.range,fallback?'A1:AZ50000':'entire_tab');assert.deepEqual(result.coverage.terms,['synthetic']);assert.equal(urls.length,fallback?2:1);
- }
+test('original CSV parser retains quoted commas/newlines and bounded coverage',()=>{
+ const csv='date,shop,item\r\n2026/04/10,Synthetic,"One, two\nthree"\r\n2026/04/11,Other,item';
+ const result=searchCsv(csv,['synthetic'],'2026-04-10',true);
+ assert.equal(result.matches[0].values[2],'One, two\nthree');assert.equal(result.matches[0].row,2);
+ assert.equal(result.exportMode,'original_csv');assert.equal(result.coverage.range,'A1:AZ50000');assert.deepEqual(result.coverage.terms,['synthetic']);
 });
 test('mail search stores query scope and pagination separately from purchase evidence',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'omf-search-evidence-'));

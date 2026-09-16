@@ -1,10 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {webcrypto} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {matchSheetRows} from '../research-worker/search-evidence.mjs';
 import {searchCsv} from '../research-worker/sheets.mjs';
@@ -28,8 +26,7 @@ test('size-limited pages advance by actual returned rows and oversized rows cann
 
 test('browser continuation keeps one row snapshot and rejects a changed export instead of mixing pages',async()=>{
  let csv=Array.from({length:32},(_,i)=>'2026/04/10,Synthetic,'+i).join('\n');
- const sandbox={fetch:async()=>({ok:true,text:async()=>csv}),crypto:webcrypto,TextEncoder};
- const call=page=>vm.runInNewContext('('+searchCsv.toString()+')('+['sheetid','0',['Synthetic'],'2026-04-10',false,'Tab'].map(JSON.stringify).join(',')+',('+matchSheetRows.toString()+'),'+JSON.stringify(page)+')',sandbox).then(JSON.parse);
+ const call=async page=>searchCsv(csv,['Synthetic'],'2026-04-10',false,page);
  const first=await call({offset:0});assert.match(first.snapshotHash,/^[a-f0-9]{64}$/);const second=await call({offset:first.pagination.nextOffset,expectedSnapshot:first.snapshotHash});assert.equal(second.matches[0].row,26);assert.equal(second.pagination.nextOffset,null);
  csv+='\n2026/04/10,Synthetic,new';await assert.rejects(call({offset:25,expectedSnapshot:first.snapshotHash}),/changed/);
 });
