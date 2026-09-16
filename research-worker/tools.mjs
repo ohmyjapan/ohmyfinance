@@ -9,12 +9,15 @@ import {publicGet,htmlText} from './http.mjs';
 import {readBrowserPage} from './browser.mjs';
 import {searchBrowserSheet} from './sheets.mjs';
 import {matchSheetRows} from './search-evidence.mjs';
+import {IsseyArchive,ISSEY_HISTORY_URL} from './issey-archive.mjs';
 import {parseRegistry} from '../shared/finance-research.mjs';
 const require=createRequire(new URL('../collector/package.json',import.meta.url));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const obj=properties=>({type:'object',properties,additionalProperties:false,required:Object.keys(properties)});
 const str={type:'string'};
 export const toolDefinitions=[
+ {name:'search_issey_orders',description:'Search the configured private ISSEY MIYAKE order archive for this financial account and the card purchase date plus/minus seven days. Returns dated order candidates, products, variants, quantities, totals, cancellation flags and screenshot parts. Card number is not recorded; exact dates/amounts do not prove an association. Cancelled and incomplete orders cannot be purchase matches. Use read_issey_order for original screenshot evidence before asking for an available order record.',inputSchema:obj({})},
+ {name:'read_issey_order',description:'Read one original, hash-verified screenshot part of an order returned by search_issey_orders. Captures order detail and inventory/shipment links, transcribes the screenshot, and preserves it for on-page review. Read each listed image part for a tall order. Order-history screenshots are not tax invoices; do not derive a printed tax percentage from amounts.',inputSchema:obj({orderId:str,part:{type:'integer',minimum:1,maximum:20}})},
  {name:'search_spreadsheet',description:'Search an authorized finance, inventory or shipping spreadsheet. ALL terms must match the same row (AND). Use fewer terms for broader discovery. The optional window requires a parseable row date within seven days of purchase. Returns a page of rows, query scope, snapshot hash and pagination. When pagination.nextOffset is not null, use continue_spreadsheet with this source ID to examine omitted matches before concluding that relevant evidence was not found or describing the historical pattern. Zero matches never proves absence; missing prices remain unknown.',inputSchema:obj({source:{type:'string',enum:['finance','inventory','shipping']},terms:{type:'array',items:str,maxItems:5},withinPurchaseWindow:{type:'boolean'}})},
  {name:'continue_spreadsheet',description:'Read the next page of a captured spreadsheet search using its source ID. Keeps the same configured sheet, terms, date window and export snapshot; cannot change the search. Continue with the new source ID while pagination.nextOffset is not null. A final page may still say truncated because earlier pages are separate sources. If the sheet changed, restart search_spreadsheet and do not combine different snapshots. Reading every page covers only that query, not all purchases or cells omitted by Google export.',inputSchema:obj({sourceId:str})},
  {name:'read_browser_page',description:'Read a JavaScript supplier or receipt page in real Chrome. GET-only requests; optional receipt PDF preservation.',inputSchema:obj({url:str,preservePdf:{type:'boolean'}})},
@@ -26,7 +29,7 @@ export const toolDefinitions=[
  {name:'verify_invoice',description:'Verify a T-number against the official NTA API for this purchase date. Never infer registration from a company number.',inputSchema:obj({number:str})}
 ];
 export class ResearchTools {
- constructor(config,job,directory,{get=publicGet,extract=interpretDocument,searchSheet=searchBrowserSheet}={}){this.config=config;this.job=job;this.directory=directory;this.sources=[...job.sources];this.get=get;this.extract=extract;this.searchSheet=searchSheet;this.sheetContinuations=new Map();this.messages=new Map();this.attachments=new Map();this.registry=null;this.calls=0}
+ constructor(config,job,directory,{get=publicGet,extract=interpretDocument,searchSheet=searchBrowserSheet,archive=null}={}){this.config=config;this.job=job;this.directory=directory;this.sources=[...job.sources];this.get=get;this.extract=extract;this.searchSheet=searchSheet;this.archive=archive;this.isseyImages=new Map();this.sheetContinuations=new Map();this.messages=new Map();this.attachments=new Map();this.registry=null;this.calls=0}
  async persist(stage){await fs.writeFile(path.join(this.directory,'evidence.json'),JSON.stringify({sources:this.sources,registry:this.registry,stage}));}
  async api(route,body,raw=false){
   const r=await fetch(this.config.baseUrl+'/api/finance-research/worker/'+(this.job.mode==='evaluation'?'evaluation/':'')+this.job.id+'/'+route,{method:'POST',headers:{Authorization:'Bearer '+this.config.token,'Content-Type':'application/json'},body:JSON.stringify({...body,lease:this.job.lease}),redirect:'error',signal:AbortSignal.timeout(30000)});
@@ -82,6 +85,24 @@ export class ResearchTools {
  async call(name,args){
   if(++this.calls>35)throw Error('Research tool budget reached');
   if(!toolDefinitions.some(t=>t.name===name))throw Error('Unknown research tool');
+  if(name==='search_issey_orders'){
+   this.archive ||= new IsseyArchive(this.config,this.job.context);
+   const result=await this.archive.search();
+   return this.add('search','ISSEY MIYAKE 注文履歴の検索',JSON.stringify(result),ISSEY_HISTORY_URL);
+  }
+  if(name==='read_issey_order'){
+   if(!this.archive)throw Error('Search the authorized order archive first');
+   const key=JSON.stringify([args.orderId,args.part]);
+   if(!this.isseyImages.has(key))this.isseyImages.set(key,(async()=>{
+    const {bytes,order,part}=await this.archive.image(args.orderId,args.part);
+    const text=JSON.stringify({searchType:'issey_order_detail',archiveId:order.id,orderNumber:order.orderNumber,date:order.date,total:order.total,currency:order.currency,items:order.items,amounts:order.amounts,cancelled:order.cancelled,dataQuality:order.dataQuality,inventoryLinks:order.inventoryLinks,capturedAt:order.capturedAt,paymentCardVerified:false,merchantIssuedTaxInvoice:false,association:'candidate_only',coverage:{absenceProven:false,limitations:['This is an archived order and its linked inventory evidence. It does not identify the payment card or prove association with this transaction.','Missing inventory or shipment links do not establish that an item was not shipped.']}});
+    if(text.length>60000)throw Error('Order detail exceeds the research evidence limit');
+    const detail=await this.add('search','ISSEY MIYAKE 注文 '+order.orderNumber, text,ISSEY_HISTORY_URL);
+    const document=await this.document(bytes,'image/png','ISSEY MIYAKE 注文履歴 '+order.orderNumber+' ('+part+'/'+order.files.length+').png',ISSEY_HISTORY_URL);
+    return {detail,document,part,parts:order.files.length};
+   })().catch(e=>{this.isseyImages.delete(key);throw e}));
+   return this.isseyImages.get(key);
+  }
   if(name==='search_spreadsheet'){
    const spreadsheetId=this.config.spreadsheets?.[args.source];if(!spreadsheetId)throw Error('Spreadsheet connection is not configured');
    if(!Array.isArray(args.terms)||!args.terms.length||args.terms.length>5||args.terms.some(t=>typeof t!=='string'||!t.trim()||t.length>100))throw Error('Use one to five specific spreadsheet terms');

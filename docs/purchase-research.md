@@ -27,6 +27,16 @@ Sheet searches return bounded pages of up to 25 matching rows. The worker can ca
 
 Mail uses the existing collector's authorized Gmail connection, verifies the mailbox identity, limits searches to the purchase date plus/minus seven days, excludes authentication subjects, and permits only reading returned messages and their listed PDF/image attachments. Search metadata is retained separately from actual mail evidence, including terms, date bounds, returned count and whether additional pages exist. Search metadata cannot establish a printed tax percentage. It does not change mail labels or send messages.
 
+### Private ISSEY MIYAKE order archive
+
+The workstation research worker can read the separate Issey project's authenticated order-history archive. Configure `isseyArchive` in its DPAPI vault with `baseUrl`, `token`, permitted store `accountIds`, and permitted OMF `financialAccountIds`. The endpoint must be loopback or a literal Tailscale address; redirects are refused. The bearer token and service address are never included in captured sources or browser responses. This connection adds no purchase actions and does not modify the archive.
+
+`search_issey_orders` searches only those store accounts and this card purchase's date plus/minus seven days. It reads every catalog page within fixed size/record limits and caches that snapshot for the job. The result retains archive-run status, cancellation and completeness flags, quantities, order totals, screenshot-part counts and search omissions. Same-date or same-amount orders remain separate candidates. The archive does not record the payment card: an exact date/amount match does not confirm a card-to-order association. Cancelled or incomplete orders are ineligible purchase candidates; cancelled negative totals remain cancellation evidence. Missing inventory links do not establish an unshipped item.
+
+`read_issey_order` accepts only an order returned by that job's search and a listed screenshot part. It checks that the order metadata still matches, validates the original PNG size and SHA-256, captures the order's inventory/shipment links and transcribes the original screenshot through the existing document reader. Normal research preserves the original image for on-page review; evaluation reads do not upload artifacts. Repeated reads reuse their result. Sources cite the official order-history page, while the preserved screenshot is accessed through OMF's existing authenticated artifact routes. Attaching it to a transaction or applying findings still requires the existing owner confirmation.
+
+These screenshots are order-history evidence, not merchant-issued tax invoices or registration verification. Printed tax amounts are useful evidence, but calculating a ratio does not satisfy OMF's existing printed tax-percentage requirement. Order totals, quantities and per-item prices must remain distinct. The connector does not automatically create item rows or post accounting entries.
+
 NTA verification requires an application ID approved for the invoice Web-API. The on-page **Ryzen 7で接続設定を開く** link opens a nonce-protected loopback form on the worker machine. It saves the ID in DPAPI without returning it to OMF. Existing values are never echoed. Status reports whether credentials are configured, not whether the NTA service has accepted them.
 
 The worker calls the [official invoice Web-API](https://www.invoice-kohyo.nta.go.jp/web-api/index.html) with the literal T-number and purchase date. The server checks the captured API response, requested number, legal name, registration dates, and content hash before storing a verified observation. No application ID means registration stays unverified. Existing dated browser observations remain historical evidence.
@@ -66,6 +76,7 @@ node --test scripts/finance-research-numbers.test.mjs
 node --test scripts/finance-research-references.test.mjs
 node --test scripts/finance-research-text.test.mjs
 node --test scripts/finance-sheet-continuation.test.mjs scripts/finance-sheet-export.test.mjs
+node --test scripts/finance-issey-archive.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
 ```
