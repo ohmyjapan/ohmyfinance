@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {ResearchTools} from '../research-worker/tools.mjs';
-import {searchReviewSchema} from '../research-worker/search-review.mjs';
+import {searchReviewSchema,scopeRepairSchema} from '../research-worker/search-review.mjs';
 const require=createRequire(new URL('../collector/package.json',import.meta.url));
 test('review output schema restricts paths and IDs to this report and captured search evidence',()=>{
  const Ajv=require('ajv'),report={summary:'Synthetic',question:'',findings:[{reason:'Synthetic reason'}]},sources=[{id:'s0',kind:'context'},{id:'s1',kind:'spreadsheet'},{id:'s2',kind:'search'}],check=new Ajv().compile(searchReviewSchema(report,sources));
@@ -34,4 +34,11 @@ test('API spreadsheet searches use configured tabs, separate tab caches and the 
   assert.deepEqual(ranges,["'Finance'!A1:AZ50000","'Shipping'!A1:AZ50000"]);
   tools.config.spreadsheetTabs.finance='Missing';await assert.rejects(tools.call('search_spreadsheet',{source:'finance',terms:['Synthetic']}),/Configured spreadsheet tab/);
  }finally{google.sheets=original;if(path.dirname(dir)!==path.resolve(os.tmpdir())||!path.basename(dir).startsWith('omf-search-contract-'))throw Error('Unsafe temporary path');await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('wording schema accepts only explicit edits to existing findings, including zero findings',()=>{
+ const Ajv=require('ajv'),check=new Ajv().compile(scopeRepairSchema({findings:[{field:'purpose'}]})),edits={summary:'Qualified observation',question:'',findings:[{field:'purpose',action:'keep',reason:'Returned rows only'}]};
+ assert(check(edits));assert(check({...edits,findings:[{...edits.findings[0],action:'withdraw',reason:''}]}));
+ for(const bad of [{...edits,supplier:null},{...edits,findings:[]},{...edits,findings:[{...edits.findings[0],field:'customerId'}]},{...edits,findings:[{...edits.findings[0],valueJson:'"company"'}]},{...edits,findings:[{...edits.findings[0],citations:[]}]}])assert.equal(check(bad),false);
+ const empty=new Ajv().compile(scopeRepairSchema({findings:[]}));assert(empty({summary:'No supported proposal',question:'',findings:[]}));assert.equal(empty(edits),false);
 });
