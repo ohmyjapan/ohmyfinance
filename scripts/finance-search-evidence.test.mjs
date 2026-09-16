@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {webcrypto} from 'node:crypto';
 import {matchSheetRows} from '../research-worker/search-evidence.mjs';
 import {searchCsv} from '../research-worker/sheets.mjs';
 import {ResearchTools} from '../research-worker/tools.mjs';
@@ -29,7 +30,7 @@ test('zero matches and omitted rows preserve the limits of the evidence',()=>{
 test('real-browser serialized CSV parser retains quoted commas/newlines and fallback coverage',async()=>{
  for(const fallback of [false,true]){
   const urls=[],csv='date,shop,item\r\n2026/04/10,Synthetic,"One, two\nthree"\r\n2026/04/11,Other,item';
-  const sandbox={fetch:async url=>{urls.push(url);return {ok:!(fallback&&urls.length===1),text:async()=>csv}}};
+  const sandbox={fetch:async url=>{urls.push(url);return {ok:!(fallback&&urls.length===1),text:async()=>csv}},crypto:webcrypto,TextEncoder};
   const script='('+searchCsv.toString()+')('+['sheetid','0',['synthetic'],'2026-04-10',true,'Tab'].map(JSON.stringify).join(',')+',('+matchSheetRows.toString()+'))';
   const result=JSON.parse(await vm.runInNewContext(script,sandbox));
   assert.equal(result.matches[0].values[2],'One, two\nthree');assert.equal(result.matches[0].row,2);

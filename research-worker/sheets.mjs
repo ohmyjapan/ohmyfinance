@@ -19,7 +19,7 @@ async function selectTab(title){
  const gid=new URLSearchParams(location.hash.replace(/^#/, '')).get('gid');
  return {gid:/^\d+$/.test(gid||'')?gid:null};
 }
-export async function searchCsv(spreadsheetId,gid,terms,purchaseDate,windowed,title,matchRows){
+export async function searchCsv(spreadsheetId,gid,terms,purchaseDate,windowed,title,matchRows,{offset=0,expectedSnapshot=''}={}){
  let response,exportMode='original_csv';
  try{response=await fetch('/spreadsheets/d/'+spreadsheetId+'/export?format=csv&gid='+gid,{credentials:'include'})}catch{}
  if(!response?.ok){exportMode='google_query_csv';response=await fetch('/spreadsheets/d/'+spreadsheetId+'/gviz/tq?tqx=out:csv&headers=0&range=A1:AZ50000&sheet='+encodeURIComponent(title),{credentials:'include'})}
@@ -28,9 +28,11 @@ export async function searchCsv(spreadsheetId,gid,terms,purchaseDate,windowed,ti
  const rows=[];let row=[],cell='',quoted=false;
  for(let i=0;i<csv.length;i++){const c=csv[i];if(c==='"'){if(quoted&&csv[i+1]==='"'){cell+='"';i++}else quoted=!quoted}else if(c===','&&!quoted){row.push(cell);cell=''}else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&csv[i+1]==='\n')i++;row.push(cell);rows.push(row);row=[];cell=''}else cell+=c}
  if(cell||row.length){row.push(cell);rows.push(row)}
- return JSON.stringify(matchRows(rows,{terms,purchaseDate,windowed,exportMode,range:exportMode==='google_query_csv'?'A1:AZ50000':'entire_tab'}));
+ const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(rows))),snapshotHash=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+ if(expectedSnapshot&&snapshotHash!==expectedSnapshot)throw Error('Spreadsheet changed between pages; restart the search instead of combining different snapshots');
+ return JSON.stringify({snapshotHash,...matchRows(rows,{terms,purchaseDate,windowed,exportMode,range:exportMode==='google_query_csv'?'A1:AZ50000':'entire_tab',offset})});
 }
-export async function searchBrowserSheet(config,source,terms,purchaseDate,windowed=true) {
+export async function searchBrowserSheet(config,source,terms,purchaseDate,windowed=true,page={}) {
  const id=config.spreadsheets?.[source],title=config.spreadsheetTabs?.[source];
  if(!/^[a-zA-Z0-9_-]{20,100}$/.test(id||'')||!title||!config.spreadsheetBrowserProfile)throw Error('Spreadsheet browser connection is not configured');
  const opened=await browserApi('open',{url:'https://docs.google.com/spreadsheets/d/'+id+'/edit',profile:config.spreadsheetBrowserProfile,wait_for_cf:false});
@@ -38,7 +40,7 @@ export async function searchBrowserSheet(config,source,terms,purchaseDate,window
  if(!String(opened.url).startsWith('https://docs.google.com/spreadsheets/d/'+id+'/'))throw Error('Sign in to the authorized spreadsheet browser');
  const selected=await browserApi('eval',{session_id:opened.session_id,script:'('+selectTab.toString()+')('+JSON.stringify(title)+')'}),tab=JSON.parse(selected.output);
  if(!tab.gid)throw Error('Configured spreadsheet tab is unavailable');
- const result=await browserApi('eval',{session_id:opened.session_id,script:'('+searchCsv.toString()+')('+[id,tab.gid,terms,purchaseDate,windowed,title].map(v=>JSON.stringify(v)).join(',')+',('+matchSheetRows.toString()+'))'});
+ const result=await browserApi('eval',{session_id:opened.session_id,script:'('+searchCsv.toString()+')('+[id,tab.gid,terms,purchaseDate,windowed,title].map(v=>JSON.stringify(v)).join(',')+',('+matchSheetRows.toString()+'),'+JSON.stringify(page)+')'});
  return {sheet:title,gid:tab.gid,...JSON.parse(result.output)};
  }finally{await browserApi('close',{session_id:opened.session_id}).catch(()=>{})}
 }

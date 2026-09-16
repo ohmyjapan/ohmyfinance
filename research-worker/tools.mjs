@@ -15,7 +15,8 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const obj=properties=>({type:'object',properties,additionalProperties:false,required:Object.keys(properties)});
 const str={type:'string'};
 export const toolDefinitions=[
- {name:'search_spreadsheet',description:'Search an authorized finance, inventory or shipping spreadsheet. ALL terms must match the same row (AND). Use fewer terms for broader discovery. The optional window requires a parseable row date within seven days of purchase. Returns rows plus query scope and omissions; zero matches never proves absence, and missing prices remain unknown.',inputSchema:obj({source:{type:'string',enum:['finance','inventory','shipping']},terms:{type:'array',items:str,maxItems:5},withinPurchaseWindow:{type:'boolean'}})},
+ {name:'search_spreadsheet',description:'Search an authorized finance, inventory or shipping spreadsheet. ALL terms must match the same row (AND). Use fewer terms for broader discovery. The optional window requires a parseable row date within seven days of purchase. Returns a page of rows, query scope, snapshot hash and pagination. When pagination.nextOffset is not null, use continue_spreadsheet with this source ID to examine omitted matches before concluding that relevant evidence was not found or describing the historical pattern. Zero matches never proves absence; missing prices remain unknown.',inputSchema:obj({source:{type:'string',enum:['finance','inventory','shipping']},terms:{type:'array',items:str,maxItems:5},withinPurchaseWindow:{type:'boolean'}})},
+ {name:'continue_spreadsheet',description:'Read the next page of a captured spreadsheet search using its source ID. Keeps the same configured sheet, terms, date window and export snapshot; cannot change the search. Continue with the new source ID while pagination.nextOffset is not null. A final page may still say truncated because earlier pages are separate sources. If the sheet changed, restart search_spreadsheet and do not combine different snapshots. Reading every page covers only that query, not all purchases or cells omitted by Google export.',inputSchema:obj({sourceId:str})},
  {name:'read_browser_page',description:'Read a JavaScript supplier or receipt page in real Chrome. GET-only requests; optional receipt PDF preservation.',inputSchema:obj({url:str,preservePdf:{type:'boolean'}})},
  {name:'read_page',description:'Read a public supplier or company HTTPS page and capture literal text. No government registry scraping.',inputSchema:obj({url:str})},
  {name:'search_mail',description:'Search authorized purchase mail within seven days of this purchase; only merchant/order terms.',inputSchema:obj({terms:str})},
@@ -25,7 +26,7 @@ export const toolDefinitions=[
  {name:'verify_invoice',description:'Verify a T-number against the official NTA API for this purchase date. Never infer registration from a company number.',inputSchema:obj({number:str})}
 ];
 export class ResearchTools {
- constructor(config,job,directory,{get=publicGet,extract=interpretDocument}={}){this.config=config;this.job=job;this.directory=directory;this.sources=[...job.sources];this.get=get;this.extract=extract;this.messages=new Map();this.attachments=new Map();this.registry=null;this.calls=0}
+ constructor(config,job,directory,{get=publicGet,extract=interpretDocument,searchSheet=searchBrowserSheet}={}){this.config=config;this.job=job;this.directory=directory;this.sources=[...job.sources];this.get=get;this.extract=extract;this.searchSheet=searchSheet;this.sheetContinuations=new Map();this.messages=new Map();this.attachments=new Map();this.registry=null;this.calls=0}
  async persist(stage){await fs.writeFile(path.join(this.directory,'evidence.json'),JSON.stringify({sources:this.sources,registry:this.registry,stage}));}
  async api(route,body,raw=false){
   const r=await fetch(this.config.baseUrl+'/api/finance-research/worker/'+(this.job.mode==='evaluation'?'evaluation/':'')+this.job.id+'/'+route,{method:'POST',headers:{Authorization:'Bearer '+this.config.token,'Content-Type':'application/json'},body:JSON.stringify({...body,lease:this.job.lease}),redirect:'error',signal:AbortSignal.timeout(30000)});
@@ -59,19 +60,37 @@ export class ResearchTools {
   }
   return source;
  }
+ async spreadsheetPage(source,terms,windowed,{offset=0,expectedSnapshot=''}={},continuedFrom=''){
+  const spreadsheetId=this.config.spreadsheets?.[source],date=this.job.context.source.purchaseDate;let result;
+  if(this.config.spreadsheetBrowserProfile)result=await this.searchSheet(this.config,source,terms,date,windowed,{offset,expectedSnapshot});
+  else{
+   await this.mailbox();const {google}=require('googleapis'),sheets=google.sheets({version:'v4',auth:this.googleAuth});this.sheetsCache ||= new Map();
+   const title=this.config.spreadsheetTabs?.[source];if(!title)throw Error('Configured spreadsheet tab is unavailable');
+   const cacheKey=JSON.stringify([spreadsheetId,title]);let sheet=this.sheetsCache.get(cacheKey);
+   if(!sheet){try{const meta=await sheets.spreadsheets.get({spreadsheetId,fields:'sheets.properties'}),selected=meta.data.sheets.find(s=>s.properties.title===title);if(!selected)throw Error('Missing tab');const range="'"+title.replaceAll("'","''")+"'!A1:AZ50000",response=await sheets.spreadsheets.values.get({spreadsheetId,range,valueRenderOption:'FORMATTED_VALUE'});const rows=response.data.values||[];sheet={title,gid:selected.properties.sheetId,rows,snapshotHash:hash(JSON.stringify(rows))};this.sheetsCache.set(cacheKey,sheet)}catch{throw Error('Configured spreadsheet tab is not accessible on this connection')}}
+   result={sheet:sheet.title,gid:sheet.gid,snapshotHash:sheet.snapshotHash,...matchSheetRows(sheet.rows,{terms,purchaseDate:date,windowed,exportMode:'sheets_api',range:'A1:AZ50000',offset})};
+  }
+  if(!/^[a-f0-9]{64}$/.test(result.snapshotHash)||result.pagination?.offset!==offset)throw Error('Invalid spreadsheet page');
+  if(expectedSnapshot&&result.snapshotHash!==expectedSnapshot)throw Error('Spreadsheet changed between pages; restart the search instead of combining different snapshots');
+  if(result.pagination.nextOffset!==null&&(!Number.isSafeInteger(result.pagination.nextOffset)||result.pagination.nextOffset!==offset+result.matches.length||result.pagination.nextOffset<=offset))throw Error('Invalid spreadsheet continuation');
+  const captured=await this.add('spreadsheet',source+' / '+result.sheet,JSON.stringify({...result,...(continuedFrom?{continuedFrom}:{})}),'https://docs.google.com/spreadsheets/d/'+spreadsheetId+'/edit#gid='+result.gid);
+  if(result.pagination.nextOffset!==null){
+   this.sheetContinuations.set(captured.id,{source,terms:[...terms],windowed,page:{offset:result.pagination.nextOffset,expectedSnapshot:result.snapshotHash},next:null});
+  }
+  return captured;
+ }
  async call(name,args){
   if(++this.calls>35)throw Error('Research tool budget reached');
   if(!toolDefinitions.some(t=>t.name===name))throw Error('Unknown research tool');
   if(name==='search_spreadsheet'){
    const spreadsheetId=this.config.spreadsheets?.[args.source];if(!spreadsheetId)throw Error('Spreadsheet connection is not configured');
    if(!Array.isArray(args.terms)||!args.terms.length||args.terms.length>5||args.terms.some(t=>typeof t!=='string'||!t.trim()||t.length>100))throw Error('Use one to five specific spreadsheet terms');
-   if(this.config.spreadsheetBrowserProfile){const result=await searchBrowserSheet(this.config,args.source,args.terms,this.job.context.source.purchaseDate,args.withinPurchaseWindow!==false);return this.add('spreadsheet',args.source+' / '+result.sheet,JSON.stringify(result),'https://docs.google.com/spreadsheets/d/'+spreadsheetId+'/edit#gid='+result.gid);}
-   await this.mailbox();const {google}=require('googleapis'),sheets=google.sheets({version:'v4',auth:this.googleAuth});this.sheetsCache ||= new Map();
-   const title=this.config.spreadsheetTabs?.[args.source];if(!title)throw Error('Configured spreadsheet tab is unavailable');
-   const cacheKey=JSON.stringify([spreadsheetId,title]);let sheet=this.sheetsCache.get(cacheKey);
-   if(!sheet){try{const meta=await sheets.spreadsheets.get({spreadsheetId,fields:'sheets.properties'}),selected=meta.data.sheets.find(s=>s.properties.title===title);if(!selected)throw Error('Missing tab');const range="'"+title.replaceAll("'","''")+"'!A1:AZ50000",response=await sheets.spreadsheets.values.get({spreadsheetId,range,valueRenderOption:'FORMATTED_VALUE'});sheet={title,gid:selected.properties.sheetId,rows:response.data.values||[]};this.sheetsCache.set(cacheKey,sheet)}catch{throw Error('Configured spreadsheet tab is not accessible on this connection')}}
-   const result=matchSheetRows(sheet.rows,{terms:args.terms,purchaseDate:this.job.context.source.purchaseDate,windowed:args.withinPurchaseWindow!==false,exportMode:'sheets_api',range:'A1:AZ50000'});
-   return this.add('spreadsheet',args.source+' / '+sheet.title,JSON.stringify({sheet:sheet.title,gid:sheet.gid,...result}),'https://docs.google.com/spreadsheets/d/'+spreadsheetId+'/edit#gid='+sheet.gid);
+   return this.spreadsheetPage(args.source,[...args.terms],args.withinPurchaseWindow!==false);
+  }
+  if(name==='continue_spreadsheet'){
+   const entry=this.sheetContinuations.get(args.sourceId);if(!entry)throw Error('No spreadsheet continuation is available for this captured source');
+   if(!entry.next)entry.next=this.spreadsheetPage(entry.source,entry.terms,entry.windowed,entry.page,args.sourceId).catch(error=>{entry.next=null;throw error});
+   return entry.next;
   }
   if(name==='read_browser_page'){
    const page=await readBrowserPage(path.join(this.config.researchDirectory||path.dirname(path.dirname(this.directory)),'browser'),args.url,{print:args.preservePdf===true});

@@ -19,6 +19,8 @@ Create a dedicated finance chat agent with `researchEnabled: true` and the permi
 
 For browser-backed Sheets, configure `spreadsheetBrowserProfile` with the existing OhMyCode real Chrome profile and set the `spreadsheets` IDs and `spreadsheetTabs` names for `finance`, `inventory`, and `shipping`. Only configured sheets can be queried. The reader uses the local browser service on HTTPS port 6060 and closes only its own tab. It tries the original CSV first; Google's query CSV is a fallback. Query export can omit mixed-type cells, so empty values and zero matches are not evidence of absence. This limitation is retained with the captured source. Both browser and API readers use the configured tab, AND matching for all terms, and the requested date window. Captured coverage records terms, range, dates, counts and omitted rows. A date filter excludes rows with no parseable date; missing values remain unknown.
 
+Sheet searches return bounded pages of up to 25 matching rows. The worker can call `continue_spreadsheet` with a returned source ID when `pagination.nextOffset` is present. OMF binds continuation to that job's original sheet, terms, date window and SHA-256 of the exported rows. Browser reads reject changed snapshots; API reads reuse the job's cached export. Repeating a continuation reuses its captured result. Pages preserve original row positions and advance by the number actually returned after the evidence-size limit; a single oversized row fails explicitly. Each page is a separate cited source. Reading all pages covers only that query and export, including any mixed-type omissions, and does not establish a purchase association or an exhaustive ledger search.
+
 Mail uses the existing collector's authorized Gmail connection, verifies the mailbox identity, limits searches to the purchase date plus/minus seven days, excludes authentication subjects, and permits only reading returned messages and their listed PDF/image attachments. Search metadata is retained separately from actual mail evidence, including terms, date bounds, returned count and whether additional pages exist. Search metadata cannot establish a printed tax percentage. It does not change mail labels or send messages.
 
 NTA verification requires an application ID approved for the invoice Web-API. The on-page **Ryzen 7で接続設定を開く** link opens a nonce-protected loopback form on the worker machine. It saves the ID in DPAPI without returning it to OMF. Existing values are never echoed. Status reports whether credentials are configured, not whether the NTA service has accepted them.
@@ -56,6 +58,7 @@ node --test scripts/finance-research-questions.test.mjs
 node --test scripts/finance-research-evidence-repair.test.mjs
 node --test scripts/finance-research-numbers.test.mjs
 node --test scripts/finance-research-references.test.mjs
+node --test scripts/finance-sheet-continuation.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
 ```
