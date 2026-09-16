@@ -43,6 +43,8 @@ These checks establish output compatibility and validation behavior. A new run w
 
 Citation and literal-evidence failures use a targeted correction when they can be isolated without breaking field dependencies. The worker identifies rejected findings and supplier evidence, then requests replacement quotations only for those targets or explicit withdrawal. Mapped values, evidence basis, supplier identity and valid citations stay fixed. Unsupported percentages must be withdrawn when no captured purchase mail or document prints that rate; a spreadsheet or merchant category cannot substitute. The model also revises the summary and reasons to reflect withdrawals. Missing, duplicate, extra or invalid repairs are rejected. Full report validation and the normal wording review still run before delivery. This uses the existing single correction allowance and 90-second correction limit; it does not extend the lease or deliver partial failed reports. Private traces retain the initial report, evidence repair plan, edits and subsequent review.
 
+Numeric findings have an explicit output format: `taxRate` and `productPrice` encode JSON numbers in `valueJson`, rather than copying the document extractor's quoted transcription strings. The schema and research instructions agree on that distinction. Strict validation identifies a mistyped numeric field for correction without coercing it. Receipt numbers, JAN codes and other identifiers retain their strings and leading zeros. Existing range checks and printed purchase-tax evidence requirements remain in force; unknown prices do not become zero.
+
 ## Validation
 
 ```powershell
@@ -50,6 +52,7 @@ npm run build
 node --test scripts/finance-research.test.mjs scripts/finance-research-purpose.test.mjs scripts/finance-research-accounting.test.mjs scripts/finance-search-evidence.test.mjs scripts/finance-search-review.test.mjs scripts/finance-search-contract.test.mjs scripts/finance-supplier.test.mjs
 node --test scripts/finance-research-questions.test.mjs
 node --test scripts/finance-research-evidence-repair.test.mjs
+node --test scripts/finance-research-numbers.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
 ```
