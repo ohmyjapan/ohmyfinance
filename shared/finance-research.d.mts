@@ -1,5 +1,6 @@
 export const purposeContract:string;
 export const numericValueContract:string;
+export const referenceValueContract:string;
 export function validationFeedback(error:any):any;
 export function validateDiagnostic(input:any):{code:string;correctionAttempted:boolean};
 export function diagnosticMessage(input:any):string;

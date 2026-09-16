@@ -45,6 +45,8 @@ Citation and literal-evidence failures use a targeted correction when they can b
 
 Numeric findings have an explicit output format: `taxRate` and `productPrice` encode JSON numbers in `valueJson`, rather than copying the document extractor's quoted transcription strings. The schema and research instructions agree on that distinction. Strict validation identifies a mistyped numeric field for correction without coercing it. Receipt numbers, JAN codes and other identifiers retain their strings and leading zeros. Existing range checks and printed purchase-tax evidence requirements remain in force; unknown prices do not become zero.
 
+Reference findings encode the existing registered ID as a JSON string, including when the ID contains only digits. The schema rejects bare IDs, names and null; validation identifies the offending field without guessing a replacement. An encoded empty string remains available for a supported clear. Registered-choice, citation and customer/purpose checks still apply independently of formatting.
+
 ## Validation
 
 ```powershell
@@ -53,6 +55,7 @@ node --test scripts/finance-research.test.mjs scripts/finance-research-purpose.t
 node --test scripts/finance-research-questions.test.mjs
 node --test scripts/finance-research-evidence-repair.test.mjs
 node --test scripts/finance-research-numbers.test.mjs
+node --test scripts/finance-research-references.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
 ```

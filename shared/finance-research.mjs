@@ -2,6 +2,7 @@ import { fields, validateValues, purposeChoices } from './finance-draft.mjs';
 
 export const researchFields = fields.filter(f => !['date','status','sourceId','referenceNumber','notes','tags','items'].includes(f.key));
 const citationSchema={type:'array',items:{type:'object',additionalProperties:false,required:['sourceId','quote'],properties:{sourceId:{type:'string'},quote:{type:'string'}}}};
+export const referenceValueContract='For reference fields, valueJson is JSON.stringify of an existing registered _id, including the surrounding double quotes in its content, for example "0123456789abcdef01234567". Never return the bare ID, a number, a name, an object or null. Even an ID containing only digits is a string. Choose the ID from the supplied references for that field; formatting does not establish which account, supplier or customer is correct. If no registered choice is supported, omit the finding. The JSON-encoded empty string is allowed only for an intentional evidence-supported clear, not as a substitute for an unknown choice. Keep customer and purpose consistent. Never invent or automatically replace an ID.';
 export const numericValueContract='For numeric fields taxRate and productPrice, valueJson must encode a JSON number, for example 10 or 1200.5, never a quoted string such as "10", a percentage string or a comma-formatted amount. Document extraction records use strings for transcription; research findings use the destination field type. Unknown amounts are not zero: omit an unsupported finding rather than guessing. Null may clear an unsupported productPrice only with evidence and confirmation. Receipt numbers, JAN codes, invoice numbers, reference IDs and names remain JSON strings. Preserve the printed identifier exactly, including leading zeros and prefix punctuation such as # in #000010; do not strip those as numeric formatting. Exclude a field label such as No. from the identifier, while retaining the identifier prefix. Numeric formatting does not establish purchase association, tax treatment or a printed tax percentage.';
 export const purposeContract='For purpose, use exactly one of these values: '+purposeChoices.map(c=>c.value+' ('+c.label+'): '+c.meaning).join(' ')+' Put explanations in reason, never in valueJson. customerId must be an existing registered customer _id and may be nonempty only with purpose customer. Propose purpose and customerId together when both need to change. If customer use is supported but the customer identity is unknown, leave customerId empty and ask only for the missing identity. Do not invent an ID or clear an existing customer without evidence.';
 const findingSchema=(keys,valueSchema)=>({type:'object',additionalProperties:false,required:['field','valueJson','reason','basis','citations'],properties:{field:{type:'string',enum:keys},valueJson:valueSchema,reason:{type:'string'},basis:{type:'string',enum:['literal','reasoned']},citations:citationSchema}});
@@ -12,7 +13,8 @@ export const reportSchema={
   findings:{type:'array',items:{anyOf:[
    findingSchema(['purpose'],{type:'string',enum:purposeChoices.map(c=>JSON.stringify(c.value)),description:purposeContract}),
    findingSchema(researchFields.filter(f=>f.kind==='number').map(f=>f.key),{type:'string',pattern:'^(?:null|(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$',description:numericValueContract}),
-   findingSchema(researchFields.filter(f=>f.key!=='purpose'&&f.kind!=='number').map(f=>f.key),{type:'string'})
+   findingSchema(researchFields.filter(f=>f.ref).map(f=>f.key),{type:'string',pattern:'^"(?:[a-fA-F0-9]{24})?"$',description:referenceValueContract}),
+   findingSchema(researchFields.filter(f=>f.key!=='purpose'&&f.kind!=='number'&&!f.ref).map(f=>f.key),{type:'string'})
   ]}},
   supplier:{anyOf:[{type:'null'},{type:'object',additionalProperties:false,required:['shopName','legalName','invoiceNumber','citations'],properties:{
    shopName:{type:'string'},legalName:{type:'string'},invoiceNumber:{type:'string'},citations:citationSchema
@@ -21,7 +23,9 @@ export const reportSchema={
 };
 const purposeError=(code,message)=>Object.assign(Error(message),{code});
 const evidenceError=(message,target)=>Object.assign(Error(message),{code:'finding_evidence_invalid',target});
+const referenceError=field=>Object.assign(Error('Reference finding must encode a JSON string ID or an intentional empty string'),{code:'reference_value_invalid',field});
 export function validationFeedback(error){
+ if(error?.code==='reference_value_invalid')return {code:error.code,message:error.message,fields:[error.field],instruction:referenceValueContract};
  if(error?.code==='numeric_value_invalid')return {code:error.code,message:'A numeric finding must contain a JSON number or null, not a JSON string.',fields:[error.field],instruction:numericValueContract};
  if(error?.code==='finding_evidence_invalid')return {code:error.code,message:error.message,fields:[error.target],instruction:'Repair the rejected citations using captured evidence or withdraw the unsupported finding. A tax percentage requires printed purchase mail or document evidence. Preserve already valid values and citations.'};
  if(['search_scope_invalid','question_repeated'].includes(error?.code))return {code:error.code,issues:error.issues||[],instruction:'Correct the identified evidence-scope or repeated-answer issues in the actual phrases. Use supplied settled facts to remove repeated questions, preserving questions about still-missing details and concrete conflicts. Restrict conclusions to the captured returned evidence, and leave absence or exhaustive agreement unverified. A later disclaimer does not repair an earlier absolute claim. Preserve supported findings and exact quotations. Do not introduce or change mapped values; omit a finding if its reasoning cannot be supported.'};
@@ -57,7 +61,9 @@ export function validateReport(raw,context,sources) {
  if(!Array.isArray(raw.findings)||raw.findings.length>researchFields.length)throw Error('Invalid findings');
  const found=new Set(),parsed=raw.findings.map(f=>{
   if(!f||!researchFields.some(x=>x.key===f.field)||found.has(f.field)||!['literal','reasoned'].includes(f.basis))throw Error('Invalid research field');found.add(f.field);
-  const value=JSON.parse(string(f.valueJson,6000));
+  const field=researchFields.find(x=>x.key===f.field);let value;
+  try{value=JSON.parse(string(f.valueJson,6000))}catch(error){if(field.ref)throw referenceError(f.field);throw error}
+  if(field.ref&&(typeof value!=='string'||value!==''&&!/^[a-f\d]{24}$/i.test(value)))throw referenceError(f.field);
   if(researchFields.find(x=>x.key===f.field).kind==='number'&&value!==null&&typeof value!=='number')throw Object.assign(Error('Invalid numeric finding type'),{code:'numeric_value_invalid',field:f.field});
   if(f.field==='purpose'&&!purposeChoices.some(c=>c.value===value))throw purposeError('purpose_invalid','Invalid purpose choice');
   return {...f,value};
