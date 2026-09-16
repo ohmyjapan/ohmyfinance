@@ -49,6 +49,8 @@ Numeric findings have an explicit output format: `taxRate` and `productPrice` en
 
 Reference findings encode the existing registered ID as a JSON string, including when the ID contains only digits. The schema rejects bare IDs, names and null; validation identifies the offending field without guessing a replacement. An encoded empty string remains available for a supported clear. Registered-choice, citation and customer/purpose checks still apply independently of formatting.
 
+Text findings also encode JSON strings: company and product names, invoice numbers, receipt numbers, tracking numbers and JAN codes preserve Unicode, prefixes, leading zeros and escaped characters. The output schema rejects bare text and non-string JSON values; strict validation identifies the field without coercing it. Summary, question, citations and supplier properties stay ordinary strings. This prevents text formatting from consuming the single correction allowance when the schema is followed. Literal quotations, invoice evidence, field limits and purchase-association uncertainty remain separate checks.
+
 ## Validation
 
 ```powershell
@@ -58,6 +60,7 @@ node --test scripts/finance-research-questions.test.mjs
 node --test scripts/finance-research-evidence-repair.test.mjs
 node --test scripts/finance-research-numbers.test.mjs
 node --test scripts/finance-research-references.test.mjs
+node --test scripts/finance-research-text.test.mjs
 node --test scripts/finance-sheet-continuation.test.mjs
 $env:OMF_TEST_RESEARCH_ONLY='1'
 node scripts/finance-integration.cjs
