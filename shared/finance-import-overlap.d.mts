@@ -1,4 +1,4 @@
-export interface SourceReference { fingerprint: string; lines: number[]; state: 'existing_import' | 'source_overlap_review'; targets: { importId: string; sourceHash: string; lines: number[] }[] }
+export interface SourceReference { match?: string; fingerprint: string; lines: number[]; state: 'existing_import' | 'source_overlap_review'; targets: { importId: string; sourceHash: string; lines: number[] }[] }
 export function sourceReferenceGroups(batch: any): SourceReference[];
 export function buildSourceReferences(batch: any, previous: any[]): { version: number; sourceHash: string; groups: SourceReference[] };
 export function verifySourceReferences(batch: any, targets: any[]): SourceReference[];

@@ -174,7 +174,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
       const customer = references.customers.find((r: any) => r._id.toString() === values.customerId)
       const category = references.transactionCategories.find((r: any) => r._id.toString() === values.transactionCategoryId)
       const sourceCustomer = !draft && evidence.customerId?.source === 'spreadsheet'
-      rows[index] = { ...source, classification: purposeEvidence(values, evidence), purpose: values.purpose,
+      rows[index] = { ...source, settlement: reviewByLine.get(row.line)?.settlement || null, classification: purposeEvidence(values, evidence), purpose: values.purpose,
         clientCode: values.purpose === 'customer' ? customer?.name || (sourceCustomer ? source.clientCode : '') : '',
         clientName: values.purpose === 'customer' && sourceCustomer ? source.clientName : '',
         category: category?.name || (!draft && evidence.transactionCategoryId?.source === 'spreadsheet' ? source.category : ''),
@@ -246,7 +246,7 @@ async function view(ctx: any) {
     approvedAt: cardChanged ? null : saved?.approvedAt || null, rememberedFields: saved?.memory?.fields || [], history: [...(saved?.history || [])].reverse(),
     missing: missingFields(values), locked: !!reserved || ['posted', 'duplicate', 'in_progress'].includes(row.state),
     source: { ...ctx.mapped, kind: ctx.row.kind, ...(ctx.row.provider === 'aplus' ? { statementMonth: ctx.row.statementMonth, paymentAmount: ctx.row.paymentAmount, statementDetails: ctx.row.statementDetails } : {}), paymentMethod: 'クレジットカード', type: '支出', currency: ctx.row.currency, foreignAmount: ctx.row.foreignAmount, exchangeRate: ctx.row.exchangeRate, account: { id: ctx.account._id.toString(), name: ctx.account.name } },
-    review: { state: row.state, existing: row.existing, transactionId: row.transactionId }, documents: await documents(ctx) }
+    review: { state: row.state, settlement: row.settlement, existing: row.existing, transactionId: row.transactionId }, documents: await documents(ctx) }
 }
 export async function readDraft(ownerId: string, importId: string, line: number) { return view(await context(ownerId, importId, line)) }
 

@@ -56,7 +56,8 @@ export default defineEventHandler(async event => {
         return { account: updated }
       }
       if (parts[2] === 'imports' && parts.length === 3 && method === 'POST') {
-        if (!getHeader(event,'content-type')?.startsWith('text/csv')) fail(415, 'CSV required')
+        const jsonCapture = account.provider === 'aplus' && getQuery(event).kind === 'pending'
+        if (!getHeader(event,'content-type')?.startsWith(jsonCapture ? 'application/json' : 'text/csv')) fail(415, jsonCapture ? 'Bank page JSON capture required' : 'CSV required')
         return await acceptImport(ownerId, account, await csvBody(event), getQuery(event))
       }
     }
@@ -120,8 +121,8 @@ export default defineEventHandler(async event => {
       if (parts[2] === 'commit' && parts.length === 3 && method === 'POST') return await commitImport(ownerId, parts[1], await readBody(event))
       if (parts[2] === 'file' && parts.length === 3 && method === 'GET') {
         const batch = await ownedImport(ownerId, parts[1])
-        setHeader(event,'Content-Type',`text/csv; charset=${batch.encoding === 'utf-8' ? 'UTF-8' : 'Shift_JIS'}`)
-        setHeader(event,'Content-Disposition',`attachment; filename="${batch.provider || 'amex'}-${batch.period.start}-${batch.period.end}.csv"`)
+        setHeader(event,'Content-Type',batch.sourceFormat === 'json' ? 'application/json; charset=UTF-8' : `text/csv; charset=${batch.encoding === 'utf-8' ? 'UTF-8' : 'Shift_JIS'}`)
+        setHeader(event,'Content-Disposition',`attachment; filename="${batch.provider || 'amex'}-${batch.period.start}-${batch.period.end}.${batch.sourceFormat || 'csv'}"`)
         setHeader(event,'Cache-Control','no-store')
         return await originalFile(batch)
       }

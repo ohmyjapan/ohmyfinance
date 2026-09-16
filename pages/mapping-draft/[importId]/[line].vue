@@ -15,7 +15,8 @@
     <template v-else-if="draft">
       <section class="card mb-6 p-4 sm:p-6" aria-label="元のカード明細">
         <div class="flex flex-wrap items-start justify-between gap-4"><div class="min-w-0"><h2 class="break-words text-base font-semibold text-gray-900 dark:text-gray-100">{{ draft.source.description }}</h2><p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ draft.source.account.name }} · {{ draft.source.cardLast4 || 'カード未記載' }}</p></div><strong class="text-xl font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ yen(draft.source.amount) }}</strong></div>
-        <div class="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-gray-500 dark:text-gray-400"><span>処理日 {{ draft.source.processingDate || '未記載' }}</span><span>利用日 {{ draft.source.purchaseDate || '未記載' }}</span><span>支払方法 {{ draft.source.paymentMethod }}</span><span>{{ isExpense ? '支出' : draft.source.kind === 'repayment' ? 'カード返済' : draft.source.kind === 'statement_review' ? '明細の個別確認' : '返金など' }}</span><span>CSV {{ line }}行</span></div>
+        <div class="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-gray-500 dark:text-gray-400"><span>処理日 {{ draft.source.processingDate || '未記載' }}</span><span>利用日 {{ draft.source.purchaseDate || '未記載' }}</span><span>支払方法 {{ draft.source.paymentMethod }}</span><span>{{ isExpense ? '支出' : draft.source.kind === 'repayment' ? 'カード返済' : draft.source.kind === 'statement_review' ? '明細の個別確認' : '返金など' }}</span><span>元明細 {{ line }}行</span></div>
+        <StatementStatus :settlement="draft.review.settlement" />
         <p v-if="draft.source.statementMonth" class="mt-3 text-xs text-gray-500">請求月 {{ draft.source.statementMonth }} · お支払金額 {{ draft.source.paymentAmount === null ? '未記載' : yen(draft.source.paymentAmount) }}<span v-if="draft.source.statementDetails"> · {{ draft.source.statementDetails }}</span></p>
         <details v-if="draft.source.source || draft.source.reason" class="mt-4 text-xs text-gray-500 dark:text-gray-400"><summary class="cursor-pointer py-1 text-primary-main dark:text-primary-light">元データの照合根拠</summary><div class="mt-2 space-y-2 leading-relaxed"><p>{{ draft.source.reason }}</p><template v-if="draft.source.source"><p>{{ draft.source.source.sheet }} · {{ draft.source.source.rows.join(', ') }}行</p><p>顧客「{{ draft.source.source.client || '空欄' }}」 · 区分「{{ draft.source.source.category || '空欄' }}」</p><p v-if="draft.source.source.rows.length > 1">分類と件数は一致していますが、繰り返し明細の個々の行の対応は未確定です。</p></template></div></details>
       </section>
@@ -76,6 +77,7 @@
         <section class="card mb-6 p-4 sm:p-6" aria-labelledby="posting-title">
           <h2 id="posting-title" class="text-base font-semibold text-gray-900 dark:text-gray-100">Transactionsへ登録</h2>
           <NuxtLink v-if="posted && draft.review.transactionId" :to="`/transactions/${draft.review.transactionId}`" class="btn btn-secondary mt-4 text-sm">登録された取引を開く</NuxtLink>
+          <StatementStatus v-else-if="draft.review.settlement && draft.review.settlement.state !== 'finalized'" :settlement="draft.review.settlement" />
           <template v-else-if="draft.review.state === 'in_progress'"><p class="mt-3 text-sm text-amber-700 dark:text-amber-400">同じ明細の登録処理が進行中です。元の取込で処理を完了してください。</p></template>
           <template v-else>
             <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">保存した内容を帳簿へ登録します。元の明細と根拠書類も保持されます。</p>
@@ -94,6 +96,7 @@
 </template>
 
 <script setup lang="ts">
+import StatementStatus from '~/components/finance/StatementStatus.vue'
 import { ArrowLeft, Loader2 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import DraftField from '~/components/finance/DraftField.vue'

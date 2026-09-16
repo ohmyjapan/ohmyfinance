@@ -47,6 +47,8 @@
           </p>
         </section>
 
+        <p v-if="pendingRows.length" class="card mb-6 p-4 text-sm text-amber-800 dark:text-amber-300" data-pending-summary>表示中の購入に、確定待ち {{ pendingRows.length }}件・{{ yen(pendingRows.reduce((n, row) => n + row.amount, 0)) }} を含みます。確定明細との重複分は件数に加えません。</p>
+
         <details v-if="referenceCount" class="card mb-6 p-4 sm:p-6" data-source-references>
           <summary class="cursor-pointer text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('mappingImport.referenceCount', { count: referenceCount }) }}</summary>
           <p class="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('mappingImport.referenceHint') }}</p>
@@ -167,6 +169,7 @@
                   <div data-tax-review><p class="text-gray-500 dark:text-gray-400">消費税</p><p class="mt-1 font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.tax.category || '税区分 未設定' }} · {{ row.preparation.tax.rateLabel }}</p><p v-if="row.preparation.tax.status === 'conflict'" class="mt-1 text-amber-700 dark:text-amber-400">税区分・税率の根拠を確認</p></div>
                   <div data-invoice-review><p class="text-gray-500 dark:text-gray-400">インボイス登録番号</p><p class="mt-1 break-all font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.invoice.number || '未取得' }}</p><p class="mt-1 text-gray-500 dark:text-gray-400">{{ row.preparation.invoice.label }}</p><SupplierVerification :registration="row.preparation.invoice.registry" /></div>
                 </div>
+                <StatementStatus :settlement="row.settlement" />
                 <SupplierMemory v-if="['customer','company','unresolved'].includes(row.purpose)" :import-id="row.importId" :line="row.line" @changed="refreshSupplierRows" />
               </article>
             </div>
@@ -184,6 +187,7 @@
 
 
 <script setup lang="ts">
+import StatementStatus from '~/components/finance/StatementStatus.vue'
 import { CreditCard, RefreshCw, Search, FileText, Loader2, Info } from 'lucide-vue-next'
 import SupplierMemory from '~/components/finance/SupplierMemory.vue'
 import SupplierVerification from '~/components/finance/SupplierVerification.vue'
@@ -198,7 +202,7 @@ import { useUserStore } from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
 import { preparationStates } from '~/shared/finance-preparation.mjs'
 import type { MappingRow as SourceMappingRow } from '~/shared/finance-mapping.mjs'
-type MappingRow = SourceMappingRow & { draft?: { revision: number; approved: boolean }; preparation?: any; classification?: {state: string; source: string; grade: string; reason: string} }
+type MappingRow = SourceMappingRow & { settlement?: any; draft?: { revision: number; approved: boolean }; preparation?: any; classification?: {state: string; source: string; grade: string; reason: string} }
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '明細マッピング | OhMyFinance' })
 interface Batch { id: string; account: { id: string; name: string }; period: { kind?: string; start: string; end: string; fiscalPeriod?: {start: string; end: string} }; sourceReferences?: any[]; preparedAt: string | null; rows: MappingRow[]; sourceHash: string; mappingKey: string; sourceCategories: {name: string; count: number; matches: number}[] }
@@ -219,6 +223,7 @@ const filters = computed(() => [{ value: 'all', label: 'すべて' }, { value: '
 const purposeFilters = computed(() => [{value: 'purpose:supported', label: t('mappingImport.supported')}, {value: 'purpose:tentative', label: t('mappingImport.tentative')}, {value: 'purpose:review', label: t('mappingImport.unresolved')}].map(item => ({...item, count: rows.value.filter(row => matchesFilter(row, item.value)).length})))
 const purposeLabel = (row: MappingRow) => t('mappingImport.' + (row.classification?.state === 'conflict' ? 'conflict' : row.classification?.state === 'unresolved' ? 'unresolved' : row.classification?.state === 'tentative' ? 'tentative' : row.classification?.source === 'learning_rule' ? 'confirmedRule' : row.classification?.source === 'spreadsheet' ? 'spreadsheet' : 'supported'))
 const referenceGroups = computed(() => batches.value.flatMap(batch => (batch.sourceReferences || []).map(group => ({...group, importId: batch.id, accountName: batch.account.name}))))
+const pendingRows = computed(() => rows.value.filter(row => row.settlement && row.settlement.state !== 'finalized'))
 const referenceCount = computed(() => referenceGroups.value.reduce((n, group) => n + group.lines.length, 0))
 const countFor = (value: string) => filters.value.find(item => item.value === value)?.count || 0
 const preparationFilters = computed(() => Object.entries(preparationStates).map(([key,label]) => ({ value: 'preparation:' + key, label, count: rows.value.filter(row => row.preparation?.state === key).length })))

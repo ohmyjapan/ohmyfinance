@@ -9,17 +9,19 @@
         <p>{{ states[account.jobState] || account.jobState }} · {{ account.lastMessage || '未取得' }}</p>
         <small>最終取得: {{ formatDate(account.lastSuccessAt) }}<template v-if="account.provider !== 'aplus'"><br>認証メール: {{ account.otpRecipient }} → {{ account.otpMailbox }}</template></small>
         <button v-if="account.provider !== 'aplus'" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
-        <details><summary>CSVを手動で取り込む</summary><form @submit.prevent="run(() => upload(account))">
-          <template v-if="account.provider === 'aplus'">
+        <details><summary>明細ファイルを取り込む</summary><form @submit.prevent="run(() => upload(account))">
+          <label>明細の状態<select v-model="manual.kind"><option value="statement">確定明細</option><option value="pending">未請求・確定待ち</option></select></label>
+          <p v-if="manual.kind === 'pending'">購入件数に含めてマッピングできます。確定明細との照合までは帳簿に登録しません。Amexは確定前の利用を含まないCSV、Aplusは取得ツールの元ページ付きJSONを選択します。</p>
+          <template v-if="account.provider === 'aplus' && manual.kind === 'statement'">
             <label>確定した請求月<input v-model="manual.statementMonth" type="month" required></label>
             <label>Aplusに表示されたお支払金額<input v-model="manual.statementTotal" type="number" step="1" required></label>
             <label>別途返金済みの金額（通知がある場合）<input v-model="manual.refundTotal" type="number" min="0" step="1"></label>
             <label>対象の会計期間・開始（任意）<input v-model="manual.fiscalStart" type="date"></label>
             <label>対象の会計期間・終了（任意）<input v-model="manual.fiscalEnd" type="date" :required="!!manual.fiscalStart"></label>
-            <p>未確定明細は対象外です。元の利用日が会計期間外の明細は個別確認に回します。</p>
+            <p>元の利用日が会計期間外の明細は個別確認に回します。</p>
           </template>
-          <template v-else><label>明細期間の開始<input v-model="manual.start" type="date" required></label><label>明細期間の終了<input v-model="manual.end" type="date" required></label></template>
-          <label>{{ account.provider === 'aplus' ? 'Aplus 確定明細 CSV' : 'Amex CSV' }}<input type="file" accept=".csv" required @change="selectFile"></label><button :disabled="busy">確認画面へ</button>
+          <template v-else-if="account.provider !== 'aplus'"><label>明細期間の開始<input v-model="manual.start" type="date" required></label><label>明細期間の終了<input v-model="manual.end" type="date" required></label></template>
+          <label>{{ account.provider === 'aplus' && manual.kind === 'pending' ? 'Aplus 未請求明細 JSON' : 'カード会社のCSV' }}<input type="file" :accept="account.provider === 'aplus' && manual.kind === 'pending' ? '.json' : '.csv'" required @change="selectFile"></label><button :disabled="busy">確認画面へ</button>
         </form></details>
       </section>
     </div>
@@ -40,7 +42,7 @@
     <section><h2>取得履歴</h2><p v-if="!imports.length">まだ明細がありません。</p>
       <button v-for="batch in imports" :key="batch._id" :data-import-id="batch._id" class="history" :disabled="busy" @click="run(() => review(batch._id))">{{ accountName(batch.accountId) }} · {{ batch.period.start }} ～ {{ batch.period.end }} · {{ batch.rowCount }}件</button>
     </section>
-    <section v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件</p></div><button :disabled="busy" @click="run(downloadOriginal)">元のCSV</button></header>
+    <section v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件</p></div><button :disabled="busy" @click="run(downloadOriginal)">元の明細ファイル</button></header>
       <p>口座振替はカードへの返済として保管します。返金などのマイナス明細は確認待ちです。同じ取引の可能性がある行は、既存取引への紐付け・別の支出として登録・保留から選んでください。</p>
       <p v-if="(selected.requiresDraft || selected.mappingPreview)" class="notice">この明細の顧客・区分は分類案の確認中です。<NuxtLink :to="{ path: '/mapping', query: { import: selected.id } }">マッピングを確認 →</NuxtLink></p>
       <div class="review-list"><article v-for="row in selected.rows" :key="row.line" :class="{ muted: ['posted','duplicate'].includes(row.state) }">
@@ -61,7 +63,7 @@ const user = useUserStore()
 const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), selected = ref<any>(null)
 const busy = ref(false), message = ref(''), pairToken = ref(''), collectorName = ref('Ryzen 7'), pairAccounts = ref<string[]>([])
 const newAccount = reactive({ provider: 'amex', name: '', primaryCard: '', otpRecipient: '', otpMailbox: '' }), cardsText = ref('')
-const manual = reactive({ start: '', end: '', statementMonth: '', statementTotal: '', refundTotal: '', fiscalStart: '', fiscalEnd: '' }), file = ref<File | null>(null), choices = reactive<Record<number,string>>({}), reviewPanel = ref<HTMLElement | null>(null)
+const manual = reactive({ kind: 'statement', start: '', end: '', statementMonth: '', statementTotal: '', refundTotal: '', fiscalStart: '', fiscalEnd: '' }), file = ref<File | null>(null), choices = reactive<Record<number,string>>({}), reviewPanel = ref<HTMLElement | null>(null)
 const states: Record<string,string> = { idle:'未取得', queued:'PCの応答待ち', running:'取得中', verification_required:'Chromeで認証が必要', complete:'取得完了・内容確認待ち', failed:'取得できませんでした', statement_review:'明細・個別確認待ち', new:'新しい支出', repayment:'カードへの返済', credit_review:'返金など・確認待ち', posted:'登録済み', duplicate:'登録済みの明細', legacy_review:'既存取引と一致する可能性', correction_review:'処理日や外貨情報が変わった明細の可能性', overlap_review:'他の明細期間と重複する可能性', in_progress:'先の取り込み処理を再開してください' }
 const decisionCount = computed(() => Object.values(choices).filter(Boolean).length)
 const api = (url: string, options: any = {}): Promise<any> => $fetch('/api/finance/' + url, { ...options, headers: { ...user.authHeader, ...options.headers } })
@@ -76,14 +78,14 @@ async function pair() { const result = await api('collectors', { method:'POST', 
 async function revoke(id: string) { await api(`collectors/${id}`, { method:'DELETE' }); await refresh() }
 async function copyToken() { await navigator.clipboard.writeText(pairToken.value); message.value = 'コピーしました' }
 function selectFile(event: Event) { file.value = (event.target as HTMLInputElement).files?.[0] || null }
-async function upload(account: any) { const id = account._id; const metadata = account.provider === 'aplus' ? { kind: 'statement', statementMonth: manual.statementMonth, statementTotal: manual.statementTotal, refundTotal: manual.refundTotal, ...(manual.fiscalStart || manual.fiscalEnd ? { fiscalStart: manual.fiscalStart, fiscalEnd: manual.fiscalEnd } : {}) } : { kind: 'statement', start: manual.start, end: manual.end }; if (!file.value) throw Error('CSVを選択してください'); const result = await api(`accounts/${id}/imports`, { method:'POST', query: metadata, body:file.value, headers: { 'Content-Type':'text/csv' } }); await refresh(); await review(result.id) }
+async function upload(account: any) { const id = account._id; const metadata = manual.kind === 'pending' ? { kind: 'pending', ...(account.provider !== 'aplus' ? { start: manual.start, end: manual.end } : {}) } : account.provider === 'aplus' ? { kind: 'statement', statementMonth: manual.statementMonth, statementTotal: manual.statementTotal, refundTotal: manual.refundTotal, ...(manual.fiscalStart || manual.fiscalEnd ? { fiscalStart: manual.fiscalStart, fiscalEnd: manual.fiscalEnd } : {}) } : { kind: 'statement', start: manual.start, end: manual.end }; if (!file.value) throw Error('CSVを選択してください'); const result = await api(`accounts/${id}/imports`, { method:'POST', query: metadata, body:file.value, headers: { 'Content-Type':account.provider === 'aplus' && manual.kind === 'pending' ? 'application/json' : 'text/csv' } }); await refresh(); await review(result.id) }
 async function review(id: string) { selected.value = await api(`imports/${id}`); for (const key of Object.keys(choices)) delete choices[Number(key)]; for (const row of selected.value.rows) if (row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)) choices[row.line] = row.skipped ? 'skip' : row.state === 'new' ? 'import' : ''; await nextTick(); reviewPanel.value?.scrollIntoView({ behavior:'smooth' }) }
 async function commit() {
   const decisions = Object.entries(choices).filter(([,value]) => value).map(([line,value]) => ({ line:Number(line), action:value.startsWith('link:') ? 'link' : value, transactionId:value.startsWith('link:') ? value.slice(5) : undefined, confirmNew:value === 'import' }))
   try { const result = await api(`imports/${selected.value.id}/commit`, { method:'POST', body: { decisions } }); message.value = `${result.posted}件登録・${result.linked}件紐付け・${result.skipped}件保留または登録済み` }
   finally { await review(selected.value.id); await refresh() }
 }
-async function downloadOriginal() { const blob = await api(`imports/${selected.value.id}/file`, { responseType:'blob' }); const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = `${selected.value.account.provider || 'amex'}-${selected.value.period.start}-${selected.value.period.end}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url),1000) }
+async function downloadOriginal() { const blob = await api(`imports/${selected.value.id}/file`, { responseType:'blob' }); const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = `${selected.value.account.provider || 'amex'}-${selected.value.period.start}-${selected.value.period.end}.${selected.value.sourceFormat || 'csv'}`; a.click(); setTimeout(() => URL.revokeObjectURL(url),1000) }
 let poll: ReturnType<typeof setInterval>
 onMounted(() => { run(refresh); poll = setInterval(() => { if (!busy.value) refresh().catch(() => {}) },10000) })
 onUnmounted(() => clearInterval(poll))
