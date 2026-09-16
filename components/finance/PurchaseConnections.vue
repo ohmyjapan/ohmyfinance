@@ -17,6 +17,7 @@
     </div>
    </div>
    <div class="mt-3 space-y-2"><p class="text-xs font-medium">注文履歴の原本</p><button v-for="original in card.originals" :key="original.hash" type="button" class="block max-w-full break-all text-left text-xs text-primary-main underline" :disabled="busy" @click="download(card,original)">{{ original.name }}</button></div>
+   <PurchaseExports v-if="card.saved?.status==='linked'" :purchase="card.saved" :disabled="busy" />
    <p v-if="card.candidate?.conflict" class="mt-3 text-xs text-amber-700 dark:text-amber-400">この注文または在庫は別の支払いに接続済みです。</p>
    <p v-if="card.candidate && !card.candidate.documentsComplete" class="mt-3 text-xs text-amber-700 dark:text-amber-400">原本 {{ card.candidate.originals.length }} / {{ card.candidate.fileCount }}ページを取得。残りのページを調査してください。</p>
    <div class="mt-4 flex flex-wrap gap-3">
@@ -32,6 +33,7 @@
 </template>
 <script setup lang="ts">
 import {useUserStore} from '~/stores/user'
+import PurchaseExports from './PurchaseExports.vue'
 const props=defineProps<{draft:any;disabled:boolean;researchRevision:number}>(),user=useUserStore()
 const data=ref<any>(null),busy=ref(false),error=ref(''),message=ref(''),releaseId=ref('')
 const inventoryConfirmed=ref<Record<string,boolean>>({})
