@@ -85,3 +85,18 @@ export function samePendingPurchases(a, b) {
   const signature = r => JSON.stringify([r.purchaseDate, r.processingDate || '', r.cardIdentifier, r.description.normalize('NFC'), r.amount, r.currency, r.foreignAmount || '', r.exchangeRate || '', r.provider === 'aplus' ? r.pendingPaymentMonth || r.statementMonth : '']);
   return JSON.stringify(a.map(signature).sort()) === JSON.stringify(b.map(signature).sort());
 }
+
+// This is a hold, never evidence that two purchases are the same. An actual
+// arriving after an unresolved forecast must not be counted independently just
+// because the bank changed its date, merchant, amount or billing month.
+export function pendingReviewCandidate(batch, row, prior, original) {
+  if (![row, original].every(r => r.purchaseDate && r.cardIdentifier && r.description && r.amount > 0) ||
+      (batch.provider || 'amex') !== (prior.provider || 'amex') || row.cardIdentifier !== original.cardIdentifier ||
+      !(isPending(batch) || isPending(prior))) return false;
+  if (isPending(prior)) return true;
+  // Reverse arrival: only earlier files whose coverage could contain the
+  // forecast are candidates. Future activity is not part of a closed period.
+  if (!isFinalStatement(prior)) return false;
+  if (row.pendingPaymentMonth && original.statementMonth) return row.pendingPaymentMonth <= original.statementMonth;
+  return !!prior.period?.end && (row.processingDate || row.purchaseDate) <= prior.period.end;
+}

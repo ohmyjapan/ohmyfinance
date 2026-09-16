@@ -21,9 +21,23 @@ owner, account, provider, card, purchase date and exact merchant spelling.
 Amounts, processing/foreign-currency fields, multiplicity and Aplus billing month
 must agree. Two identical purchases remain two purchases; their individual bank
 row identities are not invented. Differences and competing originals are held.
-Merchant/date changes outside this strict match need separate investigation;
-there is no fuzzy bank-transaction identity claim. A disappearance from a later
-snapshot is not treated as proof of cancellation.
+Unmatched incoming purchases are also checked against the remaining canonical
+forecasts on the same card. A changed merchant, date, amount or billing month
+creates a version-3 `pending_candidate` review reference, never an automatic
+match. These incoming rows are archived and visible in source review but excluded
+from purchase totals and posting; the original draft and evidence remain intact.
+This can also hold genuinely new purchases when an older forecast is unresolved.
+A disappearance from a later snapshot is not proof of cancellation. Resolving
+these ambiguous holds is a separate source review; no automatic cancellation or
+manual override endpoint is provided by this change.
+
+Exact groups in the incoming file take precedence. Already confirmed forecasts
+do not hold activity after their final statement period; revised or older
+snapshots can still require review. When a forecast arrives after the actual,
+the earlier statement must cover its processing date (or Aplus billing month).
+Card suffixes and owners never cross-match. Non-purchase adjustments keep their
+existing review treatment. Reconciliation reads the complete account history and
+fails closed above 100 imports rather than silently ignoring older forecasts.
 
 Drafts and downstream links retain their original import/line/hash. Finalized
 files reference those rows. A byte-identical finalized Amex CSV records its

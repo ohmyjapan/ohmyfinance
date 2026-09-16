@@ -117,7 +117,7 @@ export async function pendingSettlements(batch: any) {
       const target = group.targets.find(t => t.importId === String(batch._id))
       if (!target) continue
       for (const line of target.lines) {
-        if (group.state === 'source_overlap_review') result.set(line, { state: 'review', reason: '未請求明細と件数・金額などが一致しません。元の明細と比較してください。' })
+        if (group.state === 'source_overlap_review') result.set(line, { state: 'review', reason: group.match === 'pending_candidate' ? '同じカードに未照合の明細があります。利用先・日付・金額などを比較するまで、追加分を購入件数に加えません。' : '未請求明細と件数・金額などが一致しません。元の明細と比較してください。' })
         else if (isFinalStatement(other) && result.get(line)?.state !== 'review') result.set(line, { state: 'finalized', source: { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, lines: group.lines } })
       }
     }
@@ -155,7 +155,9 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
       }
       return duplicate(retry)
     }
-    const previous: any[] = await FinanceImport.find({ ownerId, accountId: account._id, $or: [{ 'rows.fingerprint': { $in: parsed!.rows.map(r => r.fingerprint) } }, { ...(parsed!.sourceStatus === 'pending' ? {} : { sourceStatus: 'pending' }), 'rows.purchaseDate': { $in: parsed!.rows.map(r => r.purchaseDate).filter(Boolean) } }] }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus').limit(101).lean()
+    // Date/fingerprint-only lookups miss bank corrections. Read the bounded
+    // account history, including final statements that confirm older forecasts.
+    const previous: any[] = await FinanceImport.find({ ownerId, accountId: account._id }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus finalization').limit(101).lean()
     if (previous.length > 100) fail(409, 'Too many overlapping imports; review the source history first')
     for (const prior of previous) await importSourceReferences(prior)
     const data = { _id: new mongoose.Types.ObjectId(), ownerId, accountId: account._id, hash: parsed!.sha256, provider: account.provider || 'amex', sourceStatus: parsed!.sourceStatus, sourceFormat: parsed!.sourceFormat, sourceCapturedAt: parsed!.sourceCapturedAt, reconciliation: parsed!.reconciliation, originalName: (account.provider || 'amex') + '-activity.' + (parsed!.sourceFormat || 'csv'), bytes: bytes.length, encoding: parsed!.encoding, parserVersion: parsed!.parserVersion, period: parsed!.period, rows: parsed!.rows, rowCount: parsed!.rows.length, downloadedAt: new Date(), collectorId }

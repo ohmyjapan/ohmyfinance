@@ -55,6 +55,7 @@
           <div v-for="group in referenceGroups" :key="group.importId + group.fingerprint" class="mt-3 border-t border-gray-200 pt-3 text-xs dark:border-white/10">
             <p class="break-words font-medium text-gray-700 dark:text-gray-300">{{ group.accountName }} · {{ group.description }} · {{ group.lines.length }}件</p>
             <p v-if="group.state === 'source_overlap_review'" class="mt-1 text-amber-700 dark:text-amber-400">{{ t('mappingImport.overlapHeld') }}</p>
+            <p v-if="group.match === 'pending_candidate'" class="mt-1 text-amber-700 dark:text-amber-400" data-pending-overlap>同じカードの未照合明細と重複する可能性があります。利用先・日付・金額の確認が終わるまで、追加の購入として数えません。</p>
             <NuxtLink v-for="target in group.targets" :key="target.importId" :to="{path: '/mapping', query: {import: target.importId}}" class="mt-2 block py-1 text-primary-main">{{ t('mappingImport.openOriginal') }} · {{ target.period.start }} ～ {{ target.period.end }}</NuxtLink>
           </div>
         </details>

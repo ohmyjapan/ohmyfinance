@@ -11,6 +11,12 @@ const csv = (headers, rows) => Buffer.from([headers, ...rows].map(r => r.map(v =
 const pending = (source = aplusCapture()) => parseCardImport(encode(source), account, { kind: 'pending' });
 const batch = (parsed, n) => ({ ...parsed, _id: String(n).padStart(24, '0'), ownerId: 'owner', accountId: 'account', hash: parsed.sha256, provider: 'aplus' });
 const billed = (amounts = [1200, 1200], month = '2026-09') => parseCardImport(csv(APLUS_HEADERS, amounts.map(n => ['≪****-****-****-1234≫', '20260801', 'Synthetic shop', n, 'Ｓ', '1', '01', n, ''])), account, { kind: 'statement', statementMonth: month, statementTotal: amounts.reduce((a, b) => a + b, 0) });
+const actual = (items, month = '2026-09') => parseCardImport(csv(APLUS_HEADERS, items.map(r => [`≪****-****-****-${r.card || '1234'}≫`, (r.date || '2026-08-01').replaceAll('-', ''), r.merchant, r.amount, 'Ｓ', '1', '01', r.amount, ''])), account, { kind: 'statement', statementMonth: month, statementTotal: items.reduce((n, r) => n + r.amount, 0) });
+const reconcile = (current, previous) => {
+  current.sourceReferences = buildSourceReferences(current, previous);
+  verifySourceReferences(current, previous);
+  return current;
+};
 
 test('Aplus pending captures reconcile every raw page field, original byte hash and repeated purchase', () => {
   const parsed = pending(); assert.equal(parsed.sourceStatus, 'pending'); assert.equal(parsed.sourceFormat, 'json'); assert.equal(parsed.rows.length, 2); assert.equal(parsed.reconciliation.purchaseTotal, 2400);
@@ -49,4 +55,78 @@ test('reverse arrival order, supplementary cards, tampering and different owners
   const otherCard = batch(pending(aplusCapture([{ merchant: 'Synthetic shop', amount: 1200, card: '5678' }])), 3); assert.equal(buildSourceReferences(otherCard, [original]).groups.length, 0);
   const broken = structuredClone(next); broken.sourceReferences.groups[0].targets[0].lines.pop(); assert.throws(() => verifySourceReferences(broken, [original]));
   const changed = structuredClone(original); changed.rows[0].amount++; assert.throws(() => verifySourceReferences(next, [changed]));
+});
+
+test('renamed, redated and late finalized purchases are held without adding to forecast totals', () => {
+  const original = batch(pending(), 1), before = structuredClone(original);
+  for (const item of [
+    { merchant: 'Final merchant', amount: 1200 },
+    { merchant: 'Synthetic shop', amount: 1200, date: '2026-08-04' },
+    { merchant: 'Final merchant', amount: 1300, date: '2026-10-25' }
+  ]) {
+    const final = reconcile(batch(actual([item, item], '2026-11'), 2), [original]);
+    assert.equal(final.sourceReferences.version, 3);
+    assert.equal(final.sourceReferences.groups[0].match, 'pending_candidate');
+    assert.equal(final.sourceReferences.groups[0].state, 'source_overlap_review');
+    assert.equal(activeImportRows(final).length, 0);
+    assert.deepEqual(final.sourceReferences.groups[0].targets[0].lines, [2, 3]);
+    assert.equal(activeImportRows(original).reduce((n, r) => n + r.amount, 0), 2400);
+  }
+  assert.deepEqual(original, before);
+});
+
+test('snapshot refreshes preserve multiplicity and count independent new purchases after matching the originals', () => {
+  const original = batch(pending(), 1);
+  const extra = { merchant: 'New purchase', amount: 800 };
+  const refresh = reconcile(batch(pending(aplusCapture([{ merchant: 'Synthetic shop', amount: 1200 }, { merchant: 'Synthetic shop', amount: 1200 }, extra])), 2), [original]);
+  assert.deepEqual(activeImportRows(refresh).map(r => r.amount), [800]);
+  const missing = reconcile(batch(pending(aplusCapture([extra])), 3), [original]);
+  assert.equal(activeImportRows(missing).length, 0);
+  const another = reconcile(batch(pending(aplusCapture([{ ...extra, date: '2026-08-04' }])), 4), [original, missing]);
+  assert.equal(activeImportRows(another).length, 0);
+  assert.deepEqual(another.sourceReferences.groups[0].targets.map(t => t.importId), [original._id]);
+  const mismatched = reconcile(batch(pending(aplusCapture([{ merchant: 'Synthetic shop', amount: 1200 }, extra])), 5), [original]);
+  assert.equal(activeImportRows(mismatched).length, 0);
+  assert.equal(mismatched.sourceReferences.groups.length, 2);
+});
+
+test('reverse arrival and post-finalization refreshes cannot recount changed forecasts', () => {
+  const original = batch(pending(), 1), final = reconcile(batch(billed(), 2), [original]);
+  const changed = batch(pending(aplusCapture([{ merchant: 'Changed forecast', amount: 1300, date: '2026-08-04' }])), 3);
+  assert.equal(activeImportRows(reconcile(changed, [original, final])).length, 0);
+  const actualFirst = batch(billed(), 4);
+  assert.equal(activeImportRows(reconcile({ ...changed, _id: '5'.repeat(24) }, [actualFirst])).length, 0);
+  const future = batch(pending(aplusCapture([{ merchant: 'New cycle', amount: 900, date: '2026-09-15', month: '26/10' }])), 6);
+  assert.equal(activeImportRows(reconcile(future, [original, final])).length, 1);
+  assert.equal(activeImportRows(reconcile(batch(actual([{ merchant: 'New cycle', amount: 900, date: '2026-09-15' }], '2026-10'), 7), [original, final])).length, 1);
+});
+
+test('candidate references cannot become automatic matches or split repeated source groups', () => {
+  const prior = batch(pending(), 1), other = batch(pending(aplusCapture([{ merchant: 'Other forecast', amount: 800 }])), 2);
+  const current = reconcile(batch(actual([{ merchant: 'Final merchant', amount: 1200 }]), 3), [prior, other]);
+  assert.equal(current.sourceReferences.groups[0].targets.length, 2);
+  for (const change of [
+    c => c.sourceReferences.groups[0].state = 'existing_import',
+    c => c.sourceReferences.groups[0].targets[0].lines.pop(),
+    c => c.sourceReferences.groups[0].targets[0].sourceHash = '0'.repeat(64),
+    c => c.sourceReferences.version = 2
+  ]) {
+    const broken = structuredClone(current); change(broken);
+    assert.throws(() => verifySourceReferences(broken, [prior, other]));
+  }
+  assert.throws(() => verifySourceReferences(current, [{ ...prior, ownerId: 'other-owner' }, other]));
+  const foreign = batch(actual([{ merchant: 'Final merchant', amount: 1200, card: '5678' }]), 4);
+  assert.equal(buildSourceReferences(foreign, [prior]).groups.length, 0);
+  const refund = batch(actual([{ merchant: 'Refund', amount: -1200 }]), 5);
+  assert.equal(buildSourceReferences(refund, [prior]).groups.length, 0);
+  assert.equal(refund.rows[0].kind, 'credit_review');
+});
+
+test('Amex changed processing dates, merchant labels and foreign amounts remain review-only', () => {
+  const a = { provider: 'amex', cardIdentifiers: ['12345'] };
+  const parse = (cells, metadata, n) => ({ ...batch(parseCardImport(csv(AMEX_HEADERS, [cells]), a, metadata), n), provider: 'amex' });
+  const original = parse(['2026/08/01', '2026/08/03', 'Foreign merchant', 'Test user', '12345', 1200, '8 USD', '150'], { kind: 'pending', start: '2026-08-01', end: '2026-08-10' }, 1);
+  const final = parse(['2026/08/02', '2026/08/05', 'Final merchant', 'Test user', '12345', 1220, '8 USD', '152.5'], { kind: 'statement', start: '2026-08-01', end: '2026-08-31' }, 2);
+  assert.equal(activeImportRows(reconcile(final, [original])).length, 0);
+  assert.equal(final.sourceReferences.groups[0].state, 'source_overlap_review');
 });
