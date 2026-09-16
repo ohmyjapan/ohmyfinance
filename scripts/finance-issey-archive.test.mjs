@@ -62,6 +62,7 @@ test('research tools capture original screenshot evidence once without treating 
   const search=await tools.call('search_issey_orders',{});assert.equal(search.kind,'search');
   const [first,retry]=await Promise.all([tools.call('read_issey_order',{orderId:order().id,part:1}),tools.call('read_issey_order',{orderId:order().id,part:1})]);assert.deepEqual(first,retry);assert.equal(extracted,1);assert.equal(first.document.kind,'document');assert.equal(tools.sources.length,3);validateSources(tools.sources);
   assert(!JSON.stringify(tools.sources).includes(config.isseyArchive.token));assert(!JSON.stringify(tools.sources).includes(config.isseyArchive.baseUrl));
+  const detail=JSON.parse(first.detail.text);assert.equal(detail.connectionVersion,1);assert.equal(detail.original.sourceId,first.document.id);assert.equal(detail.original.sha256,hash(bytes));assert.equal(detail.fileCount,1);
   assert.throws(()=>validateReport({summary:'Synthetic',question:'',supplier:null,findings:[{field:'taxRate',valueJson:'10',reason:'Calculated from amounts',basis:'reasoned',citations:[{sourceId:first.document.id,quote:'Tax amount 200'}]}]},context,tools.sources),/printed purchase percentage/);
  }finally{if(path.dirname(dir)!==path.resolve(os.tmpdir())||!path.basename(dir).startsWith('omf-issey-archive-'))throw Error('Unsafe test directory');await fs.rm(dir,{recursive:true,force:true})}
 });

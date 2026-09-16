@@ -95,10 +95,10 @@ export class ResearchTools {
    const key=JSON.stringify([args.orderId,args.part]);
    if(!this.isseyImages.has(key))this.isseyImages.set(key,(async()=>{
     const {bytes,order,part}=await this.archive.image(args.orderId,args.part);
-    const text=JSON.stringify({searchType:'issey_order_detail',archiveId:order.id,orderNumber:order.orderNumber,date:order.date,total:order.total,currency:order.currency,items:order.items,amounts:order.amounts,cancelled:order.cancelled,dataQuality:order.dataQuality,inventoryLinks:order.inventoryLinks,capturedAt:order.capturedAt,paymentCardVerified:false,merchantIssuedTaxInvoice:false,association:'candidate_only',coverage:{absenceProven:false,limitations:['This is an archived order and its linked inventory evidence. It does not identify the payment card or prove association with this transaction.','Missing inventory or shipment links do not establish that an item was not shipped.']}});
+    const document=await this.document(bytes,'image/png','ISSEY MIYAKE 注文履歴 '+order.orderNumber+' ('+part+'/'+order.files.length+').png',ISSEY_HISTORY_URL);
+    const text=JSON.stringify({searchType:'issey_order_detail',connectionVersion:1,original:{sourceId:document.id,part,sha256:order.files[part-1].sha256,bytes:bytes.length},fileCount:order.files.length,archiveId:order.id,orderNumber:order.orderNumber,date:order.date,total:order.total,currency:order.currency,items:order.items,amounts:order.amounts,cancelled:order.cancelled,dataQuality:order.dataQuality,inventoryLinks:order.inventoryLinks,capturedAt:order.capturedAt,paymentCardVerified:false,merchantIssuedTaxInvoice:false,association:'candidate_only',coverage:{absenceProven:false,limitations:['This is an archived order and its linked inventory evidence. It does not identify the payment card or prove association with this transaction.','Missing inventory or shipment links do not establish that an item was not shipped.']}});
     if(text.length>60000)throw Error('Order detail exceeds the research evidence limit');
     const detail=await this.add('search','ISSEY MIYAKE 注文 '+order.orderNumber, text,ISSEY_HISTORY_URL);
-    const document=await this.document(bytes,'image/png','ISSEY MIYAKE 注文履歴 '+order.orderNumber+' ('+part+'/'+order.files.length+').png',ISSEY_HISTORY_URL);
     return {detail,document,part,parts:order.files.length};
    })().catch(e=>{this.isseyImages.delete(key);throw e}));
    return this.isseyImages.get(key);

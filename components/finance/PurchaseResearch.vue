@@ -42,8 +42,10 @@
   <details v-if="research?.sources?.length" class="mt-5 text-xs"><summary class="cursor-pointer py-2 font-medium text-primary-main">調査の出典 · {{ research.sources.length }}件</summary><div v-for="s in research.sources" :key="s.id" class="mt-3 rounded-lg bg-gray-50 p-3 dark:bg-white/5"><a v-if="s.url" :href="s.url" target="_blank" rel="noopener noreferrer" class="break-words text-primary-main underline">{{ s.title }} ↗</a><p v-else class="font-medium">{{ s.title }}</p><p class="mt-1 text-gray-400">{{ new Date(s.capturedAt).toLocaleString('ja-JP') }}</p><details class="mt-2"><summary class="cursor-pointer text-gray-500">取得した本文</summary><pre class="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words font-sans leading-relaxed">{{ s.text }}</pre></details></div></details>
   <details v-if="research?.history?.length" class="mt-4 text-xs"><summary class="cursor-pointer py-2 text-primary-main">以前の調査・追加の説明</summary><div v-for="(h,i) in research.history" :key="i" class="mt-3 space-y-1 border-l-2 border-gray-200 pl-3"><p>{{ h.instruction }}</p><p class="text-gray-500">{{ h.report?.summary }}</p></div></details>
  </section>
+ <PurchaseConnections :draft="draft" :disabled="disabled || busy || pending" :research-revision="research?.revision || 0" />
 </template>
 <script setup lang="ts">
+import PurchaseConnections from './PurchaseConnections.vue'
 import {useUserStore} from '~/stores/user'
 import {researchFields} from '~/shared/finance-research.mjs'
 const props=defineProps<{draft:any;disabled:boolean}>(),emit=defineEmits(['changed'])

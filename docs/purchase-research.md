@@ -119,3 +119,39 @@ node scripts/finance-integration.cjs
 ```
 
 The isolated suite covers hidden answers, owner/account boundaries, leases, duplicate runs, frozen scores, stale case rejection, document access, scoring, runtime metadata and unchanged purchase collections. Private real cases and live outputs must never be committed.
+
+## Purchase connections
+
+The mapping page now shows an ISSEY order's date, total, item variants, quantities,
+linked inventory IDs and original screenshots together. The private research worker
+binds each screenshot part to its captured order metadata using the source ID,
+byte count and SHA-256 hash. Earlier research must be rerun to capture this binding.
+
+A connection is an owner-confirmed association between one complete order and one
+card payment with an equal total, within the existing seven-day search window.
+Dates and totals identify candidates; inventory and shipment evidence help review
+them. Competing orders remain separate choices. The archive does not record the
+payment card, and the confirmation does not turn an order-history screenshot into
+a merchant-issued tax invoice. Split payments and combined orders require separate
+reconciliation and cannot be connected through this full-order flow.
+
+`FinancePurchaseLink` retains the source-bound payment, order snapshot, inventory
+coordinates, original hashes and confirmation history. Inventory quantity cannot
+exceed purchased quantity. Unique indexes prevent an active order, card row or
+inventory ID from being assigned twice for the same owner. Account leases and
+revision checks coordinate with draft saves and posting. No draft values or ledger
+records are changed by confirming a connection.
+
+Original bytes are retained by owner and content hash under
+`OMF_DATA_DIR/purchase-documents` (default `~/.ohmyfinance/purchase-documents`).
+Their lifetime is independent of a research attempt. Downloads require the owning
+user and verify the saved hash and size. Multiple inventory items reference the
+same order original. Missing inventory stays pending and does not prevent saving
+the document. Updated research can refresh the saved connection after review.
+Undo releases the payment/inventory association while retaining the order original
+and history. Include this collection and storage directory in normal data backups.
+
+Validation: `finance-purchase-links.test.mjs` covers evidence binding, date windows,
+quantity limits, competing orders and missing parts; run the isolated application
+suite with `OMF_TEST_PURCHASE_LINKS_ONLY=1`. Add `OMF_TEST_PURCHASE_BROWSER=1` for
+real Chrome checks and `OMF_TEST_SCREENSHOT` for private desktop/mobile captures.
