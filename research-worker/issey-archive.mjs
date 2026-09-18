@@ -4,6 +4,13 @@ export const isseyArchiveContract='For an ISSEY MIYAKE purchase, search_issey_or
 const hash=v=>createHash('sha256').update(v).digest('hex'),uuid=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 export const ISSEY_HISTORY_URL='https://www.isseymiyake.com/pages/orders';
 const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value||'')&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString().slice(0,10)===value;
+export function validateArchivedOrder(order,account){
+ if(!order||order.accountId!==account||!/^\d{4,15}$/.test(order.orderNumber||'')||order.id!==hash(account+':'+order.orderNumber)||order.captureVersion!==2||!validDate(order.date)||order.sourceUrl!==ISSEY_HISTORY_URL||!Number.isFinite(Date.parse(order.capturedAt))||order.currency!=='JPY'||typeof order.cancelled!=='boolean'||!['complete','incomplete'].includes(order.dataQuality))throw Error('Invalid archived order identity');
+ if(order.total!==null&&(!Number.isSafeInteger(order.total)||order.total<0&&!order.cancelled)||!Array.isArray(order.items)||order.items.length>100||!Array.isArray(order.amounts)||order.amounts.length>30||!Array.isArray(order.inventoryLinks)||order.inventoryLinks.length>1000)throw Error('Invalid archived order detail');
+ if(!Array.isArray(order.files)||!order.files.length||order.files.length>20||order.files.some((f,i)=>f.part!==i+1||!/^[a-f0-9]{64}$/.test(f.sha256||'')||!Number.isSafeInteger(f.bytes)||f.bytes<=0||f.bytes>10*1024*1024))throw Error('Invalid archived order images');
+ if(order.dataQuality==='complete'&&(!order.items.length||order.total===null||order.items.some(i=>!Number.isSafeInteger(i.quantity)||i.quantity<=0||typeof i.product!=='string'||!i.product.trim()||typeof i.color!=='string'||typeof i.size!=='string'||i.lineTotal!==null&&(!Number.isSafeInteger(i.lineTotal)||i.lineTotal<0&&!order.cancelled))))throw Error('Incomplete archived order marked complete');
+ return order;
+}
 
 export class IsseyArchive {
  constructor(config,context,{fetchImpl=fetch}={}){
@@ -25,11 +32,7 @@ export class IsseyArchive {
   const bytes=Buffer.concat(chunks);return image?bytes:JSON.parse(bytes.toString('utf8'));
  }
  validateOrder(order,account){
-  if(!order||order.accountId!==account||!/^\d{4,15}$/.test(order.orderNumber||'')||order.id!==hash(account+':'+order.orderNumber)||order.captureVersion!==2||!validDate(order.date)||order.sourceUrl!==ISSEY_HISTORY_URL||!Number.isFinite(Date.parse(order.capturedAt))||order.currency!=='JPY'||typeof order.cancelled!=='boolean'||!['complete','incomplete'].includes(order.dataQuality))throw Error('Invalid archived order identity');
-  if(order.total!==null&&(!Number.isSafeInteger(order.total)||order.total<0&&!order.cancelled)||!Array.isArray(order.items)||order.items.length>100||!Array.isArray(order.amounts)||order.amounts.length>30||!Array.isArray(order.inventoryLinks)||order.inventoryLinks.length>1000)throw Error('Invalid archived order detail');
-  if(!Array.isArray(order.files)||!order.files.length||order.files.length>20||order.files.some((f,i)=>f.part!==i+1||!/^[a-f0-9]{64}$/.test(f.sha256||'')||!Number.isSafeInteger(f.bytes)||f.bytes<=0||f.bytes>10*1024*1024))throw Error('Invalid archived order images');
-  if(order.dataQuality==='complete'&&(!order.items.length||order.total===null||order.items.some(i=>!Number.isSafeInteger(i.quantity)||i.quantity<=0||typeof i.product!=='string'||!i.product.trim()||typeof i.color!=='string'||typeof i.size!=='string'||i.lineTotal!==null&&(!Number.isSafeInteger(i.lineTotal)||i.lineTotal<0&&!order.cancelled))))throw Error('Incomplete archived order marked complete');
-  return order;
+  return validateArchivedOrder(order,account);
  }
  async catalog(){
   const orders=[],runs=[],seen=new Set();let bytes=0;

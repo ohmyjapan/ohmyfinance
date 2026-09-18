@@ -3,6 +3,7 @@
   <div class="flex flex-wrap items-start justify-between gap-3"><div><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">注文・在庫・購入原本</h2><p class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">日付と金額を照合し、注文の商品・在庫・原本をこの支払いに接続します。</p></div><button type="button" class="text-xs text-primary-main underline" :disabled="busy" @click="load">再読込</button></div>
   <p v-if="error" role="alert" class="mt-3 text-xs text-red-600">{{ error }}</p>
   <p v-if="message" role="status" class="mt-3 text-xs text-green-700 dark:text-green-400">{{ message }}</p>
+  <PurchaseWorkflow :import-id="draft.importId" :line="draft.line" />
   <div class="mt-4 rounded-lg bg-gray-50 p-3 text-sm dark:bg-white/5"><p class="text-xs text-gray-500">カード明細 · {{ draft.source.account.name }}</p><p class="mt-1">{{ draft.source.purchaseDate }} · {{ money(draft.source.amount) }}</p><p class="mt-1 break-words text-xs text-gray-500">{{ draft.source.description }}</p></div>
   <p v-if="!cards.length" class="mt-4 text-xs leading-relaxed text-gray-500">購入調査で取得した注文がここに表示されます。以前の調査結果は再調査すると原本との対応も取得できます。</p>
   <p v-if="matchingCount > 1" class="mt-4 text-xs text-amber-700 dark:text-amber-400">同額の注文候補が複数あります。商品・在庫を確認して選択してください。</p>
@@ -34,6 +35,7 @@
 <script setup lang="ts">
 import {useUserStore} from '~/stores/user'
 import PurchaseExports from './PurchaseExports.vue'
+import PurchaseWorkflow from './PurchaseWorkflow.vue'
 const props=defineProps<{draft:any;disabled:boolean;researchRevision:number}>(),user=useUserStore()
 const data=ref<any>(null),busy=ref(false),error=ref(''),message=ref(''),releaseId=ref('')
 const inventoryConfirmed=ref<Record<string,boolean>>({})

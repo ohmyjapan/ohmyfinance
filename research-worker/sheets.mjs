@@ -3,7 +3,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {matchSheetRows} from './search-evidence.mjs';
 import {connectSheetBrowser,selectSheet,selectedSheet,readSheetCsv,sheetExportUrl,CSV_LIMIT} from './sheet-export.mjs';
 
-function browserApi(route,body) {
+export function browserApi(route,body) {
  return new Promise((resolve,reject)=>{
   const data=JSON.stringify(body),request=https.request({hostname:'localhost',port:6060,path:'/api/browser/'+route,method:'POST',rejectUnauthorized:false,headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}},response=>{
    let output='';response.on('data',b=>{output+=b;if(output.length>1000000)request.destroy(Error('Browser response too large'))});response.on('end',()=>{try{if(response.statusCode!==200){reject(Error('Real-browser '+route+' returned HTTP '+response.statusCode));return}resolve(JSON.parse(output))}catch{reject(Error('Real-browser service unavailable'))}});response.on('error',reject);
@@ -36,7 +36,7 @@ export function searchCsv(csv,terms,purchaseDate,windowed=true,{offset=0,expecte
  return {snapshotHash,...matchSheetRows(rows,{terms,purchaseDate,windowed,exportMode:'original_csv',range:'A1:AZ50000',offset})};
 }
 
-export async function searchBrowserSheet(config,source,terms,purchaseDate,windowed=true,options={}) {
+export async function captureBrowserSheet(config,source) {
  const id=config.spreadsheets?.[source],title=config.spreadsheetTabs?.[source],profile=config.spreadsheetBrowserProfile;
  if(!/^[a-zA-Z0-9_-]{20,100}$/.test(id||'')||!title||!/^[a-zA-Z0-9_-]{1,80}$/.test(profile||''))throw Error('Spreadsheet browser connection is not configured');
  const prefix='https://docs.google.com/spreadsheets/d/'+id+'/',opened=await browserApi('open',{url:prefix+'edit',profile,wait_for_cf:false});let browser;
@@ -49,8 +49,13 @@ export async function searchBrowserSheet(config,source,terms,purchaseDate,window
   const selected=await selectSheet(page,title),csv=await readSheetCsv(browser,sheetExportUrl(id,selected.gid));
   const after=await page.evaluate(selectedSheet);
   if(!page.url().startsWith(prefix+'edit')||after.title!==title||after.gid!==selected.gid)throw Error('The spreadsheet selection changed during export');
-  return {sheet:title,gid:selected.gid,...searchCsv(csv,terms,purchaseDate,windowed,options)};
+  return {sheet:title,gid:selected.gid,url:prefix+'edit#gid='+selected.gid,capturedAt:new Date().toISOString(),csv};
  }finally{
   try{if(browser)await browser.disconnect()}finally{await browserApi('close',{session_id:opened.session_id}).catch(()=>{})}
  }
+}
+
+export async function searchBrowserSheet(config,source,terms,purchaseDate,windowed=true,options={}) {
+ const {sheet,gid,csv}=await captureBrowserSheet(config,source);
+ return {sheet,gid,...searchCsv(csv,terms,purchaseDate,windowed,options)};
 }

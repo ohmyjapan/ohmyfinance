@@ -43,6 +43,7 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
+  if(process.env.OMF_TEST_WORKFLOW_ONLY){await require('./finance-workflow-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row,directory});console.log(checks+' targeted workflow checks passed');return;}
   if(process.env.OMF_TEST_EVALUATION_ONLY){await require('./finance-evaluation-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted evaluation checks passed');return;}
   if(process.env.OMF_TEST_RESEARCH_ONLY){await require('./finance-research-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted research checks passed');return;}
   if(process.env.OMF_TEST_PURCHASE_LINKS_ONLY){await require('./finance-purchase-links-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted purchase connection checks passed');return;}

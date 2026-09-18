@@ -7,7 +7,7 @@ const exportSchema=new Schema({
  permitNumber:String,permitDate:String,documents:{type:[Schema.Types.Mixed],default:[]},
  allocations:{type:[Schema.Types.Mixed],default:[]},inventoryIds:{type:[String],default:[]},
  status:{type:String,enum:['active','released'],required:true},revision:{type:Number,required:true},
- verifiedAt:Date,history:{type:[Schema.Types.Mixed],default:[]}
+ verifiedAt:Date,verificationEvidence:Schema.Types.Mixed,history:{type:[Schema.Types.Mixed],default:[]}
 },{timestamps:true})
 exportSchema.index({ownerId:1,provider:1,providerAccount:1,orderId:1},{unique:true})
 exportSchema.index({ownerId:1,provider:1,providerAccount:1,trackingKey:1},{unique:true,partialFilterExpression:{status:'active'}})

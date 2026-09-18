@@ -74,7 +74,7 @@ async function preserveDocuments(owner:string,inputs:any[],old:any,allowed:strin
  if(allowed.includes('invoice')&&result.length===2&&result[0].hash===result[1].hash)fail(400,'Invoiceと輸出許可書には別々の書類を選択してください。')
  return result
 }
-export async function saveExport(owner:string,body:any){
+export async function saveExport(owner:string,body:any,automation?:{check:()=>Promise<void>,evidence:any}){
  await init()
  const keys=['id','revision','providerAccount','orderId','applicationId','tracking','shippedAt','itemCount','declaredAmount','permitNumber','permitDate','allocations','documents','confirm','confirmDocuments']
  if(!body||Object.keys(body).some(k=>!keys.includes(k))||body.confirm!==true||typeof body.confirmDocuments!=='boolean'||!Number.isSafeInteger(body.revision)||body.revision<0||
@@ -100,8 +100,9 @@ export async function saveExport(owner:string,body:any){
   if(await Export.exists({ownerId:owner,status:'active',inventoryIds:{$in:[...ids]},...(old?{_id:{$ne:old._id}}:{})}))fail(409,'別の出荷に割当済みの在庫です。')
   const documents=await preserveDocuments(owner,body.documents,old,['invoice','permit'])
   if(body.confirmDocuments&&(!body.applicationId.trim()||!body.permitNumber.trim()||!body.permitDate||documents.length!==2))fail(400,'Invoice・輸出許可書と申告番号・許可日を確認してください。')
-  const at=new Date(),value={provider:'intras',providerAccount,orderId,applicationId:body.applicationId.trim(),tracking:body.tracking.trim(),trackingKey:tracking(body.tracking),shippedAt:body.shippedAt,itemCount:body.itemCount,declaredValue:{amount:body.declaredAmount,currency:'JPY',source:'customer_submitted'},permitNumber:body.permitNumber.trim(),permitDate:body.permitDate,documents,allocations,inventoryIds:[...ids],status:'active',verifiedAt:body.confirmDocuments?at:null}
+  const at=new Date(),value={provider:'intras',providerAccount,orderId,applicationId:body.applicationId.trim(),tracking:body.tracking.trim(),trackingKey:tracking(body.tracking),shippedAt:body.shippedAt,itemCount:body.itemCount,declaredValue:{amount:body.declaredAmount,currency:'JPY',source:'customer_submitted'},permitNumber:body.permitNumber.trim(),permitDate:body.permitDate,documents,allocations,inventoryIds:[...ids],status:'active',verifiedAt:body.confirmDocuments?at:null,verificationEvidence:automation?.evidence||null}
   const history={at,action:old?'updated':'created',before:old?{...old,history:undefined}:null}
+  if(automation)await automation.check()
   await check()
   try{
    if(old){const r=await Export.updateOne({_id:old._id,ownerId:owner,revision:body.revision},{$set:value,$inc:{revision:1},$push:{history}});if(!r.matchedCount)fail(409,'出荷が更新されています。')}
