@@ -48,5 +48,6 @@ test('same-price online alternatives remain proposals, unknown offline evidence 
  assert.equal(c.alternatives[0].paymentCardVerified,false);assert(!c.facts.find(f=>f.id==='competing_payments').text.includes('p1'));assert(c.facts.find(f=>f.id==='competing_payments').text.includes('p2'));
  assert(validateInvestigationReport(report,c));assert.equal(automaticPurchaseCandidate(c,report),null);
  c.confirmedReference={reference:'1234567'};assert.equal(automaticPurchaseCandidate(c,report).id,id);
+ c.payment.merchant='Unrelated department store';assert.equal(automaticPurchaseCandidate(c,report),null);
  report.hypotheses[0].support[0].quote='not in source';assert.throws(()=>validateInvestigationReport(report,c));
 });

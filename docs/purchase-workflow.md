@@ -36,8 +36,8 @@ and preserves the cumulative history.
 
 AI compares purchase candidates and cites saved facts. Equal dates, amounts or
 products never authorize an unattended association. Automatic connection requires
-an exact order reference previously confirmed for that payment, the original files
-and matching payment amount. Other candidates need owner confirmation. The owner can
+an identified ISSEY merchant, an exact order reference previously confirmed for that
+payment, the original files and matching payment amount. Other candidates need owner confirmation. The owner can
 answer in the page; the answer applies to that payment and is reconsidered overnight.
 
 Offline receipts and item tags retain absent prices, dates and quantities. Owner

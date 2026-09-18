@@ -52,6 +52,9 @@ export function validateInvestigationReport(report,context) {
 export function automaticPurchaseCandidate(context,report) {
  // A previous explicit confirmation of this exact reference is the acceptance
  // authority. Date/amount agreement or model confidence alone never qualifies.
+ // Receipt numbers belong to a merchant namespace. A numeric reference at an
+ // unrelated merchant must not collide with an ISSEY online order number.
+ if(!/ISSEY|イ[ッツ]セイ[ー\s]*ミヤケ/i.test(String(context.payment?.merchant||'').normalize('NFKC')))return null;
  const c=context.alternatives.find(a=>a.id===report.recommendedId&&!a.claimed);
  if(!c||c.kind!=='online'||!context.confirmedReference||context.confirmedReference.reference!==c.orderNumber||context.alternatives.filter(a=>a.kind==='online'&&a.orderNumber===c.orderNumber).length!==1)return null;
  return c;

@@ -3,7 +3,7 @@ const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 module.exports=async({db,call,upload,csv,row,token,origin,directory,pass,account,accountId,worker,request})=>{
  const {FinalizationWorker}=await import(pathToFileURL(path.resolve('finalization-worker/worker.mjs')));
  const date='2026-10-02',number='7654321',stock='WF-WORKER-1',external='22222222-2222-2222-2222-222222222222',archiveId=hash(external+':'+number),png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),Buffer.from('Synthetic full-cycle original')]);
- const imported=await upload(csv([row({0:'2026/10/02',1:'2026/10/03',2:'Synthetic full nightly cycle',5:'9100'})]),'?kind=statement&start=2026-09-19&end=2026-10-18');assert.equal(imported.status,200);
+ const imported=await upload(csv([row({0:'2026/10/02',1:'2026/10/03',2:'Synthetic ISSEY full nightly cycle',5:'9100'})]),'?kind=statement&start=2026-09-19&end=2026-10-18');assert.equal(imported.status,200);
  const importId=imported.data.id,d=(await call('/api/finance/imports/'+importId+'/drafts/2',{token})).data;
  await db.collection('financedrafts').updateOne({ownerId:account.ownerId,importId:new ObjectId(importId),line:2},{$set:{accountId:account._id,key:d.key,sourceHash:d.sourceHash,revision:1,values:{...d.values,receiptNumber:number,purpose:'customer'},evidence:{...d.evidence,receiptNumber:{state:'confirmed',source:'owner'}}}},{upsert:true});
  const config=await db.collection('financeworkflowconfigs').findOne({ownerId:account.ownerId});
