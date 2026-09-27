@@ -38,17 +38,20 @@ export function useProxy() {
     async function proxyRequest(source: string, data: any) {
         isLoading.value = true
         error.value = null
+        lastResponse.value = null
 
         try {
-            const { data: responseData } = await useFetch(`/api/proxy/${source}`, {
+            const { data: responseData, error: responseError } = await useFetch(`/api/proxy/${source}`, {
                 method: 'POST',
                 body: data
             })
 
+            if (responseError.value) throw responseError.value
+
             lastResponse.value = responseData.value
             return responseData.value
-        } catch (err: any) {
-            error.value = err.message || `Failed to proxy request to ${source}`
+        } catch (err: unknown) {
+            error.value = (err instanceof Error ? err.message : '') || `Failed to proxy request to ${source}`
             console.error(`Error proxying request to ${source}:`, err)
             throw err
         } finally {

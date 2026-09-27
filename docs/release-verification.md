@@ -5,14 +5,18 @@ capture/workflow tests to OhMyCode's project fixture convention. It exports the
 standard name, explicit source coverage and run result; no hub gate changes are
 required.
 
-The fixture runs ten Node test suites, including assistant page selection,
+The fixture runs eleven Node test suites, including assistant page selection,
 purchase investigation evidence, upload/API error handling and CSV module
-compatibility, builds the current Nuxt
+compatibility and unsupported-provider behavior, builds the current Nuxt
 source, then runs `scripts/finance-integration.cjs` with only
 `OMF_TEST_WORKFLOW_ONLY=1` and `scripts/auth-integration.cjs` without its optional
 browser flag. It then selects `OMF_TEST_RECEIPTS_ONLY=1` for a separate disposable
 receipt-management replay covering creation without an organization, ownership,
 metadata editing, concurrent requests, deletion, upload and original-file retention.
+Finally `OMF_TEST_PROXY_ONLY=1` verifies explicit 501 responses, authentication,
+concurrent requests/retries, ledger preservation and unaffected finance routes.
+The legacy proxy names remain available for errors only: they have no real
+provider adapters and must not fabricate payment success or forward credentials.
 The authentication suite checks registration, access tokens, 2FA,
 trusted devices, backup codes, PIN/password renewal, restart recovery, invitations
 and logout. Each integration creates its own disposable MongoDB. The workflow
@@ -21,8 +25,9 @@ an available loopback port.
 It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
-A failed command, missing test summary, fewer than the existing 53 unit tests,
-18 workflow checks, 10 authentication checks or 11 receipt management checks, or skipped unit test is a
+A failed command, missing test summary, fewer than the existing 60 unit tests,
+18 workflow checks, 10 authentication checks, 11 receipt management checks or
+6 proxy checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.
 The verifier owns the 15-minute fixture timeout and process-tree cleanup. A fresh

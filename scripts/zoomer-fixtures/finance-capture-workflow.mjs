@@ -30,6 +30,12 @@ export default {
     'server/api/receipts/match.ts',
     'server/services/fileUploadService.ts',
     'scripts/file-processing-contracts.test.cjs',
+    'server/services/proxyService.ts',
+    'server/middleware/proxy.ts',
+    'server/api/proxy/[source].ts',
+    'composables/useProxy.ts',
+    'scripts/proxy-contracts.test.cjs',
+    'scripts/proxy-integration.cjs',
     'plugins/api.ts',
     'composables/useFileUpload.ts',
     'server/middleware/file-upload.ts',
@@ -93,13 +99,14 @@ export default {
       'scripts/finance-workflow-evidence.test.mjs',
       'scripts/legacy-upload-contracts.test.cjs',
       'scripts/file-processing-contracts.test.cjs',
+      'scripts/proxy-contracts.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 53 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 60 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -126,7 +133,15 @@ export default {
       logs.push('The isolated receipt management suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit tests, ${checks} isolated workflow checks, ${authChecks} authentication checks and ${receiptChecks} receipt management checks against freshly built source.`);
+    delete env.OMF_TEST_RECEIPTS_ONLY;
+    env.OMF_TEST_PROXY_ONLY = '1';
+    const proxy = stage('isolated unsupported provider integration', ['scripts/finance-integration.cjs']);
+    const proxyChecks = Number(proxy.output.match(/^(\d+) targeted proxy checks passed\s*$/m)?.[1]);
+    if (!proxy.ok || !(proxyChecks >= 6)) {
+      logs.push('The isolated proxy suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks and ${proxyChecks} proxy checks against freshly built source.`);
     return result(true);
   },
 };
