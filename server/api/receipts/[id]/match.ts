@@ -1,6 +1,7 @@
 // server/api/receipts/[id]/match.ts
 import { defineEventHandler, readBody, createError } from 'h3'
-import { matchReceiptWithTransaction, unmatchReceipt, getReceiptById } from '../../../services/receiptService'
+import { matchReceiptWithTransaction, unmatchReceipt } from '../../../services/receiptService'
+import { getReceiptById } from '../../../services/receiptManagementService'
 import { requireAuth } from '../../../middleware/auth'
 
 /**
@@ -11,7 +12,7 @@ import { requireAuth } from '../../../middleware/auth'
  * Unmatch a receipt from its transaction
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const auth = requireAuth(event)
   const receiptId = event.context.params?.id
 
   if (!receiptId) {
@@ -24,6 +25,7 @@ export default defineEventHandler(async (event) => {
   // Handle DELETE - unmatch receipt
   if (event.method === 'DELETE') {
     try {
+      await getReceiptById(auth.userId, receiptId)
       const result = await unmatchReceipt(receiptId)
       return {
         success: true,
@@ -58,7 +60,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Verify receipt exists and is not already matched
-    const receipt = await getReceiptById(receiptId)
+    const receipt = await getReceiptById(auth.userId, receiptId)
     if (!receipt) {
       throw createError({
         statusCode: 404,

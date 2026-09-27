@@ -1,6 +1,7 @@
 // server/api/receipts/[id]/matches.ts
 import { defineEventHandler, createError } from 'h3'
-import { findMatchesForReceipt, getReceiptById } from '../../../services/receiptService'
+import { findMatchesForReceipt } from '../../../services/receiptService'
+import { getReceiptById } from '../../../services/receiptManagementService'
 import { requireAuth } from '../../../middleware/auth'
 
 /**
@@ -8,7 +9,7 @@ import { requireAuth } from '../../../middleware/auth'
  * Find potential transaction matches for a receipt
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const auth = requireAuth(event)
   const id = event.context.params?.id
 
   if (!id) {
@@ -20,7 +21,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Verify receipt exists
-    const receipt = await getReceiptById(id)
+    const receipt = await getReceiptById(auth.userId, id)
     if (!receipt) {
       throw createError({
         statusCode: 404,

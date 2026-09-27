@@ -21,6 +21,19 @@ export default {
     'shared/finance-workflow-investigation.mjs',
     'server/models/User.ts',
     'server/models/Organization.ts',
+    'server/models/Receipt.ts',
+    'server/services/receiptManagementService.ts',
+    'server/services/receiptService.ts',
+    'server/api/receipts/index.ts',
+    'server/api/receipts/[id].ts',
+    'server/api/receipts/upload.ts',
+    'server/api/receipts/export.ts',
+    'server/api/receipts/auto-match.ts',
+    'server/api/receipts/[id]/match.ts',
+    'server/api/receipts/[id]/matches.ts',
+    'stores/receipt.ts',
+    'types/receipt.ts',
+    'scripts/receipt-management-integration.cjs',
     'scripts/auth-integration.cjs',
     'scripts/finance-sheet-export.test.mjs',
     'scripts/finance-sheet-continuation.test.mjs',
@@ -90,7 +103,15 @@ export default {
       logs.push('The isolated authentication and organization suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit tests, ${checks} isolated workflow checks and ${authChecks} authentication checks against freshly built source.`);
+    delete env.OMF_TEST_WORKFLOW_ONLY;
+    env.OMF_TEST_RECEIPTS_ONLY = '1';
+    const receipts = stage('isolated receipt management integration', ['scripts/finance-integration.cjs']);
+    const receiptChecks = Number(receipts.output.match(/^(\d+) targeted receipt management checks passed\s*$/m)?.[1]);
+    if (!receipts.ok || !(receiptChecks >= 11)) {
+      logs.push('The isolated receipt management suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit tests, ${checks} isolated workflow checks, ${authChecks} authentication checks and ${receiptChecks} receipt management checks against freshly built source.`);
     return result(true);
   },
 };

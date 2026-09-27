@@ -33,15 +33,16 @@ export interface IReceiptExtractedData {
 
 // Main receipt interface
 export interface IReceipt extends Document {
-  organizationId: mongoose.Types.ObjectId
+  _id: mongoose.Types.ObjectId
+  organizationId?: mongoose.Types.ObjectId
   filename: string
   originalFilename: string
   size: number
   mimeType?: string
   uploadDate: Date
-  amount?: number
+  amount?: number | null
   currency?: string
-  merchant?: string
+  merchant?: string | null
   status: 'matched' | 'unmatched' | 'processing' | 'error'
   transactionId?: mongoose.Types.ObjectId
   fileUrl?: string
@@ -94,7 +95,7 @@ const ExtractedDataSchema = new Schema<IReceiptExtractedData>({
 
 // Main receipt schema
 const ReceiptSchema = new Schema<IReceipt>({
-  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', index: true },
   filename: { type: String, required: true },
   originalFilename: { type: String, required: true },
   size: { type: Number, required: true },
@@ -146,4 +147,4 @@ ReceiptSchema.index({ organizationId: 1, uploadDate: -1 })
 // Text search index
 ReceiptSchema.index({ merchant: 'text', notes: 'text', 'extractedData.merchant': 'text' })
 
-export default mongoose.models.Receipt || mongoose.model<IReceipt>('Receipt', ReceiptSchema)
+export default mongoose.models.Receipt as mongoose.Model<IReceipt> | undefined || mongoose.model<IReceipt>('Receipt', ReceiptSchema)

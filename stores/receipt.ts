@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { useUserStore } from '~/stores/user'
-import { Receipt } from '~/types/receipt'
+import type { Receipt } from '~/types/receipt'
 
 interface ReceiptState {
     receipts: Receipt[]
@@ -122,10 +122,10 @@ export const useReceiptStore = defineStore('receipt', {
             this.error = null
 
             try {
-                const response = await $fetch('/api/receipts', {
+                const response = await $fetch<{ receipts: Receipt[] }>('/api/receipts', {
                     headers: this._getAuthHeaders()
                 })
-                this.receipts = response
+                this.receipts = response.receipts
             } catch (err: any) {
                 this.error = err.message || 'Failed to fetch receipts'
                 console.error('Error fetching receipts:', err)
@@ -140,7 +140,7 @@ export const useReceiptStore = defineStore('receipt', {
             this.error = null
 
             try {
-                const response = await $fetch(`/api/receipts/${id}`, {
+                const response = await $fetch<Receipt>(`/api/receipts/${id}`, {
                     headers: this._getAuthHeaders()
                 })
                 this.currentReceipt = response
@@ -160,15 +160,15 @@ export const useReceiptStore = defineStore('receipt', {
             this.error = null
 
             try {
-                const response = await $fetch('/api/receipts', {
+                const response = await $fetch<{ receipt: Receipt }>('/api/receipts/upload', {
                     method: 'POST',
                     body: formData,
                     headers: this._getAuthHeaders()
                 })
 
                 // Add to local state
-                this.receipts.unshift(response)
-                return response
+                this.receipts.unshift(response.receipt)
+                return response.receipt
             } catch (err: any) {
                 this.error = err.message || 'Failed to upload receipt'
                 console.error('Error uploading receipt:', err)
@@ -184,7 +184,7 @@ export const useReceiptStore = defineStore('receipt', {
             this.error = null
 
             try {
-                const response = await $fetch(`/api/receipts/${id}`, {
+                const response = await $fetch<Receipt>(`/api/receipts/${id}`, {
                     method: 'PATCH',
                     body: data,
                     headers: this._getAuthHeaders()

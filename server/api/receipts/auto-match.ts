@@ -8,7 +8,7 @@ import { requireAuth } from '../../middleware/auth'
  * Automatically match unmatched receipts with high-confidence transactions
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const auth = requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,
@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const results = await autoMatchReceipts(minConfidence)
+    const results = await autoMatchReceipts(auth.userId, minConfidence)
 
     return {
       success: true,

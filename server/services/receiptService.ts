@@ -338,11 +338,11 @@ export async function findMatchesForReceipt(receiptId: string) {
 /**
  * Auto-match unmatched receipts with high-confidence transactions
  */
-export async function autoMatchReceipts(minConfidence: number = 85) {
+export async function autoMatchReceipts(ownerId: string, minConfidence: number = 85) {
   await ensureConnection()
   try {
     // Find all unmatched receipts
-    const unmatchedReceipts = await Receipt.find({ status: 'unmatched' }).lean()
+    const unmatchedReceipts = await Receipt.find({ status: 'unmatched', uploadedBy: ownerId }).lean()
 
     const results = {
       processed: 0,

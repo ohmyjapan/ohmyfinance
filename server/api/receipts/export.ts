@@ -1,6 +1,6 @@
 // server/api/receipts/export.ts
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
-import { getReceipts } from '../../services/receiptService'
+import { getReceipts } from '../../services/receiptManagementService'
 import { requireAuth } from '../../middleware/auth'
 
 /**
@@ -8,7 +8,7 @@ import { requireAuth } from '../../middleware/auth'
  * Export receipts to CSV, JSON format
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const auth = requireAuth(event)
   try {
     const query = getQuery(event)
     const format = String(query.format || 'csv').toLowerCase()
@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
     if (query.merchant) filters.merchant = query.merchant
 
     // Fetch receipts from MongoDB
-    const receipts = await getReceipts(filters)
+    const receipts = await getReceipts(auth.userId, filters)
 
     // Define fields and headers for export (OMF Japanese style)
     const fields = [

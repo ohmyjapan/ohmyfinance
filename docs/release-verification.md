@@ -9,7 +9,10 @@ The fixture runs eight Node test suites, including assistant page selection and
 purchase investigation evidence, builds the current Nuxt
 source, then runs `scripts/finance-integration.cjs` with only
 `OMF_TEST_WORKFLOW_ONLY=1` and `scripts/auth-integration.cjs` without its optional
-browser flag. The authentication suite checks registration, access tokens, 2FA,
+browser flag. It then selects `OMF_TEST_RECEIPTS_ONLY=1` for a separate disposable
+receipt-management replay covering creation without an organization, ownership,
+metadata editing, concurrent requests, deletion, upload and original-file retention.
+The authentication suite checks registration, access tokens, 2FA,
 trusted devices, backup codes, PIN/password renewal, restart recovery, invitations
 and logout. Each integration creates its own disposable MongoDB. The workflow
 integration also uses private temporary evidence storage and an app listening on
@@ -18,7 +21,7 @@ It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
 A failed command, missing test summary, fewer than the existing 43 unit tests,
-18 workflow checks or 10 authentication checks, or skipped unit test is a
+18 workflow checks, 10 authentication checks or 11 receipt management checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.
 The verifier owns the 15-minute fixture timeout and process-tree cleanup. A fresh

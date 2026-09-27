@@ -2,12 +2,13 @@
 import { defineEventHandler, readMultipartFormData, createError } from 'h3'
 import { writeFile, mkdir } from 'fs/promises'
 import { join, extname } from 'path'
-import { createReceipt } from '../../services/receiptService'
+import { randomUUID } from 'node:crypto'
+import { createReceipt } from '../../services/receiptManagementService'
 import { ensureConnection } from '../../config/database'
 import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const auth = requireAuth(event)
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,
@@ -43,9 +44,8 @@ export default defineEventHandler(async (event) => {
     await mkdir(uploadDir, { recursive: true })
 
     // Generate unique filename
-    const timestamp = Date.now()
     const ext = extname(file.filename || '.jpg')
-    const filename = `receipt_${timestamp}${ext}`
+    const filename = `receipt_${randomUUID()}${ext}`
     const filePath = join(uploadDir, filename)
 
     // Save file
@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
     const size = file.data.length
 
     // Create receipt record in database
-    const receipt = await createReceipt({
+    const receipt = await createReceipt(auth.userId, {
       filename,
       originalFilename: file.filename || filename,
       size,
@@ -73,21 +73,7 @@ export default defineEventHandler(async (event) => {
       tags: ['uploaded']
     })
 
-    return {
-      success: true,
-      receipt: {
-        id: receipt._id,
-        _id: receipt._id,
-        filename: receipt.filename,
-        originalFilename: receipt.originalFilename,
-        size: receipt.size,
-        uploadDate: receipt.createdAt,
-        status: receipt.status || 'unmatched',
-        transactionId: receipt.transactionId || null,
-        amount: receipt.amount,
-        merchant: receipt.merchant
-      }
-    }
+    return { success: true, receipt }
   } catch (error: any) {
     console.error('Receipt upload error:', error)
     throw createError({

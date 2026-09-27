@@ -18,6 +18,10 @@ export type ReceiptCategory =
  * Base receipt interface
  */
 export interface Receipt {
+    _id?: string
+    originalFilename?: string
+    mimeType?: string
+    createdAt?: string
     /**
      * Unique identifier for the receipt
      */

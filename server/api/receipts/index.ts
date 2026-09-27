@@ -1,10 +1,10 @@
 // server/api/receipts/index.ts
 import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
-import { getReceipts, createReceipt, getReceiptStats } from '../../services/receiptService'
+import { getReceipts, createReceipt, getReceiptStats } from '../../services/receiptManagementService'
 import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const auth = requireAuth(event)
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
 
     // Check if stats are requested
     if (query.stats === 'true') {
-      const stats = await getReceiptStats()
+      const stats = await getReceiptStats(auth.userId)
       return { stats }
     }
 
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
       }
     })
 
-    const receipts = await getReceipts(filters)
+    const receipts = await getReceipts(auth.userId, filters)
 
     return {
       receipts,
@@ -54,7 +54,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const receipt = await createReceipt({
+    const receipt = await createReceipt(auth.userId, {
       filename: body.filename,
       originalFilename: body.originalFilename || body.filename,
       size: body.size || 0,
@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
       category: body.category,
       notes: body.notes,
       tags: body.tags,
-      uploadedBy: body.uploadedBy
+
     })
 
     return receipt
