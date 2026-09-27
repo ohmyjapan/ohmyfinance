@@ -2,6 +2,7 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IWebhook extends Document {
+  _id: mongoose.Types.ObjectId
   organizationId: mongoose.Types.ObjectId
   name: string
   url: string
@@ -46,4 +47,4 @@ const WebhookSchema = new Schema<IWebhook>({
 
 WebhookSchema.index({ organizationId: 1, isActive: 1 })
 
-export default mongoose.models.Webhook || mongoose.model<IWebhook>('Webhook', WebhookSchema)
+export default mongoose.models.Webhook as mongoose.Model<IWebhook> | undefined || mongoose.model<IWebhook>('Webhook', WebhookSchema)

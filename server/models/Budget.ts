@@ -2,6 +2,7 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IBudget extends Document {
+  _id: mongoose.Types.ObjectId
   organizationId: mongoose.Types.ObjectId
   name: string
   category?: string
@@ -34,4 +35,4 @@ const BudgetSchema = new Schema<IBudget>({
 BudgetSchema.index({ organizationId: 1, category: 1 })
 BudgetSchema.index({ organizationId: 1, isActive: 1 })
 
-export default mongoose.models.Budget || mongoose.model<IBudget>('Budget', BudgetSchema)
+export default mongoose.models.Budget as mongoose.Model<IBudget> | undefined || mongoose.model<IBudget>('Budget', BudgetSchema)

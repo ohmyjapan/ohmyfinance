@@ -10,6 +10,7 @@ export interface IInvoiceItem {
 }
 
 export interface IInvoice extends Document {
+  _id: mongoose.Types.ObjectId
   organizationId: mongoose.Types.ObjectId
   invoiceNumber: string
   transactionId?: mongoose.Types.ObjectId
@@ -111,4 +112,4 @@ InvoiceSchema.index({ organizationId: 1, invoiceNumber: 1 }, { unique: true })
 InvoiceSchema.index({ organizationId: 1, status: 1 })
 InvoiceSchema.index({ organizationId: 1, dueDate: 1 })
 
-export default mongoose.models.Invoice || mongoose.model<IInvoice>('Invoice', InvoiceSchema)
+export default mongoose.models.Invoice as mongoose.Model<IInvoice> | undefined || mongoose.model<IInvoice>('Invoice', InvoiceSchema)

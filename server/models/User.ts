@@ -131,12 +131,12 @@ UserSchema.virtual('id').get(function() {
 UserSchema.set('toJSON', {
   virtuals: true,
   transform: (doc, ret) => {
-    delete ret.password
+    delete (ret as Partial<Pick<typeof ret, 'password'>>).password
     delete ret.twoFactorSecret
     delete ret.twoFactorBackupCodes
     delete ret.trustedDevices
     if (ret.securityPreferences) delete ret.securityPreferences.pinHash
-    delete ret.__v
+    delete (ret as Partial<Pick<typeof ret, '__v'>>).__v
     return ret
   }
 })
