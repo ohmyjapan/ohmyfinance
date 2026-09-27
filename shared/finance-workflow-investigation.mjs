@@ -6,6 +6,19 @@ export const investigationSystem='You are the purchase-identification brain in O
 const citation={type:'object',additionalProperties:false,required:['factId','quote'],properties:{factId:{type:'string'},quote:{type:'string',minLength:1,maxLength:1000}}};
 export const investigationSchema={type:'object',additionalProperties:false,required:['summary','recommendedId','hypotheses','question','inventoryProposals'],properties:{summary:{type:'string',maxLength:2000},recommendedId:{type:'string'},hypotheses:{type:'array',maxItems:30,items:{type:'object',additionalProperties:false,required:['candidateId','support','uncertainty'],properties:{candidateId:{type:'string'},support:{type:'array',maxItems:10,items:citation},uncertainty:{type:'string',maxLength:1500}}}},question:{type:'string',maxLength:600},inventoryProposals:{type:'array',maxItems:100,items:{type:'object',additionalProperties:false,required:['receiptId','line','inventoryId','basis','support','uncertainty'],properties:{receiptId:{type:'string'},line:{type:'integer'},inventoryId:{type:'string'},basis:{enum:['jan_supported','inferred']},support:{type:'array',maxItems:10,items:citation},uncertainty:{type:'string',maxLength:1000}}}}}};
 
+/**
+ * @param {{
+ *   row: {id: string, importId: unknown, line: number, payment: {date: string, amount: number}},
+ *   peers: Array<{id: string, payment: {date: string, amount: number}, purchaseId?: unknown}>,
+ *   archive: {orders?: Array<{id: string, date: string, total: number, cancelled?: boolean, dataQuality: string, accountName?: string, accountId?: string, orderNumber: string, currency: string, items?: unknown[], files?: unknown[], capturedAt?: string, sourceUrl?: string}>, accountIds?: string[], runs?: unknown[]} | null,
+ *   inventory: {rows?: unknown[][], complete?: boolean, url?: string, name?: string} | null,
+ *   receipts?: Array<{id: string, importId: string, line: number, hash: string, reading?: ReturnType<typeof import('./finance-workflow-receipts.mjs').validateReceiptReading>}>,
+ *   claims?: Array<{archiveId?: string | null, receiptId?: string, inventoryIds?: string[], order?: {inventoryLinks?: Array<{itemLine: number, inventoryId: string}>}}>,
+ *   confirmedReference?: {reference: string, evidence: unknown} | null,
+ *   janCatalog?: Array<{jan: string, exact: boolean, model: string, product?: string, color?: string, size?: string, source?: unknown}>,
+ *   ownerNotes?: Array<{text: string, scope: unknown, at: unknown}>
+ * }} input
+ */
 export function buildInvestigation({row,peers,archive,inventory,receipts=[],claims=[],confirmedReference=null,janCatalog=[],ownerNotes=[]}) {
  const alternatives=[];
  const orders=(archive?.orders||[]).filter(o=>days(o.date,row.payment.date)<=7&&o.total===row.payment.amount&&!o.cancelled&&o.dataQuality==='complete');

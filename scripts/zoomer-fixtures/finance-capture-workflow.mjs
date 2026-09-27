@@ -15,6 +15,10 @@ export default {
     'shared/finance-workflow.mjs',
     'shared/finance-workflow-matching.mjs',
     'server/services/financeService.ts',
+    'server/services/financeAssistantService.ts',
+    'server/services/financeDraftService.ts',
+    'shared/finance-assistant.d.mts',
+    'shared/finance-workflow-investigation.mjs',
     'server/models/User.ts',
     'server/models/Organization.ts',
     'scripts/auth-integration.cjs',
@@ -24,6 +28,8 @@ export default {
     'scripts/finance-workflow-worker.test.mjs',
     'scripts/finance-workflow-matching.test.mjs',
     'scripts/finance-workflow.test.mjs',
+    'scripts/finance-assistant.test.mjs',
+    'scripts/finance-workflow-evidence.test.mjs',
     'scripts/finance-integration.cjs',
     'scripts/finance-workflow-integration.cjs',
     'scripts/finance-workflow-worker-integration.cjs',
@@ -57,13 +63,15 @@ export default {
       'scripts/finance-workflow-worker.test.mjs',
       'scripts/finance-workflow-matching.test.mjs',
       'scripts/finance-workflow.test.mjs',
+      'scripts/finance-assistant.test.mjs',
+      'scripts/finance-workflow-evidence.test.mjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 36 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 43 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }

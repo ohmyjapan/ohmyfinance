@@ -81,6 +81,11 @@ export function applyWorkflowObservation(previous, observation, { now = new Date
   return { step, counted, changed: JSON.stringify(step) !== before };
 }
 
+/**
+ * @param {ReturnType<typeof newWorkflowStep>} previous
+ * @param {{action: string, until?: string, reason: string}} review
+ * @param {Date} [now]
+ */
 export function reviewWorkflowStep(previous, { action, until, reason }, now = new Date()) {
   if (!previous || !WORKFLOW_STAGES.includes(previous.stage) || !['retry', 'snooze'].includes(action) || typeof reason !== 'string' || !reason.trim() || reason.length > 1000) throw Error('A review action and reason are required');
   if (['complete', 'not_applicable'].includes(previous.state)) throw Error('Completed evidence does not need a retry');

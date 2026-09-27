@@ -149,6 +149,8 @@ async function propose(ctx: any, references: any) {
   }
   return { values, evidence, automation: learning?.answer || null, purchaseHistory: memoryWins ? { ...purchaseHistory, status: 'remembered', reason: 'あなたが記憶した科目を優先しています。' } : purchaseHistory }
 }
+type ProposalProjection = Pick<Awaited<ReturnType<typeof propose>>, 'values' | 'evidence'>
+  & Partial<Pick<Awaited<ReturnType<typeof propose>>, 'purchaseHistory'>>
 // Batch projection uses the same proposals as the editor, with one reference/review snapshot.
 export async function mappingPreparation(ownerId: string, batch: any, account: any, mapped: any[]) {
   const importId = batch._id.toString()
@@ -166,7 +168,7 @@ export async function mappingPreparation(ownerId: string, batch: any, account: a
     while (next < mapped.length) {
       const index = next++, source = mapped[index], row: any = rowByLine.get(source.line), draft: any = savedByLine.get(source.line)
       if (draft && (draft.key !== row.key || draft.sourceHash !== batch.hash)) fail(409, '下書きと元ファイルが一致しません。')
-      const proposed = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, { ...references, merchantLinks: links }) : { values: emptyValues(row), evidence: {} }
+      const proposed: ProposalProjection = row.kind === 'expense' ? await propose({ ownerId, importId, batch, account, row, mapped: source, saved: draft }, { ...references, merchantLinks: links }) : { values: emptyValues(row), evidence: {} }
       const values = draft?.values || proposed.values, evidence = draft?.evidence || proposed.evidence
       const card = entries.find((e: any) => e.line === row.line)?.draftSnapshot?.transaction?.cardAccounting || cardAccounting(account, row, references)
       const preparation = draftReadiness({ importId, line: row.line, sourceHash: batch.hash, purchaseHistory: proposed.purchaseHistory, accountingResponse: draft?.accountingResponse, cardAccounting: card, values, evidence, source: { ...source, kind: row.kind }, revision: draft?.revision || 0, approvedAt: approvedCardMatches(draft, card) ? draft?.approvedAt : null, locked: reserved.has(row.line) }, references, reviewByLine.get(row.line))

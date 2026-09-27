@@ -7,8 +7,10 @@
 import { createStorage } from 'unstorage'
 import memoryDriver from 'unstorage/drivers/memory'
 
+type StoredRecord = { id: string; [key: string]: unknown }
+
 // Initialize storage
-const storage = createStorage({
+const storage = createStorage<StoredRecord[]>({
     driver: memoryDriver()
 })
 
