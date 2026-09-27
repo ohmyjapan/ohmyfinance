@@ -5,8 +5,9 @@ capture/workflow tests to OhMyCode's project fixture convention. It exports the
 standard name, explicit source coverage and run result; no hub gate changes are
 required.
 
-The fixture runs nine Node test suites, including assistant page selection,
-purchase investigation evidence and upload/API error handling, builds the current Nuxt
+The fixture runs ten Node test suites, including assistant page selection,
+purchase investigation evidence, upload/API error handling and CSV module
+compatibility, builds the current Nuxt
 source, then runs `scripts/finance-integration.cjs` with only
 `OMF_TEST_WORKFLOW_ONLY=1` and `scripts/auth-integration.cjs` without its optional
 browser flag. It then selects `OMF_TEST_RECEIPTS_ONLY=1` for a separate disposable
@@ -20,7 +21,7 @@ an available loopback port.
 It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
-A failed command, missing test summary, fewer than the existing 48 unit tests,
+A failed command, missing test summary, fewer than the existing 53 unit tests,
 18 workflow checks, 10 authentication checks or 11 receipt management checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.

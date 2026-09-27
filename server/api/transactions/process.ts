@@ -1,4 +1,4 @@
-import { defineEventHandler, readBody, createError } from 'h3';
+import { defineEventHandler, readBody, createError, isError } from 'h3';
 import path from 'path';
 import fs from 'fs/promises';
 import { processExcelFile } from '../../../utils/excel-processor';
@@ -36,7 +36,7 @@ export default defineEventHandler(async (event) => {
 
         // Process based on file type
         const processedDir = path.join(process.cwd(), 'uploads', 'processed');
-        let result;
+        let result: { data?: Record<string, any>[] };
 
         if (fileExt === '.xlsx' || fileExt === '.xls') {
             // Use our Excel processor to avoid ESM issues
@@ -60,7 +60,7 @@ export default defineEventHandler(async (event) => {
                 if (!lines[i].trim()) continue;
 
                 const values = lines[i].split(',');
-                const entry = {};
+                const entry: Record<string, string> = {};
 
                 headers.forEach((header, index) => {
                     entry[header.trim()] = values[index]?.trim() || '';
@@ -95,8 +95,8 @@ export default defineEventHandler(async (event) => {
         console.error('Transaction processing error:', error);
 
         throw createError({
-            statusCode: error.statusCode || 500,
-            statusMessage: error.statusMessage || 'Failed to process transaction file'
+            statusCode: isError(error) ? error.statusCode : 500,
+            statusMessage: (isError(error) ? error.statusMessage : '') || 'Failed to process transaction file'
         });
     }
 });
@@ -104,8 +104,10 @@ export default defineEventHandler(async (event) => {
 /**
  * Maps fields from source data to target schema based on provided mappings
  */
-function mapFields(sourceData, mappings) {
-    const result = {
+type FieldMappings = Record<string, string | { field?: string; format?: string } | null>
+
+function mapFields(sourceData: Record<string, any>, mappings: FieldMappings) {
+    const result: Record<string, any> = {
         createdAt: new Date().toISOString(),
         status: 'pending'
     };

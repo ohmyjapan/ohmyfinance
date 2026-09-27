@@ -1,4 +1,4 @@
-import { defineEventHandler, readBody, createError } from 'h3';
+import { defineEventHandler, readBody, createError, isError } from 'h3';
 import path from 'path';
 import fs from 'fs/promises';
 import { requireAuth } from '../../middleware/auth'
@@ -51,8 +51,8 @@ export default defineEventHandler(async (event) => {
         console.error('Receipt matching error:', error);
 
         throw createError({
-            statusCode: error.statusCode || 500,
-            statusMessage: error.statusMessage || 'Failed to match receipt with transaction'
+            statusCode: isError(error) ? error.statusCode : 500,
+            statusMessage: (isError(error) ? error.statusMessage : '') || 'Failed to match receipt with transaction'
         });
     }
 });

@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { promisify } from 'util'
-import * as Papa from 'papaparse'
+import Papa from 'papaparse'
 import { create as createInDb } from '../utils/database'
 
 const writeFileAsync = promisify(fs.writeFile)
@@ -86,7 +86,7 @@ export async function processTransactionFile(fileRecord: any, sourceType: string
         if (fileRecord.mimeType === 'text/csv' || fileRecord.originalName.endsWith('.csv')) {
             // Parse CSV
             const csvText = fileData.toString('utf-8')
-            const result = Papa.parse(csvText, {
+            const result = Papa.parse<Record<string, unknown>>(csvText, {
                 header: true,
                 skipEmptyLines: true,
                 dynamicTyping: true
