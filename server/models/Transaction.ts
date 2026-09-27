@@ -1,5 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
+export const TRANSACTION_STATUSES = ['completed', 'pending', 'processing', 'failed', 'cancelled', 'refunded']
+
 // Transaction item interface (OMF style)
 export interface ITransactionItem {
   productName?: string
@@ -109,7 +111,7 @@ const TransactionSchema = new Schema<ITransaction>({
     required: true,
     default: 'pending',
     index: true,
-    enum: ['completed', 'pending', 'processing', 'failed', 'cancelled']
+    enum: TRANSACTION_STATUSES
   },
   // Japanese accounting fields
   customerId: { type: Schema.Types.ObjectId, ref: 'Customer', index: true },

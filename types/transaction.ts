@@ -7,6 +7,7 @@ export type TransactionStatus =
     | 'processing'
     | 'failed'
     | 'cancelled'
+    | 'refunded'
 
 /**
  * Transaction type (支出 or 入金)
