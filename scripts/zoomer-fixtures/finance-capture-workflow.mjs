@@ -22,6 +22,12 @@ export default {
     'server/models/User.ts',
     'server/models/Organization.ts',
     'server/models/Receipt.ts',
+    'server/models/Vendor.ts',
+    'plugins/api.ts',
+    'composables/useFileUpload.ts',
+    'server/middleware/file-upload.ts',
+    'utils/excel-processor.ts',
+    'scripts/legacy-upload-contracts.test.cjs',
     'server/services/receiptManagementService.ts',
     'server/services/receiptService.ts',
     'server/api/receipts/index.ts',
@@ -78,13 +84,14 @@ export default {
       'scripts/finance-workflow.test.mjs',
       'scripts/finance-assistant.test.mjs',
       'scripts/finance-workflow-evidence.test.mjs',
+      'scripts/legacy-upload-contracts.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 43 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 48 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }

@@ -422,7 +422,7 @@ export default defineNuxtPlugin({
             } else {
                 // Wrap other errors
                 console.error('API Request Error:', error)
-                throw new ApiError(0, error.message || 'An unexpected error occurred')
+                throw new ApiError(0, (error instanceof Error ? error.message : '') || 'An unexpected error occurred')
             }
         }
     }
@@ -448,19 +448,7 @@ export default defineNuxtPlugin({
   }
 })
 
-// Type declaration for better TypeScript support
-declare module '#app' {
-    interface NuxtApp {
-        $api: ReturnType<typeof useApi>
-    }
-}
-
-declare module '@vue/runtime-core' {
-    interface ComponentCustomProperties {
-        $api: ReturnType<typeof useApi>
-    }
-}
-
+// Nuxt generates the injected API type from this plugin.
 // Helper function to access the API in components
 export const useApi = () => {
     const nuxtApp = useNuxtApp()

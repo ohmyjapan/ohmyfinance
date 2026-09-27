@@ -1,4 +1,4 @@
-import { defineEventHandler, readMultipartFormData, createError } from 'h3';
+import { defineEventHandler, readMultipartFormData, createError, isError } from 'h3';
 import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { processExcelFile } from '../../utils/excel-processor';
@@ -108,8 +108,8 @@ export default defineEventHandler(async (event) => {
         console.error('File upload error:', error);
 
         throw createError({
-            statusCode: error.statusCode || 500,
-            statusMessage: error.statusMessage || 'File upload failed'
+            statusCode: isError(error) ? error.statusCode : 500,
+            statusMessage: (isError(error) ? error.statusMessage : '') || 'File upload failed'
         });
     }
 });

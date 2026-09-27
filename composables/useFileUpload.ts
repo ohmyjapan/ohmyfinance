@@ -238,7 +238,7 @@ export function useFileUpload() {
                         } catch (e) {
                             error.value = 'Upload failed'
                         }
-                        reject(new Error(error.value))
+                        reject(new Error(error.value || 'Upload failed'))
                     }
                     isUploading.value = false
                 }
