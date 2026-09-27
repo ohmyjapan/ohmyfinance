@@ -14,6 +14,10 @@ export default {
     'finalization-worker/worker.mjs',
     'shared/finance-workflow.mjs',
     'shared/finance-workflow-matching.mjs',
+    'server/services/financeService.ts',
+    'server/models/User.ts',
+    'server/models/Organization.ts',
+    'scripts/auth-integration.cjs',
     'scripts/finance-sheet-export.test.mjs',
     'scripts/finance-sheet-continuation.test.mjs',
     'scripts/finance-search-evidence.test.mjs',
@@ -72,7 +76,13 @@ export default {
       logs.push('The isolated workflow suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit tests and ${checks} isolated workflow checks against freshly built source.`);
+    const auth = stage('isolated authentication and organization integration', ['scripts/auth-integration.cjs']);
+    const authChecks = Number(auth.output.match(/^Authentication integration: (\d+) checks passed; production data untouched\.\s*$/m)?.[1]);
+    if (!auth.ok || !(authChecks >= 10)) {
+      logs.push('The isolated authentication and organization suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit tests, ${checks} isolated workflow checks and ${authChecks} authentication checks against freshly built source.`);
     return result(true);
   },
 };

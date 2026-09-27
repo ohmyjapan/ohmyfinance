@@ -3,6 +3,7 @@ import mongoose, { Schema, Document } from 'mongoose'
 import bcrypt from 'bcryptjs'
 
 export interface IUser extends Document {
+  _id: mongoose.Types.ObjectId
   email: string
   password: string
   name: string
@@ -140,4 +141,4 @@ UserSchema.set('toJSON', {
   }
 })
 
-export default mongoose.models.User || mongoose.model<IUser>('User', UserSchema)
+export default mongoose.models.User as mongoose.Model<IUser> | undefined || mongoose.model<IUser>('User', UserSchema)

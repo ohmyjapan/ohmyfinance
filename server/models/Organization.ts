@@ -12,6 +12,7 @@ export interface IOrgMember {
 }
 
 export interface IOrganization extends Document {
+  _id: mongoose.Types.ObjectId
   name: string
   slug: string
   type: OrganizationType
@@ -132,4 +133,4 @@ OrganizationSchema.statics.generateSlug = async function(name: string): Promise<
   return uniqueSlug
 }
 
-export default mongoose.models.Organization || mongoose.model<IOrganization>('Organization', OrganizationSchema)
+export default mongoose.models.Organization as mongoose.Model<IOrganization> | undefined || mongoose.model<IOrganization>('Organization', OrganizationSchema)

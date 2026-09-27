@@ -22,7 +22,7 @@ const User = UserModel as mongoose.Model<IUser>
 const Transaction = TransactionModel as mongoose.Model<ITransaction>
 const AccountCategory = AccountCategoryModel as mongoose.Model<IAccountCategory>
 
-export const fail = (statusCode: number, message: string): never => { throw createError({ statusCode, statusMessage: /[^\x20-\x7e]/.test(message) ? 'Finance request failed' : message, data: { message } }) }
+export const fail: (statusCode: number, message: string) => never = (statusCode, message) => { throw createError({ statusCode, statusMessage: /[^\x20-\x7e]/.test(message) ? 'Finance request failed' : message, data: { message } }) }
 export function id(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f\d]{24}$/i.test(value)) fail(400, 'Invalid identifier')
   return value as string
