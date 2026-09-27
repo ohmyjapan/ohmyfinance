@@ -53,6 +53,16 @@ export interface ShipmentFilters {
     search?: string
 }
 
+interface ShipmentStats {
+    total: number
+    pending: number
+    processing: number
+    inTransit: number
+    delivered: number
+    failed: number
+    cancelled: number
+}
+
 export const useShipmentStore = defineStore('shipment', {
     state: () => ({
         shipments: [] as Shipment[],
@@ -358,10 +368,10 @@ export const useShipmentStore = defineStore('shipment', {
 
         async fetchStats() {
             try {
-                const { data } = await useFetch('/api/shipments/stats', {
+                const data = await $fetch<{ stats: ShipmentStats }>('/api/shipments?stats=true', {
                     headers: this._getAuthHeaders()
                 })
-                this.stats = data.value
+                this.stats = data.stats
             } catch (error: any) {
                 console.error('Error fetching shipment stats:', error)
             }

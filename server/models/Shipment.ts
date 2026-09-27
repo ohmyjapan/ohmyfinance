@@ -1,4 +1,6 @@
-import mongoose, { Document, Schema } from 'mongoose'
+import mongoose, { Document, Schema, type Model } from 'mongoose'
+
+export const SHIPMENT_STATUSES = ['pending', 'processing', 'shipped', 'in_transit', 'out_for_delivery', 'delivered', 'failed', 'returned', 'cancelled', 'delayed', 'exception']
 
 // Address interface
 export interface IShipmentAddress {
@@ -24,6 +26,7 @@ export interface IShipmentEvent {
 
 // Main shipment interface
 export interface IShipment extends Document {
+  _id: mongoose.Types.ObjectId
   organizationId: mongoose.Types.ObjectId
   trackingNumber?: string
   status: string
@@ -106,7 +109,7 @@ const ShipmentSchema = new Schema<IShipment>({
     type: String,
     required: true,
     default: 'pending',
-    enum: ['pending', 'processing', 'shipped', 'in_transit', 'out_for_delivery', 'delivered', 'failed', 'returned', 'cancelled'],
+    enum: SHIPMENT_STATUSES,
     index: true
   },
   carrier: String,
@@ -139,4 +142,4 @@ ShipmentSchema.index({ organizationId: 1, trackingNumber: 1 })
 ShipmentSchema.index({ organizationId: 1, status: 1 })
 ShipmentSchema.index({ trackingNumber: 1, carrier: 1 })
 
-export default mongoose.models.Shipment || mongoose.model<IShipment>('Shipment', ShipmentSchema)
+export default (mongoose.models.Shipment as Model<IShipment> | undefined) || mongoose.model<IShipment>('Shipment', ShipmentSchema)

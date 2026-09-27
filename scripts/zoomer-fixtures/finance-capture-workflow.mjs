@@ -36,6 +36,12 @@ export default {
     'composables/useProxy.ts',
     'scripts/proxy-contracts.test.cjs',
     'scripts/proxy-integration.cjs',
+    'server/models/Shipment.ts',
+    'server/services/shipmentService.ts',
+    'server/api/shipments/[id]/update-status.ts',
+    'stores/shipment.ts',
+    'scripts/shipment-status.test.cjs',
+    'scripts/shipment-status-integration.cjs',
     'plugins/api.ts',
     'composables/useFileUpload.ts',
     'server/middleware/file-upload.ts',
@@ -100,13 +106,14 @@ export default {
       'scripts/legacy-upload-contracts.test.cjs',
       'scripts/file-processing-contracts.test.cjs',
       'scripts/proxy-contracts.test.cjs',
+      'scripts/shipment-status.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 60 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 67 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -141,7 +148,15 @@ export default {
       logs.push('The isolated proxy suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks and ${proxyChecks} proxy checks against freshly built source.`);
+    delete env.OMF_TEST_PROXY_ONLY;
+    env.OMF_TEST_SHIPMENT_STATUS_ONLY = '1';
+    const shipments = stage('isolated shipment status integration', ['scripts/finance-integration.cjs']);
+    const shipmentChecks = Number(shipments.output.match(/^(\d+) targeted shipment status checks passed\s*$/m)?.[1]);
+    if (!shipments.ok || !(shipmentChecks >= 8)) {
+      logs.push('The isolated shipment status suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks and ${shipmentChecks} shipment status checks against freshly built source.`);
     return result(true);
   },
 };

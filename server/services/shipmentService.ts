@@ -1,5 +1,8 @@
 // server/services/shipmentService.ts
-import Shipment from '../models/Shipment'
+import Shipment, { SHIPMENT_STATUSES } from '../models/Shipment'
+import { Types } from 'mongoose'
+import { createError } from 'h3'
+import { ensureConnection } from '../config/database'
 import Transaction from '../models/Transaction'
 import type { IShipment, IShipmentEvent } from '../models/Shipment'
 
@@ -9,6 +12,48 @@ interface ShipmentFilters {
   dateFrom?: string
   dateTo?: string
   search?: string
+}
+
+/** Save status and its history in one document; linked purchases are unchanged. */
+export async function updateShipmentStatus(id: string | undefined, organizationId: string | undefined, input: unknown) {
+  if (!organizationId || !Types.ObjectId.isValid(organizationId)) {
+    throw createError({ statusCode: 403, statusMessage: 'No organization selected' })
+  }
+  if (!id || !Types.ObjectId.isValid(id)) {
+    throw createError({ statusCode: 400, statusMessage: 'Valid shipment ID is required' })
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw createError({ statusCode: 400, statusMessage: 'Shipment status is required' })
+  }
+  const body = input as Record<string, unknown>
+  if (typeof body.status !== 'string' || !SHIPMENT_STATUSES.includes(body.status)) {
+    throw createError({ statusCode: 400, statusMessage: 'Valid shipment status is required' })
+  }
+  for (const key of ['notes', 'statusNotes', 'location']) {
+    if (body[key] != null && typeof body[key] !== 'string') {
+      throw createError({ statusCode: 400, statusMessage: 'Shipment notes and location must be text' })
+    }
+  }
+  const status = body.status
+  const history: IShipmentEvent = {
+    type: status,
+    title: `Shipment ${formatStatus(status)}`,
+    timestamp: new Date(),
+    description: (body.notes ?? body.statusNotes ?? `Status updated to ${status}`) as string,
+    location: body.location == null ? undefined : body.location as string
+  }
+  await ensureConnection()
+  const scope = { _id: id, organizationId }
+  const changed = await Shipment.findOneAndUpdate(
+    { ...scope, status: { $ne: status } },
+    { $set: { status }, $push: { events: { $each: [history], $position: 0 } } },
+    { new: true, runValidators: true }
+  ).lean()
+  // A same-status retry needs no event or timestamp update. Re-read with the
+  // same organization scope; it must not reveal a foreign shipment.
+  const shipment = changed || await Shipment.findOne(scope).lean()
+  if (!shipment) throw createError({ statusCode: 404, statusMessage: 'Shipment not found' })
+  return { ...shipment, id: shipment._id.toString() }
 }
 
 /**
