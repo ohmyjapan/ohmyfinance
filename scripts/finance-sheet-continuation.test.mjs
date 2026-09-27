@@ -5,9 +5,24 @@ import os from 'node:os';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {matchSheetRows} from '../research-worker/search-evidence.mjs';
-import {searchCsv} from '../research-worker/sheets.mjs';
+import {searchCsv,readCompleteSheetCsv} from '../research-worker/sheets.mjs';
 import {ResearchTools} from '../research-worker/tools.mjs';
 const options={terms:['Synthetic'],purchaseDate:'2026-04-10',windowed:false,exportMode:'sheets_api',range:'A1:AZ50000'};
+
+test('research cannot save truncated capture evidence and can retry successfully afterward',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'omf-sheet-pages-'));let broken=true,reads=0;
+ const config={spreadsheets:{finance:'synthetic-sheet-id-0123456789'},spreadsheetTabs:{finance:'Finance'},spreadsheetBrowserProfile:'synthetic'},job={context:{source:{purchaseDate:'2026-04-10'}},sources:[]};
+ const searchSheet=async(_config,_source,terms,date,windowed,page)=>{
+  const {csv}=await readCompleteSheetCsv(null,'unused',{read:async()=>{reads++;return broken?'date,shop,price\n2026/04/10,Synthetic':'date,shop,price\n2026/04/10,Synthetic,'}});
+  return {sheet:'Finance',gid:'1',...searchCsv(csv,terms,date,windowed,page)};
+ };
+ try{
+  const tools=new ResearchTools(config,job,dir,{searchSheet});
+  await assert.rejects(tools.call('search_spreadsheet',{source:'finance',terms:['Synthetic']}),{code:'source_incomplete'});assert.equal(reads,2);assert.equal(tools.sources.length,0);
+  broken=false;const source=await tools.call('search_spreadsheet',{source:'finance',terms:['Synthetic']});assert.equal(reads,3);assert.equal(tools.sources.length,1);
+  const result=JSON.parse(source.text);assert.equal(result.matches.length,1);assert.equal(result.matches[0].values[2],'','Unknown price must remain empty');
+ }finally{if(path.dirname(dir)!==path.resolve(os.tmpdir())||!path.basename(dir).startsWith('omf-sheet-pages-'))throw Error('Unsafe temporary path');await fs.rm(dir,{recursive:true,force:true})}
+});
 
 test('sheet pages visit every matching row once while preserving original row positions and filters',()=>{
  const rows=Array.from({length:130},(_,i)=>['2026/04/10',i%2?'Other':'Synthetic',String(i)]),seen=[];let offset=0;

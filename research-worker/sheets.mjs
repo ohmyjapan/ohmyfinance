@@ -25,9 +25,30 @@ export function parseSheetCsv(csv){
   else if(c==='\r'||c==='\n'){if(c==='\r'&&csv[i+1]==='\n')i++;line()}
   else{if(closed)throw Error('Malformed spreadsheet CSV');cell+=c}
  }
- if(quoted)throw Error('Incomplete spreadsheet CSV');
+ if(quoted)throw Object.assign(Error('Incomplete spreadsheet CSV'),{code:'source_incomplete'});
  if(cell||row.length||closed)line();
  return rows;
+}
+
+// Google range exports retain empty cells, including trailing cells. Keep the
+// general CSV parser permissive: only original sheet captures use this contract.
+export function validateSheetExportRows(rows){
+ const width=rows[0]?.length;
+ if(!width||rows.some(row=>row.length!==width))throw Object.assign(Error('Incomplete spreadsheet row'),{code:'source_incomplete'});
+}
+
+export async function readCompleteSheetCsv(browser,url,{read=readSheetCsv}={}){
+ const captureFailures=[];
+ for(let attempt=0;attempt<2;attempt++){
+  let csv;
+  try{csv=await read(browser,url);validateSheetExportRows(parseSheetCsv(csv));return {csv,captureFailures};}
+  catch(error){
+   if(error.code!=='source_incomplete'){error.captureFailures=captureFailures;throw error;}
+   const original=csv??error.csv;
+   captureFailures.push({at:new Date().toISOString(),reason:error.message,csv:original,hash:createHash('sha256').update(original||'').digest('hex')});
+   if(attempt===1){error.captureFailures=captureFailures;throw error;}
+  }
+ }
 }
 
 export function searchCsv(csv,terms,purchaseDate,windowed=true,{offset=0,expectedSnapshot=''}={}){
@@ -46,10 +67,10 @@ export async function captureBrowserSheet(config,source) {
   browser=await connectSheetBrowser(profile);let page;
   for(const candidate of await browser.pages())if(candidate.url().startsWith(prefix+'edit')&&await candidate.evaluate(marker=>window.__omfSheetRead===marker,marker)){page=candidate;break}
   if(!page)throw Error('The authorized spreadsheet tab could not be identified');
-  const selected=await selectSheet(page,title),csv=await readSheetCsv(browser,sheetExportUrl(id,selected.gid));
+  const selected=await selectSheet(page,title),{csv,captureFailures}=await readCompleteSheetCsv(browser,sheetExportUrl(id,selected.gid));
   const after=await page.evaluate(selectedSheet);
   if(!page.url().startsWith(prefix+'edit')||after.title!==title||after.gid!==selected.gid)throw Error('The spreadsheet selection changed during export');
-  return {sheet:title,gid:selected.gid,url:prefix+'edit#gid='+selected.gid,capturedAt:new Date().toISOString(),csv};
+  return {sheet:title,gid:selected.gid,url:prefix+'edit#gid='+selected.gid,capturedAt:new Date().toISOString(),csv,captureFailures};
  }finally{
   try{if(browser)await browser.disconnect()}finally{await browserApi('close',{session_id:opened.session_id}).catch(()=>{})}
  }

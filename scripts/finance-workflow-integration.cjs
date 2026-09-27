@@ -71,6 +71,26 @@ module.exports=async context=>{
  const stableRevision=workflow.revision;const refreshedAgain=await wc('context');assert.equal(refreshedAgain.data.rows.find(r=>r.id===workflow.id).revision,stableRevision);
  assert.equal(JSON.stringify(await db.collection('transactions').find({}).sort({_id:1}).toArray()),ledgerBefore);assert.equal(JSON.stringify(await db.collection('financedrafts').find({}).sort({_id:1}).toArray()),draftsBefore);
  pass('document identity and PDF readback must agree; customer-declared values and partial shipments remain separate');
+ // Replay targeted recovery of a previously verified chain held by a short
+ // capture. The existing owner review path must retain its audit and revisions.
+ const heldKeys=Object.keys(workflow.steps).filter(k=>workflow.steps[k].state==='complete'&&workflow.steps[k].stage!=='purchase');
+ assert.equal(heldKeys.length,3);
+ const beforeRecovery={};for(const name of ['financepurchaselinks','financeexports','transactions','financedrafts'])beforeRecovery[name]=JSON.stringify(await db.collection(name).find({}).sort({_id:1}).toArray());
+ const heldSteps=structuredClone(workflow.steps);
+ for(const key of heldKeys)heldSteps[key]={...heldSteps[key],state:'manual_review',reason:'conflict',completedAt:null,conflicts:[{reason:'shipment_changed',inventoryId:ids[0]}]};
+ await db.collection('financeworkflows').updateOne({_id:new ObjectId(workflow.id)},{$set:{steps:heldSteps},$inc:{revision:1}});
+ let held=(await wc('context')).data.rows.find(r=>r.id===workflow.id);assert(heldKeys.every(k=>held.steps[k].state==='manual_review'));
+ const retriesBefore=held.events.filter(e=>e.action==='retry').length;
+ for(const key of heldKeys){
+  const retry={revision:held.revision,step:key,action:'retry',reason:'Synthetic fresh full capture matches the saved shipment.'};
+  assert.equal((await request(held.id+'/review',retry,'POST',other)).status,404);
+  const reviewed=await request(held.id+'/review',retry);assert.equal(reviewed.status,200,JSON.stringify(reviewed));held=reviewed.data;
+  assert.equal((await request(held.id+'/review',retry)).status,409,'A repeated review must not overwrite a newer decision');
+ }
+ workflow=(await wc('context')).data.rows.find(r=>r.id===workflow.id);
+ assert(heldKeys.every(k=>workflow.steps[k].state==='complete'));assert.equal(workflow.events.filter(e=>e.action==='retry').length,retriesBefore+3);
+ for(const name of Object.keys(beforeRecovery))assert.equal(JSON.stringify(await db.collection(name).find({}).sort({_id:1}).toArray()),beforeRecovery[name],name+' must remain unchanged during review recovery');
+ pass('targeted review recovery restores verified stages with audit events and no purchase/export/ledger mutation');
  await require('./finance-workflow-investigation-integration.cjs')({...context,account,accountId,worker,wc,request,run});
  const waitingKey=Object.keys(workflow.steps).find(k=>workflow.steps[k].stage==='shipment'&&workflow.steps[k].state==='waiting');
  const review={revision:workflow.revision,step:waitingKey,action:'snooze',until:'2099-01-01',reason:'Synthetic warehouse wait'};

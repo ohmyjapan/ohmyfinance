@@ -70,6 +70,10 @@ export async function readSheetCsv(browser,url,{limit=CSV_LIMIT,timeout=45000}={
     for(;;){const part=await cdp.send('IO.read',{handle:stream,size:65536}),bytes=Buffer.from(part.data,part.base64Encoded?'base64':'utf8');total+=bytes.length;if(total>limit)throw Error('Spreadsheet export is too large');chunks.push(bytes);if(part.eof)break}
     await cdp.send('IO.close',{handle:stream});stream=null;
     const csv=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks));
+    // Chrome exposes decoded response bytes. Compare Content-Length only when
+    // the response was not compressed; compressed wire sizes are not CSV sizes.
+    const expected=headers['content-length'],encoding=(headers['content-encoding']||'identity').toLowerCase();
+    if(/^\d+$/.test(expected||'')&&encoding==='identity'&&Number(expected)!==total)throw Object.assign(Error('Incomplete spreadsheet response body'),{code:'source_incomplete',csv});
     if(!csv.trim()||/^\s*</.test(csv))throw Error('Original spreadsheet CSV is unavailable');
     await cdp.send('Fetch.failRequest',{requestId:paused,errorReason:'Aborted'});paused=null;finish(null,csv);
    }catch(error){finish(error)}

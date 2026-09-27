@@ -71,3 +71,30 @@ Verification: build the Nuxt app, run the workflow/export unit suites and
 environment. `OMF_TEST_WORKFLOW_BROWSER=1` also checks the page in real Chrome.
 The worker integration injects a disconnect and verifies that recovery does not
 repeat downloads, model work, purchase connections or export allocations.
+
+Google range captures retain empty cells and have a consistent column count.
+A short response with a declared uncompressed length, a cut quoted field or a
+short row is retried once before it can become a pinned source. Compressed response
+lengths are not compared with decoded CSV lengths. General CSV parsing and the
+Google Sheets API path keep their existing handling of sparse data.
+
+If both reads are incomplete, affected unfinished steps report source incompleteness
+without consuming missing-data attempts. Previously verified evidence stays intact.
+The nightly worker keeps rejected CSV captures privately under
+`runs/<run-id>/rejected/`; they must not be copied into the public repository.
+Cached sources are checked before reuse and remain immutable if rejected.
+
+These checks detect structural or declared-length truncation. A cut exactly at a
+row boundary without a trustworthy body length cannot be distinguished from a
+legitimate shorter sheet by these checks alone. A structurally valid export is not
+proof that every historical transaction exists in the source.
+
+Existing conflict holds require review. After a fresh full capture matches the saved
+purchase and shipment evidence, use each affected step's existing retry action with
+its current revision, then refresh. Keep the review events and originals; do not
+reset unrelated decisions or change customer-declared values. The workflow
+integration includes targeted recovery and checks that purchases, exports, drafts
+and ledger records remain unchanged.
+
+Capture and consumer regression command:
+`node --test scripts/finance-sheet-export.test.mjs scripts/finance-sheet-continuation.test.mjs scripts/finance-search-evidence.test.mjs scripts/finance-workflow-worker.test.mjs scripts/finance-workflow-matching.test.mjs scripts/finance-workflow.test.mjs`

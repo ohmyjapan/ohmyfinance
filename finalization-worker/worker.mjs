@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {teachingOrigin} from '../teaching-worker/worker.mjs';
-import {captureBrowserSheet,parseSheetCsv} from '../research-worker/sheets.mjs';
+import {captureBrowserSheet,parseSheetCsv,validateSheetExportRows} from '../research-worker/sheets.mjs';
 import {IsseyArchive} from '../research-worker/issey-archive.mjs';
 import {IntrasCollector} from './intras.mjs';
 import {interpret} from './interpreter.mjs';
@@ -23,8 +23,25 @@ export class FinalizationWorker {
   const dir=path.join(this.directory,'runs',run.id);await fs.mkdir(dir,{recursive:true});
   const file=path.join(dir,kind+'.json');let snapshot;
   try { snapshot=JSON.parse(await fs.readFile(file,'utf8'));if(snapshot.binding!==hash([run.id,run.policy,this.config.spreadsheets,this.config.spreadsheetTabs,this.config.isseyArchive?.accountIds,this.config.isseyArchive?.financialAccountIds])||snapshot.hash!==hash(snapshot.source))throw Error('Local workflow snapshot changed'); }
-  catch(e){if(e.code!=='ENOENT')throw e;const source=await read();snapshot={binding:hash([run.id,run.policy,this.config.spreadsheets,this.config.spreadsheetTabs,this.config.isseyArchive?.accountIds,this.config.isseyArchive?.financialAccountIds]),hash:hash(source),source};await fs.writeFile(file,JSON.stringify(snapshot),{flag:'wx'});}
+  catch(e){if(e.code!=='ENOENT')throw e;const source=await read();if(['inventory','shipping'].includes(kind))validateSheetExportRows(source.payload.rows);snapshot={binding:hash([run.id,run.policy,this.config.spreadsheets,this.config.spreadsheetTabs,this.config.isseyArchive?.accountIds,this.config.isseyArchive?.financialAccountIds]),hash:hash(source),source};await fs.writeFile(file,JSON.stringify(snapshot),{flag:'wx'});}
+  // Old pinned captures stay immutable, but must satisfy the capture contract
+  // before reuse after a worker upgrade or restart.
+  if(['inventory','shipping'].includes(kind))validateSheetExportRows(snapshot.source.payload.rows);
   const saved=await this.api(run.id+'/source',{lease:run.lease,...snapshot.source});return {...snapshot.source,id:saved.id,hash:saved.hash};
+ }
+ async captureWorkflowSheet(run,kind){
+  let captured,captureFailures=[];
+  try{
+   captured=await this.captureSheet(this.config,kind);captureFailures=captured.captureFailures||[];
+   const rows=parseSheetCsv(captured.csv);validateSheetExportRows(rows);
+   return {kind,name:captured.sheet,capturedAt:captured.capturedAt,complete:rows.length<50000,scope:{url:captured.url,range:'A1:AZ50000'},payload:{rows}};
+  }catch(error){captureFailures=error.captureFailures||captureFailures;throw error;}
+  finally{
+   for(const failure of captureFailures){
+    const directory=path.join(this.directory,'runs',run.id,'rejected');await fs.mkdir(directory,{recursive:true});
+    try{await fs.writeFile(path.join(directory,kind+'-'+failure.hash+'.json'),JSON.stringify(failure),{flag:'wx'});}catch(error){if(error.code!=='EEXIST')throw error;}
+   }
+  }
  }
  async observe(run,row,step,reason,sourceIds=[],suggestion='') {
   const result=await this.api(run.id+'/observation',{lease:run.lease,id:row.id,revision:row.revision,step,reason,sourceIds,eventId:randomUUID(),suggestion});
@@ -50,8 +67,8 @@ export class FinalizationWorker {
    const sources={},failures={};
    // Read each configured source once; immutable files survive a worker restart.
    for(const kind of ['inventory','shipping']) {
-    try { sources[kind]=await this.snapshot(run,kind,async()=>{const captured=await this.captureSheet(this.config,kind),rows=parseSheetCsv(captured.csv);return {kind,name:captured.sheet,capturedAt:captured.capturedAt,complete:rows.length<50000,scope:{url:captured.url,range:'A1:AZ50000'},payload:{rows}};}); }
-    catch { failures[kind]='connection_required'; }
+    try { sources[kind]=await this.snapshot(run,kind,()=>this.captureWorkflowSheet(run,kind)); }
+    catch(e) { failures[kind]=e.code==='source_incomplete'?'source_incomplete':'connection_required'; }
     if(expired)throw Error('Workflow lease lost');
    }
    try {
@@ -91,11 +108,11 @@ export class FinalizationWorker {
      if(['complete','not_applicable','manual_review'].includes(step.state))continue;
      if(step.stage==='inventory'&&row.purchaseId) {
       if(result?.state==='manual_review')await this.observe(run,row,key,'ambiguous',[sources.inventory?.id,sources.shipping?.id].filter(Boolean),'在庫・サイズ・数量の候補を購入画面で確認してください。');
-      else if(result?.state==='connection_required'||failures.inventory||failures.shipping)await this.observe(run,row,key,'connection_required',[],'在庫・出荷シートへの接続を確認してください。');
+      else if(result?.state==='connection_required'||failures.inventory||failures.shipping)await this.observe(run,row,key,result?.state==='connection_required'||[failures.inventory,failures.shipping].includes('connection_required')?'connection_required':'source_incomplete',[],'在庫・出荷シートの接続と取得範囲を確認してください。');
       else if(sources.inventory?.complete&&sources.shipping?.complete)await this.observe(run,row,key,'missing_inventory',[sources.inventory.id,sources.shipping.id],'今回取得した在庫に、注文の商品と一致する未接続の在庫が見つかりません。');
       else await this.observe(run,row,key,'source_incomplete',[],'全範囲の資料が取得できるまで照合を保留します。');
      } else if(step.stage==='shipment'&&row.purchaseId&&!step.unit.startsWith('remaining:')) {
-      if(failures.shipping)await this.observe(run,row,key,'connection_required',[],'出荷シートへの接続を確認してください。');
+      if(failures.shipping)await this.observe(run,row,key,failures.shipping,[],'出荷シートの接続と取得範囲を確認してください。');
       else if(sources.shipping?.complete)await this.observe(run,row,key,'waiting_shipment',[sources.shipping.id],'取得した出荷記録に対応する出荷が見つかりません。未発送の確定ではありません。');
      } else if(step.stage==='documents'&&documentResults.has(step.unit)) {
       await this.observe(run,row,key,documentResults.get(step.unit),[],'Intrasの接続または取得した書類の一致を確認してください。保存済みの資料は保持しています。');
@@ -131,7 +148,7 @@ export class FinalizationWorker {
      const prepared=await this.api(run.id+'/investigate',{lease:run.lease,id:row.id}),evidence=prepared.context;let investigation=prepared.investigation;
      if(!evidence.alternatives.length) {
       const unavailable=failures.orders||failures.receipts||failures.inventory;
-      await this.observe(run,row,stageKey,unavailable?'connection_required':'source_required',[],unavailable?'購入・領収書・在庫の接続を確認してください。':'接続済みの購入記録では対応を特定できません。購入先または領収書を明細に追加してください。');continue;
+      await this.observe(run,row,stageKey,unavailable||'source_required',[],unavailable?'購入・領収書・在庫の接続と取得範囲を確認してください。':'接続済みの購入記録では対応を特定できません。購入先または領収書を明細に追加してください。');continue;
      }
      if(!prepared.cached) {
       const output=await this.interpret(this.config,{system:investigationSystem,schema:investigationSchema,input:evidence});
