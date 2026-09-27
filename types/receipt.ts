@@ -288,9 +288,14 @@ export interface ReceiptMatchCandidate {
     description?: string
 
     /**
-     * Match confidence score (0-100)
+     * Evidence ranking score (0-100), not a calibrated probability
      */
     confidence: number
+
+    autoMatchEligible?: boolean
+    matchFactors?: string[]
+    currency?: string
+    reference?: string
 
     /**
      * Reason for the match suggestion

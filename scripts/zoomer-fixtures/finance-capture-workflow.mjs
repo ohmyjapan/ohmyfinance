@@ -54,6 +54,11 @@ export default {
     'scripts/legacy-upload-contracts.test.cjs',
     'server/services/receiptManagementService.ts',
     'server/services/receiptService.ts',
+    'server/utils/receiptMatching.ts',
+    'components/receipt/ReceiptMatchDialog.vue',
+    'scripts/receipt-candidates.test.cjs',
+    'scripts/receipt-dialog.test.cjs',
+    'scripts/receipt-candidates-integration.cjs',
     'server/api/receipts/index.ts',
     'server/api/receipts/[id].ts',
     'server/api/receipts/upload.ts',
@@ -113,13 +118,15 @@ export default {
       'scripts/proxy-contracts.test.cjs',
       'scripts/shipment-status.test.cjs',
       'scripts/transaction-status.test.cjs',
+      'scripts/receipt-candidates.test.cjs',
+      'scripts/receipt-dialog.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 71 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 87 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -170,7 +177,15 @@ export default {
       logs.push('The isolated transaction status suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks and ${transactionStatusChecks} transaction status checks against freshly built source.`);
+    delete env.OMF_TEST_TRANSACTION_STATUS_ONLY;
+    env.OMF_TEST_RECEIPT_CANDIDATES_ONLY = '1';
+    const candidates = stage('isolated receipt candidate integration', ['scripts/finance-integration.cjs']);
+    const candidateChecks = Number(candidates.output.match(/^(\d+) targeted receipt candidate checks passed\s*$/m)?.[1]);
+    if (!candidates.ok || !(candidateChecks >= 7)) {
+      logs.push('The isolated receipt candidate suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks and ${candidateChecks} receipt candidate checks against freshly built source.`);
     return result(true);
   },
 };

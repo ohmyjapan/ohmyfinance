@@ -133,8 +133,8 @@
                       </div>
                     </div>
 
-                    <!-- Matching confidence indicator (if amount matches) -->
-                    <div v-if="receipt.amount && transaction.amount === receipt.amount"
+                    <!-- Show strong evidence only when the server found one unambiguous candidate. -->
+                    <div v-if="transaction.isStrongMatch"
                          class="mt-2 bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 rounded p-2">
                       <div class="flex items-center">
                         <CheckCircle size="16" class="text-green-500 mr-1" />
@@ -178,6 +178,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useUserStore } from '~/stores/user'
 import {
   FileText,
   Link as LinkIcon,
@@ -189,6 +190,7 @@ import {
 } from 'lucide-vue-next'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
 
 const props = defineProps({
   receipt: {
@@ -212,18 +214,21 @@ onMounted(async () => {
     // First try to get suggested matches for this receipt
     let suggestedMatches: any[] = []
     try {
-      const matchesResult = await $fetch<any>(`/api/receipts/${props.receipt.id || props.receipt._id}/matches`)
+      const matchesResult = await $fetch<any>(`/api/receipts/${props.receipt.id || props.receipt._id}/matches`, { headers: userStore.authHeader })
       suggestedMatches = matchesResult?.matches || []
     } catch (e) {
       // Ignore if matches endpoint fails
     }
 
     // Fetch unmatched transactions (without receipts)
-    const transactionsData = await $fetch<any[]>('/api/transactions')
+    const transactionsData = await $fetch<any[]>('/api/transactions', { headers: userStore.authHeader })
+    const strongCandidates = suggestedMatches.filter(m => m.confidence >= 85)
+    const strongId = strongCandidates.length === 1 && strongCandidates[0].autoMatchEligible
+      ? strongCandidates[0].transactionId : null
 
     // Filter to transactions without receipts and format for display
     transactions.value = (transactionsData || [])
-      .filter((t: any) => !t.hasReceipt)
+      .filter((t: any) => !t.hasReceipt && !t.receiptFilePath)
       .map((t: any) => ({
         id: t._id || t.id,
         type: t.type || '支出',
@@ -233,23 +238,20 @@ onMounted(async () => {
         accountCategory: t.accountCategoryId?.name || '-',
         supplier: t.supplierId?.name || t.customerId?.name || '-',
         // Check if this is a suggested match
-        isMatch: suggestedMatches.some((m: any) => m.transactionId === (t._id || t.id))
+        isMatch: suggestedMatches.some((m: any) => m.transactionId === (t._id || t.id)),
+        isStrongMatch: strongId === (t._id || t.id),
+        matchScore: suggestedMatches.find((m: any) => m.transactionId === (t._id || t.id))?.confidence ?? -1
       }))
       .sort((a: any, b: any) => {
         // Sort suggested matches first
         if (a.isMatch && !b.isMatch) return -1
         if (!a.isMatch && b.isMatch) return 1
+        if (a.matchScore !== b.matchScore) return b.matchScore - a.matchScore
         // Then by date descending
         return new Date(b.date).getTime() - new Date(a.date).getTime()
       })
 
-    // Try to auto-select a transaction with matching amount
-    if (props.receipt.amount) {
-      const matchingTransaction = transactions.value.find((t: any) => t.amount === props.receipt.amount)
-      if (matchingTransaction) {
-        selectedTransactionId.value = matchingTransaction.id
-      }
-    }
+    selectedTransactionId.value = transactions.value.some(t => t.id === strongId) ? strongId : null
   } catch (error) {
     console.error('Failed to load transactions:', error)
   } finally {

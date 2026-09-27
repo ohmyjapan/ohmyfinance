@@ -5,7 +5,7 @@ capture/workflow tests to OhMyCode's project fixture convention. It exports the
 standard name, explicit source coverage and run result; no hub gate changes are
 required.
 
-The fixture runs thirteen Node test suites, including assistant page selection,
+The fixture runs fifteen Node test suites, including assistant page selection,
 purchase investigation evidence, upload/API error handling and CSV module
 compatibility and unsupported-provider behavior, builds the current Nuxt
 source, then runs `scripts/finance-integration.cjs` with only
@@ -27,7 +27,21 @@ the active transaction edit service, checks persisted labels/history and verifie
 that protected card fields and other transactions are unchanged. `refunded` is a
 bookkeeping status only; it does not call a payment provider or alter the amount.
 Status edits retain the existing transaction API's access policy. Ledger ownership
-and receipt matching are separate pending work.
+and receipt attachment persistence are separate pending work.
+`OMF_TEST_RECEIPT_CANDIDATES_ONLY=1` exercises persisted candidate ranking,
+receipt ownership, repeated reads and automatic no-write decisions for weak or
+ambiguous evidence. Scores use actual merchant/statement text, JPY calendar dates,
+amount and recorded currency. They are rule scores, not calibrated probabilities.
+The service considers the entire date/amount window before returning ten results;
+existing receipt claims on either side exclude a candidate. Exact positive amount,
+known matching currency, exact normalized merchant/statement text, an expense and
+a date within three days are required for automatic consideration. This does not
+make the separate attachment writer safe or settle ledger ownership.
+Scoring tests cover Japanese/full-width names, missing or conflicting evidence,
+currency mismatches, competing candidates, cursor failure and reconnect. The dialog
+tests compile its actual script and render its template, verify authentication,
+and prevent price-only preselection or high-confidence badges. Icons are stubbed;
+this is not a browser visual review. The manual confirmation path remains separate.
 The authentication suite checks registration, access tokens, 2FA,
 trusted devices, backup codes, PIN/password renewal, restart recovery, invitations
 and logout. Each integration creates its own disposable MongoDB. The workflow
@@ -36,9 +50,10 @@ an available loopback port.
 It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
-A failed command, missing test summary, fewer than the existing 71 unit/service tests,
+A failed command, missing test summary, fewer than the existing 87 unit/service/component tests,
 18 workflow checks, 10 authentication checks, 11 receipt management checks or
-6 proxy checks, 8 shipment status checks or 7 transaction status checks, or skipped unit test is a
+6 proxy checks, 8 shipment status checks, 7 transaction status checks or
+7 receipt candidate checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.
 The verifier owns the 15-minute fixture timeout and process-tree cleanup. A fresh

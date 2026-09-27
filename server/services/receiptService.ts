@@ -2,7 +2,10 @@
 import Receipt from '../models/Receipt'
 import Transaction from '../models/Transaction'
 import type { IReceipt } from '../models/Receipt'
+import type { ITransaction } from '../models/Transaction'
+import type { Types } from 'mongoose'
 import { ensureConnection } from '../config/database'
+import { calculateMatchConfidence, receiptCandidateWindow, transactionCurrency } from '../utils/receiptMatching'
 
 interface ReceiptFilters {
   status?: string
@@ -165,174 +168,47 @@ export async function deleteReceipt(id: string) {
   }
 }
 
-/**
- * Calculate text similarity between two strings (Jaccard similarity)
- */
-function textSimilarity(str1?: string, str2?: string): number {
-  if (!str1 || !str2) return 0
+type CandidateTransaction = Pick<ITransaction, 'date' | 'amount' | 'companyInfo' | 'notes' | 'referenceNumber' | 'metadata' | 'type' | 'status'> & { _id: Types.ObjectId }
 
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim().split(/\s+/)
-  const words1 = new Set(normalize(str1))
-  const words2 = new Set(normalize(str2))
-
-  if (words1.size === 0 || words2.size === 0) return 0
-
-  const intersection = new Set([...words1].filter(x => words2.has(x)))
-  const union = new Set([...words1, ...words2])
-
-  return intersection.size / union.size
-}
-
-/**
- * Calculate match confidence score between receipt and transaction
- */
-function calculateMatchConfidence(receipt: any, transaction: any): { confidence: number; factors: string[] } {
-  let confidence = 30 // Base confidence
-  const factors: string[] = []
-
-  // Amount matching (max 35 points)
-  if (receipt.amount && transaction.amount) {
-    const amountDiff = Math.abs(receipt.amount - transaction.amount)
-    const percentDiff = amountDiff / receipt.amount
-
-    if (amountDiff === 0) {
-      confidence += 35
-      factors.push('Exact amount match')
-    } else if (percentDiff < 0.01) {
-      confidence += 30
-      factors.push('Amount within 1%')
-    } else if (percentDiff < 0.05) {
-      confidence += 20
-      factors.push('Amount within 5%')
-    } else if (percentDiff < 0.1) {
-      confidence += 10
-      factors.push('Amount within 10%')
-    }
-  }
-
-  // Date proximity (max 25 points)
-  if (receipt.receiptDate && transaction.date) {
-    const daysDiff = Math.abs(
-      (new Date(receipt.receiptDate).getTime() - new Date(transaction.date).getTime()) / (1000 * 60 * 60 * 24)
-    )
-
-    if (daysDiff === 0) {
-      confidence += 25
-      factors.push('Same day')
-    } else if (daysDiff <= 1) {
-      confidence += 20
-      factors.push('Within 1 day')
-    } else if (daysDiff <= 3) {
-      confidence += 15
-      factors.push('Within 3 days')
-    } else if (daysDiff <= 7) {
-      confidence += 10
-      factors.push('Within 1 week')
-    }
-  }
-
-  // Merchant/Customer name matching (max 20 points)
-  if (receipt.merchant) {
-    const customerSimilarity = textSimilarity(receipt.merchant, transaction.customer?.name)
-    const referenceSimilarity = textSimilarity(receipt.merchant, transaction.reference)
-    const bestTextMatch = Math.max(customerSimilarity, referenceSimilarity)
-
-    if (bestTextMatch > 0.7) {
-      confidence += 20
-      factors.push('Strong name match')
-    } else if (bestTextMatch > 0.4) {
-      confidence += 12
-      factors.push('Partial name match')
-    } else if (bestTextMatch > 0.2) {
-      confidence += 5
-      factors.push('Weak name match')
-    }
-  }
-
-  // Currency matching (max 10 points)
-  if (receipt.currency && transaction.currency) {
-    if (receipt.currency === transaction.currency) {
-      confidence += 10
-      factors.push('Same currency')
-    }
-  } else {
-    // No currency mismatch penalty if one is missing
-    confidence += 5
-  }
-
-  return {
-    confidence: Math.min(confidence, 100),
-    factors
-  }
-}
-
-/**
- * Find potential transaction matches for a receipt
- */
+/** Rank the entire search window before limiting the display to ten results. */
 export async function findMatchesForReceipt(receiptId: string) {
   await ensureConnection()
-  try {
-    const receipt = await Receipt.findById(receiptId)
-    if (!receipt) {
-      throw new Error(`Receipt ${receiptId} not found`)
-    }
+  const receipt = await Receipt.findById(receiptId).lean()
+  if (!receipt) throw new Error(`Receipt ${receiptId} not found`)
+  const window = receiptCandidateWindow(receipt)
+  if (!Object.keys(window).length) return []
 
-    // Build match query based on receipt data
-    const matchQuery: any = {
-      receipt: null // Only match transactions without receipts
-    }
+  // Either recorded side of an existing link excludes a candidate. This is a
+  // read-time exclusion, not a reservation or a repair of old attachment writes.
+  const linkedIds = await Receipt.distinct('transactionId', { transactionId: { $ne: null } })
+  const cursor = Transaction.find({
+    ...window,
+    hasReceipt: { $ne: true },
+    receiptFilePath: { $in: [null, ''] },
+    _id: { $nin: linkedIds }
+  }).select('_id date amount companyInfo notes referenceNumber metadata type status')
+    .lean<CandidateTransaction[]>().cursor()
 
-    // If we have amount, find transactions within 15% tolerance (wider search)
-    if (receipt.amount) {
-      const tolerance = receipt.amount * 0.15
-      matchQuery.amount = {
-        $gte: receipt.amount - tolerance,
-        $lte: receipt.amount + tolerance
-      }
-    }
-
-    // If we have receipt date, find transactions within 14 days (wider search)
-    if (receipt.receiptDate) {
-      const receiptDate = new Date(receipt.receiptDate)
-      const startDate = new Date(receiptDate)
-      startDate.setDate(startDate.getDate() - 14)
-      const endDate = new Date(receiptDate)
-      endDate.setDate(endDate.getDate() + 14)
-      matchQuery.date = { $gte: startDate, $lte: endDate }
-    }
-
-    const potentialMatches = await Transaction.find(matchQuery)
-      .sort({ date: -1 })
-      .limit(20)
-      .lean()
-
-    // Calculate confidence scores for each match
-    const matches = potentialMatches.map(transaction => {
-      const { confidence, factors } = calculateMatchConfidence(receipt, transaction)
-
-      return {
-        transactionId: transaction._id.toString(),
-        date: transaction.date,
-        amount: transaction.amount,
-        currency: transaction.currency,
-        description: transaction.customer?.name || transaction.reference,
-        reference: transaction.reference,
-        confidence,
-        matchFactors: factors,
-        matchReason: confidence >= 85 ? 'High confidence match' :
-                     confidence >= 70 ? 'Good match' :
-                     confidence >= 50 ? 'Possible match' : 'Low confidence'
-      }
-    })
-
-    // Sort by confidence and return top 10
-    return matches
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 10)
-  } catch (error) {
-    console.error(`Failed to find matches for receipt ${receiptId}:`, error)
-    throw error
+  type Candidate = {
+    transactionId: string; date: Date; amount: number; currency?: string;
+    description?: string; reference?: string; confidence: number;
+    matchFactors: string[]; autoMatchEligible: boolean; matchReason: string;
   }
+  const matches: Candidate[] = []
+  try {
+    for await (const transaction of cursor) {
+      const { confidence, factors, autoMatchEligible } = calculateMatchConfidence(receipt, transaction)
+      matches.push({
+        transactionId: transaction._id.toString(), date: transaction.date, amount: transaction.amount,
+        currency: transactionCurrency(transaction), description: transaction.companyInfo || transaction.notes || transaction.referenceNumber,
+        reference: transaction.referenceNumber, confidence, matchFactors: factors, autoMatchEligible,
+        matchReason: autoMatchEligible ? 'Strong recorded evidence; rule score' : 'Review the supporting evidence; rule score'
+      })
+      matches.sort((a, b) => b.confidence - a.confidence || a.transactionId.localeCompare(b.transactionId))
+      if (matches.length > 10) matches.pop()
+    }
+  } finally { await cursor.close() }
+  return matches
 }
 
 /**
@@ -360,7 +236,7 @@ export async function autoMatchReceipts(ownerId: string, minConfidence: number =
         // Only auto-match if there's exactly one high-confidence match
         const highConfidenceMatches = matches.filter(m => m.confidence >= minConfidence)
 
-        if (highConfidenceMatches.length === 1) {
+        if (highConfidenceMatches.length === 1 && highConfidenceMatches[0].autoMatchEligible) {
           const match = highConfidenceMatches[0]
           await matchReceiptWithTransaction(receipt._id.toString(), match.transactionId)
           results.matched++

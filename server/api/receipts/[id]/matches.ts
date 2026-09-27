@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
       receiptId: id,
       matches,
       totalMatches: matches.length,
-      highConfidenceMatches: matches.filter(m => m.confidence >= 80).length
+      highConfidenceMatches: matches.filter(m => m.confidence >= 85 && m.autoMatchEligible).length
     }
   } catch (error: any) {
     if (error.statusCode) throw error
