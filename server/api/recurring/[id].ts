@@ -6,7 +6,7 @@ import {
   deleteRecurringPayment,
   generateTransaction
 } from '../../services/recurringPaymentService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 /**
  * GET /api/recurring/:id - Get a recurring payment
@@ -15,7 +15,7 @@ import { requireAuth } from '../../middleware/auth'
  * POST /api/recurring/:id - Generate transaction manually
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const id = event.context.params?.id
   const method = event.method
 
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
   // GET - Get single recurring payment
   if (method === 'GET') {
     try {
-      const payment = await getRecurringPaymentById(id)
+      const payment = await getRecurringPaymentById(access, id)
       if (!payment) {
         throw createError({
           statusCode: 404,
@@ -57,7 +57,7 @@ export default defineEventHandler(async (event) => {
       if (body.endDate) body.endDate = new Date(body.endDate)
       if (body.nextDueDate) body.nextDueDate = new Date(body.nextDueDate)
 
-      const payment = await updateRecurringPayment(id, body)
+      const payment = await updateRecurringPayment(access, id, body)
       return {
         success: true,
         message: 'Recurring payment updated',
@@ -76,13 +76,14 @@ export default defineEventHandler(async (event) => {
   // DELETE - Delete recurring payment
   if (method === 'DELETE') {
     try {
-      const payment = await deleteRecurringPayment(id)
+      const payment = await deleteRecurringPayment(access, id)
       return {
         success: true,
         message: 'Recurring payment deleted',
         payment
       }
     } catch (error: any) {
+      if (error.statusCode) throw error
       console.error(`Error deleting recurring payment ${id}:`, error)
       throw createError({
         statusCode: error.message?.includes('not found') ? 404 : 500,
@@ -94,13 +95,15 @@ export default defineEventHandler(async (event) => {
   // POST - Generate transaction from this recurring payment
   if (method === 'POST') {
     try {
-      const result = await generateTransaction(id)
+      const body = await readBody(event)
+      const result = await generateTransaction(access, id, body?.dueDate)
       return {
         success: true,
         message: 'Transaction generated successfully',
         ...result
       }
     } catch (error: any) {
+      if (error.statusCode) throw error
       console.error(`Error generating transaction for ${id}:`, error)
       throw createError({
         statusCode: error.message?.includes('not found') ? 404 : 400,

@@ -5,14 +5,14 @@ import {
   createRecurringPayment,
   getRecurringPaymentStats
 } from '../../services/recurringPaymentService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 /**
  * GET /api/recurring - List all recurring payments
  * POST /api/recurring - Create new recurring payment
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const method = event.method
 
   // GET - List recurring payments
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
 
       // Check if stats are requested
       if (query.stats === 'true') {
-        const stats = await getRecurringPaymentStats()
+        const stats = await getRecurringPaymentStats(access)
         return { success: true, ...stats }
       }
 
@@ -31,9 +31,10 @@ export default defineEventHandler(async (event) => {
       if (query.frequency) filters.frequency = query.frequency
       if (query.search) filters.search = query.search
 
-      const payments = await getRecurringPayments(filters)
+      const payments = await getRecurringPayments(access, filters)
       return payments
     } catch (error: any) {
+      if (error.statusCode) throw error
       console.error('Error fetching recurring payments:', error)
       throw createError({
         statusCode: 500,
@@ -64,7 +65,7 @@ export default defineEventHandler(async (event) => {
         })
       }
 
-      const payment = await createRecurringPayment({
+      const payment = await createRecurringPayment(access, {
         name: body.name,
         description: body.description,
         amount: parseFloat(body.amount),

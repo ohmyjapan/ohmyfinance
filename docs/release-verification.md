@@ -138,3 +138,28 @@ and draft evidence. They include two shared setup checks per suite. No live bank
 request, production migration or accounting reclassification occurs. Missing or
 mismatched source companies require reviewed assignment; nothing is swept into a
 company based only on the current login.
+
+`OMF_TEST_RECURRING_GROUPS_ONLY=1` adds 8 checks including two shared setup
+checks. Real tokens verify company scope on recurring CRUD, totals, upcoming and
+batch processing; current database roles override stale token roles. The compiled
+recurring page calls the freshly built API with its displayed due date. That date
+identifies the occurrence even after a lost response. Sixteen service/page tests
+also cover durable reservations, concurrent generation, failures before/after the
+ledger write and before schedule advancement, reconnect, protected accounting
+edits, foreign target IDs, missing posted entries and calendar boundaries.
+
+Each recurring occurrence reserves its ledger ID and payload atomically in the
+payment document before insertion. Schedule advancement follows insertion and is
+conditional on that occurrence. Editing/deleting a reserved payment returns 409
+until generation resumes. Posted history is retained; missing or conflicting ledger
+targets require review. Only JPY templates can generate into the current JPY ledger.
+This generates accounting entries; it neither charges cards nor verifies payment.
+
+Exclusions: shipment writes remain pending; no nightly recurring scheduler exists.
+Recurring entries versus eventual card statements still need explicit reconciliation.
+These tests prove per-occurrence retries, not deduplication across different import
+sources. Legacy recurring company assignments require review. Public APIs omit the
+internal snapshots; the embedded history is not yet archived. Currency display and
+mixed-currency totals on the existing recurring page remain separate work. No real
+browser visual check, historical production corpus, full process-kill matrix or
+live exposure is claimed. No production migration or deployment occurs here.

@@ -2,6 +2,15 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IRecurringPayment extends Document {
+  organizationId?: mongoose.Types.ObjectId
+  occurrences: {
+    dueDate: Date
+    transactionId: mongoose.Types.ObjectId
+    transaction: Record<string, any>
+    nextDueDate: Date
+    nextStatus: 'active' | 'completed'
+    state: 'reserved' | 'posted'
+  }[]
   name: string
   description?: string
   amount: number
@@ -31,6 +40,15 @@ export interface IRecurringPayment extends Document {
 }
 
 const RecurringPaymentSchema = new Schema<IRecurringPayment>({
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', immutable: true, index: true },
+  occurrences: { type: [new Schema({
+    dueDate: { type: Date, required: true },
+    transactionId: { type: Schema.Types.ObjectId, required: true },
+    transaction: { type: Schema.Types.Mixed, required: true },
+    nextDueDate: { type: Date, required: true },
+    nextStatus: { type: String, enum: ['active', 'completed'], required: true },
+    state: { type: String, enum: ['reserved', 'posted'], required: true }
+  }, { _id: false })], default: [] },
   name: {
     type: String,
     required: true,

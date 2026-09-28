@@ -18,6 +18,15 @@ export default {
     'server/api/finance/[...path].ts',
     'scripts/card-groups.test.cjs',
     'scripts/card-groups-integration.cjs',
+    'server/models/RecurringPayment.ts',
+    'server/services/recurringPaymentService.ts',
+    'server/api/recurring/index.ts',
+    'server/api/recurring/[id].ts',
+    'server/api/recurring/process.ts',
+    'pages/recurring/index.vue',
+    'scripts/recurring-groups.test.cjs',
+    'scripts/recurring-groups-integration.cjs',
+    'scripts/helpers/recurring-page.cjs',
     'scripts/finance-pending-integration.cjs',
     'scripts/finance-import-overlap-integration.cjs',
     'scripts/finance-aplus-integration.cjs',
@@ -161,13 +170,14 @@ export default {
       'scripts/receipt-groups.test.cjs',
       'scripts/transaction-groups.test.cjs',
       'scripts/card-groups.test.cjs',
+      'scripts/recurring-groups.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 145 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 161 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -252,6 +262,7 @@ export default {
     }
     delete env.OMF_TEST_TRANSACTION_GROUPS_ONLY;
     for (const [flag, label, minimum] of [
+      ['OMF_TEST_RECURRING_GROUPS_ONLY', 'recurring group', 8],
       ['OMF_TEST_CARD_GROUPS_ONLY', 'card group', 8],
       ['OMF_TEST_PENDING_ONLY', 'pending', 8],
       ['OMF_TEST_IMPORT_OVERLAP_ONLY', 'source overlap', 7],

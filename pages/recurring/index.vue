@@ -427,7 +427,7 @@ const togglePause = async (payment: any) => {
 
 const generateNow = async (payment: any) => {
   try {
-    await $fetch(`/api/recurring/${payment.id}`, { method: 'POST', headers: userStore.authHeader })
+    await $fetch(`/api/recurring/${payment.id}`, { method: 'POST', body: { dueDate: payment.nextDueDate }, headers: userStore.authHeader })
     alert('Transaction generated successfully')
     await loadPayments()
   } catch (error: any) {
