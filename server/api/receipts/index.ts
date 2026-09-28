@@ -58,9 +58,7 @@ export default defineEventHandler(async (event) => {
       filename: body.filename,
       originalFilename: body.originalFilename || body.filename,
       size: body.size || 0,
-      mimeType: body.mimeType,
-      fileUrl: body.fileUrl,
-      filePath: body.filePath
+      mimeType: body.mimeType
     }, {
       amount: body.amount,
       currency: body.currency,

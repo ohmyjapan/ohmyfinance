@@ -116,8 +116,8 @@ test('the compiled upload page sends the displayed link version and keeps the se
  const script=compileScript(descriptor,{id:'receipt-link-page'}),module={exports:{}};
  const code=ts.transpileModule(script.content,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  const receipt={id:'synthetic-receipt',status:'unmatched',linkVersion:4},requests=[];
- const imports={vue:{...vue,onMounted(){}},'~/stores/user':{useUserStore:()=>({authHeader:{Authorization:'Synthetic session'}})},'lucide-vue-next':{}};
- new Function('require','module','exports','useI18n','$fetch',code)(name=>{assert(Object.hasOwn(imports,name));return imports[name];},module,module.exports,()=>({t:k=>k,locale:vue.ref('ja')}),async(url,options)=>{
+ const imports={vue:{...vue,onMounted(){},onBeforeUnmount(){}},'~/composables/useReceiptFiles':{useReceiptFiles:()=>({downloadReceipt(){},downloadError:vue.ref('')})},'~/stores/user':{useUserStore:()=>({authHeader:{Authorization:'Synthetic session'}})},'lucide-vue-next':{}};
+ new Function('require','module','exports','useI18n','useRoute','$fetch',code)(name=>{assert(Object.hasOwn(imports,name));return imports[name];},module,module.exports,()=>({t:k=>k,locale:vue.ref('ja')}),()=>({query:{}}),async(url,options)=>{
   requests.push({url,options});return {receipt:{...receipt,status:'matched',transactionId:'synthetic-transaction',linkVersion:5}};
  });
  const state=module.exports.default.setup({},{expose(){}});state.receipts.value=[receipt];

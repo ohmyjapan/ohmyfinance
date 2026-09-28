@@ -50,6 +50,8 @@ export interface IReceipt extends Document {
   transactionId?: mongoose.Types.ObjectId
   fileUrl?: string
   filePath?: string
+  fileHash?: string
+  storageVersion?: number
   thumbnailUrl?: string
   receiptDate?: Date
   category?: 'business' | 'personal' | 'travel' | 'entertainment' | 'office' | 'other'
@@ -120,6 +122,8 @@ const ReceiptSchema = new Schema<IReceipt>({
   linkHistory: [{ _id: false, action: String, transactionId: Schema.Types.ObjectId, userId: Schema.Types.ObjectId, version: Number, at: Date }],
   fileUrl: String,
   filePath: String,
+  fileHash: String,
+  storageVersion: Number,
   thumbnailUrl: String,
   receiptDate: Date,
   category: {
@@ -155,6 +159,9 @@ ReceiptSchema.index({ organizationId: 1, transactionId: 1 }, {
   partialFilterExpression: { organizationId: { $type: 'objectId' }, transactionId: { $type: 'objectId' } }
 })
 // Text search index
+ReceiptSchema.index({ organizationId: 1, fileHash: 1 }, {
+  unique: true, partialFilterExpression: { organizationId: { $type: 'objectId' }, fileHash: { $type: 'string' } }
+})
 ReceiptSchema.index({ merchant: 'text', notes: 'text', 'extractedData.merchant': 'text' })
 
 export default mongoose.models.Receipt as mongoose.Model<IReceipt> | undefined || mongoose.model<IReceipt>('Receipt', ReceiptSchema)

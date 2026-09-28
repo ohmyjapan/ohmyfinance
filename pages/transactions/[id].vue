@@ -343,23 +343,24 @@
             </div>
 
             <DocumentList v-if="transaction.metadata?.financeDraftId && transaction.attachments?.length" :documents="transaction.attachments" />
-            <div v-else-if="transaction.hasReceipt && transaction.receiptFilePath">
+            <div v-else-if="transaction.receipt || (transaction.hasReceipt && transaction.receiptFilePath)">
               <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-white/[0.03] rounded-xl border border-gray-200 dark:border-white/10">
                 <div class="flex items-center gap-3">
                   <div class="w-10 h-10 rounded-lg bg-primary-main/10 dark:bg-primary-main/20 flex items-center justify-center">
                     <FileText class="h-5 w-5 text-primary-main dark:text-primary-light" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('transactionDetail.receiptFile') }}</p>
+                    <p class="text-sm font-medium text-gray-900 dark:text-white break-all">{{ transaction.receipt?.filename || t('transactionDetail.receiptFile') }}</p>
                     <p class="text-xs text-gray-500 dark:text-gray-400">
                       {{ transaction.receiptUploadedAt ? formatDate(transaction.receiptUploadedAt) + ' ' + t('transactionDetail.uploaded') : '' }}
                     </p>
                   </div>
                 </div>
-                <button class="w-10 h-10 rounded-xl bg-primary-main/10 dark:bg-primary-main/20 flex items-center justify-center hover:bg-primary-main/20 dark:hover:bg-primary-main/30 transition-colors touch-manipulation">
+                <button :disabled="!transaction.receipt?.url || isDownloading" :aria-label="t('common.download')" @click="downloadReceipt(transaction.receipt.id, transaction.receipt.filename)" class="w-10 h-10 shrink-0 rounded-xl bg-primary-main/10 dark:bg-primary-main/20 flex items-center justify-center hover:bg-primary-main/20 dark:hover:bg-primary-main/30 transition-colors touch-manipulation disabled:opacity-40">
                   <Download class="h-5 w-5 text-primary-main dark:text-primary-light" />
                 </button>
               </div>
+              <p v-if="downloadError" role="alert" class="mt-3 text-sm text-red-600">{{ downloadError }}</p>
             </div>
             <div v-else class="text-center py-8">
               <div class="w-16 h-16 rounded-2xl bg-gray-100 dark:bg-white/5 flex items-center justify-center mx-auto mb-3">
@@ -391,11 +392,13 @@ import {
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import DocumentList from '~/components/finance/DocumentList.vue'
+import { useReceiptFiles } from '~/composables/useReceiptFiles'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const { downloadReceipt, downloadError, isDownloading } = useReceiptFiles()
 const getAuthHeaders = () => userStore.authHeader
 
 const transactionId = computed(() => route.params.id as string)

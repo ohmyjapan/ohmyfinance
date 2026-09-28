@@ -226,3 +226,29 @@ independent review. This is relationship verification, not original file downloa
 verification or a production reliability rate. File storage/recovery/downloads,
 remaining mock receipt pages and the broader company-access release work remain
 outstanding. No production migration or deployment is included.
+
+
+Receipt originals now live outside the checkout under the configured data directory,
+partitioned by company and SHA-256. Uploads publish a flushed temporary file by
+rename before unique company/hash registration. Retrying identical bytes preserves
+reviewed metadata and can restore a missing or damaged original. An uncertain
+database result never deletes the original. Purchase date remains unknown.
+
+The ID-based download route requires current company read membership, derives its
+path from the trusted stored hash, verifies bytes and returns attachment/no-store
+headers. JSON metadata cannot assign a file path or URL. Multipart input is bounded
+while streaming, including absent Content-Length; file signatures and size are
+checked before registration. The active page honors a transaction upload target,
+deduplicates retries, drops old-context results and downloads with authentication.
+Existing finance evidence uses its separate document flow. Mobile summary labels
+and original filenames retain the current page design.
+
+Fifteen new storage/page/client tests plus retained suites pass; the actual fixture
+runs 212 unit/service tests, a fresh build and all retained HTTP suites including
+nine receipt-file checks (seven specific and two shared setup). A separate real
+Chrome run adds one browser flow: normal login, upload, attach, download byte
+comparison and reload. Ten deliberate faults fail named behavioral assertions.
+Root TypeScript remains at zero errors. This is scoped verification, not a
+production reliability rate or a power-loss/OS-kill guarantee. New file/access/
+context guards still await independent review. Remaining receipt mock/legacy routes
+and broader release work are outstanding; no deployment is included.

@@ -44,6 +44,7 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
+  if(process.env.OMF_TEST_RECEIPT_FILES_ONLY){await require('./receipt-files-integration.cjs')({db,call,token,other,origin,directory,pass});console.log(checks+' targeted receipt file checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_LINKS_ONLY){await require('./receipt-links-integration.cjs')({db,call,token,other,origin,root,pass});console.log(checks+' targeted receipt link checks passed');return;}
   if(process.env.OMF_TEST_SHIPMENT_GROUPS_ONLY){await require('./shipment-groups-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted shipment group checks passed');return;}
   if(process.env.OMF_TEST_RECURRING_GROUPS_ONLY){await require('./recurring-groups-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted recurring group checks passed');return;}
@@ -55,7 +56,7 @@ async function main(){
   if(process.env.OMF_TEST_TRANSACTION_STATUS_ONLY){await require('./transaction-status-integration.cjs')({db,call,token,pass});console.log(checks+' targeted transaction status checks passed');return;}
   if(process.env.OMF_TEST_SHIPMENT_STATUS_ONLY){await require('./shipment-status-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted shipment status checks passed');return;}
   if(process.env.OMF_TEST_PROXY_ONLY){await require('./proxy-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted proxy checks passed');return;}
-  if(process.env.OMF_TEST_RECEIPTS_ONLY){await require('./receipt-management-integration.cjs')({db,call,token,other,origin,root,pass});console.log(checks+' targeted receipt management checks passed');return;}
+  if(process.env.OMF_TEST_RECEIPTS_ONLY){await require('./receipt-management-integration.cjs')({db,call,token,other,origin,root,directory,pass});console.log(checks+' targeted receipt management checks passed');return;}
   if(process.env.OMF_TEST_WORKFLOW_ONLY){await require('./finance-workflow-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row,directory});console.log(checks+' targeted workflow checks passed');return;}
   if(process.env.OMF_TEST_EVALUATION_ONLY){await require('./finance-evaluation-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted evaluation checks passed');return;}
   if(process.env.OMF_TEST_RESEARCH_ONLY){await require('./finance-research-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted research checks passed');return;}

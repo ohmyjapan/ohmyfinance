@@ -32,10 +32,10 @@
           <td class="px-6 py-4 whitespace-nowrap">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-xl bg-gray-100 dark:bg-white/10 flex items-center justify-center flex-shrink-0">
-                <component :is="getFileIcon(receipt.filename)" class="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                <component :is="getFileIcon(receipt.originalFilename || receipt.filename)" class="w-5 h-5 text-gray-500 dark:text-gray-400" />
               </div>
               <div class="min-w-0">
-                <p class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-[200px]">{{ receipt.filename }}</p>
+                <p class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-[200px]">{{ receipt.originalFilename || receipt.filename }}</p>
                 <p class="text-xs text-gray-400 dark:text-gray-500">{{ formatFileSize(receipt.size) }}</p>
               </div>
             </div>

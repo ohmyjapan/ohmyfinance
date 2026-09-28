@@ -159,18 +159,22 @@ export const useReceiptStore = defineStore('receipt', {
             this.isLoading = true
             this.error = null
 
+            const headers = this._getAuthHeaders()
             try {
                 const response = await $fetch<{ receipt: Receipt }>('/api/receipts/upload', {
                     method: 'POST',
                     body: formData,
-                    headers: this._getAuthHeaders()
+                    headers
                 })
 
+                if (headers.Authorization !== this._getAuthHeaders().Authorization) return null
                 // Add to local state
-                this.receipts.unshift(response.receipt)
+                const index = this.receipts.findIndex(r => r.id === response.receipt.id)
+                if (index < 0) this.receipts.unshift(response.receipt)
+                else this.receipts[index] = response.receipt
                 return response.receipt
             } catch (err: any) {
-                this.error = err.message || 'Failed to upload receipt'
+                if (headers.Authorization === this._getAuthHeaders().Authorization) this.error = err.message || 'Failed to upload receipt'
                 console.error('Error uploading receipt:', err)
                 return null
             } finally {

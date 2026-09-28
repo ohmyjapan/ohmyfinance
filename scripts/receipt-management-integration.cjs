@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createRequire } = require('node:module');
-module.exports = async ({ db, call, token, other, origin, root, pass }) => {
+module.exports = async ({ db, call, token, other, origin, root, directory, pass }) => {
   const req = createRequire(path.join(root, 'package.json'));
   const group=await require('./helpers/group-session.cjs')(call,token,'Synthetic receipt management group');
   const foreign=await require('./helpers/group-session.cjs')(call,other,'Synthetic receipt management foreign group');
@@ -95,26 +95,26 @@ module.exports = async ({ db, call, token, other, origin, root, pass }) => {
 
   const savedPaths = [];
   try {
-    const form = new FormData(); form.append('file', new Blob(['Synthetic receipt document'], { type: 'application/pdf' }), 'synthetic.pdf');
+    const form = new FormData(); form.append('file', new Blob(['%PDF-1.7\nSynthetic receipt document'], { type: 'application/pdf' }), 'synthetic.pdf');
     const uploaded = await store.uploadReceipt(form);
     assert.equal(store.error, null); assert(uploaded, 'Receipt store upload must return a receipt');
     assert.equal(store.receipts[0].id, uploaded.id);
     const stored = await db.collection('receipts').findOne({ filename: uploaded.filename });
-    assert(stored); const savedPath = stored.filePath; savedPaths.push(savedPath);
+    assert(stored); const savedPath = path.join(directory, 'receipts', String(stored.organizationId), stored.fileHash); savedPaths.push(savedPath);
     assert.equal(String(stored.uploadedBy), owner); assert.equal(stored.amount, null); assert.equal(stored.merchant, null);
     assert.equal(uploaded.id, String(stored._id)); assert.equal(uploaded.uploadDate, stored.uploadDate.toISOString());
-    assert.equal(await fs.readFile(savedPath, 'utf8'), 'Synthetic receipt document');
+    assert.equal(await fs.readFile(savedPath, 'utf8'), '%PDF-1.7\nSynthetic receipt document');
     await store.fetchReceiptById(uploaded.id);
     assert.equal(await store.deleteReceipt(uploaded.id), true);
     assert.equal(store.currentReceipt, null); assert(!store.receipts.some(r => r.id === uploaded.id));
-    assert.equal(await fs.readFile(savedPath, 'utf8'), 'Synthetic receipt document');
-    const concurrent = await Promise.all(['First simultaneous original', 'Second simultaneous original'].map(async text => {
+    assert.equal(await fs.readFile(savedPath, 'utf8'), '%PDF-1.7\nSynthetic receipt document');
+    const concurrent = await Promise.all(['%PDF-1.7\nFirst simultaneous original', '%PDF-1.7\nSecond simultaneous original'].map(async text => {
       const form = new FormData(); form.append('file', new Blob([text], { type: 'application/pdf' }), 'same-name.pdf');
       const response = await fetch(origin + '/api/receipts/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form, signal: AbortSignal.timeout(20000) });
       const result = await response.json();
       if (result.receipt) {
         const row = await db.collection('receipts').findOne({ filename: result.receipt.filename });
-        if (row?.filePath) savedPaths.push(row.filePath);
+        if (row?.fileHash) savedPaths.push(path.join(directory, 'receipts', String(row.organizationId), row.fileHash));
       }
       return { status: response.status, result, text };
     }));
@@ -122,12 +122,12 @@ module.exports = async ({ db, call, token, other, origin, root, pass }) => {
     assert.notEqual(concurrent[0].result.receipt.filename, concurrent[1].result.receipt.filename);
     for (const r of concurrent) {
       const row = await db.collection('receipts').findOne({ filename: r.result.receipt.filename });
-      assert.equal(await fs.readFile(row.filePath, 'utf8'), r.text);
+      assert.equal(await fs.readFile(path.join(directory, 'receipts', String(row.organizationId), row.fileHash), 'utf8'), r.text);
     }
     pass('the real Pinia receipt store lists, edits, uploads and deletes correctly; originals are retained');
   } finally {
     for (const savedPath of new Set(savedPaths)) {
-      const allowed = path.resolve(root, 'server/data/receipts') + path.sep;
+      const allowed = path.resolve(directory, 'receipts') + path.sep;
       assert(path.resolve(savedPath).startsWith(allowed));
       await fs.unlink(savedPath);
     }

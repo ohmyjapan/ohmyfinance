@@ -7,46 +7,46 @@
         <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('receiptUpload.description') }}</p>
       </div>
       <NuxtLink
-        to="/receipts"
+        :to="targetTransactionId ? '/transactions/' + targetTransactionId : '/receipts'"
         class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl hover:bg-gray-50 dark:hover:bg-white/[0.07] transition-all"
       >
         <FileText class="w-4 h-4" />
-        {{ t('receiptUpload.viewAll') }}
+        {{ targetTransactionId ? t('receiptUpload.backToTransaction') : t('receiptUpload.viewAll') }}
       </NuxtLink>
     </header>
 
     <!-- Stats Row -->
     <div class="grid grid-cols-3 gap-4">
-      <div class="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-        <div class="flex items-center gap-4">
-          <div class="w-12 h-12 rounded-xl bg-primary-main/10 dark:bg-primary-main/20 flex items-center justify-center flex-shrink-0">
+      <div class="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-3 sm:p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+        <div class="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-center sm:text-left">
+          <div class="w-12 h-12 rounded-xl bg-primary-main/10 dark:bg-primary-main/20 hidden sm:flex items-center justify-center flex-shrink-0">
             <FileText class="w-6 h-6 text-primary-main" />
           </div>
           <div>
             <p class="text-3xl font-bold font-mono text-gray-900 dark:text-white">{{ receiptStats.total }}</p>
-            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('receiptUpload.totalReceipts') }}</p>
+            <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400">{{ t('receiptUpload.totalReceipts') }}</p>
           </div>
         </div>
       </div>
-      <div class="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-        <div class="flex items-center gap-4">
-          <div class="w-12 h-12 rounded-xl bg-green-500/10 dark:bg-green-500/20 flex items-center justify-center flex-shrink-0">
+      <div class="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-3 sm:p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+        <div class="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-center sm:text-left">
+          <div class="w-12 h-12 rounded-xl bg-green-500/10 dark:bg-green-500/20 hidden sm:flex items-center justify-center flex-shrink-0">
             <CheckCircle class="w-6 h-6 text-green-500" />
           </div>
           <div>
             <p class="text-3xl font-bold font-mono text-gray-900 dark:text-white">{{ receiptStats.matched }}</p>
-            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('receiptUpload.matched') }}</p>
+            <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400">{{ t('receiptUpload.matched') }}</p>
           </div>
         </div>
       </div>
-      <div class="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-        <div class="flex items-center gap-4">
-          <div class="w-12 h-12 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+      <div class="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 backdrop-blur-sm p-3 sm:p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+        <div class="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-center sm:text-left">
+          <div class="w-12 h-12 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 hidden sm:flex items-center justify-center flex-shrink-0">
             <AlertTriangle class="w-6 h-6 text-amber-500" />
           </div>
           <div>
             <p class="text-3xl font-bold font-mono text-gray-900 dark:text-white">{{ receiptStats.unmatched }}</p>
-            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('receiptUpload.unmatched') }}</p>
+            <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400">{{ t('receiptUpload.unmatched') }}</p>
           </div>
         </div>
       </div>
@@ -213,7 +213,7 @@
           </div>
           <button
             @click="isFilterOpen = !isFilterOpen"
-            class="inline-flex items-center gap-2 px-3 py-2 text-sm border rounded-xl transition-all touch-manipulation"
+            class="inline-flex shrink-0 whitespace-nowrap items-center gap-2 px-3 py-2 text-sm border rounded-xl transition-all touch-manipulation"
             :class="isFilterOpen
               ? 'border-primary-main text-primary-main bg-primary-main/5 dark:bg-primary-main/10'
               : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.07]'"
@@ -253,6 +253,7 @@
         </div>
       </div>
 
+      <p v-if="downloadError" role="alert" class="px-6 py-3 text-sm text-red-600">{{ downloadError }}</p>
       <!-- Table -->
       <ReceiptTable
         :receipts="filteredReceipts"
@@ -307,16 +308,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import {
   Upload, FileText, Camera, CheckCircle, AlertTriangle, AlertCircle,
   Loader2, X, Plus, Check, Search, SlidersHorizontal, History,
   ChevronLeft, ChevronRight, Focus, DollarSign, Calendar, Sparkles
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { useReceiptFiles } from '~/composables/useReceiptFiles'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
+const route = useRoute()
+const targetTransactionId = computed(() => typeof route.query.transactionId === 'string' ? route.query.transactionId : '')
+const { downloadReceipt, downloadError } = useReceiptFiles()
+let requestVersion = 0, mounted = false
 
 // Auth headers
 const getAuthHeaders = () => userStore.authHeader
@@ -335,7 +341,7 @@ const uploadProgress = ref(0)
 const uploadingFileName = ref('')
 const isDragging = ref(false)
 const errorMessage = ref('')
-const uploadedFiles = ref<Array<{ name: string; size: number; preview: string | null; uploaded: boolean; file: File }>>([])
+const uploadedFiles = ref<Array<{ receiptId: string; name: string; size: number; preview: string | null; uploaded: boolean; file: File }>>([])
 const filters = ref({ status: '', dateRange: '' })
 const currentPage = ref(1)
 const itemsPerPage = ref(10)
@@ -380,78 +386,44 @@ const handleDrop = (event: DragEvent) => {
 
 // Process & upload files
 const processFiles = async (files: File[]) => {
+  if (isUploading.value) return
   errorMessage.value = ''
-  const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/webp']
-  const maxSize = 10 * 1024 * 1024
-
-  const invalid = files.filter(f => !validTypes.includes(f.type))
-  if (invalid.length) {
-    errorMessage.value = t('receiptUpload.invalidFileError')
-    return
-  }
-
-  const oversized = files.filter(f => f.size > maxSize)
-  if (oversized.length) {
-    errorMessage.value = t('receiptUpload.fileTooLarge')
-    return
-  }
-
-  // Upload each file
-  for (const file of files) {
-    isUploading.value = true
-    uploadProgress.value = 0
-    uploadingFileName.value = file.name
-
-    // Create preview
-    const preview = file.type.startsWith('image/')
-      ? URL.createObjectURL(file)
-      : null
-
-    try {
-      // Simulate progress
-      const progressInterval = setInterval(() => {
-        if (uploadProgress.value < 90) {
-          uploadProgress.value += Math.random() * 15
+  const version = requestVersion, target = targetTransactionId.value, headers = getAuthHeaders()
+  if (target && files.length !== 1) { errorMessage.value = t('receiptUpload.singleReceipt'); return }
+  if (files.some(f => f.size > 10 * 1024 * 1024)) { errorMessage.value = t('receiptUpload.fileTooLarge'); return }
+  isUploading.value = true
+  try {
+    for (const file of files) {
+      if (version !== requestVersion) return
+      uploadProgress.value = 0; uploadingFileName.value = file.name
+      let saved = false
+      try {
+        const formData = new FormData(); formData.append('file', file)
+        const result = await $fetch<any>('/api/receipts/upload', { method: 'POST', body: formData, headers })
+        if (version !== requestVersion) return
+        saved = true
+        const id = result.receipt.id
+        const updateList = (receipt: any) => {
+          const index = receipts.value.findIndex(r => r.id === receipt.id)
+          if (index < 0) receipts.value.unshift(receipt)
+          else receipts.value[index] = receipt
+          receiptStats.value = { total: receipts.value.length, matched: receipts.value.filter(r => r.status === 'matched').length, unmatched: receipts.value.filter(r => r.status !== 'matched').length }
         }
-      }, 200)
-
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const result = await $fetch<any>('/api/receipts/upload', {
-        method: 'POST',
-        body: formData,
-        headers: getAuthHeaders()
-      })
-
-      clearInterval(progressInterval)
-      uploadProgress.value = 100
-
-      // Add to uploaded files
-      uploadedFiles.value.push({
-        name: file.name,
-        size: file.size,
-        preview,
-        uploaded: true,
-        file
-      })
-
-      if (result?.receipt) {
-        receipts.value.unshift(result.receipt)
-        receiptStats.value.total++
-        receiptStats.value.unmatched++
+        updateList(result.receipt)
+        if (!uploadedFiles.value.some(r => r.receiptId === id)) uploadedFiles.value.push({ receiptId: id, name: file.name, size: file.size, preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null, uploaded: true, file })
+        if (target && result.receipt.transactionId !== target) {
+          const matched = await $fetch<any>('/api/transactions/' + target + '/receipt', { method: 'PUT', body: { receiptId: id, linkVersion: result.receipt.linkVersion ?? 0 }, headers })
+          if (version !== requestVersion) return
+          updateList(matched.receipt)
+        }
+        uploadProgress.value = 100
+      } catch {
+        if (version === requestVersion) errorMessage.value = t(saved ? 'receiptUpload.linkError' : 'receiptUpload.uploadError')
       }
-
-      // Brief pause to show 100%
-      await new Promise(r => setTimeout(r, 300))
-    } catch (error) {
-      console.error('Upload failed:', error)
-      errorMessage.value = t('receiptUpload.uploadError')
     }
+  } finally {
+    if (version === requestVersion) { isUploading.value = false; uploadProgress.value = 0 }
   }
-
-  isUploading.value = false
-  uploadProgress.value = 0
 }
 
 // Remove file from preview
@@ -468,11 +440,13 @@ const addMoreFiles = () => {
 
 // Load receipts from API
 const loadReceipts = async () => {
+  const version = requestVersion
   isLoading.value = true
   try {
     const response = await $fetch<any>('/api/receipts', {
       headers: getAuthHeaders()
     })
+    if (version !== requestVersion) return
     const data = Array.isArray(response) ? response : (response?.receipts || [])
     receipts.value = data
 
@@ -483,13 +457,21 @@ const loadReceipts = async () => {
     }
   } catch (error) {
     console.error('Failed to load receipts:', error)
-    receipts.value = []
+    if (version === requestVersion) receipts.value = []
   } finally {
-    isLoading.value = false
+    if (version === requestVersion) isLoading.value = false
   }
 }
 
-onMounted(() => loadReceipts())
+const clearContext = () => {
+  requestVersion++
+  for (const file of uploadedFiles.value) if (file.preview) URL.revokeObjectURL(file.preview)
+  uploadedFiles.value = []; receipts.value = []; receiptStats.value = { total: 0, matched: 0, unmatched: 0 }
+  isUploading.value = false; isLoading.value = false; errorMessage.value = ''; showMatchDialog.value = false; selectedReceipt.value = null
+}
+onMounted(() => { mounted = true; return loadReceipts() })
+watch([() => userStore.authHeader.Authorization, targetTransactionId], () => { clearContext(); if (mounted) void loadReceipts() }, { flush: 'sync' })
+onBeforeUnmount(() => { mounted = false; clearContext() })
 
 // Filtered receipts
 const filteredReceipts = computed(() => {
@@ -531,7 +513,10 @@ const resetFilters = () => {
 }
 
 // Receipt actions
-const viewReceipt = (id: string) => navigateTo(`/receipts/${id}`)
+const viewReceipt = (id: string) => {
+  const receipt = receipts.value.find(r => r.id === id)
+  return downloadReceipt(id, receipt?.originalFilename || receipt?.filename || 'receipt')
+}
 
 const openMatchDialog = (id: string) => {
   const receipt = receipts.value.find(r => r.id === id)
