@@ -33,6 +33,7 @@ export interface IAttachment {
 
 // Main transaction interface (OMF style - Japanese accounting)
 export interface ITransaction extends Document {
+  organizationId?: mongoose.Types.ObjectId
   referenceNumber?: string
   date: Date
   amount: number
@@ -102,6 +103,7 @@ const AttachmentSchema = new Schema<IAttachment>({
 
 // Main transaction schema (OMF style - Japanese accounting)
 const TransactionSchema = new Schema<ITransaction>({
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', index: true },
   referenceNumber: { type: String, index: true },
   date: { type: Date, required: true, index: true },
   amount: { type: Number, required: true },

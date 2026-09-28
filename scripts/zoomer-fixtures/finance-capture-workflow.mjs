@@ -80,6 +80,11 @@ export default {
     'scripts/group-switch.test.cjs',
     'scripts/organization-page.test.cjs',
     'scripts/group-switch-integration.cjs',
+    'server/services/ledgerAccessService.ts',
+    'server/api/receipts/[id]/pdf.ts',
+    'scripts/helpers/group-session.cjs',
+    'scripts/receipt-groups.test.cjs',
+    'scripts/receipt-groups-integration.cjs',
     'scripts/finance-sheet-export.test.mjs',
     'scripts/finance-sheet-continuation.test.mjs',
     'scripts/finance-search-evidence.test.mjs',
@@ -133,13 +138,14 @@ export default {
       'scripts/auth-regression.test.cjs',
       'scripts/group-switch.test.cjs',
       'scripts/organization-page.test.cjs',
+      'scripts/receipt-groups.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 122 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 128 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -206,7 +212,15 @@ export default {
       logs.push('The isolated group switch suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks, ${candidateChecks} receipt candidate checks and ${groupChecks} group switch checks against freshly built source.`);
+    delete env.OMF_TEST_GROUP_SWITCH_ONLY;
+    env.OMF_TEST_RECEIPT_GROUPS_ONLY = '1';
+    const receiptGroups = stage('isolated receipt group integration', ['scripts/finance-integration.cjs']);
+    const receiptGroupChecks = Number(receiptGroups.output.match(/^(\d+) targeted receipt group checks passed\s*$/m)?.[1]);
+    if (!receiptGroups.ok || !(receiptGroupChecks >= 11)) {
+      logs.push('The isolated receipt group suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks, ${candidateChecks} receipt candidate checks, ${groupChecks} group switch checks and ${receiptGroupChecks} receipt group checks against freshly built source.`);
     return result(true);
   },
 };

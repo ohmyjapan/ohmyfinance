@@ -5,10 +5,10 @@ import { join, extname } from 'path'
 import { randomUUID } from 'node:crypto'
 import { createReceipt } from '../../services/receiptManagementService'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 export default defineEventHandler(async (event) => {
-  const auth = requireAuth(event)
+  const auth = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,
@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
     const size = file.data.length
 
     // Create receipt record in database
-    const receipt = await createReceipt(auth.userId, {
+    const receipt = await createReceipt(auth, {
       filename,
       originalFilename: file.filename || filename,
       size,

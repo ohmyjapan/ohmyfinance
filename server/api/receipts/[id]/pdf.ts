@@ -2,7 +2,7 @@
 import { defineEventHandler, setHeader, createError } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import Transaction from '../../../models/Transaction'
-import { requireAuth } from '../../../middleware/auth'
+import { requireLedgerAccess } from '../../../services/ledgerAccessService'
 
 /**
  * GET /api/receipts/:id/pdf
@@ -15,7 +15,7 @@ import { requireAuth } from '../../../middleware/auth'
  * - pdf-lib
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const auth = await requireLedgerAccess(event)
   const id = event.context.params?.id
 
   if (!id) {
@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
   try {
     await ensureConnection()
 
-    const transaction = await Transaction.findById(id).lean()
+    const transaction = await Transaction.findOne({ _id: id, organizationId: auth.organizationId }).lean()
     if (!transaction) {
       throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
     }

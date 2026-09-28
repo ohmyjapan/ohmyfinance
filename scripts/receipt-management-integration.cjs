@@ -4,6 +4,9 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 module.exports = async ({ db, call, token, other, origin, root, pass }) => {
   const req = createRequire(path.join(root, 'package.json'));
+  const group=await require('./helpers/group-session.cjs')(call,token,'Synthetic receipt management group');
+  const foreign=await require('./helpers/group-session.cjs')(call,other,'Synthetic receipt management foreign group');
+  token=group.token;other=foreign.token;
   const owner = JSON.parse(Buffer.from(token.split('.')[1], 'base64url')).userId;
   const stranger = JSON.parse(Buffer.from(other.split('.')[1], 'base64url')).userId;
   await db.collection('transactions').insertOne({ referenceNumber: 'SYNTHETIC-PROTECTED', date: new Date('2030-01-01'), amount: 987654, type: 'expense', status: 'completed', cardAccounting: { test: 'preserve' }, timeline: [] });
@@ -17,7 +20,7 @@ module.exports = async ({ db, call, token, other, origin, root, pass }) => {
   assert.equal(a.uploadedBy, owner); assert.equal(b.uploadedBy, stranger);
   assert.equal(typeof a.id, 'string'); assert.equal(a._id, a.id);
   assert.equal(new Date(a.uploadDate).toISOString(), a.uploadDate);
-  pass('normal logins create receipts without an organization; uploader comes from the session');
+  pass('selected groups own new receipts; uploader comes from the session');
 
   for (const [route, method] of [['/api/receipts', 'GET'], ['/api/receipts?stats=true', 'GET'], ['/api/receipts/export', 'GET'], ['/api/receipts/' + a.id, 'GET'], ['/api/receipts/' + a.id, 'PATCH'], ['/api/receipts/' + a.id, 'DELETE'], ['/api/receipts/upload', 'POST']]) {
     assert.equal((await call(route, { method, ...(method === 'PATCH' ? { body: { notes: 'No access' } } : {}) })).status, 401, route + ' ' + method);
@@ -44,7 +47,7 @@ module.exports = async ({ db, call, token, other, origin, root, pass }) => {
   const store = module.exports.useReceiptStore();
   await store.fetchReceipts(); assert.equal(store.error, null);
   assert.deepEqual(store.receipts.map(r => r.id), [a.id]);
-  pass('list, statistics and export include only the uploading user receipts');
+  pass('list, statistics and export include only receipts in the selected group');
 
   const route = '/api/receipts/' + a.id;
   assert.equal((await call(route, { token })).data.id, a.id);
@@ -74,7 +77,7 @@ module.exports = async ({ db, call, token, other, origin, root, pass }) => {
   const auto = await call('/api/receipts/auto-match', { token: other, method: 'POST', body: {} });
   assert.equal(auto.status, 200, JSON.stringify(auto.data)); assert.equal(auto.data.processed, 1);
   assert.equal((await call(route, { token })).data.notes, 'Verified edit');
-  pass('another user cannot read, edit, delete or start matching this receipt; auto-match input is scoped');
+  pass('another group cannot read, edit, delete or start matching this receipt; auto-match input is scoped');
 
   assert.equal((await call('/api/receipts/not-an-object-id', { token })).status, 400);
   assert.equal((await call(route, { token, method: 'PUT', body: {} })).status, 405);
@@ -88,7 +91,7 @@ module.exports = async ({ db, call, token, other, origin, root, pass }) => {
   assert.deepEqual(deletes.map(r => r.status).sort(), [200, 404]);
   assert.equal((await call(route, { token })).status, 404);
   assert.equal((await call('/api/receipts/' + b.id, { token: other })).status, 200);
-  pass('DELETE removes exactly the owned record and retry cannot remove another record');
+  pass('DELETE removes exactly the selected group record and retry cannot remove another record');
 
   const savedPaths = [];
   try {

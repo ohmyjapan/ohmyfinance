@@ -1,5 +1,7 @@
 // server/services/receiptService.ts
 import Receipt from '../models/Receipt'
+import { createError } from 'h3'
+import type { LedgerAccess } from './ledgerAccessService'
 import Transaction from '../models/Transaction'
 import type { IReceipt } from '../models/Receipt'
 import type { ITransaction } from '../models/Transaction'
@@ -171,18 +173,19 @@ export async function deleteReceipt(id: string) {
 type CandidateTransaction = Pick<ITransaction, 'date' | 'amount' | 'companyInfo' | 'notes' | 'referenceNumber' | 'metadata' | 'type' | 'status'> & { _id: Types.ObjectId }
 
 /** Rank the entire search window before limiting the display to ten results. */
-export async function findMatchesForReceipt(receiptId: string) {
+export async function findMatchesForReceipt(access: LedgerAccess, receiptId: string) {
   await ensureConnection()
-  const receipt = await Receipt.findById(receiptId).lean()
-  if (!receipt) throw new Error(`Receipt ${receiptId} not found`)
+  const receipt = await Receipt.findOne({ _id: receiptId, organizationId: access.organizationId }).lean()
+  if (!receipt) throw createError({ statusCode: 404, statusMessage: 'Receipt not found' })
   const window = receiptCandidateWindow(receipt)
   if (!Object.keys(window).length) return []
 
   // Either recorded side of an existing link excludes a candidate. This is a
   // read-time exclusion, not a reservation or a repair of old attachment writes.
-  const linkedIds = await Receipt.distinct('transactionId', { transactionId: { $ne: null } })
+  const linkedIds = await Receipt.distinct('transactionId', { organizationId: access.organizationId, transactionId: { $ne: null } })
   const cursor = Transaction.find({
     ...window,
+    organizationId: access.organizationId,
     hasReceipt: { $ne: true },
     receiptFilePath: { $in: [null, ''] },
     _id: { $nin: linkedIds }
@@ -214,11 +217,11 @@ export async function findMatchesForReceipt(receiptId: string) {
 /**
  * Auto-match unmatched receipts with high-confidence transactions
  */
-export async function autoMatchReceipts(ownerId: string, minConfidence: number = 85) {
+export async function autoMatchReceipts(access: LedgerAccess, minConfidence: number = 85) {
   await ensureConnection()
   try {
     // Find all unmatched receipts
-    const unmatchedReceipts = await Receipt.find({ status: 'unmatched', uploadedBy: ownerId }).lean()
+    const unmatchedReceipts = await Receipt.find({ status: 'unmatched', organizationId: access.organizationId }).lean()
 
     const results = {
       processed: 0,
@@ -231,14 +234,14 @@ export async function autoMatchReceipts(ownerId: string, minConfidence: number =
       results.processed++
 
       try {
-        const matches = await findMatchesForReceipt(receipt._id.toString())
+        const matches = await findMatchesForReceipt(access, receipt._id.toString())
 
         // Only auto-match if there's exactly one high-confidence match
         const highConfidenceMatches = matches.filter(m => m.confidence >= minConfidence)
 
         if (highConfidenceMatches.length === 1 && highConfidenceMatches[0].autoMatchEligible) {
           const match = highConfidenceMatches[0]
-          await matchReceiptWithTransaction(receipt._id.toString(), match.transactionId)
+          await matchReceiptWithTransaction(access, receipt._id.toString(), match.transactionId)
           results.matched++
           results.matches.push({
             receiptId: receipt._id.toString(),
@@ -264,17 +267,17 @@ export async function autoMatchReceipts(ownerId: string, minConfidence: number =
 /**
  * Match a receipt with a transaction
  */
-export async function matchReceiptWithTransaction(receiptId: string, transactionId: string) {
+export async function matchReceiptWithTransaction(access: LedgerAccess, receiptId: string, transactionId: string) {
   await ensureConnection()
   try {
-    const receipt = await Receipt.findById(receiptId)
+    const receipt = await Receipt.findOne({ _id: receiptId, organizationId: access.organizationId })
     if (!receipt) {
-      throw new Error(`Receipt ${receiptId} not found`)
+      throw createError({ statusCode: 404, statusMessage: 'Receipt not found' })
     }
 
-    const transaction = await Transaction.findById(transactionId)
+    const transaction = await Transaction.findOne({ _id: transactionId, organizationId: access.organizationId })
     if (!transaction) {
-      throw new Error(`Transaction ${transactionId} not found`)
+      throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
     }
 
     // Update receipt
@@ -283,7 +286,7 @@ export async function matchReceiptWithTransaction(receiptId: string, transaction
     await receipt.save()
 
     // Update transaction with receipt data
-    await Transaction.findByIdAndUpdate(transactionId, {
+    await Transaction.findOneAndUpdate({ _id: transactionId, organizationId: access.organizationId }, {
       receipt: {
         receiptId: receipt._id,
         filename: receipt.originalFilename || receipt.filename,
@@ -308,7 +311,7 @@ export async function matchReceiptWithTransaction(receiptId: string, transaction
 
     return {
       receipt: receipt.toObject(),
-      transaction: await Transaction.findById(transactionId).lean()
+      transaction: await Transaction.findOne({ _id: transactionId, organizationId: access.organizationId }).lean()
     }
   } catch (error) {
     console.error(`Failed to match receipt ${receiptId} with transaction ${transactionId}:`, error)
@@ -319,12 +322,12 @@ export async function matchReceiptWithTransaction(receiptId: string, transaction
 /**
  * Unmatch a receipt from a transaction
  */
-export async function unmatchReceipt(receiptId: string) {
+export async function unmatchReceipt(access: LedgerAccess, receiptId: string) {
   await ensureConnection()
   try {
-    const receipt = await Receipt.findById(receiptId)
+    const receipt = await Receipt.findOne({ _id: receiptId, organizationId: access.organizationId })
     if (!receipt) {
-      throw new Error(`Receipt ${receiptId} not found`)
+      throw createError({ statusCode: 404, statusMessage: 'Receipt not found' })
     }
 
     if (receipt.status !== 'matched' || !receipt.transactionId) {
@@ -332,6 +335,9 @@ export async function unmatchReceipt(receiptId: string) {
     }
 
     const transactionId = receipt.transactionId
+    if (!await Transaction.exists({ _id: transactionId, organizationId: access.organizationId })) {
+      throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
+    }
 
     // Update receipt
     receipt.status = 'unmatched'
@@ -339,7 +345,7 @@ export async function unmatchReceipt(receiptId: string) {
     await receipt.save()
 
     // Update transaction
-    await Transaction.findByIdAndUpdate(transactionId, {
+    await Transaction.findOneAndUpdate({ _id: transactionId, organizationId: access.organizationId }, {
       receipt: null,
       $push: {
         timeline: {

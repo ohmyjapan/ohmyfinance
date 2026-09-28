@@ -18,6 +18,7 @@ export type ReceiptCategory =
  * Base receipt interface
  */
 export interface Receipt {
+    organizationId?: string
     _id?: string
     originalFilename?: string
     mimeType?: string

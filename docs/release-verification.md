@@ -5,13 +5,13 @@ capture/workflow tests to OhMyCode's project fixture convention. It exports the
 standard name, explicit source coverage and run result; no hub gate changes are
 required.
 
-The fixture runs eighteen Node test suites, including assistant page selection,
+The fixture runs nineteen Node test suites, including assistant page selection,
 purchase investigation evidence, upload/API error handling and CSV module
 compatibility and unsupported-provider behavior, builds the current Nuxt
 source, then runs `scripts/finance-integration.cjs` with only
 `OMF_TEST_WORKFLOW_ONLY=1` and `scripts/auth-integration.cjs` without its optional
 browser flag. It then selects `OMF_TEST_RECEIPTS_ONLY=1` for a separate disposable
-receipt-management replay covering creation without an organization, ownership,
+receipt-management replay covering creation in a selected organization, provenance,
 metadata editing, concurrent requests, deletion, upload and original-file retention.
 Finally `OMF_TEST_PROXY_ONLY=1` verifies explicit 501 responses, authentication,
 concurrent requests/retries, ledger preservation and unaffected finance routes.
@@ -29,7 +29,7 @@ bookkeeping status only; it does not call a payment provider or alter the amount
 Status edits retain the existing transaction API's access policy. Ledger ownership
 and receipt attachment persistence are separate pending work.
 `OMF_TEST_RECEIPT_CANDIDATES_ONLY=1` exercises persisted candidate ranking,
-receipt ownership, repeated reads and automatic no-write decisions for weak or
+receipt group membership, repeated reads and automatic no-write decisions for weak or
 ambiguous evidence. Scores use actual merchant/statement text, JPY calendar dates,
 amount and recorded currency. They are rule scores, not calibrated probabilities.
 The service considers the entire date/amount window before returning ten results;
@@ -56,6 +56,21 @@ yet add group predicates to ledger or receipt APIs. Browser visual review,
 localStorage quota/crash recovery and production observation of the new behavior
 remain outside this fixture; these checks do not establish a production reliability
 rate or replace independent review of the new response/race guards.
+`OMF_TEST_RECEIPT_GROUPS_ONLY=1` exercises current company membership on the
+persisted receipt routes. Owner/admin/member writes and viewer reads use the
+current membership, including after demotion/removal with an older token.
+List/detail/stats/export/upload and metadata edits use organization predicates;
+uploadedBy remains provenance. Suggestions, manual match/unmatch lookups and the
+transaction-backed receipt HTML preview exclude foreign and unassigned transactions.
+Group identifiers cannot be assigned through receipt metadata. Unit tests include
+membership database failure, concurrent edits/deletion and reconnect.
+This is a partial access conversion: general transaction APIs, attachments,
+backup/restore and other direct readers/writers remain pending. In particular,
+transaction group assignment and immutability across every write path still need
+enforcement; adding the model field does not complete them. Existing records need
+a reviewed migration. The legacy simulated matcher/OCR and canonical recoverable
+attachment writer also remain release blockers. A passing receipt boundary test
+does not establish whole-ledger isolation or a working original-file download.
 The authentication suite checks registration, access tokens, 2FA,
 trusted devices, backup codes, PIN/password renewal, restart recovery, invitations
 and logout. Each integration creates its own disposable MongoDB. The workflow
@@ -64,10 +79,10 @@ an available loopback port.
 It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
-A failed command, missing test summary, fewer than the existing 122 unit/service/component tests,
+A failed command, missing test summary, fewer than the existing 128 unit/service/component tests,
 18 workflow checks, 10 authentication checks, 11 receipt management checks or
 6 proxy checks, 8 shipment status checks, 7 transaction status checks or
-8 receipt candidate checks, 10 group switch checks, or skipped unit test is a
+8 receipt candidate checks, 10 group switch checks, 11 receipt group checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.
 The verifier owns the 15-minute fixture timeout and process-tree cleanup. A fresh

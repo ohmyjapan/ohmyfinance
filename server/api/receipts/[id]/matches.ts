@@ -2,14 +2,14 @@
 import { defineEventHandler, createError } from 'h3'
 import { findMatchesForReceipt } from '../../../services/receiptService'
 import { getReceiptById } from '../../../services/receiptManagementService'
-import { requireAuth } from '../../../middleware/auth'
+import { requireLedgerAccess } from '../../../services/ledgerAccessService'
 
 /**
  * GET /api/receipts/:id/matches
  * Find potential transaction matches for a receipt
  */
 export default defineEventHandler(async (event) => {
-  const auth = requireAuth(event)
+  const auth = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const id = event.context.params?.id
 
   if (!id) {
@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Verify receipt exists
-    const receipt = await getReceiptById(auth.userId, id)
+    const receipt = await getReceiptById(auth, id)
     if (!receipt) {
       throw createError({
         statusCode: 404,
@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
     }
 
     // Find potential matches
-    const matches = await findMatchesForReceipt(id)
+    const matches = await findMatchesForReceipt(auth, id)
 
     return {
       success: true,

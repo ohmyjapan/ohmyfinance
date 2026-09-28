@@ -1,12 +1,15 @@
 const assert = require('node:assert/strict');
 const {ObjectId} = require('mongodb');
 module.exports = async ({db,call,token,other,pass}) => {
+  const group=await require('./helpers/group-session.cjs')(call,token,'Synthetic candidate group');
+  const foreign=await require('./helpers/group-session.cjs')(call,other,'Synthetic candidate foreign group');
+  token=group.token;other=foreign.token;
   const create = async extra => {
     const response=await call('/api/receipts',{method:'POST',token,body:{filename:'synthetic-'+new ObjectId()+'.pdf',originalFilename:'synthetic.pdf',size:1,amount:67000,receiptDate:'2026-09-22',merchant:'東京書店',currency:'JPY',...extra}});
     assert.equal(response.status,200,JSON.stringify(response));return response.data;
   };
   const receipt=await create({}),route='/api/receipts/'+receipt.id+'/matches';
-  const base={amount:67000,date:new Date('2026-09-22'),companyInfo:'東京書店',type:'支出',status:'completed',metadata:{currency:'JPY'},hasReceipt:false,timeline:[]};
+  const base={organizationId:new ObjectId(group.organizationId),amount:67000,date:new Date('2026-09-22'),companyInfo:'東京書店',type:'支出',status:'completed',metadata:{currency:'JPY'},hasReceipt:false,timeline:[]};
   const id=new ObjectId(),blocked=new ObjectId(),claimed=new ObjectId();
   await db.collection('transactions').insertMany([
     {...base,_id:id,referenceNumber:'SYNTHETIC-EXACT'},
@@ -21,7 +24,7 @@ module.exports = async ({db,call,token,other,pass}) => {
   const receipts=await db.collection('receipts').find({}).toArray();
   assert.equal((await call(route)).status,401);
   assert.equal((await call(route,{token:other})).status,404);
-  pass('candidate HTTP reads require login and receipt ownership');
+  pass('candidate HTTP reads require login and receipt group membership');
 
   const response=await call(route,{token});assert.equal(response.status,200,JSON.stringify(response));
   assert.equal(response.data.matches[0].transactionId,String(id));

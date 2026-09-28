@@ -11,8 +11,9 @@ function load(file, imports = {}) {
   return module.exports;
 }
 const scoring = load('server/utils/receiptMatching.ts');
-const receipt = {amount:67000,receiptDate:'2026-09-22',merchant:'東京書店',currency:'JPY'};
-const transaction = {amount:67000,date:'2026-09-22',companyInfo:'東京書店',metadata:{currency:'JPY'},type:'支出',status:'completed'};
+const organizationId=new mongoose.Types.ObjectId(),access={organizationId:String(organizationId),userId:String(new mongoose.Types.ObjectId()),role:'member'};
+const receipt = {organizationId,amount:67000,receiptDate:'2026-09-22',merchant:'東京書店',currency:'JPY'};
+const transaction = {organizationId,amount:67000,date:'2026-09-22',companyInfo:'東京書店',metadata:{currency:'JPY'},type:'支出',status:'completed'};
 const score = (r = {}, t = {}) => scoring.calculateMatchConfidence({...receipt,...r},{...transaction,...t});
 let mongo, Receipt, Transaction, service;
 before(async()=>{
@@ -22,7 +23,7 @@ before(async()=>{
   const receipts = load('server/models/Receipt.ts',{mongoose}),transactions=load('server/models/Transaction.ts',{mongoose});
   Receipt=receipts.default;Transaction=transactions.default;
   service=load('server/services/receiptService.ts',{
-    '../models/Receipt':receipts,'../models/Transaction':transactions,'../utils/receiptMatching':scoring,
+    'h3':require('h3'),'../models/Receipt':receipts,'../models/Transaction':transactions,'../utils/receiptMatching':scoring,
     '../config/database':{ensureConnection:async()=>assert.equal(mongoose.connection.name,'receipt_candidates_regression')}
   });
 });
@@ -70,7 +71,7 @@ test('stored candidates expose actual references/currency and rank an older exac
   await Transaction.insertMany(Array.from({length:25},(_,i)=>({...transaction,date:new Date('2026-09-23'),amount:67001+i,companyInfo:'大阪衣料'})));
   const exact=await Transaction.create({...transaction,referenceNumber:'SYNTHETIC-EXACT'});
   const before=await Transaction.find({}).lean();
-  const matches=await service.findMatchesForReceipt(String(r._id));
+  const matches=await service.findMatchesForReceipt(access, String(r._id));
   assert.equal(matches.length,10);assert.equal(matches[0].transactionId,String(exact._id));
   assert.equal(matches[0].reference,'SYNTHETIC-EXACT');assert.equal(matches[0].currency,'JPY');assert.equal(matches[0].description,'東京書店');
   assert.equal(matches[0].autoMatchEligible,true);assert.deepEqual(await Transaction.find({}).lean(),before);
@@ -82,37 +83,37 @@ test('either stored receipt fields or an existing reciprocal receipt claim exclu
   await Transaction.create({...transaction,hasReceipt:true});
   await Transaction.create({...transaction,receiptFilePath:'/synthetic/original.pdf'});
   const free=await Transaction.create(transaction);
-  const result=await service.findMatchesForReceipt(String(r._id));assert.deepEqual(result.map(m=>m.transactionId),[String(free._id)]);
+  const result=await service.findMatchesForReceipt(access, String(r._id));assert.deepEqual(result.map(m=>m.transactionId),[String(free._id)]);
 });
 test('equal strong candidates remain ambiguous across the display limit and automatic matching performs no write',async()=>{
   await reset();const r=await seedReceipt();await Transaction.insertMany(Array.from({length:25},()=>({...transaction})));
   const before=await Transaction.find({}).lean();
-  const matches=await service.findMatchesForReceipt(String(r._id));assert.equal(matches.length,10);assert(matches.every(m=>m.confidence===100));
-  const result=await service.autoMatchReceipts(String(r.uploadedBy),85);assert.equal(result.matched,0);assert.equal(result.skipped,1);
+  const matches=await service.findMatchesForReceipt(access, String(r._id));assert.equal(matches.length,10);assert(matches.every(m=>m.confidence===100));
+  const result=await service.autoMatchReceipts(access,85);assert.equal(result.matched,0);assert.equal(result.skipped,1);
   assert.deepEqual(await Transaction.find({}).lean(),before);assert.equal((await Receipt.findById(r._id)).status,'unmatched');
 });
 test('a lowered automatic threshold cannot turn incomplete evidence into a receipt write',async()=>{
   await reset();const r=await seedReceipt({merchant:null});await Transaction.create(transaction);
   const before=await Transaction.find({}).lean();
-  const result=await service.autoMatchReceipts(String(r.uploadedBy),50);assert.equal(result.matched,0);assert.equal(result.skipped,1);
+  const result=await service.autoMatchReceipts(access,50);assert.equal(result.matched,0);assert.equal(result.skipped,1);
   assert.deepEqual(await Transaction.find({}).lean(),before);assert.equal((await Receipt.findById(r._id)).status,'unmatched');
 });
 test('candidate requests are repeatable, read-only and empty evidence does not scan the entire ledger',async()=>{
   await reset();const empty=await seedReceipt({amount:null,receiptDate:null});await Transaction.create(transaction);
-  assert.deepEqual(await service.findMatchesForReceipt(String(empty._id)),[]);
+  assert.deepEqual(await service.findMatchesForReceipt(access, String(empty._id)),[]);
   const r=await seedReceipt();const before=await Receipt.find({}).lean();
-  const results=await Promise.all(Array.from({length:5},()=>service.findMatchesForReceipt(String(r._id))));
+  const results=await Promise.all(Array.from({length:5},()=>service.findMatchesForReceipt(access, String(r._id))));
   for(const result of results)assert.deepEqual(result,results[0]);
   assert.deepEqual(await Receipt.find({}).lean(),before);
   await mongoose.disconnect();await mongoose.connect(mongo.getUri('receipt_candidates_regression'));
-  assert.deepEqual(await service.findMatchesForReceipt(String(r._id)),results[0]);
+  assert.deepEqual(await service.findMatchesForReceipt(access, String(r._id)),results[0]);
 });
 
 test('the actual database window includes both whole Japanese boundary dates without including neighboring days',async()=>{
   await reset();const r=await seedReceipt();
   const dates=['2026-09-07T14:59:59.999Z','2026-09-07T15:00:00.000Z','2026-10-06T14:59:59.999Z','2026-10-06T15:00:00.000Z'];
   const records=await Transaction.insertMany(dates.map(date=>({...transaction,date:new Date(date)})));
-  const result=await service.findMatchesForReceipt(String(r._id));
+  const result=await service.findMatchesForReceipt(access, String(r._id));
   assert.deepEqual(result.map(m=>m.transactionId).sort(),[String(records[1]._id),String(records[2]._id)].sort());
   assert(result.every(m=>!m.autoMatchEligible));
 });
@@ -133,11 +134,11 @@ test('a scan failure after one candidate closes the cursor and never turns an in
     return query;
   };
   try{
-    await assert.rejects(service.findMatchesForReceipt(String(r._id)),/Synthetic interrupted candidate scan/);
-    const result=await service.autoMatchReceipts(String(r.uploadedBy),85);
+    await assert.rejects(service.findMatchesForReceipt(access, String(r._id)),/Synthetic interrupted candidate scan/);
+    const result=await service.autoMatchReceipts(access,85);
     assert.equal(result.matched,0);assert.equal(result.skipped,1);assert.equal(closed,2);
   }finally{Transaction.find=original;}
   assert.deepEqual(await Transaction.find({}).lean(),before);
   assert.equal((await Receipt.findById(r._id)).status,'unmatched');
-  assert.equal((await service.findMatchesForReceipt(String(r._id))).length,2);
+  assert.equal((await service.findMatchesForReceipt(access, String(r._id))).length,2);
 });

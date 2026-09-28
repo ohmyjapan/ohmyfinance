@@ -1,14 +1,14 @@
 // server/api/receipts/export.ts
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
 import { getReceipts } from '../../services/receiptManagementService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 /**
  * GET /api/receipts/export
  * Export receipts to CSV, JSON format
  */
 export default defineEventHandler(async (event) => {
-  const auth = requireAuth(event)
+  const auth = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   try {
     const query = getQuery(event)
     const format = String(query.format || 'csv').toLowerCase()
@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
     if (query.merchant) filters.merchant = query.merchant
 
     // Fetch receipts from MongoDB
-    const receipts = await getReceipts(auth.userId, filters)
+    const receipts = await getReceipts(auth, filters)
 
     // Define fields and headers for export (OMF Japanese style)
     const fields = [

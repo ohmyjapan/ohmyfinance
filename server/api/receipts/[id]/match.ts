@@ -2,7 +2,7 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { matchReceiptWithTransaction, unmatchReceipt } from '../../../services/receiptService'
 import { getReceiptById } from '../../../services/receiptManagementService'
-import { requireAuth } from '../../../middleware/auth'
+import { requireLedgerAccess } from '../../../services/ledgerAccessService'
 
 /**
  * POST /api/receipts/:id/match
@@ -12,7 +12,7 @@ import { requireAuth } from '../../../middleware/auth'
  * Unmatch a receipt from its transaction
  */
 export default defineEventHandler(async (event) => {
-  const auth = requireAuth(event)
+  const auth = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const receiptId = event.context.params?.id
 
   if (!receiptId) {
@@ -25,14 +25,15 @@ export default defineEventHandler(async (event) => {
   // Handle DELETE - unmatch receipt
   if (event.method === 'DELETE') {
     try {
-      await getReceiptById(auth.userId, receiptId)
-      const result = await unmatchReceipt(receiptId)
+      await getReceiptById(auth, receiptId)
+      const result = await unmatchReceipt(auth, receiptId)
       return {
         success: true,
         message: 'Receipt unmatched successfully',
         ...result
       }
     } catch (error: any) {
+      if (error.statusCode) throw error
       console.error(`Error unmatching receipt ${receiptId}:`, error)
       throw createError({
         statusCode: error.message?.includes('not found') ? 404 : 400,
@@ -60,7 +61,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Verify receipt exists and is not already matched
-    const receipt = await getReceiptById(auth.userId, receiptId)
+    const receipt = await getReceiptById(auth, receiptId)
     if (!receipt) {
       throw createError({
         statusCode: 404,
@@ -76,7 +77,7 @@ export default defineEventHandler(async (event) => {
     }
 
     // Match the receipt with transaction
-    const result = await matchReceiptWithTransaction(receiptId, body.transactionId)
+    const result = await matchReceiptWithTransaction(auth, receiptId, body.transactionId)
 
     return {
       success: true,

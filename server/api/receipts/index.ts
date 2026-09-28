@@ -1,10 +1,10 @@
 // server/api/receipts/index.ts
 import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
 import { getReceipts, createReceipt, getReceiptStats } from '../../services/receiptManagementService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 export default defineEventHandler(async (event) => {
-  const auth = requireAuth(event)
+  const auth = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
 
     // Check if stats are requested
     if (query.stats === 'true') {
-      const stats = await getReceiptStats(auth.userId)
+      const stats = await getReceiptStats(auth)
       return { stats }
     }
 
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
       }
     })
 
-    const receipts = await getReceipts(auth.userId, filters)
+    const receipts = await getReceipts(auth, filters)
 
     return {
       receipts,
@@ -54,7 +54,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const receipt = await createReceipt(auth.userId, {
+    const receipt = await createReceipt(auth, {
       filename: body.filename,
       originalFilename: body.originalFilename || body.filename,
       size: body.size || 0,

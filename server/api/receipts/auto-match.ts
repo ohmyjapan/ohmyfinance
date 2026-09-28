@@ -1,14 +1,14 @@
 // server/api/receipts/auto-match.ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { autoMatchReceipts } from '../../services/receiptService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 /**
  * POST /api/receipts/auto-match
  * Automatically match unmatched receipts with high-confidence transactions
  */
 export default defineEventHandler(async (event) => {
-  const auth = requireAuth(event)
+  const auth = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,
@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const results = await autoMatchReceipts(auth.userId, minConfidence)
+    const results = await autoMatchReceipts(auth, minConfidence)
 
     return {
       success: true,
