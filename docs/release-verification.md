@@ -5,7 +5,7 @@ capture/workflow tests to OhMyCode's project fixture convention. It exports the
 standard name, explicit source coverage and run result; no hub gate changes are
 required.
 
-The fixture runs fifteen Node test suites, including assistant page selection,
+The fixture runs eighteen Node test suites, including assistant page selection,
 purchase investigation evidence, upload/API error handling and CSV module
 compatibility and unsupported-provider behavior, builds the current Nuxt
 source, then runs `scripts/finance-integration.cjs` with only
@@ -45,6 +45,17 @@ this is not a browser visual review. The manual confirmation path remains separa
 The same compiled dialog harness also consumes the actual built transaction and
 suggestion HTTP responses. This checks the `{ transactions, total }` list envelope;
 an array-shaped test stub previously hid a real empty-dialog failure.
+`OMF_TEST_GROUP_SWITCH_ONLY=1` runs the real session store and compiled organization
+settings page against the built HTTP API. It checks group selection, default
+selection, persistence after reload/refresh, all four existing membership roles,
+denied and inactive groups, and membership removal during the token/profile
+handshake. Separate store/page tests exercise late responses, competing selections,
+logout/new login, screen locks and cross-tab cache resets. Existing authentication
+regressions share the same extracted store harness. Selecting a group does not
+yet add group predicates to ledger or receipt APIs. Browser visual review,
+localStorage quota/crash recovery and production observation of the new behavior
+remain outside this fixture; these checks do not establish a production reliability
+rate or replace independent review of the new response/race guards.
 The authentication suite checks registration, access tokens, 2FA,
 trusted devices, backup codes, PIN/password renewal, restart recovery, invitations
 and logout. Each integration creates its own disposable MongoDB. The workflow
@@ -53,10 +64,10 @@ an available loopback port.
 It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
-A failed command, missing test summary, fewer than the existing 87 unit/service/component tests,
+A failed command, missing test summary, fewer than the existing 122 unit/service/component tests,
 18 workflow checks, 10 authentication checks, 11 receipt management checks or
 6 proxy checks, 8 shipment status checks, 7 transaction status checks or
-8 receipt candidate checks, or skipped unit test is a
+8 receipt candidate checks, 10 group switch checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.
 The verifier owns the 15-minute fixture timeout and process-tree cleanup. A fresh

@@ -71,6 +71,15 @@ export default {
     'types/receipt.ts',
     'scripts/receipt-management-integration.cjs',
     'scripts/auth-integration.cjs',
+    'stores/user.ts',
+    'pages/settings/organization.vue',
+    'server/api/auth/switch-organization.ts',
+    'scripts/auth-regression.test.cjs',
+    'scripts/helpers/auth-session.cjs',
+    'scripts/helpers/organization-page.cjs',
+    'scripts/group-switch.test.cjs',
+    'scripts/organization-page.test.cjs',
+    'scripts/group-switch-integration.cjs',
     'scripts/finance-sheet-export.test.mjs',
     'scripts/finance-sheet-continuation.test.mjs',
     'scripts/finance-search-evidence.test.mjs',
@@ -121,13 +130,16 @@ export default {
       'scripts/transaction-status.test.cjs',
       'scripts/receipt-candidates.test.cjs',
       'scripts/receipt-dialog.test.cjs',
+      'scripts/auth-regression.test.cjs',
+      'scripts/group-switch.test.cjs',
+      'scripts/organization-page.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 87 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 122 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -186,7 +198,15 @@ export default {
       logs.push('The isolated receipt candidate suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks and ${candidateChecks} receipt candidate checks against freshly built source.`);
+    delete env.OMF_TEST_RECEIPT_CANDIDATES_ONLY;
+    env.OMF_TEST_GROUP_SWITCH_ONLY = '1';
+    const groups = stage('isolated group session switch integration', ['scripts/finance-integration.cjs']);
+    const groupChecks = Number(groups.output.match(/^(\d+) targeted group switch checks passed\s*$/m)?.[1]);
+    if (!groups.ok || !(groupChecks >= 10)) {
+      logs.push('The isolated group switch suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks, ${candidateChecks} receipt candidate checks and ${groupChecks} group switch checks against freshly built source.`);
     return result(true);
   },
 };

@@ -18,6 +18,7 @@ interface User {
 type RefreshResult = 'refreshed' | 'unavailable' | 'rejected'
 interface Runtime {
     epoch: number
+    groupSwitchSequence: number
     refresh: Promise<RefreshResult> | null
     timer: ReturnType<typeof setTimeout> | null
     listening: boolean
@@ -28,7 +29,7 @@ const runtimes = new WeakMap<object, Runtime>()
 function runtime(store: object): Runtime {
     let value = runtimes.get(store)
     if (!value) {
-        value = { epoch: 0, refresh: null, timer: null, listening: false, profileLoaded: false, profile: null }
+        value = { epoch: 0, groupSwitchSequence: 0, refresh: null, timer: null, listening: false, profileLoaded: false, profile: null }
         runtimes.set(store, value)
     }
     return value
@@ -114,12 +115,21 @@ export const useUserStore = defineStore('user', {
             document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake() })
             window.addEventListener('storage', event => {
                 if (event.key !== SESSION_KEY) return
+                const previous = tokenClaims(this.token)
                 rt.epoch++
                 rt.refresh = null
                 rt.profileLoaded = false
                 rt.profile = null
                 if (event.newValue === null) this.clearSession(false)
-                else { this.initAuth(true); void this.ensureSession() }
+                else {
+                    this.initAuth(true)
+                    const selected = tokenClaims(this.token)
+                    if (this.isAuthenticated && (previous?.organizationId !== selected?.organizationId || previous?.userId !== selected?.userId)) {
+                        window.location.reload()
+                        return
+                    }
+                    void this.ensureSession()
+                }
             })
         },
 
@@ -190,7 +200,8 @@ export const useUserStore = defineStore('user', {
             this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
             this.user = data.user
             this.organizations = data.organizations || []
-            this.currentOrganization = data.currentOrganization || data.organization || this.organizations[0] || null
+            this.currentOrganization = [data.currentOrganization, data.organization, ...this.organizations]
+                .find(org => access?.organizationId && (org?.id || org?._id) === access.organizationId) || null
             this.isAuthenticated = true
             this.initialized = true
             this.requires2FA = false
@@ -201,6 +212,46 @@ export const useUserStore = defineStore('user', {
             this.persistSession()
             this.startSessionRuntime()
             this.scheduleRefresh()
+        },
+
+        async switchOrganization(organizationId: string): Promise<boolean> {
+            this.initAuth()
+            const rt = runtime(this), startedSession = this.sessionId
+            const userId = tokenClaims(this.token)?.userId || tokenClaims(this.refreshToken)?.userId
+            if (!this.isAuthenticated || !startedSession || !userId) return false
+            const sequence = ++rt.groupSwitchSequence
+            const ownsRequest = () => this.isAuthenticated && this.sessionId === startedSession && rt.groupSwitchSequence === sequence
+            try {
+                if (!await this.ensureFreshToken() || !ownsRequest()) return false
+                const response = await fetch('/api/auth/switch-organization', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', ...this.authHeader },
+                    body: JSON.stringify({ organizationId }), signal: AbortSignal.timeout(15000)
+                })
+                const data = await response.json()
+                if (!ownsRequest()) return false
+                if (!response.ok) throw new Error(data.statusMessage || data.message || 'Unable to switch organization')
+                const access = tokenClaims(data.tokens?.accessToken), refresh = tokenClaims(data.tokens?.refreshToken)
+                if (accessExpiry(data.tokens?.accessToken) <= Date.now() || !validRefresh(data.tokens?.refreshToken)
+                    || access?.userId !== userId || refresh?.userId !== userId
+                    || access?.organizationId !== organizationId || refresh?.organizationId !== organizationId) {
+                    throw new Error('Invalid organization session response')
+                }
+                const profileResponse = await fetch('/api/auth/me', {
+                    headers: { Authorization: `Bearer ${data.tokens.accessToken}` }, signal: AbortSignal.timeout(15000)
+                })
+                const profile = await profileResponse.json()
+                if (!ownsRequest()) return false
+                if (!profileResponse.ok || (profile.user?.id || profile.user?._id) !== userId
+                    || (profile.currentOrganization?.id || profile.currentOrganization?._id) !== organizationId) {
+                    throw new Error('Unable to confirm organization membership')
+                }
+                this.error = null
+                this.acceptSession({ ...profile, tokens: data.tokens }, false)
+                return true
+            } catch (error: any) {
+                if (ownsRequest()) this.error = error?.message || 'Unable to switch organization'
+                return false
+            }
         },
 
         async login(email: string, password: string, rememberMe = false) {

@@ -43,6 +43,7 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
+  if(process.env.OMF_TEST_GROUP_SWITCH_ONLY){await require('./group-switch-integration.cjs')({db,call,token,other,origin,pass});console.log(checks+' targeted group switch checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_CANDIDATES_ONLY){await require('./receipt-candidates-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted receipt candidate checks passed');return;}
   if(process.env.OMF_TEST_TRANSACTION_STATUS_ONLY){await require('./transaction-status-integration.cjs')({db,call,token,pass});console.log(checks+' targeted transaction status checks passed');return;}
   if(process.env.OMF_TEST_SHIPMENT_STATUS_ONLY){await require('./shipment-status-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted shipment status checks passed');return;}

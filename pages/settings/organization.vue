@@ -502,10 +502,7 @@ const canManageMember = (member: any) => {
 }
 
 onMounted(async () => {
-  // Initialize auth if not done
-  if (!userStore.isAuthenticated) {
-    userStore.initAuth()
-  }
+  await userStore.ensureSession()
 
   // Fetch user's organizations
   await fetchOrganizations()
@@ -523,9 +520,11 @@ async function fetchOrganizations() {
     })
     if (response.success) {
       organizations.value = response.organizations
-      // Set current organization to the first one if available
-      if (response.organizations.length > 0) {
-        currentOrganization.value = response.organizations[0]
+      const selectedId = userStore.currentOrganization?.id || userStore.currentOrganization?._id
+      currentOrganization.value = response.organizations.find((org: any) => (org.id || org._id) === selectedId) || null
+      // Selecting a default also needs a real server-issued group session.
+      if (!currentOrganization.value && response.organizations.length > 0) {
+        await switchOrganization(response.organizations[0].id || response.organizations[0]._id)
       }
     }
   } catch (error) {
@@ -703,27 +702,18 @@ async function sendInvite() {
 }
 
 async function switchOrganization(orgId: string): Promise<boolean> {
-  try {
-    const org = organizations.value.find(o => (o.id || o._id) === orgId)
-    if (org) {
-      currentOrganization.value = org
-      return true
-    }
-    return false
-  } catch (error) {
-    console.error('Failed to switch organization:', error)
+  if (!await userStore.switchOrganization(orgId)) {
+    alert(t('common.error'))
     return false
   }
+  currentOrganization.value = userStore.currentOrganization
+  // Discard Pinia/Nuxt caches from the previous company before another screen is used.
+  window.location.reload()
+  return true
 }
 
 async function handleSwitchOrg(orgId: string) {
-  if (orgId === currentOrganization.value?.id) return
-
-  const success = await switchOrganization(orgId)
-  if (success) {
-    loadOrgData()
-    loadMembers()
-  }
+  await switchOrganization(orgId)
 }
 
 function getRoleBadgeClass(role: string) {

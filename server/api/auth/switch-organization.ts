@@ -1,5 +1,5 @@
 // server/api/auth/switch-organization.ts
-import { defineEventHandler, readBody, createError } from 'h3'
+import { defineEventHandler, readBody, createError, isError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { switchOrganization } from '../../services/authService'
 import { requireAuth } from '../../middleware/auth'
@@ -31,6 +31,7 @@ export default defineEventHandler(async (event) => {
       tokens
     }
   } catch (error: any) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    if (isError(error)) throw error
+    throw createError({ statusCode: 500, statusMessage: error?.message || 'Unable to switch organization' })
   }
 })
