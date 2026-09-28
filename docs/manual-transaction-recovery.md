@@ -1,6 +1,6 @@
 # Manual transaction creation and recovery
 
-The keyed API is implemented on the release-verification branch. The transaction form still uses the legacy unkeyed API; persistent browser drafts and integrated recovery are pending. This is not a deployment or a guarantee for existing form retries.
+The keyed API and persistent transaction-form drafts are implemented on the release-verification branch. This is not a production deployment. Browser acceptance and release evidence are recorded separately from this contract.
 
 ## Contract
 
@@ -34,6 +34,20 @@ A verified unique partial company/key index arbitrates concurrent inserts. Ident
 
 Deletion retains keyed identities; older transaction archives do not overwrite current records. The reconciliation read is a current observation, not a lock against later edits/deletion. An entire database rollback to a time before creation, external writes that remove identities, or an operator dropping the index during insertion fall outside the guarantee.
 
-Requests without a key keep the existing response shape and independent-create behavior for compatibility. The form, imports and recurring/card occurrence protocols are not migrated by this patch. Distinct legacy/import occurrences must not be deduplicated by amount or merchant.
+Requests without a key keep the existing response shape and independent-create behavior for compatibility. The manual transaction form now uses the keyed protocol. Imports and recurring/card occurrence protocols retain their own identities. Distinct legacy/import occurrences must not be deduplicated by amount or merchant.
 
-Before release: integrate persistence-before-send and same-draft tab coordination in the actual light-theme form, test ordinary Chrome recovery across reload/session/company changes, complete independent guard review and the recorded broader reliability work, and resolve existing backup/company-boundary blockers. Concurrent edit versioning remains separate. No production migration or deployment is included here.
+## Browser continuation
+
+Opening a new form writes a blank identity to IndexedDB and puts its key in the page URL. A duplicated tab carrying that URL resumes the same identity for the same user and company. Opening a deliberately new purchase creates a separate key even when its details match another entry.
+
+Save freezes the submitted details in one readwrite IndexedDB transaction. The request starts only after the transaction completes; a successful individual storage request is insufficient. Browser tabs serialize updates to the same stored record. A pending or confirmed draft cannot replace its original body or rotate its key. Retrying a pending form sends its exact frozen body. A definite validation rejection allows correction using the same identity and retains earlier payloads; stale rejection callbacks cannot downgrade a newer attempt or a terminal result.
+
+Reload or the recovery panel checks the authenticated creation lookup. A confirmed result updates the ledger display; a deleted result never triggers recreation. Absence retains the original intent and makes no claim that an earlier request cannot finish. Automatic recovery performs reads only. A user-initiated retry sends the pending original intent; a previously confirmed record uses a lookup instead of another POST.
+
+Confirmed recovery also reloads the complete company list, because reconciliation can supersede its initial load. Failure of that refresh retains already-confirmed rows and displays the read error. A company/session change still discards both old reads.
+
+Draft records belong to a browser user/company pair. Logout, company change and disposal invalidate pending UI continuations. A late response may settle its original local record but cannot populate the new workspace. Viewers can check saved results; only current writers can open or retry forms. The server still checks current group membership. Local partitioning is not encryption or protection from someone with access to the browser profile.
+
+If storage fails before sending, no purchase is sent. If storage fails after the server confirms its result, the confirmed result stays confirmed and the recovery warning remains visible. Terminal records remain locally so older tabs can recover the same identity. Clearing browser storage, another device/profile, origin changes, quota eviction and operating-system/power-loss recovery are outside this implementation's guarantees. Typed text before the first Save is not autosaved. There is no cleanup/retention policy for stored drafts yet.
+
+New persistence-before-send, original-body, terminal-outcome and stale-context/revision guards require independent review. Before release, complete that review and the recorded broader reliability work, and resolve existing backup/company-boundary blockers. Concurrent edit versioning remains separate. No production migration or deployment is included here.

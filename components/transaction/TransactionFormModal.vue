@@ -73,7 +73,7 @@
               <!-- Form Content -->
               <div class="flex-1 overflow-y-auto">
                 <form @submit.prevent="submitForm" class="p-6 pb-32">
-                  <fieldset :disabled="isSubmitting || busy" class="space-y-6">
+                  <fieldset :disabled="isSubmitting || busy || frozen" class="space-y-6">
 
                   <!-- Essential Info Section -->
                   <section class="space-y-4">
@@ -532,19 +532,19 @@
 
           <!-- Floating Actions -->
           <div class="sticky bottom-0 bg-white dark:bg-gray-950 border-t border-gray-200 dark:border-white/10 px-6 py-4">
-            <p v-if="saveOutcomeUnknown" role="alert" class="mb-3 text-sm text-amber-700 dark:text-amber-300">{{ t('transactionForm.saveUnconfirmed') }}</p>
+            <p v-if="frozen || saveOutcomeUnknown" role="alert" class="mb-3 text-sm text-amber-700 dark:text-amber-300">{{ t('draftRecovery.frozen') }}</p>
             <p v-if="saveError || localError" role="alert" class="mb-3 text-sm text-red-600">{{ saveError || localError }}</p>
-            <div class="flex items-center justify-between">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div class="text-sm text-gray-500 dark:text-gray-400">
                 <span v-if="form.amount" class="font-medium text-gray-900 dark:text-white">
                   ¥{{ form.amount }}
                 </span>
               </div>
-              <div class="flex gap-3">
+              <div class="flex justify-end gap-3">
                 <button
                   type="button"
                   @click="close"
-                  class="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 rounded-xl hover:bg-gray-50 dark:hover:bg-white/10 transition-colors"
+                  class="whitespace-nowrap px-3 sm:px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-white/5 border border-gray-300 dark:border-white/10 rounded-xl hover:bg-gray-50 dark:hover:bg-white/10 transition-colors"
                 >
                   {{ t('common.cancel') }}
                 </button>
@@ -552,11 +552,11 @@
                   type="button"
                   @click="submitForm"
                   :disabled="isSubmitting || busy || form.amount === '' || !form.date"
-                  class="px-5 py-2.5 text-sm font-medium text-white bg-primary-main rounded-xl hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                  class="px-3 sm:px-5 py-2.5 text-sm font-medium text-white bg-primary-main rounded-xl hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
                   <Loader v-if="isSubmitting" class="w-4 h-4 animate-spin" />
                   <Save v-else class="w-4 h-4" />
-                  {{ isEditing ? t('common.update') : t('common.save') }}
+                  {{ isEditing ? t('common.update') : frozen ? t('draftRecovery.retry') : t('common.save') }}
                 </button>
               </div>
             </div>
@@ -895,6 +895,7 @@ const props = defineProps<{
   busy?: boolean
   saveError?: string | null
   saveOutcomeUnknown?: boolean
+  frozen?: boolean
 }>()
 
 const emit = defineEmits(['update:modelValue'])
@@ -992,7 +993,7 @@ onMounted(async () => {
 
 // Watch for initial data
 watch(() => props.initialData, (data) => {
-  if (data && props.isEditing) {
+  if (data) {
     const dateValue = data.date ? new Date(data.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
     form.value = {
       date: dateValue,
@@ -1427,7 +1428,7 @@ const submitForm = async () => {
   if (isSubmitting.value || props.busy || !form.value.date || form.value.amount === '') return
   isSubmitting.value = true; localError.value = ''
   try {
-    const payload = metadataPayload()
+    const payload = props.frozen ? JSON.parse(JSON.stringify(props.initialData)) : metadataPayload()
     const data = props.isEditing ? Object.fromEntries(Object.entries(payload).filter(([key, value]) => value !== initialPayload[key])) : payload
     const saved = await props.save(data)
     if (saved && alive) emit('update:modelValue', false)

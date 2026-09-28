@@ -20,13 +20,33 @@
         </button>
         <button
             class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
-            v-if="canEdit" :disabled="isSaving" @click="clearSaveError(); showCreateModal = true"
+            v-if="canEdit" :disabled="isSaving" @click="openCreateDraft()"
         >
           <Plus class="mr-2 h-4 w-4" />
           {{ t('transactionForm.createTitle') }}
         </button>
       </div>
     </header>
+
+    <section v-if="pendingDrafts.length || draftNotice || draftError" class="mb-6 rounded-xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-white/5" data-manual-recovery>
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ t('draftRecovery.title') }}</h2>
+        <button type="button" :disabled="isSaving" @click="refreshDrafts" class="text-sm text-primary-main disabled:opacity-50">{{ t('draftRecovery.refresh') }}</button>
+      </div>
+      <p v-if="draftNotice" role="status" class="mt-2 text-sm text-gray-600 dark:text-gray-300">{{ draftNotice }}</p>
+      <p v-if="draftError" role="alert" class="mt-2 text-sm text-red-600">{{ draftError }}</p>
+      <p v-if="pendingDrafts.length" class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('draftRecovery.description') }}</p>
+      <div v-for="draft in pendingDrafts" :key="draft.key" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3 dark:border-white/10">
+        <div class="min-w-0 text-sm text-gray-700 dark:text-gray-200">
+          <p class="font-medium">{{ draft.payload?.date?.slice(0, 10) }} · {{ formatCurrency(Number(draft.payload?.amount || 0)) }}</p>
+          <p class="max-w-xs truncate text-gray-500">{{ draft.payload?.productName || draft.payload?.notes || t('draftRecovery.purchase') }}</p>
+        </div>
+        <div class="flex gap-3 text-sm">
+          <button type="button" :disabled="isSaving" @click="checkDraft(draft.key)" class="text-primary-main disabled:opacity-50">{{ t('draftRecovery.check') }}</button>
+          <button v-if="canEdit" type="button" :disabled="isSaving" @click="openCreateDraft(draft.key)" class="text-primary-main disabled:opacity-50">{{ t('draftRecovery.resume') }}</button>
+        </div>
+      </div>
+    </section>
 
     <!-- Stats Cards -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
@@ -384,6 +404,7 @@
     <TransactionFormModal
       v-if="showCreateModal"
       v-model="showCreateModal"
+      :key="draftRecord?.key" :initialData="draftRecord?.payload" :frozen="!!draftRecord && !['draft', 'rejected'].includes(draftRecord.state)"
       :save="handleCreateTransaction" :busy="isSaving" :saveError="saveError" :saveOutcomeUnknown="saveOutcomeUnknown"
     />
 
@@ -399,7 +420,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onScopeDispose, watch } from 'vue'
 import { useTransactions } from '~/composables/useTransactions'
 import {
   Search,
@@ -422,6 +443,7 @@ const { t } = useI18n()
 
 // Use the transactions composable
 const {
+  draftRecord, pendingDrafts, draftNotice, draftError, refreshDrafts, startDraft, loadDraft, recoverDraft,
   contextKey, canEdit, isSaving, saveError, saveOutcomeUnknown, clearSaveError, updateTransaction,
   transactions,
   isLoading,
@@ -449,11 +471,36 @@ const openMenuId = ref<string | null>(null)
 
 // Router
 const router = useRouter()
+const route = useRoute()
+let draftOpening = 0, pageAlive = true
+const removeDraftRoute = () => {
+  if (route.query?.draft) void router.replace({ query: { ...route.query, draft: undefined } })
+}
+const checkDraft = async (key: string) => {
+  const generation = contextKey.value
+  const result = await recoverDraft(key)
+  if (generation === contextKey.value && result && ['saved', 'deleted'].includes(result.state)) { showCreateModal.value = false; removeDraftRoute() }
+}
+const openCreateDraft = async (key?: string) => {
+  if (!canEdit.value || isSaving.value) return
+  const request = ++draftOpening, generation = contextKey.value
+  clearSaveError()
+  const draft = key ? await loadDraft(key) : await startDraft()
+  if (!draft || request !== draftOpening || generation !== contextKey.value) return
+  showCreateModal.value = true
+  if (route.query?.draft !== draft.key) await router.replace({ query: { ...route.query, draft: draft.key } })
+  if (request !== draftOpening || generation !== contextKey.value) return
+  if (draft.payload) await checkDraft(draft.key)
+}
 
 // Initialize data
 onMounted(async () => {
   await fetchTransactions()
+  await refreshDrafts()
+  if (typeof route.query?.draft === 'string') await openCreateDraft(route.query.draft)
+  if (pageAlive && typeof window !== 'undefined') window.addEventListener('focus', refreshDrafts)
 })
+onScopeDispose(() => { pageAlive = false; draftOpening++; if (typeof window !== 'undefined') window.removeEventListener('focus', refreshDrafts) })
 
 // Computed properties
 const isFiltered = computed(() => {
@@ -540,7 +587,11 @@ const deleteTransactionConfirm = async (id: string) => {
 }
 
 // Callbacks resolve only after the authenticated client confirms the write.
-const handleCreateTransaction = async (data: any) => !!await createTransaction(data)
+const handleCreateTransaction = async (data: any) => {
+  const result = await createTransaction(data)
+  if (result) removeDraftRoute()
+  return !!result
+}
 const openEditModal = (transaction: any) => {
   if (!canEdit.value || isSaving.value) return
   closeActionsMenu(transaction.id); clearSaveError()
@@ -552,10 +603,15 @@ const handleEditTransaction = async (data: any) => {
   return id ? await updateTransaction(id, data) : false
 }
 watch([contextKey, canEdit], () => {
+  draftOpening++; removeDraftRoute()
   showCreateModal.value = false; showEditModal.value = false; editingTransaction.value = null
   openMenuId.value = null; currentPage.value = 1
 }, { flush: 'sync' })
-watch(contextKey, () => fetchTransactions(), { flush: 'post' })
+watch(contextKey, () => { void fetchTransactions(); void refreshDrafts() }, { flush: 'post' })
+watch(showCreateModal, shown => { if (!shown) { draftOpening++; removeDraftRoute(); void refreshDrafts() } })
+watch(() => route.query?.draft, key => {
+  if (typeof key === 'string' && !(showCreateModal.value && draftRecord.value?.key === key)) void openCreateDraft(key)
+})
 watch(filteredTransactions, () => { currentPage.value = 1 }, { flush: 'sync' })
 
 // Click outside directive

@@ -8,6 +8,10 @@ export const timeoutMs = 900000;
 export default {
   name: 'finance-capture-workflow',
   covers: [
+    'utils/manualDraftStore.ts',
+    'scripts/helpers/manual-draft-store.cjs',
+    'scripts/manual-draft-recovery.test.cjs',
+    'scripts/manual-draft-integration.cjs',
     'server/services/manualTransactionService.ts',
     'server/api/transactions/creation/[key].get.ts',
     'scripts/manual-transaction.test.cjs',
@@ -244,6 +248,7 @@ export default {
       'scripts/transaction-workspace.test.cjs',
       'scripts/transaction-lifecycle.test.cjs',
       'scripts/manual-transaction.test.cjs',
+      'scripts/manual-draft-recovery.test.cjs',
       'scripts/card-groups.test.cjs',
       'scripts/recurring-groups.test.cjs',
       'scripts/shipment-groups.test.cjs',
@@ -254,7 +259,7 @@ export default {
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 268 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 281 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -339,6 +344,7 @@ export default {
     }
     delete env.OMF_TEST_TRANSACTION_GROUPS_ONLY;
     for (const [flag, label, minimum] of [
+      ['OMF_TEST_DRAFT_RECOVERY_ONLY', 'draft recovery', 6],
       ['OMF_TEST_MANUAL_TRANSACTION_ONLY', 'manual transaction', 10],
       ['OMF_TEST_TRANSACTION_LIFECYCLE_ONLY', 'transaction lifecycle', 8],
       ['OMF_TEST_TRANSACTION_WORKSPACE_ONLY', 'transaction workspace', 6],

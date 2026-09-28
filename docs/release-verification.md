@@ -317,3 +317,15 @@ The form still needs persisted-draft recovery and makes no retry guarantee yet.
 Verified: 268 unit/service cases, fresh build, retained HTTP suites including ten
 manual API checks, zero TypeScript diagnostics and five detected/restored mutations.
 New guards require independent review. No deployment or production migration.
+
+
+Manual transaction forms now persist the original keyed draft before sending.
+Reload and same-draft tabs reconcile saved/deleted results; definite validation
+rejection permits same-key corrections. Light recovery UI preserves user/company
+context. New guards require independent owner-ordered review.
+
+Verified: 281 unit/service cases, fresh builds and retained API suites, six scoped
+real Chrome cases (twelve including API/setup), zero TypeScript diagnostics, and
+six detected/restored mutations including an actual IndexedDB abort boundary.
+Browser storage eviction, OS/power loss and unsubmitted text are excluded.
+Existing broader release blockers remain. No deployment or production migration.

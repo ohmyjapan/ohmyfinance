@@ -50,6 +50,7 @@ async function main(){
   if(process.env.OMF_TEST_SHIPMENT_GROUPS_ONLY){await require('./shipment-groups-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted shipment group checks passed');return;}
   if(process.env.OMF_TEST_RECURRING_GROUPS_ONLY){await require('./recurring-groups-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted recurring group checks passed');return;}
   if(process.env.OMF_TEST_CARD_GROUPS_ONLY){await require('./card-groups-integration.cjs')({db,call,token,other,pass,csv,row});console.log(checks+' targeted card group checks passed');return;}
+  if(process.env.OMF_TEST_DRAFT_RECOVERY_ONLY){await require('./manual-draft-integration.cjs')({db,call,token,other,origin,pass});console.log(checks+' targeted draft recovery checks passed');return;}
   if(process.env.OMF_TEST_MANUAL_TRANSACTION_ONLY){await require('./manual-transaction-integration.cjs')({db,call,token,other,origin,pass});console.log(checks+' targeted manual transaction checks passed');return;}
   if(process.env.OMF_TEST_TRANSACTION_LIFECYCLE_ONLY){await require('./transaction-lifecycle-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted transaction lifecycle checks passed');return;}
   if(process.env.OMF_TEST_TRANSACTION_WORKSPACE_ONLY){await require('./transaction-workspace-integration.cjs')({db,call,token,other,origin,directory,pass});console.log(checks+' targeted transaction workspace checks passed');return;}
