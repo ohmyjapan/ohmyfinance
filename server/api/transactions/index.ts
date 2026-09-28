@@ -1,7 +1,8 @@
 // server/api/transactions/index.ts
-import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
+import { defineEventHandler, getQuery, readBody, getMethod, getHeader, setHeader, createError } from 'h3'
 import { getTransactions, createTransaction, getTransactionStats } from '../../services/transactionService'
 import { requireLedgerAccess } from '../../services/ledgerAccessService'
+import { createManualTransaction } from '../../services/manualTransactionService'
 
 export default defineEventHandler(async (event) => {
   const access = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
@@ -50,6 +51,14 @@ export default defineEventHandler(async (event) => {
 
   if (method === 'POST') {
     const body = await readBody(event)
+    const key = getHeader(event, 'Idempotency-Key')
+    if (key !== undefined) {
+      setHeader(event, 'Cache-Control', 'no-store')
+      return createManualTransaction(access, key, body)
+    }
+
+    // Compatibility for existing clients/import helpers. This unkeyed path has
+    // no retry guarantee; the persisted-draft client must supply its original key.
 
     // Validate required fields (OMF style)
     if (!body.amount && body.amount !== 0) {

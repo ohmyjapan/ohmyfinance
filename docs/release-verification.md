@@ -306,3 +306,14 @@ still pending; other backup collections and legacy ownership entrances remain op
 Verified: 254 unit/service cases, fresh build, retained HTTP suites including eight
 lifecycle checks, zero TypeScript diagnostics and five detected/restored mutations.
 Shared guards require independent review and broader validation. Not deployed.
+
+
+Keyed manual transaction POST and company-scoped reconciliation now preserve one
+original intent through ambiguous responses, concurrent retries and deletion.
+Canonical purchase hashing and verified unique identity use one journal-acknowledged
+insert; replay returns current metadata. Existing unkeyed clients remain compatible.
+The form still needs persisted-draft recovery and makes no retry guarantee yet.
+
+Verified: 268 unit/service cases, fresh build, retained HTTP suites including ten
+manual API checks, zero TypeScript diagnostics and five detected/restored mutations.
+New guards require independent review. No deployment or production migration.
