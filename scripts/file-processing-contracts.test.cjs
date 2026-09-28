@@ -39,6 +39,9 @@ function route(file, { body, rejection, rejectBody = false, authenticated = true
   const noWrite = () => { throw Error('Unexpected filesystem operation'); };
   new Function('require', 'module', 'exports', 'console', compiled)(name => {
     if (name === 'h3') return { ...h3, defineEventHandler: handler => handler, readBody: async () => { if (rejectBody) throw rejection; return body; } };
+    if (name.endsWith('/services/ledgerAccessService')) return { requireLedgerAccess: async () => { if (!authenticated) throw h3.createError({ statusCode: 401 }); return { organizationId: 'synthetic-group' }; } };
+    if (name.endsWith('/services/receiptManagementService')) return { getReceiptById: noWrite };
+    if (name.endsWith('/services/receiptLinkService')) return { matchReceiptWithTransaction: noWrite };
     if (name === 'path') return path;
     if (name === 'fs/promises') return { mkdir: noWrite, readFile: noWrite, appendFile: noWrite, access: noWrite };
     if (name.endsWith('/utils/excel-processor')) return { processExcelFile: noWrite };
@@ -63,11 +66,11 @@ test('transaction preview handles non-Error body parser failures', async () => {
 test('legacy matching error path preserves authentication and validation responses', async () => {
   const file = 'server/api/receipts/match.ts';
   await assert.rejects(route(file, { authenticated: false })({}), error => error.statusCode === 401);
-  await assert.rejects(route(file, { body: {} })({}), error => error.statusCode === 400 && error.statusMessage === 'Receipt ID and Transaction ID are required');
+  await assert.rejects(route(file, { body: {} })({method:'POST'}), error => error.statusCode === 400 && error.statusMessage === 'Receipt ID and Transaction ID are required');
 });
 
 test('legacy matching error path handles null failures without writing a success log', async () => {
   for (const rejection of [null, undefined, new Error('Synthetic parser failure')]) {
-    await assert.rejects(route('server/api/receipts/match.ts', { rejectBody: true, rejection })({}), error => h3.isError(error) && error.statusCode === 500 && error.statusMessage === 'Failed to match receipt with transaction');
+    await assert.rejects(route('server/api/receipts/match.ts', { rejectBody: true, rejection })({method:'POST'}), error => h3.isError(error) && error.statusCode === 500 && error.statusMessage === 'Failed to match receipt with transaction');
   }
 });

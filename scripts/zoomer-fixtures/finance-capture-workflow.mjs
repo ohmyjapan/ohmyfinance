@@ -8,6 +8,13 @@ export const timeoutMs = 900000;
 export default {
   name: 'finance-capture-workflow',
   covers: [
+    'composables/useReceipts.ts',
+    'pages/receipts/index.vue',
+    'components/receipt/ReceiptUpload.vue',
+    'components/receipt/ReceiptMatcher.vue',
+    'scripts/helpers/receipt-workspace.cjs',
+    'scripts/receipt-workspace.test.cjs',
+    'scripts/receipt-workspace-integration.cjs',
     'components/receipt/ReceiptTable.vue',
     'server/services/receiptFileService.ts',
     'server/api/receipts/[id]/file.ts',
@@ -196,6 +203,7 @@ export default {
       'scripts/group-switch.test.cjs',
       'scripts/organization-page.test.cjs',
       'scripts/receipt-files.test.cjs',
+      'scripts/receipt-workspace.test.cjs',
       'scripts/receipt-links.test.cjs',
       'scripts/receipt-groups.test.cjs',
       'scripts/transaction-groups.test.cjs',
@@ -209,7 +217,7 @@ export default {
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 212 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 223 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -294,6 +302,7 @@ export default {
     }
     delete env.OMF_TEST_TRANSACTION_GROUPS_ONLY;
     for (const [flag, label, minimum] of [
+      ['OMF_TEST_RECEIPT_WORKSPACE_ONLY', 'receipt workspace', 7],
       ['OMF_TEST_RECEIPT_FILES_ONLY', 'receipt file', 9],
       ['OMF_TEST_RECEIPT_LINKS_ONLY', 'receipt link', 9],
       ['OMF_TEST_SHIPMENT_GROUPS_ONLY', 'shipment group', 9],

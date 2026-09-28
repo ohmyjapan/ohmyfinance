@@ -252,3 +252,19 @@ Root TypeScript remains at zero errors. This is scoped verification, not a
 production reliability rate or a power-loss/OS-kill guarantee. New file/access/
 context guards still await independent review. Remaining receipt mock/legacy routes
 and broader release work are outstanding; no deployment is included.
+
+
+The receipt workspace now uses the company receipt API for records, statistics,
+matching and confirmed deletion; it no longer generates demonstration receipts.
+Search/filter/pagination preserve zero values, original filenames and stored
+currency. Downloads use the authenticated original-file service. Two unused mock
+components were removed; legacy matching now invokes the canonical link service.
+Old-context responses are discarded and company reload waits until the complete
+session update finishes. Viewer controls reflect current membership.
+
+Verified with 223 unit/service tests, a fresh build, all retained HTTP suites,
+seven workspace API checks, and ordinary-login real Chrome matching/download/
+delete/reload/company-switch checks. Compiler remains at zero errors. Seven
+injected defects were caught by the actual verifier and restored byte-exact.
+Independent guard review and remaining attachment/ledger/release work are pending.
+This branch has not been deployed.

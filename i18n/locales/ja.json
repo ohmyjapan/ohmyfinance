@@ -1436,6 +1436,11 @@
     "transactions": "取引",
     "uploaded": "アップロード日"
   },
+  "receiptWorkspace": {
+    "reload": "再読み込み",
+    "transaction": "取引を開く",
+    "loadFailed": "取引を読み込めませんでした。閉じてもう一度お試しください。"
+  },
   "receiptsList": {
     "adjustFilters": "フィルターを調整",
     "allStatuses": "すべてのステータス",

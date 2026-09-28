@@ -10,11 +10,11 @@ const render=new Function('Vue',compile(descriptor.template.content,{mode:'funct
 
 module.exports=async({receipt,authHeader,fetch})=>{
   let mounted;const emitted=[];const module={exports:{}};
-  const imports={vue:{...vue,onMounted:fn=>{mounted=fn;}},'~/stores/user':{useUserStore:()=>({authHeader})},'lucide-vue-next':new Proxy({},{get:()=>()=>null})};
+  const imports={vue:{...vue,onMounted:fn=>{mounted=fn;}},'~/stores/user':{useUserStore:()=>({authHeader})},'~/composables/useReceiptFiles':{useReceiptFiles:()=>({downloadReceipt(){},downloadError:vue.ref(''),isDownloading:vue.ref(false)})},'lucide-vue-next':new Proxy({},{get:()=>()=>null})};
   new Function('require','module','exports','useI18n','$fetch',compiled)(name=>{
     if(!Object.hasOwn(imports,name))throw Error('Unexpected dependency: '+name);return imports[name];
   },module,module.exports,()=>({t:key=>key,locale:vue.ref('ja')}),fetch);
-  const props={receipt};
+  const props={receipt,busy:false,saveError:''};
   const state=module.exports.default.setup(props,{expose:()=>{},emit:(...args)=>emitted.push(args)});
   await mounted();
   const app=vue.createSSRApp({setup:()=>({...state,...props}),render});

@@ -7,11 +7,8 @@
       </div>
 
       <div class="mt-4 md:mt-0 flex space-x-3">
-        <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
-          <FileText class="mr-2 h-4 w-4 text-gray-500" />
-          {{ t('common.export') }} CSV
-        </button>
         <button
+            v-if="canEdit"
             class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
             @click="router.push('/receipts/upload')"
         >
@@ -22,39 +19,31 @@
     </header>
 
     <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
       <StatCard
           :title="t('receipts.title')"
-          value="247"
-          change="+5.8%"
-          trend="up"
+          :value="!hasLoaded ? '—' : String(receiptStats.total)"
           icon="FileText"
           color="primary"
       />
 
       <StatCard
           :title="t('receipts.matched')"
-          value="189"
-          change="+8.2%"
-          trend="up"
+          :value="!hasLoaded ? '—' : String(receiptStats.matched)"
           icon="CheckCircle"
           color="green"
       />
 
       <StatCard
           :title="t('receipts.unmatched')"
-          value="58"
-          change="-12.5%"
-          trend="down"
+          :value="!hasLoaded ? '—' : String(receiptStats.unmatched)"
           icon="AlertTriangle"
           color="amber"
       />
 
       <StatCard
           :title="t('receipts.matchRate')"
-          value="76.5%"
-          change="+2.3%"
-          trend="up"
+          :value="!hasLoaded ? '—' : String(receiptStats.matchRate) + '%'"
           icon="BarChart2"
           color="blue"
       />
@@ -82,7 +71,7 @@
                   v-model="filters.status"
                   class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-xl dark:bg-white/5 dark:border-white/10 dark:text-white"
               >
-                <option value="">{{ t('receiptsList.allStatuses') }}</option>
+                <option :value="undefined">{{ t('receiptsList.allStatuses') }}</option>
                 <option value="matched">{{ t('receipts.matched') }}</option>
                 <option value="unmatched">{{ t('receipts.unmatched') }}</option>
               </select>
@@ -93,7 +82,7 @@
                   v-model="filters.type"
                   class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-xl dark:bg-white/5 dark:border-white/10 dark:text-white"
               >
-                <option value="">{{ t('receiptsList.allTypes') }}</option>
+                <option :value="undefined">{{ t('receiptsList.allTypes') }}</option>
                 <option value="pdf">PDF</option>
                 <option value="jpg">JPG/JPEG</option>
                 <option value="png">PNG</option>
@@ -175,14 +164,20 @@
       </div>
     </div>
 
+    <div v-if="error || downloadError" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">
+      {{ error || downloadError }}
+      <button :disabled="isSaving" class="ml-3 underline" @click="fetchReceipts">{{ t('receiptWorkspace.reload') }}</button>
+    </div>
+    <ReceiptMatchDialog v-if="receiptToMatch && canEdit" :receipt="receiptToMatch" :busy="isSaving" :save-error="error || ''" @close="receiptToMatch = null" @match="saveMatch" />
+
     <!-- Receipts Table -->
-    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
+    <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-x-auto">
       <div v-if="isLoading" class="flex justify-center items-center p-12">
         <Loader class="h-8 w-8 text-primary-main animate-spin" />
         <span class="ml-2 text-gray-600">{{ t('receiptsList.loading') }}</span>
       </div>
 
-      <div v-else-if="filteredReceipts.length === 0" class="text-center py-16">
+      <div v-else-if="!error && filteredReceipts.length === 0" class="text-center py-16">
         <FileText class="mx-auto h-12 w-12 text-gray-300" />
         <h3 class="mt-2 text-sm font-medium text-gray-900">{{ t('receiptsList.noReceipts') }}</h3>
         <p class="mt-1 text-sm text-gray-500">
@@ -190,6 +185,7 @@
         </p>
         <div class="mt-6">
           <button
+              v-if="canEdit"
               class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
               @click="router.push('/receipts/upload')"
           >
@@ -199,7 +195,7 @@
         </div>
       </div>
 
-      <table v-else class="min-w-full divide-y divide-gray-200">
+      <table v-else-if="filteredReceipts.length" class="min-w-full divide-y divide-gray-200">
         <thead class="bg-gray-50 dark:bg-white/5">
         <tr>
           <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ t('receiptTable.receipt') }}</th>
@@ -220,11 +216,11 @@
             <div class="flex items-center">
               <div class="h-10 w-10 flex-shrink-0 bg-gray-100 rounded">
                 <div class="h-10 w-10 flex items-center justify-center text-gray-500">
-                  <FileIcon :filename="receipt.filename" />
+                  <FileIcon :filename="(receipt.originalFilename || receipt.filename)" />
                 </div>
               </div>
               <div class="ml-4">
-                <div class="text-sm font-medium text-gray-900">{{ receipt.filename }}</div>
+                <div class="text-sm font-medium text-gray-900">{{ (receipt.originalFilename || receipt.filename) }}</div>
                 <div class="text-sm text-gray-500">{{ formatFileSize(receipt.size) }}</div>
               </div>
             </div>
@@ -234,8 +230,8 @@
             <div class="text-sm text-gray-500">{{ formatTime(receipt.uploadDate) }}</div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
-            <div class="text-sm text-gray-900" v-if="receipt.amount">
-              {{ formatCurrency(receipt.amount) }}
+            <div class="text-sm text-gray-900" v-if="receipt.amount != null">
+              {{ formatCurrency(receipt.amount, receipt.currency) }}
             </div>
             <div class="text-sm text-gray-500" v-else>--</div>
           </td>
@@ -251,27 +247,33 @@
                 <CheckCircle size="14" class="mr-1" />
                 {{ t('receipts.matched') }}
               </span>
-            <span v-else
+            <span v-else-if="receipt.status === 'unmatched'"
                   class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
                 <AlertTriangle size="14" class="mr-1" />
                 {{ t('receipts.unmatched') }}
               </span>
+            <span v-else class="text-sm text-gray-600">{{ t('common.' + receipt.status) }}</span>
           </td>
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+            <NuxtLink v-if="receipt.transactionId" :to="'/transactions/' + receipt.transactionId" class="text-primary-main mr-3">{{ t('receiptWorkspace.transaction') }}</NuxtLink>
             <button
-                @click="viewReceiptDetails(receipt.id)"
+                @click="viewReceiptDetails(receipt)"
+                :disabled="!receipt.fileUrl || isDownloading"
                 class="text-primary-main hover:text-primary-dark mr-3"
             >
-              {{ t('common.view') }}
+              {{ t('common.download') }}
             </button>
             <button
-                v-if="receipt.status === 'unmatched'"
+                v-if="canEdit && receipt.status === 'unmatched'"
+                :disabled="isSaving"
                 @click="matchReceipt(receipt.id)"
                 class="text-primary-main hover:text-primary-dark mr-3"
             >
               {{ t('receipts.match') }}
             </button>
             <button
+                v-if="canEdit"
+                :disabled="isSaving"
                 @click="confirmDelete(receipt.id)"
                 class="text-red-600 hover:text-red-900"
             >
@@ -338,7 +340,7 @@
 
     <!-- Confirm Delete Modal -->
     <div
-        v-if="showDeleteConfirm"
+        v-if="showDeleteConfirm && canEdit"
         class="fixed inset-0 z-10 overflow-y-auto"
         aria-labelledby="modal-title"
         role="dialog"
@@ -370,11 +372,13 @@
               </div>
             </div>
           </div>
+          <p v-if="error" role="alert" class="px-6 py-3 text-sm text-red-600">{{ error }}</p>
           <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
                 type="button"
                 class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
                 @click="deleteReceipt"
+                :disabled="isSaving"
             >
               {{ t('common.delete') }}
             </button>
@@ -393,7 +397,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, defineComponent, h } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, defineComponent, h } from 'vue'
+import { useReceipts } from '~/composables/useReceipts'
+import { useReceiptFiles } from '~/composables/useReceiptFiles'
+import { useUserStore } from '~/stores/user'
+import type { Receipt } from '~/types/receipt'
 import {
   FileText,
   Upload,
@@ -410,116 +418,28 @@ import {
 
 const { t, locale } = useI18n()
 
-// State
-const receipts = ref([])
-const searchQuery = ref('')
-const isLoading = ref(true)
-const currentPage = ref(1)
-const itemsPerPage = ref(10)
-const showAdvancedFilters = ref(false)
-const showDeleteConfirm = ref(false)
-const receiptToDelete = ref(null)
-const filters = ref({
-  status: '',
-  type: '',
-  dateFrom: '',
-  dateTo: '',
-  minAmount: '',
-  maxAmount: '',
-  merchant: ''
-})
-
+const user = useUserStore()
+const { receipts, isLoading, isSaving, hasLoaded, error, filters, searchQuery, filteredReceipts, receiptStats,
+  fetchReceipts, deleteReceipt: removeReceipt, matchWithTransaction, resetFilters } = useReceipts()
+const { downloadReceipt, downloadError, isDownloading } = useReceiptFiles()
+const canEdit = computed(() => ['owner', 'admin', 'member'].includes(user.currentOrganization?.role))
+const currentPage = ref(1), itemsPerPage = ref(10), showAdvancedFilters = ref(false)
+const showDeleteConfirm = ref(false), receiptToDelete = ref<string | null>(null), receiptToMatch = ref<Receipt | null>(null)
 const router = useRouter()
-
-// Load receipts data
-onMounted(async () => {
-  try {
-    // In a real app, this would be an API call
-    // await fetchReceipts()
-
-    // For demo purposes, we'll use mock data
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    receipts.value = generateMockReceipts(50)
-  } finally {
-    isLoading.value = false
-  }
-})
-
-// Check if filters are applied
-const isFiltered = computed(() => {
-  return (
-      searchQuery.value !== '' ||
-      filters.value.status !== '' ||
-      filters.value.type !== '' ||
-      filters.value.dateFrom !== '' ||
-      filters.value.dateTo !== '' ||
-      filters.value.minAmount !== '' ||
-      filters.value.maxAmount !== '' ||
-      filters.value.merchant !== ''
-  )
-})
-
-// Filter receipts based on search and filters
-const filteredReceipts = computed(() => {
-  let result = [...receipts.value]
-
-  // Apply search filter
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(receipt =>
-        receipt.filename.toLowerCase().includes(query) ||
-        (receipt.merchant && receipt.merchant.toLowerCase().includes(query)) ||
-        (receipt.amount && receipt.amount.toString().includes(query))
-    )
-  }
-
-  // Apply status filter
-  if (filters.value.status) {
-    result = result.filter(receipt => receipt.status === filters.value.status)
-  }
-
-  // Apply file type filter
-  if (filters.value.type) {
-    result = result.filter(receipt => {
-      const extension = receipt.filename.split('.').pop().toLowerCase()
-      return extension === filters.value.type ||
-          (filters.value.type === 'jpg' && (extension === 'jpeg' || extension === 'jpg'))
-    })
-  }
-
-  // Apply date range filter
-  if (filters.value.dateFrom) {
-    const fromDate = new Date(filters.value.dateFrom)
-    result = result.filter(receipt => new Date(receipt.uploadDate) >= fromDate)
-  }
-
-  if (filters.value.dateTo) {
-    const toDate = new Date(filters.value.dateTo)
-    toDate.setHours(23, 59, 59, 999) // End of the day
-    result = result.filter(receipt => new Date(receipt.uploadDate) <= toDate)
-  }
-
-  // Apply amount filter
-  if (filters.value.minAmount !== '') {
-    const min = parseFloat(filters.value.minAmount)
-    result = result.filter(receipt => receipt.amount && receipt.amount >= min)
-  }
-
-  if (filters.value.maxAmount !== '') {
-    const max = parseFloat(filters.value.maxAmount)
-    result = result.filter(receipt => receipt.amount && receipt.amount <= max)
-  }
-
-  // Apply merchant filter
-  if (filters.value.merchant) {
-    const merchant = filters.value.merchant.toLowerCase()
-    result = result.filter(receipt =>
-        receipt.merchant && receipt.merchant.toLowerCase().includes(merchant)
-    )
-  }
-
-  return result
-})
+let mounted = false
+onMounted(async () => { mounted = true; await fetchReceipts() })
+onBeforeUnmount(() => { mounted = false })
+watch(() => user.authHeader.Authorization, () => {
+  receiptToDelete.value = null; receiptToMatch.value = null; showDeleteConfirm.value = false; currentPage.value = 1
+}, { flush: 'sync' })
+// The session store sets token, session ID and company in one synchronous update.
+// Clear immediately above; reload after that update has finished.
+watch(() => user.authHeader.Authorization, () => {
+  if (mounted) void fetchReceipts()
+}, { flush: 'post' })
+watch([searchQuery, filters], () => { currentPage.value = 1 }, { deep: true, flush: 'sync' })
+watch(() => filteredReceipts.value.length, () => { currentPage.value = Math.min(currentPage.value, totalPages.value) }, { flush: 'sync' })
+const isFiltered = computed(() => !!searchQuery.value || Object.values(filters.value).some(v => v !== '' && v != null))
 
 // Paginated receipts
 const paginatedReceipts = computed(() => {
@@ -541,21 +461,6 @@ const paginationEnd = computed(() => {
   return Math.min(currentPage.value * itemsPerPage.value, filteredReceipts.value.length)
 })
 
-// Reset filters
-const resetFilters = () => {
-  searchQuery.value = ''
-  filters.value = {
-    status: '',
-    type: '',
-    dateFrom: '',
-    dateTo: '',
-    minAmount: '',
-    maxAmount: '',
-    merchant: ''
-  }
-  currentPage.value = 1
-}
-
 // Format helpers
 const formatDate = (isoDate: string) => {
   const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
@@ -575,9 +480,8 @@ const formatTime = (isoDate: string) => {
   })
 }
 
-const formatCurrency = (amount: number) => {
+const formatCurrency = (amount: number, currency = 'JPY') => {
   const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
   return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
     currency: currency,
@@ -596,44 +500,19 @@ const formatFileSize = (bytes: number) => {
   }
 }
 
-// Action handlers
-const viewReceiptDetails = (id: string) => {
-  // Navigate to receipt details
-  navigateTo(`/receipts/${id}`)
+// Only confirmed server results change the displayed records or close a dialog.
+const viewReceiptDetails = (receipt: Receipt) => downloadReceipt(receipt.id, receipt.originalFilename || receipt.filename)
+const matchReceipt = (id: string) => { if (canEdit.value) receiptToMatch.value = receipts.value.find(r => r.id === id) || null }
+const saveMatch = async (id: string, transactionId: string) => {
+  if (!canEdit.value || receiptToMatch.value?.id !== id) return
+  const selected = receiptToMatch.value
+  if (await matchWithTransaction(id, transactionId, selected.linkVersion ?? 0) && receiptToMatch.value === selected) receiptToMatch.value = null
 }
-
-const matchReceipt = (id: string) => {
-  // Navigate to receipt matching screen
-  router.push({
-    path: '/receipts/upload',
-    query: { action: 'match', id }
-  })
-}
-
-const confirmDelete = (id: string) => {
-  receiptToDelete.value = id
-  showDeleteConfirm.value = true
-}
-
+const confirmDelete = (id: string) => { if (canEdit.value) { receiptToDelete.value = id; showDeleteConfirm.value = true; error.value = null } }
 const deleteReceipt = async () => {
-  if (!receiptToDelete.value) return
-
-  try {
-    // Delete receipt via API
-    await $fetch(`/api/receipts/${receiptToDelete.value}`, { method: 'DELETE' })
-  } catch (error) {
-    // Continue to remove from local state even if API fails
-  }
-
-  // Remove from local state
-  const index = receipts.value.findIndex(r => r.id === receiptToDelete.value)
-  if (index !== -1) {
-    receipts.value.splice(index, 1)
-  }
-
-  // Close modal
-  showDeleteConfirm.value = false
-  receiptToDelete.value = null
+  const id = receiptToDelete.value
+  if (!id || !canEdit.value) return
+  if (await removeReceipt(id) && receiptToDelete.value === id) { showDeleteConfirm.value = false; receiptToDelete.value = null }
 }
 
 // Component to display appropriate icon based on file type
@@ -666,66 +545,4 @@ const FileIcon = defineComponent({
   }
 })
 
-// Generate mock receipts for demo
-const generateMockReceipts = (count: number) => {
-  const merchants = [
-    'Tech Gadgets Inc.',
-    'Office Supplies Co.',
-    'Global Imports Ltd.',
-    'ElectroMart',
-    'FoodMart',
-    'Travel Agency',
-    'Auto Parts Store',
-    'Hardware Depot'
-  ]
-
-  const fileTypes = [
-    'pdf',
-    'jpg',
-    'png',
-    'pdf'  // PDF more common
-  ]
-
-  const receipts = []
-
-  // Current date for reference
-  const now = new Date()
-
-  for (let i = 0; i < count; i++) {
-    // Create random dates within last 60 days
-    const uploadDate = new Date(now.getTime())
-    uploadDate.setDate(now.getDate() - Math.floor(Math.random() * 60))
-
-    // Random amount (sometimes null to simulate unprocessed receipts)
-    const hasAmount = Math.random() > 0.2
-    const amount = hasAmount ? Math.round(Math.random() * 1000 * 100) / 100 : null
-
-    // Random merchant (sometimes null)
-    const hasMerchant = Math.random() > 0.3
-    const merchant = hasMerchant ? merchants[Math.floor(Math.random() * merchants.length)] : null
-
-    // Random file type
-    const fileType = fileTypes[Math.floor(Math.random() * fileTypes.length)]
-
-    // Random status (more matched than unmatched)
-    const status = Math.random() > 0.3 ? 'matched' : 'unmatched'
-
-    // Random file size between 100KB and 5MB
-    const size = Math.floor(Math.random() * 5000000) + 100000
-
-    // Create receipt
-    receipts.push({
-      id: `receipt_${4000 + i}`,
-      filename: `receipt_${4000 + i}.${fileType}`,
-      size,
-      uploadDate: uploadDate.toISOString(),
-      amount,
-      merchant,
-      status,
-      transactionId: status === 'matched' ? `TRX-${7000 + i}` : null
-    })
-  }
-
-  return receipts
-}
 </script>

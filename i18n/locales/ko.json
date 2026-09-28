@@ -1465,6 +1465,11 @@
     "transactions": "거래",
     "uploaded": "업로드 날짜"
   },
+  "receiptWorkspace": {
+    "reload": "새로고침",
+    "transaction": "거래 열기",
+    "loadFailed": "거래를 불러오지 못했습니다. 닫은 후 다시 시도해 주세요."
+  },
   "receiptsList": {
     "adjustFilters": "필터 조정",
     "allStatuses": "모든 상태",

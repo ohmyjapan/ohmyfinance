@@ -1,58 +1,19 @@
-import { defineEventHandler, readBody, createError, isError } from 'h3';
-import path from 'path';
-import fs from 'fs/promises';
-import { requireAuth } from '../../middleware/auth'
+import { defineEventHandler, readBody, createError, isError } from 'h3'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
+import { getReceiptById } from '../../services/receiptManagementService'
+import { matchReceiptWithTransaction } from '../../services/receiptLinkService'
 
-/**
- * Matches receipt with transaction data
- */
-export default defineEventHandler(async (event) => {
-  requireAuth(event)
-    try {
-        // Parse request body
-        const body = await readBody(event);
-
-        if (!body.receiptId || !body.transactionId) {
-            throw createError({
-                statusCode: 400,
-                statusMessage: 'Receipt ID and Transaction ID are required'
-            });
-        }
-
-        // In a real application, this would interact with a database
-        // For now, we'll simulate successful matching
-
-        // Update the receipt status (in a real app, this would be a database update)
-        const receipt = {
-            id: body.receiptId,
-            status: 'matched',
-            transactionId: body.transactionId,
-            updatedAt: new Date().toISOString()
-        };
-
-        // Log the match for demonstration
-        const logsDir = path.join(process.cwd(), 'logs');
-        await fs.mkdir(logsDir, { recursive: true });
-
-        const logFile = path.join(logsDir, 'receipt-matches.log');
-        const logEntry = `${new Date().toISOString()} - Matched receipt ${body.receiptId} with transaction ${body.transactionId}\\n`;
-
-        try {
-            await fs.appendFile(logFile, logEntry);
-        } catch (error) {
-            console.warn('Failed to write to log file:', error);
-        }
-
-        return {
-            success: true,
-            receipt
-        };
-    } catch (error) {
-        console.error('Receipt matching error:', error);
-
-        throw createError({
-            statusCode: isError(error) ? error.statusCode : 500,
-            statusMessage: (isError(error) ? error.statusMessage : '') || 'Failed to match receipt with transaction'
-        });
-    }
-});
+// Compatibility entrance: use the same company ownership and displayed-version protocol.
+export default defineEventHandler(async event => {
+  const access = await requireLedgerAccess(event, 'write')
+  if (event.method !== 'POST') throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
+  try {
+    const body = await readBody(event)
+    if (!body?.receiptId || !body?.transactionId) throw createError({ statusCode: 400, statusMessage: 'Receipt ID and Transaction ID are required' })
+    await getReceiptById(access, body.receiptId)
+    return { success: true, ...await matchReceiptWithTransaction(access, body.receiptId, body.transactionId, body.linkVersion) }
+  } catch (error) {
+    if (isError(error)) throw error
+    throw createError({ statusCode: 500, statusMessage: 'Failed to match receipt with transaction' })
+  }
+})

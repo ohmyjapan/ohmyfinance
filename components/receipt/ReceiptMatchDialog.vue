@@ -23,6 +23,7 @@
             </div>
           </div>
 
+          <p v-if="saveError || loadError || downloadError" role="alert" class="mt-4 text-sm text-red-600">{{ saveError || loadError || downloadError }}</p>
           <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Left column - Receipt Details -->
             <div>
@@ -35,7 +36,7 @@
                     </div>
                   </div>
                   <div class="ml-3 flex-1">
-                    <div class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ receipt.filename }}</div>
+                    <div class="text-sm font-medium text-gray-900 dark:text-gray-100 break-all">{{ receipt.originalFilename || receipt.filename }}</div>
                     <div class="text-xs text-gray-500 dark:text-gray-400">
                       {{ t('receiptMatchDialog.uploaded', { date: formatDate(receipt.uploadDate) }) }}
                     </div>
@@ -61,7 +62,7 @@
                       <div>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('common.amount') }}</p>
                         <p class="text-sm font-medium text-gray-900 dark:text-gray-100">
-                          {{ receipt.amount ? formatCurrency(receipt.amount) : t('receiptMatchDialog.notDetected') }}
+                          {{ receipt.amount != null ? formatCurrency(receipt.amount, receipt.currency) : t('receiptMatchDialog.notDetected') }}
                         </p>
                       </div>
                       <div>
@@ -78,7 +79,7 @@
                 <div class="text-center">
                   <FileText size="40" class="mx-auto text-gray-400 dark:text-gray-500 mb-2" />
                   <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('receiptMatchDialog.receiptPreview') }}</p>
-                  <button class="mt-2 text-sm text-primary-main dark:text-primary-light">{{ t('receiptMatchDialog.viewFullSize') }}</button>
+                  <button :disabled="!receipt.fileUrl || isDownloading" @click="downloadReceipt(receipt.id, receipt.originalFilename || receipt.filename)" class="mt-2 text-sm text-primary-main dark:text-primary-light disabled:opacity-50">{{ t('common.download') }}</button>
                 </div>
               </div>
             </div>
@@ -122,7 +123,7 @@
                           #{{ transaction.id }}
                         </div>
                         <div class="text-xs text-gray-500 dark:text-gray-400">
-                          {{ transaction.type }} - {{ formatCurrency(transaction.amount) }}
+                          {{ transaction.type }} - {{ formatCurrency(transaction.amount, transaction.currency) }}
                         </div>
                         <div class="text-xs text-gray-500 dark:text-gray-400">
                           {{ formatDate(transaction.date) }}
@@ -158,7 +159,7 @@
           <button
               type="button"
               class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-primary-main text-base font-medium text-white hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:ml-3 sm:w-auto sm:text-sm"
-              :disabled="!selectedTransactionId"
+              :disabled="busy || !selectedTransactionId"
               @click="matchReceipt"
           >
             {{ t('receiptMatchDialog.confirmMatch') }}
@@ -179,6 +180,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '~/stores/user'
+import { useReceiptFiles } from '~/composables/useReceiptFiles'
 import {
   FileText,
   Link as LinkIcon,
@@ -191,8 +193,11 @@ import {
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
+const { downloadReceipt, downloadError, isDownloading } = useReceiptFiles()
 
 const props = defineProps({
+  busy: { type: Boolean, default: false },
+  saveError: { type: String, default: '' },
   receipt: {
     type: Object,
     required: true
@@ -206,6 +211,7 @@ const searchQuery = ref('')
 const selectedTransactionId = ref<string | null>(null)
 const transactions = ref<any[]>([])
 const isLoading = ref(false)
+const loadError = ref('')
 
 // Fetch transactions from API
 onMounted(async () => {
@@ -233,6 +239,7 @@ onMounted(async () => {
         id: t._id || t.id,
         type: t.type || '支出',
         amount: t.amount,
+        currency: t.currency || 'JPY',
         date: t.date,
         status: t.status,
         accountCategory: t.accountCategoryId?.name || '-',
@@ -253,6 +260,7 @@ onMounted(async () => {
 
     selectedTransactionId.value = transactions.value.some(t => t.id === strongId) ? strongId : null
   } catch (error) {
+    loadError.value = t('receiptWorkspace.loadFailed')
     console.error('Failed to load transactions:', error)
   } finally {
     isLoading.value = false
@@ -285,9 +293,8 @@ const formatDate = (isoDate: string) => {
 }
 
 // Format currency (locale-aware)
-const formatCurrency = (amount: number) => {
+const formatCurrency = (amount: number, currency = 'JPY') => {
   const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
   return new Intl.NumberFormat(currencyLocale, {
     style: 'currency',
     currency: currency,
@@ -330,7 +337,7 @@ const getTransactionIconColor = (type: string) => {
 
 // Match receipt with selected transaction
 const matchReceipt = () => {
-  if (selectedTransactionId.value) {
+  if (!props.busy && selectedTransactionId.value) {
     emit('match', props.receipt.id, selectedTransactionId.value)
   }
 }
