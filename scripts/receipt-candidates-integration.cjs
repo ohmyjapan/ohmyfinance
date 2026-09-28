@@ -31,6 +31,19 @@ module.exports = async ({db,call,token,other,pass}) => {
   assert(!response.data.matches.some(m=>[String(blocked),String(claimed)].includes(m.transactionId)));
   pass('built candidate route ranks actual merchant/currency evidence beyond the old twenty-record limit');
 
+  const rendered=await require('./helpers/receipt-dialog.cjs')({
+    receipt,authHeader:{Authorization:'Bearer '+token},
+    fetch:async(url,options)=>{
+      assert.equal(options.headers.Authorization,'Bearer '+token);
+      const response=await call(url,{token});assert.equal(response.status,200,JSON.stringify(response));return response.data;
+    }
+  });
+  assert(rendered.state.transactions.value.length>0,'The real API envelope must populate the receipt dialog');
+  assert.equal(rendered.state.selectedTransactionId.value,String(id));
+  assert.equal(rendered.emitted.length,0,'Opening the dialog must not attach a receipt');
+  assert(rendered.html.includes(String(id)));
+  pass('the actual receipt dialog consumes the built transaction envelope and displays its strong suggestion');
+
   const reads=await Promise.all(Array.from({length:5},()=>call(route,{token})));
   for(const read of reads)assert.deepEqual(read.data,response.data);
   assert.deepEqual(await db.collection('transactions').find({}).toArray(),ledger);

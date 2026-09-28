@@ -58,6 +58,7 @@ export default {
     'components/receipt/ReceiptMatchDialog.vue',
     'scripts/receipt-candidates.test.cjs',
     'scripts/receipt-dialog.test.cjs',
+    'scripts/helpers/receipt-dialog.cjs',
     'scripts/receipt-candidates-integration.cjs',
     'server/api/receipts/index.ts',
     'server/api/receipts/[id].ts',
@@ -181,7 +182,7 @@ export default {
     env.OMF_TEST_RECEIPT_CANDIDATES_ONLY = '1';
     const candidates = stage('isolated receipt candidate integration', ['scripts/finance-integration.cjs']);
     const candidateChecks = Number(candidates.output.match(/^(\d+) targeted receipt candidate checks passed\s*$/m)?.[1]);
-    if (!candidates.ok || !(candidateChecks >= 7)) {
+    if (!candidates.ok || !(candidateChecks >= 8)) {
       logs.push('The isolated receipt candidate suite must finish all its checks.');
       return result(false);
     }

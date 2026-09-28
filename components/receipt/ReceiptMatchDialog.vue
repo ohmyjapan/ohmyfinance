@@ -221,13 +221,13 @@ onMounted(async () => {
     }
 
     // Fetch unmatched transactions (without receipts)
-    const transactionsData = await $fetch<any[]>('/api/transactions', { headers: userStore.authHeader })
+    const transactionsData = await $fetch<{ transactions: any[]; total: number }>('/api/transactions', { headers: userStore.authHeader })
     const strongCandidates = suggestedMatches.filter(m => m.confidence >= 85)
     const strongId = strongCandidates.length === 1 && strongCandidates[0].autoMatchEligible
       ? strongCandidates[0].transactionId : null
 
     // Filter to transactions without receipts and format for display
-    transactions.value = (transactionsData || [])
+    transactions.value = (transactionsData.transactions || [])
       .filter((t: any) => !t.hasReceipt && !t.receiptFilePath)
       .map((t: any) => ({
         id: t._id || t.id,

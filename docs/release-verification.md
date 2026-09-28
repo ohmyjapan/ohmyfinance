@@ -42,6 +42,9 @@ currency mismatches, competing candidates, cursor failure and reconnect. The dia
 tests compile its actual script and render its template, verify authentication,
 and prevent price-only preselection or high-confidence badges. Icons are stubbed;
 this is not a browser visual review. The manual confirmation path remains separate.
+The same compiled dialog harness also consumes the actual built transaction and
+suggestion HTTP responses. This checks the `{ transactions, total }` list envelope;
+an array-shaped test stub previously hid a real empty-dialog failure.
 The authentication suite checks registration, access tokens, 2FA,
 trusted devices, backup codes, PIN/password renewal, restart recovery, invitations
 and logout. Each integration creates its own disposable MongoDB. The workflow
@@ -53,7 +56,7 @@ switches are removed. No actual bank, spreadsheet or export session is used.
 A failed command, missing test summary, fewer than the existing 87 unit/service/component tests,
 18 workflow checks, 10 authentication checks, 11 receipt management checks or
 6 proxy checks, 8 shipment status checks, 7 transaction status checks or
-7 receipt candidate checks, or skipped unit test is a
+8 receipt candidate checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.
 The verifier owns the 15-minute fixture timeout and process-tree cleanup. A fresh
