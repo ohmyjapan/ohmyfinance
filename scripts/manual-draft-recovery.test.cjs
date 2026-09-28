@@ -11,7 +11,7 @@ test('draft commit finishes before any POST and storage failure never sends an u
  const p=workspace({draftStore,fetch:async()=>{sends++;return result()}});
  try{const save=p.state.createTransaction(body);await tick();assert.equal(sends,0);commit.resolve();assert.equal((await save).state,'saved');assert.equal(sends,1)}finally{p.close()}
  const failed=storage();failed.manualDraftStore.freeze=async()=>{throw Error('Quota denied')};const q=workspace({draftStore:failed,fetch:()=>{throw Error('Must not send')}});
- try{assert.equal(await q.state.createTransaction(body),null);assert.equal(q.state.saveError.value,'draftRecovery.storageError');assert.equal(q.state.saveOutcomeUnknown.value,false)}finally{q.close()}
+ try{assert.equal(await q.state.createTransaction(body),null);assert.equal(q.state.saveError.value,'draftRecovery.storageBeforeSend');assert.equal(q.state.saveOutcomeUnknown.value,false)}finally{q.close()}
 });
 
 test('lost response and a remounted client reuse the stored original draft key and body',async()=>{
@@ -75,6 +75,62 @@ test('frozen form resubmits exact original fields while fresh rejected forms rem
  const original={...body,date:'2026-09-22T13:14:15Z',extraOriginalField:'test-only'},sent=[];
  const p=await form(original,{isEditing:false,frozen:true,save:async data=>{sent.push(data);return true}});
  try{p.state.form.value.amount='1';await p.state.submitForm();assert.deepEqual(sent,[original]);assert.match(p.html,/fieldset disabled/);assert.match(p.html,/draftRecovery.retry/)}finally{p.close()}
+});
+
+test('recovery absence or lookup failure preserves a running company list and its totals',async()=>{
+ for(const fails of [false,true]){
+  const s=storage(),draft=await s.manualDraftStore.create(s.draftOwner('user-a','company-a'));await s.manualDraftStore.freeze(draft.owner,draft.key,body);
+  const list=deferred(),rows=[{...body,_id:'one',type:'支出'},{...body,_id:'two',type:'支出'}];
+  const p=workspace({draftStore:s,fetch:async(url,o)=>{if(o.method)return result('three');if(url.includes('/creation/')){if(fails)throw Error('Lookup unavailable');return {state:'absent'}}return list.promise}});
+  try{const reading=p.state.fetchTransactions();await tick();await p.state.recoverDraft(draft.key);list.resolve({transactions:rows});assert.equal(await reading,true);assert.equal(p.state.transactions.value.length,2);assert.equal(p.state.transactionStats.value.expense.amount,134000);await p.state.createTransaction(body);assert.equal(p.state.transactions.value.length,3)}finally{list.resolve({transactions:rows});p.close()}
+ }
+});
+
+test('income and expense controls use the same lock as the frozen or busy form',async()=>{
+ for(const flags of [{frozen:true},{busy:true},{}]){
+  const p=await form({...body,type:'支出'},{isEditing:false,...flags});
+  try{const toggles=[...p.html.matchAll(/<button\b[^>]*class="[^"]*flex-1 py-2 px-4 rounded-lg[^>]*>/g)].map(m=>m[0]);assert.equal(toggles.length,2);for(const html of toggles)assert.equal(/\sdisabled(?:[\s=>])/.test(html),!!(flags.frozen||flags.busy))}finally{p.close()}
+ }
+});
+
+test('ordinary and corrected saves do not show recovery notices while unknown retries still do',async()=>{
+ const p=workspace({fetch:async()=>result()});
+ try{await p.state.createTransaction(body);await tick();assert.equal(p.state.draftNotice.value,'');assert.equal(p.state.pendingDrafts.value.length,0)}finally{p.close()}
+ for(const statusCode of [400,503]){
+  let failed=true;const q=workspace({fetch:async()=>{if(failed)throw Object.assign(Error('Synthetic failure'),{statusCode});return result()}});
+  try{await q.state.createTransaction(body);failed=false;await q.state.createTransaction(body);assert.equal(q.state.draftNotice.value,statusCode===400?'':'draftRecovery.saved')}finally{q.close()}
+ }
+});
+
+async function rejectedDraft(s){const row=await s.manualDraftStore.create(s.draftOwner('user-a','company-a'));const pending=await s.manualDraftStore.freeze(row.owner,row.key,body);return s.manualDraftStore.settle(row.owner,row.key,pending.revision,'rejected')}
+
+test('discarded rejection retains its identity and stops stale tabs or remounts from sending',async()=>{
+ const s=storage(),row=await rejectedDraft(s);let posts=0;const fetch=async(url,o)=>{if(o.method){posts++;return result()}return url.includes('/creation/')?{state:'absent'}:{transactions:[]}};
+ const first=workspace({page:true,draftStore:s,fetch}),old=workspace({page:true,draftStore:s,fetch});
+ try{await first.mount();await old.mount();await first.state.openCreateDraft(row.key);await old.state.openCreateDraft(row.key);assert.equal(old.state.draftNotice.value,'draftRecovery.rejected');await first.state.discardDraftEntry(row.key,row.revision);assert.equal(first.state.showCreateModal.value,false);assert.equal(first.route.query.draft,undefined);assert.deepEqual(first.state.pendingDrafts.value,[]);assert.equal(await old.state.handleCreateTransaction(body),false);assert.equal(old.state.showCreateModal.value,false);assert.equal(old.state.saveOutcomeUnknown.value,false);assert.equal(posts,0);assert.equal((await s.manualDraftStore.get(row.owner,row.key)).state,'discarded');assert.deepEqual((await s.manualDraftStore.get(row.owner,row.key)).payload,body)}finally{first.close();old.close()}
+ const reloaded=workspace({page:true,draftStore:s,fetch,route:vue.reactive({params:{},query:{draft:row.key}})});try{await reloaded.mount();assert.equal(reloaded.state.showCreateModal.value,false);assert.equal(reloaded.state.draftNotice.value,'draftRecovery.discarded');assert.equal(posts,0)}finally{reloaded.close()}
+});
+
+test('discard checks the stored revision and cannot erase pending or confirmed attempts',async()=>{
+ const s=storage(),first=await rejectedDraft(s),corrected=await s.manualDraftStore.freeze(first.owner,first.key,{...body,amount:1});
+ const p=workspace({draftStore:s,fetch:()=>{throw Error('Discard must not call the API')}});
+ try{assert.equal((await p.state.discardRejectedDraft(first.key,first.revision)).state,'pending');assert.equal(p.state.draftNotice.value,'draftRecovery.discardChanged');assert.equal((await p.state.discardRejectedDraft(first.key,corrected.revision)).state,'pending');await s.manualDraftStore.settle(first.owner,first.key,corrected.revision,'rejected');assert.equal((await p.state.discardRejectedDraft(first.key,first.revision)).state,'rejected');assert.equal((await s.manualDraftStore.get(first.owner,first.key)).revision,corrected.revision);await s.manualDraftStore.settle(first.owner,first.key,corrected.revision,'saved','real-row');assert.equal((await p.state.discardRejectedDraft(first.key,corrected.revision)).state,'saved');await s.manualDraftStore.settle(first.owner,first.key,corrected.revision,'deleted','real-row');assert.equal((await p.state.discardRejectedDraft(first.key,corrected.revision)).state,'deleted')}finally{p.close()}
+});
+
+test('concurrent discard is idempotent and stale rejection cannot resurrect its marker',async()=>{
+ const s=storage(),row=await rejectedDraft(s),a=workspace({draftStore:s}),b=workspace({draftStore:s});
+ try{const results=await Promise.all([a.state.discardRejectedDraft(row.key,row.revision),b.state.discardRejectedDraft(row.key,row.revision)]);assert(results.every(r=>r.state==='discarded'));assert.equal((await s.manualDraftStore.get(row.owner,row.key)).revision,row.revision+1);assert.equal((await s.manualDraftStore.settle(row.owner,row.key,row.revision,'rejected')).state,'discarded');assert.equal((await s.manualDraftStore.freeze(row.owner,row.key,body)).state,'discarded');assert.equal((await s.manualDraftStore.settle(row.owner,row.key,row.revision,'saved','authoritative')).state,'saved');assert.equal((await s.manualDraftStore.settle(row.owner,row.key,row.revision,'deleted','authoritative')).state,'deleted')}finally{a.close();b.close()}
+});
+
+test('discard failure preserves the rejection and company changes suppress late UI results',async()=>{
+ const s=storage(),row=await rejectedDraft(s),original=s.manualDraftStore.discard;const p=workspace({draftStore:s});
+ try{await p.state.loadDraft(row.key);s.manualDraftStore.discard=async()=>{throw Error('Storage aborted')};assert.equal(await p.state.discardRejectedDraft(row.key,row.revision),null);assert.equal((await s.manualDraftStore.get(row.owner,row.key)).state,'rejected');assert.equal(p.state.draftError.value,'draftRecovery.storageError');s.manualDraftStore.discard=original;p.user.currentOrganization.role='viewer';assert.equal(await p.state.discardRejectedDraft(row.key,row.revision),null);assert.equal((await s.manualDraftStore.get(row.owner,row.key)).state,'rejected');p.user.currentOrganization.role='member';const gate=deferred();s.manualDraftStore.discard=async(...args)=>{const result=await original(...args);await gate.promise;return result};const pending=p.state.discardRejectedDraft(row.key,row.revision);await tick();p.user.currentOrganization={id:'other',role:'member'};gate.resolve();assert.equal(await pending,null);assert.equal(p.state.draftRecord.value,null);assert.equal(p.state.draftNotice.value,'');assert.deepEqual(p.state.pendingDrafts.value,[])}finally{p.close()}
+});
+
+test('storage failures explain which attempt was not sent and recovery keeps the same identity',async()=>{
+ const s=storage(),create=s.manualDraftStore.create,freeze=s.manualDraftStore.freeze;let sends=0;s.manualDraftStore.create=async()=>{throw Error('Storage unavailable')};
+ const p=workspace({page:true,draftStore:s,fetch:async(url,o)=>{if(o.method){sends++;return result()}return {transactions:[]}}});
+ try{await p.mount();await p.state.openCreateDraft();assert.equal(p.state.showCreateModal.value,false);assert.equal(p.state.draftError.value,'draftRecovery.storageNewError');assert.equal(sends,0);s.manualDraftStore.create=create;await p.state.openCreateDraft();const key=p.state.draftRecord.value.key;s.manualDraftStore.freeze=async()=>{throw Error('Storage unavailable')};assert.equal(await p.state.handleCreateTransaction(body),false);assert.equal(p.state.saveError.value,'draftRecovery.storageBeforeSend');assert.equal(p.state.draftRecord.value.key,key);assert.equal(sends,0);s.manualDraftStore.freeze=freeze;assert.equal(await p.state.handleCreateTransaction(body),true);assert.equal(p.state.draftRecord.value.key,key);assert.equal(sends,1)}finally{p.close()}
 });
 
 test('page opens a durable draft route and resumes it after remount without creating another identity',async()=>{

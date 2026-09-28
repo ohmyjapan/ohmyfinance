@@ -97,7 +97,7 @@ export function useTransactions() {
             const row = await manualDraftStore.create(owner())
             if (generation !== epoch || request !== draftLoadRequest) return null
             draftRecord.value = row; return row
-        } catch { if (generation === epoch) draftError.value = t('draftRecovery.storageError'); return null }
+        } catch { if (generation === epoch) draftError.value = t('draftRecovery.storageNewError'); return null }
         finally { if (generation === epoch) isSaving.value = false }
     }
     async function loadDraft(key: string) {
@@ -108,10 +108,11 @@ export function useTransactions() {
             if (generation !== epoch || request !== draftLoadRequest) return null
             draftRecord.value = row
             if (!row) draftError.value = t('draftRecovery.missing')
+            if (row?.state === 'discarded') draftNotice.value = t('draftRecovery.discarded')
             return row
         } catch { if (generation === epoch) draftError.value = t('draftRecovery.storageError'); return null }
     }
-    async function recordOutcome(row: ManualDraft, result: any, generation: number) {
+    async function recordOutcome(row: ManualDraft, result: any, generation: number, recovering = true) {
         if (!['saved', 'deleted'].includes(result?.state) || !result.transactionId || (result.state === 'saved' && (!result.transaction || String(result.transaction.id || result.transaction._id) !== result.transactionId))) throw Error(t('draftRecovery.unconfirmed'))
         let settled: ManualDraft = { ...row, state: result.state, transactionId: result.transactionId }
         try {
@@ -119,20 +120,25 @@ export function useTransactions() {
             if (generation === epoch) { draftSettlementFailed = false; draftError.value = '' }
         } catch { if (generation === epoch) { draftSettlementFailed = true; draftError.value = t('draftRecovery.confirmedStorageError') } }
         const confirmed = settled.state === 'deleted' ? { state: 'deleted', transactionId: settled.transactionId } : result
-        if (generation === epoch) { draftRecord.value = settled; draftNotice.value = t('draftRecovery.' + confirmed.state); void refreshDrafts() }
+        if (generation === epoch) { draftRecord.value = settled; draftNotice.value = recovering ? t('draftRecovery.' + confirmed.state) : ''; void refreshDrafts() }
         return confirmed
     }
     const createTransaction = (data: Partial<Transaction>) => {
         const body = snapshot(data), generation = epoch, identity = owner()
         return save(async headers => {
-            let row: ManualDraft
+            let row: ManualDraft, recovering = false
             try {
                 row = draftRecord.value || await manualDraftStore.create(identity)
                 if (generation !== epoch) return null
+                recovering = ['pending', 'saved', 'deleted'].includes(row.state)
                 row = await manualDraftStore.freeze(identity, row.key, body)
-            } catch { throw Object.assign(Error(t('draftRecovery.storageError')), { notSent: true }) }
+            } catch { throw Object.assign(Error(t('draftRecovery.storageBeforeSend')), { notSent: true }) }
             if (generation !== epoch) return null
             draftRecord.value = row
+            if (row.state === 'discarded') {
+                draftNotice.value = t('draftRecovery.discarded')
+                throw Object.assign(Error(t('draftRecovery.discarded')), { notSent: true })
+            }
             if (!sameDraftPayload(row.payload, body)) throw Error(t('draftRecovery.changed'))
             void refreshDrafts()
             let result: any
@@ -149,7 +155,7 @@ export function useTransactions() {
                 }
                 throw err
             }
-            return recordOutcome(row, result, generation)
+            return recordOutcome(row, result, generation, recovering)
         }, result => {
             if (result?.state === 'saved') remember(result.transaction)
             if (result?.state === 'deleted') transactions.value = transactions.value.filter(row => row.id !== result.transactionId)
@@ -158,14 +164,15 @@ export function useTransactions() {
     async function recoverDraft(key: string) {
         if (!alive || !userStore.isAuthenticated || isSaving.value) return null
         const generation = epoch, identity = owner(), headers = { ...userStore.authHeader }
-        isSaving.value = true; clearSaveError(); invalidateReads(); draftNotice.value = ''
+        isSaving.value = true; clearSaveError(); draftNotice.value = ''
         try {
             const row = await manualDraftStore.get(identity, key)
             if (generation !== epoch || !row?.payload) return null
+            if (row.state === 'discarded') { draftRecord.value = row; draftNotice.value = t('draftRecovery.discarded'); return { state: 'discarded' } }
             const result = await $fetch<any>('/api/transactions/creation/' + row.key, { headers, retry: 0 })
             if (generation !== epoch) return null
             if (result.state === 'absent') {
-                draftRecord.value = row; draftNotice.value = t('draftRecovery.absent'); return result
+                draftRecord.value = row; draftNotice.value = t(row.state === 'rejected' ? 'draftRecovery.rejected' : 'draftRecovery.absent'); return result
             }
             const confirmed = await recordOutcome(row, result, generation)
             if (generation !== epoch) return null
@@ -179,6 +186,20 @@ export function useTransactions() {
             if (generation !== epoch) return null
             return confirmed
         } catch (err) { if (generation === epoch) saveError.value = failure(err); return null }
+        finally { if (generation === epoch) isSaving.value = false }
+    }
+    async function discardRejectedDraft(key: string, revision: number) {
+        if (!alive || !canEdit.value || isSaving.value) return null
+        const generation = epoch, identity = owner()
+        isSaving.value = true; clearSaveError(); draftNotice.value = ''
+        try {
+            const row = await manualDraftStore.discard(identity, key, revision)
+            if (generation !== epoch) return null
+            if (draftRecord.value?.key === key) draftRecord.value = row
+            draftNotice.value = t(row.state === 'discarded' ? 'draftRecovery.discarded' : 'draftRecovery.discardChanged')
+            await refreshDrafts()
+            return generation === epoch ? row : null
+        } catch { if (generation === epoch) draftError.value = t('draftRecovery.storageError'); return null }
         finally { if (generation === epoch) isSaving.value = false }
     }
     const updateTransaction = async (id: string, data: Partial<Transaction>) => {
@@ -387,7 +408,7 @@ export function useTransactions() {
     }
 
     return {
-        draftRecord, pendingDrafts, draftNotice, draftError, refreshDrafts, startDraft, loadDraft, recoverDraft,
+        draftRecord, pendingDrafts, draftNotice, draftError, refreshDrafts, startDraft, loadDraft, recoverDraft, discardRejectedDraft,
         contextKey, canEdit, isSaving, saveError, saveOutcomeUnknown, clearSaveError, clearCurrent,
         // State
         transactions,

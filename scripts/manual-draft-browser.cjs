@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),path=require('node:path');
 module.exports=async({db,call,token,origin,organizationId,pass})=>{
  const puppeteer=require('node:module').createRequire(path.resolve(__dirname,'../collector/package.json'))('rebrowser-puppeteer-core');
  const browser=await puppeteer.connect({browserURL:'http://127.0.0.1:'+Number(process.env.OMF_TEST_CHROME_PORT),defaultViewport:null});
- const pages=[],errors=[],writes=[],ja=require('../i18n/locales/ja.json');let attempts=0,interceptionFailure;
+ const pages=[],errors=[],writes=[],ja=require('../i18n/locales/ja.json');let attempts=0,interceptionFailure,responseMode='drop',releaseHeld;
  const modal='body > .fixed.z-50',form=modal+' form';
  const action=(page,selector,label)=>page.$$eval(selector+' button',(buttons,text)=>{const button=buttons.find(b=>b.textContent.trim()===text);if(!button)throw Error('Button missing: '+text);button.click()},label);
  const stored=(page,key)=>page.evaluate(async key=>{
@@ -14,14 +14,18 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
  const open=async page=>{await action(page,'header',ja.transactionForm.createTitle);await page.waitForSelector(form);await page.waitForFunction(()=>new URL(location.href).searchParams.has('draft'));return new URL(page.url()).searchParams.get('draft')};
  const fill=async page=>{const input=await page.$(form+' input[placeholder="10,000"]');await input.click();await page.keyboard.down('Control');await page.keyboard.press('A');await page.keyboard.up('Control');await input.type('67000')};
  const submit=page=>action(page,modal,ja.common.save);
+ const until=async check=>{for(let i=0;i<100;i++){if(await check())return;await new Promise(resolve=>setTimeout(resolve,50))}throw Error('Timed out waiting for draft state')};
+ const abortPuts=page=>page.evaluate(()=>{window.originalDraftPut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(...args){const r=window.originalDraftPut.apply(this,args);if(this.transaction.db.name==='omf-manual-drafts')r.addEventListener('success',()=>this.transaction.abort(),{once:true});return r}});
+ const restorePuts=page=>page.evaluate(()=>{IDBObjectStore.prototype.put=window.originalDraftPut;delete window.originalDraftPut});
  async function intercept(page){
   page.on('pageerror',error=>errors.push(error.message));await page.setRequestInterception(true);
   page.on('request',request=>{void (async()=>{
    if(request.method()!=='POST'||!request.url().endsWith('/api/transactions')){await request.continue();return}
    attempts++;const headers=request.headers(),key=headers['idempotency-key'];assert.match(key,/^[a-f0-9]{32}$/);
    const record=await stored(page,key);assert.equal(record.state,'pending');assert.deepEqual(record.payload,JSON.parse(request.postData()));
+   const mode=responseMode;if(mode==='hold')await new Promise(resolve=>{releaseHeld=resolve});
    const response=await fetch(request.url(),{method:'POST',headers:{'Content-Type':'application/json',Authorization:headers.authorization,'Idempotency-Key':key},body:request.postData()});
-   const result=await response.json();assert.equal(response.status,200,JSON.stringify(result));writes.push({key,result});await request.abort('failed');
+   const result=await response.json();assert.equal(response.status,200,JSON.stringify(result));writes.push({key,result});if(mode==='drop')await request.abort('failed');else await request.respond({status:200,contentType:'application/json',body:JSON.stringify(result)});
   })().catch(async error=>{interceptionFailure=error;if(!request.isInterceptResolutionHandled())try{await request.abort('failed')}catch{}})});
  }
  try{
@@ -33,6 +37,7 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
   const key=await open(page);await fill(page);await submit(page);await ready(page);if(interceptionFailure)throw interceptionFailure;
   assert.equal(writes.length,1);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':key}),1);
   const row=await stored(page,key);assert.equal(row.state,'pending');assert.equal(row.payload.amount,67000);
+  const toggles=await page.$$eval(modal+' button',(buttons,labels)=>buttons.filter(b=>labels.includes(b.textContent.trim())).map(b=>({disabled:b.disabled,text:b.textContent.trim()})),[ja.transactions.income,ja.transactions.expense]);assert.equal(toggles.length,2);assert(toggles.every(b=>b.disabled));await action(page,modal,ja.transactions.income);assert.deepEqual((await stored(page,key)).payload,row.payload);
   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT});
   await page.reload({waitUntil:'networkidle2'});await saved(page);assert.equal((await stored(page,key)).state,'saved');assert.equal(await page.$(form),null);assert.equal(attempts,1);
   pass('real Chrome stores the original purchase before sending and recovers a lost response after reload without another POST');
@@ -52,12 +57,14 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
   assert.equal((await stored(page,deleted)).state,'deleted');assert.equal(attempts,beforeDeleted);
   pass('real Chrome reload reports a deleted transaction and retains its identity without resurrection');
 
+  const beforeNewFailure=attempts;await page.evaluate(()=>{window.originalDraftAdd=IDBObjectStore.prototype.add;IDBObjectStore.prototype.add=function(...args){if(this.transaction.db.name==='omf-manual-drafts')throw new DOMException('Synthetic storage denied','QuotaExceededError');return window.originalDraftAdd.apply(this,args)}});
+  try{await action(page,'header',ja.transactionForm.createTitle);await page.waitForFunction(label=>document.body.textContent.includes(label),{polling:100},ja.draftRecovery.storageNewError);assert.equal(await page.$(form),null);assert.equal(attempts,beforeNewFailure)}finally{await page.evaluate(()=>{IDBObjectStore.prototype.add=window.originalDraftAdd;delete window.originalDraftAdd})}
   const aborted=await open(page);await fill(page);const beforeAbort=attempts;
-  await page.evaluate(()=>{window.originalDraftPut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(...args){const r=window.originalDraftPut.apply(this,args);if(this.transaction.db.name==='omf-manual-drafts')r.addEventListener('success',()=>this.transaction.abort(),{once:true});return r}});
-  try{await submit(page);await page.waitForFunction(label=>document.body.textContent.includes(label),{timeout:5000},ja.draftRecovery.storageError);assert.equal(attempts,beforeAbort);assert.equal((await stored(page,aborted)).state,'draft')}
+  await abortPuts(page);
+  try{await submit(page);await page.waitForFunction(label=>document.body.textContent.includes(label),{timeout:5000},ja.draftRecovery.storageBeforeSend);assert.equal(attempts,beforeAbort);assert.equal((await stored(page,aborted)).state,'draft')}
   catch(error){throw Error('Real Chrome storage commit boundary failed: '+error.message)}
-  finally{await page.evaluate(()=>{IDBObjectStore.prototype.put=window.originalDraftPut;delete window.originalDraftPut})}
-  await action(page,modal,ja.common.cancel);
+  finally{await restorePuts(page)}
+  await submit(page);await ready(page);assert.equal(attempts,beforeAbort+1);await page.reload({waitUntil:'networkidle2'});await saved(page);assert.equal((await stored(page,aborted)).state,'saved');
   pass('real Chrome abort after IndexedDB request success prevents the network continuation until storage commits');
 
   const owned=await open(page);await fill(page);await submit(page);await ready(page);if(interceptionFailure)throw interceptionFailure;
@@ -70,11 +77,36 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
   await page.waitForFunction(count=>document.querySelectorAll('tbody tr').length===count,{},expectedRows);
   pass('real Chrome company changes hide the old draft while returning recovers it and the complete company list through authenticated reads');
 
+  responseMode='pass';const ordinary=await open(page);await fill(page);await submit(page);await page.waitForFunction(selector=>!document.querySelector(selector),{polling:100},form);await until(async()=>!(await page.$('[data-manual-recovery]')));assert.equal((await stored(page,ordinary)).state,'saved');
+  pass('real Chrome ordinary successful saves leave no confirmation-needed panel');
+
+  // Seed the result of an actual rejected API request. The UI correction omits
+  // its unsupported field; this avoids pretending a successful POST was a 400.
+  const seedRejected=async()=>{
+   const draftKey=require('node:crypto').randomBytes(16).toString('hex'),payload={...row.payload,unsupportedFixtureField:true};
+   assert.equal((await call('/api/transactions',{method:'POST',token,headers:{'Idempotency-Key':draftKey},body:payload})).status,400);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':draftKey}),0);
+   const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url')),owner=JSON.stringify([claims.userId,String(organizationId)]);
+   const rejected={id:JSON.stringify([owner,draftKey]),owner,key:draftKey,state:'rejected',revision:1,payload,previousPayloads:[],createdAt:new Date().toISOString()};
+   await page.evaluate(async record=>{const database=await new Promise((resolve,reject)=>{const r=indexedDB.open('omf-manual-drafts',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});await new Promise((resolve,reject)=>{const tx=database.transaction('drafts','readwrite',{durability:'strict'});tx.oncomplete=()=>{database.close();resolve()};tx.onabort=()=>{database.close();reject(tx.error)};tx.objectStore('drafts').put(record)})},rejected);return rejected;
+  };
+  const stale=await browser.newPage();pages.push(stale);await intercept(stale);
+  const rejected=await seedRejected();await page.goto(origin+'/transactions',{waitUntil:'networkidle2'});await stale.goto(origin+'/transactions?draft='+rejected.key,{waitUntil:'networkidle2'});await stale.waitForSelector(form);
+  const panel='[data-manual-draft="'+rejected.key+'"]',beforeDiscard=attempts;
+  if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-rejected.png')});
+  await abortPuts(page);try{await action(page,panel,ja.draftRecovery.discard);await page.waitForFunction(label=>document.body.textContent.includes(label),{polling:100},ja.draftRecovery.storageError);assert.equal((await stored(page,rejected.key)).state,'rejected')}finally{await restorePuts(page)}
+  await action(page,panel,ja.draftRecovery.discard);await until(async()=>(await stored(page,rejected.key)).state==='discarded');await submit(stale);await stale.waitForFunction(selector=>!document.querySelector(selector),{polling:100},form);assert.equal(attempts,beforeDiscard);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':rejected.key}),0);await stale.reload({waitUntil:'networkidle2'});assert.equal(await stale.$(form),null);
+  pass('real Chrome discard survives storage abort and prevents an older tab or reload from sending the rejected purchase');
+
+  const corrected=await seedRejected();await page.goto(origin+'/transactions',{waitUntil:'networkidle2'});await stale.goto(origin+'/transactions?draft='+corrected.key,{waitUntil:'networkidle2'});await stale.waitForSelector(form);responseMode='hold';releaseHeld=null;await submit(stale);await until(()=>!!releaseHeld);assert.equal((await stored(page,corrected.key)).state,'pending');
+  try{await action(page,'[data-manual-draft="'+corrected.key+'"]',ja.draftRecovery.discard);await page.waitForFunction(label=>document.body.textContent.includes(label),{polling:100},ja.draftRecovery.discardChanged);assert.equal((await stored(page,corrected.key)).state,'pending')}finally{releaseHeld();releaseHeld=null;responseMode='pass'}
+  await stale.waitForFunction(selector=>!document.querySelector(selector),{polling:100},form);assert.equal((await stored(page,corrected.key)).state,'saved');assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':corrected.key}),1);await stale.close();pages.splice(pages.indexOf(stale),1);await page.bringToFront();await page.reload({waitUntil:'networkidle2'});
+  pass('real Chrome a newer corrected save wins over a stale discard and completes with one ledger entry');
+
   assert.equal(await page.evaluate(()=>document.documentElement.classList.contains('dark')),false);
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
   if(process.env.OMF_TEST_SCREENSHOT){await page.setViewport({width:1440,height:1000});await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-desktop.png')})}
   assert.deepEqual(errors,[]);if(interceptionFailure)throw interceptionFailure;
   pass('real Chrome recovery uses the light transaction layout without mobile overflow or page exceptions');
  }catch(error){if(process.env.OMF_TEST_SCREENSHOT){try{require('node:fs').writeFileSync(process.env.OMF_TEST_SCREENSHOT.replace('.png','-failure.json'),JSON.stringify({attempts,writes,interceptionFailure:interceptionFailure?.stack,pages:await Promise.all(pages.map(p=>p.evaluate(()=>({url:location.href,visible:document.visibilityState,text:document.body.innerText,buttons:[...document.querySelectorAll('body > .fixed.z-50 button')].map(b=>({text:b.textContent,disabled:b.disabled}))}))))},null,2))}catch{}if(pages[0])try{await pages[0].bringToFront();await pages[0].screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-failure.png')})}catch{}}throw error}
- finally{for(const page of pages)try{await page.close()}catch{}browser.disconnect()}
+ finally{if(releaseHeld)releaseHeld();for(const page of pages)try{await page.close()}catch{}browser.disconnect()}
 };

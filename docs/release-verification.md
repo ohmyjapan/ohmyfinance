@@ -329,3 +329,21 @@ real Chrome cases (twelve including API/setup), zero TypeScript diagnostics, and
 six detected/restored mutations including an actual IndexedDB abort boundary.
 Browser storage eviction, OS/power loss and unsubmitted text are excluded.
 Existing broader release blockers remain. No deployment or production migration.
+
+The reviewed draft follow-up fixes absent/failed recovery canceling the ledger read,
+locks expense/income toggles with the rest of the form, and limits confirmation
+notices to recovery/retry results. Rejected drafts have a revision-aware local
+discard marker that prevents stale-tab sends. Durable storage remains mandatory;
+new-draft, before-send and confirmed-result storage errors have distinct guidance.
+
+Required acceptance now includes both cross-tab discard/correction orderings,
+discard transaction abort, storage recovery with the same identity, no notice
+after ordinary success, and disabled type controls in actual Chrome. Browser
+receipts include source hashes at test start; the finance fixture requires all
+289 unit/service cases and the draft browser fixture requires all 16 checks,
+including nine in real Chrome. Current results are retained with the task report.
+
+New discard state/revision and no-send guards still need independent owner-ordered
+review. The older shared save helper can cancel an initial list read, leaving an
+incomplete list after a save started during loading; this is separately reproduced
+and remains a release blocker. The broader release blockers above still apply.

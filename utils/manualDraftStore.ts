@@ -1,4 +1,4 @@
-export type DraftState = 'draft' | 'pending' | 'rejected' | 'saved' | 'deleted'
+export type DraftState = 'draft' | 'pending' | 'rejected' | 'discarded' | 'saved' | 'deleted'
 export interface ManualDraft {
   id: string; owner: string; key: string; state: DraftState; revision: number
   payload: Record<string, any> | null; previousPayloads: Record<string, any>[]
@@ -26,6 +26,10 @@ export function freezeDraft(row: ManualDraft, payload: Record<string, any>): Man
 export function settleDraft(row: ManualDraft, revision: number, state: 'saved' | 'deleted' | 'rejected', transactionId?: string): ManualDraft {
   if (row.state === 'deleted' || (state === 'rejected' && (row.revision !== revision || row.state !== 'pending'))) return row
   return { ...row, state, ...(transactionId ? { transactionId } : {}) }
+}
+export function discardDraft(row: ManualDraft, revision: number): ManualDraft {
+  if (row.state !== 'rejected' || row.revision !== revision) return row
+  return { ...row, state: 'discarded', revision: row.revision + 1 }
 }
 
 async function openDatabase(): Promise<IDBDatabase> {
@@ -82,5 +86,6 @@ export const manualDraftStore = {
     return transaction<ManualDraft[]>('readonly', (store, result) => { const request = store.index('owner').getAll(owner); request.onsuccess = () => result(request.result.filter((row: ManualDraft) => ['pending', 'rejected'].includes(row.state))) })
   },
   freeze: (owner: string, key: string, payload: Record<string, any>) => update(owner, key, row => freezeDraft(row, payload)),
+  discard: (owner: string, key: string, revision: number) => update(owner, key, row => discardDraft(row, revision)),
   settle: (owner: string, key: string, revision: number, state: 'saved' | 'deleted' | 'rejected', transactionId?: string) => update(owner, key, row => settleDraft(row, revision, state, transactionId))
 }

@@ -9,6 +9,7 @@ module.exports=()=>{
   async get(owner,key){return copy(rows.get(actual.draftIdentity(owner,key))||null)},
   async list(owner){return copy([...rows.values()].filter(row=>row.owner===owner&&['pending','rejected'].includes(row.state)))},
   async freeze(owner,key,payload){const id=actual.draftIdentity(owner,key),row=actual.freezeDraft(rows.get(id),copy(payload));rows.set(id,row);return copy(row)},
+  async discard(owner,key,revision){const id=actual.draftIdentity(owner,key),row=actual.discardDraft(rows.get(id),revision);rows.set(id,row);return copy(row)},
   async settle(owner,key,revision,state,transactionId){const id=actual.draftIdentity(owner,key),row=actual.settleDraft(rows.get(id),revision,state,transactionId);rows.set(id,row);return copy(row)}
  };
  return {...actual,manualDraftStore:store};

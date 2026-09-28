@@ -36,14 +36,16 @@
       <p v-if="draftNotice" role="status" class="mt-2 text-sm text-gray-600 dark:text-gray-300">{{ draftNotice }}</p>
       <p v-if="draftError" role="alert" class="mt-2 text-sm text-red-600">{{ draftError }}</p>
       <p v-if="pendingDrafts.length" class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('draftRecovery.description') }}</p>
-      <div v-for="draft in pendingDrafts" :key="draft.key" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3 dark:border-white/10">
+      <div v-for="draft in pendingDrafts" :key="draft.key" :data-manual-draft="draft.key" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3 dark:border-white/10">
         <div class="min-w-0 text-sm text-gray-700 dark:text-gray-200">
           <p class="font-medium">{{ draft.payload?.date?.slice(0, 10) }} · {{ formatCurrency(Number(draft.payload?.amount || 0)) }}</p>
           <p class="max-w-xs truncate text-gray-500">{{ draft.payload?.productName || draft.payload?.notes || t('draftRecovery.purchase') }}</p>
+          <p v-if="draft.state === 'rejected'" class="mt-1 text-gray-500">{{ t('draftRecovery.rejected') }}</p>
         </div>
-        <div class="flex gap-3 text-sm">
+        <div class="flex flex-wrap gap-3 text-sm">
           <button type="button" :disabled="isSaving" @click="checkDraft(draft.key)" class="text-primary-main disabled:opacity-50">{{ t('draftRecovery.check') }}</button>
           <button v-if="canEdit" type="button" :disabled="isSaving" @click="openCreateDraft(draft.key)" class="text-primary-main disabled:opacity-50">{{ t('draftRecovery.resume') }}</button>
+          <button v-if="canEdit && draft.state === 'rejected'" type="button" :disabled="isSaving" @click="discardDraftEntry(draft.key, draft.revision)" class="text-red-600 disabled:opacity-50">{{ t('draftRecovery.discard') }}</button>
         </div>
       </div>
     </section>
@@ -443,7 +445,7 @@ const { t } = useI18n()
 
 // Use the transactions composable
 const {
-  draftRecord, pendingDrafts, draftNotice, draftError, refreshDrafts, startDraft, loadDraft, recoverDraft,
+  draftRecord, pendingDrafts, draftNotice, draftError, refreshDrafts, startDraft, loadDraft, recoverDraft, discardRejectedDraft,
   contextKey, canEdit, isSaving, saveError, saveOutcomeUnknown, clearSaveError, updateTransaction,
   transactions,
   isLoading,
@@ -487,10 +489,14 @@ const openCreateDraft = async (key?: string) => {
   clearSaveError()
   const draft = key ? await loadDraft(key) : await startDraft()
   if (!draft || request !== draftOpening || generation !== contextKey.value) return
+  if (draft.state === 'discarded') { showCreateModal.value = false; removeDraftRoute(); return }
   showCreateModal.value = true
   if (route.query?.draft !== draft.key) await router.replace({ query: { ...route.query, draft: draft.key } })
   if (request !== draftOpening || generation !== contextKey.value) return
   if (draft.payload) await checkDraft(draft.key)
+}
+const discardDraftEntry = async (key: string, revision: number) => {
+  await discardRejectedDraft(key, revision)
 }
 
 // Initialize data
@@ -609,6 +615,9 @@ watch([contextKey, canEdit], () => {
 }, { flush: 'sync' })
 watch(contextKey, () => { void fetchTransactions(); void refreshDrafts() }, { flush: 'post' })
 watch(showCreateModal, shown => { if (!shown) { draftOpening++; removeDraftRoute(); void refreshDrafts() } })
+watch(() => draftRecord.value?.state, state => {
+  if (state === 'discarded') { showCreateModal.value = false; removeDraftRoute() }
+}, { flush: 'sync' })
 watch(() => route.query?.draft, key => {
   if (typeof key === 'string' && !(showCreateModal.value && draftRecord.value?.key === key)) void openCreateDraft(key)
 })

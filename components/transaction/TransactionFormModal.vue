@@ -43,6 +43,7 @@
                     <button
                       type="button"
                       @click="form.type = '支出'"
+                      :disabled="isSubmitting || busy || frozen"
                       :class="[
                         'flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all',
                         form.type === '支出'
@@ -56,6 +57,7 @@
                     <button
                       type="button"
                       @click="form.type = '入金'"
+                      :disabled="isSubmitting || busy || frozen"
                       :class="[
                         'flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all',
                         form.type === '入金'

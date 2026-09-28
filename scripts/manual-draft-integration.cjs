@@ -18,6 +18,9 @@ module.exports=async({db,call,token,other,origin,pass})=>{
   pass('compiled recovery reports deleted state through read-only reconciliation and never recreates the entry');
   const failed=await next.state.startDraft();assert.equal(await next.state.createTransaction({...body,date:'bad'}),null);assert.equal(next.state.draftRecord.value.state,'rejected');const corrected=await next.state.createTransaction(body);assert.equal(corrected.state,'saved');assert.equal(next.state.draftRecord.value.key,failed.key);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':failed.key}),1);
   pass('actual validation rejection allows corrected fields while retaining one original request identity');
+  const abandoned=await next.state.startDraft();assert.equal(await next.state.createTransaction({...body,date:'bad'}),null);const rejected=next.state.draftRecord.value;
+  assert.equal((await next.state.discardRejectedDraft(abandoned.key,rejected.revision)).state,'discarded');const beforeDiscardedRetry=sent.length;assert.equal(await next.state.createTransaction(body),null);assert.equal(sent.length,beforeDiscardedRetry);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':abandoned.key}),0);
+  pass('actual rejected purchase can be discarded without an API write or later retry POST');
  }finally{next.close()}
  if(process.env.OMF_TEST_CHROME_PORT)await require('./manual-draft-browser.cjs')({db,call,token,other,origin,organizationId,pass});
 };
