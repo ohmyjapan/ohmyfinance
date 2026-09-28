@@ -1,7 +1,7 @@
 import { createError } from 'h3'
 import mongoose from 'mongoose'
 import Receipt from '../models/Receipt'
-import Transaction from '../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../models/Transaction'
 import { ensureConnection } from '../config/database'
 import type { LedgerAccess } from './ledgerAccessService'
 
@@ -52,7 +52,7 @@ export async function matchReceiptWithTransaction(access: LedgerAccess, receiptI
   // Failed index initialization must not fall back to read-then-write.
   await Receipt.init()
   const receipt = await Receipt.findOne({ _id: receiptId, organizationId: access.organizationId }).lean()
-  const transaction: any = await Transaction.findOne({ _id: transactionId, organizationId: access.organizationId }).lean()
+  const transaction: any = await Transaction.findOne(activeTransactionFilter({ _id: transactionId, organizationId: access.organizationId })).lean()
   if (!receipt || !transaction) throw createError({ statusCode: 404, statusMessage: 'Receipt or transaction not found' })
   const result = async (row: any) => ({ receipt: publicReceipt(row), transaction: (await withReceiptLinks(access, [transaction]))[0] })
   if (String(receipt.transactionId) === transactionId && receipt.linkVersion === version + 1) return result(receipt)

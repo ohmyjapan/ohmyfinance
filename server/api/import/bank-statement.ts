@@ -1,7 +1,7 @@
 // server/api/import/bank-statement.ts
 import { defineEventHandler, readMultipartFormData, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { requireLedgerAccess } from '../../services/ledgerAccessService'
 import { createTransaction } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
@@ -256,7 +256,7 @@ export default defineEventHandler(async (event) => {
     for (const tx of parsedTransactions) {
       try {
         // Check for duplicates by reference
-        const existing = await Transaction.findOne({ organizationId: access.organizationId, referenceNumber: tx.reference })
+        const existing = await Transaction.findOne(activeTransactionFilter({ organizationId: access.organizationId, referenceNumber: tx.reference }))
         if (!existing) {
           await createTransaction(access, {
             referenceNumber: tx.reference,

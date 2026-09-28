@@ -2,7 +2,7 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Vendor from '../../models/Vendor'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
@@ -22,9 +22,9 @@ export default defineEventHandler(async (event) => {
     }
 
     // Get transaction history
-    const transactions = await Transaction.find({
+    const transactions = await Transaction.find(activeTransactionFilter({
       'customer.name': vendor.name
-    }).sort({ date: -1 }).limit(50).lean()
+    })).sort({ date: -1 }).limit(50).lean()
 
     return {
       vendor: { ...vendor, id: vendor._id },

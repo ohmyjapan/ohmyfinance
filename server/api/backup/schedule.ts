@@ -11,11 +11,12 @@ import { writeFile, mkdir, readdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess, type LedgerAccess } from '../../services/ledgerAccessService'
 
 const BACKUP_DIR = join(process.cwd(), 'backups')
 const MAX_BACKUPS = 7 // Keep last 7 backups
 
-async function createBackup(): Promise<{ filename: string; size: number }> {
+async function createBackup(access: LedgerAccess): Promise<{ filename: string; size: number }> {
   await ensureConnection()
 
   // Ensure backup directory exists
@@ -25,7 +26,7 @@ async function createBackup(): Promise<{ filename: string; size: number }> {
 
   // Gather all data
   const [transactions, receipts, recurring, invoices, budgets, vendors] = await Promise.all([
-    Transaction.find({}).lean(),
+    Transaction.find({ organizationId: access.organizationId }).select('+manualCreate').lean(),
     Receipt.find({}).lean(),
     RecurringPayment.find({}).lean(),
     Invoice.find({}).lean(),
@@ -35,6 +36,9 @@ async function createBackup(): Promise<{ filename: string; size: number }> {
 
   const backup = {
     version: '1.0',
+    application: 'ohmyfinance',
+    transactionArchiveVersion: 2,
+    organizationId: access.organizationId,
     createdAt: new Date().toISOString(),
     data: {
       transactions,
@@ -119,7 +123,7 @@ export default defineEventHandler(async (event) => {
     const { action } = body
 
     if (action === 'create') {
-      const result = await createBackup()
+      const result = await createBackup(await requireLedgerAccess(event))
       return {
         success: true,
         message: 'Backup created',

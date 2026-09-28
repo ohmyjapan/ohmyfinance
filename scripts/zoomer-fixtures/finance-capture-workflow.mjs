@@ -8,6 +8,22 @@ export const timeoutMs = 900000;
 export default {
   name: 'finance-capture-workflow',
   covers: [
+    'server/api/analytics/index.ts',
+    'server/api/backup/index.ts',
+    'server/api/backup/restore.ts',
+    'server/api/backup/schedule.ts',
+    'server/api/budgets/index.ts',
+    'server/api/dashboard/stats.ts',
+    'server/api/reports/index.ts',
+    'server/api/reports/tax.ts',
+    'server/api/search.ts',
+    'server/api/tags/index.ts',
+    'server/api/validate/transactions.ts',
+    'server/api/vendors/[id].ts',
+    'server/api/vendors/index.ts',
+    'scripts/transaction-lifecycle-integration.cjs',
+    'scripts/transaction-lifecycle.test.cjs',
+    'server/services/transactionArchiveService.ts',
     'composables/useTransactions.ts',
     'pages/transactions/index.vue',
     'scripts/helpers/transaction-workspace.cjs',
@@ -221,6 +237,7 @@ export default {
       'scripts/transaction-groups.test.cjs',
       'scripts/transaction-attachments.test.cjs',
       'scripts/transaction-workspace.test.cjs',
+      'scripts/transaction-lifecycle.test.cjs',
       'scripts/card-groups.test.cjs',
       'scripts/recurring-groups.test.cjs',
       'scripts/shipment-groups.test.cjs',
@@ -231,7 +248,7 @@ export default {
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 240 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 254 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -316,6 +333,7 @@ export default {
     }
     delete env.OMF_TEST_TRANSACTION_GROUPS_ONLY;
     for (const [flag, label, minimum] of [
+      ['OMF_TEST_TRANSACTION_LIFECYCLE_ONLY', 'transaction lifecycle', 8],
       ['OMF_TEST_TRANSACTION_WORKSPACE_ONLY', 'transaction workspace', 6],
       ['OMF_TEST_RECEIPT_WORKSPACE_ONLY', 'receipt workspace', 7],
       ['OMF_TEST_RECEIPT_FILES_ONLY', 'receipt file', 9],

@@ -1,6 +1,6 @@
 // server/services/transactionService.ts
 import { withReceiptLinks, receiptPresence } from './receiptLinkService'
-import Transaction from '../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../models/Transaction'
 import { createError } from 'h3'
 import { Types } from 'mongoose'
 import type { LedgerAccess } from './ledgerAccessService'
@@ -95,7 +95,7 @@ export async function getTransactions(access: LedgerAccess, filters: Transaction
       ]
     }
 
-    const transactions = await Transaction.find(query)
+    const transactions = await Transaction.find(activeTransactionFilter(query))
       .populate('customerId', 'name email')
       .populate('supplierId', 'name')
       .populate('accountCategoryId', 'name')
@@ -119,7 +119,7 @@ export async function getTransactions(access: LedgerAccess, filters: Transaction
 export async function getTransactionById(access: LedgerAccess, id: string) {
   await ensureConnection()
   try {
-    const transaction = await Transaction.findOne({ _id: id, organizationId: access.organizationId })
+    const transaction = await Transaction.findOne(activeTransactionFilter({ _id: id, organizationId: access.organizationId }))
       .populate('customerId', 'name email phone')
       .populate('supplierId', 'name companyInfo address email phone')
       .populate('accountCategoryId', 'name code')
@@ -143,7 +143,7 @@ export async function createTransaction(access: LedgerAccess, data: Partial<ITra
   try {
     if (data.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting is assigned through the reviewed import.' })
     // Generic metadata cannot register evidence or adopt a client-supplied path.
-    const { receipt, hasReceipt, receiptFilePath, receiptUploadedAt, attachments, ...metadata } = data as any
+    const { _id, manualCreate, deletedAt, deletedBy, receipt, hasReceipt, receiptFilePath, receiptUploadedAt, attachments, ...metadata } = data as any
     data = metadata
     // Add initial timeline event
     if (!data.timeline) {
@@ -185,10 +185,10 @@ export async function updateTransaction(access: LedgerAccess, id: string, data: 
   try {
     // Don't allow changing certain fields
     // Receipt fields returned by reads are projections, not editable evidence.
-    const { _id, createdAt, organizationId, receipt, hasReceipt, receiptFilePath, receiptUploadedAt, attachments, ...updateData } = data as any
+    const { _id, createdAt, organizationId, manualCreate, deletedAt, deletedBy, receipt, hasReceipt, receiptFilePath, receiptUploadedAt, attachments, ...updateData } = data as any
 
     if (Object.keys(updateData).some(k => k.startsWith('$') || k.includes('.')) || updateData.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting cannot be replaced by a transaction edit.' })
-    const current: any = await Transaction.findOne({ _id: id, organizationId: access.organizationId }).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
+    const current: any = await Transaction.findOne(activeTransactionFilter({ _id: id, organizationId: access.organizationId })).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
     if (!current) throw new Error(`Transaction ${id} not found`)
     if (current.cardAccounting) {
       for (const key of ['amount', 'type', 'paymentMethod', 'cardNumber']) if (updateData[key] !== undefined && updateData[key] !== current[key]) throw createError({ statusCode: 409, message: 'Imported card source values cannot be changed.' })
@@ -203,7 +203,7 @@ export async function updateTransaction(access: LedgerAccess, id: string, data: 
     }
 
     const transaction = await Transaction.findOneAndUpdate(
-      { _id: id, organizationId: access.organizationId },
+      activeTransactionFilter({ _id: id, organizationId: access.organizationId }),
       {
         ...updateData,
         $push: { timeline: { $each: [updateTimeline], $position: 0 } }
@@ -225,10 +225,36 @@ export async function updateTransaction(access: LedgerAccess, id: string, data: 
 /**
  * Delete a transaction
  */
+/** Keep keyed identities after deletion; legacy unkeyed rows retain their old behavior. */
+export async function removeTransactions(access: LedgerAccess, filter: Record<string, any>) {
+  await ensureConnection()
+  const scope = { $and: [{ organizationId: access.organizationId }, filter] }
+  const archived = await Transaction.updateMany(
+    activeTransactionFilter({ $and: [scope, { 'manualCreate.key': { $type: 'string' } }] }),
+    { $set: { deletedAt: new Date(), deletedBy: access.userId } }
+  )
+  // The exclusion is evaluated at the actual delete, not on an earlier snapshot.
+  const removed = await Transaction.deleteMany({
+    $and: [scope, { manualCreate: null, deletedAt: null }]
+  })
+  return { deletedCount: archived.modifiedCount + removed.deletedCount }
+}
+
 export async function deleteTransaction(access: LedgerAccess, id: string) {
   await ensureConnection()
   try {
-    const transaction = await Transaction.findOneAndDelete({ _id: id, organizationId: access.organizationId }).lean()
+    const scope = { _id: id, organizationId: access.organizationId }
+    const archived = await Transaction.findOneAndUpdate(
+      activeTransactionFilter({ ...scope, 'manualCreate.key': { $type: 'string' } }),
+      { $set: { deletedAt: new Date(), deletedBy: access.userId } },
+      { new: false }
+    ).lean()
+    // Keep the legacy removal atomic; two concurrent deletes cannot both remove it.
+    const transaction = archived || await Transaction.findOneAndDelete({
+      ...scope, manualCreate: null, deletedAt: null
+    }).lean() || await Transaction.findOne({
+      ...scope, 'manualCreate.key': { $type: 'string' }, deletedAt: { $ne: null }
+    }).lean()
 
     if (!transaction) {
       throw new Error(`Transaction ${id} not found`)
@@ -282,7 +308,7 @@ export async function importTransactions(
         // Check for existing transaction by referenceNumber
         let existingTransaction = null
         if (mappedTransaction.referenceNumber) {
-          existingTransaction = await Transaction.findOne({ organizationId: access.organizationId, referenceNumber: mappedTransaction.referenceNumber })
+          existingTransaction = await Transaction.findOne(activeTransactionFilter({ organizationId: access.organizationId, referenceNumber: mappedTransaction.referenceNumber }))
         }
 
         if (existingTransaction) {
@@ -328,14 +354,16 @@ export async function getTransactionStats(access: LedgerAccess) {
   await ensureConnection()
   try {
     const scope = { organizationId: new Types.ObjectId(access.organizationId) }
-    const totalCount = await Transaction.countDocuments(scope)
+    const totalCount = await Transaction.countDocuments(activeTransactionFilter(scope))
     const totalAmount = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: scope },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ])
 
     // Stats by status
     const statusStats = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: scope },
       {
         $group: {
@@ -348,6 +376,7 @@ export async function getTransactionStats(access: LedgerAccess) {
 
     // Stats by type (income/expense)
     const typeStats = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: scope },
       {
         $group: {
@@ -359,7 +388,7 @@ export async function getTransactionStats(access: LedgerAccess) {
     ])
 
     // Receipt stats
-    const withReceipt = await Transaction.countDocuments({ ...scope, ...await receiptPresence(access, true) })
+    const withReceipt = await Transaction.countDocuments(activeTransactionFilter({ ...scope, ...await receiptPresence(access, true) }))
 
     const statusMap = statusStats.reduce((acc: any, item: any) => {
       acc[item._id] = { count: item.count, amount: item.amount }

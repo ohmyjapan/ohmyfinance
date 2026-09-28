@@ -3,7 +3,7 @@ import Shipment, { SHIPMENT_STATUSES } from '../models/Shipment'
 import { Types } from 'mongoose'
 import { createError } from 'h3'
 import { ensureConnection } from '../config/database'
-import Transaction from '../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../models/Transaction'
 import type { IShipment, IShipmentEvent } from '../models/Shipment'
 import type { LedgerAccess } from './ledgerAccessService'
 
@@ -82,7 +82,7 @@ function transactionIds(input: unknown): string[] {
 }
 async function verifiedTransactions(access: LedgerAccess, input: unknown) {
   const ids = transactionIds(input)
-  const count = await Transaction.countDocuments({ organizationId: access.organizationId, _id: { $in: ids } })
+  const count = await Transaction.countDocuments(activeTransactionFilter({ organizationId: access.organizationId, _id: { $in: ids } }))
   if (count !== ids.length) throw missing()
   return ids
 }
@@ -96,7 +96,7 @@ async function requireShipment(access: LedgerAccess, id: string) {
  * never mirror this many-to-many relationship onto accounting records. */
 async function shipmentViews(access: LedgerAccess, shipments: any[]) {
   const ids = shipments.flatMap(shipment => shipment.transactionIds || [])
-  const transactions = await Transaction.find({ organizationId: access.organizationId, _id: { $in: ids } }).lean()
+  const transactions = await Transaction.find(activeTransactionFilter({ organizationId: access.organizationId, _id: { $in: ids } })).lean()
   const byId = new Map(transactions.map(transaction => [String(transaction._id), transaction]))
   return shipments.map(shipment => {
     const linked = (shipment.transactionIds || []).map((id: any) => byId.get(String(id))).filter(Boolean)

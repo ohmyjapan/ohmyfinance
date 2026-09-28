@@ -1,7 +1,7 @@
 // server/api/dashboard/stats.ts
 import { defineEventHandler, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import { Payment } from '../../models/Payment'
 import Organization from '../../models/Organization'
@@ -54,10 +54,10 @@ export default defineEventHandler(async (event) => {
       recentActivity
     ] = await Promise.all([
       // Total transaction count
-      Transaction.countDocuments(transactionFilter),
+      Transaction.countDocuments(activeTransactionFilter(transactionFilter)),
 
       // Recent 5 transactions
-      Transaction.find(transactionFilter)
+      Transaction.find(activeTransactionFilter(transactionFilter))
         .populate('accountCategoryId', 'name')
         .populate('supplierId', 'name')
         .sort({ date: -1, createdAt: -1 })
@@ -66,6 +66,7 @@ export default defineEventHandler(async (event) => {
 
       // Transaction stats by type
       Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
         { $match: transactionFilter },
         {
           $group: {
@@ -87,10 +88,10 @@ export default defineEventHandler(async (event) => {
       }),
 
       // Recent activity - last 7 days transactions
-      Transaction.countDocuments({
+      Transaction.countDocuments(activeTransactionFilter({
         ...transactionFilter,
         createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-      })
+      }))
     ])
 
     // Parse transaction stats
@@ -105,10 +106,10 @@ export default defineEventHandler(async (event) => {
     const incomeStats = typeStats['入金'] || { count: 0, amount: 0 }
 
     // Get receipt match rate
-    const transactionsWithReceipt = await Transaction.countDocuments({
+    const transactionsWithReceipt = await Transaction.countDocuments(activeTransactionFilter({
       ...transactionFilter,
       hasReceipt: true
-    })
+    }))
     const receiptMatchRate = totalTransactions > 0 ? transactionsWithReceipt / totalTransactions : 0
 
     return {

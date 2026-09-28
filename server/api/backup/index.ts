@@ -6,6 +6,7 @@ import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
 import { MappingTemplate } from '../../models/MappingTemplate'
 import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 /**
  * GET /api/backup - Create a full backup of all data
@@ -30,7 +31,10 @@ export default defineEventHandler(async (event) => {
     }
 
     if (includeTransactions) {
-      const transactions = await Transaction.find({}).lean()
+      const access = await requireLedgerAccess(event)
+      const transactions = await Transaction.find({ organizationId: access.organizationId }).select('+manualCreate').lean()
+      backupData.transactionArchiveVersion = 2
+      backupData.organizationId = access.organizationId
       backupData.transactions = transactions.map(cleanDocument)
     }
 
@@ -68,6 +72,7 @@ export default defineEventHandler(async (event) => {
 
     return JSON.stringify(backupData, null, 2)
   } catch (error: any) {
+    if (error.statusCode) throw error
     console.error('Backup error:', error)
     throw createError({
       statusCode: 500,

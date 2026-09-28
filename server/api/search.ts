@@ -1,7 +1,7 @@
 // server/api/search.ts
 import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../config/database'
-import Transaction from '../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../models/Transaction'
 import Receipt from '../models/Receipt'
 import RecurringPayment from '../models/RecurringPayment'
 import { requireAuth } from '../middleware/auth'
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
 
     // Search transactions
     if (type === 'all' || type === 'transactions') {
-      const transactions = await Transaction.find({
+      const transactions = await Transaction.find(activeTransactionFilter({
         $or: [
           { reference: searchRegex },
           { 'customer.name': searchRegex },
@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
           { notes: searchRegex },
           { tags: searchRegex }
         ]
-      })
+      }))
         .sort({ date: -1 })
         .limit(limit)
         .lean()

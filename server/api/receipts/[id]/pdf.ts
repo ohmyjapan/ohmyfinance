@@ -1,7 +1,7 @@
 // server/api/receipts/[id]/pdf.ts
 import { defineEventHandler, setHeader, createError } from 'h3'
 import { ensureConnection } from '../../../config/database'
-import Transaction from '../../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../../models/Transaction'
 import { requireLedgerAccess } from '../../../services/ledgerAccessService'
 
 /**
@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
   try {
     await ensureConnection()
 
-    const transaction = await Transaction.findOne({ _id: id, organizationId: auth.organizationId }).lean()
+    const transaction = await Transaction.findOne(activeTransactionFilter({ _id: id, organizationId: auth.organizationId })).lean()
     if (!transaction) {
       throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
     }

@@ -1,7 +1,7 @@
 // server/api/reports/tax.ts
 import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
@@ -16,9 +16,9 @@ export default defineEventHandler(async (event) => {
   await ensureConnection()
 
   // Get all transactions for the tax year
-  const transactions = await Transaction.find({
+  const transactions = await Transaction.find(activeTransactionFilter({
     date: { $gte: startDate, $lte: endDate }
-  }).lean()
+  })).lean()
 
   // Categorize transactions for tax purposes
   const income: any[] = []

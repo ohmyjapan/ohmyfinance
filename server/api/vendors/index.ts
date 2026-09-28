@@ -4,7 +4,7 @@
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Supplier from '../../models/Supplier'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
@@ -20,6 +20,7 @@ export default defineEventHandler(async (event) => {
     if (sync === 'true') {
       // Get unique suppliers from transactions
       const supplierIds = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
         { $match: { supplierId: { $exists: true, $ne: null } } },
         { $group: { _id: '$supplierId' } }
       ])
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
         if (!supplierId) continue
 
         // Update supplier stats
-        const txs = await Transaction.find({ supplierId })
+        const txs = await Transaction.find(activeTransactionFilter({ supplierId }))
         const totalSpent = txs.reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0)
         const lastTx = txs.sort((a: any, b: any) =>
           new Date(b.date).getTime() - new Date(a.date).getTime()

@@ -7,7 +7,7 @@ import TaxCategory from '../../models/TaxCategory'
 import Supplier from '../../models/Supplier'
 import TransactionCategory from '../../models/TransactionCategory'
 import Customer from '../../models/Customer'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { ensureConnection } from '../../config/database'
 
 /**
@@ -180,12 +180,12 @@ export default defineEventHandler(async (event) => {
 
                 // Skip duplicates check
                 if (options.skipDuplicates) {
-                    const existing = await Transaction.findOne({
+                    const existing = await Transaction.findOne(activeTransactionFilter({
                         organizationId: access.organizationId,
                         date: transactionDate,
                         amount: Math.abs(parsedAmount),
                         notes: record.notes || ''
-                    })
+                    }))
                     if (existing) {
                         importResults.skipped++
                         continue

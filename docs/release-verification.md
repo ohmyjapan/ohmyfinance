@@ -295,3 +295,14 @@ Verified: 240 unit/service tests, fresh build, retained API suites, six workspac
 API checks, ordinary-login real Chrome edit/retry/reload/company-switch checks,
 zero TypeScript errors and six detected/restored mutations. Independent guard
 review and broader release work remain pending. This branch is not deployed.
+
+
+Transaction lifecycle foundation retains future manual-create identities after deletion,
+excludes deleted rows from ordinary ledger reads, and preserves original transaction
+IDs/current states during company-bound archive merge. Clear uses a captured ID set;
+new purchases during restore survive. Durable manual POST/browser reconciliation is
+still pending; other backup collections and legacy ownership entrances remain open.
+
+Verified: 254 unit/service cases, fresh build, retained HTTP suites including eight
+lifecycle checks, zero TypeScript diagnostics and five detected/restored mutations.
+Shared guards require independent review and broader validation. Not deployed.

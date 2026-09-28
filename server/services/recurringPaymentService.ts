@@ -1,5 +1,5 @@
 import RecurringPayment, { type IRecurringPayment } from '../models/RecurringPayment'
-import Transaction, { type ITransaction } from '../models/Transaction'
+import Transaction, { activeTransactionFilter, type ITransaction } from '../models/Transaction'
 import { Types } from 'mongoose'
 import { createError } from 'h3'
 import { ensureConnection } from '../config/database'
@@ -132,17 +132,17 @@ export async function generateTransaction(access: LedgerAccess, paymentId: strin
   }
   let transaction
   if (occurrence.state === 'posted') {
-    transaction = await Transaction.findOne(target).lean<ITransaction>()
+    transaction = await Transaction.findOne(activeTransactionFilter(target)).lean<ITransaction>()
     if (!transaction) throw conflict('Posted recurring transaction is missing or changed; review its history')
   } else {
     try {
-      transaction = await Transaction.findOneAndUpdate(target, { $setOnInsert: occurrence.transaction }, {
+      transaction = await Transaction.findOneAndUpdate(activeTransactionFilter(target), { $setOnInsert: occurrence.transaction }, {
         upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true
       }).lean<ITransaction>()
     } catch (error: any) {
       if (error.code !== 11000) throw error
       // Concurrent insert may have won; an unrelated target ID cannot be adopted.
-      transaction = await Transaction.findOne(target).lean<ITransaction>()
+      transaction = await Transaction.findOne(activeTransactionFilter(target)).lean<ITransaction>()
       if (!transaction) throw conflict('Reserved recurring transaction ID conflicts with an existing record')
     }
     const completed = await RecurringPayment.updateOne(

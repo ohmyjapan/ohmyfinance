@@ -1,7 +1,8 @@
 // server/api/backup/restore.ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import { restoreTransactionArchive } from '../../services/transactionArchiveService'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
 import { MappingTemplate } from '../../models/MappingTemplate'
@@ -40,7 +41,9 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const backupData = typeof body.data === 'string' ? JSON.parse(body.data) : body.data
+    const archive = typeof body.data === 'string' ? JSON.parse(body.data) : body.data
+    // Scheduled and downloaded archives carry different envelopes.
+    const backupData = archive?.data ? { ...archive.data, version: archive.version, application: archive.application, createdAt: archive.createdAt } : archive
 
     // Validate backup format
     if (!backupData.version || !backupData.application) {
@@ -66,41 +69,19 @@ export default defineEventHandler(async (event) => {
       mappingTemplates: { restored: 0, skipped: 0, failed: 0 }
     }
 
+    // Transaction identity validation and restoration precede any legacy clears.
+    // Existing transaction IDs are retained even when skipDuplicates is false.
+    const transactionRestore = options.transactions
+      ? await restoreTransactionArchive(await requireLedgerAccess(event, 'write'), backupData.transactions, !!options.clearExisting)
+      : null
+    if (transactionRestore) results.transactions = transactionRestore
+
+    // Other archive collections retain their existing behavior pending their own audit.
     // Optionally clear existing data
     if (options.clearExisting) {
-      if (options.transactions) await Transaction.deleteMany({})
       if (options.receipts) await Receipt.deleteMany({})
       if (options.recurringPayments) await RecurringPayment.deleteMany({})
       if (options.mappingTemplates) await MappingTemplate.deleteMany({})
-    }
-
-    // Restore transactions
-    if (options.transactions && backupData.transactions) {
-      for (const item of backupData.transactions) {
-        try {
-          const doc = prepareDocument(item)
-
-          if (options.skipDuplicates && !options.clearExisting) {
-            // Check for duplicate by reference or original ID
-            const exists = await Transaction.findOne({
-              $or: [
-                { reference: doc.reference },
-                { _id: item.id || item._id }
-              ]
-            })
-            if (exists) {
-              results.transactions.skipped++
-              continue
-            }
-          }
-
-          await Transaction.create(doc)
-          results.transactions.restored++
-        } catch (error) {
-          console.error('Failed to restore transaction:', error)
-          results.transactions.failed++
-        }
-      }
     }
 
     // Restore receipts
@@ -191,7 +172,9 @@ export default defineEventHandler(async (event) => {
 
     return {
       success: true,
-      message: `Restore completed: ${totalRestored} items restored, ${totalSkipped} skipped, ${totalFailed} failed`,
+      message: `Restore completed: ${totalRestored} items restored, ${totalSkipped} skipped, ${totalFailed} failed${transactionRestore ? '. Existing transaction records and IDs were preserved.' : ''}${transactionRestore?.clearSkipped ? ' Transaction clearing was skipped because some records failed.' : ''}`,
+      transactionRestore,
+      transactionRestorePolicy: 'Existing transaction IDs and newer states are preserved; only missing identities are restored.',
       backupVersion: backupData.version,
       backupCreatedAt: backupData.createdAt,
       results,

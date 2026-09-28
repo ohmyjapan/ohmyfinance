@@ -1,7 +1,8 @@
 // server/api/transactions/bulk.ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
+import { removeTransactions } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
 import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
@@ -40,7 +41,7 @@ export default defineEventHandler(async (event) => {
 
     switch (action) {
       case 'delete':
-        const deleteResult = await Transaction.deleteMany({ organizationId: access.organizationId, _id: { $in: ids } })
+        const deleteResult = await removeTransactions(access, { _id: { $in: ids } })
         results.succeeded = deleteResult.deletedCount
         results.failed = ids.length - deleteResult.deletedCount
         break
@@ -55,7 +56,7 @@ export default defineEventHandler(async (event) => {
         }
 
         const statusResult = await Transaction.updateMany(
-          { organizationId: access.organizationId, _id: { $in: ids } },
+          activeTransactionFilter({ organizationId: access.organizationId, _id: { $in: ids } }),
           {
             $set: { status: data.status },
             $push: {
@@ -77,7 +78,7 @@ export default defineEventHandler(async (event) => {
           throw createError({ statusCode: 400, statusMessage: 'Tag is required for add_tag action' })
         }
         const tagResult = await Transaction.updateMany(
-          { organizationId: access.organizationId, _id: { $in: ids } },
+          activeTransactionFilter({ organizationId: access.organizationId, _id: { $in: ids } }),
           { $addToSet: { tags: data.tag } }
         )
         results.succeeded = tagResult.modifiedCount
@@ -89,7 +90,7 @@ export default defineEventHandler(async (event) => {
           throw createError({ statusCode: 400, statusMessage: 'Tag is required for remove_tag action' })
         }
         const removeTagResult = await Transaction.updateMany(
-          { organizationId: access.organizationId, _id: { $in: ids } },
+          activeTransactionFilter({ organizationId: access.organizationId, _id: { $in: ids } }),
           { $pull: { tags: data.tag } }
         )
         results.succeeded = removeTagResult.modifiedCount
@@ -101,7 +102,7 @@ export default defineEventHandler(async (event) => {
           throw createError({ statusCode: 400, statusMessage: 'Source is required for update_source action' })
         }
         const sourceResult = await Transaction.updateMany(
-          { organizationId: access.organizationId, _id: { $in: ids } },
+          activeTransactionFilter({ organizationId: access.organizationId, _id: { $in: ids } }),
           { $set: { source: data.source } }
         )
         results.succeeded = sourceResult.modifiedCount
@@ -115,7 +116,7 @@ export default defineEventHandler(async (event) => {
         // For notes, we need to update each individually to append
         for (const id of ids) {
           try {
-            const updated = await Transaction.findOneAndUpdate({ _id: id, organizationId: access.organizationId }, {
+            const updated = await Transaction.findOneAndUpdate(activeTransactionFilter({ _id: id, organizationId: access.organizationId }), {
               $set: {
                 notes: data.appendNote
                   ? { $concat: ['$notes', '\n', data.note] }
@@ -132,7 +133,7 @@ export default defineEventHandler(async (event) => {
 
       case 'export':
         // Return the transactions for export
-        const transactions = await Transaction.find({ organizationId: access.organizationId, _id: { $in: ids } }).lean()
+        const transactions = await Transaction.find(activeTransactionFilter({ organizationId: access.organizationId, _id: { $in: ids } })).lean()
         return {
           success: true,
           action: 'export',

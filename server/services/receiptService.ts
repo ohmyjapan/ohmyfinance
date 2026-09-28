@@ -4,7 +4,7 @@ export { matchReceiptWithTransaction, unmatchReceipt } from './receiptLinkServic
 import Receipt from '../models/Receipt'
 import { createError } from 'h3'
 import type { LedgerAccess } from './ledgerAccessService'
-import Transaction from '../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../models/Transaction'
 import type { IReceipt } from '../models/Receipt'
 import type { ITransaction } from '../models/Transaction'
 import type { Types } from 'mongoose'
@@ -158,7 +158,7 @@ export async function deleteReceipt(id: string) {
 
     // If receipt is matched to a transaction, update the transaction
     if (receipt.status === 'matched' && receipt.transactionId) {
-      await Transaction.findByIdAndUpdate(receipt.transactionId, {
+      await Transaction.findOneAndUpdate(activeTransactionFilter({ _id: receipt.transactionId }), {
         receipt: null
       })
     }
@@ -185,13 +185,13 @@ export async function findMatchesForReceipt(access: LedgerAccess, receiptId: str
   // Either recorded side of an existing link excludes a candidate. This is a
   // read-time exclusion, not a reservation or a repair of old attachment writes.
   const linkedIds = await Receipt.distinct('transactionId', { organizationId: access.organizationId, transactionId: { $ne: null } })
-  const cursor = Transaction.find({
+  const cursor = Transaction.find(activeTransactionFilter({
     ...window,
     organizationId: access.organizationId,
     hasReceipt: { $ne: true },
     receiptFilePath: { $in: [null, ''] },
     _id: { $nin: linkedIds }
-  }).select('_id date amount companyInfo notes referenceNumber metadata type status')
+  })).select('_id date amount companyInfo notes referenceNumber metadata type status')
     .lean<CandidateTransaction[]>().cursor()
 
   type Candidate = {

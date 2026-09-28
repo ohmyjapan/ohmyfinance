@@ -1,7 +1,7 @@
 // server/api/analytics/index.ts
 import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import { requireAuth } from '../../middleware/auth'
 
@@ -144,6 +144,7 @@ async function getKeyMetrics(dateRange: DateRange) {
 
   // Current period aggregation
   const currentStats = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
     { $match: { date: { $gte: start, $lte: end } } },
     {
       $group: {
@@ -163,6 +164,7 @@ async function getKeyMetrics(dateRange: DateRange) {
 
   // Previous period for comparison
   const previousStats = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
     { $match: { date: { $gte: previousStart, $lte: previousEnd } } },
     {
       $group: {
@@ -247,6 +249,7 @@ async function getTransactionsOverTime(dateRange: DateRange) {
   }
 
   const data = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
     { $match: { date: { $gte: start, $lte: end } } },
     {
       $group: {
@@ -281,6 +284,7 @@ async function getSourceDistribution(dateRange: DateRange) {
   const { start, end } = dateRange
 
   const data = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
     { $match: { date: { $gte: start, $lte: end } } },
     {
       $group: {
@@ -320,6 +324,7 @@ async function getStatusDistribution(dateRange: DateRange) {
   const { start, end } = dateRange
 
   const data = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
     { $match: { date: { $gte: start, $lte: end } } },
     {
       $group: {
@@ -360,6 +365,7 @@ async function getTrends(dateRange: DateRange) {
 
   // Weekly transaction counts (last 7 data points)
   const weeklyData = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
     { $match: { date: { $gte: start, $lte: end } } },
     {
       $group: {
@@ -374,6 +380,7 @@ async function getTrends(dateRange: DateRange) {
 
   // Failed transaction rate
   const failedRates = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
     { $match: { date: { $gte: start, $lte: end } } },
     {
       $group: {

@@ -34,6 +34,9 @@ export interface IAttachment {
 // Main transaction interface (OMF style - Japanese accounting)
 export interface ITransaction extends Document {
   organizationId?: mongoose.Types.ObjectId
+  manualCreate?: { key: string; payloadHash: string; schemaVersion: number; createdBy: mongoose.Types.ObjectId }
+  deletedAt?: Date
+  deletedBy?: mongoose.Types.ObjectId
   referenceNumber?: string
   date: Date
   amount: number
@@ -104,6 +107,18 @@ const AttachmentSchema = new Schema<IAttachment>({
 // Main transaction schema (OMF style - Japanese accounting)
 const TransactionSchema = new Schema<ITransaction>({
   organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', index: true, immutable: true },
+  manualCreate: {
+    type: new Schema({
+      key: { type: String, required: true, match: /^[a-f0-9]{32}$/ },
+      payloadHash: { type: String, required: true, match: /^[a-f0-9]{64}$/ },
+      schemaVersion: { type: Number, required: true, enum: [1] },
+      createdBy: { type: Schema.Types.ObjectId, required: true, ref: 'User' }
+    }, { _id: false }),
+    immutable: true,
+    select: false
+  },
+  deletedAt: { type: Date },
+  deletedBy: { type: Schema.Types.ObjectId, ref: 'User' },
   referenceNumber: { type: String, index: true },
   date: { type: Date, required: true, index: true },
   amount: { type: Number, required: true },
@@ -169,5 +184,14 @@ TransactionSchema.pre('save', function(next) {
 TransactionSchema.index({ accountCategoryId: 1 })
 TransactionSchema.index({ createdAt: -1 })
 TransactionSchema.index({ referenceNumber: 'text', productName: 'text', notes: 'text' })
+TransactionSchema.index({ organizationId: 1, 'manualCreate.key': 1 }, {
+  unique: true,
+  partialFilterExpression: { 'manualCreate.key': { $type: 'string' } }
+})
+
+/** Ordinary ledger operations exclude retained identities of deleted manual rows. */
+export function activeTransactionFilter(scope: Record<string, any>) {
+  return { $and: [scope, { deletedAt: null }] }
+}
 
 export default mongoose.models.Transaction || mongoose.model<ITransaction>('Transaction', TransactionSchema)

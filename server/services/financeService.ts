@@ -9,7 +9,7 @@ import { requireAuth } from '../middleware/auth'
 import Organization from '../models/Organization'
 import { ledgerAccessForIdentity, type LedgerAccess } from './ledgerAccessService'
 import UserModel, { type IUser } from '../models/User'
-import TransactionModel, { type ITransaction } from '../models/Transaction'
+import TransactionModel, { activeTransactionFilter, type ITransaction } from '../models/Transaction'
 import AccountCategoryModel, { type IAccountCategory } from '../models/AccountCategory'
 import { FinancialAccount, FinanceCollector, FinanceImport, FinanceEntry, initializeFinance } from '../models/Finance'
 import { digest, MAX_BYTES } from '../../shared/amex.mjs'
@@ -201,7 +201,7 @@ async function candidates(account: any, rows: CardRow[]) {
   const cards = account.cardIdentifiers.map((v: string) => v.slice(-4))
   const sorted = dates.sort()
   if (!sorted.length) return []
-  const records: any[] = await Transaction.find({ organizationId: financeOrganization(account), date: { $gte: new Date(Date.parse(sorted[0]) - 9*3600000), $lt: new Date(Date.parse(sorted.at(-1)!) + 86400000) }, amount: { $in: rows.map(r => Math.abs(r.amount)) }, 'metadata.financeEntryId': { $exists: false }, $or: [{ cardNumber: { $in: [...cards, ...account.cardIdentifiers] } }, { cardNumber: { $exists: false } }, { cardNumber: '' }, { cardNumber: null }] }).select('_id date amount notes productName cardNumber type').limit(10001).lean()
+  const records: any[] = await Transaction.find(activeTransactionFilter({ organizationId: financeOrganization(account), date: { $gte: new Date(Date.parse(sorted[0]) - 9*3600000), $lt: new Date(Date.parse(sorted.at(-1)!) + 86400000) }, amount: { $in: rows.map(r => Math.abs(r.amount)) }, 'metadata.financeEntryId': { $exists: false }, $or: [{ cardNumber: { $in: [...cards, ...account.cardIdentifiers] } }, { cardNumber: { $exists: false } }, { cardNumber: '' }, { cardNumber: null }] })).select('_id date amount notes productName cardNumber type').limit(10001).lean()
   if (records.length > 10000) fail(409, 'Too many historical matches; split the import period')
   return records
 }
@@ -271,7 +271,7 @@ export async function commitImport(access: LedgerAccess, importId: string, body:
       seen.add(decision.line)
       if (decision.action !== 'skip') assertEditableImportRow(initial, row.line)
       if (['posted','duplicate'].includes(row.state)) {
-        if (!await Transaction.exists({ _id: row.transactionId, organizationId })) fail(409, 'Posted transaction company binding needs review')
+        if (!await Transaction.exists(activeTransactionFilter({ _id: row.transactionId, organizationId }))) fail(409, 'Posted transaction company binding needs review')
         continue
       }
       if (decision.action === 'skip') continue
@@ -313,10 +313,10 @@ export async function commitImport(access: LedgerAccess, importId: string, body:
       if (entry.linkedExisting !== (decision.action === 'link') || (entry.linkedExisting && entry.transactionId.toString() !== decision.transactionId)) fail(409, 'Resume the previously selected action for this row')
       if (entry.linkedExisting) {
         // A link records evidence without rewriting the user's existing accounting data.
-        if (!await Transaction.exists({ _id: entry.transactionId, organizationId })) fail(409, 'Historical transaction no longer exists')
+        if (!await Transaction.exists(activeTransactionFilter({ _id: entry.transactionId, organizationId }))) fail(409, 'Historical transaction no longer exists')
         linked++
       } else {
-        await Transaction.updateOne({ _id: entry.transactionId, organizationId, 'metadata.financeEntryId': entry._id.toString() }, { $setOnInsert: {
+        await Transaction.updateOne(activeTransactionFilter({ _id: entry.transactionId, organizationId, 'metadata.financeEntryId': entry._id.toString() }), { $setOnInsert: {
           referenceNumber: `${(view.account.provider || 'amex').toUpperCase()}-${entry._id}`, date: new Date(row.purchaseDate), status: 'completed',
           accountCategoryId: body.accountCategoryId || undefined,
           hasReceipt: false, notes: row.description, items: [], attachments: [], tags: ['imported', view.account.provider || 'amex'],

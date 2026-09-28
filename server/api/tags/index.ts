@@ -1,7 +1,7 @@
 // server/api/tags/index.ts
 import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
@@ -11,6 +11,7 @@ export default defineEventHandler(async (event) => {
   if (event.method === 'GET') {
     // Get all unique tags with counts
     const result = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $unwind: '$tags' },
       { $group: { _id: '$tags', count: { $sum: 1 } } },
       { $sort: { count: -1 } },

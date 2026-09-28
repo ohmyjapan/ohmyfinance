@@ -1,7 +1,7 @@
 // server/api/reports/index.ts
 import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
 import { requireAuth } from '../../middleware/auth'
@@ -42,6 +42,7 @@ export default defineEventHandler(async (event) => {
 
     // Get transaction summary
     const transactionSummary = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: { date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
@@ -57,6 +58,7 @@ export default defineEventHandler(async (event) => {
 
     // Get breakdown by status
     const byStatus = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: { date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
@@ -70,6 +72,7 @@ export default defineEventHandler(async (event) => {
 
     // Get breakdown by source
     const bySource = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: { date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
@@ -83,6 +86,7 @@ export default defineEventHandler(async (event) => {
 
     // Get daily breakdown
     const dailyBreakdown = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: { date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
@@ -96,6 +100,7 @@ export default defineEventHandler(async (event) => {
 
     // Get top customers
     const topCustomers = await Transaction.aggregate([
+      { $match: activeTransactionFilter({}) },
       { $match: { date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {

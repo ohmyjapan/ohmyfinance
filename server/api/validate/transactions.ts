@@ -1,7 +1,7 @@
 // server/api/validate/transactions.ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
 
 interface ValidationIssue {
@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
 
   if (event.method === 'GET') {
     // Validate all transactions
-    const transactions = await Transaction.find({}).lean()
+    const transactions = await Transaction.find(activeTransactionFilter({})).lean()
     const issues: ValidationIssue[] = []
 
     for (const tx of transactions as any[]) {

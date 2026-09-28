@@ -2,7 +2,7 @@
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Budget from '../../models/Budget'
-import Transaction from '../../models/Transaction'
+import Transaction, { activeTransactionFilter } from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
 
 export default defineEventHandler(async (event) => {
@@ -52,7 +52,7 @@ export default defineEventHandler(async (event) => {
         ]
       }
 
-      const transactions = await Transaction.find(txQuery).lean()
+      const transactions = await Transaction.find(activeTransactionFilter(txQuery)).lean()
       const spent = transactions.reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0)
       const percentage = budget.amount > 0 ? Math.round((spent / budget.amount) * 100) : 0
       const remaining = budget.amount - spent
