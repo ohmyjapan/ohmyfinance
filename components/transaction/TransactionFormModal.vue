@@ -72,7 +72,8 @@
 
               <!-- Form Content -->
               <div class="flex-1 overflow-y-auto">
-                <form @submit.prevent="submitForm" class="p-6 space-y-6 pb-32">
+                <form @submit.prevent="submitForm" class="p-6 pb-32">
+                  <fieldset :disabled="isSubmitting || busy" class="space-y-6">
 
                   <!-- Essential Info Section -->
                   <section class="space-y-4">
@@ -525,11 +526,14 @@
                     </Transition>
                   </section>
 
+                  </fieldset>
                 </form>
               </div>
 
           <!-- Floating Actions -->
           <div class="sticky bottom-0 bg-white dark:bg-gray-950 border-t border-gray-200 dark:border-white/10 px-6 py-4">
+            <p v-if="saveOutcomeUnknown" role="alert" class="mb-3 text-sm text-amber-700 dark:text-amber-300">{{ t('transactionForm.saveUnconfirmed') }}</p>
+            <p v-if="saveError || localError" role="alert" class="mb-3 text-sm text-red-600">{{ saveError || localError }}</p>
             <div class="flex items-center justify-between">
               <div class="text-sm text-gray-500 dark:text-gray-400">
                 <span v-if="form.amount" class="font-medium text-gray-900 dark:text-white">
@@ -547,7 +551,7 @@
                 <button
                   type="button"
                   @click="submitForm"
-                  :disabled="isSubmitting || !form.amount || !form.date"
+                  :disabled="isSubmitting || busy || form.amount === '' || !form.date"
                   class="px-5 py-2.5 text-sm font-medium text-white bg-primary-main rounded-xl hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
                   <Loader v-if="isSubmitting" class="w-4 h-4 animate-spin" />
@@ -865,7 +869,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onScopeDispose } from 'vue'
 import {
   X, TrendingUp, TrendingDown, Coins, FolderOpen, Users, FileText,
   Receipt, ChevronDown, Info, Save, Loader, Plus, Edit3
@@ -887,9 +891,17 @@ const props = defineProps<{
   modelValue: boolean
   initialData?: any
   isEditing?: boolean
+  save: (data: any) => Promise<boolean>
+  busy?: boolean
+  saveError?: string | null
+  saveOutcomeUnknown?: boolean
 }>()
 
-const emit = defineEmits(['update:modelValue', 'submit'])
+const emit = defineEmits(['update:modelValue'])
+let alive = true
+onScopeDispose(() => { alive = false })
+const localError = ref('')
+let initialPayload: Record<string, any> = {}
 
 const isSubmitting = ref(false)
 const showSupplierSuggestions = ref(false)
@@ -985,18 +997,22 @@ watch(() => props.initialData, (data) => {
     form.value = {
       date: dateValue,
       type: data.type || '支出',
-      amount: data.amount ? formatNumberWithCommas(String(data.amount)) : '',
-      customerId: data.customerId || '',
-      accountCategoryId: data.accountCategoryId || '',
-      subAccountCategoryId: data.subAccountCategoryId || '',
-      taxCategoryId: data.taxCategoryId || '',
-      taxRate: data.taxRate ? `${data.taxRate}%` : '',
-      supplierId: data.supplierId || '',
+      amount: data.amount !== undefined && data.amount !== null ? formatNumberWithCommas(String(data.amount)) : '',
+      customerId: data.customerId?._id || data.customerId?.id || data.customerId || '',
+      accountCategoryId: data.accountCategoryId?._id || data.accountCategoryId?.id || data.accountCategoryId || '',
+      subAccountCategoryId: data.subAccountCategoryId?._id || data.subAccountCategoryId?.id || data.subAccountCategoryId || '',
+      taxCategoryId: data.taxCategoryId?._id || data.taxCategoryId?.id || data.taxCategoryId || '',
+      taxRate: data.taxRate !== undefined && data.taxRate !== null ? `${data.taxRate}%` : '',
+      supplierId: data.supplierId?._id || data.supplierId?.id || data.supplierId || '',
       receiptNumber: data.receiptNumber || '',
       invoiceNumber: data.invoiceNumber || '',
       productName: data.productName || '',
-      notes: data.notes || ''
+      notes: data.notes || '',
+      paymentMethod: data.paymentMethod || '',
+      cardNumber: data.cardNumber || '',
+      trackingNumber: data.trackingNumber || ''
     }
+    initialPayload = metadataPayload()
     // Sync date picker value
     datePickerValue.value = new Date(dateValue)
     if (data.supplierId) {
@@ -1396,37 +1412,27 @@ const saveSupplier = async () => {
   }
 }
 
-const submitForm = async () => {
-  isSubmitting.value = true
-  try {
-    const data: any = {
-      date: new Date(form.value.date).toISOString(),
-      type: form.value.type,
-      amount: parseNumber(form.value.amount),
-      status: 'pending',
-      receiptNumber: form.value.receiptNumber,
-      invoiceNumber: form.value.invoiceNumber,
-      trackingNumber: form.value.trackingNumber,
-      paymentMethod: form.value.paymentMethod,
-      cardNumber: form.value.cardNumber,
-      productName: form.value.productName,
-      notes: form.value.notes
-    }
-
-    if (form.value.customerId) data.customerId = form.value.customerId
-    if (form.value.accountCategoryId) data.accountCategoryId = form.value.accountCategoryId
-    if (form.value.subAccountCategoryId) data.subAccountCategoryId = form.value.subAccountCategoryId
-    if (form.value.taxCategoryId) data.taxCategoryId = form.value.taxCategoryId
-    if (form.value.taxRate) data.taxRate = parseFloat(form.value.taxRate.replace('%', ''))
-    if (form.value.supplierId) data.supplierId = form.value.supplierId
-
-    emit('submit', data)
-    // Don't close here - parent will close after successful save
-  } catch (err) {
-    console.error('Error in submitForm:', err)
-  } finally {
-    isSubmitting.value = false
+function metadataPayload(): Record<string, any> {
+  const value = form.value
+  const data: Record<string, any> = {
+    date: value.date ? new Date(value.date).toISOString() : '', type: value.type, amount: Number(value.amount.replace(/,/g, '')),
+    receiptNumber: value.receiptNumber, invoiceNumber: value.invoiceNumber, trackingNumber: value.trackingNumber,
+    paymentMethod: value.paymentMethod, cardNumber: value.cardNumber, productName: value.productName, notes: value.notes,
+    taxRate: value.taxRate === '' ? null : parseFloat(value.taxRate.replace('%', ''))
   }
+  for (const key of ['customerId', 'accountCategoryId', 'subAccountCategoryId', 'taxCategoryId', 'supplierId'] as const) data[key] = value[key] || null
+  return data
+}
+const submitForm = async () => {
+  if (isSubmitting.value || props.busy || !form.value.date || form.value.amount === '') return
+  isSubmitting.value = true; localError.value = ''
+  try {
+    const payload = metadataPayload()
+    const data = props.isEditing ? Object.fromEntries(Object.entries(payload).filter(([key, value]) => value !== initialPayload[key])) : payload
+    const saved = await props.save(data)
+    if (saved && alive) emit('update:modelValue', false)
+  } catch (err: any) { if (alive) localError.value = err?.message || t('transactions.updateFailed') }
+  finally { if (alive) isSubmitting.value = false }
 }
 </script>
 

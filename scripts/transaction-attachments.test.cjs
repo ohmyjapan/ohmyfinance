@@ -15,9 +15,9 @@ test('transaction form submits metadata without inventing receipt evidence for n
   try{
    assert(!/type="file"/.test(form.html),'Metadata form must not offer an upload which never saves bytes');
    assert(form.html.includes('transactionForm.receiptAfterSave'),'Explain the canonical receipt flow');
-   form.state.form.value.amount='67,000';form.state.form.value.receiptFile={name:'not-uploaded.pdf'};
+   form.state.form.value.amount='67,321';form.state.form.value.receiptFile={name:'not-uploaded.pdf'};
    await form.state.submitForm();const submission=form.emitted.find(e=>e[0]==='submit')[1];
-   assert.equal(submission.amount,67000);
+   assert.equal(submission.amount,67321);
    for(const field of ['hasReceipt','receipt','receiptFilePath','receiptUploadedAt','attachments','receiptFile'])assert(!Object.hasOwn(submission,field),field+' is not metadata');
   }finally{form.close();}
  }

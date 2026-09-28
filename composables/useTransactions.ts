@@ -1,227 +1,102 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onScopeDispose } from 'vue'
 import { useUserStore } from '~/stores/user'
-import type {
-    Transaction,
-    TransactionStatus,
-    TransactionType,
-    TransactionFilters,
-    TransactionStats,
-    TransactionItem,
-    TimelineEvent
-} from '~/types/transaction'
+import type { Transaction, TransactionStatus, TransactionFilters, TransactionStats } from '~/types/transaction'
 
-/**
- * Composable for managing transactions (OMF style - Japanese accounting)
- */
+/** Each mounted workspace owns its company/session requests and confirmed state. */
 export function useTransactions() {
     const userStore = useUserStore()
-    // State
-    const transactions = ref<Transaction[]>([])
-    const isLoading = ref<boolean>(false)
-    const error = ref<string | null>(null)
-    const currentTransaction = ref<Transaction | null>(null)
-    const filters = ref<TransactionFilters>({})
-    const searchQuery = ref<string>('')
-
-    // Fetch all transactions
-    const fetchTransactions = async () => {
-        isLoading.value = true
-        error.value = null
-        userStore.initAuth()
-
-        try {
-            const response = await $fetch<any>('/api/transactions', {
-                headers: userStore.authHeader
-            })
-            const data = response.transactions || response
-            transactions.value = (Array.isArray(data) ? data : []).map(t => ({
-                ...t,
-                id: t.id || t._id?.toString() || '',
-                date: t.date || new Date().toISOString(),
-                createdAt: t.createdAt || t.date || new Date().toISOString(),
-                items: t.items || [],
-                timeline: t.timeline || [],
-                hasReceipt: t.hasReceipt || false
-            }))
-        } catch (err: any) {
-            error.value = err.message || 'Failed to fetch transactions'
-            console.error('Error fetching transactions:', err)
-        } finally {
-            isLoading.value = false
-        }
+    const transactions = ref<Transaction[]>([]), currentTransaction = ref<Transaction | null>(null)
+    const isLoading = ref(false), isSaving = ref(false), error = ref<string | null>(null), saveError = ref<string | null>(null)
+    const saveOutcomeUnknown = ref(false), filters = ref<TransactionFilters>({}), searchQuery = ref('')
+    const contextKey = computed(() => JSON.stringify([userStore.sessionId, userStore.isAuthenticated, userStore.user?.id, userStore.currentOrganization?.id || userStore.currentOrganization?._id]))
+    const canEdit = computed(() => ['owner', 'admin', 'member'].includes(userStore.currentOrganization?.role))
+    let epoch = 0, listRequest = 0, detailRequest = 0, alive = true
+    const invalidateReads = () => { listRequest++; detailRequest++; isLoading.value = false }
+    const clearCurrent = () => { epoch++; invalidateReads(); currentTransaction.value = null; error.value = null; isSaving.value = false; clearSaveError() }
+    const clearSaveError = () => { saveError.value = null; saveOutcomeUnknown.value = false }
+    const reset = () => {
+        epoch++; invalidateReads(); transactions.value = []; currentTransaction.value = null
+        error.value = null; clearSaveError(); isSaving.value = false; filters.value = {}; searchQuery.value = ''
     }
-
-    // Get a single transaction by ID
-    const fetchTransactionById = async (id: string) => {
-        isLoading.value = true
-        error.value = null
-
-        try {
-            const response = await $fetch<any>(`/api/transactions/${id}`, {
-                headers: userStore.authHeader
-            })
-            currentTransaction.value = {
-                ...response,
-                id: response.id || response._id?.toString() || '',
-                date: response.date || new Date().toISOString(),
-                createdAt: response.createdAt || response.date || new Date().toISOString(),
-                items: response.items || [],
-                timeline: response.timeline || [],
-                hasReceipt: response.hasReceipt || false
-            }
-        } catch (err: any) {
-            error.value = err.message || `Failed to fetch transaction ${id}`
-            console.error(`Error fetching transaction ${id}:`, err)
-        } finally {
-            isLoading.value = false
-        }
+    watch(contextKey, reset, { flush: 'sync' })
+    onScopeDispose(() => { alive = false; reset() })
+    const failure = (err: any) => err?.data?.message || err?.data?.statusMessage || err?.message || 'Transaction request failed'
+    const normalize = (row: any): Transaction => ({ ...row, id: row.id || String(row._id || ''), date: row.date || '', createdAt: row.createdAt || '', items: row.items || [], timeline: row.timeline || [], hasReceipt: !!row.hasReceipt })
+    const remember = (row: any) => {
+        const record = normalize(row), index = transactions.value.findIndex(t => t.id === record.id)
+        if (index < 0) transactions.value.unshift(record)
+        else transactions.value[index] = record
+        if (currentTransaction.value?.id === record.id) currentTransaction.value = record
     }
-
-    // Create a new transaction (OMF style)
-    const createTransaction = async (transactionData: Partial<Transaction>) => {
-        isLoading.value = true
-        error.value = null
-        userStore.initAuth()
-
+    async function fetchTransactions() {
+        if (!alive) return false
+        const generation = epoch, request = ++listRequest, headers = { ...userStore.authHeader }
+        isLoading.value = true; error.value = null
         try {
-            const response = await $fetch<any>('/api/transactions', {
-                method: 'POST',
-                headers: userStore.authHeader,
-                body: transactionData
-            })
-
-            const newTransaction: Transaction = {
-                ...response,
-                id: response._id?.toString() || response.id,
-                date: response.date || new Date().toISOString(),
-                createdAt: response.createdAt || response.date || new Date().toISOString(),
-                items: response.items || [],
-                timeline: response.timeline || [],
-                hasReceipt: response.hasReceipt || false
-            }
-
-            // Add to local state
-            transactions.value.unshift(newTransaction)
-
-            return newTransaction
+            const response = await $fetch<{ transactions: any[] }>('/api/transactions', { headers, retry: 0 })
+            if (generation !== epoch || request !== listRequest) return false
+            transactions.value = response.transactions.map(normalize)
+            return true
+        } catch (err) {
+            if (generation === epoch && request === listRequest) { transactions.value = []; error.value = failure(err) }
+            return false
+        } finally { if (generation === epoch && request === listRequest) isLoading.value = false }
+    }
+    async function fetchTransactionById(id: string) {
+        if (!alive) return null
+        const generation = epoch, request = ++detailRequest, headers = { ...userStore.authHeader }
+        currentTransaction.value = null; isLoading.value = true; error.value = null
+        try {
+            const response = await $fetch<any>('/api/transactions/' + id, { headers, retry: 0 })
+            if (generation !== epoch || request !== detailRequest) return null
+            currentTransaction.value = normalize(response)
+            return currentTransaction.value
+        } catch (err) { if (generation === epoch && request === detailRequest) error.value = failure(err); return null }
+        finally { if (generation === epoch && request === detailRequest) isLoading.value = false }
+    }
+    async function save<T>(operation: (headers: Record<string, string>) => Promise<T>, apply: (result: T) => void, creating = false): Promise<T | null> {
+        if (!alive || isSaving.value || !canEdit.value) return null
+        const generation = epoch, headers = { ...userStore.authHeader }
+        isSaving.value = true; clearSaveError(); invalidateReads()
+        try {
+            const result = await operation(headers)
+            if (generation !== epoch) return null
+            invalidateReads(); apply(result)
+            return result
         } catch (err: any) {
-            error.value = err.message || 'Failed to create transaction'
-            console.error('Error creating transaction:', err)
+            if (generation === epoch) {
+                saveError.value = failure(err)
+                const status = err?.statusCode || err?.response?.status
+                saveOutcomeUnknown.value = creating && (!status || status >= 500 || status === 408)
+            }
             return null
-        } finally {
-            isLoading.value = false
-        }
+        } finally { if (generation === epoch) isSaving.value = false }
     }
-
-    // Update transaction
+    const snapshot = (data: any) => JSON.parse(JSON.stringify(data))
+    const createTransaction = (data: Partial<Transaction>) => {
+        const body = snapshot(data)
+        return save(headers => $fetch<any>('/api/transactions', { method: 'POST', headers, body, retry: 0 }), remember, true)
+    }
     const updateTransaction = async (id: string, data: Partial<Transaction>) => {
-        isLoading.value = true
-        error.value = null
-
-        try {
-            const response = await $fetch<any>(`/api/transactions/${id}`, {
-                method: 'PUT',
-                headers: userStore.authHeader,
-                body: data
-            })
-
-            // Update in the list
-            const transactionIndex = transactions.value.findIndex(t => t.id === id)
-            if (transactionIndex !== -1) {
-                transactions.value[transactionIndex] = {
-                    ...transactions.value[transactionIndex],
-                    ...response,
-                    id: response.id || response._id?.toString()
-                }
-            }
-
-            // Update current transaction if it's loaded
-            if (currentTransaction.value && currentTransaction.value.id === id) {
-                currentTransaction.value = {
-                    ...currentTransaction.value,
-                    ...response,
-                    id: response.id || response._id?.toString()
-                }
-            }
-
-            return true
-        } catch (err: any) {
-            error.value = err.message || `Failed to update transaction ${id}`
-            console.error(`Error updating transaction ${id}:`, err)
-            return false
-        } finally {
-            isLoading.value = false
-        }
+        const body = snapshot(data)
+        return !!await save(headers => $fetch<any>('/api/transactions/' + id, { method: 'PUT', headers, body, retry: 0 }), remember)
     }
-
-    // Update transaction status
-    const updateTransactionStatus = async (id: string, status: TransactionStatus, notes?: string) => {
-        return updateTransaction(id, { status, notes } as Partial<Transaction>)
-    }
-
-    // Delete transaction
-    const deleteTransaction = async (id: string) => {
-        isLoading.value = true
-        error.value = null
-
-        try {
-            await $fetch(`/api/transactions/${id}`, {
-                method: 'DELETE',
-                headers: userStore.authHeader
-            })
-
-            // Remove from local state
+    const updateTransactionStatus = async (id: string, status: TransactionStatus, notes?: string) =>
+        !!await save(headers => $fetch<{ transaction: any }>('/api/transactions/' + id + '/status', { method: 'PATCH', headers, body: { status, ...(notes !== undefined ? { notes } : {}) }, retry: 0 }), result => remember(result.transaction))
+    const deleteTransaction = async (id: string) =>
+        !!await save(headers => $fetch<{ success: boolean }>('/api/transactions/' + id, { method: 'DELETE', headers, retry: 0 }), () => {
             transactions.value = transactions.value.filter(t => t.id !== id)
-
-            // Clear current transaction if it was deleted
-            if (currentTransaction.value && currentTransaction.value.id === id) {
-                currentTransaction.value = null
-            }
-
-            return true
-        } catch (err: any) {
-            error.value = err.message || `Failed to delete transaction ${id}`
-            console.error(`Error deleting transaction ${id}:`, err)
-            return false
-        } finally {
-            isLoading.value = false
-        }
-    }
-
-    // Import transactions from file data
-    const importTransactions = async (
-        parsedData: any[],
-        mappings: Record<string, string>,
-        options: { skipDuplicates?: boolean, updateMatches?: boolean } = {}
-    ) => {
-        isLoading.value = true
-        error.value = null
-
-        try {
-            const response = await $fetch<any>('/api/transactions/import', {
-                method: 'POST',
-                headers: userStore.authHeader,
-                body: { data: parsedData, mappings, options }
-            })
-
-            // Refresh transactions list
-            await fetchTransactions()
-
-            return {
-                success: true,
-                stats: response.results || response,
-                transactions: response.transactions || []
-            }
-        } catch (err: any) {
-            error.value = err.message || 'Failed to import transactions'
-            console.error('Error importing transactions:', err)
-            return {
-                success: false,
-                error: error.value
-            }
-        } finally {
-            isLoading.value = false
-        }
+            if (currentTransaction.value?.id === id) currentTransaction.value = null
+        })
+    const importTransactions = async (parsedData: any[], mappings: Record<string, string>, options = {}) => {
+        const generation = epoch
+        const body = snapshot({ data: parsedData, mappings, options })
+        const result = await save(headers => $fetch<any>('/api/transactions/import', { method: 'POST', headers, body, retry: 0 }), () => {})
+        if (!result) return { success: false, error: saveError.value }
+        // A failed refresh cannot turn a confirmed import into a failed write.
+        await fetchTransactions()
+        if (generation !== epoch) return { success: false, error: null }
+        return { success: true, stats: result.results || result, transactions: result.transactions || [] }
     }
 
     // Get transaction statistics
@@ -408,6 +283,7 @@ export function useTransactions() {
     }
 
     return {
+        contextKey, canEdit, isSaving, saveError, saveOutcomeUnknown, clearSaveError, clearCurrent,
         // State
         transactions,
         isLoading,

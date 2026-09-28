@@ -21,6 +21,7 @@
   },
   "common": {
     "save": "保存",
+    "update": "更新",
     "discard": "破棄",
     "unsavedChanges": "保存されていない変更があります",
     "cancel": "キャンセル",
@@ -1641,6 +1642,7 @@
     "notesPlaceholder": "メモを入力...",
     "receiptSection": "領収書",
     "receiptAfterSave": "取引を保存してから、取引詳細で領収書をアップロードしてください。登録済みの領収書は領収書一覧から紐付けできます。",
+    "saveUnconfirmed": "保存結果を確認できません。再保存する前に取引一覧を読み直して、登録済みか確認してください。",
     "dropOrClick": "ファイルをドロップまたはクリック",
     "maxSize": "最大10MB",
     "typeLabel": "区別",

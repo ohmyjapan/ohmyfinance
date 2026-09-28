@@ -16,16 +16,16 @@
           </p>
         </div>
       </div>
-      <div class="flex gap-2">
+      <div v-if="canEdit && transaction" class="flex gap-2">
         <button
-          @click="editTransaction"
+          :disabled="isSaving" @click="editTransaction"
           class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main text-white rounded-xl shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
         >
           <Pencil class="w-4 h-4" />
           {{ t('transactionDetail.edit') }}
         </button>
         <button
-          @click="deleteTransactionConfirm"
+          :disabled="isSaving" @click="deleteTransactionConfirm"
           class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-all duration-300 touch-manipulation"
         >
           <Trash2 class="w-4 h-4" />
@@ -34,6 +34,7 @@
       </div>
     </div>
 
+    <p v-if="saveError && !showEditModal" role="alert" class="mb-4 text-sm text-red-600">{{ saveError }}</p>
     <!-- Loading State -->
     <div v-if="isLoading" class="flex justify-center items-center h-64">
       <div class="flex items-center gap-3">
@@ -43,7 +44,7 @@
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" class="rounded-2xl border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-900/10 backdrop-blur-sm p-6">
+    <div role="alert" v-else-if="error" class="rounded-2xl border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-900/10 backdrop-blur-sm p-6">
       <div class="flex items-center gap-3">
         <div class="w-12 h-12 rounded-xl bg-red-500/10 dark:bg-red-500/20 flex items-center justify-center">
           <AlertCircle class="w-6 h-6 text-red-500" />
@@ -368,7 +369,7 @@
               </div>
               <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('transactionDetail.noReceipt') }}</p>
               <button
-                @click="uploadReceipt"
+                v-if="canEdit" :disabled="isSaving" @click="uploadReceipt"
                 class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main text-white rounded-xl shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
               >
                 <Upload class="w-4 h-4" />
@@ -379,11 +380,13 @@
         </div>
       </div>
     </template>
+    <TransactionFormModal v-if="showEditModal && transaction" v-model="showEditModal" :initialData="transaction" :isEditing="true" :save="saveTransaction" :busy="isSaving" :saveError="saveError" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useTransactions } from '~/composables/useTransactions'
 import {
   ArrowLeft, Loader2, FileText, Download, ExternalLink,
   Check, Clock, AlertCircle, Plus, Pencil, Trash2,
@@ -399,41 +402,16 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const { downloadReceipt, downloadError, isDownloading } = useReceiptFiles()
-const getAuthHeaders = () => userStore.authHeader
+const { currentTransaction: transaction, isLoading, isSaving, error, saveError, canEdit, contextKey, clearCurrent, clearSaveError, fetchTransactionById, updateTransaction, deleteTransaction } = useTransactions()
+const showEditModal = ref(false)
 
 const transactionId = computed(() => route.params.id as string)
 
-const transaction = ref<any>(null)
-const isLoading = ref(true)
-const error = ref<string | null>(null)
-
-onMounted(async () => {
-  userStore.initAuth()
-  await fetchTransaction()
-})
-
-const fetchTransaction = async () => {
-  isLoading.value = true
-  error.value = null
-
-  try {
-    const response = await $fetch<any>(`/api/transactions/${transactionId.value}`, {
-      headers: getAuthHeaders()
-    })
-    transaction.value = {
-      ...response,
-      id: response.id || response._id,
-      date: response.date || new Date().toISOString(),
-      items: response.items || [],
-      timeline: response.timeline || []
-    }
-  } catch (err: any) {
-    error.value = err.message || t('transactionDetail.loadFailed')
-    console.error(err)
-  } finally {
-    isLoading.value = false
-  }
-}
+const fetchTransaction = () => fetchTransactionById(transactionId.value)
+onMounted(() => { userStore.initAuth(); fetchTransaction() })
+watch([transactionId, contextKey], () => { clearCurrent(); showEditModal.value = false; clearSaveError() }, { flush: 'sync' })
+watch([transactionId, contextKey], () => fetchTransaction(), { flush: 'post' })
+watch(canEdit, () => { showEditModal.value = false })
 
 const formatDate = (dateString: string) => {
   if (!dateString) return '-'
@@ -496,22 +474,17 @@ const getTimelineIcon = (type: string) => {
 }
 
 const editTransaction = () => {
-  alert(t('transactionDetail.editInProgress'))
+  if (!canEdit.value || isSaving.value || !transaction.value) return
+  clearSaveError(); showEditModal.value = true
 }
-
+const saveTransaction = async (data: any) => {
+  const id = transactionId.value
+  return await updateTransaction(id, data) && id === transactionId.value
+}
 const deleteTransactionConfirm = async () => {
-  if (confirm(t('transactionDetail.deleteConfirm'))) {
-    try {
-      await $fetch(`/api/transactions/${transactionId.value}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders()
-      })
-      router.push('/transactions')
-    } catch (err) {
-      console.error('Failed to delete transaction:', err)
-      alert(t('transactionDetail.deleteFailed'))
-    }
-  }
+  if (!canEdit.value || isSaving.value) return
+  const id = transactionId.value
+  if (confirm(t('transactionDetail.deleteConfirm')) && await deleteTransaction(id) && id === transactionId.value) router.push('/transactions')
 }
 
 const uploadReceipt = () => {

@@ -282,3 +282,16 @@ transaction-group checks, an ordinary-login real Chrome save/upload/reload flow,
 zero TypeScript errors and six detected/restored mutations. Independent guard
 review, transaction save lifecycle and broader release work remain pending.
 This branch has not been deployed.
+
+
+Transaction list/detail saves now use authenticated company/session-owned state.
+Late replies are discarded after company, route or page changes; normal token
+renewal is tolerated. Forms await confirmed saves, retain failed inputs and send
+only changed metadata, preserving status, timestamps, card fields and zero values.
+Detail editing is functional. Lost creates show uncertainty and are not replayed
+automatically; durable create identity and concurrent edit versions remain open.
+
+Verified: 240 unit/service tests, fresh build, retained API suites, six workspace
+API checks, ordinary-login real Chrome edit/retry/reload/company-switch checks,
+zero TypeScript errors and six detected/restored mutations. Independent guard
+review and broader release work remain pending. This branch is not deployed.

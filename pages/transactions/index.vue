@@ -13,14 +13,14 @@
         </button>
         <button
             class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
-            @click="router.push('/transactions/upload')"
+            v-if="canEdit" @click="router.push('/transactions/upload')"
         >
           <Upload class="mr-2 h-4 w-4 text-gray-500" />
           {{ t('common.import') }}
         </button>
         <button
             class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
-            @click="showCreateModal = true"
+            v-if="canEdit" :disabled="isSaving" @click="clearSaveError(); showCreateModal = true"
         >
           <Plus class="mr-2 h-4 w-4" />
           {{ t('transactionForm.createTitle') }}
@@ -180,6 +180,7 @@
       </div>
     </div>
 
+    <p v-if="saveError && !showCreateModal && !showEditModal" role="alert" class="mb-4 text-sm text-red-600">{{ saveError }}</p>
     <!-- Transactions Table -->
     <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden">
       <div v-if="isLoading" class="flex justify-center items-center p-12">
@@ -187,6 +188,7 @@
         <span class="ml-2 text-gray-600">{{ t('transactionsList.loading') }}</span>
       </div>
 
+      <p v-else-if="error" role="alert" class="p-6 text-sm text-red-600">{{ error }}</p>
       <div v-else-if="filteredTransactions.length === 0" class="text-center py-16">
         <CreditCard class="mx-auto h-12 w-12 text-gray-300" />
         <h3 class="mt-2 text-sm font-medium text-gray-900">{{ t('transactionsList.noTransactions') }}</h3>
@@ -196,7 +198,7 @@
         <div class="mt-6">
           <button
               class="inline-flex items-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark touch-manipulation focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
-              @click="router.push('/transactions/upload')"
+              v-if="canEdit" @click="router.push('/transactions/upload')"
           >
             <Upload class="mr-2 h-4 w-4" />
             {{ t('transactionsList.importTransactions') }}
@@ -262,7 +264,7 @@
             </div>
             <div v-else>
               <button
-                  @click="attachReceipt(transaction.id)"
+                  v-if="canEdit" :disabled="isSaving" @click="attachReceipt(transaction.id)"
                   class="text-gray-500 hover:text-gray-700 text-xs inline-flex items-center"
               >
                 <Plus class="h-3 w-3 mr-1" />
@@ -277,9 +279,9 @@
             >
               {{ t('transactions.details') }}
             </button>
-            <div class="relative inline-block text-left" v-click-outside="() => closeActionsMenu(transaction.id)">
+            <div v-if="canEdit" class="relative inline-block text-left" v-click-outside="() => closeActionsMenu(transaction.id)">
               <button
-                  @click="toggleActionsMenu(transaction.id)"
+                  :disabled="isSaving" @click="toggleActionsMenu(transaction.id)"
                   class="text-gray-500 hover:text-gray-700"
               >
                 <MoreVertical class="h-5 w-5" />
@@ -380,22 +382,24 @@
 
     <!-- Create Transaction Modal -->
     <TransactionFormModal
+      v-if="showCreateModal"
       v-model="showCreateModal"
-      @submit="handleCreateTransaction"
+      :save="handleCreateTransaction" :busy="isSaving" :saveError="saveError" :saveOutcomeUnknown="saveOutcomeUnknown"
     />
 
     <!-- Edit Transaction Modal -->
     <TransactionFormModal
+      v-if="showEditModal"
       v-model="showEditModal"
       :initialData="editingTransaction"
       :isEditing="true"
-      @submit="handleEditTransaction"
+      :save="handleEditTransaction" :busy="isSaving" :saveError="saveError"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useTransactions } from '~/composables/useTransactions'
 import {
   Search,
@@ -418,6 +422,7 @@ const { t } = useI18n()
 
 // Use the transactions composable
 const {
+  contextKey, canEdit, isSaving, saveError, saveOutcomeUnknown, clearSaveError, updateTransaction,
   transactions,
   isLoading,
   error,
@@ -512,7 +517,7 @@ const viewTransactionDetails = (id: string) => {
   router.push(`/transactions/${id}`)
 }
 
-const updateTransactionStatus = async (id: string, status: string) => {
+const updateTransactionStatus = async (id: string, status: 'completed' | 'cancelled') => {
   closeActionsMenu(id)
   await updateStatus(id, status)
 }
@@ -522,18 +527,6 @@ const attachReceipt = (id: string) => {
     path: '/receipts/upload',
     query: { transactionId: id }
   })
-}
-
-const viewReceipt = (receipt: any) => {
-  // In a real app, this would open a receipt viewer or download
-  console.log('View receipt:', receipt)
-
-  // Mock viewer
-  if (receipt.url) {
-    window.open(receipt.url, '_blank')
-  } else {
-    alert(`Receipt: ${receipt.filename} (${formatCurrency(receipt.amount)})`)
-  }
 }
 
 const deleteTransactionConfirm = async (id: string) => {
@@ -546,71 +539,24 @@ const deleteTransactionConfirm = async (id: string) => {
   }
 }
 
-// Handle create transaction
-const handleCreateTransaction = async (formData: any) => {
-  try {
-    const result = await createTransaction(formData)
-    if (result) {
-      showCreateModal.value = false
-      await fetchTransactions()
-    }
-  } catch (err) {
-    console.error('Error in handleCreateTransaction:', err)
-  }
-}
-
-// Open edit modal
+// Callbacks resolve only after the authenticated client confirms the write.
+const handleCreateTransaction = async (data: any) => !!await createTransaction(data)
 const openEditModal = (transaction: any) => {
-  closeActionsMenu(transaction.id)
-  editingTransaction.value = {
-    id: transaction._id || transaction.id,
-    date: transaction.date ? new Date(transaction.date).toISOString().split('T')[0] : '',
-    amount: transaction.amount,
-    type: transaction.type || '支出',
-    status: transaction.status || 'pending',
-    accountCategoryId: transaction.accountCategoryId?._id || transaction.accountCategoryId || '',
-    subAccountCategoryId: transaction.subAccountCategoryId?._id || transaction.subAccountCategoryId || '',
-    taxCategoryId: transaction.taxCategoryId?._id || transaction.taxCategoryId || '',
-    taxRate: transaction.taxRate,
-    supplierId: transaction.supplierId?._id || transaction.supplierId || '',
-    customerId: transaction.customerId?._id || transaction.customerId || '',
-    transactionCategoryId: transaction.transactionCategoryId?._id || transaction.transactionCategoryId || '',
-    companyInfo: transaction.companyInfo || '',
-    invoiceNumber: transaction.invoiceNumber || '',
-    receiptNumber: transaction.receiptNumber || '',
-    productName: transaction.productName || '',
-    productPrice: transaction.productPrice,
-    janCode: transaction.janCode || '',
-    notes: transaction.notes || '',
-    referenceNumber: transaction.referenceNumber || ''
-  }
+  if (!canEdit.value || isSaving.value) return
+  closeActionsMenu(transaction.id); clearSaveError()
+  editingTransaction.value = structuredClone(JSON.parse(JSON.stringify(transaction)))
   showEditModal.value = true
 }
-
-// Close edit modal
-const closeEditModal = () => {
-  showEditModal.value = false
-  editingTransaction.value = null
+const handleEditTransaction = async (data: any) => {
+  const id = editingTransaction.value?.id || editingTransaction.value?._id
+  return id ? await updateTransaction(id, data) : false
 }
-
-// Handle edit transaction
-const handleEditTransaction = async (formData: any) => {
-  if (!editingTransaction.value?.id) return
-
-  try {
-    const response = await $fetch(`/api/transactions/${editingTransaction.value.id}`, {
-      method: 'PUT',
-      body: formData
-    })
-    if (response) {
-      closeEditModal()
-      await fetchTransactions()
-    }
-  } catch (err) {
-    console.error('Failed to update transaction:', err)
-    alert(t('transactions.updateFailed'))
-  }
-}
+watch([contextKey, canEdit], () => {
+  showCreateModal.value = false; showEditModal.value = false; editingTransaction.value = null
+  openMenuId.value = null; currentPage.value = 1
+}, { flush: 'sync' })
+watch(contextKey, () => fetchTransactions(), { flush: 'post' })
+watch(filteredTransactions, () => { currentPage.value = 1 }, { flush: 'sync' })
 
 // Click outside directive
 const vClickOutside = {
