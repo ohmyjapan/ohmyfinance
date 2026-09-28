@@ -1640,6 +1640,7 @@
     "notes": "メモ",
     "notesPlaceholder": "メモを入力...",
     "receiptSection": "領収書",
+    "receiptAfterSave": "取引を保存してから、取引詳細で領収書をアップロードしてください。登録済みの領収書は領収書一覧から紐付けできます。",
     "dropOrClick": "ファイルをドロップまたはクリック",
     "maxSize": "最大10MB",
     "typeLabel": "区別",

@@ -268,3 +268,17 @@ delete/reload/company-switch checks. Compiler remains at zero errors. Seven
 injected defects were caught by the actual verifier and restored byte-exact.
 Independent guard review and remaining attachment/ledger/release work are pending.
 This branch has not been deployed.
+
+
+Legacy generic attachment endpoints now return authenticated HTTP 410 without
+reading/deleting old originals or changing transaction references. Generic
+transaction metadata writes cannot register or replace receipt evidence; finance
+document associations remain intact. The active form directs receipt work to the
+canonical upload/link flow; its nonfunctional picker and unused older form were
+removed. Existing-data initialization no longer calls an uninitialized formatter.
+
+Verified: 229 unit/service tests, fresh build, retained API suites with 16
+transaction-group checks, an ordinary-login real Chrome save/upload/reload flow,
+zero TypeScript errors and six detected/restored mutations. Independent guard
+review, transaction save lifecycle and broader release work remain pending.
+This branch has not been deployed.

@@ -142,6 +142,9 @@ export async function createTransaction(access: LedgerAccess, data: Partial<ITra
   await ensureConnection()
   try {
     if (data.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting is assigned through the reviewed import.' })
+    // Generic metadata cannot register evidence or adopt a client-supplied path.
+    const { receipt, hasReceipt, receiptFilePath, receiptUploadedAt, attachments, ...metadata } = data as any
+    data = metadata
     // Add initial timeline event
     if (!data.timeline) {
       data.timeline = []
@@ -182,7 +185,7 @@ export async function updateTransaction(access: LedgerAccess, id: string, data: 
   try {
     // Don't allow changing certain fields
     // Receipt fields returned by reads are projections, not editable evidence.
-    const { _id, createdAt, organizationId, receipt, hasReceipt, receiptFilePath, receiptUploadedAt, ...updateData } = data as any
+    const { _id, createdAt, organizationId, receipt, hasReceipt, receiptFilePath, receiptUploadedAt, attachments, ...updateData } = data as any
 
     if (Object.keys(updateData).some(k => k.startsWith('$') || k.includes('.')) || updateData.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting cannot be replaced by a transaction edit.' })
     const current: any = await Transaction.findOne({ _id: id, organizationId: access.organizationId }).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
@@ -314,44 +317,6 @@ export async function importTransactions(
     return results
   } catch (error) {
     console.error('Failed to import transactions:', error)
-    throw error
-  }
-}
-
-/**
- * Link a receipt to a transaction (OMF style)
- */
-export async function linkReceiptToTransaction(access: LedgerAccess, transactionId: string, receiptPath: string) {
-  await ensureConnection()
-  try {
-    const transaction = await Transaction.findOneAndUpdate(
-      { _id: transactionId, organizationId: access.organizationId },
-      {
-        hasReceipt: true,
-        receiptFilePath: receiptPath,
-        receiptUploadedAt: new Date(),
-        $push: {
-          timeline: {
-            $each: [{
-              type: 'receipt_linked',
-              title: '領収書添付',
-              timestamp: new Date(),
-              description: `領収書ファイルが添付されました`
-            }],
-            $position: 0
-          }
-        }
-      },
-      { new: true }
-    ).lean()
-
-    if (!transaction) {
-      throw new Error(`Transaction ${transactionId} not found`)
-    }
-
-    return transaction
-  } catch (error) {
-    console.error(`Failed to link receipt to transaction ${transactionId}:`, error)
     throw error
   }
 }

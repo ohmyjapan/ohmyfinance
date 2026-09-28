@@ -518,37 +518,9 @@
 
                     <Transition name="collapse">
                       <div v-show="sections.receipt">
-                        <div
-                          class="border-2 border-dashed border-gray-300 dark:border-white/10 rounded-lg p-6 text-center hover:border-primary-main dark:hover:border-primary-main transition-colors cursor-pointer"
-                          @click="triggerFileUpload"
-                          @dragover.prevent="isDragging = true"
-                          @dragleave="isDragging = false"
-                          @drop.prevent="handleDrop"
-                          :class="{ 'border-primary-main bg-primary-light dark:bg-primary-dark/20': isDragging }"
-                        >
-                          <input
-                            ref="fileInput"
-                            type="file"
-                            accept="image/*,.pdf"
-                            class="hidden"
-                            @change="handleFileUpload"
-                          />
-                          <Upload class="w-10 h-10 mx-auto text-gray-400 dark:text-gray-500 mb-2" />
-                          <p class="text-sm text-gray-600 dark:text-gray-400">
-                            {{ t('transactionForm.dropOrClick') }}
-                          </p>
-                          <p class="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                            PNG, JPG, PDF ({{ t('transactionForm.maxSize') }})
-                          </p>
-                        </div>
-
-                        <div v-if="form.receiptFile" class="mt-3 flex items-center gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                          <CheckCircle class="w-5 h-5 text-green-600 dark:text-green-400" />
-                          <span class="text-sm text-green-700 dark:text-green-300 flex-1 truncate">{{ form.receiptFile.name }}</span>
-                          <button type="button" @click="form.receiptFile = null" class="text-gray-400 hover:text-red-500">
-                            <X class="w-4 h-4" />
-                          </button>
-                        </div>
+                        <p class="rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 p-4 text-sm text-gray-600 dark:text-gray-300">
+                          {{ t('transactionForm.receiptAfterSave') }}
+                        </p>
                       </div>
                     </Transition>
                   </section>
@@ -896,7 +868,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import {
   X, TrendingUp, TrendingDown, Coins, FolderOpen, Users, FileText,
-  Receipt, Upload, ChevronDown, Info, Save, Loader, CheckCircle, Plus, Edit3
+  Receipt, ChevronDown, Info, Save, Loader, Plus, Edit3
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 
@@ -920,8 +892,6 @@ const props = defineProps<{
 const emit = defineEmits(['update:modelValue', 'submit'])
 
 const isSubmitting = ref(false)
-const isDragging = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
 const showSupplierSuggestions = ref(false)
 const supplierSearch = ref('')
 const showCustomerSuggestions = ref(false)
@@ -959,8 +929,7 @@ const form = ref({
   paymentMethod: '',
   cardNumber: '',
   productName: '',
-  notes: '',
-  receiptFile: null as File | null
+  notes: ''
 })
 
 // Master data
@@ -1026,8 +995,7 @@ watch(() => props.initialData, (data) => {
       receiptNumber: data.receiptNumber || '',
       invoiceNumber: data.invoiceNumber || '',
       productName: data.productName || '',
-      notes: data.notes || '',
-      receiptFile: null
+      notes: data.notes || ''
     }
     // Sync date picker value
     datePickerValue.value = new Date(dateValue)
@@ -1145,7 +1113,7 @@ const formatAmount = () => {
   form.value.amount = formatNumberWithCommas(form.value.amount)
 }
 
-const formatNumberWithCommas = (value: string) => {
+function formatNumberWithCommas(value: string) {
   const plain = value.replace(/,/g, '')
   if (!plain || isNaN(Number(plain))) return plain
   return plain.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
@@ -1428,24 +1396,6 @@ const saveSupplier = async () => {
   }
 }
 
-const triggerFileUpload = () => {
-  fileInput.value?.click()
-}
-
-const handleFileUpload = (e: Event) => {
-  const input = e.target as HTMLInputElement
-  if (input.files?.[0]) {
-    form.value.receiptFile = input.files[0]
-  }
-}
-
-const handleDrop = (e: DragEvent) => {
-  isDragging.value = false
-  if (e.dataTransfer?.files?.[0]) {
-    form.value.receiptFile = e.dataTransfer.files[0]
-  }
-}
-
 const submitForm = async () => {
   isSubmitting.value = true
   try {
@@ -1460,8 +1410,7 @@ const submitForm = async () => {
       paymentMethod: form.value.paymentMethod,
       cardNumber: form.value.cardNumber,
       productName: form.value.productName,
-      notes: form.value.notes,
-      hasReceipt: !!form.value.receiptFile
+      notes: form.value.notes
     }
 
     if (form.value.customerId) data.customerId = form.value.customerId

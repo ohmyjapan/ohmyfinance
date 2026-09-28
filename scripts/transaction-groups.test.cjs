@@ -11,26 +11,53 @@ function load(file,imports={}){
 const id=()=>new mongoose.Types.ObjectId(),a=id(),b=id();
 const ctx={organizationId:String(a),userId:String(id()),role:'member'},foreign={...ctx,organizationId:String(b)};
 const record={date:new Date('2026-09-22'),amount:67000,type:'支出',status:'completed',notes:'Synthetic purchase',referenceNumber:'SHARED'};
-let mongo,Transaction,service,bulk,duplicates,bank;
+let mongo,Transaction,Receipt,links,service,bulk,duplicates,bank;
 before(async()=>{
   const binary=path.join(root,'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe');
   mongo=await MongoMemoryServer.create({binary:fs.existsSync(binary)?{systemBinary:binary,version:'8.2.1'}:undefined});await mongoose.connect(mongo.getUri('transaction_group_regression'));
   const model=load('server/models/Transaction.ts',{mongoose});Transaction=model.default;
   for(const name of ['Customer','Supplier','AccountCategory','SubAccountCategory','TaxCategory','TransactionCategory','DataSource'])if(!mongoose.models[name])mongoose.model(name,new mongoose.Schema({name:String}));
   const database={ensureConnection:async()=>assert.equal(mongoose.connection.name,'transaction_group_regression')};
-  const links=load('server/services/receiptLinkService.ts',{h3:require('h3'),mongoose,'../models/Receipt':load('server/models/Receipt.ts',{mongoose}),'../models/Transaction':model,'../config/database':database});
+  links=load('server/services/receiptLinkService.ts',{h3:require('h3'),mongoose,'../models/Receipt':load('server/models/Receipt.ts',{mongoose}),'../models/Transaction':model,'../config/database':database});
+  Receipt=mongoose.models.Receipt;await Receipt.init();
   service=load('server/services/transactionService.ts',{'./receiptLinkService':links,'h3':h3,mongoose,'../models/Transaction':model,'../config/database':database});
   const imports={h3:{...h3,defineEventHandler:fn=>fn,readBody:async event=>event.body,getQuery:event=>event.query||{},readMultipartFormData:async event=>event.form},'../../models/Transaction':model,'../../config/database':database,'../../middleware/auth':{requireAuth:event=>event.access},'../../services/transactionService':service,'../../services/ledgerAccessService':{requireLedgerAccess:async(event,mode)=>{if(mode==='write'&&event.access.role==='viewer')throw h3.createError({statusCode:403});return event.access;}}};
   bulk=load('server/api/transactions/bulk.ts',imports).default;duplicates=load('server/api/transactions/duplicates.ts',imports).default;bank=load('server/api/import/bank-statement.ts',imports).default;
 });
 after(async()=>{await mongoose.disconnect();if(mongo)await mongo.stop();});
-beforeEach(async()=>{await Transaction.deleteMany({});});
+beforeEach(async()=>{await Transaction.deleteMany({});await Receipt.deleteMany({});});
 const create=(access=ctx,extra={})=>service.createTransaction(access,{...record,...extra});
 const request=(body,access=ctx)=>({method:'POST',body,access});
 const seed=async()=>({own:await create(),other:await create(foreign),legacy:await Transaction.create(record)});
 
+test('generic transaction creation cannot register forged receipt evidence',async()=>{
+  const row=await create(ctx,{hasReceipt:true,receiptFilePath:'/foreign.pdf',receiptUploadedAt:new Date(),receipt:{id:String(id())},attachments:[{filename:'foreign.pdf',path:'/foreign.pdf'}]});
+  const saved=await Transaction.findById(row._id).lean();
+  assert.equal(saved.hasReceipt,false);assert.equal(saved.receiptFilePath,undefined);assert.equal(saved.receiptUploadedAt,undefined);assert.deepEqual(saved.attachments,[]);
+  assert.equal((await service.getTransactionStats(ctx)).receiptMatchRate,0);
+});
+test('generic metadata edits retain separately registered finance and receipt evidence',async()=>{
+  const row=await Transaction.create({...record,organizationId:a,hasReceipt:true,receiptFilePath:'/finance/document.pdf',receiptUploadedAt:new Date(),attachments:[{filename:'document-id',path:'/api/finance/documents/document-id/file'}]});
+  const before=await Transaction.findById(row._id).lean();
+  await service.updateTransaction(ctx,String(row._id),{notes:'Allowed correction',hasReceipt:false,receiptFilePath:'/forged.pdf',attachments:[]});
+  const after=await Transaction.findById(row._id).lean();
+  for(const key of ['attachments','hasReceipt','receiptFilePath','receiptUploadedAt'])assert.deepEqual(after[key],before[key],key);
+  assert.equal(after.notes,'Allowed correction');
+});
+test('mapped metadata imports cannot create or overwrite original evidence',async()=>{
+  const input={...record,hasReceipt:true,receiptFilePath:'/forged.pdf',attachments:[{filename:'forged',path:'/forged'}]};
+  const mapping=Object.fromEntries(Object.keys(input).map(k=>[k,k]));
+  const created=await service.importTransactions(ctx,[input],mapping);assert.equal(created.imported,1);
+  let row=await Transaction.findById(created.transactions[0]).lean();assert.equal(row.hasReceipt,false);assert.equal(row.receiptFilePath,undefined);assert.deepEqual(row.attachments,[]);
+  await Transaction.updateOne({_id:row._id},{$set:{attachments:[{filename:'registered',path:'/finance/registered'}]}});
+  const prior=await Transaction.findById(row._id).lean();
+  const edited=await service.importTransactions(ctx,[input],mapping,{updateMatches:true});assert.equal(edited.updated,1);
+  row=await Transaction.findById(row._id).lean();assert.deepEqual(row.attachments,prior.attachments);
+});
+
 test('transaction list and aggregates exclude other companies and unassigned history',async()=>{
-  const {own}=await seed();await create(ctx,{amount:100,hasReceipt:true,type:'入金',status:'pending'});
+  const {own}=await seed();const income=await create(ctx,{amount:100,type:'入金',status:'pending'});
+  const receipt=await Receipt.create({organizationId:a,filename:'synthetic.pdf',originalFilename:'synthetic.pdf',size:12});await links.matchReceiptWithTransaction(ctx,String(receipt._id),String(income._id),0);
   assert.equal((await service.getTransactions(ctx)).length,2);
   assert.deepEqual((await service.getTransactions(ctx,{search:'SHARED',type:'支出'})).map(t=>String(t._id)),[String(own._id)]);
   const stats=await service.getTransactionStats(ctx);assert.deepEqual(stats.total,{count:2,amount:67100});assert.equal(stats.expense.amount,67000);assert.equal(stats.income.amount,100);assert.equal(stats.pending.count,1);assert.equal(stats.completed.count,1);assert.equal(stats.receiptMatchRate,0.5);
@@ -48,10 +75,12 @@ test('transaction detail edit delete and receipt linking require the same compan
   const before=await Transaction.find({_id:{$in:[other._id,legacy._id]}}).lean();
   for(const row of [other,legacy]){
     assert.equal(await service.getTransactionById(ctx,String(row._id)),null);
-    for(const fn of [()=>service.updateTransaction(ctx,String(row._id),{notes:'Foreign'}),()=>service.deleteTransaction(ctx,String(row._id)),()=>service.linkReceiptToTransaction(ctx,String(row._id),'/synthetic.pdf')])await assert.rejects(fn,/not found/);
+    for(const fn of [()=>service.updateTransaction(ctx,String(row._id),{notes:'Foreign'}),()=>service.deleteTransaction(ctx,String(row._id))])await assert.rejects(fn,/not found/);
   }
   assert.deepEqual(await Transaction.find({_id:{$in:[other._id,legacy._id]}}).lean(),before);
-  assert.equal((await service.linkReceiptToTransaction(ctx,String(own._id),'/synthetic.pdf')).hasReceipt,true);
+  const receipt=await Receipt.create({organizationId:a,filename:'synthetic.pdf',originalFilename:'synthetic.pdf',size:12});
+  for(const row of [other,legacy])await assert.rejects(links.matchReceiptWithTransaction(ctx,String(receipt._id),String(row._id),0),e=>e.statusCode===404);
+  assert.equal((await links.matchReceiptWithTransaction(ctx,String(receipt._id),String(own._id),0)).transaction.hasReceipt,true);
   assert.equal(String((await service.deleteTransaction(ctx,String(own._id)))._id),String(own._id));
 });
 

@@ -50,7 +50,7 @@ async function main(){
   if(process.env.OMF_TEST_SHIPMENT_GROUPS_ONLY){await require('./shipment-groups-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted shipment group checks passed');return;}
   if(process.env.OMF_TEST_RECURRING_GROUPS_ONLY){await require('./recurring-groups-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted recurring group checks passed');return;}
   if(process.env.OMF_TEST_CARD_GROUPS_ONLY){await require('./card-groups-integration.cjs')({db,call,token,other,pass,csv,row});console.log(checks+' targeted card group checks passed');return;}
-  if(process.env.OMF_TEST_TRANSACTION_GROUPS_ONLY){await require('./transaction-groups-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted transaction group checks passed');return;}
+  if(process.env.OMF_TEST_TRANSACTION_GROUPS_ONLY){await require('./transaction-groups-integration.cjs')({db,call,token:ungroupedToken,other,origin,directory,pass});console.log(checks+' targeted transaction group checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_GROUPS_ONLY){await require('./receipt-groups-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted receipt group checks passed');return;}
   if(process.env.OMF_TEST_GROUP_SWITCH_ONLY){await require('./group-switch-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted group switch checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_CANDIDATES_ONLY){await require('./receipt-candidates-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted receipt candidate checks passed');return;}

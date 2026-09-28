@@ -8,6 +8,13 @@ export const timeoutMs = 900000;
 export default {
   name: 'finance-capture-workflow',
   covers: [
+    'server/api/attachments/upload.ts',
+    'server/api/attachments/[id].ts',
+    'components/transaction/TransactionForm.vue',
+    'components/transaction/TransactionFormModal.vue',
+    'scripts/transaction-attachments.test.cjs',
+    'scripts/helpers/transaction-form.cjs',
+    'scripts/transaction-attachments-integration.cjs',
     'composables/useReceipts.ts',
     'pages/receipts/index.vue',
     'components/receipt/ReceiptUpload.vue',
@@ -207,6 +214,7 @@ export default {
       'scripts/receipt-links.test.cjs',
       'scripts/receipt-groups.test.cjs',
       'scripts/transaction-groups.test.cjs',
+      'scripts/transaction-attachments.test.cjs',
       'scripts/card-groups.test.cjs',
       'scripts/recurring-groups.test.cjs',
       'scripts/shipment-groups.test.cjs',
@@ -217,7 +225,7 @@ export default {
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 223 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 229 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -296,7 +304,7 @@ export default {
     env.OMF_TEST_TRANSACTION_GROUPS_ONLY = '1';
     const transactionGroups = stage('isolated transaction group integration', ['scripts/finance-integration.cjs']);
     const transactionGroupChecks = Number(transactionGroups.output.match(/^(\d+) targeted transaction group checks passed\s*$/m)?.[1]);
-    if (!transactionGroups.ok || !(transactionGroupChecks >= 12)) {
+    if (!transactionGroups.ok || !(transactionGroupChecks >= 16)) {
       logs.push('The isolated transaction group suite must finish all its checks.');
       return result(false);
     }

@@ -2,7 +2,7 @@ const assert=require('node:assert/strict');
 const {ObjectId}=require('mongodb');
 const groupSession=require('./helpers/group-session.cjs');
 const claims=token=>JSON.parse(Buffer.from(token.split('.')[1],'base64url'));
-module.exports=async({db,call,token,other,origin,pass})=>{
+module.exports=async({db,call,token,other,origin,directory,pass})=>{
   assert.equal((await call('/api/transactions',{token})).status,403,'Transactions need a selected company');
   const a=await groupSession(call,token,'Synthetic transaction A'),b=await groupSession(call,other,'Synthetic transaction B');
   const group=new ObjectId(a.organizationId),foreignGroup=new ObjectId(b.organizationId);
@@ -76,6 +76,7 @@ module.exports=async({db,call,token,other,origin,pass})=>{
   assert.equal((await bank(b.token,true)).data.saved,1);assert.equal((await bank(member,true)).data.saved,1);assert.equal((await bank(member,true)).data.saved,0);
   const bankRow=await db.collection('transactions').findOne({organizationId:group,referenceNumber:'SYNTHETIC-BANK-ID'});assert(bankRow);assert.equal(bankRow.type,'支出');assert.equal(bankRow.companyInfo,'Synthetic bank shop');assert.equal(bankRow.amount,321);
   pass('bank preview remains read-only and OFX saving persists canonical fields with company-local duplicate references');
+  await require('./transaction-attachments-integration.cjs')({db,call,token:member,viewer,foreign:b,origin,group,directory,pass});
   await db.collection('organizations').updateOne({_id:group,'members.userId':memberId},{$set:{'members.$.role':'viewer'}});
   assert.equal((await call('/api/transactions',{token:member})).status,200);
   assert.equal((await create(member)).status,403);
