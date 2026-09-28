@@ -5,8 +5,10 @@ import { createError } from 'h3'
 import { ensureConnection } from '../config/database'
 import Transaction from '../models/Transaction'
 import type { IShipment, IShipmentEvent } from '../models/Shipment'
+import type { LedgerAccess } from './ledgerAccessService'
 
 interface ShipmentFilters {
+  transactionId?: string
   status?: string
   carrier?: string
   dateFrom?: string
@@ -46,7 +48,7 @@ export async function updateShipmentStatus(id: string | undefined, organizationI
   const scope = { _id: id, organizationId }
   const changed = await Shipment.findOneAndUpdate(
     { ...scope, status: { $ne: status } },
-    { $set: { status }, $push: { events: { $each: [history], $position: 0 } } },
+    { $set: { status }, $push: { events: { $each: [history], $position: 0 } }, $inc: { __v: 1 } },
     { new: true, runValidators: true }
   ).lean()
   // A same-status retry needs no event or timestamp update. Re-read with the
@@ -56,376 +58,172 @@ export async function updateShipmentStatus(id: string | undefined, organizationI
   return { ...shipment, id: shipment._id.toString() }
 }
 
-/**
- * Get all shipments with optional filtering
- */
-export async function getShipments(filters: ShipmentFilters = {}) {
-  try {
-    const query: any = {}
 
-    if (filters.status) {
-      query.status = filters.status
-    }
-
-    if (filters.carrier) {
-      query.carrier = { $regex: filters.carrier, $options: 'i' }
-    }
-
-    if (filters.dateFrom || filters.dateTo) {
-      query.createdAt = {}
-      if (filters.dateFrom) {
-        query.createdAt.$gte = new Date(filters.dateFrom)
-      }
-      if (filters.dateTo) {
-        query.createdAt.$lte = new Date(filters.dateTo)
-      }
-    }
-
-    if (filters.search) {
-      query.$or = [
-        { trackingNumber: { $regex: filters.search, $options: 'i' } },
-        { carrier: { $regex: filters.search, $options: 'i' } },
-        { notes: { $regex: filters.search, $options: 'i' } }
-      ]
-    }
-
-    const shipments = await Shipment.find(query)
-      .sort({ createdAt: -1 })
-      .populate('transactionIds')
-      .lean()
-
-    return shipments
-  } catch (error) {
-    console.error('Failed to get shipments:', error)
-    throw error
+type ShipmentRecord = IShipment & { __v?: number }
+type ShipmentInput = Partial<IShipment> & { transactionId?: string; statusNotes?: string }
+const editable = ['trackingNumber', 'carrier', 'status', 'shippingDate', 'estimatedDelivery', 'deliveryDate', 'shippingAddress', 'shippingCost', 'shippingMethod', 'weight', 'dimensions', 'notes', 'metadata'] as const
+const missing = () => createError({ statusCode: 404, statusMessage: 'Shipment or linked purchase not found in this organization' })
+const conflict = (message: string) => createError({ statusCode: 409, statusMessage: message })
+function shipmentScope(access: LedgerAccess, id: string) {
+  if (!Types.ObjectId.isValid(id)) throw createError({ statusCode: 400, statusMessage: 'Valid shipment ID required' })
+  return { _id: id, organizationId: access.organizationId }
+}
+function shipmentFields(data: ShipmentInput) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw createError({ statusCode: 400, statusMessage: 'Shipment details required' })
+  if (data.status != null && !SHIPMENT_STATUSES.includes(data.status)) throw createError({ statusCode: 400, statusMessage: 'Valid shipment status required' })
+  if (data.statusNotes != null && typeof data.statusNotes !== 'string') throw createError({ statusCode: 400, statusMessage: 'Status notes must be text' })
+  return Object.fromEntries(editable.filter(key => Object.hasOwn(data, key)).map(key => [key, data[key]]))
+}
+function transactionIds(input: unknown): string[] {
+  if (!Array.isArray(input) || input.some(value => !(value instanceof Types.ObjectId) && (typeof value !== 'string' || !Types.ObjectId.isValid(value)))) {
+    throw createError({ statusCode: 400, statusMessage: 'Valid transactionIds array required' })
   }
+  return [...new Set(input.map(value => new Types.ObjectId(value).toHexString()))]
+}
+async function verifiedTransactions(access: LedgerAccess, input: unknown) {
+  const ids = transactionIds(input)
+  const count = await Transaction.countDocuments({ organizationId: access.organizationId, _id: { $in: ids } })
+  if (count !== ids.length) throw missing()
+  return ids
+}
+async function requireShipment(access: LedgerAccess, id: string) {
+  const shipment = await Shipment.findOne(shipmentScope(access, id)).lean<ShipmentRecord>()
+  if (!shipment) throw missing()
+  return shipment
 }
 
-/**
- * Get a shipment by ID
- */
-export async function getShipmentById(id: string) {
-  try {
-    const shipment = await Shipment.findById(id)
-      .populate('transactionIds')
-      .lean()
-    return shipment
-  } catch (error) {
-    console.error(`Failed to get shipment ${id}:`, error)
-    throw error
-  }
+/** The shipment owns its links. Read purchases in one company-scoped batch;
+ * never mirror this many-to-many relationship onto accounting records. */
+async function shipmentViews(access: LedgerAccess, shipments: any[]) {
+  const ids = shipments.flatMap(shipment => shipment.transactionIds || [])
+  const transactions = await Transaction.find({ organizationId: access.organizationId, _id: { $in: ids } }).lean()
+  const byId = new Map(transactions.map(transaction => [String(transaction._id), transaction]))
+  return shipments.map(shipment => {
+    const linked = (shipment.transactionIds || []).map((id: any) => byId.get(String(id))).filter(Boolean)
+    return { ...shipment, id: String(shipment._id), organizationId: String(shipment.organizationId),
+      createdBy: shipment.createdBy ? String(shipment.createdBy) : undefined,
+      transactionIds: linked.map((transaction: any) => String(transaction._id)), transactions: linked }
+  })
 }
 
-/**
- * Create a new shipment
- */
-export async function createShipment(data: Partial<IShipment> & { transactionId?: string }) {
-  try {
-    const shipmentData: Partial<IShipment> = {
-      ...data,
-      status: data.status || 'pending',
-      events: [{
-        type: 'created',
-        title: 'Shipment Created',
-        timestamp: new Date(),
-        description: 'Shipment record created'
-      }]
-    }
-
-    // Handle single transactionId
-    if (data.transactionId) {
-      shipmentData.transactionIds = [data.transactionId as any]
-    }
-
-    const shipment = new Shipment(shipmentData)
-    await shipment.save()
-
-    // Update linked transactions
-    if (shipment.transactionIds && shipment.transactionIds.length > 0) {
-      for (const txnId of shipment.transactionIds) {
-        await Transaction.findByIdAndUpdate(txnId, {
-          shipment: {
-            shipmentId: shipment._id,
-            trackingNumber: shipment.trackingNumber,
-            carrier: shipment.carrier,
-            status: shipment.status,
-            estimatedDelivery: shipment.estimatedDelivery,
-            address: shipment.shippingAddress
-          },
-          $push: {
-            timeline: {
-              $each: [{
-                type: 'shipment_created',
-                title: 'Shipment Created',
-                timestamp: new Date(),
-                description: `Shipment ${shipment.trackingNumber || shipment._id} created`
-              }],
-              $position: 0
-            }
-          }
-        })
-      }
-    }
-
-    return shipment.toObject()
-  } catch (error) {
-    console.error('Failed to create shipment:', error)
-    throw error
+export async function getShipments(access: LedgerAccess, filters: ShipmentFilters = {}) {
+  await ensureConnection()
+  const query: any = { organizationId: access.organizationId }
+  if (filters.status) query.status = filters.status
+  if (filters.carrier) query.carrier = { $regex: filters.carrier, $options: 'i' }
+  if (filters.transactionId) query.transactionIds = (await verifiedTransactions(access, [filters.transactionId]))[0]
+  if (filters.dateFrom || filters.dateTo) {
+    query.createdAt = {}
+    if (filters.dateFrom) query.createdAt.$gte = new Date(filters.dateFrom)
+    if (filters.dateTo) query.createdAt.$lte = new Date(filters.dateTo)
   }
+  if (filters.search) query.$or = ['trackingNumber', 'carrier', 'notes'].map(key => ({ [key]: { $regex: filters.search, $options: 'i' } }))
+  return shipmentViews(access, await Shipment.find(query).sort({ createdAt: -1 }).lean())
 }
 
-/**
- * Update a shipment
- */
-export async function updateShipment(id: string, data: Partial<IShipment> & { statusNotes?: string }) {
-  try {
-    const currentShipment = await Shipment.findById(id)
-    if (!currentShipment) {
-      throw new Error(`Shipment ${id} not found`)
-    }
-
-    // Don't allow changing certain fields
-    const { _id, createdAt, events: existingEvents, statusNotes, ...updateData } = data as any
-
-    // If status is changing, add a new event
-    if (updateData.status && updateData.status !== currentShipment.status) {
-      const statusEvent: IShipmentEvent = {
-        type: updateData.status,
-        title: `Shipment ${formatStatus(updateData.status)}`,
-        timestamp: new Date(),
-        description: statusNotes || `Status updated to ${updateData.status}`
-      }
-
-      updateData.$push = { events: { $each: [statusEvent], $position: 0 } }
-    }
-
-    const shipment = await Shipment.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    ).lean()
-
-    // Update linked transactions with new shipment status
-    if (shipment && shipment.transactionIds && shipment.transactionIds.length > 0) {
-      for (const txnId of shipment.transactionIds) {
-        await Transaction.findByIdAndUpdate(txnId, {
-          'shipment.status': shipment.status,
-          'shipment.trackingNumber': shipment.trackingNumber,
-          'shipment.carrier': shipment.carrier,
-          'shipment.estimatedDelivery': shipment.estimatedDelivery
-        })
-      }
-    }
-
-    return shipment
-  } catch (error) {
-    console.error(`Failed to update shipment ${id}:`, error)
-    throw error
-  }
+export async function getShipmentById(access: LedgerAccess, id: string) {
+  await ensureConnection()
+  return (await shipmentViews(access, [await requireShipment(access, id)]))[0]
 }
 
-/**
- * Delete a shipment
- */
-export async function deleteShipment(id: string) {
-  try {
-    const shipment = await Shipment.findById(id)
-    if (!shipment) {
-      throw new Error(`Shipment ${id} not found`)
-    }
-
-    // Update linked transactions to remove shipment reference
-    if (shipment.transactionIds && shipment.transactionIds.length > 0) {
-      for (const txnId of shipment.transactionIds) {
-        await Transaction.findByIdAndUpdate(txnId, {
-          shipment: null,
-          $push: {
-            timeline: {
-              $each: [{
-                type: 'shipment_removed',
-                title: 'Shipment Removed',
-                timestamp: new Date(),
-                description: 'Shipment was deleted'
-              }],
-              $position: 0
-            }
-          }
-        })
-      }
-    }
-
-    await Shipment.findByIdAndDelete(id)
-
-    return shipment.toObject()
-  } catch (error) {
-    console.error(`Failed to delete shipment ${id}:`, error)
-    throw error
-  }
+export async function createShipment(access: LedgerAccess, data: ShipmentInput) {
+  await ensureConnection()
+  const fields = shipmentFields(data)
+  const ids = await verifiedTransactions(access, [...transactionIds(data.transactionIds ?? []), ...(data.transactionId ? [data.transactionId] : [])])
+  const shipment = await Shipment.create({ ...fields, organizationId: access.organizationId, createdBy: access.userId,
+    transactionIds: ids, status: data.status || 'pending',
+    events: [{ type: 'created', title: 'Shipment Created', timestamp: new Date(), description: 'Shipment record created' }] })
+  return (await shipmentViews(access, [shipment.toObject()]))[0]
 }
 
-/**
- * Add a tracking event to a shipment
- */
-export async function addTrackingEvent(shipmentId: string, eventData: Partial<IShipmentEvent> & { status?: string }) {
-  try {
-    const shipment = await Shipment.findById(shipmentId)
-    if (!shipment) {
-      throw new Error(`Shipment ${shipmentId} not found`)
-    }
-
-    const event: IShipmentEvent = {
-      type: eventData.type || 'update',
-      title: eventData.title || 'Tracking Update',
-      timestamp: new Date(),
-      description: eventData.description,
-      location: eventData.location
-    }
-
-    const updateData: any = {
-      $push: { events: { $each: [event], $position: 0 } }
-    }
-
-    // Update status if provided
-    if (eventData.status) {
-      updateData.status = eventData.status
-    }
-
-    const updatedShipment = await Shipment.findByIdAndUpdate(
-      shipmentId,
-      updateData,
-      { new: true }
-    ).lean()
-
-    return updatedShipment
-  } catch (error) {
-    console.error(`Failed to add tracking event to shipment ${shipmentId}:`, error)
-    throw error
+export async function updateShipment(access: LedgerAccess, id: string, data: ShipmentInput) {
+  await ensureConnection()
+  const current = await requireShipment(access, id), fields: any = shipmentFields(data)
+  if (Object.hasOwn(data, 'transactionIds') || Object.hasOwn(data, 'transactionId')) {
+    fields.transactionIds = await verifiedTransactions(access, [...transactionIds(data.transactionIds ?? []), ...(data.transactionId ? [data.transactionId] : [])])
   }
+  const update: any = { $set: fields, $inc: { __v: 1 } }
+  if (fields.status && fields.status !== current.status) update.$push = { events: { $each: [{
+    type: fields.status, title: 'Shipment ' + formatStatus(fields.status), timestamp: new Date(),
+    description: data.statusNotes || 'Status updated to ' + fields.status
+  }], $position: 0 } }
+  const shipment = await Shipment.findOneAndUpdate(
+    { ...shipmentScope(access, id), __v: current.__v ?? { $exists: false } }, update, { new: true, runValidators: true }
+  ).lean()
+  if (!shipment) { await requireShipment(access, id); throw conflict('Shipment changed; refresh before saving your edits') }
+  return (await shipmentViews(access, [shipment]))[0]
 }
 
-/**
- * Link transactions to a shipment
- */
-export async function linkTransactions(shipmentId: string, transactionIds: string[]) {
-  try {
-    const shipment = await Shipment.findById(shipmentId)
-    if (!shipment) {
-      throw new Error(`Shipment ${shipmentId} not found`)
-    }
-
-    // Add transaction IDs to shipment
-    await Shipment.findByIdAndUpdate(shipmentId, {
-      $addToSet: { transactionIds: { $each: transactionIds } }
-    })
-
-    // Update each transaction with shipment reference
-    for (const txnId of transactionIds) {
-      await Transaction.findByIdAndUpdate(txnId, {
-        shipment: {
-          shipmentId: shipment._id,
-          trackingNumber: shipment.trackingNumber,
-          carrier: shipment.carrier,
-          status: shipment.status
-        },
-        $push: {
-          timeline: {
-            $each: [{
-              type: 'shipment_linked',
-              title: 'Linked to Shipment',
-              timestamp: new Date(),
-              description: `Linked to shipment ${shipment.trackingNumber || shipment._id}`
-            }],
-            $position: 0
-          }
-        }
-      })
-    }
-
-    return await Shipment.findById(shipmentId).lean()
-  } catch (error) {
-    console.error(`Failed to link transactions to shipment ${shipmentId}:`, error)
-    throw error
-  }
+export async function deleteShipment(access: LedgerAccess, id: string) {
+  await ensureConnection()
+  const shipment = await Shipment.findOneAndDelete(shipmentScope(access, id)).lean()
+  if (!shipment) throw missing()
+  return (await shipmentViews(access, [shipment]))[0]
 }
 
-/**
- * Unlink transactions from a shipment
- */
-export async function unlinkTransactions(shipmentId: string, transactionIds: string[]) {
-  try {
-    const shipment = await Shipment.findById(shipmentId)
-    if (!shipment) {
-      throw new Error(`Shipment ${shipmentId} not found`)
-    }
-
-    // Remove transaction IDs from shipment
-    await Shipment.findByIdAndUpdate(shipmentId, {
-      $pull: { transactionIds: { $in: transactionIds } }
-    })
-
-    // Update each transaction to remove shipment reference
-    for (const txnId of transactionIds) {
-      await Transaction.findByIdAndUpdate(txnId, {
-        shipment: null,
-        $push: {
-          timeline: {
-            $each: [{
-              type: 'shipment_unlinked',
-              title: 'Unlinked from Shipment',
-              timestamp: new Date(),
-              description: `Unlinked from shipment ${shipment.trackingNumber || shipment._id}`
-            }],
-            $position: 0
-          }
-        }
-      })
-    }
-
-    return await Shipment.findById(shipmentId).lean()
-  } catch (error) {
-    console.error(`Failed to unlink transactions from shipment ${shipmentId}:`, error)
-    throw error
-  }
+export async function linkTransactions(access: LedgerAccess, shipmentId: string, input: unknown) {
+  await ensureConnection()
+  await requireShipment(access, shipmentId)
+  const ids = await verifiedTransactions(access, input)
+  if (!ids.length) return getShipmentById(access, shipmentId)
+  await Shipment.findOneAndUpdate(
+    { ...shipmentScope(access, shipmentId), transactionIds: { $not: { $all: ids } } },
+    { $addToSet: { transactionIds: { $each: ids } }, $inc: { __v: 1 } }, { new: true, runValidators: true }
+  ).lean()
+  return getShipmentById(access, shipmentId)
 }
 
-/**
- * Get shipment statistics
- */
-export async function getShipmentStats() {
-  try {
-    const stats = await Shipment.aggregate([
-      {
-        $facet: {
-          total: [{ $count: 'count' }],
-          byStatus: [
-            { $group: { _id: '$status', count: { $sum: 1 } } }
-          ]
-        }
-      }
-    ])
+/** Unlink only mutates this shipment, so corrupt/dangling references can be removed. */
+export async function unlinkTransactions(access: LedgerAccess, shipmentId: string, input: unknown) {
+  await ensureConnection()
+  await requireShipment(access, shipmentId)
+  const ids = transactionIds(input)
+  await Shipment.findOneAndUpdate(
+    { ...shipmentScope(access, shipmentId), transactionIds: { $in: ids } },
+    { $pull: { transactionIds: { $in: ids } }, $inc: { __v: 1 } }, { new: true }
+  ).lean()
+  return getShipmentById(access, shipmentId)
+}
 
-    const total = stats[0].total[0]?.count || 0
-    const statusCounts = stats[0].byStatus.reduce((acc: any, item: any) => {
-      acc[item._id] = item.count
-      return acc
-    }, {})
-
-    return {
-      total,
-      pending: statusCounts.pending || 0,
-      processing: statusCounts.processing || 0,
-      shipped: statusCounts.shipped || 0,
-      inTransit: statusCounts.in_transit || 0,
-      outForDelivery: statusCounts.out_for_delivery || 0,
-      delivered: statusCounts.delivered || 0,
-      failed: statusCounts.failed || 0,
-      returned: statusCounts.returned || 0,
-      cancelled: statusCounts.cancelled || 0
-    }
-  } catch (error) {
-    console.error('Failed to get shipment stats:', error)
-    throw error
+export async function addTrackingEvent(access: LedgerAccess, shipmentId: string, data: Partial<IShipmentEvent> & { status?: string; requestId?: string }) {
+  await ensureConnection()
+  await requireShipment(access, shipmentId)
+  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.requestId !== 'string' || !data.requestId.trim() || data.requestId.length > 128) {
+    throw createError({ statusCode: 400, statusMessage: 'A tracking requestId is required for safe retries' })
   }
+  for (const key of ['type', 'title', 'description', 'location'] as const) if (data[key] != null && typeof data[key] !== 'string') {
+    throw createError({ statusCode: 400, statusMessage: 'Tracking event details must be text' })
+  }
+  if (data.status != null && !SHIPMENT_STATUSES.includes(data.status)) throw createError({ statusCode: 400, statusMessage: 'Valid shipment status required' })
+  const type = data.type || 'update', title = data.title || 'Tracking Update'
+  const fingerprint = JSON.stringify([type, title, data.description ?? null, data.location ?? null, data.status ?? null])
+  const event: IShipmentEvent = { type, title, description: data.description, location: data.location, timestamp: new Date(),
+    data: { requestId: data.requestId, requestFingerprint: fingerprint } }
+  const update: any = { $push: { events: { $each: [event], $position: 0 } }, $inc: { __v: 1 } }
+  if (data.status) update.$set = { status: data.status }
+  const changed = await Shipment.findOneAndUpdate(
+    { ...shipmentScope(access, shipmentId), events: { $not: { $elemMatch: { 'data.requestId': data.requestId } } } },
+    update, { new: true, runValidators: true }
+  ).lean()
+  if (!changed) {
+    const current = await requireShipment(access, shipmentId)
+    const existing = current.events.find(event => event.data?.requestId === data.requestId)
+    if (!existing || existing.data?.requestFingerprint !== fingerprint) throw conflict('Tracking requestId was already used for different details')
+  }
+  return getShipmentById(access, shipmentId)
+}
+
+export async function getShipmentStats(access: LedgerAccess) {
+  await ensureConnection()
+  const counts = await Shipment.aggregate([
+    { $match: { organizationId: new Types.ObjectId(access.organizationId) } },
+    { $group: { _id: '$status', count: { $sum: 1 } } }
+  ])
+  const byStatus = Object.fromEntries(counts.map(row => [row._id, row.count]))
+  return { total: counts.reduce((sum, row) => sum + row.count, 0), pending: byStatus.pending || 0,
+    processing: byStatus.processing || 0, shipped: byStatus.shipped || 0, inTransit: byStatus.in_transit || 0,
+    outForDelivery: byStatus.out_for_delivery || 0, delivered: byStatus.delivered || 0, failed: byStatus.failed || 0,
+    returned: byStatus.returned || 0, cancelled: byStatus.cancelled || 0, delayed: byStatus.delayed || 0, exception: byStatus.exception || 0 }
 }
 
 // Helper function to format status for display

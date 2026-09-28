@@ -86,8 +86,11 @@ test('shipment route requires organization and dispatches only POST to persisten
   let calls = 0;
   const handler = load('server/api/shipments/[id]/update-status.ts', {
     h3: { ...h3, defineEventHandler: handler => handler, getRouterParam: event => event.context.params.id, readBody: async () => ({ status: 'shipped' }) },
-    '../../../services/shipmentService': { updateShipmentStatus: async (id, organizationId, body) => { calls++; assert.equal(organizationId, 'synthetic-org'); return { id, status: body.status }; } },
-    '../../../middleware/auth': { requireOrganization: event => { if (!event.context.auth) throw h3.createError({ statusCode: 403 }); return event.context.auth; } }
+    '../../../services/shipmentService': {
+      updateShipmentStatus: async (id, organizationId, body) => { calls++; assert.equal(organizationId, 'synthetic-org'); return { id, status: body.status }; },
+      getShipmentById: async (access, id) => { assert.equal(access.organizationId, 'synthetic-org'); return { id, status: 'shipped' }; }
+    },
+    '../../../services/ledgerAccessService': { requireLedgerAccess: async (event, mode) => { assert.equal(mode, 'write'); if (!event.context.auth) throw h3.createError({ statusCode: 403 }); return event.context.auth; } }
   }).default;
   const event = { method: 'POST', context: { auth: { organizationId: 'synthetic-org' }, params: { id: 'synthetic-id' } } };
   assert.equal((await handler(event)).shipment.status, 'shipped');

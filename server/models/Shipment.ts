@@ -103,7 +103,7 @@ const DimensionsSchema = new Schema({
 
 // Main shipment schema
 const ShipmentSchema = new Schema<IShipment>({
-  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true, immutable: true },
   trackingNumber: { type: String, index: true },
   status: {
     type: String,
@@ -125,7 +125,7 @@ const ShipmentSchema = new Schema<IShipment>({
   events: [ShipmentEventSchema],
   notes: String,
   metadata: Schema.Types.Mixed,
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User', immutable: true }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

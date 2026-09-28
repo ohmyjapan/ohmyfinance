@@ -1,10 +1,10 @@
 // server/api/shipments/index.ts
-import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
+import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
 import { getShipments, createShipment, getShipmentStats } from '../../services/shipmentService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -12,11 +12,12 @@ export default defineEventHandler(async (event) => {
 
     // Check if stats are requested
     if (query.stats === 'true') {
-      const stats = await getShipmentStats()
+      const stats = await getShipmentStats(access)
       return { stats }
     }
 
     const filters = {
+      transactionId: query.transactionId as string | undefined,
       status: query.status as string | undefined,
       carrier: query.carrier as string | undefined,
       dateFrom: query.dateFrom as string | undefined,
@@ -31,7 +32,7 @@ export default defineEventHandler(async (event) => {
       }
     })
 
-    const shipments = await getShipments(filters)
+    const shipments = await getShipments(access, filters)
 
     return {
       shipments,
@@ -41,8 +42,11 @@ export default defineEventHandler(async (event) => {
 
   if (method === 'POST') {
     const body = await readBody(event)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw createError({ statusCode: 400, statusMessage: 'Shipment details required' })
+    }
 
-    const shipment = await createShipment({
+    const shipment = await createShipment(access, {
       trackingNumber: body.trackingNumber,
       carrier: body.carrier,
       status: body.status || 'pending',

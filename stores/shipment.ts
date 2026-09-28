@@ -13,6 +13,8 @@ export interface ShipmentAddress {
 }
 
 export interface ShipmentEvent {
+    requestId?: string
+    status?: Shipment['status']
     type: string
     title: string
     timestamp: string
@@ -24,7 +26,7 @@ export interface Shipment {
     id: string
     trackingNumber: string
     carrier: string
-    status: 'pending' | 'processing' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'delayed' | 'exception' | 'cancelled'
+    status: 'pending' | 'processing' | 'shipped' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'failed' | 'returned' | 'delayed' | 'exception' | 'cancelled'
     createdAt: string
     updatedAt: string
     estimatedDelivery?: string
@@ -90,8 +92,8 @@ export const useShipmentStore = defineStore('shipment', {
             if (this.searchQuery) {
                 const query = this.searchQuery.toLowerCase()
                 result = result.filter(shipment =>
-                    shipment.trackingNumber.toLowerCase().includes(query) ||
-                    shipment.customerName.toLowerCase().includes(query) ||
+                    (shipment.trackingNumber || '').toLowerCase().includes(query) ||
+                    (shipment.customerName || shipment.shippingAddress?.name || '').toLowerCase().includes(query) ||
                     (shipment.customerEmail && shipment.customerEmail.toLowerCase().includes(query)) ||
                     (shipment.transactionId && shipment.transactionId.toLowerCase().includes(query)) ||
                     shipment.id.toLowerCase().includes(query)
@@ -171,7 +173,7 @@ export const useShipmentStore = defineStore('shipment', {
 
             // Apply country filter
             if (this.filters.country) {
-                result = result.filter(shipment => shipment.address.country === this.filters.country)
+                result = result.filter(shipment => (shipment.shippingAddress || shipment.address)?.country === this.filters.country)
             }
 
             return result
@@ -185,14 +187,15 @@ export const useShipmentStore = defineStore('shipment', {
         },
 
         async fetchShipments() {
+            this.shipments = []
             this.isLoading = true
             this.error = null
 
             try {
-                const data = await $fetch<Shipment[]>('/api/shipments', {
+                const data = await $fetch<{ shipments: Shipment[]; total: number }>('/api/shipments', {
                     headers: this._getAuthHeaders()
                 })
-                this.shipments = data
+                this.shipments = data.shipments
 
                 // Fetch statistics
                 await this.fetchStats()
@@ -205,6 +208,7 @@ export const useShipmentStore = defineStore('shipment', {
         },
 
         async fetchShipmentById(id: string) {
+            this.currentShipment = null
             this.isLoading = true
             this.error = null
 
@@ -226,13 +230,11 @@ export const useShipmentStore = defineStore('shipment', {
             this.error = null
 
             try {
-                const { data } = await useFetch('/api/shipments/create', {
+                const newShipment = await $fetch<Shipment>('/api/shipments', {
                     method: 'POST',
                     body: shipmentData,
                     headers: this._getAuthHeaders()
                 })
-
-                const newShipment = data.value as Shipment
 
                 // Add to local state
                 this.shipments.unshift(newShipment)
@@ -255,13 +257,12 @@ export const useShipmentStore = defineStore('shipment', {
             this.error = null
 
             try {
-                const { data } = await useFetch(`/api/shipments/${id}/update`, {
-                    method: 'POST',
+                const updatedShipment = await $fetch<Shipment>(`/api/shipments/${id}`, {
+                    method: 'PATCH',
                     body: shipmentData,
                     headers: this._getAuthHeaders()
                 })
 
-                const updatedShipment = data.value as Shipment
 
                 // Update in local state
                 const index = this.shipments.findIndex(s => s.id === id)
@@ -300,13 +301,13 @@ export const useShipmentStore = defineStore('shipment', {
                     location
                 }
 
-                const { data } = await useFetch(`/api/shipments/${id}/update`, {
+                const data = await $fetch<{ shipment: Shipment }>(`/api/shipments/${id}/update-status`, {
                     method: 'POST',
                     body: eventData,
                     headers: this._getAuthHeaders()
                 })
 
-                const updatedShipment = data.value as Shipment
+                const updatedShipment = data.shipment
 
                 // Update in local state
                 const index = this.shipments.findIndex(s => s.id === id)
@@ -337,13 +338,13 @@ export const useShipmentStore = defineStore('shipment', {
             this.error = null
 
             try {
-                const { data } = await useFetch(`/api/shipments/${shipmentId}/tracking`, {
+                eventData.requestId ||= Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('')
+                const updatedShipment = await $fetch<Shipment>(`/api/shipments/${shipmentId}/tracking`, {
                     method: 'POST',
                     body: eventData,
                     headers: this._getAuthHeaders()
                 })
 
-                const updatedShipment = data.value as Shipment
 
                 // Update in local state
                 const index = this.shipments.findIndex(s => s.id === shipmentId)

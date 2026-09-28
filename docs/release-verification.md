@@ -163,3 +163,27 @@ internal snapshots; the embedded history is not yet archived. Currency display a
 mixed-currency totals on the existing recurring page remain separate work. No real
 browser visual check, historical production corpus, full process-kill matrix or
 live exposure is claimed. No production migration or deployment occurs here.
+
+`OMF_TEST_SHIPMENT_GROUPS_ONLY=1` adds 8 API checks, including 2 common setup
+checks, for shipment CRUD, company-scoped purchase links, current roles and tracking
+replay. The actual Pinia store runs against the freshly built API. Fourteen new
+service/store tests cover split shipments, full-set link validation, corrupted old
+references, concurrent changes, a failure after a durable link write followed by
+reconnect, optimistic edits, tracking request identity and store request/response
+contracts. The seven existing shipment-status tests remain active.
+
+Shipment.transactionIds is the relationship authority. Shipment operations do not
+write the unsupported Transaction.shipment field or change ledger timestamps,
+history, source evidence or accounting. The same purchase can link to multiple
+shipments. Public shipment responses include only same-company transaction IDs and
+records; unlink can remove dangling/foreign references from the owned shipment.
+Tracking POST requests require a stable requestId; retries preserve newer status,
+and reusing an ID with different event details returns 409. The store retains the
+request ID on the event object for retries and uses getRandomValues on HTTP origins.
+
+Limits: the shipment pages still generate mock data and are the next UI repair.
+This generic shipment API is not the Finance export-document workflow. Creation
+POST itself has no idempotency key; tracking/link retry evidence does not establish
+idempotent shipment creation. Concurrent ledger deletion can leave an internal
+dangling reference; public reads omit it and unlink can remove it. No production
+assignment/migration, actual browser visual validation or OS-kill matrix is claimed.
