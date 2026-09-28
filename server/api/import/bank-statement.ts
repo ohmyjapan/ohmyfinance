@@ -2,6 +2,8 @@
 import { defineEventHandler, readMultipartFormData, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
+import { createTransaction } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
 
 interface ParsedTransaction {
@@ -223,6 +225,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Empty file' })
   }
 
+  const access = await requireLedgerAccess(event, saveToDb ? 'write' : 'read')
+
   // Detect format and parse
   let parsedTransactions: ParsedTransaction[] = []
   let format = 'unknown'
@@ -252,22 +256,18 @@ export default defineEventHandler(async (event) => {
     for (const tx of parsedTransactions) {
       try {
         // Check for duplicates by reference
-        const existing = await Transaction.findOne({ reference: tx.reference })
+        const existing = await Transaction.findOne({ organizationId: access.organizationId, referenceNumber: tx.reference })
         if (!existing) {
-          await Transaction.create({
-            reference: tx.reference,
+          await createTransaction(access, {
+            referenceNumber: tx.reference,
             date: tx.date,
             amount: tx.amount,
-            currency: 'JPY',
             status: 'completed',
-            source: 'manual',
-            type: tx.type,
-            customer: {
-              name: tx.description,
-              email: 'imported@bank.statement'
-            },
+            type: tx.type === 'debit' ? '支出' : '入金',
+            companyInfo: tx.description,
             notes: tx.memo,
             metadata: {
+              currency: 'JPY',
               importedFrom: 'bank_statement',
               format,
               checkNumber: tx.checkNumber

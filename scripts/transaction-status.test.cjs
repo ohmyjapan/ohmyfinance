@@ -15,25 +15,26 @@ function load(file, imports) {
   }, module, module.exports);
   return module.exports;
 }
-function handler({ body = {}, update = async (id, data) => ({ id, ...data }) } = {}) {
+function handler({ body = {}, update = async (access, id, data) => ({ id, ...data }) } = {}) {
   return load('server/api/transactions/[id]/status.ts', {
     h3: { ...h3, defineEventHandler: handler => handler, getRouterParam: event => event.context.params?.id, readBody: async () => body },
     mongoose,
     '../../../models/Transaction': { TRANSACTION_STATUSES: statuses },
     '../../../services/transactionService': { updateTransaction: update },
+    '../../../services/ledgerAccessService': { requireLedgerAccess: async event => event.context.auth },
     '../../../middleware/auth': { requireAuth: event => { if (!event.context.auth) throw h3.createError({ statusCode: 401 }); return event.context.auth; } }
   }).default;
 }
 const id = '000000000000000000000001';
-const event = { method: 'PATCH', context: { auth: { userId: 'synthetic-user' }, params: { id } } };
+const event = { method: 'PATCH', context: { auth: { userId: 'synthetic-user', organizationId: 'synthetic-group', role: 'member' }, params: { id } } };
 
 test('transaction status exports a callable default and writes through the existing edit service', async () => {
   const calls = [];
-  const route = handler({ body: { status: 'completed', notes: 'Synthetic note', amount: 1, cardAccounting: { forged: true } }, update: async (id, data) => { calls.push({ id, data }); return { id, ...data }; } });
+  const route = handler({ body: { status: 'completed', notes: 'Synthetic note', amount: 1, cardAccounting: { forged: true } }, update: async (access, id, data) => { calls.push({ access, id, data }); return { id, ...data }; } });
   assert.equal(typeof route, 'function', 'Nitro requires a default handler');
   const result = await route(event);
   assert.equal(result.success, true); assert.equal(result.transaction.status, 'completed');
-  assert.deepEqual(calls, [{ id, data: { status: 'completed', notes: 'Synthetic note' } }]);
+  assert.deepEqual(calls, [{ access: event.context.auth, id, data: { status: 'completed', notes: 'Synthetic note' } }]);
 });
 
 test('transaction status keeps authentication and method boundaries before writes', async () => {

@@ -80,10 +80,22 @@ export default {
     'scripts/group-switch.test.cjs',
     'scripts/organization-page.test.cjs',
     'scripts/group-switch-integration.cjs',
+    'server/services/transactionService.ts',
+    'server/api/transactions/index.ts',
+    'server/api/transactions/[id].ts',
+    'server/api/transactions/stats.ts',
+    'server/api/transactions/export.ts',
+    'server/api/transactions/bulk.ts',
+    'server/api/transactions/duplicates.ts',
+    'server/api/transactions/import.ts',
+    'server/api/transactions/import-preview.ts',
+    'server/api/import/bank-statement.ts',
+    'scripts/transaction-groups-integration.cjs',
     'server/services/ledgerAccessService.ts',
     'server/api/receipts/[id]/pdf.ts',
     'scripts/helpers/group-session.cjs',
     'scripts/receipt-groups.test.cjs',
+    'scripts/transaction-groups.test.cjs',
     'scripts/receipt-groups-integration.cjs',
     'scripts/finance-sheet-export.test.mjs',
     'scripts/finance-sheet-continuation.test.mjs',
@@ -139,13 +151,14 @@ export default {
       'scripts/group-switch.test.cjs',
       'scripts/organization-page.test.cjs',
       'scripts/receipt-groups.test.cjs',
+      'scripts/transaction-groups.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 128 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 136 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -220,7 +233,15 @@ export default {
       logs.push('The isolated receipt group suite must finish all its checks.');
       return result(false);
     }
-    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks, ${candidateChecks} receipt candidate checks, ${groupChecks} group switch checks and ${receiptGroupChecks} receipt group checks against freshly built source.`);
+    delete env.OMF_TEST_RECEIPT_GROUPS_ONLY;
+    env.OMF_TEST_TRANSACTION_GROUPS_ONLY = '1';
+    const transactionGroups = stage('isolated transaction group integration', ['scripts/finance-integration.cjs']);
+    const transactionGroupChecks = Number(transactionGroups.output.match(/^(\d+) targeted transaction group checks passed\s*$/m)?.[1]);
+    if (!transactionGroups.ok || !(transactionGroupChecks >= 12)) {
+      logs.push('The isolated transaction group suite must finish all its checks.');
+      return result(false);
+    }
+    logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks, ${candidateChecks} receipt candidate checks, ${groupChecks} group switch checks ${receiptGroupChecks} receipt group checks and ${transactionGroupChecks} transaction group checks against freshly built source.`);
     return result(true);
   },
 };

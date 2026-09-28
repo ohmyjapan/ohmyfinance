@@ -1,10 +1,10 @@
 // server/api/transactions/index.ts
 import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
 import { getTransactions, createTransaction, getTransactionStats } from '../../services/transactionService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
 
     // Check if stats are requested
     if (query.stats === 'true') {
-      const stats = await getTransactionStats()
+      const stats = await getTransactionStats(access)
       return { stats }
     }
 
@@ -40,7 +40,7 @@ export default defineEventHandler(async (event) => {
       }
     })
 
-    const transactions = await getTransactions(filters)
+    const transactions = await getTransactions(access, filters)
 
     return {
       transactions,
@@ -68,7 +68,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const transaction = await createTransaction({
+    const transaction = await createTransaction(access, {
       ...body,
       date: new Date(body.date),
       type: body.type || '支出',

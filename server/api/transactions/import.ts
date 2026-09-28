@@ -1,5 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import crypto from 'crypto'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 import { createTransaction } from '../../services/transactionService'
 import AccountCategory from '../../models/AccountCategory'
 import TaxCategory from '../../models/TaxCategory'
@@ -14,7 +15,7 @@ import { ensureConnection } from '../../config/database'
  * Import pre-parsed transactions with field mappings applied.
  * Receives JSON body: { data: [...], mappings: {...}, options: {...}, source?: string, fileName?: string }
  * Data comes from the excel-processor API (already parsed).
- * Auth: handled by api.ts middleware for /api/transactions/* routes
+ * Auth: current company membership and write role checked before import.
  */
 export default defineEventHandler(async (event) => {
 
@@ -26,6 +27,7 @@ export default defineEventHandler(async (event) => {
         })
     }
 
+    const access = await requireLedgerAccess(event, 'write')
     const body = await readBody(event)
 
     if (!body || !body.data || !Array.isArray(body.data)) {
@@ -179,6 +181,7 @@ export default defineEventHandler(async (event) => {
                 // Skip duplicates check
                 if (options.skipDuplicates) {
                     const existing = await Transaction.findOne({
+                        organizationId: access.organizationId,
                         date: transactionDate,
                         amount: Math.abs(parsedAmount),
                         notes: record.notes || ''
@@ -239,7 +242,7 @@ export default defineEventHandler(async (event) => {
                     ]
                 }
 
-                const newTransaction = await createTransaction(transactionData)
+                const newTransaction = await createTransaction(access, transactionData)
                 importedTransactions.push(newTransaction)
                 importResults.imported++
 

@@ -51,8 +51,8 @@ selection, persistence after reload/refresh, all four existing membership roles,
 denied and inactive groups, and membership removal during the token/profile
 handshake. Separate store/page tests exercise late responses, competing selections,
 logout/new login, screen locks and cross-tab cache resets. Existing authentication
-regressions share the same extracted store harness. Selecting a group does not
-yet add group predicates to ledger or receipt APIs. Browser visual review,
+regressions share the same extracted store harness. Group-scoped receipt and core transaction APIs are covered below; other direct
+ledger readers/writers remain pending. Browser visual review,
 localStorage quota/crash recovery and production observation of the new behavior
 remain outside this fixture; these checks do not establish a production reliability
 rate or replace independent review of the new response/race guards.
@@ -64,10 +64,9 @@ uploadedBy remains provenance. Suggestions, manual match/unmatch lookups and the
 transaction-backed receipt HTML preview exclude foreign and unassigned transactions.
 Group identifiers cannot be assigned through receipt metadata. Unit tests include
 membership database failure, concurrent edits/deletion and reconnect.
-This is a partial access conversion: general transaction APIs, attachments,
-backup/restore and other direct readers/writers remain pending. In particular,
-transaction group assignment and immutability across every write path still need
-enforcement; adding the model field does not complete them. Existing records need
+This is a partial access conversion: attachments, card posting, backup/restore
+and other direct readers/writers remain pending. Core transaction routes now use
+company context as described below. Existing records need
 a reviewed migration. The legacy simulated matcher/OCR and canonical recoverable
 attachment writer also remain release blockers. A passing receipt boundary test
 does not establish whole-ledger isolation or a working original-file download.
@@ -79,10 +78,10 @@ an available loopback port.
 It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
-A failed command, missing test summary, fewer than the existing 128 unit/service/component tests,
+A failed command, missing test summary, fewer than the existing 136 unit/service/component tests,
 18 workflow checks, 10 authentication checks, 11 receipt management checks or
 6 proxy checks, 8 shipment status checks, 7 transaction status checks or
-8 receipt candidate checks, 10 group switch checks, 11 receipt group checks, or skipped unit test is a
+8 receipt candidate checks, 10 group switch checks, 11 receipt group checks, 12 transaction group checks, or skipped unit test is a
 verification failure. Counts only confirm that the intended suites executed;
 their assertions supply the evidence.
 The verifier owns the 15-minute fixture timeout and process-tree cleanup. A fresh
@@ -94,3 +93,24 @@ or reset production workflows. Record fail-first evidence and run the normal
 exact-commit verifier before release. The existing TypeScript failures must be
 resolved separately; a passing behavioral fixture alone does not make the release
 deployable.
+
+
+`OMF_TEST_TRANSACTION_GROUPS_ONLY=1` exercises selected-company CRUD, status,
+list/filter/stats/export, mixed-ID bulk actions, duplicate management, manual JSON
+import and bank-statement preview/save. Owner/member/viewer sessions and stale-role
+tokens use current membership. Viewers retain preview and POST bulk export access.
+Company assignment is server-owned and immutable on the transaction model; legacy
+unassigned records are excluded. Duplicate merge excludes its kept ID and counts
+actual deletions. Imports compare duplicates only within the company. OFX saving
+uses referenceNumber, companyInfo and Japanese transaction types. The integration
+uses real tokens and a freshly built API, with two nonempty companies and unassigned
+history. Unit/service cases include reconnect, concurrent edits/deletion and mapped
+import preserving protected card source values.
+
+Exclusions: shared supplier/customer/category catalogs have no company model yet.
+CSV/generated OFX/QIF references and concurrent imports are not proven idempotent.
+The old duplicate classifier compares missing legacy fields; append-note and bulk
+source updates still need canonical-field repairs. Duplicate merge is not crash
+atomic and delete/merge do not yet reconcile receipt attachments. These remain
+release work; this suite does not prove whole-ledger isolation or production
+reliability. No production records were assigned a company or migrated.

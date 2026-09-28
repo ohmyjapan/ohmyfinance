@@ -103,7 +103,7 @@ const AttachmentSchema = new Schema<IAttachment>({
 
 // Main transaction schema (OMF style - Japanese accounting)
 const TransactionSchema = new Schema<ITransaction>({
-  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', index: true },
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', index: true, immutable: true },
   referenceNumber: { type: String, index: true },
   date: { type: Date, required: true, index: true },
   amount: { type: Number, required: true },

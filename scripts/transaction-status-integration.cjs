@@ -1,8 +1,10 @@
 const assert = require('node:assert/strict');
 const { ObjectId } = require('mongodb');
 module.exports = async ({ db, call, token, pass }) => {
+  const group = await require('./helpers/group-session.cjs')(call, token, 'Synthetic status group');
+  token = group.token;
   const id = new ObjectId(), normalId = new ObjectId();
-  const source = { date: new Date('2030-01-01'), amount: 67000, type: 'expense', status: 'pending', hasReceipt: false, timeline: [], notes: 'Original', paymentMethod: 'Credit card', cardNumber: '1234', cardAccounting: { preserve: true }, metadata: { preserve: true } };
+  const source = { organizationId: new ObjectId(group.organizationId), date: new Date('2030-01-01'), amount: 67000, type: 'expense', status: 'pending', hasReceipt: false, timeline: [], notes: 'Original', paymentMethod: 'Credit card', cardNumber: '1234', cardAccounting: { preserve: true }, metadata: { preserve: true } };
   await db.collection('transactions').insertMany([{ ...source, _id: id }, { ...source, _id: normalId }]);
   const route = '/api/transactions/' + id + '/status';
   const patch = body => call(route, { method: 'PATCH', token, body });

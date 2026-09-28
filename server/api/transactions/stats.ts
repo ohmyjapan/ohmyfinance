@@ -2,14 +2,14 @@
 import { defineEventHandler, createError } from 'h3'
 import { getTransactionStats } from '../../services/transactionService'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event)
   await ensureConnection()
 
   try {
-    const stats = await getTransactionStats()
+    const stats = await getTransactionStats(access)
     return stats
   } catch (error: any) {
     console.error('Failed to get transaction stats:', error)

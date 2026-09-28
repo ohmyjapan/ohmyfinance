@@ -1,6 +1,8 @@
 // server/services/transactionService.ts
 import Transaction from '../models/Transaction'
 import { createError } from 'h3'
+import { Types } from 'mongoose'
+import type { LedgerAccess } from './ledgerAccessService'
 import type { ITransaction } from '../models/Transaction'
 import { ensureConnection } from '../config/database'
 
@@ -23,10 +25,10 @@ interface TransactionFilters {
 /**
  * Get all transactions with optional filtering (OMF style)
  */
-export async function getTransactions(filters: TransactionFilters = {}) {
+export async function getTransactions(access: LedgerAccess, filters: TransactionFilters = {}) {
   await ensureConnection()
   try {
-    const query: any = {}
+    const query: any = { organizationId: access.organizationId }
 
     // Build query based on filters
     if (filters.status) {
@@ -113,10 +115,10 @@ export async function getTransactions(filters: TransactionFilters = {}) {
 /**
  * Get a transaction by ID
  */
-export async function getTransactionById(id: string) {
+export async function getTransactionById(access: LedgerAccess, id: string) {
   await ensureConnection()
   try {
-    const transaction = await Transaction.findById(id)
+    const transaction = await Transaction.findOne({ _id: id, organizationId: access.organizationId })
       .populate('customerId', 'name email phone')
       .populate('supplierId', 'name companyInfo address email phone')
       .populate('accountCategoryId', 'name code')
@@ -135,7 +137,7 @@ export async function getTransactionById(id: string) {
 /**
  * Create a new transaction (OMF style)
  */
-export async function createTransaction(data: Partial<ITransaction>) {
+export async function createTransaction(access: LedgerAccess, data: Partial<ITransaction>) {
   await ensureConnection()
   try {
     if (data.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting is assigned through the reviewed import.' })
@@ -161,7 +163,7 @@ export async function createTransaction(data: Partial<ITransaction>) {
       data.hasReceipt = false
     }
 
-    const transaction = new Transaction(data)
+    const transaction = new Transaction({ ...data, organizationId: access.organizationId })
     await transaction.save()
 
     return transaction.toObject()
@@ -174,15 +176,16 @@ export async function createTransaction(data: Partial<ITransaction>) {
 /**
  * Update a transaction
  */
-export async function updateTransaction(id: string, data: Partial<ITransaction>) {
+export async function updateTransaction(access: LedgerAccess, id: string, data: Partial<ITransaction>) {
   await ensureConnection()
   try {
     // Don't allow changing certain fields
-    const { _id, createdAt, ...updateData } = data as any
+    const { _id, createdAt, organizationId, ...updateData } = data as any
 
     if (Object.keys(updateData).some(k => k.startsWith('$') || k.includes('.')) || updateData.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting cannot be replaced by a transaction edit.' })
-    const current: any = await Transaction.findById(id).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
-    if (current?.cardAccounting) {
+    const current: any = await Transaction.findOne({ _id: id, organizationId: access.organizationId }).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
+    if (!current) throw new Error(`Transaction ${id} not found`)
+    if (current.cardAccounting) {
       for (const key of ['amount', 'type', 'paymentMethod', 'cardNumber']) if (updateData[key] !== undefined && updateData[key] !== current[key]) throw createError({ statusCode: 409, message: 'Imported card source values cannot be changed.' })
       if (updateData.metadata !== undefined) updateData.metadata = { ...updateData.metadata, ...current.metadata }
     }
@@ -194,8 +197,8 @@ export async function updateTransaction(id: string, data: Partial<ITransaction>)
       description: '取引詳細が更新されました'
     }
 
-    const transaction = await Transaction.findByIdAndUpdate(
-      id,
+    const transaction = await Transaction.findOneAndUpdate(
+      { _id: id, organizationId: access.organizationId },
       {
         ...updateData,
         $push: { timeline: { $each: [updateTimeline], $position: 0 } }
@@ -217,10 +220,10 @@ export async function updateTransaction(id: string, data: Partial<ITransaction>)
 /**
  * Delete a transaction
  */
-export async function deleteTransaction(id: string) {
+export async function deleteTransaction(access: LedgerAccess, id: string) {
   await ensureConnection()
   try {
-    const transaction = await Transaction.findByIdAndDelete(id).lean()
+    const transaction = await Transaction.findOneAndDelete({ _id: id, organizationId: access.organizationId }).lean()
 
     if (!transaction) {
       throw new Error(`Transaction ${id} not found`)
@@ -237,6 +240,7 @@ export async function deleteTransaction(id: string) {
  * Import transactions from parsed file data (OMF style)
  */
 export async function importTransactions(
+  access: LedgerAccess,
   parsedData: any[],
   mappings: Record<string, string>,
   options: { skipDuplicates?: boolean; updateMatches?: boolean } = {}
@@ -273,7 +277,7 @@ export async function importTransactions(
         // Check for existing transaction by referenceNumber
         let existingTransaction = null
         if (mappedTransaction.referenceNumber) {
-          existingTransaction = await Transaction.findOne({ referenceNumber: mappedTransaction.referenceNumber })
+          existingTransaction = await Transaction.findOne({ organizationId: access.organizationId, referenceNumber: mappedTransaction.referenceNumber })
         }
 
         if (existingTransaction) {
@@ -281,7 +285,8 @@ export async function importTransactions(
             results.skipped++
             continue
           } else if (options.updateMatches) {
-            await Transaction.findByIdAndUpdate(existingTransaction._id, mappedTransaction)
+            const { timeline, ...updates } = mappedTransaction
+            await updateTransaction(access, existingTransaction._id.toString(), updates)
             results.updated++
             results.transactions.push(existingTransaction._id.toString())
             continue
@@ -294,8 +299,7 @@ export async function importTransactions(
         mappedTransaction.date = mappedTransaction.date || new Date()
         mappedTransaction.hasReceipt = mappedTransaction.hasReceipt || false
 
-        const transaction = new Transaction(mappedTransaction)
-        await transaction.save()
+        const transaction = await createTransaction(access, mappedTransaction)
 
         results.imported++
         results.transactions.push(transaction._id.toString())
@@ -315,11 +319,11 @@ export async function importTransactions(
 /**
  * Link a receipt to a transaction (OMF style)
  */
-export async function linkReceiptToTransaction(transactionId: string, receiptPath: string) {
+export async function linkReceiptToTransaction(access: LedgerAccess, transactionId: string, receiptPath: string) {
   await ensureConnection()
   try {
-    const transaction = await Transaction.findByIdAndUpdate(
-      transactionId,
+    const transaction = await Transaction.findOneAndUpdate(
+      { _id: transactionId, organizationId: access.organizationId },
       {
         hasReceipt: true,
         receiptFilePath: receiptPath,
@@ -353,16 +357,19 @@ export async function linkReceiptToTransaction(transactionId: string, receiptPat
 /**
  * Get transaction statistics (OMF style with income/expense)
  */
-export async function getTransactionStats() {
+export async function getTransactionStats(access: LedgerAccess) {
   await ensureConnection()
   try {
-    const totalCount = await Transaction.countDocuments()
+    const scope = { organizationId: new Types.ObjectId(access.organizationId) }
+    const totalCount = await Transaction.countDocuments(scope)
     const totalAmount = await Transaction.aggregate([
+      { $match: scope },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ])
 
     // Stats by status
     const statusStats = await Transaction.aggregate([
+      { $match: scope },
       {
         $group: {
           _id: '$status',
@@ -374,6 +381,7 @@ export async function getTransactionStats() {
 
     // Stats by type (income/expense)
     const typeStats = await Transaction.aggregate([
+      { $match: scope },
       {
         $group: {
           _id: '$type',
@@ -384,7 +392,7 @@ export async function getTransactionStats() {
     ])
 
     // Receipt stats
-    const withReceipt = await Transaction.countDocuments({ hasReceipt: true })
+    const withReceipt = await Transaction.countDocuments({ ...scope, hasReceipt: true })
 
     const statusMap = statusStats.reduce((acc: any, item: any) => {
       acc[item._id] = { count: item.count, amount: item.amount }

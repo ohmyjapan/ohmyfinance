@@ -1,10 +1,10 @@
 // server/api/transactions/[id].ts
 import { defineEventHandler, readBody, getMethod, createError } from 'h3'
 import { getTransactionById, updateTransaction, deleteTransaction } from '../../services/transactionService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   const method = getMethod(event)
   const id = event.context.params?.id
 
@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'GET') {
-    const transaction = await getTransactionById(id)
+    const transaction = await getTransactionById(access, id)
 
     if (!transaction) {
       throw createError({
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
     const body = await readBody(event)
 
     try {
-      const transaction = await updateTransaction(id, body)
+      const transaction = await updateTransaction(access, id, body)
       return transaction
     } catch (error: any) {
       if (error.message?.includes('not found')) {
@@ -50,7 +50,7 @@ export default defineEventHandler(async (event) => {
 
   if (method === 'DELETE') {
     try {
-      const transaction = await deleteTransaction(id)
+      const transaction = await deleteTransaction(access, id)
       return { success: true, deleted: transaction }
     } catch (error: any) {
       if (error.message?.includes('not found')) {

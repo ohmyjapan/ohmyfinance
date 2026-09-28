@@ -2,7 +2,7 @@
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 interface DuplicateGroup {
   key: string
@@ -12,7 +12,7 @@ interface DuplicateGroup {
 }
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event, event.method === 'GET' ? 'read' : 'write')
   await ensureConnection()
   const method = event.method
 
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
     const confidenceThreshold = parseInt(threshold as string)
 
     // Get all transactions
-    const transactions = await Transaction.find({}).sort({ date: -1 }).lean()
+    const transactions = await Transaction.find({ organizationId: access.organizationId }).sort({ date: -1 }).lean()
 
     const duplicateGroups: DuplicateGroup[] = []
     const processed = new Set<string>()
@@ -81,13 +81,14 @@ export default defineEventHandler(async (event) => {
       }
 
       // Get the transaction to keep
-      const keepTx = await Transaction.findById(keepId)
+      const keepTx = await Transaction.findOne({ _id: keepId, organizationId: access.organizationId })
       if (!keepTx) {
         throw createError({ statusCode: 404, statusMessage: 'Transaction to keep not found' })
       }
 
       // Merge metadata from duplicates
-      const duplicates = await Transaction.find({ _id: { $in: deleteIds } })
+      const duplicateScope = { organizationId: access.organizationId, _id: { $in: deleteIds, $ne: keepTx._id } }
+      const duplicates = await Transaction.find(duplicateScope)
 
       for (const dup of duplicates) {
         // Merge tags
@@ -109,13 +110,13 @@ export default defineEventHandler(async (event) => {
       await keepTx.save()
 
       // Delete duplicates
-      await Transaction.deleteMany({ _id: { $in: deleteIds } })
+      const deleted = await Transaction.deleteMany(duplicateScope)
 
       return {
         success: true,
-        message: `Merged ${deleteIds.length} duplicates into transaction ${keepTx.reference}`,
+        message: `Merged ${deleted.deletedCount} duplicates into transaction ${keepTx.referenceNumber || keepId}`,
         kept: keepId,
-        deleted: deleteIds.length
+        deleted: deleted.deletedCount
       }
     }
 
@@ -124,12 +125,12 @@ export default defineEventHandler(async (event) => {
         throw createError({ statusCode: 400, statusMessage: 'deleteIds required' })
       }
 
-      await Transaction.deleteMany({ _id: { $in: deleteIds } })
+      const deleted = await Transaction.deleteMany({ organizationId: access.organizationId, _id: { $in: deleteIds } })
 
       return {
         success: true,
-        message: `Deleted ${deleteIds.length} duplicate transactions`,
-        deleted: deleteIds.length
+        message: `Deleted ${deleted.deletedCount} duplicate transactions`,
+        deleted: deleted.deletedCount
       }
     }
 
@@ -140,10 +141,12 @@ export default defineEventHandler(async (event) => {
         throw createError({ statusCode: 400, statusMessage: 'transactionIds required' })
       }
 
-      for (const id of transactionIds) {
-        await Transaction.findByIdAndUpdate(id, {
+      const scopedRows = await Transaction.find({ organizationId: access.organizationId, _id: { $in: transactionIds } }).select('_id').lean()
+      const scopedIds = scopedRows.map(row => String(row._id))
+      for (const id of scopedIds) {
+        await Transaction.findOneAndUpdate({ _id: id, organizationId: access.organizationId }, {
           $addToSet: {
-            'metadata.ignoredDuplicates': { $each: transactionIds.filter((tid: string) => tid !== id) }
+            'metadata.ignoredDuplicates': { $each: scopedIds.filter((tid: string) => tid !== id) }
           }
         })
       }

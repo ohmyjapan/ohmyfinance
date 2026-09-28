@@ -1,4 +1,5 @@
 import { defineEventHandler, readBody, createError } from 'h3'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 import Supplier from '../../models/Supplier'
 import Customer from '../../models/Customer'
 import { ensureConnection } from '../../config/database'
@@ -19,6 +20,7 @@ export default defineEventHandler(async (event) => {
         })
     }
 
+    await requireLedgerAccess(event)
     const body = await readBody(event)
     const { supplierNames = [], customerNames = [] } = body || {}
 

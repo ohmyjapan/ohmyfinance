@@ -1,14 +1,14 @@
 // server/api/transactions/export.ts
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
 import { getTransactions } from '../../services/transactionService'
-import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 /**
  * GET /api/transactions/export
  * Export transactions to CSV, JSON, or Excel format
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const access = await requireLedgerAccess(event)
   try {
     // Get query parameters
     const query = getQuery(event)
@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
     if (query.hasReceipt !== undefined) filters.hasReceipt = query.hasReceipt === 'true'
 
     // Fetch transactions from MongoDB
-    const transactions = await getTransactions(filters)
+    const transactions = await getTransactions(access, filters)
 
     // Define fields and headers for export (OMF Japanese accounting style)
     const fields = [
