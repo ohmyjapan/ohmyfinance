@@ -7,6 +7,7 @@ import { FinanceReview, FinanceReviewAgent, FinanceHistory } from './FinanceRevi
 const oid = Schema.Types.ObjectId
 const common = { timestamps: true, toJSON: { virtuals: true } }
 const account = new Schema({
+  organizationId: { type: oid, ref: 'Organization', index: true, immutable: true },
   ownerId: { type: oid, required: true, index: true },
   name: { type: String, required: true }, provider: { type: String, default: 'amex', enum: ['amex', 'aplus'] },
   cardIdentifiers: { type: [String], required: true }, primaryCard: { type: String, required: true },
@@ -26,6 +27,7 @@ const collector = new Schema({
 }, common)
 
 const batch = new Schema({
+  organizationId: { type: oid, ref: 'Organization', index: true, immutable: true },
   ownerId: { type: oid, required: true, index: true }, accountId: { type: oid, required: true, index: true },
   hash: { type: String, required: true }, originalName: String, bytes: Number,
   provider: { type: String, enum: ['amex', 'aplus'] }, reconciliation: Schema.Types.Mixed,
@@ -41,6 +43,7 @@ const batch = new Schema({
 batch.index({ accountId: 1, hash: 1 }, { unique: true })
 
 const entry = new Schema({
+  organizationId: { type: oid, ref: 'Organization', index: true, immutable: true },
   ownerId: { type: oid, required: true, index: true }, accountId: { type: oid, required: true, index: true },
   key: { type: String, required: true }, fingerprint: { type: String, required: true, index: true },
   occurrence: Number, coverage: { type: String, required: true },

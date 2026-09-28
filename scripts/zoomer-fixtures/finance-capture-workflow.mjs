@@ -14,6 +14,13 @@ export default {
     'finalization-worker/worker.mjs',
     'shared/finance-workflow.mjs',
     'shared/finance-workflow-matching.mjs',
+    'server/models/Finance.ts',
+    'server/api/finance/[...path].ts',
+    'scripts/card-groups.test.cjs',
+    'scripts/card-groups-integration.cjs',
+    'scripts/finance-pending-integration.cjs',
+    'scripts/finance-import-overlap-integration.cjs',
+    'scripts/finance-aplus-integration.cjs',
     'server/services/financeService.ts',
     'server/services/financeAssistantService.ts',
     'server/services/financeDraftService.ts',
@@ -107,6 +114,7 @@ export default {
     'scripts/finance-workflow-evidence.test.mjs',
     'scripts/finance-integration.cjs',
     'scripts/finance-workflow-integration.cjs',
+    'scripts/finance-workflow-investigation-integration.cjs',
     'scripts/finance-workflow-worker-integration.cjs',
   ],
   run() {
@@ -152,13 +160,14 @@ export default {
       'scripts/organization-page.test.cjs',
       'scripts/receipt-groups.test.cjs',
       'scripts/transaction-groups.test.cjs',
+      'scripts/card-groups.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 136 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 145 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -241,6 +250,23 @@ export default {
       logs.push('The isolated transaction group suite must finish all its checks.');
       return result(false);
     }
+    delete env.OMF_TEST_TRANSACTION_GROUPS_ONLY;
+    for (const [flag, label, minimum] of [
+      ['OMF_TEST_CARD_GROUPS_ONLY', 'card group', 8],
+      ['OMF_TEST_PENDING_ONLY', 'pending', 8],
+      ['OMF_TEST_IMPORT_OVERLAP_ONLY', 'source overlap', 7],
+      ['OMF_TEST_APLUS_ONLY', 'Aplus', 5],
+    ]) {
+      env[flag] = '1';
+      const source = stage('isolated ' + label + ' integration', ['scripts/finance-integration.cjs']);
+      const count = Number(source.output.match(new RegExp('^(\\d+) targeted ' + label + ' checks passed\\s*$', 'm'))?.[1]);
+      delete env[flag];
+      if (!source.ok || !(count >= minimum)) {
+        logs.push('The isolated ' + label + ' suite must finish all its checks.');
+        return result(false);
+      }
+    }
+    logs.push('Also verified card company propagation, pending-to-final continuity, source overlap and Aplus imports.');
     logs.push(`Verified ${passed} unit/service tests, ${checks} isolated workflow checks, ${authChecks} authentication checks, ${receiptChecks} receipt management checks, ${proxyChecks} proxy checks, ${shipmentChecks} shipment status checks, ${transactionStatusChecks} transaction status checks, ${candidateChecks} receipt candidate checks, ${groupChecks} group switch checks ${receiptGroupChecks} receipt group checks and ${transactionGroupChecks} transaction group checks against freshly built source.`);
     return result(true);
   },

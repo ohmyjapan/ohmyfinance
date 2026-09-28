@@ -20,7 +20,7 @@ module.exports=async({db,call,upload,csv,row,token,other,pass,directory,account,
  assert.equal((await request(online.id+'/accept-purchase',acceptance,'POST',other)).status,404);
  const ledgerBefore=JSON.stringify(await db.collection('transactions').find({}).sort({_id:1}).toArray()),draftsBefore=JSON.stringify(await db.collection('financedrafts').find({}).sort({_id:1}).toArray());
  // A registered row remains eligible for evidence-only association.
- await db.collection('financeentries').insertOne({ownerId:account.ownerId,accountId:account._id,importId:new ObjectId(importId),line:2,key:draft.key,state:'posted'});
+ await db.collection('financeentries').insertOne({ownerId:account.ownerId,organizationId:account.organizationId,accountId:account._id,importId:new ObjectId(importId),line:2,key:draft.key,state:'posted'});
  const accepted=await request(online.id+'/accept-purchase',acceptance);assert.equal(accepted.status,200,JSON.stringify(accepted));assert.equal((await request(online.id+'/accept-purchase',acceptance)).data.duplicate,true);
  const link=await db.collection('financepurchaselinks').findOne({_id:new ObjectId(accepted.data.purchaseId)});assert.equal(link.order.orderNumber,'1234999');assert.equal(link.order.inventoryLinks.length,0);assert.equal(link.originals.length,1);
  const release={purchaseId:String(link._id),purchaseRevision:link.revision,reason:'Synthetic correction of a posted purchase association.',confirm:true};

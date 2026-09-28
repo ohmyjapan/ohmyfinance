@@ -7,7 +7,10 @@ const claims=token=>JSON.parse(Buffer.from(token.split('.')[1],'base64url'));
 module.exports=async({db,call,token,other,origin,pass})=>{
   const ledgerBefore=await db.collection('transactions').find({}).toArray();
   const receiptBefore=await db.collection('receipts').find({}).toArray();
-  const login=await call('/api/auth/login',{method:'POST',body:{email:'finance-a@example.invalid',password:'Synthetic-password-Only1!'}});
+  // Finance setup now selects a company. Keep this no-company login scenario independent.
+  const registered=await call('/api/auth/register',{method:'POST',body:{email:'group-switch@example.invalid',password:'Synthetic-password-Only1!',name:'Synthetic group switch'}});
+  assert.equal(registered.status,200);token=registered.data.tokens.accessToken;
+  const login=await call('/api/auth/login',{method:'POST',body:{email:'group-switch@example.invalid',password:'Synthetic-password-Only1!'}});
   assert.equal(login.status,200);
   const create=async(name,auth=token)=>{
     const response=await call('/api/organizations',{method:'POST',token:auth,body:{name,type:'business'}});

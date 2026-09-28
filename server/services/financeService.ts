@@ -6,6 +6,8 @@ import mongoose from 'mongoose'
 import { createError, getHeader, type H3Event } from 'h3'
 import { ensureConnection } from '../config/database'
 import { requireAuth } from '../middleware/auth'
+import Organization from '../models/Organization'
+import { ledgerAccessForIdentity, type LedgerAccess } from './ledgerAccessService'
 import UserModel, { type IUser } from '../models/User'
 import TransactionModel, { type ITransaction } from '../models/Transaction'
 import AccountCategoryModel, { type IAccountCategory } from '../models/AccountCategory'
@@ -41,7 +43,8 @@ export async function financeDevice(event: H3Event): Promise<any> {
   const device: any = await FinanceCollector.findOne({ tokenHash: digest(token), revokedAt: null }).lean()
   if (!device || !await User.exists({ _id: device.ownerId })) fail(401, 'Collector unavailable')
   await FinanceCollector.updateOne({ _id: device._id, revokedAt: null }, { $set: { lastSeenAt: new Date() } })
-  return device
+  const organizations = await Organization.find({ isActive: true, members: { $elemMatch: { userId: device.ownerId, role: { $in: ['owner', 'admin', 'member'] } } } }).select('_id').lean()
+  return { ...device, organizationIds: organizations.map(organization => organization._id) }
 }
 export async function ownedAccount(ownerId: string, accountId: string): Promise<any> {
   const account: any = await FinancialAccount.findOne({ _id: id(accountId), ownerId }).lean()
@@ -52,6 +55,17 @@ export async function ownedImport(ownerId: string, importId: string): Promise<an
   const batch: any = await FinanceImport.findOne({ _id: id(importId), ownerId }).lean()
   if (!batch) fail(404, 'Import not found')
   return batch
+}
+export function financeOrganization(record: any, expected?: string): string {
+  const organizationId = String(record.organizationId || '')
+  if (!mongoose.isObjectIdOrHexString(organizationId)) fail(409, 'This card source needs a reviewed company assignment')
+  if (expected && organizationId !== expected) fail(409, 'Card source company does not match its account')
+  return organizationId
+}
+async function assertFinanceSourceScope(ownerId: string, accountId: any, organizationId: string) {
+  const scope = { accountId, $or: [{ ownerId: { $ne: ownerId } }, { organizationId: { $ne: organizationId } }] }
+  const [batch, entry] = await Promise.all([FinanceImport.exists(scope), FinanceEntry.exists(scope)])
+  if (batch || entry) fail(409, 'Card source history needs consistent reviewed company assignments')
 }
 export function accountInput(body: any) {
   if (!body || typeof body.name !== 'string' || !body.name.trim() || body.name.length > 100) fail(400, 'Account name required')
@@ -66,10 +80,11 @@ export function accountInput(body: any) {
   const otpRecipient = provider === 'amex' ? body.otpRecipient.toLowerCase() : null, otpMailbox = provider === 'amex' ? body.otpMailbox.toLowerCase() : null
   return { name: body.name.trim(), provider, cardIdentifiers: cards, primaryCard: body.primaryCard, otpRecipient, otpMailbox, forwarded: otpRecipient !== otpMailbox }
 }
-export async function createCollector(ownerId: string, body: any) {
+export async function createCollector(access: LedgerAccess, body: any) {
+  const ownerId = access.userId
   if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 100 || !Array.isArray(body.accountIds) || !body.accountIds.length || body.accountIds.length > 30) fail(400, 'Collector name and accounts required')
   const accountIds = [...new Set(body.accountIds.map(id))]
-  if (await FinancialAccount.countDocuments({ ownerId, _id: { $in: accountIds }, active: true, provider: 'amex' }) !== accountIds.length) fail(400, 'Unknown account')
+  if (await FinancialAccount.countDocuments({ ownerId, organizationId: access.organizationId, _id: { $in: accountIds }, active: true, provider: 'amex' }) !== accountIds.length) fail(400, 'Unknown account')
   const token = `omfc_${randomBytes(32).toString('hex')}`
   const device = await FinanceCollector.create({ ownerId, name: body.name.trim(), tokenHash: digest(token), accountIds })
   return { id: device._id.toString(), token }
@@ -86,11 +101,12 @@ function archivePath(hash: string) {
 }
 export async function originalFile(batch: any) { return readFile(archivePath(batch.hash)) }
 export async function importSourceReferences(batch: any) {
+  const organizationId = financeOrganization(batch)
   try {
     const groups = sourceReferenceGroups(batch)
     if (!groups.length) return []
     const ids = [...new Set(groups.flatMap(g => g.targets.map(t => t.importId)))]
-    const targets: any[] = await FinanceImport.find({ ownerId: batch.ownerId, accountId: batch.accountId, _id: { $in: ids } }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus').lean()
+    const targets: any[] = await FinanceImport.find({ ownerId: batch.ownerId, organizationId, accountId: batch.accountId, _id: { $in: ids } }).select('ownerId organizationId accountId hash rows sourceReferences period provider sourceStatus').lean()
     verifySourceReferences(batch, targets)
     return groups.map(group => ({ ...group, description: batch.rows.find((r: any) => group.lines.includes(r.line)).description,
       targets: group.targets.map(t => ({ ...t, period: targets.find(b => String(b._id) === t.importId).period })) }))
@@ -109,7 +125,7 @@ export async function pendingSettlements(batch: any) {
     if (batch.finalization.sourceHash !== batch.hash || batch.finalization.period?.kind !== 'statement') fail(409, 'Finalized source evidence changed')
     for (const row of activeImportRows(batch)) result.set(row.line, { state: 'finalized', source: { importId: String(batch._id), sourceHash: batch.hash, period: batch.finalization.period, lines: batch.rows.map((r: any) => r.line) } })
   }
-  const related: any[] = await FinanceImport.find({ ownerId: batch.ownerId, accountId: batch.accountId, 'sourceReferences.groups.targets.importId': String(batch._id) }).limit(101).lean()
+  const related: any[] = await FinanceImport.find({ ownerId: batch.ownerId, organizationId: financeOrganization(batch), accountId: batch.accountId, 'sourceReferences.groups.targets.importId': String(batch._id) }).limit(101).lean()
   if (related.length > 100) fail(409, 'Too many settlement sources; review the source history')
   for (const other of related) {
     const references = await importSourceReferences(other)
@@ -126,10 +142,15 @@ export async function pendingSettlements(batch: any) {
   return result
 }
 export async function acceptImport(ownerId: string, account: any, bytes: Buffer, metadata: any, collectorId?: string) {
+  const current = await ownedAccount(ownerId, String(account._id))
+  const organizationId = financeOrganization(current, financeOrganization(account))
+  await ledgerAccessForIdentity(ownerId, organizationId, 'write')
+  if (!current.active) fail(409, 'Card account is inactive')
+  await assertFinanceSourceScope(ownerId, account._id, organizationId)
   let parsed: ReturnType<typeof parseCardImport>
   try { parsed = parseCardImport(bytes, account, metadata) } catch (error: any) { fail(400, error.message) }
   if (metadata.pageCount !== undefined && (!Number.isSafeInteger(Number(metadata.pageCount)) || Number(metadata.pageCount) !== parsed!.rows.length)) fail(400, 'CSV row count does not match the card statement')
-  const lookup = { ownerId, accountId: account._id, hash: parsed!.sha256 }
+  const lookup = { ownerId, organizationId, accountId: account._id, hash: parsed!.sha256 }
   const duplicate = (batch: any) => {
     if (account.provider === 'aplus' && JSON.stringify(batch.period) !== JSON.stringify(parsed!.period)) fail(409, 'This file was already uploaded with different statement metadata; review the original import')
     return { id: String(batch._id), rowCount: batch.rowCount, duplicateFile: true }
@@ -139,7 +160,7 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
   if (existing && !needsFinalization(existing)) return duplicate(existing)
   // Import creation and posting/draft writes share the same account lease.
   const lease = randomUUID()
-  const locked = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ commitLeaseUntil: { $exists: false } }, { commitLeaseUntil: null }, { commitLeaseUntil: { $lte: new Date() } }] }, { $set: { commitLease: lease, commitLeaseUntil: new Date(Date.now() + 60000) } }, { new: true }).lean()
+  const locked = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, organizationId, active: true, $or: [{ commitLeaseUntil: { $exists: false } }, { commitLeaseUntil: null }, { commitLeaseUntil: { $lte: new Date() } }] }, { $set: { commitLease: lease, commitLeaseUntil: new Date(Date.now() + 60000) } }, { new: true }).lean()
   if (!locked) fail(409, 'Another import or draft is being saved; retry shortly')
   try {
     // Validate against the live card membership after obtaining the lease.
@@ -149,18 +170,18 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
       if (needsFinalization(retry)) {
         await importSourceReferences(retry)
         if (retry.finalization && JSON.stringify(retry.finalization.period) !== JSON.stringify(parsed!.period)) fail(409, 'This source already has a different finalized statement period')
-        if (!await FinancialAccount.exists({ _id: account._id, ownerId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } })) fail(409, 'Import lease expired; retry')
-        if (!retry.finalization) await FinanceImport.updateOne({ _id: retry._id, ownerId }, { $set: { finalization: { sourceHash: retry.hash, period: parsed!.period, confirmedAt: new Date() } } })
+        if (!await FinancialAccount.exists({ _id: account._id, ownerId, organizationId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } })) fail(409, 'Import lease expired; retry')
+        if (!retry.finalization) await FinanceImport.updateOne({ _id: retry._id, ownerId, organizationId }, { $set: { finalization: { sourceHash: retry.hash, period: parsed!.period, confirmedAt: new Date() } } })
         return { id: String(retry._id), rowCount: retry.rowCount, duplicateFile: true, finalized: true }
       }
       return duplicate(retry)
     }
     // Date/fingerprint-only lookups miss bank corrections. Read the bounded
     // account history, including final statements that confirm older forecasts.
-    const previous: any[] = await FinanceImport.find({ ownerId, accountId: account._id }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus finalization').limit(101).lean()
+    const previous: any[] = await FinanceImport.find({ ownerId, organizationId, accountId: account._id }).select('ownerId organizationId accountId hash rows sourceReferences period provider sourceStatus finalization').limit(101).lean()
     if (previous.length > 100) fail(409, 'Too many overlapping imports; review the source history first')
     for (const prior of previous) await importSourceReferences(prior)
-    const data = { _id: new mongoose.Types.ObjectId(), ownerId, accountId: account._id, hash: parsed!.sha256, provider: account.provider || 'amex', sourceStatus: parsed!.sourceStatus, sourceFormat: parsed!.sourceFormat, sourceCapturedAt: parsed!.sourceCapturedAt, reconciliation: parsed!.reconciliation, originalName: (account.provider || 'amex') + '-activity.' + (parsed!.sourceFormat || 'csv'), bytes: bytes.length, encoding: parsed!.encoding, parserVersion: parsed!.parserVersion, period: parsed!.period, rows: parsed!.rows, rowCount: parsed!.rows.length, downloadedAt: new Date(), collectorId }
+    const data = { _id: new mongoose.Types.ObjectId(), ownerId, organizationId, accountId: account._id, hash: parsed!.sha256, provider: account.provider || 'amex', sourceStatus: parsed!.sourceStatus, sourceFormat: parsed!.sourceFormat, sourceCapturedAt: parsed!.sourceCapturedAt, reconciliation: parsed!.reconciliation, originalName: (account.provider || 'amex') + '-activity.' + (parsed!.sourceFormat || 'csv'), bytes: bytes.length, encoding: parsed!.encoding, parserVersion: parsed!.parserVersion, period: parsed!.period, rows: parsed!.rows, rowCount: parsed!.rows.length, downloadedAt: new Date(), collectorId }
     const sourceReferences = buildSourceReferences(data, previous)
     try { verifySourceReferences({ ...data, sourceReferences }, previous) } catch { fail(409, 'Overlapping purchase groups need source review before this file can be imported') }
     const target = archivePath(parsed!.sha256); await mkdir(path.dirname(target), { recursive: true })
@@ -168,11 +189,11 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
     await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 })
     try { await link(temporary, target) } catch (error: any) { if (error.code !== 'EEXIST') throw error; if (digest(await readFile(target)) !== parsed!.sha256) fail(500, 'Archived file integrity mismatch') }
     finally { await unlink(temporary) }
-    if (!await FinancialAccount.exists({ _id: account._id, ownerId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } })) fail(409, 'Import lease expired; retry')
+    if (!await FinancialAccount.exists({ _id: account._id, ownerId, organizationId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } })) fail(409, 'Import lease expired; retry')
     const batch = await FinanceImport.create({ ...data, sourceReferences })
-    await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: lease }, { $set: { lastSuccessAt: new Date(), lastMessage: parsed!.rows.length + ' rows downloaded' } })
+    await FinancialAccount.updateOne({ _id: account._id, ownerId, organizationId, commitLease: lease }, { $set: { lastSuccessAt: new Date(), lastMessage: parsed!.rows.length + ' rows downloaded' } })
     return { id: batch._id.toString(), rowCount: batch.rowCount, duplicateFile: false }
-  } finally { await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: lease }, { $unset: { commitLease: '', commitLeaseUntil: '' } }) }
+  } finally { await FinancialAccount.updateOne({ _id: account._id, ownerId, organizationId, commitLease: lease }, { $unset: { commitLease: '', commitLeaseUntil: '' } }) }
 }
 
 async function candidates(account: any, rows: CardRow[]) {
@@ -180,17 +201,19 @@ async function candidates(account: any, rows: CardRow[]) {
   const cards = account.cardIdentifiers.map((v: string) => v.slice(-4))
   const sorted = dates.sort()
   if (!sorted.length) return []
-  const records: any[] = await Transaction.find({ date: { $gte: new Date(Date.parse(sorted[0]) - 9*3600000), $lt: new Date(Date.parse(sorted.at(-1)!) + 86400000) }, amount: { $in: rows.map(r => Math.abs(r.amount)) }, 'metadata.financeEntryId': { $exists: false }, $or: [{ cardNumber: { $in: [...cards, ...account.cardIdentifiers] } }, { cardNumber: { $exists: false } }, { cardNumber: '' }, { cardNumber: null }] }).select('_id date amount notes productName cardNumber type').limit(10001).lean()
+  const records: any[] = await Transaction.find({ organizationId: financeOrganization(account), date: { $gte: new Date(Date.parse(sorted[0]) - 9*3600000), $lt: new Date(Date.parse(sorted.at(-1)!) + 86400000) }, amount: { $in: rows.map(r => Math.abs(r.amount)) }, 'metadata.financeEntryId': { $exists: false }, $or: [{ cardNumber: { $in: [...cards, ...account.cardIdentifiers] } }, { cardNumber: { $exists: false } }, { cardNumber: '' }, { cardNumber: null }] }).select('_id date amount notes productName cardNumber type').limit(10001).lean()
   if (records.length > 10000) fail(409, 'Too many historical matches; split the import period')
   return records
 }
 export async function reviewImport(ownerId: string, importId: string) {
   const batch = await ownedImport(ownerId, importId)
   const account = await ownedAccount(ownerId, batch.accountId.toString())
+  const organizationId = financeOrganization(batch, financeOrganization(account))
+  await assertFinanceSourceScope(ownerId, account._id, organizationId)
   const rows: CardRow[] = batch.rows
   const references = await importSourceReferences(batch)
   const settlements = await pendingSettlements(batch)
-  const [entries, legacy] = await Promise.all([FinanceEntry.find({ accountId: account._id, $or: [{ fingerprint: { $in: rows.map(r => r.fingerprint) } }, { 'row.purchaseDate': { $in: rows.map(r => r.purchaseDate) }, 'row.amount': { $in: rows.map(r => r.amount) } }] }).limit(20001).lean(), candidates(account, rows)])
+  const [entries, legacy] = await Promise.all([FinanceEntry.find({ ownerId, organizationId, accountId: account._id, $or: [{ fingerprint: { $in: rows.map(r => r.fingerprint) } }, { 'row.purchaseDate': { $in: rows.map(r => r.purchaseDate) }, 'row.amount': { $in: rows.map(r => r.amount) } }] }).limit(20001).lean(), candidates(account, rows)])
   if (entries.length > 20000) fail(409, 'Too many source matches; split the import period')
   const byKey = new Map(entries.map((entry: any) => [entry.key, entry]))
   const view = rows.map(row => {
@@ -213,6 +236,7 @@ export async function reviewImport(ownerId: string, importId: string) {
 export async function reviewMapping(ownerId: string, importId: string) {
   const batch = await ownedImport(ownerId, importId)
   const account = await ownedAccount(ownerId, batch.accountId.toString())
+  financeOrganization(batch, financeOrganization(account))
   let rows: ReturnType<typeof mappingRows>
   const sourceReferences = await importSourceReferences(batch)
   const activeLines = new Set(activeImportRows(batch).map(r => r.line))
@@ -221,13 +245,17 @@ export async function reviewMapping(ownerId: string, importId: string) {
   return { id: batch._id.toString(), account: { id: account._id.toString(), name: account.name }, period: batch.period, preparedAt: batch.mappingPreview?.preparedAt || null, sourceReferences, ...await mappingPreparation(ownerId, batch, account, rows!) }
 }
 
-export async function commitImport(ownerId: string, importId: string, body: any) {
+export async function commitImport(access: LedgerAccess, importId: string, body: any) {
+  const ownerId = access.userId
   if (!Array.isArray(body?.decisions) || !body.decisions.length || body.decisions.length > 5000) fail(400, 'Select rows to review')
   const initial = await ownedImport(ownerId, importId)
+  const organizationId = financeOrganization(initial, access.organizationId)
+  await ledgerAccessForIdentity(ownerId, organizationId, 'write')
+  await assertFinanceSourceScope(ownerId, initial.accountId, organizationId)
   // External client/category labels are preview data, not ledger ObjectIds.
   if ((isPending(initial) || initial.mappingPreview || initial.provider === 'aplus') && body.decisions.some((decision: any) => decision?.action === 'import' && !Number.isSafeInteger(decision.draftRevision))) fail(409, 'This statement has a classification preview; ledger posting requires the client and category mappings to be finalized')
   const lease = randomUUID(), now = new Date()
-  const locked = await FinancialAccount.findOneAndUpdate({ _id: initial.accountId, ownerId, $or: [{ commitLeaseUntil: { $exists: false } }, { commitLeaseUntil: null }, { commitLeaseUntil: { $lte: now } }] }, { $set: { commitLease: lease, commitLeaseUntil: new Date(Date.now() + 60000) } }, { new: true })
+  const locked = await FinancialAccount.findOneAndUpdate({ _id: initial.accountId, ownerId, organizationId, active: true, $or: [{ commitLeaseUntil: { $exists: false } }, { commitLeaseUntil: null }, { commitLeaseUntil: { $lte: now } }] }, { $set: { commitLease: lease, commitLeaseUntil: new Date(Date.now() + 60000) } }, { new: true })
   if (!locked) fail(409, 'Another import is being reviewed; retry shortly')
   let posted = 0, linked = 0, skipped = 0
   try {
@@ -242,14 +270,18 @@ export async function commitImport(ownerId: string, importId: string, body: any)
       if (!row || seen.has(decision.line) || !['import','skip','link'].includes(decision.action)) fail(400, 'Invalid review decision')
       seen.add(decision.line)
       if (decision.action !== 'skip') assertEditableImportRow(initial, row.line)
-      if (['posted','duplicate'].includes(row.state) || decision.action === 'skip') continue
+      if (['posted','duplicate'].includes(row.state)) {
+        if (!await Transaction.exists({ _id: row.transactionId, organizationId })) fail(409, 'Posted transaction company binding needs review')
+        continue
+      }
+      if (decision.action === 'skip') continue
       if (row.settlement && row.settlement.state !== 'finalized') fail(409, '未請求明細は購入件数に含まれます。帳簿への登録は確定明細との照合後に行ってください。')
       if (row.state === 'in_progress') fail(409, 'An earlier import must finish before this row can be reviewed')
       if (row.kind !== 'expense' || !row.purchaseDate || !row.cardIdentifier) fail(400, 'Statement exceptions are retained for review; only dated spending with an identified card can be posted here')
       if (['legacy_review','overlap_review','correction_review'].includes(row.state) && decision.confirmNew !== true && decision.action !== 'link') fail(409, 'Resolve the possible duplicate before posting')
       if (decision.action === 'link' && (row.state !== 'legacy_review' || !row.existing.some(v => v.id === decision.transactionId))) fail(400, 'Choose an exact historical candidate')
       if (decision.action === 'import') {
-        const reserved: any = await FinanceEntry.findOne({ ownerId, importId: initial._id, line: row.line }).lean()
+        const reserved: any = await FinanceEntry.findOne({ ownerId, organizationId, importId: initial._id, line: row.line }).lean()
         if (reserved?.draftSnapshot) {
           if (reserved.draftSnapshot.revision !== decision.draftRevision) fail(409, 'Resume the previously approved draft revision')
           snapshots.set(row.line, reserved.draftSnapshot)
@@ -263,10 +295,10 @@ export async function commitImport(ownerId: string, importId: string, body: any)
       const row = rows.get(decision.line)!
       if (decision.action !== 'skip') assertEditableImportRow(initial, row.line)
       if (row.state === 'posted' || row.state === 'duplicate') { skipped++; continue }
-      if (decision.action === 'skip') { await FinanceImport.updateOne({ _id: initial._id, ownerId }, { $set: { [`decisions.${row.line}`]: 'skip' } }); skipped++; continue }
+      if (decision.action === 'skip') { await FinanceImport.updateOne({ _id: initial._id, ownerId, organizationId }, { $set: { [`decisions.${row.line}`]: 'skip' } }); skipped++; continue }
       if (row.kind !== 'expense' || !row.purchaseDate || !row.cardIdentifier) fail(400, 'Statement exceptions are retained for review; only dated spending with an identified card can be posted here')
       if (['legacy_review','overlap_review','correction_review'].includes(row.state) && decision.confirmNew !== true && decision.action !== 'link') fail(409, 'Resolve the possible duplicate before posting')
-      const renewed = await FinancialAccount.updateOne({ _id: initial.accountId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } }, { $set: { commitLeaseUntil: new Date(Date.now() + 60000) } })
+      const renewed = await FinancialAccount.updateOne({ _id: initial.accountId, ownerId, organizationId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } }, { $set: { commitLeaseUntil: new Date(Date.now() + 60000) } })
       if (!renewed.matchedCount) fail(409, 'Import lease expired; retry')
       const key = row.state === 'overlap_review' && decision.action === 'import' ? `${row.key}:manual:${initial._id}:${row.line}` : row.key
       let transactionId = new mongoose.Types.ObjectId()
@@ -275,30 +307,30 @@ export async function commitImport(ownerId: string, importId: string, body: any)
         if (!selected || row.state !== 'legacy_review') fail(400, 'Choose an exact historical candidate')
         transactionId = new mongoose.Types.ObjectId(id(decision.transactionId))
       }
-      const entry: any = await FinanceEntry.findOneAndUpdate({ accountId: initial.accountId, key }, { $setOnInsert: { ownerId, fingerprint: row.fingerprint, occurrence: row.occurrence, coverage: initial.period.key, importId: initial._id, line: row.line, transactionId, row, draftSnapshot: snapshots.get(row.line), linkedExisting: decision.action === 'link', state: 'reserved' } }, { upsert: true, new: true })
+      const entry: any = await FinanceEntry.findOneAndUpdate({ ownerId, organizationId, accountId: initial.accountId, key }, { $setOnInsert: { ownerId, fingerprint: row.fingerprint, occurrence: row.occurrence, coverage: initial.period.key, importId: initial._id, line: row.line, transactionId, row, draftSnapshot: snapshots.get(row.line), linkedExisting: decision.action === 'link', state: 'reserved' } }, { upsert: true, new: true })
       if (entry.importId.toString() !== initial._id.toString()) fail(409, 'Source row was claimed by another import; refresh the review')
       if (entry.state === 'posted') { skipped++; continue }
       if (entry.linkedExisting !== (decision.action === 'link') || (entry.linkedExisting && entry.transactionId.toString() !== decision.transactionId)) fail(409, 'Resume the previously selected action for this row')
       if (entry.linkedExisting) {
         // A link records evidence without rewriting the user's existing accounting data.
-        if (!await Transaction.exists({ _id: entry.transactionId })) fail(409, 'Historical transaction no longer exists')
+        if (!await Transaction.exists({ _id: entry.transactionId, organizationId })) fail(409, 'Historical transaction no longer exists')
         linked++
       } else {
-        await Transaction.updateOne({ _id: entry.transactionId }, { $setOnInsert: {
+        await Transaction.updateOne({ _id: entry.transactionId, organizationId, 'metadata.financeEntryId': entry._id.toString() }, { $setOnInsert: {
           referenceNumber: `${(view.account.provider || 'amex').toUpperCase()}-${entry._id}`, date: new Date(row.purchaseDate), status: 'completed',
           accountCategoryId: body.accountCategoryId || undefined,
           hasReceipt: false, notes: row.description, items: [], attachments: [], tags: ['imported', view.account.provider || 'amex'],
           ...(entry.draftSnapshot?.transaction || {}),
           // CSV amount, card and transaction type cannot be overridden by a draft.
-          amount: row.amount, type: '支出', paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
+          organizationId, amount: row.amount, type: '支出', paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
           metadata: { ...(row.settlement?.source ? { finalizedSource: row.settlement.source } : {}), financeEntryId: entry._id.toString(), financialAccountId: initial.accountId.toString(), importBatchId: initial._id.toString(), importSource: view.account.provider || 'amex', originalCardIdentifier: row.cardIdentifier, processingDate: row.processingDate, currency: row.currency, foreignAmount: row.foreignAmount, exchangeRate: row.exchangeRate, ...(entry.draftSnapshot ? { financeDraftId: entry.draftSnapshot.draftId, financeDraftRevision: entry.draftSnapshot.revision, mappingPurpose: entry.draftSnapshot.purpose, mappingEvidence: entry.draftSnapshot.evidence, financeDocuments: entry.draftSnapshot.documents } : {}) },
           timeline: [{ type: 'imported', title: view.account.provider === 'aplus' ? 'Aplus取込' : 'Amex取込', timestamp: new Date(), description: `${view.account.name} / ${initial.period.start} - ${initial.period.end}` }]
         } }, { upsert: true, runValidators: true })
         posted++
       }
-      await FinanceEntry.updateOne({ _id: entry._id }, { $set: { state: 'posted' } })
-      await FinanceImport.updateOne({ _id: initial._id }, { $unset: { [`decisions.${row.line}`]: '' } })
+      await FinanceEntry.updateOne({ _id: entry._id, ownerId, organizationId }, { $set: { state: 'posted' } })
+      await FinanceImport.updateOne({ _id: initial._id, ownerId, organizationId }, { $unset: { [`decisions.${row.line}`]: '' } })
     }
     return { posted, linked, skipped }
-  } finally { await FinancialAccount.updateOne({ _id: initial.accountId, commitLease: lease }, { $unset: { commitLease: '', commitLeaseUntil: '' } }) }
+  } finally { await FinancialAccount.updateOne({ _id: initial.accountId, ownerId, organizationId, commitLease: lease }, { $unset: { commitLease: '', commitLeaseUntil: '' } }) }
 }

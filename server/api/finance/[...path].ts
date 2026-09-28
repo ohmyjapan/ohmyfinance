@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { requireLedgerAccess, type LedgerAccess } from '../../services/ledgerAccessService'
 import { readMerchantLink, saveMerchantLink } from '../../services/financeSupplierService'
 import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
@@ -11,7 +12,7 @@ export default defineEventHandler(async event => {
   try {
     if (parts[0] === 'collector') {
       const device = await financeDevice(event)
-      const scope = { ownerId: device.ownerId, _id: { $in: device.accountIds }, active: true, provider: 'amex' }
+      const scope = { ownerId: device.ownerId, organizationId: { $in: device.organizationIds }, _id: { $in: device.accountIds }, active: true, provider: 'amex' }
       if (parts[1] === 'accounts' && parts.length === 2 && method === 'GET') return { accounts: await FinancialAccount.find(scope).select('-commitLease -commitLeaseUntil').lean() }
       if (parts[1] === 'claim' && parts.length === 2 && method === 'POST') {
         const account = await FinancialAccount.findOneAndUpdate({ ...scope, $or: [{ jobState: 'queued' }, { jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $lt: new Date() } }] }, { $set: { jobState: 'running', jobDeviceId: device._id, jobLeaseUntil: new Date(Date.now() + 180000), lastAttemptAt: new Date(), lastMessage: 'Connecting to Amex' } }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
@@ -36,9 +37,15 @@ export default defineEventHandler(async event => {
 
     const ownerId = await financeUser(event)
     setHeader(event, 'Cache-Control', 'no-store')
+    let access: LedgerAccess | undefined
+    if (parts[0] === 'accounts' || parts[0] === 'imports') {
+      const source = parts[1] ? await (parts[0] === 'accounts' ? ownedAccount(ownerId, parts[1]) : ownedImport(ownerId, parts[1])) : null
+      access = await requireLedgerAccess(event, method === 'GET' ? 'read' : 'write')
+      if (source && String(source.organizationId) !== access.organizationId) fail(404, 'Card source not found in this company')
+    }
     if (parts[0] === 'accounts' && parts.length === 1) {
-      if (method === 'GET') return { accounts: await FinancialAccount.find({ ownerId }).select('-commitLease -commitLeaseUntil').sort({ createdAt: 1 }).lean() }
-      if (method === 'POST') return { account: await FinancialAccount.create({ ownerId, ...accountInput(await readBody(event)) }) }
+      if (method === 'GET') return { accounts: await FinancialAccount.find({ ownerId, organizationId: access!.organizationId }).select('-commitLease -commitLeaseUntil').sort({ createdAt: 1 }).lean() }
+      if (method === 'POST') return { account: await FinancialAccount.create({ ...accountInput(await readBody(event)), ownerId, organizationId: access!.organizationId }) }
     }
     if (parts[0] === 'accounts' && parts.length >= 2) {
       const account = await ownedAccount(ownerId, parts[1])
@@ -46,12 +53,12 @@ export default defineEventHandler(async event => {
         const input = accountInput({ provider: account.provider || 'amex', ...await readBody(event) })
         if (input.provider !== (account.provider || 'amex')) fail(400, 'The provider of an existing card account cannot be changed')
         if (await FinanceImport.exists({ accountId: account._id }) && account.cardIdentifiers.some((v: string) => !input.cardIdentifiers.includes(v))) fail(409, 'Imported card identifiers cannot be removed')
-        return { account: await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId }, { $set: input }, { new: true }) }
+        return { account: await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, organizationId: access!.organizationId }, { $set: input }, { new: true }) }
       }
       if (parts[2] === 'sync' && parts.length === 3 && method === 'POST') {
         if (account.provider === 'aplus') fail(400, 'Upload the finalized Aplus CSV from Card connections')
         if (!await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null })) fail(409, 'Pair a collector for this account first')
-        const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: new Date(), lastMessage: 'Waiting for collector' }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
+        const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, organizationId: access!.organizationId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: new Date(), lastMessage: 'Waiting for collector' }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
         if (!updated) fail(409, 'A synchronization is already queued or running')
         return { account: updated }
       }
@@ -63,7 +70,7 @@ export default defineEventHandler(async event => {
     }
     if (parts[0] === 'collectors') {
       if (parts.length === 1 && method === 'GET') return { collectors: await FinanceCollector.find({ ownerId }).select('-tokenHash').lean() }
-      if (parts.length === 1 && method === 'POST') return await createCollector(ownerId, await readBody(event))
+      if (parts.length === 1 && method === 'POST') return await createCollector(await requireLedgerAccess(event, 'write'), await readBody(event))
       if (parts.length === 2 && method === 'DELETE') {
         const device = await FinanceCollector.findOneAndUpdate({ _id: id(parts[1]), ownerId }, { $set: { revokedAt: new Date() } })
         if (!device) fail(404, 'Collector not found')
@@ -113,12 +120,15 @@ export default defineEventHandler(async event => {
     if (parts[0] === 'imports') {
       if (parts.length === 1 && method === 'GET') {
         const accountId = getQuery(event).accountId
-        if (accountId) await ownedAccount(ownerId, id(accountId))
-        return { imports: await FinanceImport.find({ ownerId, ...(accountId ? { accountId } : {}) }).select('-rows -decisions -mappingPreview -sourceReferences').sort({ createdAt: -1 }).limit(100).lean() }
+        if (accountId) {
+          const account = await ownedAccount(ownerId, id(accountId))
+          if (String(account.organizationId) !== access!.organizationId) fail(404, 'Card account not found in this company')
+        }
+        return { imports: await FinanceImport.find({ ownerId, organizationId: access!.organizationId, ...(accountId ? { accountId } : {}) }).select('-rows -decisions -mappingPreview -sourceReferences').sort({ createdAt: -1 }).limit(100).lean() }
       }
       if (parts.length === 2 && method === 'GET') return await reviewImport(ownerId, parts[1])
       if (parts[2] === 'mapping' && parts.length === 3 && method === 'GET') return await reviewMapping(ownerId, parts[1])
-      if (parts[2] === 'commit' && parts.length === 3 && method === 'POST') return await commitImport(ownerId, parts[1], await readBody(event))
+      if (parts[2] === 'commit' && parts.length === 3 && method === 'POST') return await commitImport(access!, parts[1], await readBody(event))
       if (parts[2] === 'file' && parts.length === 3 && method === 'GET') {
         const batch = await ownedImport(ownerId, parts[1])
         setHeader(event,'Content-Type',batch.sourceFormat === 'json' ? 'application/json; charset=UTF-8' : `text/csv; charset=${batch.encoding === 'utf-8' ? 'UTF-8' : 'Shift_JIS'}`)

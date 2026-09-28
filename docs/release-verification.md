@@ -64,7 +64,7 @@ uploadedBy remains provenance. Suggestions, manual match/unmatch lookups and the
 transaction-backed receipt HTML preview exclude foreign and unassigned transactions.
 Group identifiers cannot be assigned through receipt metadata. Unit tests include
 membership database failure, concurrent edits/deletion and reconnect.
-This is a partial access conversion: attachments, card posting, backup/restore
+This is a partial access conversion: attachments, backup/restore
 and other direct readers/writers remain pending. Core transaction routes now use
 company context as described below. Existing records need
 a reviewed migration. The legacy simulated matcher/OCR and canonical recoverable
@@ -78,7 +78,7 @@ an available loopback port.
 It injects the document and purchase adapters. Ambient optional browser and test
 switches are removed. No actual bank, spreadsheet or export session is used.
 
-A failed command, missing test summary, fewer than the existing 136 unit/service/component tests,
+A failed command, missing test summary, fewer than the existing 145 unit/service/component tests,
 18 workflow checks, 10 authentication checks, 11 receipt management checks or
 6 proxy checks, 8 shipment status checks, 7 transaction status checks or
 8 receipt candidate checks, 10 group switch checks, 11 receipt group checks, 12 transaction group checks, or skipped unit test is a
@@ -114,3 +114,27 @@ source updates still need canonical-field repairs. Duplicate merge is not crash
 atomic and delete/merge do not yet reconcile receipt attachments. These remain
 release work; this suite does not prove whole-ledger isolation or production
 reliability. No production records were assigned a company or migrated.
+
+
+`OMF_TEST_CARD_GROUPS_ONLY=1` adds 8 real-token API checks (including the two
+shared setup checks) for immutable account/import/entry company, source history,
+legacy candidates, posting, collector upload, demotion/removal and same-owner
+cross-company exclusion. Ledger records remain available to company members;
+connection credentials retain owner restrictions. Finance account/import routes
+require the selected company. Other finance workspace API families remain pending
+conversion; this is not complete member sharing of the mapping workspace.
+
+Nine card service tests exercise independent companies, forged draft ownership,
+source conflicts, duplicate/concurrent retries, an injected failure after ledger
+insertion followed by database reconnect, source-reference mismatch and incomplete
+legacy history. Timestamps may advance on a resumed upsert; accounting fields,
+source identity and company remain intact. The shared membership implementation
+also serves background card identities and retains its existing receipt tests.
+
+The fixture additionally executes 8 pending, 7 source-overlap and 5 Aplus API
+checks against the same freshly built source, each in its own disposable database.
+These verify that the company conversion preserves forecast/final reconciliation
+and draft evidence. They include two shared setup checks per suite. No live bank
+request, production migration or accounting reclassification occurs. Missing or
+mismatched source companies require reviewed assignment; nothing is swept into a
+company based only on the current login.

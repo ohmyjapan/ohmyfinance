@@ -29,7 +29,8 @@ async function main(){
    const text=await response.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:response.status,data};
   }
   const register=async email=>{const r=await call('/api/auth/register',{method:'POST',body:{email,password:'Synthetic-password-Only1!',name:'Finance test'}});assert.equal(r.status,200,JSON.stringify(r));return r.data.tokens.accessToken;};
-  const token=await register('finance-a@example.invalid'),other=await register('finance-b@example.invalid');
+  const ungroupedToken=await register('finance-a@example.invalid'),other=await register('finance-b@example.invalid');
+  const selected=await require('./helpers/group-session.cjs')(call,ungroupedToken,'Synthetic finance company'),token=selected.token;
   const request=(route,body,method='POST')=>call('/api/finance/'+route,{token,body,method});
   assert.equal((await call('/api/finance/accounts')).status,401);assert.equal((await call('/api/finance/collector/accounts')).status,401);pass('finance routes require the correct authorization');
   const input={name:'Synthetic Amex',primaryCard:'12345',cardIdentifiers:['12345','23456'],otpRecipient:'original@example.invalid',otpMailbox:'forwarded@example.invalid'};
@@ -43,12 +44,13 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
-  if(process.env.OMF_TEST_TRANSACTION_GROUPS_ONLY){await require('./transaction-groups-integration.cjs')({db,call,token,other,origin,pass});console.log(checks+' targeted transaction group checks passed');return;}
-  if(process.env.OMF_TEST_RECEIPT_GROUPS_ONLY){await require('./receipt-groups-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted receipt group checks passed');return;}
-  if(process.env.OMF_TEST_GROUP_SWITCH_ONLY){await require('./group-switch-integration.cjs')({db,call,token,other,origin,pass});console.log(checks+' targeted group switch checks passed');return;}
+  if(process.env.OMF_TEST_CARD_GROUPS_ONLY){await require('./card-groups-integration.cjs')({db,call,token,other,pass,csv,row});console.log(checks+' targeted card group checks passed');return;}
+  if(process.env.OMF_TEST_TRANSACTION_GROUPS_ONLY){await require('./transaction-groups-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted transaction group checks passed');return;}
+  if(process.env.OMF_TEST_RECEIPT_GROUPS_ONLY){await require('./receipt-groups-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted receipt group checks passed');return;}
+  if(process.env.OMF_TEST_GROUP_SWITCH_ONLY){await require('./group-switch-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted group switch checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_CANDIDATES_ONLY){await require('./receipt-candidates-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted receipt candidate checks passed');return;}
   if(process.env.OMF_TEST_TRANSACTION_STATUS_ONLY){await require('./transaction-status-integration.cjs')({db,call,token,pass});console.log(checks+' targeted transaction status checks passed');return;}
-  if(process.env.OMF_TEST_SHIPMENT_STATUS_ONLY){await require('./shipment-status-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted shipment status checks passed');return;}
+  if(process.env.OMF_TEST_SHIPMENT_STATUS_ONLY){await require('./shipment-status-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted shipment status checks passed');return;}
   if(process.env.OMF_TEST_PROXY_ONLY){await require('./proxy-integration.cjs')({db,call,token,other,pass});console.log(checks+' targeted proxy checks passed');return;}
   if(process.env.OMF_TEST_RECEIPTS_ONLY){await require('./receipt-management-integration.cjs')({db,call,token,other,origin,root,pass});console.log(checks+' targeted receipt management checks passed');return;}
   if(process.env.OMF_TEST_WORKFLOW_ONLY){await require('./finance-workflow-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row,directory});console.log(checks+' targeted workflow checks passed');return;}
@@ -85,13 +87,13 @@ async function main(){
   await request('imports/'+overlapping.data.id+'/commit',{decisions:[{line:2,action:'skip'}]});
   assert.equal((await request('imports/'+overlapping.data.id+'/commit',{decisions:[{line:2,action:'import'}]})).status,409);pass('overlapping snapshots require an explicit decision even after a row was deferred');
   const corrected=await upload(csv([row({1:'2026/08/04'})]));const correctedView=(await request('imports/'+corrected.data.id,undefined,'GET')).data;assert.equal(correctedView.rows[0].state,'correction_review');assert.equal((await request('imports/'+corrected.data.id+'/commit',{decisions:[{line:2,action:'import'}]})).status,409);pass('changed processing dates are held as possible corrections rather than new spending');
-  const legacyId=new ObjectId();await db.collection('transactions').insertOne({_id:legacyId,date:new Date('2026-08-04T15:00:00Z'),amount:500,type:'支出',status:'completed',notes:'Older manual entry',cardNumber:'2345'});
+  const legacyId=new ObjectId();await db.collection('transactions').insertOne({_id:legacyId,organizationId:new ObjectId(selected.organizationId),date:new Date('2026-08-04T15:00:00Z'),amount:500,type:'支出',status:'completed',notes:'Older manual entry',cardNumber:'2345'});
   const legacy=await upload(csv([row({0:'2026/08/05',1:'2026/08/06',2:'Legacy shop',5:'500'})]));const legacyView=(await request('imports/'+legacy.data.id,undefined,'GET')).data;
   assert.equal(legacyView.rows[0].state,'legacy_review');assert.equal((await request('imports/'+legacy.data.id+'/commit',{decisions:[{line:2,action:'link',transactionId:legacyId.toHexString()}]})).data.linked,1);
   assert.equal((await db.collection('transactions').findOne({_id:legacyId})).notes,'Older manual entry');pass('historical matches include Japan-local dates and linking leaves accounting data intact');
   const interrupted=await upload(csv([row({2:'Interrupted purchase',5:'777'})]));const raw=parseAmex(csv([row({2:'Interrupted purchase',5:'777'})]),input.cardIdentifiers).rows[0];const ownerId=(await db.collection('financialaccounts').findOne({_id:new ObjectId(id)})).ownerId;
-  const reserved={_id:new ObjectId(),ownerId,accountId:new ObjectId(id),key:raw.key,fingerprint:raw.fingerprint,occurrence:1,coverage:'statement:2026-07-19:2026-08-18',importId:new ObjectId(interrupted.data.id),line:2,transactionId:new ObjectId(),state:'reserved',row:raw,linkedExisting:false};
-  await db.collection('financeentries').insertOne(reserved);await db.collection('transactions').insertOne({_id:reserved.transactionId,date:new Date(raw.purchaseDate),amount:777,type:'支出',status:'completed',metadata:{financeEntryId:reserved._id.toHexString()}});
+  const reserved={_id:new ObjectId(),ownerId,organizationId:new ObjectId(selected.organizationId),accountId:new ObjectId(id),key:raw.key,fingerprint:raw.fingerprint,occurrence:1,coverage:'statement:2026-07-19:2026-08-18',importId:new ObjectId(interrupted.data.id),line:2,transactionId:new ObjectId(),state:'reserved',row:raw,linkedExisting:false};
+  await db.collection('financeentries').insertOne(reserved);await db.collection('transactions').insertOne({_id:reserved.transactionId,organizationId:new ObjectId(selected.organizationId),date:new Date(raw.purchaseDate),amount:777,type:'支出',status:'completed',metadata:{financeEntryId:reserved._id.toHexString()}});
   const before=await db.collection('transactions').countDocuments();assert.equal((await request('imports/'+interrupted.data.id+'/commit',{decisions:[{line:2,action:'import'}]})).status,200);assert.equal(await db.collection('transactions').countDocuments(),before);assert.equal((await db.collection('financeentries').findOne({_id:reserved._id})).state,'posted');pass('a crash after ledger insertion resumes without inserting the transaction again');
   assert.equal((await request('accounts/'+id+'/sync')).status,200);
   const claimed=await call('/api/finance/collector/claim',{method:'POST',token:deviceToken,body:{}});assert.equal(claimed.data.account._id,id);
