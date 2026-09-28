@@ -3,13 +3,13 @@ import { defineStore } from 'pinia'
 import { useUserStore } from '~/stores/user'
 
 export interface ShipmentAddress {
-    name: string
-    line1: string
+    name?: string
+    line1?: string
     line2?: string
-    city: string
-    state: string
-    postalCode: string
-    country: string
+    city?: string
+    state?: string
+    postalCode?: string
+    country?: string
 }
 
 export interface ShipmentEvent {
@@ -24,22 +24,25 @@ export interface ShipmentEvent {
 
 export interface Shipment {
     id: string
-    trackingNumber: string
-    carrier: string
+    trackingNumber?: string
+    carrier?: string
     status: 'pending' | 'processing' | 'shipped' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'failed' | 'returned' | 'delayed' | 'exception' | 'cancelled'
     createdAt: string
     updatedAt: string
     estimatedDelivery?: string
     transactionId?: string
-    customerName: string
+    customerName?: string
     customerEmail?: string
-    address: ShipmentAddress
+    address?: ShipmentAddress
+    shippingAddress?: ShipmentAddress
+    transactionIds?: string[]
+    transactions?: Array<{ _id: string; referenceNumber?: string; date?: string; amount?: number; currency?: string; description?: string }>
     events: ShipmentEvent[]
     serviceType?: string
     packageType?: string
-    weight?: number
+    weight?: { value?: number; unit?: string }
     weightUnit?: string
-    dimensions?: string
+    dimensions?: { length?: number; width?: number; height?: number; unit?: string }
     insurance?: number
     signatureRequired?: boolean
     [key: string]: any
@@ -73,6 +76,7 @@ export const useShipmentStore = defineStore('shipment', {
         error: null as string | null,
         filters: {} as ShipmentFilters,
         searchQuery: '',
+        requestSequence: 0,
         stats: {
             total: 0,
             pending: 0,
@@ -186,196 +190,102 @@ export const useShipmentStore = defineStore('shipment', {
             return userStore.authHeader
         },
 
-        async fetchShipments() {
+        contextKey() {
+            const user = useUserStore()
+            return JSON.stringify([user.sessionId, user.user?.id, user.currentOrganization?.id])
+        },
+
+        resetContext() {
+            this.requestSequence++
             this.shipments = []
+            this.currentShipment = null
+            this.stats = { total: 0, pending: 0, processing: 0, inTransit: 0, delivered: 0, failed: 0, cancelled: 0 }
+            this.error = null
+            this.isLoading = false
+        },
+
+        beginRequest() {
             this.isLoading = true
             this.error = null
+            return { sequence: ++this.requestSequence, context: this.contextKey(), headers: { ...this._getAuthHeaders() } }
+        },
 
+        isCurrent(request: { sequence: number; context: string }) {
+            return request.sequence === this.requestSequence && request.context === this.contextKey()
+        },
+
+        requestFailed(request: { sequence: number; context: string }, error: any) {
+            if (this.isCurrent(request)) this.error = error?.data?.statusMessage || error?.message || 'Shipment request failed'
+        },
+
+        finishRequest(request: { sequence: number; context: string }) {
+            if (this.isCurrent(request)) this.isLoading = false
+        },
+
+        async fetchShipments() {
+            this.shipments = []
+            const request = this.beginRequest()
             try {
-                const data = await $fetch<{ shipments: Shipment[]; total: number }>('/api/shipments', {
-                    headers: this._getAuthHeaders()
-                })
+                const data = await $fetch<{ shipments: Shipment[]; total: number }>('/api/shipments', { headers: request.headers })
+                if (!this.isCurrent(request)) return
                 this.shipments = data.shipments
-
-                // Fetch statistics
-                await this.fetchStats()
-            } catch (error: any) {
-                this.error = error.message || 'Failed to fetch shipments'
-                console.error('Error fetching shipments:', error)
-            } finally {
-                this.isLoading = false
-            }
+                await this.fetchStats(request)
+            } catch (error) { this.requestFailed(request, error) }
+            finally { this.finishRequest(request) }
         },
 
         async fetchShipmentById(id: string) {
             this.currentShipment = null
-            this.isLoading = true
-            this.error = null
-
+            const request = this.beginRequest()
             try {
-                const data = await $fetch<Shipment>(`/api/shipments/${id}`, {
-                    headers: this._getAuthHeaders()
-                })
-                this.currentShipment = data
-            } catch (error: any) {
-                this.error = error.message || `Failed to fetch shipment ${id}`
-                console.error(`Error fetching shipment ${id}:`, error)
-            } finally {
-                this.isLoading = false
-            }
+                const data = await $fetch<Shipment>(`/api/shipments/${id}`, { headers: request.headers })
+                if (this.isCurrent(request)) this.currentShipment = data
+            } catch (error) { this.requestFailed(request, error) }
+            finally { this.finishRequest(request) }
         },
 
-        async createShipment(shipmentData: Partial<Shipment>) {
-            this.isLoading = true
-            this.error = null
-
+        async saveShipment(url: string, method: 'POST' | 'PATCH', body: Record<string, unknown>, create = false, statusEnvelope = false) {
+            const request = this.beginRequest()
             try {
-                const newShipment = await $fetch<Shipment>('/api/shipments', {
-                    method: 'POST',
-                    body: shipmentData,
-                    headers: this._getAuthHeaders()
-                })
-
-                // Add to local state
-                this.shipments.unshift(newShipment)
-
-                // Update stats
-                await this.fetchStats()
-
-                return newShipment
-            } catch (error: any) {
-                this.error = error.message || 'Failed to create shipment'
-                console.error('Error creating shipment:', error)
-                return null
-            } finally {
-                this.isLoading = false
-            }
+                const response = await $fetch<Shipment | { shipment: Shipment }>(url, { method, body, headers: request.headers })
+                if (!this.isCurrent(request)) return null
+                const shipment = (statusEnvelope ? response.shipment : response) as Shipment
+                const index = this.shipments.findIndex(item => item.id === shipment.id)
+                if (index !== -1) this.shipments[index] = shipment
+                else if (create) this.shipments.unshift(shipment)
+                if (this.currentShipment?.id === shipment.id) this.currentShipment = shipment
+                await this.fetchStats(request)
+                return this.isCurrent(request) ? shipment : null
+            } catch (error) { this.requestFailed(request, error); return null }
+            finally { this.finishRequest(request) }
         },
 
-        async updateShipment(id: string, shipmentData: Partial<Shipment>) {
-            this.isLoading = true
-            this.error = null
+        async createShipment(data: Partial<Shipment>) {
+            return this.saveShipment('/api/shipments', 'POST', data, true)
+        },
 
-            try {
-                const updatedShipment = await $fetch<Shipment>(`/api/shipments/${id}`, {
-                    method: 'PATCH',
-                    body: shipmentData,
-                    headers: this._getAuthHeaders()
-                })
-
-
-                // Update in local state
-                const index = this.shipments.findIndex(s => s.id === id)
-                if (index !== -1) {
-                    this.shipments[index] = updatedShipment
-                }
-
-                // Update current shipment if it's loaded
-                if (this.currentShipment && this.currentShipment.id === id) {
-                    this.currentShipment = updatedShipment
-                }
-
-                // Update stats if status changed
-                if (shipmentData.status) {
-                    await this.fetchStats()
-                }
-
-                return updatedShipment
-            } catch (error: any) {
-                this.error = error.message || `Failed to update shipment ${id}`
-                console.error(`Error updating shipment ${id}:`, error)
-                return null
-            } finally {
-                this.isLoading = false
-            }
+        async updateShipment(id: string, data: Partial<Shipment>) {
+            return this.saveShipment(`/api/shipments/${id}`, 'PATCH', data)
         },
 
         async updateShipmentStatus(id: string, status: Shipment['status'], notes?: string, location?: string) {
-            this.isLoading = true
-            this.error = null
-
-            try {
-                const eventData = {
-                    status,
-                    statusNotes: notes,
-                    location
-                }
-
-                const data = await $fetch<{ shipment: Shipment }>(`/api/shipments/${id}/update-status`, {
-                    method: 'POST',
-                    body: eventData,
-                    headers: this._getAuthHeaders()
-                })
-
-                const updatedShipment = data.shipment
-
-                // Update in local state
-                const index = this.shipments.findIndex(s => s.id === id)
-                if (index !== -1) {
-                    this.shipments[index] = updatedShipment
-                }
-
-                // Update current shipment if it's loaded
-                if (this.currentShipment && this.currentShipment.id === id) {
-                    this.currentShipment = updatedShipment
-                }
-
-                // Update stats
-                await this.fetchStats()
-
-                return updatedShipment
-            } catch (error: any) {
-                this.error = error.message || `Failed to update shipment status for ${id}`
-                console.error(`Error updating shipment status for ${id}:`, error)
-                return null
-            } finally {
-                this.isLoading = false
-            }
+            return this.saveShipment(`/api/shipments/${id}/update-status`, 'POST', { status, statusNotes: notes, location }, false, true)
         },
 
-        async addTrackingEvent(shipmentId: string, eventData: Partial<ShipmentEvent>) {
-            this.isLoading = true
-            this.error = null
-
-            try {
-                eventData.requestId ||= Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('')
-                const updatedShipment = await $fetch<Shipment>(`/api/shipments/${shipmentId}/tracking`, {
-                    method: 'POST',
-                    body: eventData,
-                    headers: this._getAuthHeaders()
-                })
-
-
-                // Update in local state
-                const index = this.shipments.findIndex(s => s.id === shipmentId)
-                if (index !== -1) {
-                    this.shipments[index] = updatedShipment
-                }
-
-                // Update current shipment if it's loaded
-                if (this.currentShipment && this.currentShipment.id === shipmentId) {
-                    this.currentShipment = updatedShipment
-                }
-
-                return updatedShipment
-            } catch (error: any) {
-                this.error = error.message || `Failed to add tracking event to shipment ${shipmentId}`
-                console.error(`Error adding tracking event to shipment ${shipmentId}:`, error)
-                return null
-            } finally {
-                this.isLoading = false
-            }
+        async addTrackingEvent(id: string, data: Partial<ShipmentEvent>) {
+            data.requestId ||= Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('')
+            return this.saveShipment(`/api/shipments/${id}/tracking`, 'POST', data)
         },
 
-        async fetchStats() {
+        async fetchStats(parent?: { sequence: number; context: string; headers: Record<string, string> }) {
+            const request = parent || this.beginRequest()
             try {
-                const data = await $fetch<{ stats: ShipmentStats }>('/api/shipments?stats=true', {
-                    headers: this._getAuthHeaders()
-                })
-                this.stats = data.stats
-            } catch (error: any) {
-                console.error('Error fetching shipment stats:', error)
-            }
+                const data = await $fetch<{ stats: ShipmentStats }>('/api/shipments?stats=true', { headers: request.headers })
+                if (this.isCurrent(request)) this.stats = data.stats
+            } catch (error) {
+                // A statistics failure must not turn a confirmed write into a failed write.
+                if (!parent) this.requestFailed(request, error)
+            } finally { if (!parent) this.finishRequest(request) }
         },
 
         resetFilters() {

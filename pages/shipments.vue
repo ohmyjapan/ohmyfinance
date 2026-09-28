@@ -49,15 +49,20 @@
       <div v-if="isLoading" class="flex justify-center items-center py-16">
         <Loader class="h-8 w-8 text-primary-main animate-spin" />
       </div>
+      <div v-else-if="error" role="alert" class="px-6 py-8 text-sm text-red-600">
+        <p>{{ t('shipmentPage.loadFailed') }}</p>
+        <p class="mt-1">{{ error }}</p>
+        <button class="mt-3 text-primary-main underline" @click="load">{{ t('shipmentPage.retry') }}</button>
+      </div>
       <div v-else-if="filteredShipments.length === 0" class="text-center py-16">
         <Package class="h-12 w-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
-        <p class="text-gray-500 dark:text-gray-400 text-sm">No shipments found</p>
+        <p class="text-gray-500 dark:text-gray-400 text-sm">{{ t('shipmentPage.noShipments') }}</p>
       </div>
       <div v-else class="divide-y divide-gray-100 dark:divide-white/5">
         <NuxtLink
           v-for="shipment in filteredShipments"
           :key="shipment.id"
-          :to="`/shipment/${shipment.id}`"
+          :to="localePath(`/shipment/${shipment.id}`)"
           class="flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-white/[0.03] transition-colors"
         >
           <div class="flex items-center gap-4 min-w-0">
@@ -69,10 +74,10 @@
             </div>
             <div class="min-w-0">
               <div class="text-sm font-medium text-gray-800 dark:text-white truncate">
-                {{ shipment.trackingNumber }}
+                {{ shipment.trackingNumber || t('shipmentPage.notRecorded') }}
               </div>
               <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                {{ getCarrierName(shipment.carrier) }} &middot; {{ formatDate(shipment.createdAt) }}
+                {{ getCarrierName(shipment.carrier || '') || t('shipmentPage.notRecorded') }} &middot; {{ formatDate(shipment.createdAt) }}
               </div>
             </div>
           </div>
@@ -92,24 +97,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useShipmentStore } from '~/stores/shipment'
+import { useUserStore } from '~/stores/user'
 import { Package, Loader, ChevronRight } from 'lucide-vue-next'
 
 const { t, locale } = useI18n()
 
-const isLoading = ref(true)
+const store = useShipmentStore()
+const user = useUserStore()
+const localePath = useLocalePath()
+const mounted = ref(false)
+const isLoading = computed(() => store.isLoading)
+const error = computed(() => store.error)
+const shipments = computed(() => store.shipments)
 const activeFilter = ref('all')
-
-interface Shipment {
-  id: string
-  trackingNumber: string
-  carrier: string
-  status: string
-  createdAt: string
-  estimatedDelivery: string
-}
-
-const shipments = ref<Shipment[]>([])
+const load = () => store.fetchShipments()
+watch([mounted, () => store.contextKey()], () => {
+  store.resetContext()
+  activeFilter.value = 'all'
+  if (mounted.value) void load()
+}, { flush: 'sync' })
+onMounted(() => { mounted.value = true })
+onBeforeUnmount(() => { mounted.value = false })
 
 const filterTabs = computed(() => [
   { label: t('common.all') || 'All', value: 'all' },
@@ -187,38 +197,4 @@ const getStatusBadgeClass = (status: string) => {
   }
 }
 
-// Generate mock data
-const generateMockShipments = (): Shipment[] => {
-  const carriers = ['fedex', 'ups', 'dhl', 'yamato', 'sagawa']
-  const statuses = ['pending', 'processing', 'in_transit', 'in_transit', 'in_transit', 'delivered', 'delivered', 'delivered', 'delivered', 'failed']
-  const items: Shipment[] = []
-
-  for (let i = 1; i <= 12; i++) {
-    const carrier = carriers[Math.floor(Math.random() * carriers.length)]
-    const status = statuses[Math.floor(Math.random() * statuses.length)]
-    const created = new Date()
-    created.setDate(created.getDate() - Math.floor(Math.random() * 30))
-
-    const est = new Date(created)
-    est.setDate(est.getDate() + 3 + Math.floor(Math.random() * 5))
-
-    items.push({
-      id: String(1000 + i),
-      trackingNumber: `${carrier.toUpperCase()}-${(1000000 + Math.floor(Math.random() * 9000000))}`,
-      carrier,
-      status,
-      createdAt: created.toISOString(),
-      estimatedDelivery: est.toISOString()
-    })
-  }
-
-  return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-}
-
-onMounted(async () => {
-  // Simulate API loading
-  await new Promise(resolve => setTimeout(resolve, 400))
-  shipments.value = generateMockShipments()
-  isLoading.value = false
-})
 </script>

@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),{ObjectId}=require('mongodb');
 const group=require('./helpers/group-session.cjs'),storeFactory=require('./helpers/shipment-store.cjs');
 const claims=token=>JSON.parse(Buffer.from(token.split('.')[1],'base64url'));
-module.exports=async({db,call,token,other,pass})=>{
+module.exports=async({db,call,token,other,origin,pass})=>{
  const a=await group(call,token,'Shipment company A'),b=await group(call,token,'Shipment company B'),ga=new ObjectId(a.organizationId),gb=new ObjectId(b.organizationId),owner=new ObjectId(claims(token).userId),peer=new ObjectId(claims(other).userId);
  const own=new ObjectId(),otherTx=new ObjectId(),legacy=new ObjectId(),record={date:new Date('2026-09-22'),amount:67000,type:'支出',status:'completed',cardAccounting:{preserve:true},notes:'Reviewed purchase',timeline:[]};
  await db.collection('transactions').insertMany([{...record,_id:own,organizationId:ga},{...record,_id:otherTx,organizationId:gb},{...record,_id:legacy}]);
@@ -54,6 +54,7 @@ module.exports=async({db,call,token,other,pass})=>{
  await req('/'+sibling.id+'/update-status','POST',{status:'delivered'});await req(tracking,'POST',scan);assert.equal((await req('/'+sibling.id)).data.status,'delivered');
  pass('tracking identity rejects conflicting replay and does not overwrite a newer shipment status');
 
+ await require('./shipment-pages-integration.cjs')({db,call,token:memberToken,organizationId:a.organizationId,id:sibling.id,purchaseId:own,origin,pass});
  await db.collection('organizations').updateOne({_id:ga,'members.userId':peer},{$set:{'members.$.role':'viewer'}});
  for(const path of ['', '?stats=true', '/'+sibling.id])assert.equal((await req(path,'GET',undefined,memberToken)).status,200);
  const writes=[['','POST',{}],['/'+sibling.id,'PATCH',{notes:'Denied'}],['/'+sibling.id,'PUT',{notes:'Denied'}],['/'+sibling.id,'DELETE',{}],['/'+sibling.id+'/update-status','POST',{status:'pending'}],['/'+sibling.id+'/transactions','POST',{transactionIds:[String(own)]}],['/'+sibling.id+'/transactions','DELETE',{transactionIds:[String(own)]}],['/'+sibling.id+'/tracking','POST',{requestId:'denied',title:'Denied'}]];

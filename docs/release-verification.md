@@ -187,3 +187,19 @@ POST itself has no idempotency key; tracking/link retry evidence does not establ
 idempotent shipment creation. Concurrent ledger deletion can leave an internal
 dangling reference; public reads omit it and unlink can remove it. No production
 assignment/migration, actual browser visual validation or OS-kill matrix is claimed.
+
+The shipment list/detail pages now consume the company-scoped store. Ten compiled
+page/store checks cover real records, missing fields, errors/retry, route changes,
+company/session context, viewer controls, late writes and retained tracking request
+identity. The shipment API suite adds a compiled-page check against the built app:
+a lost response after a saved scan must reuse the same event on retry. With
+`OMF_TEST_CHROME_PORT`, it also runs two real Chrome checks using normal synthetic
+login, member/viewer pages, linked purchases, reload persistence and missing records.
+
+The form confirms a manual tracking/status update only after the server responds.
+It does not contact carriers or send customer notifications. Unimplemented label,
+proof-of-delivery, email and carrier cancellation actions are shown as unavailable.
+Retry identity remains in the mounted form; a browser reload after an uncertain
+write does not yet restore that pending form. Late responses cannot refill records
+after page, company or session changes. These are new UI/request ownership guards;
+independent review and the previously recorded broader release work remain pending.

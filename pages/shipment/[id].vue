@@ -15,27 +15,29 @@
       <Loader size="32" class="text-primary-main animate-spin" />
     </div>
 
-    <div v-else-if="error" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
+    <div v-else-if="error && !shipment" role="alert" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
       {{ error }}
+      <button class="ml-3 underline" @click="load">{{ t('shipmentPage.retry') }}</button>
     </div>
 
-    <template v-else>
+    <template v-else-if="shipment">
+      <p v-if="actionMessage" role="status" class="mb-4 text-sm text-primary-main">{{ actionMessage }}</p>
       <!-- Shipment Summary Card -->
       <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm overflow-hidden mb-6">
         <div class="p-6">
           <div class="flex flex-col md:flex-row md:justify-between md:items-center mb-6">
             <div>
-              <h2 class="text-xl font-semibold text-gray-800">#{{ shipment.id }}</h2>
+              <h2 class="text-xl font-semibold text-gray-800 break-all">#{{ shipment.id }}</h2>
               <p class="text-sm text-gray-500">
-                {{ t('shipmentPage.createdOn', { date: formatDate(shipment.createdAt) }) }}
+                {{ t('shipmentPage.createdOn') }} &middot; {{ formatDate(shipment.createdAt) }}
               </p>
             </div>
             <div class="mt-4 md:mt-0 flex items-center space-x-3">
               <ShipmentStatusBadge :status="shipment.status" />
               <button
-                  v-if="shipment.status !== 'delivered' && shipment.status !== 'cancelled'"
+                  v-if="canEdit"
                   class="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
-                  @click="updateStatus = true"
+                  @click="openStatus"
               >
                 {{ t('shipmentPage.updateStatus') }}
               </button>
@@ -46,18 +48,20 @@
             <div>
               <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.trackingNumber') }}</p>
               <div class="flex items-center">
-                <p class="text-base font-medium text-gray-800 mr-2">{{ shipment.trackingNumber }}</p>
+                <p class="text-base font-medium text-gray-800 mr-2 break-all">{{ shipment.trackingNumber || t('shipmentPage.notRecorded') }}</p>
                 <button
                     class="text-gray-400 hover:text-gray-600"
+                    v-if="shipment.trackingNumber"
                     @click="copyToClipboard(shipment.trackingNumber)"
                 >
                   <Clipboard size="14" />
                 </button>
               </div>
               <div class="flex items-center mt-2">
-                <p class="text-sm text-gray-600 mr-2">{{ getCarrierName(shipment.carrier) }}</p>
+                <p class="text-sm text-gray-600 mr-2">{{ getCarrierName(shipment.carrier || '') || t('shipmentPage.notRecorded') }}</p>
                 <button
                     class="text-primary-main hover:text-primary-dark text-sm flex items-center"
+                    v-if="shipment.trackingNumber && shipment.carrier"
                     @click="trackShipment(shipment.trackingNumber, shipment.carrier)"
                 >
                   <ExternalLink size="12" class="mr-1" />
@@ -66,13 +70,16 @@
               </div>
             </div>
             <div>
-              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.linkedOrder') }}</p>
-              <p class="text-base font-medium text-gray-800">{{ t('shipmentPage.orderNumber', { id: shipment.orderId }) }}</p>
-              <p class="text-sm text-gray-600">
-                <button class="text-primary-main hover:text-primary-dark">
-                  {{ t('shipmentPage.viewOrder') }}
-                </button>
-              </p>
+              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.linkedPurchases') }}</p>
+              <ul v-if="shipment.transactions?.length" class="space-y-2">
+                <li v-for="purchase in shipment.transactions" :key="purchase._id">
+                  <NuxtLink :to="localePath(`/transactions/${purchase._id}`)" class="text-sm text-primary-main underline break-all">
+                    {{ purchase.referenceNumber || purchase._id }}
+                  </NuxtLink>
+                  <p class="text-xs text-gray-500">{{ formatDate(purchase.date) }}</p>
+                </li>
+              </ul>
+              <p v-else class="text-sm text-gray-500">{{ t('shipmentPage.noLinkedPurchases') }}</p>
             </div>
             <div>
               <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.estimatedDelivery') }}</p>
@@ -83,23 +90,18 @@
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.customerInfo') }}</p>
-              <p class="text-base font-medium text-gray-800">{{ shipment.customer.name }}</p>
-              <p class="text-sm text-gray-600">{{ shipment.customer.email }}</p>
-              <p class="text-sm text-gray-600">
-                <button class="text-primary-main hover:text-primary-dark mt-1">
-                  {{ t('shipmentPage.viewCustomer') }}
-                </button>
-              </p>
+              <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.recipient') }}</p>
+              <p class="text-base font-medium text-gray-800">{{ address?.name || t('shipmentPage.notRecorded') }}</p>
             </div>
             <div>
               <p class="text-sm font-medium text-gray-500 mb-1">{{ t('shipmentPage.shippingAddress') }}</p>
-              <p class="text-base font-medium text-gray-800">{{ shipment.customer.name }}</p>
-              <p class="text-sm text-gray-600">{{ shipment.destination.address }}</p>
-              <p class="text-sm text-gray-600">
-                {{ shipment.destination.city }}, {{ shipment.destination.state }} {{ shipment.destination.postalCode }}
-              </p>
-              <p class="text-sm text-gray-600">{{ getCountryName(shipment.destination.country) }}</p>
+              <template v-if="address">
+                <p class="text-sm text-gray-600">{{ address.line1 }}</p>
+                <p v-if="address.line2" class="text-sm text-gray-600">{{ address.line2 }}</p>
+                <p class="text-sm text-gray-600">{{ [address.city, address.state, address.postalCode].filter(Boolean).join(' ') }}</p>
+                <p class="text-sm text-gray-600">{{ getCountryName(address.country) }}</p>
+              </template>
+              <p v-else class="text-sm text-gray-600">{{ t('shipmentPage.notRecorded') }}</p>
             </div>
           </div>
         </div>
@@ -115,7 +117,8 @@
             </div>
             <div class="p-6">
               <div class="flow-root">
-                <ul class="-mb-8">
+                <p v-if="!shipment.events?.length" class="text-sm text-gray-500">{{ t('shipmentPage.noEvents') }}</p>
+                <ul v-else class="-mb-8">
                   <li
                       v-for="(event, index) in shipment.events"
                       :key="index"
@@ -179,27 +182,15 @@
               <dl class="space-y-4">
                 <div>
                   <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.serviceType') }}</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.serviceType }}</dd>
-                </div>
-                <div>
-                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.packageType') }}</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.packageType }}</dd>
+                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.shippingMethod?.name || t('shipmentPage.notRecorded') }}</dd>
                 </div>
                 <div>
                   <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.weight') }}</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.weight }} {{ shipment.weightUnit }}</dd>
+                  <dd class="mt-1 text-sm text-gray-900">{{ weightText }}</dd>
                 </div>
                 <div>
                   <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.dimensions') }}</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.dimensions }}</dd>
-                </div>
-                <div>
-                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.insurance') }}</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.insurance ? formatCurrency(parseFloat(shipment.insurance)) : t('shipmentPage.noInsurance') }}</dd>
-                </div>
-                <div>
-                  <dt class="text-sm font-medium text-gray-500">{{ t('shipmentPage.signatureRequired') }}</dt>
-                  <dd class="mt-1 text-sm text-gray-900">{{ shipment.signatureRequired ? t('common.yes') : t('common.no') }}</dd>
+                  <dd class="mt-1 text-sm text-gray-900">{{ dimensionsText }}</dd>
                 </div>
               </dl>
             </div>
@@ -211,30 +202,7 @@
               <h3 class="text-lg font-medium text-gray-800">{{ t('shipmentPage.actions') }}</h3>
             </div>
             <div class="p-6">
-              <div class="space-y-4">
-                <button class="w-full inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-main hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
-                  <Printer class="mr-2 h-4 w-4" />
-                  {{ t('shipmentPage.printLabel') }}
-                </button>
-                <button class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
-                  <FileText class="mr-2 h-4 w-4 text-gray-500" />
-                  {{ t('shipmentPage.downloadPod') }}
-                </button>
-                <button
-                    class="w-full inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main"
-                    @click="sendTrackingInfo = true"
-                >
-                  <Mail class="mr-2 h-4 w-4 text-gray-500" />
-                  {{ t('shipmentPage.emailTracking') }}
-                </button>
-                <button
-                    v-if="shipment.status !== 'cancelled'"
-                    class="w-full inline-flex items-center px-4 py-2 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                >
-                  <AlertOctagon class="mr-2 h-4 w-4 text-red-500" />
-                  {{ t('shipmentPage.cancelShipment') }}
-                </button>
-              </div>
+              <p class="text-sm text-gray-500">{{ t('shipmentPage.unavailableActions') }}</p>
             </div>
           </div>
         </div>
@@ -243,7 +211,7 @@
 
     <!-- Status Update Modal -->
     <div
-        v-if="updateStatus"
+        v-if="updateStatus && canEdit && shipment"
         class="fixed inset-0 z-10 overflow-y-auto"
         aria-labelledby="modal-title"
         role="dialog"
@@ -253,7 +221,7 @@
         <div
             class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
             aria-hidden="true"
-            @click="updateStatus = false"
+            @click="!saving && (updateStatus = false)"
         ></div>
 
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
@@ -280,15 +248,10 @@
               <select
                   id="status"
                   v-model="newStatus"
+                  :disabled="saving || !!pendingEvent"
                   class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm rounded-md"
               >
-                <option value="pending">{{ t('shipmentPage.statusPending') }}</option>
-                <option value="processing">{{ t('shipmentPage.statusProcessing') }}</option>
-                <option value="in_transit">{{ t('shipmentPage.statusInTransit') }}</option>
-                <option value="out_for_delivery">{{ t('shipmentPage.statusOutForDelivery') }}</option>
-                <option value="delivered">{{ t('shipmentPage.statusDelivered') }}</option>
-                <option value="delayed">{{ t('shipmentPage.statusDelayed') }}</option>
-                <option value="exception">{{ t('shipmentPage.statusException') }}</option>
+                <option v-for="status in statuses" :key="status" :value="status">{{ t(`shipments.statuses.${status}`) }}</option>
               </select>
             </div>
             <div class="mt-4">
@@ -297,6 +260,7 @@
                   type="text"
                   id="location"
                   v-model="statusLocation"
+                  :disabled="saving || !!pendingEvent"
                   class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                   :placeholder="t('shipmentPage.locationPlaceholder')"
               />
@@ -306,30 +270,21 @@
               <textarea
                   id="notes"
                   v-model="statusNotes"
+                  :disabled="saving || !!pendingEvent"
                   rows="3"
                   class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
                   :placeholder="t('shipmentPage.notesPlaceholder')"
               ></textarea>
             </div>
-            <div class="mt-4 flex items-start">
-              <div class="flex items-center h-5">
-                <input
-                    id="notify-customer"
-                    v-model="notifyCustomer"
-                    type="checkbox"
-                    class="focus:ring-primary-main h-4 w-4 text-primary-main border-gray-300 rounded"
-                />
-              </div>
-              <div class="ml-3 text-sm">
-                <label for="notify-customer" class="font-medium text-gray-700">{{ t('shipmentPage.notifyCustomer') }}</label>
-                <p class="text-gray-500">{{ t('shipmentPage.notifyCustomerDesc') }}</p>
-              </div>
-            </div>
+            <p class="mt-4 text-sm text-gray-500">{{ t('shipmentPage.recordOnly') }}</p>
+            <p v-if="pendingEvent && !saving" class="mt-3 text-sm text-gray-500">{{ t('shipmentPage.retrySameUpdate') }}</p>
+            <p v-if="error" role="alert" class="mt-3 text-sm text-red-600">{{ error }}</p>
           </div>
           <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
                 type="button"
                 class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-primary-main text-base font-medium text-white hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:ml-3 sm:w-auto sm:text-sm"
+                :disabled="saving"
                 @click="updateShipmentStatus"
             >
               {{ t('shipmentPage.updateStatus') }}
@@ -337,7 +292,7 @@
             <button
                 type="button"
                 class="mt-3 w-full inline-flex justify-center rounded-xl border border-gray-300 dark:border-white/10 shadow-sm px-4 py-2 bg-white dark:bg-white/5 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
-                @click="updateStatus = false"
+                @click="!saving && (updateStatus = false)"
             >
               {{ t('common.cancel') }}
             </button>
@@ -346,130 +301,13 @@
       </div>
     </div>
 
-    <!-- Email Tracking Modal -->
-    <div
-        v-if="sendTrackingInfo"
-        class="fixed inset-0 z-10 overflow-y-auto"
-        aria-labelledby="modal-title"
-        role="dialog"
-        aria-modal="true"
-    >
-      <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        <div
-            class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-            aria-hidden="true"
-            @click="sendTrackingInfo = false"
-        ></div>
-
-        <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-
-        <div class="inline-block align-bottom bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <div class="sm:flex sm:items-start">
-              <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-primary-main/20 sm:mx-0 sm:h-10 sm:w-10">
-                <Mail class="h-6 w-6 text-primary-main" />
-              </div>
-              <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                  {{ t('shipmentPage.emailTrackingTitle') }}
-                </h3>
-                <div class="mt-2">
-                  <p class="text-sm text-gray-500">
-                    {{ t('shipmentPage.emailTrackingDesc') }}
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div class="mt-4">
-              <label for="recipient-email" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.recipientEmail') }}</label>
-              <input
-                  type="email"
-                  id="recipient-email"
-                  v-model="recipientEmail"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
-                  :placeholder="shipment.customer.email"
-              />
-              <p class="mt-1 text-xs text-gray-500">{{ t('shipmentPage.leaveBlankForCustomer') }}</p>
-            </div>
-            <div class="mt-4">
-              <label for="additional-recipients" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.additionalRecipients') }}</label>
-              <input
-                  type="text"
-                  id="additional-recipients"
-                  v-model="additionalRecipients"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
-                  placeholder="email@example.com, another@example.com"
-              />
-              <p class="mt-1 text-xs text-gray-500">{{ t('shipmentPage.separateEmails') }}</p>
-            </div>
-            <div class="mt-4">
-              <label for="email-message" class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.additionalMessage') }}</label>
-              <textarea
-                  id="email-message"
-                  v-model="emailMessage"
-                  rows="3"
-                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-main focus:border-primary-main sm:text-sm"
-                  :placeholder="t('shipmentPage.messagePlaceholder')"
-              ></textarea>
-            </div>
-            <div class="mt-4">
-              <label class="block text-sm font-medium text-gray-700">{{ t('shipmentPage.includeInEmail') }}</label>
-              <div class="mt-2 space-y-2">
-                <div class="flex items-center">
-                  <input
-                      id="include-tracking"
-                      type="checkbox"
-                      checked
-                      disabled
-                      class="h-4 w-4 text-primary-main border-gray-300 rounded focus:ring-primary-main"
-                  />
-                  <label for="include-tracking" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeTracking') }}</label>
-                </div>
-                <div class="flex items-center">
-                  <input
-                      id="include-eta"
-                      type="checkbox"
-                      checked
-                      class="h-4 w-4 text-primary-main border-gray-300 rounded focus:ring-primary-main"
-                  />
-                  <label for="include-eta" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeEta') }}</label>
-                </div>
-                <div class="flex items-center">
-                  <input
-                      id="include-order"
-                      type="checkbox"
-                      checked
-                      class="h-4 w-4 text-primary-main border-gray-300 rounded focus:ring-primary-main"
-                  />
-                  <label for="include-order" class="ml-2 text-sm text-gray-700">{{ t('shipmentPage.includeOrder') }}</label>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-            <button
-                type="button"
-                class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-primary-main text-base font-medium text-white hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:ml-3 sm:w-auto sm:text-sm"
-                @click="sendTrackingEmail"
-            >
-              {{ t('shipmentPage.sendEmail') }}
-            </button>
-            <button
-                type="button"
-                class="mt-3 w-full inline-flex justify-center rounded-xl border border-gray-300 dark:border-white/10 shadow-sm px-4 py-2 bg-white dark:bg-white/5 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
-                @click="sendTrackingInfo = false"
-            >
-              {{ t('common.cancel') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useShipmentStore, type ShipmentEvent } from '~/stores/shipment'
+import { useUserStore } from '~/stores/user'
 import {
   ArrowLeft,
   Clipboard,
@@ -480,9 +318,6 @@ import {
   AlertTriangle,
   AlertOctagon,
   Clock,
-  FileText,
-  Printer,
-  Mail,
   Loader
 } from 'lucide-vue-next'
 
@@ -492,51 +327,57 @@ const route = useRoute()
 const router = useRouter()
 const shipmentId = computed(() => route.params.id as string)
 
-// State
-const shipment = ref(null)
-const isLoading = ref(true)
-const error = ref(null)
-
-// Modal states
+const store = useShipmentStore()
+const user = useUserStore()
+const localePath = useLocalePath()
+const mounted = ref(false)
+const shipment = computed(() => store.currentShipment)
+const isLoading = computed(() => store.isLoading && !shipment.value)
+const error = computed(() => store.error)
+const canEdit = computed(() => ['owner', 'admin', 'member'].includes(user.currentOrganization?.role))
 const updateStatus = ref(false)
-const sendTrackingInfo = ref(false)
-
-// Form values for status update
-const newStatus = ref('')
+const newStatus = ref<NonNullable<typeof shipment.value>['status']>('pending')
 const statusLocation = ref('')
 const statusNotes = ref('')
-const notifyCustomer = ref(true)
-
-// Form values for sending tracking info
-const recipientEmail = ref('')
-const additionalRecipients = ref('')
-const emailMessage = ref('')
-
-// Load shipment data
-onMounted(async () => {
-  try {
-    // In a real app, this would be an API call
-    // await fetchShipment(shipmentId.value)
-
-    // For now, we'll simulate an API response with mock data
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    // Generate mock shipment data
-    shipment.value = generateMockShipment(shipmentId.value)
-
-    // Initialize the newStatus with the current status
-    newStatus.value = shipment.value.status
-  } catch (err) {
-    error.value = 'Failed to load shipment data'
-    console.error(err)
-  } finally {
-    isLoading.value = false
-  }
+const pendingEvent = ref<Partial<ShipmentEvent> | null>(null)
+const saving = ref(false)
+const actionMessage = ref('')
+const statuses = ['pending', 'processing', 'shipped', 'in_transit', 'out_for_delivery', 'delivered', 'failed', 'returned', 'cancelled', 'delayed', 'exception']
+const address = computed(() => shipment.value?.shippingAddress)
+const weightText = computed(() => {
+  const weight = shipment.value?.weight
+  return weight?.value == null ? t('shipmentPage.notRecorded') : `${weight.value} ${weight.unit || ''}`.trim()
 })
+const dimensionsText = computed(() => {
+  const size = shipment.value?.dimensions
+  return !size || [size.length, size.width, size.height].some(value => value == null)
+    ? t('shipmentPage.notRecorded') : `${size.length} × ${size.width} × ${size.height} ${size.unit || ''}`.trim()
+})
+const load = () => store.fetchShipmentById(shipmentId.value)
+watch([mounted, () => store.contextKey(), shipmentId], () => {
+  store.resetContext()
+  updateStatus.value = false
+  pendingEvent.value = null
+  saving.value = false
+  actionMessage.value = ''
+  if (mounted.value) void load()
+}, { flush: 'sync' })
+onMounted(() => { mounted.value = true })
+onBeforeUnmount(() => { mounted.value = false })
+const openStatus = () => {
+  if (!canEdit.value || !shipment.value) return
+  if (!pendingEvent.value) {
+    newStatus.value = shipment.value.status
+    statusLocation.value = ''
+    statusNotes.value = ''
+  }
+  actionMessage.value = ''
+  updateStatus.value = true
+}
 
 // Format date with locale
-const formatDate = (isoDate: string) => {
-  if (!isoDate) return t('common.unknown')
+const formatDate = (isoDate?: string) => {
+  if (!isoDate || !Number.isFinite(new Date(isoDate).getTime())) return t('shipmentPage.notRecorded')
 
   const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
   return new Date(isoDate).toLocaleDateString(dateLocale, {
@@ -558,21 +399,9 @@ const formatTime = (isoDate: string) => {
   })
 }
 
-// Format currency with locale
-const formatCurrency = (amount: number) => {
-  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
-  return new Intl.NumberFormat(currencyLocale, {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount)
-}
-
 // Get carrier name from code
 const getCarrierName = (code: string) => {
-  const carriers = {
+  const carriers: Record<string, string> = {
     fedex: 'FedEx',
     ups: 'UPS',
     usps: 'USPS',
@@ -583,7 +412,8 @@ const getCarrierName = (code: string) => {
 }
 
 // Get country name from code
-const getCountryName = (code: string) => {
+const getCountryName = (code?: string) => {
+  if (!code) return t('shipmentPage.notRecorded')
   const countryKey = `countries.${code.toLowerCase()}`
   const translated = t(countryKey)
   // Return the translation if found, otherwise return code
@@ -591,7 +421,7 @@ const getCountryName = (code: string) => {
 }
 
 // Get ETA class and text
-const getETAClass = (shipment) => {
+const getETAClass = (shipment: any) => {
   if (shipment.status === 'delivered') {
     return 'text-green-600'
   }
@@ -613,7 +443,8 @@ const getETAClass = (shipment) => {
   return 'text-gray-900'
 }
 
-const getETAText = (shipment) => {
+const getETAText = (shipment: any) => {
+  if (!shipment.estimatedDelivery || !Number.isFinite(new Date(shipment.estimatedDelivery).getTime())) return ''
   if (shipment.status === 'delivered') {
     return t('shipmentPage.etaDelivered')
   }
@@ -707,15 +538,17 @@ const getEventIconColor = (type: string) => {
   }
 }
 
-// Copy to clipboard
-const copyToClipboard = (text: string) => {
-  navigator.clipboard.writeText(text)
-  // Could add a toast notification here
-  alert(t('shipmentPage.copiedToClipboard', { text }))
+// Confirm browser actions only after their result is known.
+const copyToClipboard = async (text?: string) => {
+  if (!text) return
+  try { await navigator.clipboard.writeText(text); actionMessage.value = t('shipmentPage.copiedToClipboard') }
+  catch { actionMessage.value = t('shipmentPage.copyFailed') }
 }
 
 // Track shipment externally
-const trackShipment = (trackingNumber: string, carrier: string) => {
+const trackShipment = (trackingNumber?: string, carrier?: string) => {
+  if (!trackingNumber || !carrier) return
+  trackingNumber = encodeURIComponent(trackingNumber)
   // Open carrier tracking site in new window
   let trackingUrl = ''
 
@@ -733,267 +566,30 @@ const trackShipment = (trackingNumber: string, carrier: string) => {
       trackingUrl = `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`
       break
     default:
-      alert(t('shipmentPage.noTrackingUrl'))
+      actionMessage.value = t('shipmentPage.noTrackingUrl')
       return
   }
 
-  window.open(trackingUrl, '_blank')
+  window.open(trackingUrl, '_blank', 'noopener,noreferrer')
 }
 
-// Update shipment status
-const updateShipmentStatus = () => {
-  // In a real app, this would make an API call
-
-  // Add new event to the timeline
-  const now = new Date().toISOString()
-
-  const newEvent = {
-    type: newStatus.value,
-    title: getStatusTitle(newStatus.value),
-    timestamp: now,
-    description: statusNotes.value,
-    location: statusLocation.value
-  }
-
-  // Update shipment status and add new event
-  shipment.value.status = newStatus.value
-  shipment.value.events.unshift(newEvent)
-
-  // Close modal
+// One request identity is retained while this form retries an uncertain result.
+const updateShipmentStatus = async () => {
+  if (!canEdit.value || !shipment.value || saving.value) return
+  const id = shipmentId.value, context = store.contextKey()
+  pendingEvent.value ||= { type: newStatus.value, title: getStatusTitle(newStatus.value), status: newStatus.value,
+    description: statusNotes.value, location: statusLocation.value }
+  saving.value = true
+  const result = await store.addTrackingEvent(id, pendingEvent.value)
+  if (context !== store.contextKey() || id !== shipmentId.value || !mounted.value) return
+  saving.value = false
+  if (!result) return
+  pendingEvent.value = null
   updateStatus.value = false
-
-  // Reset form
-  statusLocation.value = ''
-  statusNotes.value = ''
-
-  // Show success message (in a real app, this would be a toast)
-  alert(t('shipmentPage.statusUpdateSuccess'))
+  actionMessage.value = t('shipmentPage.statusUpdateSuccess')
 }
 
-// Send tracking email
-const sendTrackingEmail = () => {
-  // In a real app, this would make an API call
+// Persist the localized status label instead of a missing translation key.
+const getStatusTitle = (status: string) => t(`shipments.statuses.${status}`)
 
-  // Get the email recipient
-  const email = recipientEmail.value || shipment.value.customer.email
-
-  // Additional recipients
-  const additional = additionalRecipients.value
-      .split(',')
-      .map(e => e.trim())
-      .filter(e => e)
-
-  // Log the email details (for demo purposes)
-  console.log('Sending tracking info to:', email)
-  console.log('Additional recipients:', additional)
-  console.log('Message:', emailMessage.value)
-
-  // Close modal
-  sendTrackingInfo.value = false
-
-  // Reset form
-  recipientEmail.value = ''
-  additionalRecipients.value = ''
-  emailMessage.value = ''
-
-  // Show success message (in a real app, this would be a toast)
-  alert(t('shipmentPage.emailSentSuccess'))
-}
-
-// Helper to get status title
-const getStatusTitle = (status: string) => {
-  const statusKeys = {
-    pending: 'eventPending',
-    processing: 'eventProcessing',
-    in_transit: 'eventInTransit',
-    out_for_delivery: 'eventOutForDelivery',
-    delivered: 'eventDelivered',
-    delayed: 'eventDelayed',
-    exception: 'eventException'
-  }
-
-  const key = statusKeys[status]
-  return key ? t(`shipmentPage.${key}`) : t('shipmentPage.statusUpdated')
-}
-
-// Generate mock shipment for demo
-const generateMockShipment = (id: string) => {
-  // Create dates
-  const now = new Date()
-  const createdDate = new Date(now.getTime())
-  createdDate.setDate(now.getDate() - Math.floor(Math.random() * 10)) // Last 10 days
-
-  // Determine status and events randomly
-  const possibleStatuses = ['pending', 'processing', 'in_transit', 'delivered', 'delayed']
-  const randomStatus = possibleStatuses[Math.floor(Math.random() * possibleStatuses.length)]
-
-  // Create events based on status
-  const events = []
-
-  // Always add created event
-  events.push({
-    type: 'created',
-    title: 'Shipment Created',
-    timestamp: createdDate.toISOString(),
-    description: 'Shipping label created',
-    location: 'Warehouse'
-  })
-
-  // Add processing event
-  if (randomStatus !== 'pending') {
-    const processingDate = new Date(createdDate.getTime())
-    processingDate.setHours(processingDate.getHours() + 4)
-
-    events.push({
-      type: 'processing',
-      title: 'Shipment Processing',
-      timestamp: processingDate.toISOString(),
-      description: 'Package received at origin facility',
-      location: 'Origin Sorting Facility'
-    })
-  }
-
-  // Add in_transit event
-  if (randomStatus === 'in_transit' || randomStatus === 'delivered' || randomStatus === 'delayed') {
-    const transitDate = new Date(createdDate.getTime())
-    transitDate.setHours(transitDate.getHours() + 12)
-
-    events.push({
-      type: 'in_transit',
-      title: 'In Transit',
-      timestamp: transitDate.toISOString(),
-      description: 'Package in transit to destination',
-      location: 'In Transit'
-    })
-
-    // Add additional transit scan
-    const transitDate2 = new Date(transitDate.getTime())
-    transitDate2.setHours(transitDate2.getHours() + 12)
-
-    events.push({
-      type: 'in_transit',
-      title: 'In Transit',
-      timestamp: transitDate2.toISOString(),
-      description: 'Package arrived at destination facility',
-      location: 'Destination Sorting Facility'
-    })
-  }
-
-  // Add out_for_delivery event
-  if (randomStatus === 'delivered') {
-    const deliveryDate = new Date(createdDate.getTime())
-    deliveryDate.setHours(deliveryDate.getHours() + 36)
-
-    events.push({
-      type: 'out_for_delivery',
-      title: 'Out for Delivery',
-      timestamp: deliveryDate.toISOString(),
-      description: 'Package is out for delivery',
-      location: 'Local Delivery Facility'
-    })
-
-    // Add delivered event
-    const deliveredDate = new Date(deliveryDate.getTime())
-    deliveredDate.setHours(deliveredDate.getHours() + 6)
-
-    events.push({
-      type: 'delivered',
-      title: 'Delivered',
-      timestamp: deliveredDate.toISOString(),
-      description: 'Package has been delivered',
-      location: 'Recipient Address'
-    })
-  }
-
-  // Add delayed event
-  if (randomStatus === 'delayed') {
-    const delayedDate = new Date(createdDate.getTime())
-    delayedDate.setHours(delayedDate.getHours() + 24)
-
-    events.push({
-      type: 'delayed',
-      title: 'Shipment Delayed',
-      timestamp: delayedDate.toISOString(),
-      description: 'Package delivery delayed due to weather conditions',
-      location: 'Transit Hub'
-    })
-  }
-
-  // Sort events by date (newest first)
-  events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-
-  // Create estimated delivery date
-  let estimatedDelivery = new Date(createdDate.getTime())
-  estimatedDelivery.setDate(estimatedDelivery.getDate() + 3 + Math.floor(Math.random() * 4)) // 3-7 days
-
-  if (randomStatus === 'delivered') {
-    // For delivered items, set ETA to delivery date
-    const deliveredEvent = events.find(event => event.type === 'delivered')
-    if (deliveredEvent) {
-      estimatedDelivery = new Date(deliveredEvent.timestamp)
-    }
-  } else if (randomStatus === 'delayed') {
-    // For delayed items, set ETA further out
-    estimatedDelivery.setDate(estimatedDelivery.getDate() + 3) // Add 3 more days
-  }
-
-  // Random carrier
-  const carriers = ['fedex', 'ups', 'usps', 'dhl']
-  const randomCarrier = carriers[Math.floor(Math.random() * carriers.length)]
-
-  // Random destination
-  const countries = ['US', 'CA', 'UK', 'AU', 'DE', 'JP']
-  const randomCountry = countries[Math.floor(Math.random() * countries.length)]
-
-  const cities = {
-    US: ['New York', 'Los Angeles', 'Chicago', 'Houston', 'Miami'],
-    CA: ['Toronto', 'Vancouver', 'Montreal', 'Calgary', 'Ottawa'],
-    UK: ['London', 'Manchester', 'Birmingham', 'Glasgow', 'Liverpool'],
-    AU: ['Sydney', 'Melbourne', 'Brisbane', 'Perth', 'Adelaide'],
-    DE: ['Berlin', 'Munich', 'Hamburg', 'Frankfurt', 'Cologne'],
-    JP: ['Tokyo', 'Osaka', 'Kyoto', 'Yokohama', 'Nagoya']
-  }
-
-  const states = {
-    US: ['NY', 'CA', 'IL', 'TX', 'FL'],
-    CA: ['ON', 'BC', 'QC', 'AB', 'MB'],
-    UK: ['LDN', 'MAN', 'BIR', 'GLA', 'LIV'],
-    AU: ['NSW', 'VIC', 'QLD', 'WA', 'SA'],
-    DE: ['BE', 'BY', 'HH', 'HE', 'NW'],
-    JP: ['TK', 'OS', 'KY', 'KN', 'AI']
-  }
-
-  const randomCity = cities[randomCountry][Math.floor(Math.random() * cities[randomCountry].length)]
-  const randomState = states[randomCountry][Math.floor(Math.random() * states[randomCountry].length)]
-
-  // Mock shipment details
-  return {
-    id,
-    trackingNumber: `${randomCarrier.toUpperCase()}-${Math.floor(Math.random() * 10000000)}`,
-    carrier: randomCarrier,
-    status: randomStatus,
-    createdAt: createdDate.toISOString(),
-    estimatedDelivery: estimatedDelivery.toISOString(),
-    events,
-    customer: {
-      name: 'John Anderson',
-      email: 'john.anderson@example.com'
-    },
-    orderId: `ORD-${9000 + parseInt(id.replace(/\D/g, ''))}`,
-    destination: {
-      address: `${123 + parseInt(id.replace(/\D/g, ''))} Main St`,
-      city: randomCity,
-      state: randomState,
-      postalCode: `${10000 + Math.floor(Math.random() * 90000)}`,
-      country: randomCountry
-    },
-    serviceType: 'Standard',
-    packageType: 'Package',
-    weight: (1 + Math.random() * 9).toFixed(2),
-    weightUnit: 'kg',
-    dimensions: '30cm x 20cm x 10cm',
-    insurance: Math.random() > 0.5 ? (50 + Math.random() * 500).toFixed(2) : null,
-    signatureRequired: Math.random() > 0.7
-  }
-}
 </script>

@@ -8,6 +8,14 @@ export const timeoutMs = 900000;
 export default {
   name: 'finance-capture-workflow',
   covers: [
+    'components/shipment/ShipmentStatusBadge.vue',
+    'pages/shipments.vue',
+    'pages/shipment/[id].vue',
+    'scripts/helpers/shipment-page.cjs',
+    'scripts/shipment-pages.test.cjs',
+    'scripts/shipment-pages-integration.cjs',
+    'i18n/locales/ja.json',
+    'i18n/locales/ko.json',
     'research-worker/sheet-export.mjs',
     'research-worker/sheets.mjs',
     'research-worker/search-evidence.mjs',
@@ -179,13 +187,14 @@ export default {
       'scripts/card-groups.test.cjs',
       'scripts/recurring-groups.test.cjs',
       'scripts/shipment-groups.test.cjs',
+      'scripts/shipment-pages.test.cjs',
     ]);
     if (!unit.ok) return result(false);
     const total = Number(unit.output.match(/^# tests (\d+)\s*$/m)?.[1]);
     const passed = Number(unit.output.match(/^# pass (\d+)\s*$/m)?.[1]);
     const skipped = Number(unit.output.match(/^# skipped (\d+)\s*$/m)?.[1]);
     const todo = Number(unit.output.match(/^# todo (\d+)\s*$/m)?.[1]);
-    if (!(total >= 175 && passed === total && skipped === 0 && todo === 0)) {
+    if (!(total >= 185 && passed === total && skipped === 0 && todo === 0)) {
       logs.push('The complete unit suite must execute; skipped or missing cases are not coverage.');
       return result(false);
     }
@@ -270,7 +279,7 @@ export default {
     }
     delete env.OMF_TEST_TRANSACTION_GROUPS_ONLY;
     for (const [flag, label, minimum] of [
-      ['OMF_TEST_SHIPMENT_GROUPS_ONLY', 'shipment group', 8],
+      ['OMF_TEST_SHIPMENT_GROUPS_ONLY', 'shipment group', 9],
       ['OMF_TEST_RECURRING_GROUPS_ONLY', 'recurring group', 8],
       ['OMF_TEST_CARD_GROUPS_ONLY', 'card group', 8],
       ['OMF_TEST_PENDING_ONLY', 'pending', 8],

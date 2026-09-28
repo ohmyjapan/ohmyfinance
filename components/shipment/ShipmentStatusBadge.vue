@@ -25,10 +25,15 @@ const props = defineProps({
   }
 })
 
+const { t } = useI18n()
+
 // CSS classes for each status
 const badgeClasses = {
   pending: 'bg-gray-100 text-gray-800',
   processing: 'bg-gray-100 text-gray-800',
+  shipped: 'bg-blue-100 text-blue-800',
+  failed: 'bg-red-100 text-red-800',
+  returned: 'bg-yellow-100 text-yellow-800',
   in_transit: 'bg-blue-100 text-blue-800',
   out_for_delivery: 'bg-primary-main/20 text-primary-dark',
   delivered: 'bg-green-100 text-green-800',
@@ -58,12 +63,5 @@ const statusIcon = computed(() => {
   }
 })
 
-// Format the status for display
-const formatStatus = (status: string) => {
-  // Replace underscores with spaces and capitalize each word
-  return status
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
-}
+const formatStatus = (status: string) => t(`shipments.statuses.${status}`)
 </script>

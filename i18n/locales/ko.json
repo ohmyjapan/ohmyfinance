@@ -506,6 +506,8 @@
       "delivered": "배송완료",
       "failed": "배송실패",
       "returned": "반송",
+      "delayed": "지연",
+      "exception": "이상",
       "cancelled": "취소됨"
     }
   },
@@ -1543,6 +1545,18 @@
     "trackingNumber": "운송장 번호"
   },
   "shipmentPage": {
+    "notRecorded": "미등록",
+    "noShipments": "배송 기록이 없습니다",
+    "loadFailed": "배송 정보를 불러오지 못했습니다",
+    "retry": "다시 시도",
+    "linkedPurchases": "연결된 구매 거래",
+    "noLinkedPurchases": "아직 연결된 구매 거래가 없습니다",
+    "recipient": "수취인",
+    "noEvents": "아직 추적 이력이 없습니다",
+    "unavailableActions": "배송 라벨·배달 증명·이메일 알림·배송사 취소 요청은 아직 이 화면에서 이용할 수 없습니다.",
+    "recordOnly": "OMF의 배송 기록을 수정합니다. 배송사 요청이나 고객 알림은 전송하지 않습니다.",
+    "retrySameUpdate": "동일한 수정 내용으로 다시 시도합니다.",
+    "copyFailed": "복사하지 못했습니다. 운송장 번호를 선택해서 복사해 주세요.",
     "actions": "작업",
     "additionalMessage": "추가 메시지",
     "additionalNotes": "추가 메모",

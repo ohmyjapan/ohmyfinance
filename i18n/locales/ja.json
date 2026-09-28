@@ -506,6 +506,8 @@
       "delivered": "配達完了",
       "failed": "配達失敗",
       "returned": "返送",
+      "delayed": "遅延",
+      "exception": "例外",
       "cancelled": "キャンセル"
     }
   },
@@ -1514,6 +1516,18 @@
     "trackingNumber": "追跡番号"
   },
   "shipmentPage": {
+    "notRecorded": "未登録",
+    "noShipments": "配送記録がありません",
+    "loadFailed": "配送情報を読み込めませんでした",
+    "retry": "再試行",
+    "linkedPurchases": "関連する購入取引",
+    "noLinkedPurchases": "購入取引はまだ紐付けられていません",
+    "recipient": "受取人",
+    "noEvents": "追跡履歴はまだありません",
+    "unavailableActions": "配送ラベル・配達証明・メール通知・配送会社へのキャンセル依頼は、この画面ではまだ利用できません。",
+    "recordOnly": "OMFの配送記録を更新します。配送会社への依頼や顧客への通知は行いません。",
+    "retrySameUpdate": "同じ更新内容で再試行します。",
+    "copyFailed": "コピーできませんでした。追跡番号を選択してコピーしてください。",
     "actions": "アクション",
     "additionalMessage": "追加メッセージ",
     "additionalNotes": "追加メモ",
