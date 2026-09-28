@@ -203,3 +203,26 @@ Retry identity remains in the mounted form; a browser reload after an uncertain
 write does not yet restore that pending form. Late responses cannot refill records
 after page, company or session changes. These are new UI/request ownership guards;
 independent review and the previously recorded broader release work remain pending.
+
+
+Receipt attachment now uses Receipt.transactionId as its stored authority. Both
+receipt-side and transaction-side routes use current company write access, a
+displayed linkVersion and the same atomic service. A partial unique index prevents
+two assigned receipts from owning one transaction. Same-version retries return the
+saved result; obsolete requests cannot undo a newer link. Transaction list, detail,
+receipt filters and statistics derive the link, and generic edits discard projected
+receipt fields. No transaction accounting or timeline write is needed to match.
+
+Twelve receipt-link tests cover conflict races, retries, failures before/after the
+durable write, reconnect, company boundaries, deletion, projected edits and the
+compiled upload-page caller. Seven built API/store checks (plus two shared setup
+checks) cover real route dispatch, viewer access and a lost-response retry through
+Pinia. Eight deliberate defects fail named tests through the actual verifier.
+The final fixture passes 197 unit/service/page tests, a fresh build and all retained
+API suites; TypeScript now reports zero errors (previously 19 in the broken route).
+
+New access, version, ownership, existing-evidence and projected-field guards await
+independent review. This is relationship verification, not original file download
+verification or a production reliability rate. File storage/recovery/downloads,
+remaining mock receipt pages and the broader company-access release work remain
+outstanding. No production migration or deployment is included.

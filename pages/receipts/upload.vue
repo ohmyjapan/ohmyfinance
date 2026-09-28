@@ -543,18 +543,18 @@ const openMatchDialog = (id: string) => {
 
 const matchReceipt = async (receiptId: string, transactionId: string) => {
   try {
-    await $fetch(`/api/receipts/${receiptId}/match`, {
+    const displayed = receipts.value.find(r => r.id === receiptId || r._id === receiptId)
+    const result = await $fetch<any>('/api/receipts/' + receiptId + '/match', {
       method: 'POST',
-      body: { transactionId },
+      body: { transactionId, linkVersion: displayed?.linkVersion ?? 0 },
       headers: getAuthHeaders()
     })
 
     const receipt = receipts.value.find(r => r.id === receiptId || r._id === receiptId)
     if (receipt) {
-      receipt.status = 'matched'
-      receipt.transactionId = transactionId
-      receiptStats.value.matched++
-      receiptStats.value.unmatched--
+      Object.assign(receipt, result.receipt)
+      receiptStats.value.matched = receipts.value.filter(r => r.status === 'matched').length
+      receiptStats.value.unmatched = receipts.value.length - receiptStats.value.matched
     }
   } catch (error) {
     console.error('Failed to match receipt:', error)

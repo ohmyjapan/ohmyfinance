@@ -22,7 +22,8 @@ before(async()=>{
   await mongoose.connect(mongo.getUri('receipt_candidates_regression'));
   const receipts = load('server/models/Receipt.ts',{mongoose}),transactions=load('server/models/Transaction.ts',{mongoose});
   Receipt=receipts.default;Transaction=transactions.default;
-  service=load('server/services/receiptService.ts',{
+  const links=load('server/services/receiptLinkService.ts',{h3:require('h3'),mongoose,'../models/Receipt':receipts,'../models/Transaction':transactions,'../config/database':{ensureConnection:async()=>assert.equal(mongoose.connection.name,'receipt_candidates_regression')}});
+  service=load('server/services/receiptService.ts',{'./receiptLinkService':links,
     'h3':require('h3'),'../models/Receipt':receipts,'../models/Transaction':transactions,'../utils/receiptMatching':scoring,
     '../config/database':{ensureConnection:async()=>assert.equal(mongoose.connection.name,'receipt_candidates_regression')}
   });

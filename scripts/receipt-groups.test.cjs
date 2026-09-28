@@ -18,7 +18,8 @@ before(async()=>{
   const auth=load('server/middleware/auth.ts',{'h3':h3,'../services/authService':{verifyAccessToken:()=>null},'../services/tokenBlacklistService':{isBlacklisted:()=>false}});
   access=load('server/services/ledgerAccessService.ts',{'h3':h3,mongoose,'../models/Organization':org,'../middleware/auth':auth,'../config/database':database});
   management=load('server/services/receiptManagementService.ts',{'h3':h3,mongoose,'../models/Receipt':receipt,'../config/database':database});
-  matching=load('server/services/receiptService.ts',{'h3':h3,'../models/Receipt':receipt,'../models/Transaction':transaction,'../config/database':database,'../utils/receiptMatching':load('server/utils/receiptMatching.ts')});
+  const links=load('server/services/receiptLinkService.ts',{h3:require('h3'),mongoose,'../models/Receipt':receipt,'../models/Transaction':transaction,'../config/database':database});
+  matching=load('server/services/receiptService.ts',{'./receiptLinkService':links,'h3':h3,'../models/Receipt':receipt,'../models/Transaction':transaction,'../config/database':database,'../utils/receiptMatching':load('server/utils/receiptMatching.ts')});
 });
 after(async()=>{await mongoose.disconnect();if(mongo)await mongo.stop();});
 beforeEach(async()=>{
@@ -69,11 +70,11 @@ test('receipt candidates and manual match boundaries exclude foreign and unassig
   const own=await Transaction.create({...base,organizationId:a}),foreign=await Transaction.create({...base,organizationId:b}),legacy=await Transaction.create(base);
   assert.deepEqual((await matching.findMatchesForReceipt(ctx,r.id)).map(m=>m.transactionId),[String(own._id)]);
   const before=await Receipt.findById(r.id).lean(),ledger=await Transaction.find({}).lean();
-  for(const row of [foreign,legacy])await assert.rejects(matching.matchReceiptWithTransaction(ctx,r.id,String(row._id)),e=>e.statusCode===404);
+  for(const row of [foreign,legacy])await assert.rejects(matching.matchReceiptWithTransaction(ctx,r.id,String(row._id),0),e=>e.statusCode===404);
   assert.deepEqual(await Receipt.findById(r.id).lean(),before);assert.deepEqual(await Transaction.find({}).lean(),ledger);
   await Receipt.updateOne({_id:r.id},{$set:{status:'matched',transactionId:foreign._id}});
-  await assert.rejects(matching.unmatchReceipt(ctx,r.id),e=>e.statusCode===404);
-  assert.equal((await Receipt.findById(r.id)).status,'matched');assert.deepEqual(await Transaction.find({}).lean(),ledger);
+  await matching.unmatchReceipt(ctx,r.id,String(foreign._id),0);
+  assert.equal((await Receipt.findById(r.id)).status,'unmatched');assert.deepEqual(await Transaction.find({}).lean(),ledger);
 });
 test('group-scoped receipt reads survive reconnect and do not depend on uploader still being a member',async()=>{
   const r=await create(await resolve());await Organization.updateOne({_id:a},{$pull:{members:{userId:owner}}});

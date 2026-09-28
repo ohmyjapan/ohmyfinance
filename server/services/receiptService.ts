@@ -1,4 +1,6 @@
 // server/services/receiptService.ts
+import { matchReceiptWithTransaction } from './receiptLinkService'
+export { matchReceiptWithTransaction, unmatchReceipt } from './receiptLinkService'
 import Receipt from '../models/Receipt'
 import { createError } from 'h3'
 import type { LedgerAccess } from './ledgerAccessService'
@@ -241,7 +243,7 @@ export async function autoMatchReceipts(access: LedgerAccess, minConfidence: num
 
         if (highConfidenceMatches.length === 1 && highConfidenceMatches[0].autoMatchEligible) {
           const match = highConfidenceMatches[0]
-          await matchReceiptWithTransaction(access, receipt._id.toString(), match.transactionId)
+          await matchReceiptWithTransaction(access, receipt._id.toString(), match.transactionId, receipt.linkVersion || 0)
           results.matched++
           results.matches.push({
             receiptId: receipt._id.toString(),
@@ -260,112 +262,6 @@ export async function autoMatchReceipts(access: LedgerAccess, minConfidence: num
     return results
   } catch (error) {
     console.error('Failed to auto-match receipts:', error)
-    throw error
-  }
-}
-
-/**
- * Match a receipt with a transaction
- */
-export async function matchReceiptWithTransaction(access: LedgerAccess, receiptId: string, transactionId: string) {
-  await ensureConnection()
-  try {
-    const receipt = await Receipt.findOne({ _id: receiptId, organizationId: access.organizationId })
-    if (!receipt) {
-      throw createError({ statusCode: 404, statusMessage: 'Receipt not found' })
-    }
-
-    const transaction = await Transaction.findOne({ _id: transactionId, organizationId: access.organizationId })
-    if (!transaction) {
-      throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
-    }
-
-    // Update receipt
-    receipt.status = 'matched'
-    receipt.transactionId = transaction._id
-    await receipt.save()
-
-    // Update transaction with receipt data
-    await Transaction.findOneAndUpdate({ _id: transactionId, organizationId: access.organizationId }, {
-      receipt: {
-        receiptId: receipt._id,
-        filename: receipt.originalFilename || receipt.filename,
-        size: receipt.size,
-        date: receipt.receiptDate,
-        amount: receipt.amount,
-        merchant: receipt.merchant,
-        url: receipt.fileUrl
-      },
-      $push: {
-        timeline: {
-          $each: [{
-            type: 'receipt_matched',
-            title: 'Receipt Matched',
-            timestamp: new Date(),
-            description: `Receipt ${receipt.originalFilename || receipt.filename} matched to transaction`
-          }],
-          $position: 0
-        }
-      }
-    })
-
-    return {
-      receipt: receipt.toObject(),
-      transaction: await Transaction.findOne({ _id: transactionId, organizationId: access.organizationId }).lean()
-    }
-  } catch (error) {
-    console.error(`Failed to match receipt ${receiptId} with transaction ${transactionId}:`, error)
-    throw error
-  }
-}
-
-/**
- * Unmatch a receipt from a transaction
- */
-export async function unmatchReceipt(access: LedgerAccess, receiptId: string) {
-  await ensureConnection()
-  try {
-    const receipt = await Receipt.findOne({ _id: receiptId, organizationId: access.organizationId })
-    if (!receipt) {
-      throw createError({ statusCode: 404, statusMessage: 'Receipt not found' })
-    }
-
-    if (receipt.status !== 'matched' || !receipt.transactionId) {
-      throw new Error(`Receipt ${receiptId} is not matched to a transaction`)
-    }
-
-    const transactionId = receipt.transactionId
-    if (!await Transaction.exists({ _id: transactionId, organizationId: access.organizationId })) {
-      throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
-    }
-
-    // Update receipt
-    receipt.status = 'unmatched'
-    receipt.transactionId = undefined
-    await receipt.save()
-
-    // Update transaction
-    await Transaction.findOneAndUpdate({ _id: transactionId, organizationId: access.organizationId }, {
-      receipt: null,
-      $push: {
-        timeline: {
-          $each: [{
-            type: 'receipt_unmatched',
-            title: 'Receipt Unmatched',
-            timestamp: new Date(),
-            description: 'Receipt was unmatched from transaction'
-          }],
-          $position: 0
-        }
-      }
-    })
-
-    return {
-      receipt: receipt.toObject(),
-      transactionId: transactionId.toString()
-    }
-  } catch (error) {
-    console.error(`Failed to unmatch receipt ${receiptId}:`, error)
     throw error
   }
 }

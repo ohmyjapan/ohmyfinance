@@ -1,4 +1,5 @@
 // server/services/transactionService.ts
+import { withReceiptLinks, receiptPresence } from './receiptLinkService'
 import Transaction from '../models/Transaction'
 import { createError } from 'h3'
 import { Types } from 'mongoose'
@@ -80,7 +81,7 @@ export async function getTransactions(access: LedgerAccess, filters: Transaction
     }
 
     if (filters.hasReceipt !== undefined) {
-      query.hasReceipt = filters.hasReceipt
+      query.$and = [await receiptPresence(access, filters.hasReceipt)]
     }
 
     if (filters.search) {
@@ -105,7 +106,7 @@ export async function getTransactions(access: LedgerAccess, filters: Transaction
       .sort({ date: -1, createdAt: -1 })
       .lean()
 
-    return transactions
+    return withReceiptLinks(access, transactions)
   } catch (error) {
     console.error('Failed to get transactions:', error)
     throw error
@@ -127,7 +128,7 @@ export async function getTransactionById(access: LedgerAccess, id: string) {
       .populate('transactionCategoryId', 'name')
       .populate('sourceId', 'name type')
       .lean()
-    return transaction
+    return transaction ? (await withReceiptLinks(access, [transaction]))[0] : null
   } catch (error) {
     console.error(`Failed to get transaction ${id}:`, error)
     throw error
@@ -180,7 +181,8 @@ export async function updateTransaction(access: LedgerAccess, id: string, data: 
   await ensureConnection()
   try {
     // Don't allow changing certain fields
-    const { _id, createdAt, organizationId, ...updateData } = data as any
+    // Receipt fields returned by reads are projections, not editable evidence.
+    const { _id, createdAt, organizationId, receipt, hasReceipt, receiptFilePath, receiptUploadedAt, ...updateData } = data as any
 
     if (Object.keys(updateData).some(k => k.startsWith('$') || k.includes('.')) || updateData.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting cannot be replaced by a transaction edit.' })
     const current: any = await Transaction.findOne({ _id: id, organizationId: access.organizationId }).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
@@ -210,7 +212,7 @@ export async function updateTransaction(access: LedgerAccess, id: string, data: 
       throw new Error(`Transaction ${id} not found`)
     }
 
-    return transaction
+    return (await withReceiptLinks(access, [transaction]))[0]
   } catch (error) {
     console.error(`Failed to update transaction ${id}:`, error)
     throw error
@@ -392,7 +394,7 @@ export async function getTransactionStats(access: LedgerAccess) {
     ])
 
     // Receipt stats
-    const withReceipt = await Transaction.countDocuments({ ...scope, hasReceipt: true })
+    const withReceipt = await Transaction.countDocuments({ ...scope, ...await receiptPresence(access, true) })
 
     const statusMap = statusStats.reduce((acc: any, item: any) => {
       acc[item._id] = { count: item.count, amount: item.amount }

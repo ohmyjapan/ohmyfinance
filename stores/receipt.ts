@@ -211,84 +211,35 @@ export const useReceiptStore = defineStore('receipt', {
             }
         },
 
-        // Match receipt with transaction
+        // Keep the displayed version across a failed response. A later retry must
+        // never discover a newer link and silently detach that instead.
         async matchWithTransaction(receiptId: string, transactionId: string) {
-            this.isLoading = true
-            this.error = null
-
-            try {
-                const response = await $fetch(`/api/receipts/${receiptId}/match`, {
-                    method: 'POST',
-                    body: { transactionId },
-                    headers: this._getAuthHeaders()
-                })
-
-                // Update in the array
-                const index = this.receipts.findIndex(r => r.id === receiptId)
-                if (index !== -1) {
-                    this.receipts[index] = {
-                        ...this.receipts[index],
-                        status: 'matched',
-                        transactionId
-                    }
-                }
-
-                // Update current receipt if it's loaded
-                if (this.currentReceipt && this.currentReceipt.id === receiptId) {
-                    this.currentReceipt = {
-                        ...this.currentReceipt,
-                        status: 'matched',
-                        transactionId
-                    }
-                }
-
-                return response
-            } catch (err: any) {
-                this.error = err.message || 'Failed to match receipt with transaction'
-                console.error('Error matching receipt:', err)
-                return null
-            } finally {
-                this.isLoading = false
-            }
+            return this.changeReceiptLink(receiptId, transactionId, 'POST')
         },
-
-        // Unmatch receipt from transaction
         async unmatchReceipt(receiptId: string) {
+            const receipt = this.currentReceipt?.id === receiptId ? this.currentReceipt : this.receipts.find(r => r.id === receiptId)
+            return this.changeReceiptLink(receiptId, receipt?.transactionId || '', 'DELETE')
+        },
+        async changeReceiptLink(receiptId: string, transactionId: string, method: 'POST' | 'DELETE') {
             this.isLoading = true
             this.error = null
-
+            const headers = this._getAuthHeaders()
             try {
-                const response = await $fetch(`/api/receipts/${receiptId}/match`, {
-                    method: 'DELETE',
-                    headers: this._getAuthHeaders()
+                const displayed = this.currentReceipt?.id === receiptId ? this.currentReceipt : this.receipts.find(r => r.id === receiptId)
+                if (!displayed) throw new Error('Reload the receipt before changing its link')
+                const response = await $fetch<{ receipt: Receipt }>('/api/receipts/' + receiptId + '/match', {
+                    method, body: { transactionId, linkVersion: displayed.linkVersion ?? 0 }, headers
                 })
-
-                // Update in the array
+                if (headers.Authorization !== this._getAuthHeaders().Authorization) return response
                 const index = this.receipts.findIndex(r => r.id === receiptId)
-                if (index !== -1) {
-                    this.receipts[index] = {
-                        ...this.receipts[index],
-                        status: 'unmatched',
-                        transactionId: null
-                    }
-                }
-
-                // Update current receipt if it's loaded
-                if (this.currentReceipt && this.currentReceipt.id === receiptId) {
-                    this.currentReceipt = {
-                        ...this.currentReceipt,
-                        status: 'unmatched',
-                        transactionId: null
-                    }
-                }
-
+                if (index !== -1) this.receipts[index] = response.receipt
+                if (this.currentReceipt?.id === receiptId) this.currentReceipt = response.receipt
                 return response
             } catch (err: any) {
-                this.error = err.message || 'Failed to unmatch receipt'
-                console.error('Error unmatching receipt:', err)
+                if (headers.Authorization === this._getAuthHeaders().Authorization) this.error = err.message || 'Failed to change receipt link'
                 return null
             } finally {
-                this.isLoading = false
+                if (headers.Authorization === this._getAuthHeaders().Authorization) this.isLoading = false
             }
         },
 

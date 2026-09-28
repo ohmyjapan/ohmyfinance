@@ -66,6 +66,7 @@ export interface Receipt {
     /**
      * Transaction ID if this receipt is matched with a transaction
      */
+    linkVersion?: number
     transactionId?: string | null
 
     /**

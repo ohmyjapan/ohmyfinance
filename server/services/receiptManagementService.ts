@@ -19,7 +19,7 @@ function visible(row: ReceiptRecord): ReceiptResponse {
     id: String(row._id), _id: String(row._id), filename: row.filename, originalFilename: row.originalFilename,
     size: row.size, mimeType: row.mimeType, uploadDate: row.uploadDate.toISOString(), status: row.status,
     amount: row.amount, currency: row.currency, merchant: row.merchant,
-    transactionId: row.transactionId?.toString(), fileUrl: row.fileUrl, thumbnailUrl: row.thumbnailUrl,
+    linkVersion: row.linkVersion || 0, transactionId: row.transactionId?.toString(), fileUrl: row.fileUrl, thumbnailUrl: row.thumbnailUrl,
     receiptDate: row.receiptDate?.toISOString(), category: row.category, notes: row.notes, tags: row.tags,
     uploadedBy: row.uploadedBy?.toString(), organizationId: row.organizationId?.toString(), taxAmount: row.taxAmount, taxRate: row.taxRate,
     extractedData: row.extractedData ? { ...row.extractedData, date: row.extractedData.date?.toISOString() } : undefined,
@@ -71,7 +71,7 @@ export async function deleteReceipt(access: LedgerAccess, id: string): Promise<R
   await ensureConnection()
   const row = await Receipt.findOneAndDelete({ _id: receiptId(id), organizationId: access.organizationId }).lean()
   if (!row) throw createError({ statusCode: 404, statusMessage: 'Receipt not found' })
-  // Keep the original file. Receipt links are owned by the separate matching flow.
+  // Keep the original file. Deleting this authority also removes its derived transaction link.
   return visible(row)
 }
 

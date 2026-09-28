@@ -44,6 +44,7 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
+  if(process.env.OMF_TEST_RECEIPT_LINKS_ONLY){await require('./receipt-links-integration.cjs')({db,call,token,other,origin,root,pass});console.log(checks+' targeted receipt link checks passed');return;}
   if(process.env.OMF_TEST_SHIPMENT_GROUPS_ONLY){await require('./shipment-groups-integration.cjs')({db,call,token:ungroupedToken,other,origin,pass});console.log(checks+' targeted shipment group checks passed');return;}
   if(process.env.OMF_TEST_RECURRING_GROUPS_ONLY){await require('./recurring-groups-integration.cjs')({db,call,token:ungroupedToken,other,pass});console.log(checks+' targeted recurring group checks passed');return;}
   if(process.env.OMF_TEST_CARD_GROUPS_ONLY){await require('./card-groups-integration.cjs')({db,call,token,other,pass,csv,row});console.log(checks+' targeted card group checks passed');return;}

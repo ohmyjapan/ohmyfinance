@@ -18,7 +18,8 @@ before(async()=>{
   const model=load('server/models/Transaction.ts',{mongoose});Transaction=model.default;
   for(const name of ['Customer','Supplier','AccountCategory','SubAccountCategory','TaxCategory','TransactionCategory','DataSource'])if(!mongoose.models[name])mongoose.model(name,new mongoose.Schema({name:String}));
   const database={ensureConnection:async()=>assert.equal(mongoose.connection.name,'transaction_group_regression')};
-  service=load('server/services/transactionService.ts',{'h3':h3,mongoose,'../models/Transaction':model,'../config/database':database});
+  const links=load('server/services/receiptLinkService.ts',{h3:require('h3'),mongoose,'../models/Receipt':load('server/models/Receipt.ts',{mongoose}),'../models/Transaction':model,'../config/database':database});
+  service=load('server/services/transactionService.ts',{'./receiptLinkService':links,'h3':h3,mongoose,'../models/Transaction':model,'../config/database':database});
   const imports={h3:{...h3,defineEventHandler:fn=>fn,readBody:async event=>event.body,getQuery:event=>event.query||{},readMultipartFormData:async event=>event.form},'../../models/Transaction':model,'../../config/database':database,'../../middleware/auth':{requireAuth:event=>event.access},'../../services/transactionService':service,'../../services/ledgerAccessService':{requireLedgerAccess:async(event,mode)=>{if(mode==='write'&&event.access.role==='viewer')throw h3.createError({statusCode:403});return event.access;}}};
   bulk=load('server/api/transactions/bulk.ts',imports).default;duplicates=load('server/api/transactions/duplicates.ts',imports).default;bank=load('server/api/import/bank-statement.ts',imports).default;
 });

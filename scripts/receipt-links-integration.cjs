@@ -1,0 +1,56 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {ObjectId}=require('mongodb');
+module.exports=async({db,call,token,other,origin,root,pass})=>{
+ const foreign=await require('./helpers/group-session.cjs')(call,other,'Synthetic link foreign group');
+ const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url')),group=new ObjectId(claims.organizationId);
+ const make=async()=>{const r=await call('/api/receipts',{method:'POST',token,body:{filename:'synthetic-'+new ObjectId()+'.pdf',size:12}});assert.equal(r.status,200,JSON.stringify(r));return r.data;};
+ const receipt=await make(),second=await make();
+ const txn=new ObjectId(),otherTxn=new ObjectId();
+ await db.collection('transactions').insertMany([txn,otherTxn].map(_id=>({_id,organizationId:group,date:new Date('2026-09-22'),amount:67000,type:'expense',status:'completed',hasReceipt:false,timeline:[],referenceNumber:'SYNTHETIC-LINK'})));
+ const route='/api/transactions/'+txn+'/receipt',body={receiptId:receipt.id,linkVersion:0},ledger=await db.collection('transactions').find({}).toArray();
+ for(const method of ['PUT','DELETE'])assert.equal((await call(route,{method,body})).status,401);
+ assert.equal((await call(route,{method:'PUT',token:foreign.token,body})).status,404);
+ const registered=await call('/api/auth/register',{method:'POST',body:{email:'receipt-link-viewer@example.invalid',password:'Synthetic-password-Only1!',name:'Synthetic viewer'}});
+ const viewerLogin=registered.data.tokens.accessToken,viewerId=new ObjectId(JSON.parse(Buffer.from(viewerLogin.split('.')[1],'base64url')).userId);
+ await db.collection('organizations').updateOne({_id:group},{$push:{members:{userId:viewerId,role:'viewer'}}});
+ const viewer=(await call('/api/auth/switch-organization',{method:'POST',token:viewerLogin,body:{organizationId:String(group)}})).data.tokens.accessToken;
+ for(const method of ['PUT','DELETE'])assert.equal((await call(route,{method,token:viewer,body})).status,403);
+ for(const method of ['PUT','DELETE'])assert.equal((await call('/api/transactions/invalid/receipt',{method,token,body})).status,400);
+ pass('transaction receipt routes require current company write membership for both attach and detach');
+ assert.equal((await call(route,{method:'PUT',token,body:{receiptId:receipt.id}})).status,400);
+ const saves=await Promise.all(Array.from({length:4},()=>call(route,{method:'PUT',token,body})));
+ for(const saved of saves){assert.equal(saved.status,200,JSON.stringify(saved));assert.equal(saved.data.transaction.receipt.id,receipt.id);}
+ assert.equal((await db.collection('receipts').findOne({_id:new ObjectId(receipt.id)})).linkHistory.length,1);
+ pass('the real transaction-side PUT handler persists one link and one audit event under retries');
+ const detail=await call('/api/transactions/'+txn,{token:viewer});assert.equal(detail.data.receipt.id,receipt.id);
+ const list=await call('/api/transactions?hasReceipt=true',{token});assert.equal(list.data.total,1);
+ assert.equal((await call('/api/transactions?hasReceipt=false',{token})).data.total,1);
+ assert.equal((await call('/api/transactions/stats',{token})).data.receiptMatchRate,0.5);
+ pass('detail, filtered list and receipt statistics agree for a viewer as well as the owner');
+ assert.equal((await call(route,{method:'PUT',token,body:{receiptId:second.id,linkVersion:0}})).status,409);
+ assert.equal((await call('/api/receipts/'+receipt.id+'/match',{method:'POST',token,body:{transactionId:String(otherTxn),linkVersion:0}})).status,409);
+ pass('conflicting assignments cannot replace either side of a receipt link');
+ const detach={receiptId:receipt.id,linkVersion:1};
+ for(let i=0;i<2;i++)assert.equal((await call(route,{method:'DELETE',token,body:detach})).status,200);
+ assert.equal((await call(route,{method:'PUT',token,body:{...body,linkVersion:2}})).status,200);
+ assert.equal((await call(route,{method:'DELETE',token,body:detach})).status,409);
+ assert.equal((await call('/api/transactions/'+txn,{token})).data.receipt.id,receipt.id);
+ assert.deepEqual(await db.collection('transactions').find({}).toArray(),ledger);
+ pass('delayed DELETE cannot remove a reattached receipt and accounting records remain byte-equivalent');
+ // Run the actual Pinia store against the built HTTP routes, including a lost
+ // successful response. Retry uses the displayed revision, not a fresh target.
+ const ts=require('typescript'),pinia=require('pinia');pinia.setActivePinia(pinia.createPinia());
+ const compiled=ts.transpileModule(fs.readFileSync(path.join(root,'stores/receipt.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+ const module={exports:{}},fetcher=require('ofetch').ofetch.create({baseURL:origin,retry:0});let drop=true;
+ const fetch=async(url,options)=>{const result=await fetcher(url,options);if(drop&&options?.method==='POST'&&url.endsWith('/match')){drop=false;throw Error('Synthetic lost successful response');}return result;};
+ new Function('require','module','exports','$fetch',compiled)(name=>name==='pinia'?pinia:{useUserStore:()=>({authHeader:{Authorization:'Bearer '+token}})},module,module.exports,fetch);
+ const store=module.exports.useReceiptStore();await store.fetchReceiptById(second.id);
+ assert.equal(await store.matchWithTransaction(second.id,String(otherTxn)),null);
+ assert.equal(store.currentReceipt.linkVersion,0);
+ await store.matchWithTransaction(second.id,String(otherTxn));assert.equal(store.error,null);assert.equal(store.currentReceipt.linkVersion,1);
+ await store.unmatchReceipt(second.id);assert.equal(store.error,null);assert.equal(store.currentReceipt.linkVersion,2);assert(!store.currentReceipt.transactionId);
+ pass('the real receipt store resumes a lost attach response and uses the server revision when detaching');
+ const deletion=await call('/api/receipts/'+receipt.id,{method:'DELETE',token});assert.equal(deletion.status,200);
+ assert.equal((await call('/api/transactions/'+txn,{token})).data.hasReceipt,false);
+ pass('deleting the authoritative receipt removes the transaction view without a second ledger write');
+};

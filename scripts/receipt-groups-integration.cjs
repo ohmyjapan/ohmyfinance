@@ -44,7 +44,7 @@ module.exports=async({db,call,token,other,pass})=>{
   const suggestions=await call(route+'/matches',{token:members.member});assert.equal(suggestions.status,200,JSON.stringify(suggestions));assert.deepEqual(suggestions.data.matches.map(m=>m.transactionId),[ownId.toString()]);
   const rowsBefore=await db.collection('transactions').find({}).toArray(),receiptBefore=await db.collection('receipts').findOne({_id:new ObjectId(receipt.id)});
   for(const id of [foreignId,legacyId]){
-    assert.equal((await call(route+'/match',{method:'POST',token:members.member,body:{transactionId:id.toString()}})).status,404);
+    assert.equal((await call(route+'/match',{method:'POST',token:members.member,body:{transactionId:id.toString(),linkVersion:0}})).status,404);
     assert.equal((await call('/api/receipts/'+id+'/pdf',{token:members.member})).status,404);
   }
   assert.equal((await call('/api/receipts/'+ownId+'/pdf',{token:members.viewer})).status,200);
@@ -52,11 +52,11 @@ module.exports=async({db,call,token,other,pass})=>{
   assert.deepEqual(await db.collection('receipts').findOne({_id:new ObjectId(receipt.id)}),receiptBefore);
   pass('suggestions and transaction receipt previews stay in the selected company; foreign and unassigned match attempts write nothing');
   await db.collection('receipts').updateOne({_id:new ObjectId(receipt.id)},{$set:{status:'matched',transactionId:foreignId}});
-  assert.equal((await call(route+'/match',{method:'DELETE',token:members.member})).status,404);
-  assert.equal((await db.collection('receipts').findOne({_id:new ObjectId(receipt.id)})).status,'matched');
+  assert.equal((await call(route+'/match',{method:'DELETE',token:members.member,body:{transactionId:foreignId.toString(),linkVersion:0}})).status,200);
+  assert.equal((await db.collection('receipts').findOne({_id:new ObjectId(receipt.id)})).status,'unmatched');
   assert.deepEqual(await db.collection('transactions').find({}).toArray(),rowsBefore);
   await db.collection('receipts').updateOne({_id:new ObjectId(receipt.id)},{$set:{status:'unmatched'},$unset:{transactionId:''}});
-  pass('unmatch does not clear either side of an existing foreign-group link');
+  pass('unmatch clears only the owned stale receipt reference and never writes the foreign ledger');
   const memberId=new ObjectId(claims(members.member).userId);
   await db.collection('organizations').updateOne({_id:group,'members.userId':memberId},{$set:{'members.$.role':'viewer'}});
   assert.equal((await call(route,{token:members.member})).status,200);

@@ -44,6 +44,9 @@ export interface IReceipt extends Document {
   currency?: string
   merchant?: string | null
   status: 'matched' | 'unmatched' | 'processing' | 'error'
+  linkVersion?: number
+  lastUnmatchedTransactionId?: mongoose.Types.ObjectId
+  linkHistory?: Array<{ action: string; transactionId: mongoose.Types.ObjectId; userId: mongoose.Types.ObjectId; version: number; at: Date }>
   transactionId?: mongoose.Types.ObjectId
   fileUrl?: string
   filePath?: string
@@ -112,6 +115,9 @@ const ReceiptSchema = new Schema<IReceipt>({
     index: true
   },
   transactionId: { type: Schema.Types.ObjectId, ref: 'Transaction', index: true },
+  linkVersion: { type: Number, default: 0 },
+  lastUnmatchedTransactionId: Schema.Types.ObjectId,
+  linkHistory: [{ _id: false, action: String, transactionId: Schema.Types.ObjectId, userId: Schema.Types.ObjectId, version: Number, at: Date }],
   fileUrl: String,
   filePath: String,
   thumbnailUrl: String,
@@ -144,6 +150,10 @@ ReceiptSchema.virtual('id').get(function() {
 ReceiptSchema.index({ organizationId: 1, filename: 1 }, { unique: true })
 ReceiptSchema.index({ organizationId: 1, status: 1 })
 ReceiptSchema.index({ organizationId: 1, uploadDate: -1 })
+ReceiptSchema.index({ organizationId: 1, transactionId: 1 }, {
+  unique: true,
+  partialFilterExpression: { organizationId: { $type: 'objectId' }, transactionId: { $type: 'objectId' } }
+})
 // Text search index
 ReceiptSchema.index({ merchant: 'text', notes: 'text', 'extractedData.merchant': 'text' })
 
