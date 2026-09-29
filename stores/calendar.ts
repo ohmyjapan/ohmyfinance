@@ -8,14 +8,14 @@ const context = () => {
   const user = useUserStore()
   return JSON.stringify([user.sessionId, user.isAuthenticated, user.user?.id, user.currentOrganization?.id || user.currentOrganization?._id])
 }
-const runtimes = new WeakMap<object, { epoch: number; list: number }>()
+const runtimes = new WeakMap<object, { epoch: number; list: number; readError: string | null }>()
 function runtime(store: any) {
   let current = runtimes.get(store)
   if (current) return current
-  const state = { epoch: 0, list: 0 }
+  const state = { epoch: 0, list: 0, readError: null as string | null }
   runtimes.set(store, state)
   const stop = watch(context, () => {
-    state.epoch++; state.list++
+    state.epoch++; state.list++; state.readError = null
     store.payments = []; store.error = null; store.recovery = null; store.isLoading = false; store.isSaving = false
   }, { flush: 'sync' })
   const dispose = store.$dispose.bind(store)
@@ -138,9 +138,16 @@ export const useCalendarStore = defineStore('calendar', {
         if (epoch !== rt.epoch || request !== rt.list) return false
         this.payments = response
         this.updateOverdueStatus()
+        // A successful read resolves its own failure, never a failed write.
+        if (!preserveError && rt.readError !== null && this.error === rt.readError) {
+          this.error = null
+          rt.readError = null
+        }
         return true
       } catch (error: any) {
-        if (!preserveError && epoch === rt.epoch && request === rt.list) this.error = failure(error)
+        if (!preserveError && epoch === rt.epoch && request === rt.list && (this.error === null || this.error === rt.readError)) {
+          this.error = rt.readError = failure(error)
+        }
         return false
       } finally { if (epoch === rt.epoch && request === rt.list) this.isLoading = false }
     },
@@ -159,7 +166,7 @@ export const useCalendarStore = defineStore('calendar', {
       const rt = runtime(this)
       if (!this.canEdit || this.isSaving) return null
       const epoch = rt.epoch, headers = { ...this._getAuthHeaders() }
-      this.isSaving = true; this.error = null; this.recovery = null
+      this.isSaving = true; this.error = null; this.recovery = null; rt.readError = null
       try {
         const result = await operation(headers)
         if (epoch !== rt.epoch) return null
@@ -170,6 +177,7 @@ export const useCalendarStore = defineStore('calendar', {
         return result
       } catch (error: any) {
         if (epoch === rt.epoch) {
+          rt.readError = null
           this.error = failure(error)
           const status = Number(error?.statusCode || error?.status || error?.response?.status)
           if (target && [404, 409].includes(status)) {

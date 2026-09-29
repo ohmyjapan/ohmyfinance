@@ -394,3 +394,17 @@ See [calendar payment recovery](calendar-payment-recovery.md) for boundaries.
 New recovery/setup/presentation conditions are guards requiring a new independent
 owner-ordered review. This branch remains undeployed; legacy assignment, global
 dashboard aggregates, backup coverage and the broader release blockers still apply.
+
+The subsequent UI review repairs clear recovered list errors without losing write
+failures and omit inactive defaults from the saved comparison. Final acceptance
+is 326 finance unit/service cases (28 scoped calendar cases), all required HTTP
+suites, and 21 calendar checks including 11 in real Chrome. The terminal removal
+case now keeps the old draft open while fetching and sending a newer saved
+revision. Four deliberately reintroduced defects are detected and restored.
+Finance and browser receipts match the final changed source hashes.
+
+TypeScript reports zero diagnostics; installed vue-tsc crashes in its TypeScript
+loader before checking project files. Fresh Nuxt build and Chrome coverage do not
+replace Vue type-checking. New error-ownership/comparison guards await a separately
+owner-ordered review. No deployment, migration, production reliability claim or
+resolution of the broader release blockers is included.

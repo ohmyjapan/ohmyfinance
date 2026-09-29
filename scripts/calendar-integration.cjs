@@ -54,6 +54,13 @@ async function browser({db,origin,group,owner,foreign,pass,create,call,token}){
   page.off('request',completionInterceptor);await page.setRequestInterception(false);
   await followupBrowser({page,db,origin,group,owner,foreign,pass,create,call,token,select});
   await db.collection('organizations').updateOne({_id:new ObjectId(foreign.organizationId)},{$push:{members:{userId:owner,role:'viewer',joinedAt:new Date()}}});await select(foreign.organizationId);await page.waitForFunction(()=>document.querySelector('main')?.textContent.includes('Synthetic foreign browser calendar'));assert(!(await page.$eval('main',n=>n.textContent)).includes(payment.title));assert.equal(await page.$$eval('main [data-complete-payment]',nodes=>nodes.filter(n=>!n.disabled).length),0);
+  let viewerReads=0,viewerWrites=0;const viewerIntercept=r=>{if(new URL(r.url()).pathname.startsWith('/api/payments')){if(r.method()!=='GET')viewerWrites++;else if(++viewerReads===1)return r.respond({status:503,contentType:'application/json',body:'{"message":"Synthetic viewer list offline"}'})}r.continue()};
+  await page.setRequestInterception(true);page.on('request',viewerIntercept);
+  try{
+   await page.reload({waitUntil:'networkidle2'});await page.waitForSelector('main [role="alert"]');assert.equal(await page.evaluate(()=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar').canEdit),false);
+   await page.click('[data-calendar-refresh]');await page.waitForFunction(()=>document.querySelector('main')?.textContent.includes('Synthetic foreign browser calendar')&&!document.querySelector('main [role="alert"]'));assert.equal(viewerReads,2);assert.equal(viewerWrites,0);
+   pass('real Chrome viewer refresh clears a recovered list error without sending a write');
+  }finally{page.off('request',viewerIntercept);await page.setRequestInterception(false)}
   await db.collection('organizations').updateOne({_id:new ObjectId(foreign.organizationId)},{$pull:{members:{userId:owner}}});await page.reload({waitUntil:'networkidle2'});await page.waitForSelector('main [role="alert"]');assert(!(await page.$eval('main',n=>n.textContent)).includes('Synthetic foreign browser calendar'));assert.deepEqual(errors,[]);
   pass('real Chrome company switching clears old calendar data and viewer or revoked membership cannot complete');
  }catch(e){if(page&&process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-failure.png')});throw e}finally{if(page)await page.close();browser.disconnect()}
@@ -94,6 +101,20 @@ async function followupBrowser({page,db,origin,group,owner,foreign,pass,create,c
   pass('real Chrome conflict recovery preserves draft and nested bank details until explicit saved-version choice');
   await remove(edit.id);
 
+  const comparison=await create({title:'Synthetic inactive defaults comparison',amount:100,dueDate:today,recurring:false});
+  await page.reload({waitUntil:'networkidle2'});await open(comparison.id);await set('notes','Keep this comparison draft');
+  const changed=await call('/api/payments/'+comparison.id,{method:'PUT',token,body:{revision:comparison.revision,amount:900}});assert.equal(changed.status,200);
+  await save();await page.waitForFunction(()=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar').recovery?.state==='ready');await page.click(modal+' [data-saved-comparison] summary');
+  const difference=name=>modal+' [data-comparison-field="'+name+'"]';
+  assert.equal(await page.$(difference('recurringFrequency')),null);assert.equal(await page.$(difference('bankTransfer')),null);assert(await page.$(difference('amount')));assert(await page.$(difference('notes')));
+  await page.click(field('recurring'));await page.select(field('recurringFrequency'),'weekly');await page.waitForSelector(difference('recurringFrequency'));await page.click(field('recurring'));await page.waitForSelector(difference('recurringFrequency'),{hidden:true});
+  await page.click(modal+' [data-bank-transfer-toggle]');await set('bankTransfer.bankName','Draft bank');await page.waitForSelector(difference('bankTransfer'));await set('bankTransfer.bankName','');await page.waitForSelector(difference('bankTransfer'),{hidden:true});
+  const activeSaved=await call('/api/payments/'+comparison.id,{method:'PUT',token,body:{revision:changed.data.revision,recurring:true,recurringFrequency:'weekly',bankTransfer:{bankName:'Saved bank',branchName:'Test',accountType:'ordinary',accountNumber:'1234567',accountHolder:'SYNTHETIC'}}});assert.equal(activeSaved.status,200,JSON.stringify(activeSaved));
+  await page.click(modal+' [data-refresh-payment]');await page.waitForFunction(()=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar').recovery?.state==='ready');
+  if(!await page.$eval(modal+' [data-saved-comparison]',node=>node.open))await page.click(modal+' [data-saved-comparison] summary');
+  await page.waitForSelector(difference('bankTransfer'),{visible:true});assert(await page.$(difference('recurringFrequency')));assert.equal(await page.$eval(field('recurring'),n=>n.checked),false);assert.equal(await page.$eval(field('bankTransfer.bankName'),n=>n.value),'');assert.equal(await page.$eval(field('notes'),n=>n.value),'Keep this comparison draft');await close();await remove(comparison.id);
+  pass('real Chrome comparison hides inactive defaults and keeps active draft or saved differences');
+
   const terminal=await create({title:'Synthetic deleted link browser',dueDate:today}),posted=await call('/api/payments/'+terminal.id+'/complete',{method:'POST',token,body:{revision:terminal.revision}});assert.equal(posted.status,200);
   // Represent the already-tested lost paid-checkpoint state; subsequent deletion/reconciliation uses real HTTP.
   await db.collection('payments').updateOne({_id:new ObjectId(terminal.id)},{$set:{status:'pending','posting.state':'pending'}});
@@ -102,8 +123,12 @@ async function followupBrowser({page,db,origin,group,owner,foreign,pass,create,c
   const reviews=await page.$$('[data-review-payment="'+terminal.id+'"]');await reviews[0].click();await page.waitForSelector(modal);assert(await page.$(modal+' [data-terminal-summary]'));await close();
   const sidebar=await page.$$('[data-review-payment="'+terminal.id+'"]');await sidebar[sidebar.length-1].click();await page.waitForSelector(modal);await close();
   await page.$eval('[data-calendar-date="'+today+'"]',node=>node.click());await page.waitForSelector('[data-day-detail]');await page.click('[data-day-detail] [data-review-payment="'+terminal.id+'"]');await page.waitForSelector(modal);
-  await page.click(modal+' [data-delete-payment]');await page.waitForSelector(modal,{hidden:true});assert((await db.collection('payments').findOne({_id:new ObjectId(terminal.id)})).deletedAt);assert.equal(await db.collection('transactions').countDocuments({referenceNumber:'PAY-'+terminal.id}),1);assert.equal(await db.collection('transactions').countDocuments({referenceNumber:'PAY-'+terminal.id,deletedAt:null}),0);
-  pass('real Chrome deleted-link review works from grid day and upcoming then removes only the calendar entry');
+  const displayed=await fetched(terminal.id),latest=await call('/api/payments/'+terminal.id,{method:'PUT',token,body:{revision:displayed.revision,title:'Synthetic revised deleted link',amount:700}});assert.equal(latest.status,200);assert.notEqual(latest.data.revision,displayed.revision);
+  await page.click(modal+' [data-refresh-payment]');await page.waitForFunction(()=>document.querySelector('[data-terminal-summary]')?.textContent.includes('Synthetic revised deleted link'));assert.equal(await page.$eval(field('title'),n=>n.value),displayed.title);assert.equal(await page.$eval(field('amount'),n=>n.value),String(displayed.amount));
+  const removals=[],observeRemoval=r=>{if(r.method()==='DELETE'&&r.url().endsWith('/payments/'+terminal.id))removals.push(JSON.parse(r.postData()))};page.on('request',observeRemoval);
+  try{await page.click(modal+' [data-delete-payment]');await page.waitForSelector(modal,{hidden:true})}finally{page.off('request',observeRemoval)}
+  assert.deepEqual(removals,[{revision:latest.data.revision}]);assert((await db.collection('payments').findOne({_id:new ObjectId(terminal.id)})).deletedAt);assert.equal(await db.collection('transactions').countDocuments({referenceNumber:'PAY-'+terminal.id}),1);assert.equal(await db.collection('transactions').countDocuments({referenceNumber:'PAY-'+terminal.id,deletedAt:null}),0);
+  pass('real Chrome deleted-link review from all entries removes with the newer saved revision while retaining the old form');
 
   const pending=await create({title:'Synthetic pending checkpoint browser',dueDate:today}),done=await call('/api/payments/'+pending.id+'/complete',{method:'POST',token,body:{revision:pending.revision}});assert.equal(done.status,200);await db.collection('payments').updateOne({_id:new ObjectId(pending.id)},{$set:{status:'pending','posting.state':'pending'}});
   await page.reload({waitUntil:'networkidle2'});await open(pending.id);assert.equal(await page.$eval(field('title'),node=>node.matches(':disabled')),true);assert.equal(await page.$(modal+' [data-delete-payment]'),null);await page.click(modal+' [data-resume-payment]');await page.waitForSelector(modal+' [data-resume-payment]',{hidden:true});assert.equal(await db.collection('transactions').countDocuments({referenceNumber:'PAY-'+pending.id}),1);await close();await remove(pending.id);

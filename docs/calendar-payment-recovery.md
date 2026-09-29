@@ -41,6 +41,13 @@ save can then proceed. If the calendar entry was removed, the draft remains for
 inspection/copying with no save or delete action. It is never converted to a new
 entry. Company/session changes close the old form and discard late recovery data.
 
+A successful ordinary Refresh clears the failure belonging to the list read,
+including for viewers. It cannot clear or replace a failed write, even when the
+read and write messages are identical. Conflict recovery retains its write error.
+Comparison ignores recurrence frequency when recurrence is disabled and bank
+defaults when no bank transfer will be submitted. Saved and draft activation are
+evaluated separately, so a meaningful difference on either side remains visible.
+
 ## Completion states
 
 | Stored state | Next action and result |
@@ -101,6 +108,31 @@ Browser failure responses are synthetic. Pending/deleted checkpoint states are
 seeded after real completion; separate service tests exercise actual lost-checkpoint
 exceptions. These are not process/power-loss or production reliability measurements.
 Invoice OCR is not invoked. All accounts and databases used for testing are synthetic.
+
+## UI review follow-up verification
+
+Review of 7169e55 confirmed the original three repairs and requested read-error
+cleanup, relevant comparison values, and removal coverage with different saved
+and draft revisions. Those scoped changes pass 326 finance unit/service cases
+(28 calendar cases), all required isolated HTTP suites, and 21 calendar API/Chrome
+checks, including 11 in real Chrome. The browser presses viewer Refresh without
+writes, tests active comparison fields from either version, and removes using
+the newer saved revision while the old draft remains open. The deleted ledger
+identity is retained. Five added regressions reproduced four failures before
+product changes; identical-message write ownership also has explicit coverage.
+
+Four deliberately reintroduced defects fail the real store/component or Chrome
+tests; original source bytes are restored. The outdated-removal-revision mutant
+leaves the form open after rejection. Final finance/browser source hashes match.
+The first browser attempt rejected an incomplete synthetic bank object; required
+branch/holder values were supplied in the test fixture, with the failure retained.
+
+TypeScript passes with zero diagnostics. Installed vue-tsc 1.8.27 crashes while
+loading TypeScript 5.9.3, before compiling project files. Vue files are covered by
+the fresh Nuxt build and Chrome; no passing Vue type-check is claimed. Dependencies
+were not changed. New error-ownership and comparison conditions are guards and
+have not received independent review. All data is synthetic; these results are
+not a production reliability measurement or the broader shared-guard audit.
 
 ## Release limits
 

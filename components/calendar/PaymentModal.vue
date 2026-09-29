@@ -42,7 +42,7 @@
             <details v-if="canLoadSaved" data-saved-comparison>
               <summary class="cursor-pointer font-medium">{{ t('calendar.recovery.compare') }}</summary>
               <div class="mt-2 max-h-44 space-y-2 overflow-y-auto">
-                <div v-for="difference in differences" :key="difference.field" class="rounded-lg bg-white p-2">
+                <div v-for="difference in differences" :key="difference.field" :data-comparison-field="difference.field" class="rounded-lg bg-white p-2">
                   <p class="font-medium">{{ t(`calendar.recovery.fields.${difference.field}`) }}</p>
                   <p class="break-words">{{ t('calendar.recovery.yourDraft') }}: {{ difference.draft }}</p>
                   <p class="break-words">{{ t('calendar.recovery.saved') }}: {{ difference.saved }}</p>
@@ -231,7 +231,7 @@
             <div class="border-t dark:border-white/10 pt-4">
               <button
                 type="button"
-                @click="showBankTransfer = !showBankTransfer"
+                data-bank-transfer-toggle @click="showBankTransfer = !showBankTransfer"
                 class="flex items-center text-sm font-medium text-gray-700 dark:text-gray-300"
               >
                 <component :is="showBankTransfer ? ChevronDown : ChevronRight" class="h-4 w-4 mr-2" />
@@ -497,8 +497,15 @@ const shownValue = (value: unknown, field?: string): string => {
 const differences = computed(() => {
   if (!props.savedPayment) return []
   return (Object.keys(form) as (keyof PaymentFormData)[]).flatMap(field => {
-    const saved = field === 'dueDate' ? props.savedPayment!.dueDate.split('T')[0] : props.savedPayment![field]
-    const draft = form[field]
+    let saved = field === 'dueDate' ? props.savedPayment!.dueDate.split('T')[0] : props.savedPayment![field]
+    let draft = form[field]
+    if (field === 'recurringFrequency') {
+      saved = props.savedPayment!.recurring ? saved : undefined
+      draft = form.recurring ? draft : undefined
+    } else if (field === 'bankTransfer') {
+      saved = props.savedPayment!.bankTransfer?.bankName ? saved : undefined
+      draft = showBankTransfer.value && form.bankTransfer?.bankName ? draft : undefined
+    }
     return shownValue(saved, field) === shownValue(draft, field) ? [] : [{ field, draft: shownValue(draft, field), saved: shownValue(saved, field) }]
   })
 })

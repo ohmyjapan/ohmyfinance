@@ -3,6 +3,42 @@ const user=()=>vue.reactive({sessionId:'a',isAuthenticated:true,user:{id:'owner'
 const row={id:'a'.repeat(24),title:'Synthetic',amount:100,currency:'JPY',dueDate:'2026-09-01',status:'pending',type:'expense',revision:0};
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{resolve,promise}};
 
+test('calendar viewer refresh clears a recovered list failure without writing',async()=>{
+ const u=user();u.currentOrganization.role='viewer';let offline=true;const methods=[];
+ const store=load({user:u,fetch:async(_,o)=>{methods.push(o.method||'GET');if(offline)throw Error('List offline');return[{...row}]}});
+ try{assert.equal(await store.fetchPayments(),false);assert.equal(store.error,'List offline');await store.refreshRecovery();assert.equal(store.error,'List offline');offline=false;assert.equal(await store.refreshRecovery(),true);assert.equal(store.error,null);assert.equal(store.payments.length,1);assert.deepEqual(methods,['GET','GET','GET']);}finally{store.$dispose()}
+});
+
+test('calendar late plain reads cannot erase or replace a newer write failure',async()=>{
+ for(const readFails of [false,true]){
+  const gate=deferred(),store=load({user:user(),fetch:async(_,o)=>{if(o.method)throw Object.assign(Error('New save failure'),{statusCode:400});await gate.promise;if(readFails)throw Error('Old read failure');return[{...row}]}});
+  try{const reading=store.fetchPayments();await assert.rejects(store.updatePayment(row.id,{amount:100},0));gate.resolve();await reading;assert.equal(store.error,'New save failure');}finally{gate.resolve();store.$dispose()}
+ }
+});
+
+test('calendar matching read and write error text does not let refresh bless the write',async()=>{
+ for(const duringWrite of [false,true]){
+  let offline=true;const gate=deferred(),store=load({user:user(),fetch:async(_,o)=>{if(o.method){await gate.promise;throw Object.assign(Error('Same failure text'),{statusCode:400})}if(offline)throw Error('Same failure text');return[{...row}]}});
+  try{if(!duringWrite)await store.fetchPayments();const writing=assert.rejects(store.updatePayment(row.id,{amount:100},0));if(duringWrite)await store.fetchPayments();gate.resolve();await writing;offline=false;await store.refreshRecovery();assert.equal(store.error,'Same failure text');}finally{gate.resolve();store.$dispose()}
+ }
+});
+
+test('calendar explicit error dismissal allows later read recovery',async()=>{
+ let offline=true;const store=load({user:user(),fetch:async(_,o)=>{if(o.method)throw Object.assign(Error('Save failed'),{statusCode:400});if(offline)throw Error('List offline');return[{...row}]}});
+ try{await assert.rejects(store.updatePayment(row.id,{amount:100},0));store.error=null;await store.fetchPayments();assert.equal(store.error,'List offline');offline=false;await store.refreshRecovery();assert.equal(store.error,null);}finally{store.$dispose()}
+});
+
+test('calendar comparison omits unused defaults but keeps active data from either version',async()=>{
+ const saved={...row,category:'Invoice',recurring:false,notes:''},props=vue.reactive({isOpen:false,payment:{...saved},savedPayment:{...saved}}),mounted=load.mountPaymentModal(props);
+ try{
+  props.isOpen=true;await vue.nextTick();const {state}=mounted;assert.equal(state.isEditing.value,true);assert.equal(state.form.title,row.title);
+  const fields=()=>state.differences.value.map(d=>d.field);assert.deepEqual(fields(),[]);
+  state.form.recurring=true;state.form.recurringFrequency='weekly';state.showBankTransfer.value=true;state.form.bankTransfer.bankName='Draft bank';assert(fields().includes('recurringFrequency'));assert(fields().includes('bankTransfer'));
+  state.form.recurring=false;state.form.bankTransfer.bankName='';assert.deepEqual(fields(),[]);
+  props.savedPayment={...saved,revision:1,recurring:true,recurringFrequency:'weekly',bankTransfer:{bankName:'Saved bank',accountNumber:'1234567'}};await vue.nextTick();assert(fields().includes('recurringFrequency'));assert(fields().includes('bankTransfer'));assert.equal(state.form.recurring,false);assert.equal(state.form.bankTransfer.bankName,'');
+ }finally{mounted.close()}
+});
+
 test('calendar setup dashboard returns no financial data and never reads financial models',async()=>{
  const {handler,touched}=require('./helpers/calendar-service.cjs').loadSetupDashboard(),id='a'.repeat(24);
  const result=await handler({method:'GET',context:{auth:{isAuthenticated:true,userId:id,email:'setup@example.invalid'}}});
