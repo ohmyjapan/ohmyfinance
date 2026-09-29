@@ -92,6 +92,7 @@
       <div
         v-for="(day, index) in calendarDays"
         :key="index"
+        :data-calendar-date="day.dateString"
         :class="[
           'min-h-[120px] p-2 border-b border-r dark:border-white/10 transition-all duration-200 cursor-pointer group relative',
           getDayBackgroundClass(day, index),
@@ -193,7 +194,14 @@
             <!-- Drag Handle -->
             <GripVertical :class="['flex-shrink-0 w-3 h-3 cursor-grab active:cursor-grabbing', getHandleColor(payment)]" />
             <button
-              v-if="payment.status === 'pending' || payment.status === 'overdue'"
+              v-if="payment.completionState === 'deleted'"
+              :data-review-payment="payment.id"
+              :disabled="busy"
+              @click.stop="emit('edit-payment', payment)"
+              class="shrink-0 text-amber-700 underline"
+            >{{ t('calendar.recovery.review') }}</button>
+            <button
+              v-else-if="payment.status === 'pending' || payment.status === 'overdue'"
             :disabled="readOnly || busy"
               :data-complete-payment="payment.id"
               @click.stop="emit('mark-completed', payment)"
@@ -207,6 +215,7 @@
               <Check class="h-2.5 w-2.5 text-white" />
             </div>
             <div
+              :data-payment-title="payment.id"
               @click.stop="emit('edit-payment', payment)"
               class="flex-1 truncate hover:underline"
             >

@@ -7,7 +7,7 @@
         <p class="text-gray-600 dark:text-gray-400">{{ t('calendar.trackPayments') }}</p>
       </div>
       <button
-        v-if="calendarStore.canEdit"
+        data-add-payment v-if="calendarStore.canEdit"
         :disabled="calendarStore.isSaving"
         @click="openAddModal()"
         class="mt-4 sm:mt-0 inline-flex items-center px-4 py-2 bg-primary-main hover:bg-primary-dark text-white rounded-lg font-medium transition-colors"
@@ -17,7 +17,10 @@
       </button>
     </div>
 
-    <p v-if="calendarStore.error" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ calendarStore.error }}</p>
+    <div v-if="calendarStore.error" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">
+      <p>{{ calendarError }}</p>
+      <button type="button" data-calendar-refresh :disabled="calendarStore.isLoading || calendarStore.isSaving" class="mt-2 font-medium underline" @click="calendarStore.refreshRecovery()">{{ t('calendar.recovery.refresh') }}</button>
+    </div>
 
     <!-- Stats -->
     <CalendarStats :stats="calendarStore.monthlyStats" />
@@ -142,15 +145,20 @@
 
     <!-- Payment Modal -->
     <PaymentModal
-      :read-only="!calendarStore.canEdit || selectedPayment?.completionState === 'pending'"
+      :read-only="!calendarStore.canEdit"
       :busy="calendarStore.isSaving"
-      :error="calendarStore.error"
+      :error="calendarStore.error ? calendarError : null"
+      :recovery="modalRecovery"
+      :saved-payment="savedPayment"
       :is-open="isModalOpen"
       :payment="selectedPayment"
       :default-date="selectedDate"
       @close="closeModal"
       @submit="handleSubmit"
       @delete="handleDelete"
+      @refresh="calendarStore.refreshRecovery()"
+      @use-saved="useSavedPayment"
+      @complete="handleMarkCompleted"
     />
   </div>
 </template>
@@ -204,6 +212,18 @@ const handleDayDetailAdd = () => {
 const isModalOpen = ref(false)
 const selectedPayment = ref<Payment | null>(null)
 const selectedDate = ref<string>('')
+const clonePayment = (payment: Payment): Payment => JSON.parse(JSON.stringify(payment))
+const savedPayment = computed(() => calendarStore.payments.find(payment => payment.id === selectedPayment.value?.id) || null)
+const modalRecovery = computed(() => calendarStore.recovery?.paymentId === selectedPayment.value?.id ? calendarStore.recovery : null)
+const calendarError = computed(() => {
+  const code = calendarStore.recovery?.code
+  const messages: Record<string, string> = {
+    PAYMENT_CHANGED: 'changed', PAYMENT_LINK_DELETED: 'deleted', PAYMENT_MISSING: 'missing',
+    PAYMENT_COMPLETION_PENDING: 'pending', PAYMENT_CURRENCY_REVIEW: 'currency',
+    PAYMENT_CANCELLED: 'cancelled', PAYMENT_LINK_REVIEW: 'linkReview', PAYMENT_LINK_UNAVAILABLE: 'unavailable'
+  }
+  return t(`calendar.recovery.${code && messages[code] || 'requestFailed'}`)
+})
 const quickAddType = ref<'expense' | 'income'>('expense')
 const quickAddCategory = ref<string>('')
 
@@ -220,7 +240,7 @@ const openAddModal = (dateString?: string) => {
 
 const openEditModal = (payment: Payment) => {
   if (calendarStore.isSaving) return
-  selectedPayment.value = payment
+  selectedPayment.value = clonePayment(payment)
   selectedDate.value = ''
   isModalOpen.value = true
 }
@@ -236,13 +256,20 @@ watch(() => calendarStore.contextKey, () => {
   void calendarStore.fetchPayments()
 }, { flush: 'post' })
 
+const useSavedPayment = () => {
+  if (!savedPayment.value || calendarStore.isSaving || modalRecovery.value?.state === 'loading' || modalRecovery.value?.state === 'failed') return
+  selectedPayment.value = clonePayment(savedPayment.value)
+  calendarStore.recovery = null
+  calendarStore.error = null
+}
+
 const handleSelectDate = (date: Date) => {
   calendarStore.setSelectedDate(date)
 }
 
 const handleMarkCompleted = async (payment: Payment) => {
   try {
-    await calendarStore.markAsCompleted(payment.id)
+    await calendarStore.markAsCompleted(payment.id, payment.revision)
   } catch (error) {
     console.error('Error marking payment as completed:', error)
   }
@@ -250,7 +277,7 @@ const handleMarkCompleted = async (payment: Payment) => {
 
 const handleMovePayment = async (payment: Payment, newDate: string) => {
   try {
-    await calendarStore.updatePayment(payment.id, { dueDate: newDate })
+    await calendarStore.updatePayment(payment.id, { dueDate: newDate }, payment.revision)
   } catch (error) {
     console.error('Error moving payment:', error)
   }
@@ -262,15 +289,15 @@ const handleSubmit = async (data: PaymentFormData) => {
       data.type = quickAddType.value; data.category = quickAddCategory.value
     }
     const result = selectedPayment.value
-      ? await calendarStore.updatePayment(selectedPayment.value.id, data)
+      ? await calendarStore.updatePayment(selectedPayment.value.id, data, selectedPayment.value.revision)
       : await calendarStore.addPayment(data)
     if (result) { quickAddType.value = 'expense'; quickAddCategory.value = ''; closeModal() }
   } catch { /* The store error remains visible in the open form. */ }
 }
 
-const handleDelete = async () => {
-  if (!selectedPayment.value) return
-  try { if (await calendarStore.deletePayment(selectedPayment.value.id)) closeModal() }
+const handleDelete = async (payment: Payment) => {
+  if (!payment || payment.id !== selectedPayment.value?.id) return
+  try { if (await calendarStore.deletePayment(payment.id, payment.revision)) closeModal() }
   catch { /* The store error remains visible in the open form. */ }
 }
 

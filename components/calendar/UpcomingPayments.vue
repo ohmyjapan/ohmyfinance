@@ -12,7 +12,14 @@
         <div class="flex items-center gap-3">
           <!-- Complete button -->
           <button
-            v-if="payment.status === 'pending' || payment.status === 'overdue'"
+            v-if="payment.completionState === 'deleted'"
+            :data-review-payment="payment.id"
+            :disabled="busy"
+            @click.stop="$emit('select', payment)"
+            class="shrink-0 text-sm text-amber-700 underline"
+          >{{ t('calendar.recovery.review') }}</button>
+          <button
+            v-else-if="payment.status === 'pending' || payment.status === 'overdue'"
             :disabled="readOnly || busy"
             @click.stop="$emit('mark-completed', payment)"
             class="flex-shrink-0 p-1.5 rounded-full border-2 border-gray-300 dark:border-white/10 hover:border-success-main hover:bg-success-light dark:hover:bg-success-dark/30 transition-all duration-200 hover:scale-110"

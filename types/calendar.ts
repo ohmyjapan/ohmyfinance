@@ -42,6 +42,14 @@ export interface PaymentFormData {
   notes?: string
 }
 
+export interface CalendarRecovery {
+  paymentId: string
+  operation: 'edit' | 'delete' | 'complete'
+  status: number
+  code?: string
+  state: 'loading' | 'ready' | 'failed'
+}
+
 export interface CalendarHoliday {
   name: string
   country: 'jp' | 'kr' | 'both'

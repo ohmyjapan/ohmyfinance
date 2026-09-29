@@ -1,6 +1,7 @@
 <template>
   <div
     v-if="isOpen"
+    data-payment-modal
     class="fixed inset-0 z-50 overflow-y-auto"
     @click.self="$emit('close')"
   >
@@ -18,6 +19,7 @@
             </h3>
             <button
               type="button"
+              data-close-payment
               @click="$emit('close')"
               class="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
             >
@@ -26,7 +28,32 @@
           </div>
 
           <p v-if="error" role="alert" class="mx-6 mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
-          <fieldset :disabled="readOnly || busy">
+          <div v-if="terminal || pending || needsRecovery" data-payment-recovery class="mx-6 mt-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-gray-800">
+            <p v-if="terminal">{{ t('calendar.recovery.deleted') }}</p>
+            <p v-else-if="pending">{{ t('calendar.recovery.pending') }}</p>
+            <p v-else-if="missing">{{ t('calendar.recovery.missing') }}</p>
+            <p v-else>{{ t('calendar.recovery.draftKept') }}</p>
+            <p v-if="terminal && currentPayment" data-terminal-summary class="font-medium">{{ currentPayment.title }} · {{ currentPayment.amount }} {{ currentPayment.currency }} · {{ currentPayment.dueDate.split('T')[0] }}</p>
+            <p v-if="recovery?.state === 'failed'" class="text-red-700">{{ t('calendar.recovery.refreshFailed') }}</p>
+            <div class="flex flex-wrap gap-3">
+              <button type="button" data-refresh-payment :disabled="busy || recovery?.state === 'loading'" class="font-medium text-primary-main underline" @click="$emit('refresh')">{{ t('calendar.recovery.refresh') }}</button>
+              <button v-if="pending && !readOnly" type="button" data-resume-payment :disabled="busy" class="font-medium text-primary-main underline" @click="$emit('complete', savedPayment || payment!)">{{ t('calendar.recovery.resume') }}</button>
+            </div>
+            <details v-if="canLoadSaved" data-saved-comparison>
+              <summary class="cursor-pointer font-medium">{{ t('calendar.recovery.compare') }}</summary>
+              <div class="mt-2 max-h-44 space-y-2 overflow-y-auto">
+                <div v-for="difference in differences" :key="difference.field" class="rounded-lg bg-white p-2">
+                  <p class="font-medium">{{ t(`calendar.recovery.fields.${difference.field}`) }}</p>
+                  <p class="break-words">{{ t('calendar.recovery.yourDraft') }}: {{ difference.draft }}</p>
+                  <p class="break-words">{{ t('calendar.recovery.saved') }}: {{ difference.saved }}</p>
+                </div>
+                <p v-if="!differences.length">{{ t('calendar.recovery.sameValues') }}</p>
+              </div>
+              <p class="mt-3 text-xs text-gray-600">{{ t('calendar.recovery.replaceDraft') }}</p>
+              <button type="button" data-use-saved :disabled="busy" class="mt-2 font-medium text-primary-main underline" @click="$emit('use-saved')">{{ t('calendar.recovery.useSaved') }}</button>
+            </details>
+          </div>
+          <fieldset :disabled="readOnly || busy || pending">
           <!-- Body -->
           <div class="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
             <!-- Invoice Scan (only show when adding new) -->
@@ -92,7 +119,7 @@
                 {{ t('paymentModal.title') }} *
               </label>
               <input
-                v-model="form.title"
+                data-payment-field="title" v-model="form.title"
                 type="text"
                 required
                 class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
@@ -107,7 +134,7 @@
                   {{ t('paymentModal.amount') }} ({{ settingsStore.defaultCurrency }}) *
                 </label>
                 <input
-                  v-model="form.amount"
+                  data-payment-field="amount" v-model="form.amount"
                   type="number"
                   step="1"
                   min="0"
@@ -121,7 +148,7 @@
                   {{ t('paymentModal.currency') }}
                 </label>
                 <select
-                  v-model="form.currency"
+                  data-payment-field="currency" v-model="form.currency"
                   class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 >
                   <option v-for="c in CURRENCIES" :key="c.code" :value="c.code">
@@ -138,7 +165,7 @@
                   {{ t('paymentModal.dueDate') }} *
                 </label>
                 <input
-                  v-model="form.dueDate"
+                  data-payment-field="dueDate" v-model="form.dueDate"
                   type="date"
                   required
                   class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
@@ -149,7 +176,7 @@
                   {{ t('paymentModal.category') }} *
                 </label>
                 <select
-                  v-model="form.category"
+                  data-payment-field="category" v-model="form.category"
                   required
                   class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 >
@@ -166,7 +193,7 @@
                 {{ t('common.status') }}
               </label>
               <select
-                v-model="form.status"
+                data-payment-field="status" v-model="form.status"
                 :disabled="!!payment?.completionState || ['paid', 'completed'].includes(payment?.status || '')"
                 class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
               >
@@ -182,7 +209,7 @@
             <div class="flex items-center space-x-4">
               <label class="flex items-center">
                 <input
-                  v-model="form.recurring"
+                  data-payment-field="recurring" v-model="form.recurring"
                   type="checkbox"
                   class="rounded border-gray-300 dark:border-white/10 text-primary-main focus:ring-primary-main"
                 />
@@ -190,7 +217,7 @@
               </label>
               <select
                 v-if="form.recurring"
-                v-model="form.recurringFrequency"
+                data-payment-field="recurringFrequency" v-model="form.recurringFrequency"
                 class="px-3 py-1 text-sm border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
               >
                 <option value="weekly">{{ t('recurring.frequencies.weekly') }}</option>
@@ -217,7 +244,7 @@
                   <div>
                     <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('paymentModal.bankName') }}</label>
                     <input
-                      v-model="form.bankTransfer.bankName"
+                      data-payment-field="bankTransfer.bankName" v-model="form.bankTransfer.bankName"
                       type="text"
                       class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                       :placeholder="t('paymentModal.bankNamePlaceholder')"
@@ -226,7 +253,7 @@
                   <div>
                     <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('paymentModal.branchName') }}</label>
                     <input
-                      v-model="form.bankTransfer.branchName"
+                      data-payment-field="bankTransfer.branchName" v-model="form.bankTransfer.branchName"
                       type="text"
                       class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                       :placeholder="t('paymentModal.branchNamePlaceholder')"
@@ -238,7 +265,7 @@
                   <div>
                     <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('paymentModal.accountType') }}</label>
                     <select
-                      v-model="form.bankTransfer.accountType"
+                      data-payment-field="bankTransfer.accountType" v-model="form.bankTransfer.accountType"
                       class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                     >
                       <option value="ordinary">{{ t('paymentModal.accountTypes.ordinary') }}</option>
@@ -249,7 +276,7 @@
                   <div>
                     <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('paymentModal.accountNumber') }}</label>
                     <input
-                      v-model="form.bankTransfer.accountNumber"
+                      data-payment-field="bankTransfer.accountNumber" v-model="form.bankTransfer.accountNumber"
                       type="text"
                       class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                       :placeholder="t('paymentModal.accountNumberPlaceholder')"
@@ -260,7 +287,7 @@
                 <div>
                   <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('paymentModal.accountHolder') }}</label>
                   <input
-                    v-model="form.bankTransfer.accountHolder"
+                    data-payment-field="bankTransfer.accountHolder" v-model="form.bankTransfer.accountHolder"
                     type="text"
                     class="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-white/10 rounded-md dark:bg-white/5 dark:text-white"
                     :placeholder="t('paymentModal.accountHolderPlaceholder')"
@@ -275,7 +302,7 @@
                 {{ t('common.notes') }}
               </label>
               <textarea
-                v-model="form.notes"
+                data-payment-field="notes" v-model="form.notes"
                 rows="2"
                 class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 :placeholder="t('paymentModal.notesPlaceholder')"
@@ -287,13 +314,14 @@
           <!-- Footer -->
           <div class="px-6 py-4 border-t dark:border-white/10 flex justify-between">
             <button
-              v-if="isEditing && !readOnly"
-              :disabled="busy"
+              v-if="isEditing && !readOnly && !pending && !missing"
+              :disabled="busy || recovery?.state === 'loading' || recovery?.state === 'failed'"
               type="button"
-              @click="$emit('delete')"
+              data-delete-payment
+              @click="$emit('delete', terminal ? (savedPayment || payment!) : payment!)"
               class="px-4 py-2 text-sm font-medium text-error-main hover:bg-error-light dark:hover:bg-error-dark/20 rounded-xl"
             >
-              {{ t('common.delete') }}
+              {{ t(terminal ? 'calendar.recovery.removeEntry' : 'common.delete') }}
             </button>
             <div v-else></div>
             <div class="flex space-x-3">
@@ -305,8 +333,9 @@
                 {{ t('common.cancel') }}
               </button>
               <button
-                v-if="!readOnly"
-                :disabled="busy"
+                v-if="!readOnly && !missing && !terminal"
+                :disabled="busy || pending"
+                data-save-payment
                 type="submit"
                 class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-xl"
               >
@@ -321,9 +350,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { X, ChevronDown, ChevronRight, Camera, Loader2 } from 'lucide-vue-next'
-import type { Payment, PaymentFormData, BankTransferInfo } from '~/types/calendar'
+import type { Payment, PaymentFormData, BankTransferInfo, CalendarRecovery } from '~/types/calendar'
 import { PAYMENT_CATEGORIES, CURRENCIES, DEFAULT_CURRENCY } from '~/types/calendar'
 import { useSettingsStore } from '~/stores/settings'
 
@@ -348,13 +377,18 @@ const props = defineProps<{
   error?: string | null
   isOpen: boolean
   payment?: Payment | null
+  savedPayment?: Payment | null
+  recovery?: CalendarRecovery | null
   defaultDate?: string
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'submit', data: PaymentFormData): void
-  (e: 'delete'): void
+  (e: 'delete', payment: Payment): void
+  (e: 'refresh'): void
+  (e: 'use-saved'): void
+  (e: 'complete', payment: Payment): void
 }>()
 
 const isEditing = ref(false)
@@ -445,7 +479,31 @@ const getDefaultForm = (): PaymentFormData => ({
 
 const form = reactive<PaymentFormData>(getDefaultForm())
 
-watch(() => props.isOpen, (newVal) => {
+const currentPayment = computed(() => props.savedPayment || props.payment)
+const terminal = computed(() => currentPayment.value?.completionState === 'deleted')
+const pending = computed(() => currentPayment.value?.completionState === 'pending')
+const missing = computed(() => props.recovery?.state === 'ready' && !props.savedPayment)
+const needsRecovery = computed(() => !!props.recovery || (!!props.savedPayment && props.savedPayment.revision !== props.payment?.revision))
+const canLoadSaved = computed(() => !!props.savedPayment && !['loading', 'failed'].includes(props.recovery?.state || ''))
+const shownValue = (value: unknown, field?: string): string => {
+  if (value === undefined || value === null || value === '') return '—'
+  if (field === 'status') return t(`paymentModal.statuses.${value}`)
+  if (field === 'type') return t(`paymentModal.${value}`)
+  if (field === 'recurringFrequency') return t(`recurring.frequencies.${value}`)
+  if (typeof value === 'boolean') return t(`calendar.recovery.${value ? 'enabled' : 'disabled'}`)
+  if (typeof value === 'object') return Object.values(value).filter(Boolean).join(' / ') || '—'
+  return String(value)
+}
+const differences = computed(() => {
+  if (!props.savedPayment) return []
+  return (Object.keys(form) as (keyof PaymentFormData)[]).flatMap(field => {
+    const saved = field === 'dueDate' ? props.savedPayment!.dueDate.split('T')[0] : props.savedPayment![field]
+    const draft = form[field]
+    return shownValue(saved, field) === shownValue(draft, field) ? [] : [{ field, draft: shownValue(draft, field), saved: shownValue(saved, field) }]
+  })
+})
+
+watch([() => props.isOpen, () => props.payment], ([newVal]) => {
   if (newVal) {
     if (props.payment) {
       isEditing.value = true
@@ -459,7 +517,7 @@ watch(() => props.isOpen, (newVal) => {
         category: props.payment.category,
         recurring: props.payment.recurring,
         recurringFrequency: props.payment.recurringFrequency || 'monthly',
-        bankTransfer: props.payment.bankTransfer || getDefaultForm().bankTransfer,
+        bankTransfer: props.payment.bankTransfer ? JSON.parse(JSON.stringify(props.payment.bankTransfer)) : getDefaultForm().bankTransfer,
         notes: props.payment.notes || ''
       })
       showBankTransfer.value = !!props.payment.bankTransfer?.bankName
@@ -475,7 +533,7 @@ watch(() => props.isOpen, (newVal) => {
 })
 
 const handleSubmit = () => {
-  if (props.readOnly || props.busy) return
+  if (props.readOnly || props.busy || pending.value || missing.value || terminal.value) return
   const data: PaymentFormData = {
     ...form,
     bankTransfer: showBankTransfer.value && form.bankTransfer?.bankName

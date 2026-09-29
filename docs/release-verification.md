@@ -377,3 +377,20 @@ and the two-byte line-ending normalization are explicitly distinguished from the
 earlier finance receipt. New guards require independent owner-ordered review.
 Legacy ownership/link migration and calendar backup completeness remain open.
 No deployment or production migration is included.
+
+The calendar review follow-up restores authenticated company setup without financial
+reads, gives deleted ledger links Review/Remove calendar entry, and preserves an
+open draft's original revision across conflict refreshes. Use saved version is an
+explicit replacement; refresh never repeats a write. All three visible calendar
+entry points, pending resume, missing rows and company changes use this behavior.
+
+Follow-up evidence supersedes the earlier calendar acceptance counts: 321 finance
+unit/service cases with all required API suites, 23 scoped cases, and nineteen
+calendar checks including nine in real Chrome. Four deliberately restored bugs
+are caught and source bytes restored; final compiler diagnostics are zero. The
+final finance/browser receipts use identical changed source hashes. Screenshots,
+earlier harness failures and test exclusions are retained with the task report.
+See [calendar payment recovery](calendar-payment-recovery.md) for boundaries.
+New recovery/setup/presentation conditions are guards requiring a new independent
+owner-ordered review. This branch remains undeployed; legacy assignment, global
+dashboard aggregates, backup coverage and the broader release blockers still apply.

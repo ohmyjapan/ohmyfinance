@@ -14,8 +14,23 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
   }
 
-  // Try to get auth, but allow unauthenticated access with limited data
+  // Account setup is available before selecting a company, without financial reads.
   const auth = requireAuth(event)
+  if (!auth.organizationId) {
+    await ensureConnection()
+    const user = await User.findById(auth.userId).lean()
+    return {
+      success: true,
+      user: user ? { id: user._id, name: user.name, email: user.email, avatar: user.avatar } : null,
+      organization: null,
+      hasOrganization: false,
+      stats: {
+        total: { count: 0, amount: 0 }, expense: { count: 0, amount: 0 }, income: { count: 0, amount: 0 },
+        receiptMatchRate: 0, receiptsCount: 0, upcomingPaymentsCount: 0, recentActivityCount: 0
+      },
+      recentTransactions: []
+    }
+  }
   const access = await requireLedgerAccess(event)
 
   try {

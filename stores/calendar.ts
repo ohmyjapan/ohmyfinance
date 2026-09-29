@@ -1,7 +1,7 @@
 // stores/calendar.ts
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
-import type { Payment, PaymentFormData, MonthlyStats } from '~/types/calendar'
+import type { Payment, PaymentFormData, MonthlyStats, CalendarRecovery } from '~/types/calendar'
 import { useUserStore } from '~/stores/user'
 
 const context = () => {
@@ -16,7 +16,7 @@ function runtime(store: any) {
   runtimes.set(store, state)
   const stop = watch(context, () => {
     state.epoch++; state.list++
-    store.payments = []; store.error = null; store.isLoading = false; store.isSaving = false
+    store.payments = []; store.error = null; store.recovery = null; store.isLoading = false; store.isSaving = false
   }, { flush: 'sync' })
   const dispose = store.$dispose.bind(store)
   store.$dispose = () => { stop(); state.epoch++; state.list++; runtimes.delete(store); dispose() }
@@ -45,6 +45,7 @@ interface CalendarState {
   isLoading: boolean
   isSaving: boolean
   error: string | null
+  recovery: CalendarRecovery | null
 }
 
 export const useCalendarStore = defineStore('calendar', {
@@ -54,7 +55,8 @@ export const useCalendarStore = defineStore('calendar', {
     currentMonth: new Date(),
     isLoading: false,
     isSaving: false,
-    error: null
+    error: null,
+    recovery: null
   }),
 
   getters: {
@@ -128,7 +130,7 @@ export const useCalendarStore = defineStore('calendar', {
       return userStore.authHeader
     },
 
-    async fetchPayments(): Promise<boolean> {
+    async fetchPayments(preserveError = false): Promise<boolean> {
       const rt = runtime(this), epoch = rt.epoch, request = ++rt.list, headers = { ...this._getAuthHeaders() }
       this.isLoading = true
       try {
@@ -138,16 +140,26 @@ export const useCalendarStore = defineStore('calendar', {
         this.updateOverdueStatus()
         return true
       } catch (error: any) {
-        if (epoch === rt.epoch && request === rt.list) this.error = failure(error)
+        if (!preserveError && epoch === rt.epoch && request === rt.list) this.error = failure(error)
         return false
       } finally { if (epoch === rt.epoch && request === rt.list) this.isLoading = false }
     },
 
-    async _write(operation: (headers: Record<string, string>) => Promise<any>, apply: (result: any) => void): Promise<any> {
+    async refreshRecovery(): Promise<boolean> {
+      const rt = runtime(this), epoch = rt.epoch
+      const recovery = this.recovery
+      if (!recovery) return this.fetchPayments()
+      recovery.state = 'loading'
+      const refreshed = await this.fetchPayments(true)
+      if (epoch !== rt.epoch || this.recovery !== recovery) return false
+      recovery.state = refreshed ? 'ready' : 'failed'
+      return refreshed
+    },
+    async _write(operation: (headers: Record<string, string>) => Promise<any>, apply: (result: any) => void, target?: { id: string; operation: CalendarRecovery['operation'] }): Promise<any> {
       const rt = runtime(this)
       if (!this.canEdit || this.isSaving) return null
       const epoch = rt.epoch, headers = { ...this._getAuthHeaders() }
-      this.isSaving = true; this.error = null
+      this.isSaving = true; this.error = null; this.recovery = null
       try {
         const result = await operation(headers)
         if (epoch !== rt.epoch) return null
@@ -157,7 +169,14 @@ export const useCalendarStore = defineStore('calendar', {
         void this.fetchPayments()
         return result
       } catch (error: any) {
-        if (epoch === rt.epoch) this.error = failure(error)
+        if (epoch === rt.epoch) {
+          this.error = failure(error)
+          const status = Number(error?.statusCode || error?.status || error?.response?.status)
+          if (target && [404, 409].includes(status)) {
+            this.recovery = { paymentId: target.id, operation: target.operation, status, code: error?.data?.data?.code || error?.data?.code, state: 'loading' }
+            void this.refreshRecovery()
+          }
+        }
         throw error
       } finally { if (epoch === rt.epoch) this.isSaving = false }
     },
@@ -169,22 +188,16 @@ export const useCalendarStore = defineStore('calendar', {
     async addPayment(paymentData: PaymentFormData): Promise<any> {
       return this._write(headers => $fetch<Payment>('/api/payments', { method: 'POST', body: paymentData, headers, retry: 0 }), payment => this._remember(payment))
     },
-    async updatePayment(id: string, paymentData: Partial<PaymentFormData>): Promise<any> {
-      const payment = this.payments.find(p => p.id === id)
-      if (!payment) return null
-      return this._write(headers => $fetch<Payment>(`/api/payments/${id}`, { method: 'PUT', body: { ...paymentData, revision: payment.revision }, headers, retry: 0 }), result => this._remember(result))
+    async updatePayment(id: string, paymentData: Partial<PaymentFormData>, displayedRevision: number): Promise<any> {
+      return this._write(headers => $fetch<Payment>(`/api/payments/${id}`, { method: 'PUT', body: { ...paymentData, revision: displayedRevision }, headers, retry: 0 }), result => this._remember(result), { id, operation: 'edit' })
     },
-    async deletePayment(id: string): Promise<any> {
-      const payment = this.payments.find(p => p.id === id)
-      if (!payment) return null
-      return this._write(headers => $fetch<{ success: boolean }>(`/api/payments/${id}`, { method: 'DELETE', body: { revision: payment.revision }, headers, retry: 0 }), () => { this.payments = this.payments.filter(p => p.id !== id) })
+    async deletePayment(id: string, displayedRevision: number): Promise<any> {
+      return this._write(headers => $fetch<{ success: boolean }>(`/api/payments/${id}`, { method: 'DELETE', body: { revision: displayedRevision }, headers, retry: 0 }), () => { this.payments = this.payments.filter(p => p.id !== id) }, { id, operation: 'delete' })
     },
-    async markAsPaid(id: string): Promise<any> {
-      const payment = this.payments.find(p => p.id === id)
-      if (!payment) return null
-      return this._write(headers => $fetch<{ payment: Payment }>(`/api/payments/${id}/complete`, { method: 'POST', body: { revision: payment.revision }, headers, retry: 0 }), result => this._remember(result.payment))
+    async markAsPaid(id: string, displayedRevision: number): Promise<any> {
+      return this._write(headers => $fetch<{ payment: Payment }>(`/api/payments/${id}/complete`, { method: 'POST', body: { revision: displayedRevision }, headers, retry: 0 }), result => this._remember(result.payment), { id, operation: 'complete' })
     },
-    async markAsCompleted(id: string): Promise<any> { return this.markAsPaid(id) },
+    async markAsCompleted(id: string, displayedRevision: number): Promise<any> { return this.markAsPaid(id, displayedRevision) },
 
     // Update overdue status for past due payments
     updateOverdueStatus() {

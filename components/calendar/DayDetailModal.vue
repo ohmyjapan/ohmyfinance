@@ -1,6 +1,7 @@
 <template>
   <div
     v-if="isOpen"
+    data-day-detail
     class="fixed inset-0 z-50 overflow-y-auto"
     @click.self="$emit('close')"
   >
@@ -56,7 +57,14 @@
             >
               <!-- Checkbox -->
               <button
-                v-if="payment.status === 'pending' || payment.status === 'overdue'"
+                v-if="payment.completionState === 'deleted'"
+                :data-review-payment="payment.id"
+                :disabled="busy"
+                @click.stop="$emit('edit-payment', payment)"
+                class="shrink-0 text-sm text-amber-700 underline"
+              >{{ t('calendar.recovery.review') }}</button>
+              <button
+                v-else-if="payment.status === 'pending' || payment.status === 'overdue'"
             :disabled="readOnly || busy"
                 @click.stop="$emit('mark-completed', payment)"
                 class="flex-shrink-0 w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500 hover:bg-success-main hover:border-success-main hover:text-white transition-all"
