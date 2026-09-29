@@ -15,9 +15,10 @@ export function useTransactions() {
     const contextKey = computed(() => JSON.stringify([userStore.sessionId, userStore.isAuthenticated, userStore.user?.id, userStore.currentOrganization?.id || userStore.currentOrganization?._id]))
     const canEdit = computed(() => ['owner', 'admin', 'member'].includes(userStore.currentOrganization?.role))
     let epoch = 0, listRequest = 0, detailRequest = 0, draftRequest = 0, draftLoadRequest = 0, alive = true
+    let activeListRequest: number | null = null
     let draftSettlementFailed = false
     const owner = () => draftOwner(userStore.user?.id || '', userStore.currentOrganization?.id || userStore.currentOrganization?._id || '')
-    const invalidateReads = () => { listRequest++; detailRequest++; isLoading.value = false }
+    const invalidateReads = () => { listRequest++; detailRequest++; activeListRequest = null; isLoading.value = false }
     const clearCurrent = () => { epoch++; invalidateReads(); currentTransaction.value = null; error.value = null; isSaving.value = false; clearSaveError() }
     const clearSaveError = () => { saveError.value = null; saveOutcomeUnknown.value = false }
     const reset = () => {
@@ -40,6 +41,7 @@ export function useTransactions() {
     async function readTransactions(retainConfirmed: boolean) {
         if (!alive) return false
         const generation = epoch, request = ++listRequest, headers = { ...userStore.authHeader }
+        activeListRequest = request
         isLoading.value = true; error.value = null
         try {
             const response = await $fetch<{ transactions: any[] }>('/api/transactions', { headers, retry: 0 })
@@ -49,7 +51,10 @@ export function useTransactions() {
         } catch (err) {
             if (generation === epoch && request === listRequest) { if (!retainConfirmed) transactions.value = []; error.value = failure(err) }
             return false
-        } finally { if (generation === epoch && request === listRequest) isLoading.value = false }
+        } finally {
+            if (activeListRequest === request) activeListRequest = null
+            if (generation === epoch && request === listRequest) isLoading.value = false
+        }
     }
     async function fetchTransactionById(id: string) {
         if (!alive) return null
@@ -66,11 +71,15 @@ export function useTransactions() {
     async function save<T>(operation: (headers: Record<string, string>) => Promise<T>, apply: (result: T) => void, creating = false): Promise<T | null> {
         if (!alive || isSaving.value || !canEdit.value) return null
         const generation = epoch, headers = { ...userStore.authHeader }
-        isSaving.value = true; clearSaveError(); invalidateReads()
+        isSaving.value = true; clearSaveError()
         try {
             const result = await operation(headers)
             if (generation !== epoch) return null
+            const refillList = activeListRequest !== null
             invalidateReads(); apply(result)
+            // A confirmed mutation replaces any list it superseded. Read failure
+            // remains separate from the confirmed write and never retries it.
+            if (refillList) void readTransactions(true)
             return result
         } catch (err: any) {
             if (generation === epoch) {

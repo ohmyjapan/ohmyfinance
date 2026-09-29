@@ -3,6 +3,7 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
  const puppeteer=require('node:module').createRequire(path.resolve(__dirname,'../collector/package.json'))('rebrowser-puppeteer-core');
  const browser=await puppeteer.connect({browserURL:'http://127.0.0.1:'+Number(process.env.OMF_TEST_CHROME_PORT),defaultViewport:null});
  const pages=[],errors=[],writes=[],ja=require('../i18n/locales/ja.json');let attempts=0,interceptionFailure,responseMode='drop',releaseHeld;
+ let holdNextList=false,releaseList;
  const modal='body > .fixed.z-50',form=modal+' form';
  const action=(page,selector,label)=>page.$$eval(selector+' button',(buttons,text)=>{const button=buttons.find(b=>b.textContent.trim()===text);if(!button)throw Error('Button missing: '+text);button.click()},label);
  const stored=(page,key)=>page.evaluate(async key=>{
@@ -20,10 +21,15 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
  async function intercept(page){
   page.on('pageerror',error=>errors.push(error.message));await page.setRequestInterception(true);
   page.on('request',request=>{void (async()=>{
+   if(request.method()==='GET'&&request.url().endsWith('/api/transactions')&&holdNextList){
+    holdNextList=false;const response=await fetch(request.url(),{headers:{Authorization:request.headers().authorization}});assert.equal(response.status,200);const body=await response.text();
+    releaseList=async()=>{releaseList=null;await request.respond({status:200,contentType:'application/json',body})};return;
+   }
    if(request.method()!=='POST'||!request.url().endsWith('/api/transactions')){await request.continue();return}
    attempts++;const headers=request.headers(),key=headers['idempotency-key'];assert.match(key,/^[a-f0-9]{32}$/);
    const record=await stored(page,key);assert.equal(record.state,'pending');assert.deepEqual(record.payload,JSON.parse(request.postData()));
    const mode=responseMode;if(mode==='hold')await new Promise(resolve=>{releaseHeld=resolve});
+   if(mode==='reject400'||mode==='reject503'){await request.respond({status:mode==='reject400'?400:503,contentType:'application/json',body:JSON.stringify({message:'Synthetic '+mode})});return}
    const response=await fetch(request.url(),{method:'POST',headers:{'Content-Type':'application/json',Authorization:headers.authorization,'Idempotency-Key':key},body:request.postData()});
    const result=await response.json();assert.equal(response.status,200,JSON.stringify(result));writes.push({key,result});if(mode==='drop')await request.abort('failed');else await request.respond({status:200,contentType:'application/json',body:JSON.stringify(result)});
   })().catch(async error=>{interceptionFailure=error;if(!request.isInterceptResolutionHandled())try{await request.abort('failed')}catch{}})});
@@ -34,12 +40,30 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
   await page.type('#email','finance-a@example.invalid');await page.type('#password','Synthetic-password-Only1!');await page.click('button[type="submit"]');await page.waitForFunction(()=>location.pathname==='/');
   const select=async selected=>assert.equal(await page.evaluate(async id=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user').switchOrganization(id),String(selected)),true);
   await select(organizationId);await page.goto(origin+'/transactions',{waitUntil:'networkidle2'});await intercept(page);
+  const holdInitialList=async()=>{holdNextList=true;releaseList=null;await page.goto(origin+'/transactions',{waitUntil:'domcontentloaded'});await until(()=>!!releaseList)};
+  const assertCompleteList=async()=>{
+   const rows=await db.collection('transactions').find({organizationId,deletedAt:null}).toArray();assert(rows.length>1&&rows.length<=10,'Synthetic rows must fit the first page');
+   await page.waitForFunction(count=>document.querySelectorAll('tbody tr').length===count,{polling:100},rows.length);
+   assert.deepEqual((await page.$$eval('tbody tr td:first-child .text-xs',nodes=>nodes.map(n=>n.textContent.trim()))).sort(),rows.map(r=>r.referenceNumber||String(r._id)).sort());
+   const total=rows.reduce((sum,r)=>sum+r.amount,0),formatted=new Intl.NumberFormat('ja-JP',{style:'currency',currency:'JPY',currencyDisplay:'narrowSymbol'}).format(total);
+   assert((await page.$eval('main',n=>n.textContent)).includes(formatted));
+  };
+  responseMode='pass';await holdInitialList();const loadSave=await open(page);await fill(page);const beforeLoadSave=attempts;await submit(page);await page.waitForFunction(selector=>!document.querySelector(selector),{polling:100},form);await releaseList();await assertCompleteList();assert.equal(attempts,beforeLoadSave+1);assert.equal(await page.$('[data-manual-recovery]'),null);assert.equal((await db.collection('transactions').findOne({'manualCreate.key':loadSave})).timeline.length,1);
+  pass('real Chrome new save during initial loading restores the complete ledger and totals with one write');
+
+  const loadRetry=await open(page);await fill(page);responseMode='reject503';await submit(page);await ready(page);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':loadRetry}),0);
+  await holdInitialList();await page.evaluate(key=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.replace({query:{draft:key}}),loadRetry);await page.waitForSelector(form);await ready(page);responseMode='pass';const beforeLoadRetry=attempts;await action(page,modal,ja.draftRecovery.retry);await page.waitForFunction(selector=>!document.querySelector(selector),{polling:100},form);await releaseList();await assertCompleteList();assert.equal(attempts,beforeLoadRetry+1);assert.equal((await stored(page,loadRetry)).state,'saved');assert.equal((await db.collection('transactions').findOne({'manualCreate.key':loadRetry})).timeline.length,1);
+  pass('real Chrome a same-key retry while the list loads restores all rows without duplicate creation');
+
+  await holdInitialList();const loadRejected=await open(page);await fill(page);responseMode='reject400';const beforeLoadRejected=attempts;await submit(page);await page.waitForFunction(label=>document.body.textContent.includes(label),{polling:100},'Synthetic reject400');assert.equal((await stored(page,loadRejected)).state,'rejected');await releaseList();await assertCompleteList();assert.equal(attempts,beforeLoadRejected+1);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':loadRejected}),0);await action(page,modal,ja.common.cancel);await page.waitForFunction(selector=>!document.querySelector(selector),{polling:100},form);await action(page,'[data-manual-draft="'+loadRejected+'"]',ja.draftRecovery.discard);responseMode='drop';
+  pass('real Chrome a rejected save leaves the original list readable and never sends another purchase');
+
   const key=await open(page);await fill(page);await submit(page);await ready(page);if(interceptionFailure)throw interceptionFailure;
-  assert.equal(writes.length,1);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':key}),1);
+  assert.equal(writes.filter(w=>w.key===key).length,1);assert.equal(await db.collection('transactions').countDocuments({'manualCreate.key':key}),1);
   const row=await stored(page,key);assert.equal(row.state,'pending');assert.equal(row.payload.amount,67000);
   const toggles=await page.$$eval(modal+' button',(buttons,labels)=>buttons.filter(b=>labels.includes(b.textContent.trim())).map(b=>({disabled:b.disabled,text:b.textContent.trim()})),[ja.transactions.income,ja.transactions.expense]);assert.equal(toggles.length,2);assert(toggles.every(b=>b.disabled));await action(page,modal,ja.transactions.income);assert.deepEqual((await stored(page,key)).payload,row.payload);
   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT});
-  await page.reload({waitUntil:'networkidle2'});await saved(page);assert.equal((await stored(page,key)).state,'saved');assert.equal(await page.$(form),null);assert.equal(attempts,1);
+  const beforeReload=attempts;await page.reload({waitUntil:'networkidle2'});await saved(page);assert.equal((await stored(page,key)).state,'saved');assert.equal(await page.$(form),null);assert.equal(attempts,beforeReload);
   pass('real Chrome stores the original purchase before sending and recovers a lost response after reload without another POST');
 
   const shared=await open(page);await fill(page);
@@ -108,5 +132,5 @@ module.exports=async({db,call,token,origin,organizationId,pass})=>{
   assert.deepEqual(errors,[]);if(interceptionFailure)throw interceptionFailure;
   pass('real Chrome recovery uses the light transaction layout without mobile overflow or page exceptions');
  }catch(error){if(process.env.OMF_TEST_SCREENSHOT){try{require('node:fs').writeFileSync(process.env.OMF_TEST_SCREENSHOT.replace('.png','-failure.json'),JSON.stringify({attempts,writes,interceptionFailure:interceptionFailure?.stack,pages:await Promise.all(pages.map(p=>p.evaluate(()=>({url:location.href,visible:document.visibilityState,text:document.body.innerText,buttons:[...document.querySelectorAll('body > .fixed.z-50 button')].map(b=>({text:b.textContent,disabled:b.disabled}))}))))},null,2))}catch{}if(pages[0])try{await pages[0].bringToFront();await pages[0].screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-failure.png')})}catch{}}throw error}
- finally{if(releaseHeld)releaseHeld();for(const page of pages)try{await page.close()}catch{}browser.disconnect()}
+ finally{if(releaseHeld)releaseHeld();if(releaseList)try{await releaseList()}catch{}for(const page of pages)try{await page.close()}catch{}browser.disconnect()}
 };

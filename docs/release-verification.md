@@ -343,7 +343,21 @@ receipts include source hashes at test start; the finance fixture requires all
 289 unit/service cases and the draft browser fixture requires all 16 checks,
 including nine in real Chrome. Current results are retained with the task report.
 
-New discard state/revision and no-send guards still need independent owner-ordered
-review. The older shared save helper can cancel an initial list read, leaving an
-incomplete list after a save started during loading; this is separately reproduced
-and remains a release blocker. The broader release blockers above still apply.
+The discard follow-up was independently reviewed at 7903d4e: no required code
+changes within that patch, with release evidence and the separate save/list race
+still outstanding. The save/list repair now preserves reads when a save fails
+and replaces a list superseded by a confirmed save. It preserves stale-response
+protection without delaying the confirmed save or adding another write.
+
+Acceptance for this repair requires 298 unit/service cases, nine isolated draft
+API/setup checks, seven workspace API/setup checks, and 21 dedicated draft checks
+including twelve in real Chrome. New cases hold real list responses across new
+saves, same-key retries, edits and rejections; assertions check the complete IDs,
+totals, confirmed metadata and write counts. Synthetic browser 400/503 responses
+exercise UI failures; separate built-API cases prove actual validation rejection.
+Ordinary loaded-list edits and detail saves retain their no-extra-list-read path.
+
+New active-read ownership and conditional replacement branches are guards under
+the house rule and need independent owner-ordered review before shipping. This
+branch remains undeployed. The broader release blockers above still apply;
+synthetic checks do not establish a production reliability rate.

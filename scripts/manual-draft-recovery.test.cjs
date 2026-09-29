@@ -5,6 +5,21 @@ const result=(id='synthetic-transaction')=>({state:'saved',transactionId:id,tran
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}};
 const tick=async()=>{await vue.nextTick();await new Promise(resolve=>setImmediate(resolve))};
 
+test('save/list manual confirmation restores siblings for new drafts and same-key retries',async()=>{
+ for(const retry of [false,true]){
+  const s=storage(),old=deferred(),fresh=deferred();let reads=0;const sent=[];
+  const p=workspace({draftStore:s,fetch:async(url,o)=>{if(o.method){sent.push(o.headers['Idempotency-Key']);return result()}return ++reads===1?old.promise:fresh.promise}});
+  try{const draft=await p.state.startDraft();if(retry){await s.manualDraftStore.freeze(draft.owner,draft.key,body);await p.state.loadDraft(draft.key)}const reading=p.state.fetchTransactions();assert.equal((await p.state.createTransaction(body)).state,'saved');assert.equal(reads,2);assert.equal(p.state.isSaving.value,false);assert.equal(p.state.draftNotice.value,retry?'draftRecovery.saved':'');old.resolve({transactions:[{_id:'old',...body}]});assert.equal(await reading,false);fresh.resolve({transactions:[result().transaction,{_id:'old',...body}]});await tick();assert.deepEqual(p.state.transactions.value.map(r=>r.id),['synthetic-transaction','old']);assert.equal(p.state.transactionStats.value.total.amount,134000);assert.deepEqual(sent,[draft.key])}finally{old.resolve({transactions:[]});fresh.resolve({transactions:[]});p.close()}
+ }
+});
+
+test('save/list rejected uncertain storage and discarded attempts leave pending reads intact',async()=>{
+ for(const mode of ['400','503','lost','storage','discarded']){
+  const s=storage(),list=deferred();let posts=0,reads=0;const p=workspace({draftStore:s,fetch:async(url,o)=>{if(o.method){posts++;throw Object.assign(Error('Synthetic '+mode),mode==='lost'?{}:{statusCode:Number(mode)})}reads++;return list.promise}});
+  try{if(mode==='storage')s.manualDraftStore.freeze=async()=>{throw Error('Storage unavailable')};if(mode==='discarded'){const row=await p.state.startDraft(),pending=await s.manualDraftStore.freeze(row.owner,row.key,body);const rejected=await s.manualDraftStore.settle(row.owner,row.key,pending.revision,'rejected');await s.manualDraftStore.discard(row.owner,row.key,rejected.revision)}const reading=p.state.fetchTransactions();assert.equal(await p.state.createTransaction(body),null);list.resolve({transactions:[{_id:'old',...body}]});assert.equal(await reading,true);assert.equal(p.state.transactions.value[0].id,'old');assert.equal(p.state.saveOutcomeUnknown.value,['503','lost'].includes(mode));assert.equal(posts,['storage','discarded'].includes(mode)?0:1);assert.equal(reads,1);assert.equal(p.state.error.value,null)}finally{list.resolve({transactions:[]});p.close()}
+ }
+});
+
 test('draft commit finishes before any POST and storage failure never sends an untracked purchase',async()=>{
  const draftStore=storage(),commit=deferred(),original=draftStore.manualDraftStore.freeze;let sends=0;
  draftStore.manualDraftStore.freeze=async(...args)=>{const row=await original(...args);await commit.promise;return row};

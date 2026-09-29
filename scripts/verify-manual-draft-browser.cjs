@@ -22,7 +22,7 @@ function hub(route,body){return new Promise((resolve,reject)=>{const bytes=body=
   if(code!==0)throw Error('Draft Chrome verification failed; evidence: '+outputDir);
   const checks=Number(/(\d+) targeted draft recovery checks passed/.exec(output)?.[1]);
   const browserChecks=(output.match(/^PASS real Chrome /gm)||[]).length;
-  if(checks!==16||browserChecks!==9)throw Error('Expected draft browser cases did not all execute');
+  if(checks!==21||browserChecks!==12)throw Error('Expected draft browser cases did not all execute');
   require('node:assert/strict').deepEqual(sourceHashes(),sourceAtStart,'Source changed during browser verification');
   const result={at:new Date().toISOString(),startedAt,sourceAtStart,head:execFileSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8',windowsHide:true}).trim(),checks,browserChecks,syntheticData:true,productionLoginRequired:false,outputDir};
   fs.writeFileSync(path.join(outputDir,'verification.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));

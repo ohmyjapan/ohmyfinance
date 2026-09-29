@@ -22,7 +22,7 @@ test('ordinary token renewal preserves same-session results while logout and dis
  const late=deferred(),c=workspace({fetch:()=>late.promise});const save=c.state.createTransaction({amount:1});c.close();late.resolve(row());assert.equal(await save,null);assert.deepEqual(c.state.transactions.value,[]);
 });
 test('a stale list cannot replace a newer confirmed edit and status uses its canonical route',async()=>{
- const pending=deferred(),calls=[];let initial=true;const p=workspace({fetch:async(url,o)=>{calls.push(url);if(o.method==='PUT')return row('a',{notes:'Saved'});if(o.method==='PATCH')return {transaction:row('a',{status:'cancelled'})};if(initial){initial=false;return {transactions:[row()]};}return pending.promise;}});
+ const pending=deferred(),calls=[];let reads=0;const p=workspace({fetch:async(url,o)=>{calls.push(url);if(o.method==='PUT')return row('a',{notes:'Saved'});if(o.method==='PATCH')return {transaction:row('a',{status:'cancelled'})};reads++;return reads===2?pending.promise:{transactions:[row('a',{notes:reads>2?'Saved':'Original'})]};}});
  try{await p.state.fetchTransactions();const stale=p.state.fetchTransactions();await p.state.updateTransaction('a',{notes:'Saved'});pending.resolve({transactions:[row()]});assert.equal(await stale,false);assert.equal(p.state.transactions.value[0].notes,'Saved');assert(await p.state.updateTransactionStatus('a','cancelled'));assert.equal(calls.at(-1),'/api/transactions/a/status');assert.equal(p.state.transactions.value[0].status,'cancelled');}finally{p.close();}
 });
 test('edit form sends changed metadata only and preserves zero amounts tax card source date and status',async()=>{
@@ -53,4 +53,50 @@ test('failed reads and deletes show errors without fabricated records or false d
 test('viewer reads remain available while forms and mutations stay unavailable',async()=>{
  let calls=0;const p=workspace({page:true,fetch:async()=>{calls++;return {transactions:[row()]};}});
  try{p.user.currentOrganization.role='viewer';await p.mount();p.state.openEditModal(p.state.transactions.value[0]);assert.equal(p.state.showEditModal.value,false);assert.equal(p.state.canEdit.value,false);assert.equal(await p.state.handleCreateTransaction({amount:1}),false);assert.equal(calls,1);}finally{p.close();}
+});
+
+test('save/list failed mutations preserve the pending list and its totals',async()=>{
+ for(const status of [400,503]){
+  const list=deferred();let writes=0,reads=0;const p=workspace({fetch:async(url,o)=>{if(o.method){writes++;throw Object.assign(Error('Synthetic '+status),{statusCode:status})}reads++;return list.promise}});
+  try{const reading=p.state.fetchTransactions();assert.equal(await p.state.updateTransaction('a',{}),false);assert(p.state.isLoading.value);list.resolve({transactions:[row('a'),row('b')]});assert.equal(await reading,true);assert.deepEqual(p.state.transactions.value.map(r=>r.id),['a','b']);assert.equal(p.state.transactionStats.value.expense.amount,134000);assert.equal(reads,1);assert.equal(writes,1);assert.match(p.state.saveError.value,/Synthetic/);assert.equal(p.state.error.value,null)}finally{list.resolve({transactions:[]});p.close()}
+ }
+});
+
+test('save/list confirmation replaces reads started before or during each mutation',async()=>{
+ for(const method of ['PUT','PATCH','DELETE'])for(const during of [false,true]){
+  const old=deferred(),write=deferred(),entered=deferred();let reads=0,writes=0;const fresh=[row('b'),...(method==='DELETE'?[]:[row('a',{notes:'Confirmed',status:'cancelled'})])];
+  const p=workspace({fetch:async(url,o)=>{if(o.method){assert.equal(o.method,method);writes++;entered.resolve();return write.promise}return ++reads===1?old.promise:{transactions:fresh}}});
+  try{let reading;if(!during)reading=p.state.fetchTransactions();const saving=method==='PUT'?p.state.updateTransaction('a',{}):method==='PATCH'?p.state.updateTransactionStatus('a','cancelled'):p.state.deleteTransaction('a');await entered.promise;if(during)reading=p.state.fetchTransactions();write.resolve(method==='PUT'?fresh[1]:method==='PATCH'?{transaction:fresh[1]}:{success:true});assert.equal(await saving,true);await tick();old.resolve({transactions:[row('a')]});assert.equal(await reading,false);assert.equal(reads,2);assert.equal(writes,1);assert.deepEqual(p.state.transactions.value.map(r=>r.id),fresh.map(r=>r._id));assert.equal(p.state.transactionStats.value.total.amount,fresh.length*67000);assert.equal(p.state.isLoading.value,false);assert.equal(p.state.error.value,null)}finally{old.resolve({transactions:[]});p.close()}
+ }
+});
+
+test('save/list confirmed writes finish before replacement reads and retain success on refresh failure',async()=>{
+ const old=deferred(),fresh=deferred();let reads=0,writes=0;const p=workspace({fetch:async(url,o)=>{if(o.method){writes++;return row('a',{notes:'Confirmed'})}return ++reads===1?old.promise:fresh.promise}});
+ try{const reading=p.state.fetchTransactions();assert.equal(await p.state.updateTransaction('a',{}),true);assert.equal(reads,2);assert.equal(p.state.isSaving.value,false);assert.equal(p.state.isLoading.value,true);old.resolve({transactions:[row()]});assert.equal(await reading,false);assert(p.state.isLoading.value);fresh.reject(Error('Synthetic refresh failure'));await tick();assert.equal(p.state.transactions.value[0].notes,'Confirmed');assert.equal(p.state.saveError.value,null);assert.equal(p.state.saveOutcomeUnknown.value,false);assert.match(p.state.error.value,/refresh failure/);assert.equal(writes,1);assert.equal(p.state.isLoading.value,false)}finally{old.resolve({transactions:[]});fresh.resolve({transactions:[]});p.close()}
+});
+
+test('save/list stale finalizers preserve the newer read marker across successive writes',async()=>{
+ const lists=Array.from({length:4},deferred);let reads=0,writes=0;const p=workspace({fetch:async(url,o)=>{if(o.method){writes++;return row('a',{notes:'Edit '+writes})}return lists[reads++].promise}});
+ try{const first=p.state.fetchTransactions(),second=p.state.fetchTransactions();lists[0].resolve({transactions:[row()]});assert.equal(await first,false);assert(p.state.isLoading.value);await p.state.updateTransaction('a',{});assert.equal(reads,3);lists[1].resolve({transactions:[row()]});assert.equal(await second,false);assert(p.state.isLoading.value);await p.state.updateTransaction('a',{});assert.equal(reads,4);lists[2].resolve({transactions:[row('a',{notes:'Edit 1'})]});await tick();assert(p.state.isLoading.value);assert.equal(p.state.transactions.value[0].notes,'Edit 2');lists[3].resolve({transactions:[row('a',{notes:'Edit 2'}),row('b')]});await tick();assert.equal(p.state.isLoading.value,false);assert.equal(p.state.transactions.value.length,2);assert.equal(writes,2)}finally{for(const item of lists)item.resolve({transactions:[]});p.close()}
+});
+
+test('save/list replacement replies cannot alter a newer company session or disposed workspace',async()=>{
+ for(const change of ['company','logout','dispose']){
+  const lists=Array.from({length:3},deferred);let reads=0;const p=workspace({fetch:async(url,o)=>o.method?row():lists[reads++].promise});
+  try{const first=p.state.fetchTransactions();await p.state.updateTransaction('a',{});assert.equal(reads,2);if(change==='company')p.user.currentOrganization={id:'company-b',role:'member'};else if(change==='logout')p.user.isAuthenticated=false;else p.close();let newer;if(change==='company')newer=p.state.fetchTransactions();lists[0].resolve({transactions:[row()]});lists[1].resolve({transactions:[row()]});await first;await tick();assert.deepEqual(p.state.transactions.value,[]);assert.equal(p.state.error.value,null);if(newer){assert(p.state.isLoading.value);lists[2].resolve({transactions:[row('company-b')]});assert.equal(await newer,true);assert.deepEqual(p.state.transactions.value.map(r=>r.id),['company-b'])}else assert.equal(p.state.isLoading.value,false)}finally{for(const item of lists)item.resolve({transactions:[]});p.close()}
+ }
+});
+
+test('save/list explicit delete and import refreshes supersede replacement reads without extra writes',async()=>{
+ for(const importing of [false,true]){
+  const lists=Array.from({length:3},deferred);let reads=0,writes=0;const p=workspace({page:!importing,fetch:async(url,o)=>{if(o.method){writes++;return importing?{results:{imported:1}}:{success:true}}return lists[reads++].promise}});
+  try{const first=p.state.fetchTransactions();const saving=importing?p.state.importTransactions([],{}):p.state.deleteTransactionConfirm('a');await tick();assert.equal(reads,3);lists[0].resolve({transactions:[row()]});assert.equal(await first,false);lists[1].resolve({transactions:[row()]});await tick();assert(p.state.isLoading.value);lists[2].resolve({transactions:[row('b')]});const result=await saving;if(importing)assert.equal(result.success,true);assert.deepEqual(p.state.transactions.value.map(r=>r.id),['b']);assert.equal(p.state.isLoading.value,false);assert.equal(writes,1)}finally{for(const item of lists)item.resolve({transactions:[]});p.close()}
+ }
+});
+
+test('save/list a read completed before confirmation needs no replacement and detail saves stay local',async()=>{
+ const list=deferred(),write=deferred();let reads=0;const p=workspace({fetch:async(url,o)=>o.method?write.promise:(reads++,list.promise)});
+ try{const reading=p.state.fetchTransactions(),saving=p.state.updateTransaction('a',{});list.resolve({transactions:[row('a'),row('b')]});assert.equal(await reading,true);write.resolve(row('a',{notes:'Confirmed'}));assert.equal(await saving,true);assert.equal(reads,1);assert.equal(p.state.transactions.value[0].notes,'Confirmed');assert.equal(p.state.transactions.value[1].id,'b')}finally{p.close()}
+ const calls=[],q=workspace({page:'detail',fetch:async(url,o)=>{calls.push(url);return row('a',{notes:o.method?'Detail confirmed':'Original'})}});
+ try{await q.mount();await tick();q.state.editTransaction();assert(await q.state.saveTransaction({notes:'Detail confirmed'}));assert.equal(q.state.transaction.value.notes,'Detail confirmed');assert.deepEqual(calls,['/api/transactions/a','/api/transactions/a'])}finally{q.close()}
 });
