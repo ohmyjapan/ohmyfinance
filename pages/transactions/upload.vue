@@ -81,8 +81,8 @@
           <TransactionDataPreview
             :files="uploadedFiles"
             :mappings="fieldMappings"
-            :parsed-data="parsedData"
-            @update-data="updateParsedData"
+            :parsed-data="sourceRows"
+            @update-stats="updatePreviewStats"
             @back="previousStep"
             @continue="nextStep"
           />
@@ -117,7 +117,7 @@
 import { ref } from 'vue'
 import { CheckCircle, Upload, GitBranch, Eye, Download, BarChart3 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
-import type { TransactionImportFile, TransactionFieldMappings } from '~/types/transaction-import'
+import type { TransactionImportFile, TransactionImportRow, TransactionFieldMappings, TransactionPreviewStats } from '~/types/transaction-import'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -144,8 +144,10 @@ const completedSteps = ref<number[]>([])
 const selectedSource = ref('credit_card')
 const uploadedFiles = ref<TransactionImportFile[]>([])
 const fieldMappings = ref<TransactionFieldMappings>({})
-const parsedData = ref<any[]>([])
-const importStats = ref({
+// Keep original column names through preview and navigation. The import API
+// applies fieldMappings itself; transformed preview rows never replace these.
+const sourceRows = ref<TransactionImportRow[]>([])
+const importStats = ref<TransactionPreviewStats>({
   totalRecords: 0,
   validRecords: 0,
   warningRecords: 0,
@@ -216,7 +218,7 @@ const handleFilesSelected = (files: TransactionImportFile[]) => {
     // Don't pre-map here — let FieldMapping component handle auto-mapping
     // so the user sees and controls all mapping decisions in one place
     fieldMappings.value = {}
-    parsedData.value = allData
+    sourceRows.value = allData
 
     // Calculate stats
     const validCount = allData.filter((row: any) => {
@@ -240,9 +242,9 @@ const updateMappings = (mappings: TransactionFieldMappings) => {
   fieldMappings.value = mappings
 }
 
-// Update parsed data
-const updateParsedData = (data: any[]) => {
-  parsedData.value = data
+// Preview owns transformed rows; confirmation receives only validation totals.
+const updatePreviewStats = (stats: TransactionPreviewStats) => {
+  importStats.value = stats
 }
 
 // Update import options
@@ -257,7 +259,7 @@ const performImport = async () => {
       method: 'POST',
       headers: getAuthHeaders(),
       body: {
-        data: parsedData.value,
+        data: sourceRows.value,
         mappings: fieldMappings.value,
         options: importOptions.value,
         source: selectedSource.value,
@@ -290,7 +292,7 @@ const resetWizard = () => {
   selectedSource.value = 'credit_card'
   uploadedFiles.value = []
   fieldMappings.value = {}
-  parsedData.value = []
+  sourceRows.value = []
   importResult.value = null
   importStats.value = { totalRecords: 0, validRecords: 0, warningRecords: 0, invalidRecords: 0 }
   importOptions.value = { skipDuplicates: true, updateMatches: false, saveTemplate: true, notifyWhenComplete: true }

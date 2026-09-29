@@ -1,0 +1,111 @@
+const test = require('node:test'), assert = require('node:assert/strict');
+const wizard = require('./helpers/transaction-import.cjs');
+const mappings = { Paid: { field: 'amount', format: 'currency_jpy' }, Day: { field: 'date', format: 'date_iso' }, Item: { field: 'notes', format: 'text' } };
+const rows = [{ Paid: '79,200', Day: '2026-09-22', Item: 'Synthetic purchase' }];
+function upload(flow, data = rows) {
+  flow.page.handleFilesSelected([{ name: 'synthetic.csv', size: 100, type: 'text/csv', isValid: true, file: {}, rowCount: data.length, data: structuredClone(data) }]);
+  flow.page.updateMappings(structuredClone(mappings));
+}
+test('refresh preserves original columns and reproduces the same preview', async t => {
+  const flow = wizard(); t.after(flow.close); upload(flow);
+  const preview = flow.preview(); await preview.processData();
+  const first = structuredClone(require('vue').toRaw(preview.previewData.value));
+  await preview.processData();
+  assert.deepEqual(preview.previewData.value, first);
+  assert.deepEqual(flow.raw(), rows);
+});
+test('back to mapping and a new preview use the original source columns', async t => {
+  const flow = wizard(); t.after(flow.close); upload(flow);
+  await flow.preview().processData();
+  flow.page.updateMappings({ ...mappings, Item: { field: 'productName', format: 'text' } });
+  const preview = flow.preview(); await preview.processData();
+  assert.equal(preview.previewData.value[0].amount, '79,200');
+  assert.equal(preview.previewData.value[0].productName, 'Synthetic purchase');
+  assert.equal(preview.previewData.value[0].notes, undefined);
+});
+test('the real import handler receives raw columns and maps exactly once', async t => {
+  const flow = wizard(); t.after(flow.close); upload(flow);
+  await flow.preview().processData(); await flow.page.performImport();
+  assert.equal(flow.page.importResult.value.results.imported, 1);
+  assert.equal(flow.writes[0].amount, 79200);
+  assert.equal(flow.writes[0].date.toISOString().slice(0, 10), '2026-09-22');
+  assert.equal(flow.writes[0].notes, 'Synthetic purchase');
+  assert.deepEqual(flow.requests.find(request => request.url === '/api/transactions/import').body.data, rows);
+});
+test('confirmation statistics reflect mapped validation, including invalid amounts', async t => {
+  const flow = wizard(); t.after(flow.close);
+  upload(flow, [...rows, { Paid: 'invalid', Day: '2026-09-22', Item: 'Bad amount' }]);
+  const preview = flow.preview(); await preview.processData();
+  assert.deepEqual(flow.page.importStats.value, preview.stats.value);
+  assert.equal(flow.page.importStats.value.invalidRecords, 1);
+});
+test('entity preview sends the current authentication and textual names', async t => {
+  const flow = wizard({ entityFetch: async options => {
+    assert.equal(options.headers?.Authorization, 'Bearer synthetic-import-fixture');
+    assert.deepEqual(options.body.supplierNames, ['123']);
+    return { newSuppliers: ['123'], newCustomers: [] };
+  } }); t.after(flow.close);
+  upload(flow, [{ ...rows[0], Seller: 123 }]);
+  flow.page.updateMappings({ ...mappings, Seller: { field: 'supplierName', format: 'text' } });
+  const preview = flow.preview(); await preview.processData();
+  assert.deepEqual(preview.newEntities.value.newSuppliers, ['123']);
+});
+test('slow entity lookup does not delay confirmation stats or replace reset source', async t => {
+  let resolve; const pending = new Promise(done => { resolve = done; });
+  const flow = wizard({ entityFetch: () => pending }); t.after(flow.close);
+  upload(flow, [{ ...rows[0], Seller: 'Synthetic seller' }]);
+  flow.page.updateMappings({ ...mappings, Seller: { field: 'supplierName', format: 'text' } });
+  const preview = flow.preview(), work = preview.processData();
+  assert.equal(flow.page.importStats.value.validRecords, 1);
+  flow.page.resetWizard(); resolve({ newSuppliers: ['Synthetic seller'], newCustomers: [] }); await work;
+  assert.deepEqual(flow.raw(), []);
+  assert.equal(flow.page.importStats.value.totalRecords, 0);
+});
+
+test('identity mappings and multiple files still import every source row', async t => {
+  const flow = wizard(); t.after(flow.close);
+  const data = [{ amount: 1200, date: '2026-09-22', notes: 'First file' }, { amount: 3400, date: '2026-09-23', notes: 'Second file' }];
+  flow.page.handleFilesSelected(data.map((row, index) => ({ name: `fixture-${index}.csv`, size: 1, type: 'text/csv', isValid: true, file: {}, data: [row] })));
+  flow.page.updateMappings(Object.fromEntries(['amount', 'date', 'notes'].map(field => [field, { field, format: 'text' }])));
+  const preview = flow.preview(); await preview.processData(); await preview.processData();
+  await flow.page.performImport();
+  assert.deepEqual(flow.writes.map(row => row.amount), [1200, 3400]);
+  assert.deepEqual(flow.writes.map(row => row.notes), ['First file', 'Second file']);
+  assert.equal(flow.page.importStats.value.validRecords, 2);
+});
+
+test('failed entity lookup preserves source, stats and the import payload', async t => {
+  const flow = wizard({ entityFetch: async () => { throw Error('Synthetic lookup failure'); } }); t.after(flow.close);
+  const data = [{ ...rows[0], Seller: 'Synthetic seller' }]; upload(flow, data);
+  flow.page.updateMappings({ ...mappings, Seller: { field: 'supplierName', format: 'text' } });
+  const preview = flow.preview(); await preview.processData();
+  assert.equal(flow.page.importStats.value.validRecords, 1); assert.deepEqual(flow.raw(), data);
+  await flow.page.performImport(); assert.equal(flow.writes.length, 1);
+});
+
+test('starting another import clears the previous source and preview counts', async t => {
+  const flow = wizard(); t.after(flow.close); upload(flow); await flow.preview().processData();
+  flow.page.resetWizard();
+  assert.deepEqual(flow.raw(), []); assert.equal(flow.page.importStats.value.totalRecords, 0);
+  upload(flow, [{ Paid: 1234, Day: '2026-09-24', Item: 'Replacement' }]);
+  await flow.preview().processData(); await flow.page.performImport();
+  assert.equal(flow.writes[0].amount, 1234); assert.equal(flow.writes[0].notes, 'Replacement');
+});
+
+test('typed date conversion retains JavaScript primitive and array behavior', t => {
+  const flow = wizard(); t.after(flow.close); const preview = flow.preview();
+  const values = [undefined, null, false, true, '', '2026-09-22', '2026/09/22', 'invalid', '0', 0, 1, -1, 1234.5, NaN, Infinity, [], ['invalid_date']];
+  for (const value of values) {
+    assert.equal(preview.previewDate(value).getTime(), new Date(value).getTime(), String(value));
+    assert.equal(preview.formatDate(value), new Date(value).toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' }));
+  }
+});
+
+test('numeric range inputs and nontext status cells render without throwing', async t => {
+  const flow = wizard(); t.after(flow.close);
+  upload(flow, [{ Paid: 100, Day: '2026-09-22', Item: 'Low' }, { Paid: 200, Day: '2026-09-22', Item: 'High' }]);
+  const preview = flow.preview(); await preview.processData();
+  preview.filter.value.minAmount = 150; preview.filter.value.maxAmount = 250;
+  assert.equal(preview.filteredData.value.length, 1); assert.equal(preview.filteredData.value[0].amount, 200);
+  assert.doesNotThrow(() => preview.getStatusClass(123)); assert.doesNotThrow(() => preview.getStatusClass(true));
+});

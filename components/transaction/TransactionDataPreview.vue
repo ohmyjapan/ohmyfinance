@@ -290,6 +290,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import type { PropType } from 'vue'
+import { useUserStore } from '~/stores/user'
+import type { TransactionImportFile, TransactionImportRow, TransactionFieldMappings, TransactionPreviewRow, TransactionPreviewValue, TransactionPreviewStats, TransactionImportEntities } from '~/types/transaction-import'
 import {
   ChevronDown,
   Filter,
@@ -305,27 +308,32 @@ import {
 } from 'lucide-vue-next'
 
 const { t, locale } = useI18n()
+const user = useUserStore()
 
 const props = defineProps({
   files: {
-    type: Array,
+    type: Array as PropType<TransactionImportFile[]>,
     required: true
   },
   mappings: {
-    type: Object,
+    type: Object as PropType<TransactionFieldMappings>,
     required: true
   },
   parsedData: {
-    type: Array,
+    type: Array as PropType<TransactionImportRow[]>,
     default: () => []
   }
 })
 
-const emit = defineEmits(['update-data', 'back', 'continue'])
+const emit = defineEmits<{
+  'update-stats': [stats: TransactionPreviewStats]
+  back: []
+  continue: []
+}>()
 
 // State
 const isFilterOpen = ref(false)
-const filter = ref({
+const filter = ref<{ recordType: string; dateRange: string; minAmount: string | number; maxAmount: string | number }>({
   recordType: 'all',
   dateRange: '',
   minAmount: '',
@@ -333,7 +341,7 @@ const filter = ref({
 })
 
 // Statistics
-const stats = ref({
+const stats = ref<TransactionPreviewStats>({
   totalRecords: 0,
   validRecords: 0,
   warningRecords: 0,
@@ -349,10 +357,14 @@ const validationIssues = ref({
 })
 
 // New entities that will be auto-created
-const newEntities = ref({ newSuppliers: [], newCustomers: [] })
+const newEntities = ref<TransactionImportEntities>({ newSuppliers: [], newCustomers: [] })
 
 // Preview data
-const previewData = ref([])
+const previewData = ref<TransactionPreviewRow[]>([])
+
+// Preserve Date's existing coercion of JSON primitives and internal string arrays.
+const previewDate = (value: TransactionPreviewValue) =>
+  new Date(typeof value === 'string' || Array.isArray(value) ? String(value) : Number(value))
 
 // Initialize component
 onMounted(() => {
@@ -402,7 +414,7 @@ const filteredData = computed(() => {
       }
 
       result = result.filter(row => {
-        const rowDate = new Date(row[dateField])
+        const rowDate = previewDate(row[dateField])
         return rowDate >= cutoffDate
       })
     }
@@ -417,13 +429,13 @@ const filteredData = computed(() => {
 
     if (amountField) {
       if (filter.value.minAmount !== '') {
-        const min = parseFloat(filter.value.minAmount)
-        result = result.filter(row => parseFloat(row[amountField]) >= min)
+        const min = parseFloat(String(filter.value.minAmount))
+        result = result.filter(row => parseFloat(String(row[amountField])) >= min)
       }
 
       if (filter.value.maxAmount !== '') {
-        const max = parseFloat(filter.value.maxAmount)
-        result = result.filter(row => parseFloat(row[amountField]) <= max)
+        const max = parseFloat(String(filter.value.maxAmount))
+        result = result.filter(row => parseFloat(String(row[amountField])) <= max)
       }
     }
   }
@@ -472,7 +484,7 @@ const processData = async () => {
   // Create a transformed dataset with mapped fields
   const transformed = data.map(row => {
     // Create a new row with transformed fields
-    const newRow = {
+    const newRow: TransactionPreviewRow = {
       _status: 'valid', // default status
       _issues: [] // tracking issues for this row
     }
@@ -533,17 +545,21 @@ const processData = async () => {
     invalidRecords: transformed.filter(row => row._status === 'invalid').length
   }
 
+  // Confirmation can advance while the optional entity lookup is still pending.
+  emit('update-stats', { ...stats.value })
+
   // Check for new entities that will be auto-created
   const supplierField = Object.keys(props.mappings).find(k => props.mappings[k]?.field === 'supplierName')
   const customerField = Object.keys(props.mappings).find(k => props.mappings[k]?.field === 'customerName')
 
-  const supplierNames = supplierField ? [...new Set(props.parsedData.map(r => r[supplierField]).filter(Boolean))] : []
-  const customerNames = customerField ? [...new Set(props.parsedData.map(r => r[customerField]).filter(Boolean))] : []
+  const supplierNames = supplierField ? [...new Set(props.parsedData.map(r => r[supplierField]).filter(Boolean).map(String))] : []
+  const customerNames = customerField ? [...new Set(props.parsedData.map(r => r[customerField]).filter(Boolean).map(String))] : []
 
   if (supplierNames.length > 0 || customerNames.length > 0) {
     try {
-      const preview = await $fetch('/api/transactions/import-preview', {
+      const preview = await $fetch<TransactionImportEntities>('/api/transactions/import-preview', {
         method: 'POST',
+        headers: user.authHeader,
         body: { supplierNames, customerNames }
       })
       newEntities.value = preview
@@ -552,8 +568,6 @@ const processData = async () => {
     }
   }
 
-  // Emit the transformed data for parent component
-  emit('update-data', transformed)
 }
 
 // Export preview data as CSV
@@ -587,14 +601,14 @@ const exportPreview = () => {
 }
 
 // Get CSS class for a row based on its status
-const getRowClass = (row) => {
+const getRowClass = (row: TransactionPreviewRow) => {
   if (row._status === 'warning') return 'bg-yellow-50 dark:bg-yellow-500/5'
   if (row._status === 'invalid') return 'bg-red-50 dark:bg-red-500/5'
   return ''
 }
 
 // Get CSS class for a field based on its validation status
-const getFieldClass = (row, field) => {
+const getFieldClass = (row: TransactionPreviewRow, field: string) => {
   if (field === 'amount' && row._issues?.includes('invalid_amount')) {
     return 'text-red-800 dark:text-red-400'
   }
@@ -609,10 +623,10 @@ const getFieldClass = (row, field) => {
 }
 
 // Get CSS class for status field
-const getStatusClass = (status) => {
+const getStatusClass = (status: TransactionPreviewValue) => {
   if (!status) return 'text-gray-500 dark:text-gray-400'
 
-  const statusLower = status.toLowerCase()
+  const statusLower = String(status).toLowerCase()
   if (statusLower.includes('complete') || statusLower.includes('success')) {
     return 'inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-green-500/10 text-green-600 dark:text-green-400'
   } else if (statusLower.includes('pending') || statusLower.includes('await')) {
@@ -627,7 +641,7 @@ const getStatusClass = (status) => {
 }
 
 // Format a field value based on its type
-const formatFieldValue = (field, value) => {
+const formatFieldValue = (field: string, value: TransactionPreviewValue) => {
   if (value === undefined || value === null) return '--'
 
   if (field.includes('amount') || field.includes('total') || field.includes('price') || field.includes('payment')) {
@@ -642,8 +656,8 @@ const formatFieldValue = (field, value) => {
 }
 
 // Format currency (locale-aware)
-const formatCurrency = (value) => {
-  const num = parseFloat(value)
+const formatCurrency = (value: TransactionPreviewValue) => {
+  const num = parseFloat(String(value))
   if (isNaN(num)) return value
 
   const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
@@ -657,9 +671,9 @@ const formatCurrency = (value) => {
 }
 
 // Format date (locale-aware)
-const formatDate = (value) => {
+const formatDate = (value: TransactionPreviewValue) => {
   try {
-    const date = new Date(value)
+    const date = previewDate(value)
     const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
     return date.toLocaleDateString(dateLocale, {
       year: 'numeric',

@@ -424,3 +424,13 @@ counts are unchanged. Four compiled SFCs are identical; the mapper's only emitte
 change makes existing numeric coercions explicit, with equivalent checked
 behavior. No new runtime guard or deployment is included. See the linked Vue
 type-checking report for the remaining scope.
+
+The [preview ownership repair](transaction-import-preview.md) preserves original
+columns across refresh/remapping and sends them unchanged to the existing import
+API. Confirmation receives preview statistics and the entity lookup sends the
+current bearer header. Eleven intercepted component/handler regressions pass;
+six fail against the preceding product code. **Current full Vue type checking
+fails with 236 diagnostics in 44 files**, with all 27 preview diagnostics removed
+and other counts unchanged. The new date type-dispatch conditional requires an
+owner-ordered independent review. Browser/deployed replay and the recorded import
+format/validation findings remain open; this is not deployment readiness.

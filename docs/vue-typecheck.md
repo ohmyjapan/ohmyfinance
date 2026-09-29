@@ -25,7 +25,7 @@ All 28 calendar tests and a production build passed. The compiled calendar SFC
 JavaScript was identical to the reviewed a9cd1b7 version, so the retained Chrome
 evidence was not repeated for this type-only change.
 
-**The full app type check still fails: 263 diagnostics in 45 Vue files.** It is
+**The full app type check still fails: 236 diagnostics in 44 Vue files.** It is
 not a green release check. No diagnostic suppression, baseline waiver or include
 exclusion was added.
 
@@ -38,6 +38,14 @@ matches the prior revision across 31 cell cases and nine field names, with six
 additional expected classifications. No new runtime guard was introduced.
 The production build also passes for this revision.
 
+The subsequent preview repair clears all 27 TransactionDataPreview diagnostics.
+It also preserves original source columns through preview/refresh/navigation and
+final import, sends mapped validation totals to confirmation, and authenticates
+the entity preview request. Eleven focused component/handler cases pass; six
+regressions fail against the preceding product code. All remaining file counts
+are unchanged. See [import preview ownership](transaction-import-preview.md) for
+the behavior, verification boundaries and required review.
+
 | Area | Diagnostics |
 | --- | ---: |
 | Analytics components | 22 |
@@ -47,12 +55,12 @@ The production build also passes for this revision.
 | Finance components | 6 |
 | Receipt components | 15 |
 | Shipment components | 2 |
-| Transaction components | 61 |
+| Transaction components | 34 |
 | Pages | 71 |
 
 These are compiler diagnostics, not a count of confirmed runtime defects. The
 active upload page uses components/transaction; older components/file-upload
 remain registered and included in the checker. Their errors were not excluded.
-The next scoped lead is TransactionDataPreview (27 diagnostics), including its
-raw/transformed row ownership on refresh and back-navigation. The broader release
-blockers remain separate. This change includes no production deployment.
+TransactionDataPreview now passes type checking. Its separate amount-format and
+validation-precedence findings are documented in the linked preview report.
+The broader release blockers remain separate. No production deployment is included.

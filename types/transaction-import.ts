@@ -16,3 +16,23 @@ export interface TransactionImportFile {
 }
 
 export type TransactionFieldMappings = Record<string, { field: string; format: string }>
+
+export type TransactionPreviewIssue = 'invalid_amount' | 'invalid_date' | 'date_out_of_range' | 'invalid_type'
+export type TransactionPreviewValue = TransactionImportCell | undefined | TransactionPreviewIssue[]
+export interface TransactionPreviewRow {
+  [field: string]: TransactionPreviewValue
+  _status: 'valid' | 'warning' | 'invalid'
+  _issues: TransactionPreviewIssue[]
+}
+
+export interface TransactionPreviewStats {
+  totalRecords: number
+  validRecords: number
+  warningRecords: number
+  invalidRecords: number
+}
+
+export interface TransactionImportEntities {
+  newSuppliers: string[]
+  newCustomers: string[]
+}
