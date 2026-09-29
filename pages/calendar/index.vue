@@ -7,6 +7,8 @@
         <p class="text-gray-600 dark:text-gray-400">{{ t('calendar.trackPayments') }}</p>
       </div>
       <button
+        v-if="calendarStore.canEdit"
+        :disabled="calendarStore.isSaving"
         @click="openAddModal()"
         class="mt-4 sm:mt-0 inline-flex items-center px-4 py-2 bg-primary-main hover:bg-primary-dark text-white rounded-lg font-medium transition-colors"
       >
@@ -14,6 +16,8 @@
         {{ t('calendar.addPayment') }}
       </button>
     </div>
+
+    <p v-if="calendarStore.error" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ calendarStore.error }}</p>
 
     <!-- Stats -->
     <CalendarStats :stats="calendarStore.monthlyStats" />
@@ -23,6 +27,8 @@
       <!-- Calendar -->
       <div class="lg:col-span-3">
         <CalendarGrid
+          :read-only="!calendarStore.canEdit"
+          :busy="calendarStore.isSaving"
           :current-month="calendarStore.currentMonth"
           :payments="calendarStore.payments"
           @previous-month="calendarStore.previousMonth"
@@ -41,6 +47,8 @@
       <div class="space-y-6">
         <!-- Upcoming Payments -->
         <UpcomingPayments
+          :read-only="!calendarStore.canEdit"
+          :busy="calendarStore.isSaving"
           :payments="calendarStore.upcomingPayments"
           @select="openEditModal"
           @mark-completed="handleMarkCompleted"
@@ -69,7 +77,7 @@
         </div>
 
         <!-- Quick Actions (OMF style) -->
-        <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
+        <div v-if="calendarStore.canEdit" class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">{{ t('calendar.quickAdd') }}</h3>
           <div class="space-y-2">
             <button
@@ -121,6 +129,8 @@
 
     <!-- Day Detail Modal -->
     <DayDetailModal
+          :read-only="!calendarStore.canEdit"
+          :busy="calendarStore.isSaving"
       :is-open="isDayDetailOpen"
       :date-string="dayDetailDate"
       :payments="dayDetailPayments"
@@ -132,6 +142,9 @@
 
     <!-- Payment Modal -->
     <PaymentModal
+      :read-only="!calendarStore.canEdit || selectedPayment?.completionState === 'pending'"
+      :busy="calendarStore.isSaving"
+      :error="calendarStore.error"
       :is-open="isModalOpen"
       :payment="selectedPayment"
       :default-date="selectedDate"
@@ -143,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { Plus, AlertTriangle, Home, Zap, FileText, DollarSign, CreditCard } from 'lucide-vue-next'
 import { useCalendarStore } from '~/stores/calendar'
 import type { Payment, PaymentFormData } from '~/types/calendar'
@@ -199,12 +212,14 @@ onMounted(() => {
 })
 
 const openAddModal = (dateString?: string) => {
+  if (!calendarStore.canEdit || calendarStore.isSaving) return
   selectedPayment.value = null
   selectedDate.value = dateString || formatLocalDate(new Date())
   isModalOpen.value = true
 }
 
 const openEditModal = (payment: Payment) => {
+  if (calendarStore.isSaving) return
   selectedPayment.value = payment
   selectedDate.value = ''
   isModalOpen.value = true
@@ -215,6 +230,11 @@ const closeModal = () => {
   selectedPayment.value = null
   selectedDate.value = ''
 }
+
+watch(() => calendarStore.contextKey, () => {
+  closeModal(); isDayDetailOpen.value = false
+  void calendarStore.fetchPayments()
+}, { flush: 'post' })
 
 const handleSelectDate = (date: Date) => {
   calendarStore.setSelectedDate(date)
@@ -238,33 +258,20 @@ const handleMovePayment = async (payment: Payment, newDate: string) => {
 
 const handleSubmit = async (data: PaymentFormData) => {
   try {
-    if (selectedPayment.value) {
-      await calendarStore.updatePayment(selectedPayment.value.id, data)
-    } else {
-      // Apply quick add presets if set
-      if (quickAddType.value && quickAddCategory.value) {
-        data.type = quickAddType.value
-        data.category = quickAddCategory.value
-        quickAddType.value = 'expense'
-        quickAddCategory.value = ''
-      }
-      await calendarStore.addPayment(data)
+    if (!selectedPayment.value && quickAddType.value && quickAddCategory.value) {
+      data.type = quickAddType.value; data.category = quickAddCategory.value
     }
-    closeModal()
-  } catch (error) {
-    console.error('Error saving payment:', error)
-  }
+    const result = selectedPayment.value
+      ? await calendarStore.updatePayment(selectedPayment.value.id, data)
+      : await calendarStore.addPayment(data)
+    if (result) { quickAddType.value = 'expense'; quickAddCategory.value = ''; closeModal() }
+  } catch { /* The store error remains visible in the open form. */ }
 }
 
 const handleDelete = async () => {
-  if (selectedPayment.value) {
-    try {
-      await calendarStore.deletePayment(selectedPayment.value.id)
-      closeModal()
-    } catch (error) {
-      console.error('Error deleting payment:', error)
-    }
-  }
+  if (!selectedPayment.value) return
+  try { if (await calendarStore.deletePayment(selectedPayment.value.id)) closeModal() }
+  catch { /* The store error remains visible in the open form. */ }
 }
 
 const quickAdd = (type: 'expense' | 'income', category: string) => {

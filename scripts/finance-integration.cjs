@@ -44,6 +44,7 @@ async function main(){
   const bytes=csv([row(),row(),row({4:'23456',2:'Other card',5:'99'}),row({2:'前回分口座振替金額',5:'-2500'})]);
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
+  if(process.env.OMF_TEST_CALENDAR_ONLY){await require('./calendar-integration.cjs')({db,call,token,other,origin,pass});console.log(checks+' targeted calendar checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_WORKSPACE_ONLY){await require('./receipt-workspace-integration.cjs')({db,call,token,other,origin,directory,pass});console.log(checks+' targeted receipt workspace checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_FILES_ONLY){await require('./receipt-files-integration.cjs')({db,call,token,other,origin,directory,pass});console.log(checks+' targeted receipt file checks passed');return;}
   if(process.env.OMF_TEST_RECEIPT_LINKS_ONLY){await require('./receipt-links-integration.cjs')({db,call,token,other,origin,root,pass});console.log(checks+' targeted receipt link checks passed');return;}

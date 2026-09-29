@@ -57,6 +57,7 @@
               <!-- Checkbox -->
               <button
                 v-if="payment.status === 'pending' || payment.status === 'overdue'"
+            :disabled="readOnly || busy"
                 @click.stop="$emit('mark-completed', payment)"
                 class="flex-shrink-0 w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500 hover:bg-success-main hover:border-success-main hover:text-white transition-all"
               />
@@ -136,6 +137,7 @@
             </div>
           </div>
           <button
+            :disabled="readOnly || busy"
             @click="$emit('add-payment')"
             class="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-xl transition-colors"
           >
@@ -156,6 +158,8 @@ import type { Payment } from '~/types/calendar'
 const { t, locale } = useI18n()
 
 const props = defineProps<{
+  readOnly?: boolean
+  busy?: boolean
   isOpen: boolean
   dateString: string
   payments: Payment[]

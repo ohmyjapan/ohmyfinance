@@ -137,6 +137,7 @@
           <!-- Add Button (appears on hover) -->
           <button
             v-if="day.isCurrentMonth"
+            :disabled="readOnly || busy"
             @click.stop="emit('add-payment', day.dateString)"
             class="p-1 hover:bg-gray-200 dark:hover:bg-white/[0.07] rounded opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
             :title="t('calendar.addPayment')"
@@ -184,7 +185,7 @@
               getPaymentClass(payment),
               draggedPayment?.id === payment.id ? 'opacity-50 ring-2 ring-primary-main' : ''
             ]"
-            draggable="true"
+            :draggable="!readOnly && !busy"
             @dragstart="handleDragStart(payment, $event)"
             @dragend="handleDragEnd"
             @click.stop
@@ -193,12 +194,14 @@
             <GripVertical :class="['flex-shrink-0 w-3 h-3 cursor-grab active:cursor-grabbing', getHandleColor(payment)]" />
             <button
               v-if="payment.status === 'pending' || payment.status === 'overdue'"
+            :disabled="readOnly || busy"
+              :data-complete-payment="payment.id"
               @click.stop="emit('mark-completed', payment)"
               class="flex-shrink-0 w-4 h-4 rounded-full border-2 border-current hover:bg-success-main hover:border-success-main hover:text-white transition-all"
               :title="t('calendar.markComplete')"
             />
             <div
-              v-else-if="payment.status === 'completed'"
+              v-else-if="payment.status === 'completed' || payment.status === 'paid'"
               class="flex-shrink-0 w-4 h-4 rounded-full bg-success-main flex items-center justify-center"
             >
               <Check class="h-2.5 w-2.5 text-white" />
@@ -291,6 +294,8 @@ const formatLocalDate = (date: Date): string => {
 }
 
 const props = defineProps<{
+  readOnly?: boolean
+  busy?: boolean
   currentMonth: Date
   payments: Payment[]
 }>()

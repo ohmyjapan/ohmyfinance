@@ -9,6 +9,9 @@ export interface BankTransferInfo {
 }
 
 export interface Payment {
+  revision: number
+  completionState?: 'pending' | 'posted' | 'deleted' | null
+  transactionId?: string | null
   id: string
   title: string
   amount: number

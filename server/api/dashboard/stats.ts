@@ -7,6 +7,7 @@ import { Payment } from '../../models/Payment'
 import Organization from '../../models/Organization'
 import User from '../../models/User'
 import { requireAuth } from '../../middleware/auth'
+import { requireLedgerAccess } from '../../services/ledgerAccessService'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'GET') {
@@ -15,6 +16,7 @@ export default defineEventHandler(async (event) => {
 
   // Try to get auth, but allow unauthenticated access with limited data
   const auth = requireAuth(event)
+  const access = await requireLedgerAccess(event)
 
   try {
     await ensureConnection()
@@ -37,7 +39,7 @@ export default defineEventHandler(async (event) => {
     // So we fetch all data. When multi-tenancy is added, filter by organizationId
     const transactionFilter: Record<string, any> = {}
     const receiptFilter: Record<string, any> = {}
-    const paymentFilter: Record<string, any> = {}
+    const paymentFilter: Record<string, any> = { organizationId: access.organizationId, deletedAt: null }
 
     // If organization exists and Receipt has organizationId, filter by it
     if (organizationId) {

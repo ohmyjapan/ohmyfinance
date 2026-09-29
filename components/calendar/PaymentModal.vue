@@ -25,6 +25,8 @@
             </button>
           </div>
 
+          <p v-if="error" role="alert" class="mx-6 mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
+          <fieldset :disabled="readOnly || busy">
           <!-- Body -->
           <div class="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
             <!-- Invoice Scan (only show when adding new) -->
@@ -165,11 +167,12 @@
               </label>
               <select
                 v-model="form.status"
+                :disabled="!!payment?.completionState || ['paid', 'completed'].includes(payment?.status || '')"
                 class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
               >
                 <option value="pending">{{ t('paymentModal.statuses.pending') }}</option>
-                <option value="paid">{{ t('paymentModal.statuses.paid') }}</option>
-                <option value="completed">{{ t('paymentModal.statuses.completed') }}</option>
+                <option :disabled="payment?.status !== 'paid'" value="paid">{{ t('paymentModal.statuses.paid') }}</option>
+                <option :disabled="payment?.status !== 'completed'" value="completed">{{ t('paymentModal.statuses.completed') }}</option>
                 <option value="overdue">{{ t('paymentModal.statuses.overdue') }}</option>
                 <option value="cancelled">{{ t('paymentModal.statuses.cancelled') }}</option>
               </select>
@@ -280,10 +283,12 @@
             </div>
           </div>
 
+          </fieldset>
           <!-- Footer -->
           <div class="px-6 py-4 border-t dark:border-white/10 flex justify-between">
             <button
-              v-if="isEditing"
+              v-if="isEditing && !readOnly"
+              :disabled="busy"
               type="button"
               @click="$emit('delete')"
               class="px-4 py-2 text-sm font-medium text-error-main hover:bg-error-light dark:hover:bg-error-dark/20 rounded-xl"
@@ -300,6 +305,8 @@
                 {{ t('common.cancel') }}
               </button>
               <button
+                v-if="!readOnly"
+                :disabled="busy"
                 type="submit"
                 class="px-4 py-2 text-sm font-medium text-white bg-primary-main hover:bg-primary-dark rounded-xl"
               >
@@ -336,6 +343,9 @@ onMounted(() => {
 })
 
 const props = defineProps<{
+  readOnly?: boolean
+  busy?: boolean
+  error?: string | null
   isOpen: boolean
   payment?: Payment | null
   defaultDate?: string
@@ -465,6 +475,7 @@ watch(() => props.isOpen, (newVal) => {
 })
 
 const handleSubmit = () => {
+  if (props.readOnly || props.busy) return
   const data: PaymentFormData = {
     ...form,
     bankTransfer: showBankTransfer.value && form.bankTransfer?.bankName

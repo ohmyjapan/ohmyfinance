@@ -10,6 +10,10 @@ export interface IBankTransferInfo {
 }
 
 export interface IPayment extends Document {
+  organizationId?: mongoose.Types.ObjectId
+  createdBy?: mongoose.Types.ObjectId
+  deletedAt?: Date
+  posting?: { key: string; payload: Record<string, any>; state: 'pending' | 'posted' | 'deleted'; transactionId?: string }
   title: string
   amount: number
   currency: string
@@ -34,6 +38,10 @@ const BankTransferInfoSchema = new Schema({
 }, { _id: false })
 
 const PaymentSchema = new Schema<IPayment>({
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', immutable: true, index: true },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User', immutable: true },
+  deletedAt: Date,
+  posting: { type: Schema.Types.Mixed, select: false },
   title: {
     type: String,
     required: true,

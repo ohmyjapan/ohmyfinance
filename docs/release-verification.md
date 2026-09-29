@@ -361,3 +361,19 @@ New active-read ownership and conditional replacement branches are guards under
 the house rule and need independent owner-ordered review before shipping. This
 branch remains undeployed. The broader release blockers above still apply;
 synthetic checks do not establish a production reliability rate.
+
+Calendar completion now reserves its original posting identity before recording
+the ledger result. Repeat/concurrent requests reuse the existing manual transaction
+service, preserve later ledger edits and do not recreate deleted transactions.
+Calendar CRUD, dashboard payment counts and visible state use the current company;
+viewer reads remain available. Failed completion is visible and resumable. Legacy
+date migration is retired without writing records.
+
+Evidence and limitations are detailed in [calendar payment recovery](calendar-payment-recovery.md):
+315 finance unit/service cases and retained HTTP suites, a final 17-case scoped
+run, eight API/setup plus two real Chrome checks on a fresh final build, zero
+TypeScript diagnostics, and four detected/restored defects. Final scoped changes
+and the two-byte line-ending normalization are explicitly distinguished from the
+earlier finance receipt. New guards require independent owner-ordered review.
+Legacy ownership/link migration and calendar backup completeness remain open.
+No deployment or production migration is included.

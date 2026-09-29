@@ -13,6 +13,7 @@
           <!-- Complete button -->
           <button
             v-if="payment.status === 'pending' || payment.status === 'overdue'"
+            :disabled="readOnly || busy"
             @click.stop="$emit('mark-completed', payment)"
             class="flex-shrink-0 p-1.5 rounded-full border-2 border-gray-300 dark:border-white/10 hover:border-success-main hover:bg-success-light dark:hover:bg-success-dark/30 transition-all duration-200 hover:scale-110"
             :title="t('calendar.markComplete')"
@@ -63,6 +64,8 @@ import type { Payment } from '~/types/calendar'
 const { t, locale } = useI18n()
 
 defineProps<{
+  readOnly?: boolean
+  busy?: boolean
   payments: Payment[]
 }>()
 

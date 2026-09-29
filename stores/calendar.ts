@@ -1,7 +1,28 @@
 // stores/calendar.ts
 import { defineStore } from 'pinia'
+import { watch } from 'vue'
 import type { Payment, PaymentFormData, MonthlyStats } from '~/types/calendar'
 import { useUserStore } from '~/stores/user'
+
+const context = () => {
+  const user = useUserStore()
+  return JSON.stringify([user.sessionId, user.isAuthenticated, user.user?.id, user.currentOrganization?.id || user.currentOrganization?._id])
+}
+const runtimes = new WeakMap<object, { epoch: number; list: number }>()
+function runtime(store: any) {
+  let current = runtimes.get(store)
+  if (current) return current
+  const state = { epoch: 0, list: 0 }
+  runtimes.set(store, state)
+  const stop = watch(context, () => {
+    state.epoch++; state.list++
+    store.payments = []; store.error = null; store.isLoading = false; store.isSaving = false
+  }, { flush: 'sync' })
+  const dispose = store.$dispose.bind(store)
+  store.$dispose = () => { stop(); state.epoch++; state.list++; runtimes.delete(store); dispose() }
+  return state
+}
+const failure = (error: any) => error?.data?.message || error?.data?.statusMessage || error?.message || 'Payment request failed'
 
 // Format date to YYYY-MM-DD in local timezone (JST)
 const formatLocalDate = (date: Date): string => {
@@ -22,6 +43,7 @@ interface CalendarState {
   selectedDate: Date
   currentMonth: Date
   isLoading: boolean
+  isSaving: boolean
   error: string | null
 }
 
@@ -31,10 +53,13 @@ export const useCalendarStore = defineStore('calendar', {
     selectedDate: new Date(),
     currentMonth: new Date(),
     isLoading: false,
+    isSaving: false,
     error: null
   }),
 
   getters: {
+    contextKey: () => context(),
+    canEdit: () => ['owner', 'admin', 'member'].includes(useUserStore().currentOrganization?.role),
     // Get payments for a specific date
     getPaymentsByDate: (state) => (dateString: string): Payment[] => {
       return state.payments.filter(p => p.dueDate.split('T')[0] === dateString)
@@ -103,120 +128,63 @@ export const useCalendarStore = defineStore('calendar', {
       return userStore.authHeader
     },
 
-    // Fetch all payments
-    async fetchPayments() {
+    async fetchPayments(): Promise<boolean> {
+      const rt = runtime(this), epoch = rt.epoch, request = ++rt.list, headers = { ...this._getAuthHeaders() }
       this.isLoading = true
-      this.error = null
       try {
-        const response = await $fetch<Payment[]>('/api/payments', {
-          headers: this._getAuthHeaders()
-        })
+        const response = await $fetch<Payment[]>('/api/payments', { headers, retry: 0 })
+        if (epoch !== rt.epoch || request !== rt.list) return false
         this.payments = response
         this.updateOverdueStatus()
+        return true
       } catch (error: any) {
-        this.error = error.message || 'Failed to fetch payments'
-        console.error('Error fetching payments:', error)
-      } finally {
-        this.isLoading = false
-      }
+        if (epoch === rt.epoch && request === rt.list) this.error = failure(error)
+        return false
+      } finally { if (epoch === rt.epoch && request === rt.list) this.isLoading = false }
     },
 
-    // Add a new payment
-    async addPayment(paymentData: PaymentFormData) {
-      this.isLoading = true
-      this.error = null
+    async _write(operation: (headers: Record<string, string>) => Promise<any>, apply: (result: any) => void): Promise<any> {
+      const rt = runtime(this)
+      if (!this.canEdit || this.isSaving) return null
+      const epoch = rt.epoch, headers = { ...this._getAuthHeaders() }
+      this.isSaving = true; this.error = null
       try {
-        const response = await $fetch<Payment>('/api/payments', {
-          method: 'POST',
-          body: paymentData,
-          headers: this._getAuthHeaders()
-        })
-        this.payments.push(response)
-        return response
+        const result = await operation(headers)
+        if (epoch !== rt.epoch) return null
+        rt.list++
+        apply(result)
+        // Only the read is refreshed. Its failure cannot retry or reject a confirmed write.
+        void this.fetchPayments()
+        return result
       } catch (error: any) {
-        this.error = error.message || 'Failed to add payment'
+        if (epoch === rt.epoch) this.error = failure(error)
         throw error
-      } finally {
-        this.isLoading = false
-      }
+      } finally { if (epoch === rt.epoch) this.isSaving = false }
     },
-
-    // Update a payment
-    async updatePayment(id: string, paymentData: Partial<PaymentFormData>) {
-      this.isLoading = true
-      this.error = null
-      try {
-        const response = await $fetch<Payment>(`/api/payments/${id}`, {
-          method: 'PUT',
-          body: paymentData,
-          headers: this._getAuthHeaders()
-        })
-        const index = this.payments.findIndex(p => p.id === id)
-        if (index !== -1) {
-          this.payments[index] = response
-        }
-        return response
-      } catch (error: any) {
-        this.error = error.message || 'Failed to update payment'
-        throw error
-      } finally {
-        this.isLoading = false
-      }
+    _remember(payment: Payment) {
+      const index = this.payments.findIndex(p => p.id === payment.id)
+      if (index < 0) this.payments.push(payment)
+      else this.payments[index] = payment
     },
-
-    // Delete a payment
-    async deletePayment(id: string) {
-      this.isLoading = true
-      this.error = null
-      try {
-        await $fetch(`/api/payments/${id}`, {
-          method: 'DELETE',
-          headers: this._getAuthHeaders()
-        })
-        this.payments = this.payments.filter(p => p.id !== id)
-      } catch (error: any) {
-        this.error = error.message || 'Failed to delete payment'
-        throw error
-      } finally {
-        this.isLoading = false
-      }
+    async addPayment(paymentData: PaymentFormData): Promise<any> {
+      return this._write(headers => $fetch<Payment>('/api/payments', { method: 'POST', body: paymentData, headers, retry: 0 }), payment => this._remember(payment))
     },
-
-    // Mark payment as paid and create a transaction
-    async markAsPaid(id: string) {
+    async updatePayment(id: string, paymentData: Partial<PaymentFormData>): Promise<any> {
       const payment = this.payments.find(p => p.id === id)
-      if (!payment) throw new Error('Payment not found')
-
-      // Update payment status
-      const updatedPayment = await this.updatePayment(id, { status: 'paid' })
-
-      // Create a transaction for this payment
-      try {
-        await $fetch('/api/transactions', {
-          method: 'POST',
-          headers: this._getAuthHeaders(),
-          body: {
-            date: new Date(payment.dueDate),
-            amount: payment.amount,
-            type: payment.type === 'income' ? '入金' : '支出',
-            status: 'completed',
-            notes: `支払いカレンダーより: ${payment.title}`,
-            referenceNumber: `PAY-${id}`,
-            // Link to payment
-            paymentId: id
-          }
-        })
-      } catch (error) {
-        console.error('Failed to create transaction for payment:', error)
-      }
-
-      return updatedPayment
+      if (!payment) return null
+      return this._write(headers => $fetch<Payment>(`/api/payments/${id}`, { method: 'PUT', body: { ...paymentData, revision: payment.revision }, headers, retry: 0 }), result => this._remember(result))
     },
-
-    // Mark payment as completed (same as paid with transaction creation)
-    async markAsCompleted(id: string) {
-      return this.markAsPaid(id)
+    async deletePayment(id: string): Promise<any> {
+      const payment = this.payments.find(p => p.id === id)
+      if (!payment) return null
+      return this._write(headers => $fetch<{ success: boolean }>(`/api/payments/${id}`, { method: 'DELETE', body: { revision: payment.revision }, headers, retry: 0 }), () => { this.payments = this.payments.filter(p => p.id !== id) })
     },
+    async markAsPaid(id: string): Promise<any> {
+      const payment = this.payments.find(p => p.id === id)
+      if (!payment) return null
+      return this._write(headers => $fetch<{ payment: Payment }>(`/api/payments/${id}/complete`, { method: 'POST', body: { revision: payment.revision }, headers, retry: 0 }), result => this._remember(result.payment))
+    },
+    async markAsCompleted(id: string): Promise<any> { return this.markAsPaid(id) },
 
     // Update overdue status for past due payments
     updateOverdueStatus() {
