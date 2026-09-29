@@ -132,7 +132,8 @@ vue-tsc 1.8.27 crashed before checking project files. Fable subsequently reviewe
 a9cd1b7 with KEEP, resolving all three required findings. The compiler maintenance
 described in [Vue type checking](vue-typecheck.md) now runs the checker and clears
 the calendar's five template diagnostics through a local draft type. Its emitted
-JavaScript is unchanged. The full app still has 280 diagnostics elsewhere.
+JavaScript is unchanged. Remaining app diagnostics are tracked in the linked
+Vue type-checking report.
 All test data is synthetic; these results are not a production reliability
 measurement or the broader shared-guard audit.
 

@@ -207,9 +207,12 @@ import {
 
 const { t } = useI18n()
 
+import type { PropType } from 'vue'
+import type { TransactionImportFile } from '~/types/transaction-import'
+
 const props = defineProps({
   files: {
-    type: Array,
+    type: Array as PropType<TransactionImportFile[]>,
     required: true
   },
   stats: {

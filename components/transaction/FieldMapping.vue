@@ -256,6 +256,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import type { PropType } from 'vue'
+import type { TransactionImportFile, TransactionImportRow, TransactionFieldMappings } from '~/types/transaction-import'
 import {
   AlertCircle,
   ChevronDown,
@@ -270,11 +272,11 @@ const { t } = useI18n()
 
 const props = defineProps({
   files: {
-    type: Array,
+    type: Array as PropType<TransactionImportFile[]>,
     required: true
   },
   mappings: {
-    type: Object,
+    type: Object as PropType<TransactionFieldMappings>,
     default: () => ({})
   }
 })
@@ -294,7 +296,7 @@ const activeTemplate = ref('')
 const TEMPLATE_STORAGE_KEY = 'omf-mapping-templates'
 
 // Load saved templates from localStorage
-const savedTemplates = ref<Array<{ name: string, mappings: Record<string, any> }>>([])
+const savedTemplates = ref<Array<{ name: string, mappings: TransactionFieldMappings }>>([])
 
 const loadSavedTemplates = () => {
   try {
@@ -319,7 +321,7 @@ const saveTemplateMapping = () => {
   setTimeout(() => { templateSaved.value = false }, 2000)
 }
 
-const loadTemplate = (tmpl: { name: string, mappings: Record<string, any> }) => {
+const loadTemplate = (tmpl: { name: string, mappings: TransactionFieldMappings }) => {
   activeTemplate.value = tmpl.name
   // Apply saved mappings to current source fields
   sourceFields.value.forEach(field => {
@@ -337,7 +339,7 @@ const deleteTemplate = (name: string) => {
 }
 
 // Sample data for the current file
-const sampleData = ref([
+const sampleData = ref<TransactionImportRow[]>([
   // This would be dynamically loaded based on the selected file
   // Here's a placeholder with sample data
 ])
@@ -518,18 +520,18 @@ const initializeMappings = () => {
 }
 
 // Get a sample value for a field
-const getSampleValue = (field) => {
+const getSampleValue = (field: string) => {
   if (sampleData.value.length === 0) return ''
   return sampleData.value[0][field]
 }
 
 // Check if a field is mapped
-const isFieldMapped = (field) => {
+const isFieldMapped = (field: string) => {
   return localMappings.value[field] && localMappings.value[field].field && localMappings.value[field].field !== ''
 }
 
 // Get the field type based on the field name or sample value (OMF style)
-const getFieldType = (field) => {
+const getFieldType = (field: string) => {
   const sampleValue = getSampleValue(field)
   const lowerField = field.toLowerCase()
 
@@ -541,7 +543,7 @@ const getFieldType = (field) => {
              lowerField.includes('amount') || lowerField.includes('price') ||
              lowerField.includes('total') || lowerField.includes('rate')) {
     return 'number'
-  } else if (!isNaN(parseFloat(sampleValue)) && isFinite(sampleValue)) {
+  } else if (!isNaN(parseFloat(String(sampleValue))) && isFinite(Number(sampleValue))) {
     return 'number'
   } else {
     return 'string'

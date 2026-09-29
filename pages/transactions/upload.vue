@@ -117,6 +117,7 @@
 import { ref } from 'vue'
 import { CheckCircle, Upload, GitBranch, Eye, Download, BarChart3 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import type { TransactionImportFile, TransactionFieldMappings } from '~/types/transaction-import'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -141,8 +142,8 @@ const getStepIcon = (index: number) => {
 const currentStep = ref(0)
 const completedSteps = ref<number[]>([])
 const selectedSource = ref('credit_card')
-const uploadedFiles = ref<any[]>([])
-const fieldMappings = ref<Record<string, any>>({})
+const uploadedFiles = ref<TransactionImportFile[]>([])
+const fieldMappings = ref<TransactionFieldMappings>({})
 const parsedData = ref<any[]>([])
 const importStats = ref({
   totalRecords: 0,
@@ -204,7 +205,7 @@ const selectSource = (sourceId: string) => {
 }
 
 // Handle file selection - now receives actual parsed data from the component
-const handleFilesSelected = (files: any[]) => {
+const handleFilesSelected = (files: TransactionImportFile[]) => {
   uploadedFiles.value = files
 
   // If files have parsed data, use it
@@ -235,7 +236,7 @@ const handleFilesSelected = (files: any[]) => {
 }
 
 // Update field mappings
-const updateMappings = (mappings: Record<string, any>) => {
+const updateMappings = (mappings: TransactionFieldMappings) => {
   fieldMappings.value = mappings
 }
 

@@ -232,17 +232,11 @@ import { FileSpreadsheet, Upload, CreditCard, Wallet, Globe, ArrowRight, CheckCi
 
 const { t } = useI18n()
 
-interface ProcessedFile {
-  name: string
-  size: number
-  type: string
-  isValid: boolean
+import type { TransactionImportFile } from '~/types/transaction-import'
+
+interface ProcessedFile extends TransactionImportFile {
   isProcessing: boolean
-  rowCount?: number
-  headers?: string[]
-  data?: any[]
   error?: string
-  file: File
 }
 
 const props = defineProps({

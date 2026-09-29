@@ -25,9 +25,18 @@ All 28 calendar tests and a production build passed. The compiled calendar SFC
 JavaScript was identical to the reviewed a9cd1b7 version, so the retained Chrome
 evidence was not repeated for this type-only change.
 
-**The full app type check still fails: 280 diagnostics in 48 Vue files.** It is
+**The full app type check still fails: 263 diagnostics in 45 Vue files.** It is
 not a green release check. No diagnostic suppression, baseline waiver or include
-exclusion was added. All non-calendar counts match the unchanged-source probe.
+exclusion was added.
+
+On 2026-09-30, the active upload producer, parent, mapper and confirmation received
+shared file/row/mapping types matching the CSV/Excel parser. The card-mapping page
+now declares its existing card-accounting summary. This clears 17 diagnostics;
+all other file counts are unchanged. Four compiled SFCs have identical JavaScript.
+The mapper only makes existing numeric coercions explicit; its compiled behavior
+matches the prior revision across 31 cell cases and nine field names, with six
+additional expected classifications. No new runtime guard was introduced.
+The production build also passes for this revision.
 
 | Area | Diagnostics |
 | --- | ---: |
@@ -38,10 +47,12 @@ exclusion was added. All non-calendar counts match the unchanged-source probe.
 | Finance components | 6 |
 | Receipt components | 15 |
 | Shipment components | 2 |
-| Transaction components | 76 |
-| Pages | 73 |
+| Transaction components | 61 |
+| Pages | 71 |
 
-These are compiler diagnostics, not a count of confirmed runtime defects. Trace
-the active mapping/import callers before scoping the next repairs; do not assume
-a component is unused or remove it just because it has type errors. The broader
-release blockers remain separate. This change includes no production deployment.
+These are compiler diagnostics, not a count of confirmed runtime defects. The
+active upload page uses components/transaction; older components/file-upload
+remain registered and included in the checker. Their errors were not excluded.
+The next scoped lead is TransactionDataPreview (27 diagnostics), including its
+raw/transformed row ownership on refresh and back-navigation. The broader release
+blockers remain separate. This change includes no production deployment.

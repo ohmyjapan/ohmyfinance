@@ -207,7 +207,14 @@ import type { MappingRow as SourceMappingRow } from '~/shared/finance-mapping.mj
 type MappingRow = SourceMappingRow & { settlement?: any; draft?: { revision: number; approved: boolean }; preparation?: any; classification?: {state: string; source: string; grade: string; reason: string} }
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '明細マッピング | OhMyFinance' })
-interface Batch { id: string; account: { id: string; name: string }; period: { kind?: string; start: string; end: string; fiscalPeriod?: {start: string; end: string} }; sourceReferences?: any[]; preparedAt: string | null; rows: MappingRow[]; sourceHash: string; mappingKey: string; sourceCategories: {name: string; count: number; matches: number}[] }
+interface CardAccountingSummary {
+  status: 'excluded' | 'missing' | 'review' | 'configured'
+  reason: string
+  accountName?: string
+  subAccountName?: string
+  taxCategory?: string
+}
+interface Batch { id: string; account: { id: string; name: string }; period: { kind?: string; start: string; end: string; fiscalPeriod?: {start: string; end: string} }; sourceReferences?: any[]; preparedAt: string | null; rows: MappingRow[]; sourceHash: string; mappingKey: string; sourceCategories: {name: string; count: number; matches: number}[]; cardAccounting?: CardAccountingSummary }
 const user = useUserStore(), route = useRoute(), assistant=useAssistantStore()
 const { t } = useI18n()
 const imports = ref<any[]>([]), accounts = ref<any[]>([]), batches = ref<Batch[]>([])

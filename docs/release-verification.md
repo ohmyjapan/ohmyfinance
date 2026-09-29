@@ -416,3 +416,11 @@ emitted JavaScript. A clean dependency install, 28 calendar tests and a producti
 build pass. **Full type checking still fails with 280 diagnostics in 48 other Vue
 files.** No suppression or exclusion was added. The reviewed runtime behavior and
 existing release blockers remain; this tooling change is not a deployment.
+
+The next bounded import-contract repair clears another 17 diagnostics using
+shared file/row/mapping types and the card summary already returned by the API.
+**The current full check fails with 263 diagnostics in 45 Vue files.** Other file
+counts are unchanged. Four compiled SFCs are identical; the mapper's only emitted
+change makes existing numeric coercions explicit, with equivalent checked
+behavior. No new runtime guard or deployment is included. See the linked Vue
+type-checking report for the remaining scope.
