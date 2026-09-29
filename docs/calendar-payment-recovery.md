@@ -127,12 +127,14 @@ leaves the form open after rejection. Final finance/browser source hashes match.
 The first browser attempt rejected an incomplete synthetic bank object; required
 branch/holder values were supplied in the test fixture, with the failure retained.
 
-TypeScript passes with zero diagnostics. Installed vue-tsc 1.8.27 crashes while
-loading TypeScript 5.9.3, before compiling project files. Vue files are covered by
-the fresh Nuxt build and Chrome; no passing Vue type-check is claimed. Dependencies
-were not changed. New error-ownership and comparison conditions are guards and
-have not received independent review. All data is synthetic; these results are
-not a production reliability measurement or the broader shared-guard audit.
+At the UI follow-up, TypeScript passed with zero diagnostics and installed
+vue-tsc 1.8.27 crashed before checking project files. Fable subsequently reviewed
+a9cd1b7 with KEEP, resolving all three required findings. The compiler maintenance
+described in [Vue type checking](vue-typecheck.md) now runs the checker and clears
+the calendar's five template diagnostics through a local draft type. Its emitted
+JavaScript is unchanged. The full app still has 280 diagnostics elsewhere.
+All test data is synthetic; these results are not a production reliability
+measurement or the broader shared-guard audit.
 
 ## Release limits
 

@@ -408,3 +408,11 @@ loader before checking project files. Fresh Nuxt build and Chrome coverage do no
 replace Vue type-checking. New error-ownership/comparison guards await a separately
 owner-ordered review. No deployment, migration, production reliability claim or
 resolution of the broader release blockers is included.
+
+The [Vue type-check maintenance](vue-typecheck.md) supersedes the loader-crash
+limitation above. Pinned vue-tsc 3.0.8 and `npm run typecheck` now reach app source.
+A local initialized calendar draft type clears five diagnostics with identical
+emitted JavaScript. A clean dependency install, 28 calendar tests and a production
+build pass. **Full type checking still fails with 280 diagnostics in 48 other Vue
+files.** No suppression or exclusion was added. The reviewed runtime behavior and
+existing release blockers remain; this tooling change is not a deployment.

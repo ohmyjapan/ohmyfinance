@@ -457,7 +457,9 @@ const handleInvoiceScan = async (event: Event) => {
   }
 }
 
-const getDefaultForm = (): PaymentFormData => ({
+type PaymentDraft = PaymentFormData & { bankTransfer: BankTransferInfo }
+
+const getDefaultForm = (): PaymentDraft => ({
   title: '',
   amount: '',
   currency: settingsStore.defaultCurrency || DEFAULT_CURRENCY,
@@ -477,7 +479,7 @@ const getDefaultForm = (): PaymentFormData => ({
   notes: ''
 })
 
-const form = reactive<PaymentFormData>(getDefaultForm())
+const form = reactive<PaymentDraft>(getDefaultForm())
 
 const currentPayment = computed(() => props.savedPayment || props.payment)
 const terminal = computed(() => currentPayment.value?.completionState === 'deleted')
