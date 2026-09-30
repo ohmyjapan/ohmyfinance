@@ -87,6 +87,17 @@ async function availablePort() {
       if (request.url() === origin + '/api/transactions/import') importRequests.push(JSON.parse(request.postData()));
       if (request.url() === origin + '/api/transactions/import-preview') entityRequests.push({ authenticated: !!request.headers().authorization, body: JSON.parse(request.postData()) });
     });
+    let holdNextImport = false, heldImport;
+    await page.setRequestInterception(true);
+    page.on('request', request => {
+      if (holdNextImport && request.url() === origin + '/api/transactions/import') {
+        holdNextImport = false; heldImport = request;
+      } else request.continue().catch(() => {});
+    });
+    const waitForHeldImport = async () => {
+      for (let i = 0; i < 100 && !heldImport; i++) await pause(50);
+      assert(heldImport, 'Expected an intercepted import request');
+    };
     const click = async (label, selector = 'button') => {
       await page.waitForFunction((text, selector) => [...document.querySelectorAll(selector)].some(element => element.textContent.trim() === text && !element.disabled), {}, label, selector);
       await page.evaluate((text, selector) => [...document.querySelectorAll(selector)].find(element => element.textContent.trim() === text && !element.disabled).click(), label, selector);
@@ -158,10 +169,30 @@ async function availablePort() {
     await page.setViewport({ width: 1440, height: 1000 });
     await click(t('dataPreview.continueToImport')); await heading('importConfirmation.title');
     assert.match(await page.$eval('main', element => element.innerText), /3\s*\/\s*6/); pass('confirmation counts only the three rows accepted by import');
+    await page.click('#skip-duplicates');
+    assert.equal(await page.$eval('#skip-duplicates', element => element.checked), false);
     await click(t('importConfirmation.startImport'));
     await page.waitForFunction(() => [...document.querySelectorAll('h3')].some(element => element.textContent.includes('インポート')));
     assert((await page.$eval('body', element => element.innerText)).includes(t('importConfirmation.confirmMessage').replace('{count}', '3')));
-    await click(t('importConfirmation.startImport'), '.fixed button'); await heading('importResults.successTitle');
+    holdNextImport = true;
+    await page.evaluate(label => {
+      const button = [...document.querySelectorAll('.fixed button')].find(element => element.textContent.trim() === label);
+      button.click(); button.click();
+    }, t('importConfirmation.startImport'));
+    await waitForHeldImport();
+    await page.waitForSelector('main fieldset[disabled]');
+    assert.equal(importRequests.length, 1);
+    assert.equal(importRequests[0].options.skipDuplicates, false);
+    assert.equal(await db.collection('transactions').countDocuments({}), 0);
+    assert.equal(await page.$$eval('main nav button:disabled', buttons => buttons.length), 5);
+    assert.equal(await page.$$eval('main input[type="checkbox"]:disabled', inputs => inputs.length), 4);
+    assert(await page.$$eval('main button', (buttons, label) => buttons.find(button => button.textContent.trim() === label)?.matches(':disabled'), t('importConfirmation.backToPreview')));
+    assert(await page.$$eval('main button', (buttons, label) => buttons.some(button => button.textContent.trim() === label && button.matches(':disabled')), t('importConfirmation.importing')));
+    await screenshot('import-pending.png');
+    await heldImport.continue(); heldImport = undefined;
+    await heading('importResults.successTitle');
+    assert.equal(await page.$eval('main fieldset', element => element.disabled), false);
+    pass('rapid confirmation sends one request and holds navigation/options until the actual import settles');
     assert.deepEqual(await previewCounts(), [3, 0, 3]);
     await click(t('importResults.showErrors').replace('{count}', '3'));
     const resultText = await page.$eval('main', element => element.innerText); assert.match(resultText, /invalid amount/i); assert.match(resultText, /Invalid date/);
@@ -187,6 +218,31 @@ async function availablePort() {
     await click(t('importConfirmation.startImport'), '.fixed button'); await heading('importResults.successTitle');
     assert.deepEqual(await previewCounts(), [1, 0, 0]); assert.equal(await db.collection('transactions').countDocuments({}), 4);
     assert.equal(importRequests.length, 2); assert.equal(importRequests[1].data.length, 1); pass('import-more clears prior rows and completes a fresh CSV import on mobile');
+    await click(t('importResults.importMore')); await page.waitForSelector('input[type="file"]');
+    const recoveryFile = path.join(directory, 'synthetic-recovery.csv'); fs.writeFileSync(recoveryFile, 'Paid,Day,Item\r\n5600,2026-09-25,Recovery import\r\n');
+    const prepareRecovery = async () => {
+      await (await page.$('input[type="file"]')).uploadFile(recoveryFile);
+      await click(t('transactionImport.continueToMapping')); await heading('fieldMapper.title');
+      await map({ Paid: 'amount', Day: 'date', Item: 'notes' });
+      await click(t('fieldMapper.continueToPreview')); await heading('dataPreview.title');
+      await click(t('dataPreview.continueToImport')); await heading('importConfirmation.title');
+      await click(t('importConfirmation.startImport'));
+    };
+    await prepareRecovery(); holdNextImport = true;
+    await click(t('importConfirmation.startImport'), '.fixed button'); await waitForHeldImport();
+    assert.equal(await page.$eval('main fieldset', element => element.disabled), true);
+    await heldImport.respond({ status: 503, contentType: 'application/json', body: JSON.stringify({ statusCode: 503, statusMessage: 'Synthetic transport failure' }) });
+    heldImport = undefined;
+    await heading('importResults.errorTitle');
+    assert.equal(await page.$eval('main fieldset', element => element.disabled), false);
+    assert.equal(importRequests.length, 3); assert.equal(await db.collection('transactions').countDocuments({}), 4);
+    await screenshot('import-failure-mobile.png');
+    pass('a simulated transport failure releases pending state and displays the existing error result');
+    await click(t('importResults.importMore')); await page.waitForSelector('input[type="file"]');
+    await prepareRecovery(); await click(t('importConfirmation.startImport'), '.fixed button'); await heading('importResults.successTitle');
+    assert.equal(importRequests.length, 4); assert.equal(await db.collection('transactions').countDocuments({}), 5);
+    assert.equal((await db.collection('transactions').findOne({ notes: 'Recovery import' })).amount, 5600);
+    pass('reset after failure permits one successful new import on mobile');
     assert.deepEqual(consoleErrors, []); assert.deepEqual(hashes(), sourceHashes);
     fs.writeFileSync(path.join(outputDir, 'verification.json'), JSON.stringify({ at: new Date().toISOString(), sourceHashes, checks, syntheticData: true, actualParserAndDatabase: true, productionTouched: false, outputDir }, null, 2));
     console.log(JSON.stringify({ pass: true, checks: checks.length, outputDir }));

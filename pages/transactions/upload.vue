@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-5xl mx-auto">
+  <fieldset class="max-w-5xl min-w-0 mx-auto" :disabled="isImporting" :aria-busy="isImporting">
     <!-- Header -->
     <header class="mb-8">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('transactionUpload.title') }}</h1>
@@ -95,6 +95,7 @@
             :stats="importStats"
             :options="importOptions"
             :source="selectedSource"
+            :is-importing="isImporting"
             @update-options="updateImportOptions"
             @back="previousStep"
             @import="performImport"
@@ -110,7 +111,7 @@
         </div>
       </Transition>
     </div>
-  </div>
+  </fieldset>
 </template>
 
 <script setup lang="ts">
@@ -160,6 +161,7 @@ const importOptions = ref({
   notifyWhenComplete: true
 })
 const importResult = ref<any>(null)
+const isImporting = ref(false)
 
 // Get step circle class
 const getStepCircleClass = (index: number) => {
@@ -254,6 +256,8 @@ const updateImportOptions = (options: any) => {
 
 // Perform the actual import
 const performImport = async () => {
+  if (isImporting.value) return
+  isImporting.value = true
   try {
     const result = await $fetch('/api/transactions/import', {
       method: 'POST',
@@ -282,6 +286,8 @@ const performImport = async () => {
       completedSteps.value.push(currentStep.value)
     }
     currentStep.value = 4
+  } finally {
+    isImporting.value = false
   }
 }
 

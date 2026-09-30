@@ -82,3 +82,10 @@ changing date coercion or validation. Existing 22 script cases and ten browser
 checks pass; the label was inspected in the Japanese table/CSV and Korean locale
 file. A fresh build passes and full type checking retains the same 236 diagnostics
 in 44 files. No additional tests, suppressed diagnostics or deployment included.
+
+The pending-import repair also retains the same 236 diagnostics in 44 files.
+The request-owning page now supplies confirmation loading state and disables
+wizard controls until settlement. Twenty-four focused cases, two detected
+removed-fix mutations, thirteen real Chrome checks and a fresh build verify the
+bounded behavior. This does not cover cross-tab or lost-response recovery.
+No diagnostic suppression or production deployment is included.

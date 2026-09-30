@@ -211,6 +211,10 @@ import type { PropType } from 'vue'
 import type { TransactionImportFile } from '~/types/transaction-import'
 
 const props = defineProps({
+  isImporting: {
+    type: Boolean,
+    default: false
+  },
   files: {
     type: Array as PropType<TransactionImportFile[]>,
     required: true
@@ -244,7 +248,6 @@ const emit = defineEmits(['update-options', 'back', 'import'])
 
 // Local state
 const localOptions = ref({...props.options})
-const isImporting = ref(false)
 const showConfirmDialog = ref(false)
 
 // Watch for changes to localOptions
@@ -299,14 +302,9 @@ const performImport = () => {
   showConfirmDialog.value = true
 }
 
-const confirmImport = async () => {
+const confirmImport = () => {
   showConfirmDialog.value = false
-  isImporting.value = true
-  try {
-    emit('import', localOptions.value)
-  } finally {
-    isImporting.value = false
-  }
+  emit('import', localOptions.value)
 }
 
 const cancelImport = () => {

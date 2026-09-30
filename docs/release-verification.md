@@ -480,3 +480,20 @@ were inspected for the label. No new cases or separate Korean browser run were
 added. Locale files are included in the browser source hashes. Fresh build passes;
 the same 236 diagnostics remain in 44 files. The new display conditional requires
 an explicit owner-ordered review. No production deployment or migration included.
+
+The 661a6db blank-date review returned LOOSEN for missing automated label assertions
+only; it found the implementation correct. That coverage recommendation remains
+recorded and unimplemented, with retained visual/CSV/probe evidence. No release
+approval follows from that scoped assessment.
+
+The pending-import repair makes the request-owning page own loading state, ignore
+concurrent confirmations and disable wizard navigation/options until settlement.
+The existing results/reset behavior is preserved after success and failure.
+Twenty-four script cases pass (22 pass/two fail before the repair); two removed-fix
+mutations are caught. Thirteen Chrome checks pass using the actual parser, built
+API and temporary database, including held-request double-clicks with duplicate
+skipping off and a simulated 503 followed by a successful new import on mobile.
+Fresh build passes; the same 236 diagnostics remain in 44 Vue files. New guards
+need explicitly ordered independent review. This is protection within one mounted
+wizard, not request idempotency, cross-tab/crash recovery or production reliability
+proof. Broader release blockers remain; no deployment or migration is included.

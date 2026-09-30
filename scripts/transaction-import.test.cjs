@@ -6,6 +6,40 @@ function upload(flow, data = rows) {
   flow.page.handleFilesSelected([{ name: 'synthetic.csv', size: 100, type: 'text/csv', isValid: true, file: {}, rowCount: data.length, data: structuredClone(data) }]);
   flow.page.updateMappings(structuredClone(mappings));
 }
+test('concurrent confirmation events send and store one batch even with duplicates allowed', async t => {
+  const flow = wizard(); t.after(flow.close); upload(flow);
+  flow.page.updateImportOptions({ skipDuplicates: false });
+  const pending = Array.from({ length: 5 }, () => flow.page.performImport());
+  await Promise.all(pending);
+  assert.equal(flow.requests.filter(request => request.url === '/api/transactions/import').length, 1);
+  assert.equal(flow.writes.length, 1);
+  assert.equal(flow.writes[0].amount, 79200);
+  assert.deepEqual(flow.raw(), rows);
+  assert.equal(flow.page.importResult.value.results.imported, 1);
+  assert.equal(flow.page.currentStep.value, 4);
+  assert.equal(flow.page.isImporting.value, false);
+});
+
+test('a rejected request releases pending state and import-more can submit a new batch', async t => {
+  const flow = wizard(); t.after(flow.close); upload(flow);
+  const push = flow.requests.push.bind(flow.requests);
+  flow.requests.push = request => { push(request); throw Error('Synthetic transport failure'); };
+  const pending = flow.page.performImport();
+  assert.equal(flow.page.isImporting.value, true);
+  await pending;
+  assert.equal(flow.page.isImporting.value, false);
+  assert.equal(flow.page.currentStep.value, 4);
+  assert.equal(flow.page.importResult.value.success, false);
+  assert.match(flow.page.importResult.value.error, /Synthetic transport failure/);
+  assert.equal(flow.writes.length, 0);
+  flow.requests.push = push;
+  flow.page.resetWizard(); upload(flow, [{ Paid: 4500, Day: '2026-09-24', Item: 'New batch' }]);
+  await flow.page.performImport();
+  assert.equal(flow.writes.length, 1);
+  assert.equal(flow.writes[0].amount, 4500);
+  assert.equal(flow.page.importResult.value.success, true);
+  assert.equal(flow.page.isImporting.value, false);
+});
 test('entering preview mounts and publishes rows and validation without a refresh', t => {
   const flow = wizard(); t.after(flow.close);
   upload(flow, [...rows, { Paid: 'invalid', Day: '2026-09-22', Item: 'Bad amount' }]);

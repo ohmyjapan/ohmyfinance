@@ -62,6 +62,13 @@ numeric zero and false. It does not insert a date or a label into source rows or
 the import payload. Validation, date filtering and server acceptance are unchanged.
 Nonempty invalid dates keep their existing invalid display and rejection.
 
+The upload page now owns the pending import request. Repeated confirmation
+events while it is pending do not send another batch, even with duplicate
+transactions allowed. The confirmation loading label uses this parent state;
+a native disabled fieldset holds the wizard's navigation and options until the
+request settles. Success and failure both release the state and keep the existing
+results/import-more flow. No source rows or server acceptance policy change.
+
 ## Verification
 
 Run `node --test scripts/transaction-import.test.cjs`.
@@ -119,17 +126,39 @@ hashes now include both locale files. Korean wording was inspected in its locale
 file, not exercised in a separate browser run. Build passes and the full checker
 still reports the same 236 diagnostics in 44 other files.
 
+The pending-request follow-up adds two financial-write regression cases: concurrent
+confirmation events send/store once, and a rejected request releases state for a
+new import. Baseline is 22 pass/two fail; the revised suite passes all 24. Removing
+the concurrent-event check in memory gives 23 pass/one fail; removing the finally
+release gives 21 pass/three fail, including existing remapping recovery.
+
+Thirteen real Chrome checks pass on a fresh build. The new scenarios hold an actual
+request before the server, trigger confirmation twice in the same task, inspect
+the disabled navigation/options/loading label, then release it and verify exactly
+three valid stored rows. Duplicate skipping is off for that batch. A simulated
+503 produces the existing error result without writes; reset and a fresh CSV
+then import once on mobile. Screenshots of pending and failed states were inspected.
+The shared script helper is unchanged. Full type checking remains at 236 diagnostics
+in the same 44 files; no exclusions or suppressions were added.
+
 ## Review and remaining scope
 
 The owner-ordered reviews of 556d546, 192832f and 6141992 returned KEEP for their
-bounded patches. The latest covers required-amount validation and empty-map
-source preservation. It does not cover the later display-only blank-date
-fallback. That new conditional is a guard under the owner's rule and needs a
-separately owner-ordered review before shipping, even though it adds no API
-rejection, submission block or hold. No reviewer was launched automatically.
+bounded patches. The 661a6db blank-date review returned LOOSEN solely for missing
+automated label assertions, while judging the implementation correct. The root
+retained its screenshots/CSV/probe evidence for that reversible display change;
+the recommendation remains recorded and unimplemented. It is not release approval.
+The later pending-request return and disabled fieldset are new guards under the
+owner's rule and require a separately owner-ordered review before shipping.
+No reviewer was launched automatically.
 
-Source reset on unusual empty-file callbacks, step-header navigation and
-repeat-click handling remain outside this follow-up. Rejection details still
+Source reset on unusual empty-file callbacks and step-header navigation outside
+an active request remain outside this follow-up. This pending-state repair applies
+only to one mounted wizard: page reload/navigation away, other tabs, lost responses,
+server idempotency and later resubmission through completed steps are not solved.
+The optional server duplicate lookup remains read-before-write. The intercepted
+503 proves UI recovery, not safety of retrying an uncertain committed request.
+Rejection details still
 lack row numbers. Unmapped-Amount wording, date-filter behavior and invalid
 nonempty date presentation remain separate. Import-more reset is covered in real Chrome.
 This change does not certify all import validation,
