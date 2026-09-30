@@ -176,9 +176,10 @@ const getStepCircleClass = (index: number) => {
 
 // Check if can navigate to step
 const canNavigateToStep = (stepIndex: number) => {
-  return completedSteps.value.includes(stepIndex) ||
+  if (importResult.value !== null) return stepIndex === 4
+  return stepIndex < 4 && (completedSteps.value.includes(stepIndex) ||
     stepIndex === currentStep.value ||
-    stepIndex === currentStep.value + 1
+    stepIndex === currentStep.value + 1)
 }
 
 // Navigate between steps
@@ -256,7 +257,7 @@ const updateImportOptions = (options: any) => {
 
 // Perform the actual import
 const performImport = async () => {
-  if (isImporting.value) return
+  if (isImporting.value || importResult.value !== null) return
   isImporting.value = true
   try {
     const result = await $fetch('/api/transactions/import', {

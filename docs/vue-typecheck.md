@@ -89,3 +89,9 @@ wizard controls until settlement. Twenty-four focused cases, two detected
 removed-fix mutations, thirteen real Chrome checks and a fresh build verify the
 bounded behavior. This does not cover cross-tab or lost-response recovery.
 No diagnostic suppression or production deployment is included.
+
+The result-navigation follow-up keeps Results closed before submission and stops
+completed step headers/repeated callbacks from reopening a submitted attempt.
+The final suite has 27 passing cases, four caught removed-fix mutations and 17
+passing Chrome checks. Fresh build passes and the full checker retains the same
+236 diagnostics in 44 files. No suppression or production deployment is included.

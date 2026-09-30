@@ -69,11 +69,19 @@ a native disabled fieldset holds the wizard's navigation and options until the
 request settles. Success and failure both release the state and keep the existing
 results/import-more flow. No source rows or server acceptance policy change.
 
+Results is now the end of one submitted attempt. Before a response exists, its
+header cannot open an empty result screen. After success, partial/all-row rejection
+or a request error, previous step headers cannot reopen the submitted batch, and
+another import callback cannot send it again. The result, batch details and row
+errors remain visible. Use the existing Import more action to reset, select a file
+and start a new attempt, including when correcting rejected rows. Pre-submission
+back/remap and the existing request-pending behavior remain unchanged.
+
 ## Verification
 
 Run `node --test scripts/transaction-import.test.cjs`.
 
-Twenty-two tests execute the actual compiled parent/preview setup through Vue's real
+Twenty-seven tests execute the actual compiled parent/preview setup through Vue's real
 mount lifecycle and execute both import handlers. The helper follows the parent
 template's source/event bindings and serializes request bodies as JSON. Database
 operations and transaction writes are intercepted in these script tests.
@@ -141,6 +149,22 @@ then import once on mobile. Screenshots of pending and failed states were inspec
 The shared script helper is unchanged. Full type checking remains at 236 diagnostics
 in the same 44 files; no exclusions or suppressions were added.
 
+The result-navigation follow-up adds three script cases for premature Results,
+completed/partially rejected batches and failed attempts. Baseline: 24 pass/three
+fail; final: 27 pass. Existing all-rejected amount-mapping recovery retains its
+validation assertions and now uses reset/re-upload before correcting and submitting
+again. Four in-memory removed-fix checks catch terminal navigation (25/2), premature
+Results (26/1), settled resubmission (25/2) and pending duplicate sends (26/1).
+
+Seventeen real Chrome checks pass on the final source hashes and a fresh build.
+The four new checks attempt actual header clicks before submission and after
+partial success, full success and a simulated error; they verify the visible
+result is preserved, requests/write counts do not increase, and Import more still
+starts successful fresh imports. Desktop/mobile coverage and the existing real
+parser/temporary database fixture are retained. Type checking still reports the
+same 236 diagnostics in 44 files. These are synthetic checks, not a production
+reliability rate or an idempotency guarantee.
+
 ## Review and remaining scope
 
 The owner-ordered reviews of 556d546, 192832f and 6141992 returned KEEP for their
@@ -148,14 +172,19 @@ bounded patches. The 661a6db blank-date review returned LOOSEN solely for missin
 automated label assertions, while judging the implementation correct. The root
 retained its screenshots/CSV/probe evidence for that reversible display change;
 the recommendation remains recorded and unimplemented. It is not release approval.
-The later pending-request return and disabled fieldset are new guards under the
-owner's rule and require a separately owner-ordered review before shipping.
+The owner-ordered review of 66088b5 returned KEEP for the pending-request return
+and disabled fieldset. The later result-aware navigation and widened submission
+exit are new/expanded guards and need a separately owner-ordered review before shipping.
 No reviewer was launched automatically.
 
-Source reset on unusual empty-file callbacks and step-header navigation outside
-an active request remain outside this follow-up. This pending-state repair applies
-only to one mounted wizard: page reload/navigation away, other tabs, lost responses,
-server idempotency and later resubmission through completed steps are not solved.
+Source reset on unusual empty-file callbacks and upload prerequisites before
+submission remain outside this follow-up. Direct internal Back/Continue function
+calls are not a complete state machine; the tested rendered flow has no such
+buttons on Results. An extra Chrome transition-click probe did not reproduce a
+post-result Back failure, so no callback-specific guards were added. Protection
+applies only to one mounted wizard: page reload/navigation away, other tabs, lost
+responses and server idempotency are not solved. Explicit reset permits a new
+attempt and does not guarantee that re-uploading an already committed batch is safe.
 The optional server duplicate lookup remains read-before-write. The intercepted
 503 proves UI recovery, not safety of retrying an uncertain committed request.
 Rejection details still

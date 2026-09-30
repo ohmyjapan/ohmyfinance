@@ -117,6 +117,15 @@ async function availablePort() {
       await page.waitForFunction(() => !document.querySelector('main .fade-enter-active, main .fade-leave-active'));
       await page.screenshot({ path: path.join(outputDir, name), fullPage: true });
     };
+    const assertResultNavigation = async (headingKey, requests, storedRows) => {
+      assert.deepEqual(await page.$$eval('main nav button', buttons => buttons.map(button => button.disabled)), [true, true, true, true, false]);
+      const before = await page.$eval('main', element => element.innerText);
+      await page.$$eval('main nav button', buttons => buttons.forEach(button => button.click()));
+      await heading(headingKey);
+      assert.equal(await page.$eval('main', element => element.innerText), before);
+      assert.equal(importRequests.length, requests);
+      assert.equal(await db.collection('transactions').countDocuments({}), storedRows);
+    };
     await page.goto(origin + '/login', { waitUntil: 'networkidle2' });
     await page.evaluate(() => localStorage.setItem('theme', 'light'));
     await page.type('#email', email); await page.type('#password', password); await page.click('button[type="submit"]');
@@ -169,6 +178,9 @@ async function availablePort() {
     await page.setViewport({ width: 1440, height: 1000 });
     await click(t('dataPreview.continueToImport')); await heading('importConfirmation.title');
     assert.match(await page.$eval('main', element => element.innerText), /3\s*\/\s*6/); pass('confirmation counts only the three rows accepted by import');
+    assert.equal(await page.$$eval('main nav button', buttons => { const result = buttons[4]; const disabled = result.disabled; result.click(); return disabled; }), true);
+    await heading('importConfirmation.title'); assert.equal(importRequests.length, 0);
+    pass('the Results header cannot open an empty result before submission');
     await page.click('#skip-duplicates');
     assert.equal(await page.$eval('#skip-duplicates', element => element.checked), false);
     await click(t('importConfirmation.startImport'));
@@ -208,6 +220,8 @@ async function availablePort() {
     assert(entityRequests.length >= 3 && entityRequests.every(request => request.authenticated));
     assert(entityRequests.every(request => JSON.stringify(request.body) === JSON.stringify({ supplierNames: ['123'], customerNames: ['456'] })));
     pass('actual server imports raw XLSX values once, reuses both catalogs and shows per-row errors');
+    await assertResultNavigation('importResults.successTitle', 1, 3);
+    pass('a partial import retains its row errors and cannot reopen old steps or submit again');
     await page.setViewport({ width: 390, height: 844 }); await screenshot('results-mobile.png');
     await click(t('importResults.importMore')); await page.waitForSelector('input[type="file"]');
     const secondFile = path.join(directory, 'synthetic-second.csv'); fs.writeFileSync(secondFile, 'Paid,Day,Item\r\n4500,2026-09-24,Second import\r\n');
@@ -218,6 +232,8 @@ async function availablePort() {
     await click(t('importConfirmation.startImport'), '.fixed button'); await heading('importResults.successTitle');
     assert.deepEqual(await previewCounts(), [1, 0, 0]); assert.equal(await db.collection('transactions').countDocuments({}), 4);
     assert.equal(importRequests.length, 2); assert.equal(importRequests[1].data.length, 1); pass('import-more clears prior rows and completes a fresh CSV import on mobile');
+    await assertResultNavigation('importResults.successTitle', 2, 4);
+    pass('a fully successful mobile import stays on its result until Import more');
     await click(t('importResults.importMore')); await page.waitForSelector('input[type="file"]');
     const recoveryFile = path.join(directory, 'synthetic-recovery.csv'); fs.writeFileSync(recoveryFile, 'Paid,Day,Item\r\n5600,2026-09-25,Recovery import\r\n');
     const prepareRecovery = async () => {
@@ -238,6 +254,8 @@ async function availablePort() {
     assert.equal(importRequests.length, 3); assert.equal(await db.collection('transactions').countDocuments({}), 4);
     await screenshot('import-failure-mobile.png');
     pass('a simulated transport failure releases pending state and displays the existing error result');
+    await assertResultNavigation('importResults.errorTitle', 3, 4);
+    pass('a failed import keeps its error visible and uses the explicit restart action');
     await click(t('importResults.importMore')); await page.waitForSelector('input[type="file"]');
     await prepareRecovery(); await click(t('importConfirmation.startImport'), '.fixed button'); await heading('importResults.successTitle');
     assert.equal(importRequests.length, 4); assert.equal(await db.collection('transactions').countDocuments({}), 5);

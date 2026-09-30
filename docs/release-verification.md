@@ -497,3 +497,15 @@ Fresh build passes; the same 236 diagnostics remain in 44 Vue files. New guards
 need explicitly ordered independent review. This is protection within one mounted
 wizard, not request idempotency, cross-tab/crash recovery or production reliability
 proof. Broader release blockers remain; no deployment or migration is included.
+
+The owner-ordered review of 66088b5 returned KEEP within the pending-request scope.
+The result-navigation follow-up prevents opening Results before a response and
+reopening submitted rows from completed step headers. Success, partial/all-row
+rejection and failure retain their result until the existing Import more reset;
+the widened request exit also ignores repeat callbacks after settlement.
+Twenty-seven focused cases pass (24 pass/three fail on the base), four removed-fix
+mutations are caught, and seventeen real Chrome checks pass with unchanged write
+counts after attempted header clicks. Pre-submit remapping and fresh imports
+after reset remain covered. Build passes; the same 236 diagnostics remain in 44
+Vue files. New/expanded guards need owner-ordered review. Cross-tab, reload,
+uncertain retry/idempotency and broader release blockers remain; no deployment.

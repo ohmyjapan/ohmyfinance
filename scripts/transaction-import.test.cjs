@@ -6,6 +6,64 @@ function upload(flow, data = rows) {
   flow.page.handleFilesSelected([{ name: 'synthetic.csv', size: 100, type: 'text/csv', isValid: true, file: {}, rowCount: data.length, data: structuredClone(data) }]);
   flow.page.updateMappings(structuredClone(mappings));
 }
+test('the results header cannot show a result before an import runs', t => {
+  const flow = wizard(); t.after(flow.close); upload(flow);
+  flow.page.nextStep(); flow.page.nextStep(); flow.page.nextStep();
+  assert.equal(flow.page.currentStep.value, 3);
+  flow.page.navigateToStep(4);
+  assert.equal(flow.page.currentStep.value, 3);
+  assert.equal(flow.page.importResult.value, null);
+  assert.equal(flow.requests.length, 0);
+  flow.page.navigateToStep(1);
+  assert.equal(flow.page.currentStep.value, 1, 'Pre-submit remapping remains available');
+});
+
+test('completed and partially rejected imports retain their result until an explicit new import', async t => {
+  for (const data of [rows, [...rows, { Paid: 'bad', Day: '2026-09-22', Item: 'Rejected row' }]]) {
+    const flow = wizard(); t.after(flow.close); upload(flow, data);
+    flow.page.updateImportOptions({ skipDuplicates: false });
+    flow.page.nextStep(); flow.page.nextStep(); flow.page.nextStep();
+    await flow.page.performImport();
+    const result = flow.page.importResult.value;
+    for (const step of [0, 1, 2, 3, 4]) {
+      flow.page.navigateToStep(step);
+      assert.equal(flow.page.currentStep.value, 4);
+    }
+    await flow.page.performImport();
+    assert.equal(flow.requests.filter(request => request.url === '/api/transactions/import').length, 1);
+    assert.equal(flow.writes.length, 1);
+    assert.equal(flow.page.importResult.value, result);
+    assert.equal(result.results.errors.length, data.length - 1);
+    assert.deepEqual(flow.raw(), data);
+    flow.page.resetWizard(); upload(flow, [{ Paid: 5600, Day: '2026-09-25', Item: 'Fresh batch' }]);
+    assert.equal(flow.page.importResult.value, null);
+    flow.page.nextStep(); assert.equal(flow.page.currentStep.value, 1);
+    await flow.page.performImport();
+    assert.deepEqual(flow.writes.map(row => row.amount), [79200, 5600]);
+  }
+});
+
+test('a failed attempt cannot be silently resubmitted through old step headers', async t => {
+  const flow = wizard(); t.after(flow.close); upload(flow);
+  flow.page.nextStep(); flow.page.nextStep(); flow.page.nextStep();
+  const push = flow.requests.push.bind(flow.requests);
+  flow.requests.push = request => { push(request); throw Error('Synthetic uncertain outcome'); };
+  await flow.page.performImport();
+  const result = flow.page.importResult.value;
+  assert.equal(result.success, false);
+  for (const step of [3, 2, 1, 0]) {
+    flow.page.navigateToStep(step);
+    assert.equal(flow.page.currentStep.value, 4);
+  }
+  await flow.page.performImport();
+  assert.equal(flow.requests.length, 1);
+  assert.equal(flow.page.importResult.value, result);
+  flow.requests.push = push;
+  flow.page.resetWizard(); upload(flow);
+  await flow.page.performImport();
+  assert.equal(flow.writes.length, 1);
+  assert.equal(flow.requests.length, 2);
+});
 test('concurrent confirmation events send and store one batch even with duplicates allowed', async t => {
   const flow = wizard(); t.after(flow.close); upload(flow);
   flow.page.updateImportOptions({ skipDuplicates: false });
@@ -319,6 +377,7 @@ test('omitted or ignored amount mappings count every row invalid and recover aft
     await flow.page.performImport();
     assert.equal(flow.writes.length, 0); assert.equal(flow.page.importResult.value.results.errors.length, 3);
     assert.deepEqual(flow.requests.find(request => request.url === '/api/transactions/import').body.data, data);
+    flow.page.resetWizard(); upload(flow, data);
     flow.page.updateMappings(structuredClone(mappings));
     const corrected = flow.preview(); await corrected.processData();
     assert.deepEqual(flow.page.importStats.value, { totalRecords: 3, validRecords: 1, warningRecords: 2, invalidRecords: 0 });
