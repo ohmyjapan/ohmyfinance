@@ -648,6 +648,7 @@ const getStatusClass = (status: TransactionPreviewValue) => {
 
 // Format a field value based on its type
 const formatFieldValue = (field: string, value: TransactionPreviewValue) => {
+  if (field === 'date' && !value) return t('dataPreview.importDateFallback')
   if (value === undefined || value === null) return '--'
 
   if (field.includes('amount') || field.includes('total') || field.includes('price') || field.includes('payment')) {

@@ -470,3 +470,13 @@ The build passes; type checking retains the same 236 diagnostics in 44 files.
 The changed classification guard and empty-map fallback require an explicitly
 ordered review before shipping. Existing wider release blockers persist; no
 production deployment, migration or production reliability claim is included.
+
+The owner-ordered review of 6141992 returned KEEP within its scope. The next
+display-only correction labels an empty canonical date as using the import date,
+in Japanese and Korean, instead of showing an invalid date or epoch date. Raw
+rows, validation, filtering and server policy are unchanged. Existing 22 script
+cases and ten Chrome checks pass; the displayed Japanese cell and downloaded CSV
+were inspected for the label. No new cases or separate Korean browser run were
+added. Locale files are included in the browser source hashes. Fresh build passes;
+the same 236 diagnostics remain in 44 files. The new display conditional requires
+an explicit owner-ordered review. No production deployment or migration included.

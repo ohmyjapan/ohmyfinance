@@ -76,3 +76,9 @@ same 44 files. Required-amount validation now covers omitted targets; empty maps
 preserve the already named source fields accepted by import. Twenty-two focused
 cases, two caught mutants, ten real Chrome checks and a fresh build verify the
 bounded repair. No diagnostic suppression or deployment is included.
+
+The blank-date display-only follow-up adds one localized fallback without
+changing date coercion or validation. Existing 22 script cases and ten browser
+checks pass; the label was inspected in the Japanese table/CSV and Korean locale
+file. A fresh build passes and full type checking retains the same 236 diagnostics
+in 44 files. No additional tests, suppressed diagnostics or deployment included.

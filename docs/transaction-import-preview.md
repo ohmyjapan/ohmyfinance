@@ -54,6 +54,14 @@ Display, preview CSV export and amount range filtering strip comma separators
 before reading the number, so 79,200 stays 79,200 instead of becoming 79. This
 does not change the existing server's number parsing or acceptance policy.
 
+For a missing canonical `date` value, the table and preview CSV now explain that
+the import date will be used: `未指定（インポート日を使用）` in Japanese and
+`미지정 (가져오기 실행일 사용)` in Korean. The display condition mirrors the
+server's existing falsey-date fallback, including undefined, null, empty string,
+numeric zero and false. It does not insert a date or a label into source rows or
+the import payload. Validation, date filtering and server acceptance are unchanged.
+Nonempty invalid dates keep their existing invalid display and rejection.
+
 ## Verification
 
 Run `node --test scripts/transaction-import.test.cjs`.
@@ -103,21 +111,27 @@ The full Nuxt checker now reports 236 diagnostics in 44 other files (27 removed,
 all other counts unchanged). No diagnostics were suppressed or excluded.
 The fresh production build passes.
 
+The later blank-date display correction reuses these same 22 script cases and
+ten browser checks; no new test cases were added for the display-only change.
+The Japanese missing-date cell and actual downloaded preview CSV were inspected
+for the new label; desktop/mobile screenshots were retained. The fixture's source
+hashes now include both locale files. Korean wording was inspected in its locale
+file, not exercised in a separate browser run. Build passes and the full checker
+still reports the same 236 diagnostics in 44 other files.
+
 ## Review and remaining scope
 
-The owner-ordered reviews of 556d546 and 192832f returned KEEP for their bounded
-patches. The latter covers final-value validation, absent-source preservation
-and comma amount display/filter/export. It does not cover the subsequent missing
-amount repair. Moving required-amount validation changes the classification
-guard's reach; empty-map source preservation introduces a fallback conditional.
-Both need a separately owner-ordered review before shipping. They mirror existing
-server behavior and add no API rejection, submission block or hold. No reviewer
-was launched automatically for this revision.
+The owner-ordered reviews of 556d546, 192832f and 6141992 returned KEEP for their
+bounded patches. The latest covers required-amount validation and empty-map
+source preservation. It does not cover the later display-only blank-date
+fallback. That new conditional is a guard under the owner's rule and needs a
+separately owner-ordered review before shipping, even though it adds no API
+rejection, submission block or hold. No reviewer was launched automatically.
 
 Source reset on unusual empty-file callbacks, step-header navigation and
-repeat-click handling remain outside this follow-up. Empty
-dates still display "Invalid Date" while importing with today's date, and rejection
-details still lack row numbers. Import-more reset is covered in real Chrome.
+repeat-click handling remain outside this follow-up. Rejection details still
+lack row numbers. Unmapped-Amount wording, date-filter behavior and invalid
+nonempty date presentation remain separate. Import-more reset is covered in real Chrome.
 This change does not certify all import validation,
 option handling or deduplication behavior. These synthetic cases are not a
 production reliability rate, database concurrency proof or deployed replay.

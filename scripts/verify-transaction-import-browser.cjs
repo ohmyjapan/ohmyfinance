@@ -7,7 +7,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server'), { MongoClient, O
 const XLSX = require('xlsx');
 const root = path.resolve(__dirname, '..'), profile = 'ohmyfinance-import-preview-test';
 const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-import-browser-evidence-'));
-const sourceFiles = ['pages/transactions/upload.vue', 'components/transaction/TransactionDataPreview.vue', 'components/transaction/TransactionFileUpload.vue', 'components/transaction/FieldMapping.vue', 'components/transaction/ImportConfirmation.vue', 'components/transaction/ImportResults.vue', 'server/api/transactions/import.ts', 'server/api/transactions/import-preview.ts', 'server/api/excel-processor.js', 'scripts/verify-transaction-import-browser.cjs'];
+const sourceFiles = ['pages/transactions/upload.vue', 'components/transaction/TransactionDataPreview.vue', 'components/transaction/TransactionFileUpload.vue', 'components/transaction/FieldMapping.vue', 'components/transaction/ImportConfirmation.vue', 'components/transaction/ImportResults.vue', 'server/api/transactions/import.ts', 'server/api/transactions/import-preview.ts', 'server/api/excel-processor.js', 'scripts/verify-transaction-import-browser.cjs', 'i18n/locales/ja.json', 'i18n/locales/ko.json'];
 const hashes = () => Object.fromEntries(sourceFiles.map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')]));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ja = JSON.parse(fs.readFileSync(path.join(root, 'i18n/locales/ja.json'), 'utf8'));

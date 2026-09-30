@@ -1302,6 +1302,7 @@
     "outOfRangeDates": "範囲外の日付: {count}件",
     "invalidAmounts": "無効な金額: {count}件",
     "invalidDates": "無効な日付: {count}件",
+    "importDateFallback": "未指定（インポート日を使用）",
     "invalidTypes": "無効な区別: {count}件",
     "newEntitiesNotice": "以下の取引先は新規作成されます",
     "newSuppliers": "新規仕入れ先",

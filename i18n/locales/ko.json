@@ -1331,6 +1331,7 @@
     "outOfRangeDates": "범위를 벗어난 날짜: {count}건",
     "invalidAmounts": "유효하지 않은 금액: {count}건",
     "invalidDates": "유효하지 않은 날짜: {count}건",
+    "importDateFallback": "미지정 (가져오기 실행일 사용)",
     "invalidTypes": "유효하지 않은 유형: {count}건",
     "newEntitiesNotice": "다음 거래처가 새로 생성됩니다",
     "newSuppliers": "신규 거래처",
