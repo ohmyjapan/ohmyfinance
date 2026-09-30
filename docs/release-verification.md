@@ -446,3 +446,15 @@ full Vue checking remains at 236 diagnostics in the same 44 files. The revised
 classification guard awaits owner-ordered review. Comma-formatted amount display,
 broader wizard edge cases, production replay and existing release blockers remain
 open. No production deployment or migration is included.
+
+The owner-ordered review of that patch, 556d546, returned KEEP within its scope.
+The next preview-values repair addresses the separately recorded comma amount
+display and duplicate-target mapping behavior. Preview now resolves the last
+defined source before validating and uses those final values for entity hints.
+Blank/null overrides still replace; absent cells preserve an earlier value.
+Display, amount filtering and downloaded preview CSV retain the full number.
+Twenty script cases pass (four fail on the preceding code), three deliberately
+restored defects are caught, and eight real Chrome checks pass with actual parser
+and temporary MongoDB. Build passes; the same 236 diagnostics in 44 other files
+remain. The new absent-source fallback guard awaits owner-ordered review; no
+production migration/deployment or broader release approval is included.

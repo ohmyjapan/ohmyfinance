@@ -64,6 +64,9 @@ remain registered and included in the checker. Their errors were not excluded.
 TransactionDataPreview now passes type checking. The review follow-up fixes
 validation priority and results registration without changing the remaining
 236 diagnostics in 44 files. Sixteen script cases, six real Chrome checks and a
-fresh build pass. Its remaining amount-format and wizard edge cases are documented
-in the linked preview report.
+fresh build pass. The subsequent value-resolution repair fixes comma amount
+display/filtering and duplicate-target validation/entity hints. Twenty script
+cases and eight real Chrome checks pass, and the fresh build passes; diagnostics
+remain unchanged. Remaining wizard edge cases are documented in the linked
+preview report.
 The broader release blockers remain separate. No production deployment is included.

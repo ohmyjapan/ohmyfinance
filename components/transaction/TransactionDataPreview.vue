@@ -366,6 +366,9 @@ const previewData = ref<TransactionPreviewRow[]>([])
 const previewDate = (value: TransactionPreviewValue) =>
   new Date(typeof value === 'string' || Array.isArray(value) ? String(value) : Number(value))
 
+const previewAmount = (value: TransactionPreviewValue) =>
+  parseFloat(String(value).replace(/,/g, ''))
+
 // Initialize component
 onMounted(() => {
   // Process the data for preview
@@ -429,13 +432,13 @@ const filteredData = computed(() => {
 
     if (amountField) {
       if (filter.value.minAmount !== '') {
-        const min = parseFloat(String(filter.value.minAmount))
-        result = result.filter(row => parseFloat(String(row[amountField])) >= min)
+        const min = previewAmount(filter.value.minAmount)
+        result = result.filter(row => previewAmount(row[amountField]) >= min)
       }
 
       if (filter.value.maxAmount !== '') {
-        const max = parseFloat(String(filter.value.maxAmount))
-        result = result.filter(row => parseFloat(String(row[amountField])) <= max)
+        const max = previewAmount(filter.value.maxAmount)
+        result = result.filter(row => previewAmount(row[amountField]) <= max)
       }
     }
   }
@@ -489,40 +492,42 @@ const processData = async () => {
       _issues: [] // tracking issues for this row
     }
 
-    // Map each source field to target field based on mappings
+    // Match import's last-defined-source rule before validating. Keep a mapped
+    // field present even when every source cell is absent, for missing-value checks.
     Object.keys(props.mappings).forEach(sourceField => {
       const mapping = props.mappings[sourceField]
       if (mapping && mapping.field && mapping.field !== '' && mapping.field !== 'null') {
-        newRow[mapping.field] = row[sourceField]
+        newRow[mapping.field] = row[sourceField] === undefined ? newRow[mapping.field] : row[sourceField]
+      }
+    })
 
-        // Validate amount field
-        if (mapping.field === 'amount') {
-          const rawVal = String(row[sourceField] || '').replace(/,/g, '')
-          if (!rawVal || isNaN(parseFloat(rawVal))) {
-            newRow._issues.push('invalid_amount')
-            validationIssues.value.invalidAmounts++
+    Object.keys(newRow).forEach(field => {
+      const value = newRow[field]
+      if (field === 'amount') {
+        const rawVal = String(value || '').replace(/,/g, '')
+        if (!rawVal || isNaN(parseFloat(rawVal))) {
+          newRow._issues.push('invalid_amount')
+          validationIssues.value.invalidAmounts++
+        }
+      } else if (field === 'date') {
+        const dateStr = String(value || '').replace(/\//g, '-')
+        const date = new Date(dateStr)
+        if (!value || isNaN(date.getTime())) {
+          newRow._issues.push('invalid_date')
+          validationIssues.value.invalidDates++
+        } else {
+          // Check if date is unreasonably old (>2 years)
+          const twoYearsAgo = new Date()
+          twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2)
+          if (date < twoYearsAgo) {
+            newRow._issues.push('date_out_of_range')
+            validationIssues.value.outOfRangeDates++
           }
-        } else if (mapping.field === 'date') {
-          const dateStr = String(row[sourceField] || '').replace(/\//g, '-')
-          const date = new Date(dateStr)
-          if (!row[sourceField] || isNaN(date.getTime())) {
-            newRow._issues.push('invalid_date')
-            validationIssues.value.invalidDates++
-          } else {
-            // Check if date is unreasonably old (>2 years)
-            const twoYearsAgo = new Date()
-            twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2)
-            if (date < twoYearsAgo) {
-              newRow._issues.push('date_out_of_range')
-              validationIssues.value.outOfRangeDates++
-            }
-          }
-        } else if (mapping.field === 'type') {
-          const val = row[sourceField]
-          if (val && val !== '支出' && val !== '入金') {
-            newRow._issues.push('invalid_type')
-            validationIssues.value.invalidTypes++
-          }
+        }
+      } else if (field === 'type') {
+        if (value && value !== '支出' && value !== '入金') {
+          newRow._issues.push('invalid_type')
+          validationIssues.value.invalidTypes++
         }
       }
     })
@@ -550,11 +555,8 @@ const processData = async () => {
   emit('update-stats', { ...stats.value })
 
   // Check for new entities that will be auto-created
-  const supplierField = Object.keys(props.mappings).find(k => props.mappings[k]?.field === 'supplierName')
-  const customerField = Object.keys(props.mappings).find(k => props.mappings[k]?.field === 'customerName')
-
-  const supplierNames = supplierField ? [...new Set(props.parsedData.map(r => r[supplierField]).filter(Boolean).map(String))] : []
-  const customerNames = customerField ? [...new Set(props.parsedData.map(r => r[customerField]).filter(Boolean).map(String))] : []
+  const supplierNames = [...new Set(transformed.map(row => row.supplierName).filter(Boolean).map(String))]
+  const customerNames = [...new Set(transformed.map(row => row.customerName).filter(Boolean).map(String))]
 
   if (supplierNames.length > 0 || customerNames.length > 0) {
     try {
@@ -658,7 +660,7 @@ const formatFieldValue = (field: string, value: TransactionPreviewValue) => {
 
 // Format currency (locale-aware)
 const formatCurrency = (value: TransactionPreviewValue) => {
-  const num = parseFloat(String(value))
+  const num = previewAmount(value)
   if (isNaN(num)) return value
 
   const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'

@@ -172,3 +172,92 @@ test('numeric range inputs and nontext status cells render without throwing', as
   assert.equal(preview.filteredData.value.length, 1); assert.equal(preview.filteredData.value[0].amount, 200);
   assert.doesNotThrow(() => preview.getStatusClass(123)); assert.doesNotThrow(() => preview.getStatusClass(true));
 });
+
+test('comma amounts retain their full value in display and range filtering', t => {
+  const flow = wizard(); t.after(flow.close);
+  upload(flow, [
+    { ...rows[0], Item: 'Formatted' }, { ...rows[0], Paid: 79200, Item: 'Numeric' },
+    { ...rows[0], Paid: '1,200', Item: 'Small' }, { ...rows[0], Paid: '-3,500', Item: 'Refund' },
+    { ...rows[0], Paid: 'bad', Item: 'Invalid' }
+  ]);
+  const preview = flow.preview();
+  assert.match(preview.formatFieldValue('amount', '79,200'), /[¥￥]79,200/);
+  assert.equal(preview.formatCurrency('79,200'), preview.formatCurrency(79200));
+  assert.match(preview.formatCurrency('-3,500'), /-[¥￥]3,500/);
+  assert.match(preview.formatCurrency(0), /[¥￥]0/);
+  assert.equal(preview.formatCurrency('bad'), 'bad');
+  preview.filter.value.minAmount = 79000; preview.filter.value.maxAmount = 80000;
+  assert.deepEqual(preview.filteredData.value.map(row => row.notes), ['Formatted', 'Numeric']);
+  preview.filter.value.minAmount = '1,000'; preview.filter.value.maxAmount = '2,000';
+  assert.deepEqual(preview.filteredData.value.map(row => row.notes), ['Small']);
+  preview.filter.value.minAmount = ''; preview.filter.value.maxAmount = 0;
+  assert.deepEqual(preview.filteredData.value.map(row => row.notes), ['Refund']);
+});
+
+test('duplicate date mappings validate only the final defined value in either order', async t => {
+  const data = [
+    { Paid: 100, DayA: 'bad', DayB: '2026-09-22', Item: 'Corrected' },
+    { Paid: 200, DayA: '2026-09-22', DayB: 'bad', Item: 'Invalid final' },
+    { Paid: 300, DayA: '2000-01-01', DayB: '2026-09-22', Item: 'Old replaced' },
+    { Paid: 400, DayA: '2026-09-22', DayB: '', Item: 'Blank final' },
+    { Paid: 500, DayA: '2026-09-22', DayB: null, Item: 'Null final' },
+    { Paid: 600, DayA: '2026-09-22', Item: 'Absent override' },
+    { Paid: 700, DayA: 'bad', Item: 'Absent with bad original' },
+    { Paid: 800, Item: 'Both absent' }
+  ];
+  for (const reverse of [false, true]) {
+    const flow = wizard(); t.after(flow.close); upload(flow, data);
+    const dates = [['DayA', { field: 'date', format: 'text' }], ['DayB', { field: 'date', format: 'text' }]];
+    flow.page.updateMappings({ Paid: mappings.Paid, ...Object.fromEntries(reverse ? dates.reverse() : dates), Item: mappings.Item });
+    const preview = flow.preview();
+    assert.deepEqual(preview.previewData.value.map(row => row._status), reverse
+      ? ['invalid', 'valid', 'warning', 'valid', 'valid', 'valid', 'invalid', 'warning']
+      : ['valid', 'invalid', 'valid', 'warning', 'warning', 'valid', 'invalid', 'warning']);
+    assert.equal(preview.validationIssues.value.invalidDates, reverse ? 3 : 5);
+    assert.equal(preview.validationIssues.value.outOfRangeDates, reverse ? 1 : 0);
+    await flow.page.performImport();
+    assert.deepEqual(flow.writes.map(row => row.notes), preview.previewData.value.filter(row => row._status !== 'invalid').map(row => row.notes));
+    assert.equal(flow.page.importStats.value.validRecords + flow.page.importStats.value.warningRecords, flow.writes.length);
+    assert.equal(flow.writes.length, 6);
+    const date = flow.writes.find(row => row.notes === 'Absent override').date;
+    assert.equal(date.toISOString().slice(0, 10), '2026-09-22');
+    assert.deepEqual(flow.raw(), data);
+  }
+});
+
+test('duplicate amounts and types use final values without retaining overwritten issues', async t => {
+  const flow = wizard(); t.after(flow.close);
+  upload(flow, [
+    { PaidA: 'bad', PaidB: '79,200', Day: '2026-09-22', KindA: 'unknown', KindB: '支出', Item: 'Corrected' },
+    { PaidA: 1200, PaidB: 'bad', Day: '2026-09-22', KindA: '支出', KindB: '入金', Item: 'Invalid final' },
+    { PaidA: 2300, Day: '2026-09-22', KindA: '支出', Item: 'Absent override' },
+    { PaidA: 1200, PaidB: 0, Day: '2026-09-22', Item: 'Zero final' },
+    { Day: '2026-09-22', Item: 'Both amounts absent' }
+  ]);
+  flow.page.updateMappings({ PaidA: mappings.Paid, PaidB: mappings.Paid, Day: mappings.Day, KindA: { field: 'type', format: 'text' }, KindB: { field: 'type', format: 'text' }, Item: mappings.Item });
+  const preview = flow.preview();
+  assert.deepEqual(preview.previewData.value.map(row => row._status), ['valid', 'invalid', 'valid', 'invalid', 'invalid']);
+  assert.equal(preview.validationIssues.value.invalidAmounts, 3);
+  assert.equal(preview.validationIssues.value.invalidTypes, 0);
+  await flow.page.performImport();
+  assert.deepEqual(flow.writes.map(row => row.amount), [79200, 2300]);
+  assert.deepEqual(flow.writes.map(row => row.notes), ['Corrected', 'Absent override']);
+});
+
+test('entity hints use the resolved names when multiple columns target one entity', async t => {
+  const flow = wizard({ suppliers: [{ name: '123', _id: 'existing-supplier' }], customers: [{ name: '456', _id: 'existing-customer' }] }); t.after(flow.close);
+  upload(flow, [
+    { ...rows[0], SellerA: 'Superseded seller', SellerB: 123, BuyerA: 'Superseded buyer', BuyerB: 456 },
+    { ...rows[0], SellerA: '123', BuyerA: '456', Item: 'Absent overrides' },
+    { ...rows[0], SellerA: 'Superseded seller', SellerB: '', BuyerA: 'Superseded buyer', BuyerB: null, Item: 'Empty overrides' }
+  ]);
+  flow.page.updateMappings({ ...mappings, SellerA: { field: 'supplierName', format: 'text' }, SellerB: { field: 'supplierName', format: 'text' }, BuyerA: { field: 'customerName', format: 'text' }, BuyerB: { field: 'customerName', format: 'text' } });
+  const preview = flow.preview(); await preview.processData();
+  assert.deepEqual(flow.requests.find(request => request.url === '/api/transactions/import-preview').body, { supplierNames: ['123'], customerNames: ['456'] });
+  assert.deepEqual(preview.newEntities.value, { newSuppliers: [], newCustomers: [] });
+  await flow.page.performImport();
+  assert.equal(flow.writes.length, 3);
+  assert.deepEqual(flow.writes.map(row => row.supplierId), ['existing-supplier', 'existing-supplier', null]);
+  assert.deepEqual(flow.writes.map(row => row.customerId), ['existing-customer', 'existing-customer', null]);
+  assert.deepEqual(flow.catalogWrites, { suppliers: [], customers: [] });
+});

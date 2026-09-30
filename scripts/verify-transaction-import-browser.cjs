@@ -63,14 +63,14 @@ async function availablePort() {
     await db.collection('suppliers').insertOne({ _id: supplierId, name: '123' });
     await db.collection('customers').insertOne({ _id: customerId, name: '456', isActive: true });
     const fixtureRows = [
-      ['79,200', '2026-09-22', 'Synthetic purchase', 123, 456],
-      ['bad', '2026-09-22', 'Invalid amount', 123, 456],
-      ['bad', 'bad', 'Both invalid', 123, 456],
-      [1200, 'bad', 'Invalid date', 123, 456],
-      [2300, '', 'Missing date', 123, 456],
-      [3400, '2000-01-01', 'Old date', 123, 456]
+      ['79,200', 'bad', 'Synthetic purchase', 123, 456, '2026-09-22'],
+      ['bad', '2026-09-22', 'Invalid amount', 123, 456, '2026-09-22'],
+      ['bad', 'bad', 'Both invalid', 123, 456, 'bad'],
+      [1200, '2026-09-22', 'Invalid date', 123, 456, 'bad'],
+      [2300, 'bad', 'Missing date', 123, 456, ''],
+      [3400, '2026-09-22', 'Old date', 123, 456, '2000-01-01']
     ];
-    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Paid', 'Day', 'Item', 'Seller', 'Buyer'], ...fixtureRows]), 'Synthetic');
+    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Paid', 'Day', 'Item', 'Seller', 'Buyer', 'FinalDay'], ...fixtureRows]), 'Synthetic');
     const inputFile = path.join(directory, 'synthetic-purchases.xlsx'); XLSX.writeFile(workbook, inputFile);
     const sessions = await hub('/api/browser/sessions'); assert(!sessions.sessionList.some(item => item.profileName === profile), 'Dedicated test profile is already in use');
     session = await hub('/api/browser/open', { url: 'about:blank', profile, background: true });
@@ -80,6 +80,8 @@ async function availablePort() {
     const puppeteer = require('node:module').createRequire(path.join(root, 'collector/package.json'))('rebrowser-puppeteer-core');
     browser = await puppeteer.connect({ browserURL: 'http://127.0.0.1:' + ports[0], defaultViewport: null });
     page = await browser.newPage(); page.setDefaultTimeout(25000); await page.setViewport({ width: 1440, height: 1000 });
+    const downloads = path.join(directory, 'downloads'); fs.mkdirSync(downloads);
+    const cdp = await page.createCDPSession(); await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
     page.on('pageerror', error => consoleErrors.push(error.message));
     page.on('request', request => {
       if (request.url() === origin + '/api/transactions/import') importRequests.push(JSON.parse(request.postData()));
@@ -111,11 +113,30 @@ async function availablePort() {
     await page.goto(origin + '/transactions/upload', { waitUntil: 'networkidle2' });
     await page.waitForSelector('input[type="file"]'); await (await page.$('input[type="file"]')).uploadFile(inputFile);
     await click(t('transactionImport.continueToMapping')); await heading('fieldMapper.title');
-    await map({ Paid: 'amount', Day: 'date', Item: 'notes', Seller: 'supplierName', Buyer: 'customerName' });
+    await map({ Paid: 'amount', Day: 'date', Item: 'notes', Seller: 'supplierName', Buyer: 'customerName', FinalDay: 'date' });
     await click(t('fieldMapper.continueToPreview')); await heading('dataPreview.title');
     assert.deepEqual(await previewCounts(), [6, 1, 2, 3]);
     const initialTable = await page.$eval('main tbody', element => element.innerText);
-    assert(initialTable.includes('Synthetic purchase')); pass('XLSX upload and initial preview render six rows without pressing refresh');
+    assert(initialTable.includes('Synthetic purchase')); pass('XLSX upload and initial preview resolve duplicate date columns before validation');
+    assert.match(initialTable, /[¥￥]79,200/);
+    await click(t('common.filter'));
+    await page.waitForSelector('main input[type="number"]');
+    await page.type('main input[type="number"]:first-of-type', '79000');
+    const amountInputs = await page.$$('main input[type="number"]'); await amountInputs[1].type('80000');
+    await page.waitForFunction(() => document.querySelectorAll('main tbody tr').length === 1);
+    assert((await page.$eval('main tbody', element => element.innerText)).includes('Synthetic purchase'));
+    await click(t('dataPreview.resetFilters')); await page.waitForFunction(() => document.querySelectorAll('main tbody tr').length === 6);
+    pass('comma amount displays 79,200 and stays in the 79,000 to 80,000 filter range');
+    await click(t('dataPreview.exportPreview'));
+    let exported;
+    for (let i = 0; i < 100; i++) {
+      const filename = fs.readdirSync(downloads).find(name => name.endsWith('.csv'));
+      if (filename) { exported = fs.readFileSync(path.join(downloads, filename), 'utf8'); break; }
+      await pause(100);
+    }
+    assert(exported, 'Preview CSV did not download'); assert.match(exported, /"[¥￥]79,200"/);
+    fs.writeFileSync(path.join(outputDir, 'preview-export.csv'), exported);
+    pass('downloaded preview CSV preserves the quoted full amount');
     await click(t('dataPreview.refreshPreview')); assert.deepEqual(await previewCounts(), [6, 1, 2, 3]);
     assert.equal(await page.$eval('main tbody', element => element.innerText), initialTable); pass('refresh preserves original columns and validation');
     await click(t('dataPreview.backToMapping')); await heading('fieldMapper.title'); await map({ Item: 'productName' });
@@ -134,10 +155,12 @@ async function availablePort() {
     const resultText = await page.$eval('main', element => element.innerText); assert.match(resultText, /invalid amount/i); assert.match(resultText, /Invalid date/);
     const stored = await db.collection('transactions').find({}).toArray(); assert.equal(stored.length, 3);
     assert.deepEqual(stored.map(row => row.amount), [79200, 2300, 3400]);
+    assert.equal(stored[0].date.toISOString().slice(0, 10), '2026-09-22');
+    assert.equal(stored[2].date.toISOString().slice(0, 10), '2000-01-01');
     assert.deepEqual(stored.map(row => row.productName), ['Synthetic purchase', 'Missing date', 'Old date']);
     assert(stored.every(row => row.supplierId.equals(supplierId) && row.customerId.equals(customerId)));
     assert.equal(await db.collection('suppliers').countDocuments({}), 1); assert.equal(await db.collection('customers').countDocuments({}), 1);
-    assert.equal(importRequests.length, 1); assert.deepEqual(Object.keys(importRequests[0].data[0]), ['Paid', 'Day', 'Item', 'Seller', 'Buyer']);
+    assert.equal(importRequests.length, 1); assert.deepEqual(Object.keys(importRequests[0].data[0]), ['Paid', 'Day', 'Item', 'Seller', 'Buyer', 'FinalDay']);
     assert.equal(typeof importRequests[0].data[0].Seller, 'number');
     assert(entityRequests.length >= 3 && entityRequests.every(request => request.authenticated));
     assert(entityRequests.every(request => JSON.stringify(request.body) === JSON.stringify({ supplierNames: ['123'], customerNames: ['456'] })));
