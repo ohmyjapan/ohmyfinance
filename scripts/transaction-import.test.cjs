@@ -261,3 +261,67 @@ test('entity hints use the resolved names when multiple columns target one entit
   assert.deepEqual(flow.writes.map(row => row.customerId), ['existing-customer', 'existing-customer', null]);
   assert.deepEqual(flow.catalogWrites, { suppliers: [], customers: [] });
 });
+
+test('omitted or ignored amount mappings count every row invalid and recover after remapping', async t => {
+  const data = [
+    { Paid: '79,200', Day: '2026-09-22', Item: 'Valid date', amount: 999 },
+    { Paid: 2300, Day: '', Item: 'Missing date', amount: 999 },
+    { Paid: 3400, Day: '2000-01-01', Item: 'Old date', amount: 999 }
+  ];
+  const incomplete = [
+    { Day: mappings.Day, Item: mappings.Item },
+    { ...mappings, Paid: { field: '', format: 'text' } },
+    { ...mappings, Paid: { field: 'null', format: 'text' } },
+    { Paid: { field: 'productPrice', format: 'number' }, Day: mappings.Day, Item: mappings.Item },
+    { Paid: { field: '', format: 'text' } }
+  ];
+  for (const mapping of incomplete) {
+    const flow = wizard(); t.after(flow.close); upload(flow, data); flow.page.updateMappings(mapping);
+    const preview = flow.preview(); await preview.processData();
+    assert.deepEqual(flow.page.importStats.value, { totalRecords: 3, validRecords: 0, warningRecords: 0, invalidRecords: 3 });
+    assert.equal(preview.validationIssues.value.invalidAmounts, 3);
+    assert(preview.previewData.value.every(row => row._issues.filter(issue => issue === 'invalid_amount').length === 1));
+    assert(!preview.previewFields.value.includes('amount'), 'Nonempty mappings must not inherit raw canonical fields');
+    await flow.page.performImport();
+    assert.equal(flow.writes.length, 0); assert.equal(flow.page.importResult.value.results.errors.length, 3);
+    assert.deepEqual(flow.requests.find(request => request.url === '/api/transactions/import').body.data, data);
+    flow.page.updateMappings(structuredClone(mappings));
+    const corrected = flow.preview(); await corrected.processData();
+    assert.deepEqual(flow.page.importStats.value, { totalRecords: 3, validRecords: 1, warningRecords: 2, invalidRecords: 0 });
+    assert.equal(corrected.validationIssues.value.invalidAmounts, 0);
+    await flow.page.performImport();
+    assert.deepEqual(flow.writes.map(row => row.amount), [79200, 2300, 3400]);
+    assert.deepEqual(flow.raw(), data);
+  }
+});
+
+test('empty mappings preserve canonical source values and match real import acceptance', async t => {
+  const flow = wizard({ suppliers: [{ name: '123', _id: 'existing-supplier' }], customers: [{ name: '456', _id: 'existing-customer' }] }); t.after(flow.close);
+  const data = [
+    { amount: '79,200', date: '2026-09-22', notes: 'Canonical', supplierName: 123, customerName: 456 },
+    { amount: 'bad', date: '2026-09-22', notes: 'Bad amount' },
+    { amount: 2300, date: '', notes: 'Missing date' },
+    { date: '2026-09-22', notes: 'Missing amount' },
+    { amount: 3400, date: 'bad', notes: 'Bad date' },
+    { amount: '0', notes: 'Text zero' },
+    { amount: 0, notes: 'Numeric zero' }
+  ];
+  upload(flow, data); flow.page.updateMappings({});
+  const preview = flow.preview(); await preview.processData();
+  assert.deepEqual(preview.previewData.value.map(row => row._status), ['valid', 'invalid', 'warning', 'invalid', 'invalid', 'valid', 'invalid']);
+  assert.equal(preview.previewData.value[0].amount, '79,200');
+  assert.equal(preview.previewData.value[0].notes, 'Canonical');
+  assert(preview.previewFields.value.includes('amount'));
+  assert.equal(preview.validationIssues.value.invalidAmounts, 3);
+  assert.deepEqual(flow.requests.find(request => request.url === '/api/transactions/import-preview').body, { supplierNames: ['123'], customerNames: ['456'] });
+  assert.deepEqual(preview.newEntities.value, { newSuppliers: [], newCustomers: [] });
+  await flow.page.performImport();
+  assert.equal(flow.page.importStats.value.validRecords + flow.page.importStats.value.warningRecords, flow.writes.length);
+  assert.deepEqual(flow.writes.map(row => row.amount), [79200, 2300, 0]);
+  assert.deepEqual(flow.writes.map(row => row.notes), ['Canonical', 'Missing date', 'Text zero']);
+  assert.equal(flow.writes[0].supplierId, 'existing-supplier'); assert.equal(flow.writes[0].customerId, 'existing-customer');
+  assert.deepEqual(flow.catalogWrites, { suppliers: [], customers: [] });
+  assert.equal(flow.page.importResult.value.results.errors.length, 4);
+  assert.deepEqual(flow.raw(), data);
+  assert.deepEqual(flow.requests.find(request => request.url === '/api/transactions/import').body.data, data);
+});

@@ -458,3 +458,15 @@ restored defects are caught, and eight real Chrome checks pass with actual parse
 and temporary MongoDB. Build passes; the same 236 diagnostics in 44 other files
 remain. The new absent-source fallback guard awaits owner-ordered review; no
 production migration/deployment or broader release approval is included.
+
+The owner-ordered review of 192832f returned KEEP for those preview-value fixes.
+The next missing-amount repair runs existing required-amount validation even
+when Amount is not mapped. Confirmation then counts zero importable rows, and
+back/remap restores the expected counts. Empty mapping objects preserve original
+field names, matching the existing API; nonempty ignored mappings cannot inherit
+unmapped source amounts. Twenty-two script cases pass (the two new cases fail on
+192832f), two removed-fix mutants are caught and ten real Chrome checks pass.
+The build passes; type checking retains the same 236 diagnostics in 44 files.
+The changed classification guard and empty-map fallback require an explicitly
+ordered review before shipping. Existing wider release blockers persist; no
+production deployment, migration or production reliability claim is included.

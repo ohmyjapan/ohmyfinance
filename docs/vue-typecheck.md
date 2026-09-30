@@ -70,3 +70,9 @@ cases and eight real Chrome checks pass, and the fresh build passes; diagnostics
 remain unchanged. Remaining wizard edge cases are documented in the linked
 preview report.
 The broader release blockers remain separate. No production deployment is included.
+
+The missing-amount mapping follow-up also retains all 236 diagnostics in the
+same 44 files. Required-amount validation now covers omitted targets; empty maps
+preserve the already named source fields accepted by import. Twenty-two focused
+cases, two caught mutants, ten real Chrome checks and a fresh build verify the
+bounded repair. No diagnostic suppression or deployment is included.

@@ -488,6 +488,8 @@ const processData = async () => {
   const transformed = data.map(row => {
     // Create a new row with transformed fields
     const newRow: TransactionPreviewRow = {
+      // With no mapping entries, import uses the original canonical fields.
+      ...(Object.keys(props.mappings).length === 0 ? row : {}),
       _status: 'valid', // default status
       _issues: [] // tracking issues for this row
     }
@@ -501,15 +503,16 @@ const processData = async () => {
       }
     })
 
+    // Amount is required on every imported row, even without an amount mapping.
+    const rawAmount = String(newRow.amount || '').replace(/,/g, '')
+    if (!rawAmount || isNaN(parseFloat(rawAmount))) {
+      newRow._issues.push('invalid_amount')
+      validationIssues.value.invalidAmounts++
+    }
+
     Object.keys(newRow).forEach(field => {
       const value = newRow[field]
-      if (field === 'amount') {
-        const rawVal = String(value || '').replace(/,/g, '')
-        if (!rawVal || isNaN(parseFloat(rawVal))) {
-          newRow._issues.push('invalid_amount')
-          validationIssues.value.invalidAmounts++
-        }
-      } else if (field === 'date') {
+      if (field === 'date') {
         const dateStr = String(value || '').replace(/\//g, '-')
         const date = new Date(dateStr)
         if (!value || isNaN(date.getTime())) {

@@ -30,9 +30,21 @@ explicit replacement. Discarded values contribute no validation issues or counts
 Supplier/customer hints use these same resolved values rather than the first
 source column. Original rows and mappings still go unchanged to the server.
 
-Preview assigns severity after inspecting all mapped fields. Invalid amounts
+Amount validation runs for every row, including when no column targets amount.
+An omitted, unselected or ignored amount mapping therefore marks the affected
+rows invalid and contributes zero importable rows to confirmation, matching the
+server's existing rejection. The existing warning summary and back-to-mapping
+action provide recovery; correcting the mapping refreshes the counts.
+
+When the entire mapping object is empty, import uses the original field names.
+Preview mirrors that behavior with its own shallow copy before validation and
+entity hints. Already named amount/date/name fields therefore remain usable.
+A nonempty mapping object, even one containing only ignored targets, still uses
+only its mapped fields; it cannot inherit an otherwise unmapped source amount.
+
+Preview assigns severity after inspecting the resolved fields. Invalid amounts
 and unreadable nonempty dates are invalid, matching the existing import handler.
-Missing dates still warn and import with today's date; old dates and coerced types
+Present but empty date fields still warn and import with today's date; old dates and coerced types
 still warn and import. Warnings on other fields cannot downgrade an invalid
 final amount or date to a warning.
 The parent now uses the registered ImportResults component, displaying actual
@@ -46,7 +58,7 @@ does not change the existing server's number parsing or acceptance policy.
 
 Run `node --test scripts/transaction-import.test.cjs`.
 
-Twenty tests execute the actual compiled parent/preview setup through Vue's real
+Twenty-two tests execute the actual compiled parent/preview setup through Vue's real
 mount lifecycle and execute both import handlers. The helper follows the parent
 template's source/event bindings and serializes request bodies as JSON. Database
 operations and transaction writes are intercepted in these script tests.
@@ -58,21 +70,31 @@ range/status inputs. The follow-up also covers initial mount without refresh,
 existing/new numeric names, empty names, and validation severity in both mapping
 orders. The value-resolution follow-up adds amount display/ranges, duplicate dates
 in both orders, duplicate amount/type resolution, and entity hints from final
-values. Four cases fail against the preceding product revision. Removing comma
-normalization, absent-source preservation or final-value processing in memory
+values. Those four cases failed against 556d546. Removing comma normalization,
+absent-source preservation or final-value processing in memory
 causes the relevant tests to fail. Earlier ownership/startup/name/severity
 regressions remain covered.
+
+The missing-amount follow-up adds five partial/ignored mapping shapes and seven
+already named rows with an empty mapping object. It checks preview counts,
+refresh, remapping recovery, actual handler acceptance, preserved source data
+and existing entity reuse. Both new cases fail on 192832f; all 22 pass after the
+repair. Removing unconditional amount validation or empty-map source preservation
+in memory makes the corresponding regressions fail again.
 
 After `npm run build`, run `node scripts/verify-transaction-import-browser.cjs`
 with the local OhMyCode browser hub available. The fixture opens real installed
 Chrome, starts the built app with temporary MongoDB, registers a synthetic user
 and company, and submits real synthetic XLSX/CSV files through the UI. It verifies
 initial preview, refresh, back/remap, confirmation, actual stored transaction and
-catalog data, visible error reasons and a second import after reset. Eight browser
+catalog data, visible error reasons and a second import after reset. Ten browser
 checks pass, including the displayed 79,200 amount, a 79,000–80,000 filter and an
 actual downloaded preview CSV. A six-row spreadsheet maps two columns to Date;
 it imports three rows, rejects three and reuses
 the two existing entity records; a new CSV imports exactly one further row.
+Before correction, that spreadsheet is previewed with Amount unmapped: all six
+rows are invalid, refresh preserves those counts, and confirmation shows 0 / 6.
+Going back and mapping Amount restores the normal preview and import path.
 Desktop and mobile navigation are exercised and mobile screenshots retained.
 The fixture closes its Chrome session and app and removes its temporary data.
 No production account, record, company migration or deployment is involved.
@@ -83,16 +105,17 @@ The fresh production build passes.
 
 ## Review and remaining scope
 
-The owner-ordered review of 556d546 returned KEEP for the prior startup, name,
-severity and results fixes. It recorded the amount-display and duplicate-target
-issues addressed by this follow-up. The undefined-source fallback conditional
-is a new guard under the owner's rule and needs a separately owner-ordered
-review before shipping. It preserves an earlier value when the later source is
-absent, matching the existing API; it adds no rejection, submission block or hold.
-No further reviewer was launched automatically for this revision.
+The owner-ordered reviews of 556d546 and 192832f returned KEEP for their bounded
+patches. The latter covers final-value validation, absent-source preservation
+and comma amount display/filter/export. It does not cover the subsequent missing
+amount repair. Moving required-amount validation changes the classification
+guard's reach; empty-map source preservation introduces a fallback conditional.
+Both need a separately owner-ordered review before shipping. They mirror existing
+server behavior and add no API rejection, submission block or hold. No reviewer
+was launched automatically for this revision.
 
-Source reset on unusual empty-file callbacks, step-header navigation, missing
-amount mappings and repeat-click handling remain outside this follow-up. Empty
+Source reset on unusual empty-file callbacks, step-header navigation and
+repeat-click handling remain outside this follow-up. Empty
 dates still display "Invalid Date" while importing with today's date, and rejection
 details still lack row numbers. Import-more reset is covered in real Chrome.
 This change does not certify all import validation,
