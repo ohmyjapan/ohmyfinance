@@ -6,6 +6,69 @@ function upload(flow, data = rows) {
   flow.page.handleFilesSelected([{ name: 'synthetic.csv', size: 100, type: 'text/csv', isValid: true, file: {}, rowCount: data.length, data: structuredClone(data) }]);
   flow.page.updateMappings(structuredClone(mappings));
 }
+test('entering preview mounts and publishes rows and validation without a refresh', t => {
+  const flow = wizard(); t.after(flow.close);
+  upload(flow, [...rows, { Paid: 'invalid', Day: '2026-09-22', Item: 'Bad amount' }]);
+  const preview = flow.preview();
+  assert.equal(preview.previewData.value.length, 2);
+  assert.deepEqual(flow.page.importStats.value, { totalRecords: 2, validRecords: 1, warningRecords: 0, invalidRecords: 1 });
+});
+test('numeric supplier and customer cells reuse the textual records found by preview', async t => {
+  const flow = wizard({ suppliers: [{ name: '123', _id: 'existing-supplier' }], customers: [{ name: '456', _id: 'existing-customer' }] }); t.after(flow.close);
+  upload(flow, [{ ...rows[0], Seller: 123, Buyer: 456 }]);
+  flow.page.updateMappings({ ...mappings, Seller: { field: 'supplierName', format: 'text' }, Buyer: { field: 'customerName', format: 'text' } });
+  const preview = flow.preview(); await preview.processData();
+  assert.deepEqual(preview.newEntities.value, { newSuppliers: [], newCustomers: [] });
+  await flow.page.performImport();
+  assert.equal(flow.writes.length, 1);
+  assert.deepEqual(flow.catalogWrites, { suppliers: [], customers: [] });
+  assert.equal(flow.writes[0].supplierId, 'existing-supplier');
+  assert.equal(flow.writes[0].customerId, 'existing-customer');
+});
+test('new numeric and textual names share one created record within a batch', async t => {
+  const flow = wizard(); t.after(flow.close);
+  upload(flow, [{ ...rows[0], Seller: 123, Buyer: 456 }, { ...rows[0], Seller: '123', Buyer: '456' }]);
+  flow.page.updateMappings({ ...mappings, Seller: { field: 'supplierName', format: 'text' }, Buyer: { field: 'customerName', format: 'text' } });
+  const preview = flow.preview(); await preview.processData();
+  assert.deepEqual(preview.newEntities.value, { newSuppliers: ['123'], newCustomers: ['456'] });
+  await flow.page.performImport();
+  assert.equal(flow.writes.length, 2);
+  assert.deepEqual(flow.catalogWrites, { suppliers: [{ name: '123', isActive: true }], customers: [{ name: '456', isActive: true }] });
+  assert.equal(flow.writes[0].supplierId, flow.writes[1].supplierId);
+  assert.equal(flow.writes[0].customerId, flow.writes[1].customerId);
+});
+test('missing names keep the existing no-create behavior', async t => {
+  const flow = wizard(); t.after(flow.close);
+  upload(flow, [null, '', 0, false].map(value => ({ ...rows[0], Seller: value, Buyer: value })));
+  flow.page.updateMappings({ ...mappings, Seller: { field: 'supplierName', format: 'text' }, Buyer: { field: 'customerName', format: 'text' } });
+  flow.preview(); await flow.page.performImport();
+  assert.equal(flow.writes.length, 4);
+  assert.deepEqual(flow.catalogWrites, { suppliers: [], customers: [] });
+});
+test('preview importable counts match server acceptance regardless of field order', async t => {
+  const data = [
+    { Paid: 1200, Day: '2026-09-22', Item: 'Valid', Kind: '支出' },
+    { Paid: 'bad', Day: '2026-09-22', Item: 'Bad amount', Kind: '支出' },
+    { Paid: 'bad', Day: 'bad', Item: 'Both invalid', Kind: '支出' },
+    { Paid: 1200, Day: 'bad', Item: 'Bad date', Kind: '支出' },
+    { Paid: 1200, Day: '', Item: 'Empty date', Kind: '支出' },
+    { Paid: 1200, Day: '2000-01-01', Item: 'Old date', Kind: '支出' },
+    { Paid: 'bad', Day: '2000-01-01', Item: 'Old with bad amount', Kind: 'unknown' },
+    { Paid: 1200, Day: '2026-09-22', Item: 'Coerced type', Kind: 'unknown' }
+  ];
+  for (const reverse of [false, true]) {
+    const flow = wizard(); t.after(flow.close); upload(flow, data);
+    const entries = Object.entries({ ...mappings, Kind: { field: 'type', format: 'text' } });
+    flow.page.updateMappings(Object.fromEntries(reverse ? entries.reverse() : entries));
+    const preview = flow.preview();
+    assert.deepEqual(preview.previewData.value.map(row => row._status), ['valid', 'invalid', 'invalid', 'invalid', 'warning', 'warning', 'invalid', 'warning']);
+    await flow.page.performImport();
+    assert.equal(flow.page.importStats.value.validRecords + flow.page.importStats.value.warningRecords, flow.writes.length);
+    assert.equal(flow.writes.length, 4);
+    assert.deepEqual(flow.writes.map(row => row.notes), ['Valid', 'Empty date', 'Old date', 'Coerced type']);
+    assert.equal(flow.page.importResult.value.results.errors.length, 4);
+  }
+});
 test('refresh preserves original columns and reproduces the same preview', async t => {
   const flow = wizard(); t.after(flow.close); upload(flow);
   const preview = flow.preview(); await preview.processData();

@@ -499,7 +499,6 @@ const processData = async () => {
         if (mapping.field === 'amount') {
           const rawVal = String(row[sourceField] || '').replace(/,/g, '')
           if (!rawVal || isNaN(parseFloat(rawVal))) {
-            newRow._status = 'invalid'
             newRow._issues.push('invalid_amount')
             validationIssues.value.invalidAmounts++
           }
@@ -507,7 +506,6 @@ const processData = async () => {
           const dateStr = String(row[sourceField] || '').replace(/\//g, '-')
           const date = new Date(dateStr)
           if (!row[sourceField] || isNaN(date.getTime())) {
-            newRow._status = 'warning'
             newRow._issues.push('invalid_date')
             validationIssues.value.invalidDates++
           } else {
@@ -515,7 +513,6 @@ const processData = async () => {
             const twoYearsAgo = new Date()
             twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2)
             if (date < twoYearsAgo) {
-              newRow._status = 'warning'
               newRow._issues.push('date_out_of_range')
               validationIssues.value.outOfRangeDates++
             }
@@ -523,7 +520,6 @@ const processData = async () => {
         } else if (mapping.field === 'type') {
           const val = row[sourceField]
           if (val && val !== '支出' && val !== '入金') {
-            newRow._status = 'warning'
             newRow._issues.push('invalid_type')
             validationIssues.value.invalidTypes++
           }
@@ -531,6 +527,11 @@ const processData = async () => {
       }
     })
 
+    // Import rejects invalid amounts and unreadable nonempty dates. Missing
+    // dates and old dates remain warnings; mapping order cannot lower severity.
+    const invalidAmount = newRow._issues.includes('invalid_amount')
+    const invalidDate = newRow._issues.includes('invalid_date') && !!newRow.date
+    newRow._status = invalidAmount || invalidDate ? 'invalid' : newRow._issues.length ? 'warning' : 'valid'
     return newRow
   })
 

@@ -434,3 +434,15 @@ fails with 236 diagnostics in 44 files**, with all 27 preview diagnostics remove
 and other counts unchanged. The new date type-dispatch conditional requires an
 owner-ordered independent review. Browser/deployed replay and the recorded import
 format/validation findings remain open; this is not deployment readiness.
+
+The subsequent review follow-up corrects numeric supplier/customer lookup,
+preview validation priority and results-component registration. Sixteen focused
+cases pass, including actual Vue mount; three deliberately restored defects are
+caught. Six real Chrome checks submit synthetic XLSX/CSV files to a built isolated
+app and temporary database, verify posted amounts/catalog references and visible
+results, and complete a second import after reset. This supersedes the missing
+browser proof and validation-priority findings for this wizard. Build passes;
+full Vue checking remains at 236 diagnostics in the same 44 files. The revised
+classification guard awaits owner-ordered review. Comma-formatted amount display,
+broader wizard edge cases, production replay and existing release blockers remain
+open. No production deployment or migration is included.

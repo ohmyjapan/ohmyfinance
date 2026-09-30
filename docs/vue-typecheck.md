@@ -61,6 +61,9 @@ the behavior, verification boundaries and required review.
 These are compiler diagnostics, not a count of confirmed runtime defects. The
 active upload page uses components/transaction; older components/file-upload
 remain registered and included in the checker. Their errors were not excluded.
-TransactionDataPreview now passes type checking. Its separate amount-format and
-validation-precedence findings are documented in the linked preview report.
+TransactionDataPreview now passes type checking. The review follow-up fixes
+validation priority and results registration without changing the remaining
+236 diagnostics in 44 files. Sixteen script cases, six real Chrome checks and a
+fresh build pass. Its remaining amount-format and wizard edge cases are documented
+in the linked preview report.
 The broader release blockers remain separate. No production deployment is included.

@@ -103,7 +103,7 @@
 
         <!-- Step 5: Results -->
         <div v-else-if="currentStep === 4" key="results">
-          <TransactionImportResults
+          <ImportResults
             :result="importResult"
             @import-more="resetWizard"
           />

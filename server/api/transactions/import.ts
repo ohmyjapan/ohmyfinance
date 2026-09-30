@@ -112,6 +112,7 @@ export default defineEventHandler(async (event) => {
 
         const findSupplier = async (name: string) => {
             if (!name) return null
+            name = String(name)
             if (supplierMap.has(name)) return supplierMap.get(name)
             // Auto-create and cache
             const supplier = await Supplier.create({ name, isActive: true })
@@ -121,6 +122,7 @@ export default defineEventHandler(async (event) => {
 
         const findCustomer = async (name: string) => {
             if (!name) return null
+            name = String(name)
             if (customerMap.has(name)) return customerMap.get(name)
             // Auto-create and cache
             const customer = await Customer.create({ name, isActive: true })
