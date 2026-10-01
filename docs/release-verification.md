@@ -509,3 +509,14 @@ counts after attempted header clicks. Pre-submit remapping and fresh imports
 after reset remain covered. Build passes; the same 236 diagnostics remain in 44
 Vue files. New/expanded guards need owner-ordered review. Cross-tab, reload,
 uncertain retry/idempotency and broader release blockers remain; no deployment.
+
+The 8601fbb review returned LOOSEN on recovery that discards files and mappings.
+The follow-up restores correction in place for a successful response reporting
+exactly zero imported rows, relaxing the existing guards without adding a hold.
+The recommendation to retry on missing response data is argued: a new Chrome
+case lets the actual isolated API save a row, then loses its response, proving
+that a browser error can coexist with a saved transaction. That existing hold
+remains. All 27 cases pass (26/1 before the correction); four in-memory mutations
+are caught, and 20 real Chrome checks pass. Fresh build passes; type checking
+retains the same 236 diagnostics in 44 files. No server/shared-helper change,
+production deployment or additional reviewer. Broader release blockers remain.

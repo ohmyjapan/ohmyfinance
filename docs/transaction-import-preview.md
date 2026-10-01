@@ -69,13 +69,15 @@ a native disabled fieldset holds the wizard's navigation and options until the
 request settles. Success and failure both release the state and keep the existing
 results/import-more flow. No source rows or server acceptance policy change.
 
-Results is now the end of one submitted attempt. Before a response exists, its
-header cannot open an empty result screen. After success, partial/all-row rejection
-or a request error, previous step headers cannot reopen the submitted batch, and
-another import callback cannot send it again. The result, batch details and row
-errors remain visible. Use the existing Import more action to reset, select a file
-and start a new attempt, including when correcting rejected rows. Pre-submission
-back/remap and the existing request-pending behavior remain unchanged.
+Before a response exists, the Results header cannot open an empty result screen.
+After a response reporting saved rows, or an unknown request outcome, previous
+step headers cannot reopen the submitted batch and another callback cannot send
+it again. A successful response reporting exactly zero imported rows leaves the
+earlier steps open for correction without discarding the file, mappings, options
+or raw rows. Its previous result remains reachable while correcting. A later
+response reporting saved rows closes that path again. Import more remains the
+explicit reset for a fresh attempt. Pre-submission back/remap and pending state
+are unchanged. Missing response data is not treated as an imported count of zero.
 
 ## Verification
 
@@ -173,9 +175,22 @@ automated label assertions, while judging the implementation correct. The root
 retained its screenshots/CSV/probe evidence for that reversible display change;
 the recommendation remains recorded and unimplemented. It is not release approval.
 The owner-ordered review of 66088b5 returned KEEP for the pending-request return
-and disabled fieldset. The later result-aware navigation and widened submission
-exit are new/expanded guards and need a separately owner-ordered review before shipping.
-No reviewer was launched automatically.
+and disabled fieldset. Review of 8601fbb returned LOOSEN for making zero-import
+and failed-request recovery discard the user's work. The recovery follow-up
+folds the acknowledged-zero part by relaxing both existing guards; no new hold
+is introduced. Its existing five-shape rejected-mapping case now corrects in
+place and preserves its validation assertions. Baseline is 26 pass/one fail;
+all 27 pass after the change. Four in-memory mutations each fail that correction
+or the existing uncertain-outcome case (26/1).
+
+The failed-request recommendation is argued: a missing response cannot establish
+zero writes. Twenty Chrome checks pass on the fresh build, including zero-import
+recovery with retained file/mappings/options, a subsequent saved batch, and a
+real isolated server write followed by a synthetic lost response. The latter
+keeps its error and does not send again through headers. Mobile screenshots were
+inspected. The same 236 diagnostics remain in 44 files. No worker was launched
+for this follow-up. The original LOOSEN report stays intact; this is not release
+approval or a guarantee about database write acknowledgments.
 
 Source reset on unusual empty-file callbacks and upload prerequisites before
 submission remain outside this follow-up. Direct internal Back/Continue function
@@ -185,8 +200,9 @@ post-result Back failure, so no callback-specific guards were added. Protection
 applies only to one mounted wizard: page reload/navigation away, other tabs, lost
 responses and server idempotency are not solved. Explicit reset permits a new
 attempt and does not guarantee that re-uploading an already committed batch is safe.
-The optional server duplicate lookup remains read-before-write. The intercepted
-503 proves UI recovery, not safety of retrying an uncertain committed request.
+The optional server duplicate lookup remains read-before-write. The pre-server
+503 proves UI recovery. The added lost-response-after-save check proves the
+existing hold remains in that scenario, not that retry/reset is safe.
 Rejection details still
 lack row numbers. Unmapped-Amount wording, date-filter behavior and invalid
 nonempty date presentation remain separate. Import-more reset is covered in real Chrome.

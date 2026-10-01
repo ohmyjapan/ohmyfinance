@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { CheckCircle, Upload, GitBranch, Eye, Download, BarChart3 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import type { TransactionImportFile, TransactionImportRow, TransactionFieldMappings, TransactionPreviewStats } from '~/types/transaction-import'
@@ -162,6 +162,9 @@ const importOptions = ref({
 })
 const importResult = ref<any>(null)
 const isImporting = ref(false)
+// A missing response cannot establish whether rows were saved.
+const canCorrectImport = computed(() => importResult.value?.success === true &&
+  importResult.value?.results?.imported === 0)
 
 // Get step circle class
 const getStepCircleClass = (index: number) => {
@@ -176,7 +179,7 @@ const getStepCircleClass = (index: number) => {
 
 // Check if can navigate to step
 const canNavigateToStep = (stepIndex: number) => {
-  if (importResult.value !== null) return stepIndex === 4
+  if (importResult.value !== null) return stepIndex === 4 || canCorrectImport.value
   return stepIndex < 4 && (completedSteps.value.includes(stepIndex) ||
     stepIndex === currentStep.value ||
     stepIndex === currentStep.value + 1)
@@ -257,7 +260,7 @@ const updateImportOptions = (options: any) => {
 
 // Perform the actual import
 const performImport = async () => {
-  if (isImporting.value || importResult.value !== null) return
+  if (isImporting.value || (importResult.value !== null && !canCorrectImport.value)) return
   isImporting.value = true
   try {
     const result = await $fetch('/api/transactions/import', {
