@@ -20,7 +20,8 @@ export const ROOT = '/run/omf';
 export const CHROME_PATH = '/usr/bin/google-chrome-stable';
 export const STAGES = ['reach', 'collect'];
 export const OUTCOMES = ['login_form_shown', 'collected', 'attention', 'issuer_unavailable', 'unknown_page', 'browser_unavailable', 'service_failure'];
-const FRAME_BUDGET_MS = 2500, REACH_WAIT_MS = 30000;
+// One TOTAL budget for the whole frame sweep (playbook §5 rule 2), not per frame — review F2.
+const FRAME_SWEEP_BUDGET_MS = 2500, REACH_WAIT_MS = 30000;
 
 // collector/browser.mjs:39 flags plus the Linux Chrome path; puppeteer-real-browser adds Xvfb and --no-sandbox itself.
 export function chromeOptions(root = ROOT) {
@@ -50,17 +51,23 @@ function redactedDocument(secrets) {
   return { html: document.documentElement.outerHTML, text: document.body ? document.body.innerText : '' };
 }
 
-// Per frame, main first, each within one budget: DOM step, else content() with empty text; then the string step.
-// The screenshot exists only in stage reach, before any credential was typed.
+// Per frame, main first, under ONE total budget for the whole sweep (playbook §5 rule 2; review F2): the DOM step,
+// else content() with empty text, each given only the time left; a frame reached after exhaustion is still indexed
+// with its url and empty html/text, and no further slow step is started. Then the string step. The screenshot exists
+// only in stage reach, before any credential was typed, on its own budget.
 export async function capture(page, secrets, { screenshot = false } = {}) {
   const frames = [];
   let list = [];
   try { const main = page.mainFrame(); list = [main, ...page.frames().filter(frame => frame !== main)]; } catch { list = []; }
+  const deadline = performance.now() + FRAME_SWEEP_BUDGET_MS;   // monotonic: a budget, not a wall-clock reading
+  const remaining = () => Math.max(0, deadline - performance.now());
   for (const frame of list) {
     let url = '', html = '', text = '';
     try { url = String(frame.url() || ''); } catch { url = ''; }
-    try { const dom = await withBudget(frame.evaluate(redactedDocument, secrets), FRAME_BUDGET_MS); html = String(dom?.html ?? ''); text = String(dom?.text ?? ''); }
-    catch { try { html = String(await withBudget(frame.content(), FRAME_BUDGET_MS)); } catch { html = ''; } text = ''; }
+    if (remaining() > 0) {
+      try { const dom = await withBudget(frame.evaluate(redactedDocument, secrets), remaining()); html = String(dom?.html ?? ''); text = String(dom?.text ?? ''); }
+      catch { if (remaining() > 0) { try { html = String(await withBudget(frame.content(), remaining())); } catch { html = ''; } } text = ''; }
+    }
     frames.push({ url: scrub(url, secrets), html: scrub(html, secrets), text: scrub(text, secrets) });
   }
   const result = { frames };

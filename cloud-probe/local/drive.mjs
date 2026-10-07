@@ -104,6 +104,13 @@ export async function runProbe({ stage, account, credentials = null, mailbox = n
   if (stage === 'collect' && !(credentials && typeof credentials.username === 'string' && credentials.username && typeof credentials.password === 'string' && credentials.password)) throw new Error('No saved Amex login for this account');
   if (!claims) throw new Error('A claims record is required');
   if (!out) throw new Error('--out <folder> is required');
+  // Review F4: the record of a live run must never be lost to a folder that already holds one. --out follows the
+  // rule stage() applies to --into (lines 78-81) BEFORE the session: absent or empty, created here; nothing is
+  // overwritten or removed, and a refusal contacts nothing. The owner picks another folder and reruns on his own go.
+  let occupied = [];
+  try { occupied = await readdir(out); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (occupied.length) throw new Error('The output directory must be empty');
+  await mkdir(out, { recursive: true });
   // The ISO instant with ':' and '.' as '-': collectFromPage uses the jobId as a folder name (browser.mjs:80).
   const jobId = 'probe-' + now().toISOString().replace(/[:.]/g, '-');
   const line = { stage, account: { _id: account._id, jobId, name: account.name, primaryCard: account.primaryCard, cardIdentifiers: account.cardIdentifiers, otpRecipient: account.otpRecipient, otpMailbox: account.otpMailbox } };
@@ -147,7 +154,7 @@ export async function runProbe({ stage, account, credentials = null, mailbox = n
   record.tally = tally;
   record.next = nextFor(record.outcome, record.reasonCode);
 
-  await mkdir(out, { recursive: true });
+  // `out` exists and was empty before the session (the preflight above); every file below is created with 'wx'.
   const files = [];
   if (captured) {
     const dir = path.join(out, 'capture');
