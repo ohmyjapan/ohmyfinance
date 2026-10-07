@@ -73,7 +73,11 @@ export async function selectLatestStatement(page, primaryCard) {
 export async function collectStatement(account, settings, directory, status, { gmail } = {}) {
   const profile = settings.profile || path.join(directory, 'profiles', account.primaryCard);
   const browser = await browserFor(profile), page = await amexPage(browser);
-  await ensureLogin(page, settings, status, { account, mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory) });
+  return collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory) });
+}
+
+export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null } = {}) {
+  await ensureLogin(page, settings, status, { account, mailbox, claims });
   await status('running', 'Selecting the latest closed Amex statement');
   const { selected, pageCount } = await selectLatestStatement(page, account.primaryCard);
   await status('running', `Downloading the closed statement ${selected.start} to ${selected.end}`);
