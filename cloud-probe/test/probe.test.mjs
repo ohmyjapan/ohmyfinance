@@ -1,11 +1,15 @@
-// Legs R1-R14 of the Railway Amex probe (plan omf-railway-amex-probe-20261007, §4; review fold
-// omf-railway-amex-review-fold-20261008 F2-F5; startup fix omf-railway-startup-fix-20261008 = R14), with tagged
-// assertions: every failure message starts with `[<leg>:<check>]`. The legs drive cloud-probe/run.mjs, relay.mjs and
-// local/drive.mjs through an in-process stream pair in place of ssh, with the fake page of ./fake-amex.mjs in place
-// of Chrome. R6c runs the real collector/browser.mjs collectStatement in a child of this file
-// (--collect-statement-child) whose only replaced seams are the Windows process probe, puppeteer-real-browser's
-// connect and the googleapis client. R14 runs the installed chrome-launcher's own prepare() at the connect seam.
-// No Chrome, no PowerShell, no Gmail, no vault, no network. Synthetic data only.
+// Legs R1-R16 of the Railway Amex probe (plan omf-railway-amex-probe-20261007, §4; review fold
+// omf-railway-amex-review-fold-20261008 F2-F5; startup fix omf-railway-startup-fix-20261008 = R14; execution-user
+// fix omf-railway-user-fix-20261008 = R15), with tagged assertions: every failure message starts with
+// `[<leg>:<check>]`. The legs drive cloud-probe/run.mjs, relay.mjs and local/drive.mjs through an in-process stream
+// pair in place of ssh, with the fake page of ./fake-amex.mjs in place of Chrome. R6c runs the real
+// collector/browser.mjs collectStatement in a child of this file (--collect-statement-child) whose only replaced
+// seams are the Windows process probe, puppeteer-real-browser's connect and the googleapis client. R14 runs the
+// installed chrome-launcher's own prepare() at the connect seam. R15 pins the driver's ssh command boundary in a
+// child whose only replaced seam is spawn (--ssh-transport-child) and assesses the evidence file of the MANUAL
+// Linux acceptance ./linux-execution.mjs when OMF_LINUX_EXECUTION_EVIDENCE names one — the in-process stream pair
+// never establishes a Linux identity and is not pretended to. No Chrome, no PowerShell, no Gmail, no vault, no
+// network. Synthetic data only.
 //
 //   node cloud-probe/test/probe.test.mjs [R1 R2 ...]   runs the legs under node:test
 //   scripts/zoomer-fixtures/railway-amex-probe.mjs      runs them plus the collector suite and the defects
@@ -13,15 +17,18 @@ import assert from 'node:assert/strict';
 import * as childProcess from 'node:child_process';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { closeSync, existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import * as fake from './fake-amex.mjs';
+import { assessEvidence, commandMismatches, describeContainerCommand, readHoldEvent, summarizeEvidence } from './linux-execution.mjs';
 
 const execute = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -56,6 +63,9 @@ export const PLANNED_COLLECT_STATEMENT = [
 ];
 export const PLANNED_COLLECT_FROM_PAGE_HEADER = 'export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null } = {}) {';
 export const PLANNED_FIRST_STATEMENT = 'await ensureLogin(page, settings, status, { account, mailbox, claims });';
+// Plan omf-railway-user-fix-20261008 (the approved proposed-driver.patch): the one foreground command of the ssh
+// session selects the image's user before the runner starts — R15's literal pin, beside the shape and spawn checks.
+export const PLANNED_CONTAINER_COMMAND = 'exec /usr/bin/setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs node /app/cloud-probe/run.mjs';
 export const R1_EVENTS = ['login', 'choose-email', 'request-code', 'claims_read', 'claim', 'type-code', 'submit-code', 'statement', 'download'];
 // R6c: the real LoginMailbox answers from the mocked Gmail client, so the mail events are seen there instead of the
 // relay's claims events (the real LoginClaims writes its file, read at type-code time).
@@ -844,6 +854,94 @@ export const legs = {
       } finally { await run.cleanup(); }
     }
     return `cold start from a runtime root nothing created, the installed chrome-launcher ${installed} prepare() run at connect: ${done.join(', ')}; profile/download/work removed after each, no Chrome`;
+  },
+
+  // R15 (plan omf-railway-user-fix-20261008): the execution boundary of the driver's one ssh session. The live run of
+  // 2026-10-08 showed the runner at uid 0 although the image's USER is 10001: Railway starts the ssh command as root,
+  // and `node /app/cloud-probe/run.mjs` inherited it. The fix is the foreground command itself: exec into setpriv to
+  // uid/gid 10001 with the supplementary groups cleared and no new privileges, then the runner. In process this leg
+  // can pin the command, not the identity it produces: the REAL sshArguments() hands the exact line as the session's
+  // single final argument under the pinned options (StrictHostKeyChecking=yes, the supplied known_hosts file,
+  // IdentitiesOnly, BatchMode, publickey only, no forwardings) and still honours an explicit command override; the
+  // REAL sshTransport.open() spawns `ssh` with precisely those arguments (a child of this file whose only replaced
+  // seam is spawn: no process starts); the uid the command selects is the one cloud-probe/Dockerfile creates; and
+  // cloud-probe/idle.mjs, run, directs the operator to the driver instead of printing the old root command. The Linux
+  // half — the identity the command really produces, the pipe, the exit status, the session end and Chrome/Xvfb under
+  // uid 10001 — is the MANUAL entry ./linux-execution.mjs: when OMF_LINUX_EXECUTION_EVIDENCE names its evidence file,
+  // the file is assessed against THIS tree's command and runner hash (stale evidence is red); when it is unset the
+  // leg says NOT RUN for that half and claims nothing about Linux. The in-process stream pair of the other legs is
+  // never presented as a uid.
+  async R15(ctx) {
+    need(ctx, 'R15', 'drive');
+    const holdInput = new PassThrough();
+    const captured = readHoldEvent(holdInput);
+    holdInput.write('unrelated output\n{"leg":"other"}\n{"leg":"ho');
+    holdInput.end('ld","pid":73,"uid":10001}\n');
+    const held = await captured;
+    tag('R15', 'hold-event', held?.pid === 73 && held?.uid === 10001, `hold event lost on reader close: ${JSON.stringify(held)}`);
+    const eofInput = new PassThrough();
+    const eof = readHoldEvent(eofInput);
+    eofInput.end('not a hold event\n');
+    tag('R15', 'hold-eof', await eof === null, 'EOF without a hold event did not return null');
+    const timeoutInput = new PassThrough();
+    const expired = await readHoldEvent(timeoutInput, 5);
+    timeoutInput.end();
+    tag('R15', 'hold-timeout', expired === null, 'missing hold event did not time out');
+    const { CONTAINER_COMMAND, SSH_HOST, sshArguments } = ctx.modules.drive;
+    const shape = describeContainerCommand(CONTAINER_COMMAND);
+    const mismatches = commandMismatches(shape);
+    tag('R15', 'command', mismatches.length === 0 && CONTAINER_COMMAND === PLANNED_CONTAINER_COMMAND, `CONTAINER_COMMAND ${JSON.stringify(CONTAINER_COMMAND)}: ${mismatches.join(', ') || 'differs from the planned line'}`);
+    const dockerfile = await readFile(path.join(REPO_ROOT, 'cloud-probe', 'Dockerfile'), 'utf8');
+    const imageUid = Number((dockerfile.match(/useradd --uid (\d+) --user-group/) || [])[1]);
+    tag('R15', 'image-user', imageUid === shape.uid && imageUid === shape.gid && /^USER omf$/m.test(dockerfile), `the command selects uid ${shape.uid}/gid ${shape.gid}; the Dockerfile creates uid ${imageUid} and runs as ${(dockerfile.match(/^USER (\S+)$/m) || [])[1]}`);
+    const synthetic = { key: 'synthetic-key', knownHosts: 'synthetic-known-hosts', instance: 'synthetic-instance' };
+    const args = sshArguments(synthetic);
+    const has = (flag, value) => args.some((token, i) => token === flag && (value === undefined || args[i + 1] === value));
+    const pinned = [['-T'], ['-F', 'none'], ['-i', 'synthetic-key'], ['-o', 'IdentitiesOnly=yes'], ['-o', 'BatchMode=yes'], ['-o', 'PreferredAuthentications=publickey'], ['-o', 'PasswordAuthentication=no'], ['-o', 'KbdInteractiveAuthentication=no'], ['-o', 'ClearAllForwardings=yes'], ['-o', 'UserKnownHostsFile=synthetic-known-hosts'], ['-o', 'StrictHostKeyChecking=yes']];
+    const missing = pinned.filter(([flag, value]) => !has(flag, value)).map(pair => pair.join(' '));
+    tag('R15', 'arguments', missing.length === 0 && args.at(-2) === `synthetic-instance@${SSH_HOST}` && args.at(-1) === CONTAINER_COMMAND && args.filter(token => token.includes('setpriv')).length === 1, `sshArguments ${JSON.stringify(args)}${missing.length ? ' lacks ' + missing.join(', ') : ''}`);
+    const override = sshArguments({ ...synthetic, command: 'node -' });
+    tag('R15', 'override', override.at(-1) === 'node -' && JSON.stringify(override.slice(0, -1)) === JSON.stringify(args.slice(0, -1)), `override arguments ${JSON.stringify(override)}`);
+    const child = await childJson(['--experimental-test-module-mocks', fileURLToPath(import.meta.url), '--ssh-transport-child', '--drive-file', path.join(ctx.probeDir, 'local', 'drive.mjs')], { timeout: 60000 });
+    let report = null;
+    try { report = JSON.parse(child.lines.at(-1)); } catch {}
+    const noise = String(child.stderr || '').split('\n').filter(line => line.trim() && !/ExperimentalWarning|--trace-warnings/.test(line)).join(' | ').slice(0, 400);
+    tag('R15', 'transport-child', child.code === 0 && report && report.harness === 'ssh-transport', `child exit ${child.code} (${noise}) last line ${String(child.lines.at(-1) ?? '').slice(0, 200)}`);
+    const spawned = report.spawn[0] || {};
+    tag('R15', 'transport-spawn', report.spawn.length === 1 && spawned.file === 'ssh' && JSON.stringify(spawned.args) === JSON.stringify(report.expected) && JSON.stringify(spawned.args) === JSON.stringify(args) && spawned.options?.windowsHide === true && JSON.stringify(spawned.options?.stdio) === JSON.stringify(['pipe', 'pipe', 'pipe']), `sshTransport.open() spawned ${JSON.stringify(report.spawn).slice(0, 400)}`);
+    tag('R15', 'transport-session', report.session?.streams === true && report.session?.exit?.code === 0 && report.session?.command === CONTAINER_COMMAND, `session ${JSON.stringify(report.session)}`);
+    // idle.mjs, run: its first line directs the operator to the driver, not to the old root command; it keeps waiting.
+    const idle = spawn(process.execPath, [path.join(REPO_ROOT, 'cloud-probe', 'idle.mjs')], { cwd: REPO_ROOT, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const firstLine = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(null), 15000);
+      const reader = createInterface({ input: idle.stdout, crlfDelay: Infinity, terminal: false });
+      reader.once('line', line => { clearTimeout(timer); reader.close(); resolve(line); });
+    });
+    const alive = idle.exitCode === null && idle.signalCode === null;
+    idle.kill();
+    await new Promise(resolve => idle.once('close', resolve));
+    tag('R15', 'idle-message', typeof firstLine === 'string' && /Ryzen 7 driver/.test(firstLine) && !firstLine.includes('node /app/cloud-probe/run.mjs') && alive, `idle.mjs first line ${JSON.stringify(firstLine)}, alive after it ${alive}`);
+    const inProcess = `command = planned setpriv line (uid/gid ${shape.uid}, groups cleared, no new privs, exec) = the Dockerfile's user; the single final ssh argument under the pinned options; override honoured; sshTransport.open() spawns ssh with exactly those arguments; idle.mjs points at the driver`;
+    const evidencePath = process.env.OMF_LINUX_EXECUTION_EVIDENCE;
+    if (!evidencePath) return `${inProcess}; Linux half NOT RUN (OMF_LINUX_EXECUTION_EVIDENCE unset) — no uid, pipe, exit, session-end or Chrome claim`;
+    let evidence = null;
+    try { evidence = JSON.parse(await readFile(evidencePath, 'utf8')); } catch (error) { tag('R15', 'linux-evidence-file', false, `${evidencePath}: ${error?.message || error}`); }
+    const runnerSha256 = digest(await readFile(path.join(REPO_ROOT, 'cloud-probe', 'run.mjs')));
+    const toolSha256 = digest(await readFile(path.join(here, 'linux-execution.mjs')));
+    const failures = assessEvidence(evidence, { containerCommand: CONTAINER_COMMAND, runnerSha256, toolSha256 });
+    tag('R15', 'linux-evidence', failures.length === 0, `${path.basename(evidencePath)}: ${failures.join('; ')}`);
+    return `${inProcess}; Linux evidence ${path.basename(evidencePath)} accepted for this command and runner ${runnerSha256.slice(0, 12)} — ${summarizeEvidence(evidence)}`;
+  },
+  // The staged image must start an init reaper. R15's manual evidence measures actual PID1 and zero leftovers.
+  async R16(ctx) {
+    const dockerfile = await readFile(path.join(ctx.probeDir, 'Dockerfile'), 'utf8');
+    const entryText = dockerfile.match(/^ENTRYPOINT\s+(\[.*\])$/m)?.[1];
+    let entry = null;
+    try { entry = JSON.parse(entryText); } catch {}
+    tag('R16', 'entrypoint', JSON.stringify(entry) === JSON.stringify(['/usr/bin/tini', '--', 'node', 'cloud-probe/idle.mjs']), `ENTRYPOINT ${entryText}`);
+    tag('R16', 'package', /apt-get install[^\n]*\btini\b/.test(dockerfile), 'the init package is not installed');
+    tag('R16', 'user', /^USER omf$/m.test(dockerfile), 'the image no longer starts as omf');
+    return 'image selects tini as PID1 and idle Node as its child; actual init identity and reaping are measured by manual Linux acceptance in R15';
   }
 };
 
@@ -947,8 +1045,38 @@ async function collectStatementChild(argv) {
   await finish();
 }
 
+// ── R15 child: the real sshTransport with only spawn replaced ──
+//   node --experimental-test-module-mocks cloud-probe/test/probe.test.mjs --ssh-transport-child [--drive-file <local/drive.mjs or a copy>]
+// Prints one JSON line: what spawn received from sshTransport.open() (file, arguments, options), the arguments
+// sshArguments() computes for the same options, and the session the driver would use. The recorded fake child ends
+// at once with exit 0; no ssh process starts.
+async function sshTransportChild(argv) {
+  const flag = name => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
+  const driveFile = flag('--drive-file') || path.join(REPO_ROOT, 'cloud-probe', 'local', 'drive.mjs');
+  const { mock } = await import('node:test');
+  const report = { harness: 'ssh-transport', spawn: [], expected: null, session: null };
+  const recorder = (file, args, options) => {
+    report.spawn.push({ file, args, options: { windowsHide: options?.windowsHide ?? null, stdio: options?.stdio ?? null } });
+    const fakeChild = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), pid: 0, kill() { return true; } });
+    setImmediate(() => { fakeChild.stdout.end(); fakeChild.stderr.end(); fakeChild.emit('close', 0, null); });
+    return fakeChild;
+  };
+  mock.module('node:child_process', { namedExports: { ...childProcess, spawn: recorder }, defaultExport: { ...childProcess, spawn: recorder } });
+  const drive = await import(pathToFileURL(driveFile).href);
+  const options = { key: 'synthetic-key', knownHosts: 'synthetic-known-hosts', instance: 'synthetic-instance' };
+  report.expected = drive.sshArguments(options);
+  const session = drive.sshTransport(options).open();
+  const streams = ['stdin', 'stdout', 'stderr'].every(name => session[name] && typeof session[name].on === 'function');
+  const exit = await session.exited;
+  report.session = { streams, exit, command: report.spawn[0]?.args?.at(-1) ?? null };
+  await new Promise(resolve => process.stdout.write(JSON.stringify(report) + '\n', () => resolve(undefined)));
+  process.exit(0);
+}
+
 if (process.argv.includes('--collect-statement-child')) {
   await collectStatementChild(process.argv.slice(2)).catch(error => { process.stderr.write(`${error?.stack || error}\n`); process.exit(1); });
+} else if (process.argv.includes('--ssh-transport-child')) {
+  await sshTransportChild(process.argv.slice(2)).catch(error => { process.stderr.write(`${error?.stack || error}\n`); process.exit(1); });
 } else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { test } = await import('node:test');
   const ctx = await makeContext();

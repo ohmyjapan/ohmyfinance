@@ -13,7 +13,7 @@ FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595
 # locales: Asia/Tokyo and ja_JP.UTF-8; procps: the `ps` that tree-kill runs when Chrome closes.
 RUN export DEBIAN_FRONTEND=noninteractive \
  && apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl xz-utils xvfb fonts-noto-cjk tzdata locales procps \
+ && apt-get install -y --no-install-recommends ca-certificates curl xz-utils xvfb fonts-noto-cjk tzdata locales procps tini \
  && sed -i 's/^# *ja_JP.UTF-8 UTF-8/ja_JP.UTF-8 UTF-8/' /etc/locale.gen && locale-gen \
  && ln -snf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime && echo Asia/Tokyo > /etc/timezone \
  && curl -fsSLo /tmp/node.tar.xz https://nodejs.org/dist/v24.13.1/node-v24.13.1-linux-x64.tar.xz \
@@ -42,4 +42,4 @@ COPY cloud-probe/run.mjs cloud-probe/relay.mjs cloud-probe/idle.mjs cloud-probe/
 
 ENV LANG=ja_JP.UTF-8 TZ=Asia/Tokyo HOME=/run/omf/home TMPDIR=/run/omf/tmp
 USER omf
-ENTRYPOINT ["node", "cloud-probe/idle.mjs"]
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "cloud-probe/idle.mjs"]

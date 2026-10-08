@@ -22,7 +22,7 @@ import { answerFor, newTally, noteStatus, RELAY_REQUESTS, scrub } from '../relay
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SSH_HOST = 'ssh.railway.com';
-export const CONTAINER_COMMAND = 'node /app/cloud-probe/run.mjs';
+export const CONTAINER_COMMAND = 'exec /usr/bin/setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs node /app/cloud-probe/run.mjs';
 export const RESULT_WAIT_MS = 30000;
 // The upload allowlist: Dockerfile and railway.json at the staged root, every module at its repository path.
 export const ALLOWLIST = [

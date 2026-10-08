@@ -1,13 +1,17 @@
 // Fixture for plan omf-railway-amex-probe-20261007 (§4), its review fold omf-railway-amex-review-fold-20261008
-// (F2-F5) and the startup fix omf-railway-startup-fix-20261008 (R14/D26). Run ONLY through the hub verifier:
+// (F2-F5), the startup fix omf-railway-startup-fix-20261008 (R14/D26) and the execution-user fix
+// omf-railway-user-fix-20261008 (R15/D27). Run ONLY through the hub verifier:
 //   node scripts/zoomer-verify.mjs --run-fixture railway-amex-probe.mjs --cwd <this worktree>
 // No recorded case: it drives cloud-probe/run.mjs, relay.mjs and local/drive.mjs through an in-process stream
 // pair in place of ssh with the fake page of cloud-probe/test/fake-amex.mjs, and the real collector/browser.mjs
 // collectStatement in a child with its process, browser and mail seams mocked — no Chrome, PowerShell, Gmail,
 // vault or network (R14 runs the installed chrome-launcher's prepare() on the runner's profile directory, never a
-// Chrome process). Legs R1-R14 (cloud-probe/test/probe.test.mjs; the collector suite inside R6a) and defects
-// D1-D26, each built as a defective copy of the module it names (run.mjs, relay.mjs, local/drive.mjs under a temp
-// cloud-probe/; collector/browser.mjs under a temp collector/ for the executed wrapper) and expected RED at the leg's tag.
+// Chrome process; R15 pins the driver's ssh command boundary with spawn replaced and assesses the evidence file of
+// the MANUAL Linux acceptance cloud-probe/test/linux-execution.mjs only when OMF_LINUX_EXECUTION_EVIDENCE names
+// one — that entry is never run from here). Legs R1-R16 (cloud-probe/test/probe.test.mjs; the collector suite
+// inside R6a) and defects D1-D28, each built as a defective copy of the module it names (run.mjs, relay.mjs,
+// local/drive.mjs under a temp cloud-probe/; collector/browser.mjs under a temp collector/ for the executed wrapper)
+// and expected RED at the leg's tag.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +21,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
 const PROBE_DIR = path.join(REPO_ROOT, 'cloud-probe');
 const BROWSER_FILE = path.join(REPO_ROOT, 'collector', 'browser.mjs');
-const COPIED = ['run.mjs', 'relay.mjs', 'local/drive.mjs'];
+const COPIED = ['run.mjs', 'relay.mjs', 'local/drive.mjs', 'Dockerfile'];
 
 // Each defect: the module, the exact source anchor (must occur exactly once) and its replacement — or `edits`, several
 // such pairs applied in order — and the leg that goes red. D1-D10 are the original plan's; D11-D25 the review fold's
@@ -59,7 +63,10 @@ const DEFECTS = [
   { id: 'D24', what: 'Gmail connection not wired into the mailbox', file: 'collector/browser.mjs', leg: 'R6c', find: 'mailbox: gmail ? new LoginMailbox(gmail) : null', replace: 'mailbox: null' },
   { id: 'D25', what: 'configured profile ignored', file: 'collector/browser.mjs', leg: 'R6c', find: "const profile = settings.profile || path.join(directory, 'profiles', account.primaryCard);", replace: "const profile = path.join(directory, 'profiles', account.primaryCard);" },
   // omf-railway-startup-fix-20261008 — the profile directory created before connect (the 2026-10-08 live ENOENT)
-  { id: 'D26', what: 'profile directory not created before connect', file: 'run.mjs', leg: 'R14', find: "await mkdir(path.join(root, 'profile'), { recursive: true });", replace: '' }
+  { id: 'D26', what: 'profile directory not created before connect', file: 'run.mjs', leg: 'R14', find: "await mkdir(path.join(root, 'profile'), { recursive: true });", replace: '' },
+  // omf-railway-user-fix-20261008 — the privilege switch removed: the runner inherits the ssh session's root again
+  { id: 'D27', what: 'privilege switch removed from the container command (root runner)', file: 'local/drive.mjs', leg: 'R15', find: "export const CONTAINER_COMMAND = 'exec /usr/bin/setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs node /app/cloud-probe/run.mjs';", replace: "export const CONTAINER_COMMAND = 'node /app/cloud-probe/run.mjs';" },
+  { id: 'D28', what: 'init reaper removed from container entrypoint', file: 'Dockerfile', leg: 'R16', find: 'ENTRYPOINT ["/usr/bin/tini", "--", "node", "cloud-probe/idle.mjs"]', replace: 'ENTRYPOINT ["node", "cloud-probe/idle.mjs"]' }
 ];
 
 function mutate(source, defect) {
@@ -104,17 +111,17 @@ async function defectiveBrowserFile(defect, base, source) {
 
 export default {
   name: 'railway-amex-probe',
-  covers: ['collector/browser.mjs', 'cloud-probe/run.mjs', 'cloud-probe/relay.mjs', 'cloud-probe/local/drive.mjs', 'cloud-probe/Dockerfile', 'cloud-probe/railway.json', 'cloud-probe/test/fake-amex.mjs', 'cloud-probe/test/probe.test.mjs'],
+  covers: ['collector/browser.mjs', 'cloud-probe/run.mjs', 'cloud-probe/relay.mjs', 'cloud-probe/local/drive.mjs', 'cloud-probe/idle.mjs', 'cloud-probe/Dockerfile', 'cloud-probe/railway.json', 'cloud-probe/test/fake-amex.mjs', 'cloud-probe/test/probe.test.mjs', 'cloud-probe/test/linux-execution.mjs'],
   async run() {
     const started = Date.now();
     let suite;
     try { suite = await import(pathToFileURL(path.join(PROBE_DIR, 'test', 'probe.test.mjs')).href); }
-    catch (error) { return { pass: false, message: `legs R1-R14 red: cloud-probe/test/probe.test.mjs could not be loaded: ${error?.message || error}` }; }
+    catch (error) { return { pass: false, message: `legs R1-R16 red: cloud-probe/test/probe.test.mjs could not be loaded: ${error?.message || error}` }; }
     const lines = [];
     let pass = true;
     let ctx;
     try { ctx = await suite.makeContext(); }
-    catch (error) { return { pass: false, message: `legs R1-R14 red: context could not be built: ${error?.message || error}` }; }
+    catch (error) { return { pass: false, message: `legs R1-R16 red: context could not be built: ${error?.message || error}` }; }
     for (const [name, error] of Object.entries(ctx.modules.errors)) lines.push(`module ${name} not loadable (${error})`);
     const legs = await suite.runLegs(ctx);
     for (const leg of legs) { if (!leg.ok) pass = false; lines.push(`${leg.name} ${leg.ok ? 'ok' : 'RED'} (${Math.round(leg.ms / 1000)}s): ${leg.message}`); }
@@ -138,6 +145,6 @@ export default {
     } finally {
       if (path.resolve(base).startsWith(path.resolve(os.tmpdir()) + path.sep)) await rm(base, { recursive: true, force: true });
     }
-    return { pass, message: `${pass ? 'legs R1-R14 green and D1-D26 red' : 'FAILED'} in ${Math.round((Date.now() - started) / 1000)}s — ${lines.join(' · ')}` };
+    return { pass, message: `${pass ? 'legs R1-R16 green and D1-D28 red' : 'FAILED'} in ${Math.round((Date.now() - started) / 1000)}s — ${lines.join(' · ')}` };
   }
 };
