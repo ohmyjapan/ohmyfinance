@@ -121,6 +121,7 @@ async function probe({ relay, output, connect, root, fetchIp, secrets, session }
   let browser, page;
   try {
     await mkdir(path.join(root, 'work'), { recursive: true });
+    await mkdir(path.join(root, 'profile'), { recursive: true });
     ({ browser } = await connect(chromeOptions(root)));
     session.browser = browser;
     page = await amexPage(browser);

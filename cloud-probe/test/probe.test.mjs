@@ -1,9 +1,10 @@
-// Legs R1-R13 of the Railway Amex probe (plan omf-railway-amex-probe-20261007, §4; review fold
-// omf-railway-amex-review-fold-20261008 F2-F5), with tagged assertions: every failure message starts with
-// `[<leg>:<check>]`. The legs drive cloud-probe/run.mjs, relay.mjs and local/drive.mjs through an in-process
-// stream pair in place of ssh, with the fake page of ./fake-amex.mjs in place of Chrome. R6c runs the real
-// collector/browser.mjs collectStatement in a child of this file (--collect-statement-child) whose only replaced
-// seams are the Windows process probe, puppeteer-real-browser's connect and the googleapis client.
+// Legs R1-R14 of the Railway Amex probe (plan omf-railway-amex-probe-20261007, §4; review fold
+// omf-railway-amex-review-fold-20261008 F2-F5; startup fix omf-railway-startup-fix-20261008 = R14), with tagged
+// assertions: every failure message starts with `[<leg>:<check>]`. The legs drive cloud-probe/run.mjs, relay.mjs and
+// local/drive.mjs through an in-process stream pair in place of ssh, with the fake page of ./fake-amex.mjs in place
+// of Chrome. R6c runs the real collector/browser.mjs collectStatement in a child of this file
+// (--collect-statement-child) whose only replaced seams are the Windows process probe, puppeteer-real-browser's
+// connect and the googleapis client. R14 runs the installed chrome-launcher's own prepare() at the connect seam.
 // No Chrome, no PowerShell, no Gmail, no vault, no network. Synthetic data only.
 //
 //   node cloud-probe/test/probe.test.mjs [R1 R2 ...]   runs the legs under node:test
@@ -12,8 +13,9 @@ import assert from 'node:assert/strict';
 import * as childProcess from 'node:child_process';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -788,6 +790,60 @@ export const legs = {
       tag('R13', 'non-empty-untouched', JSON.stringify(await snapshotFiles(into)) === JSON.stringify(before), 'the refused stage changed the folder');
       return `staged ${listed.length} files = the allowlist, bytes and sha256 match the sources, every Dockerfile COPY source present, non-empty target refused untouched`;
     } finally { await removeTemp(dir); }
+  },
+
+  // R14 (plan omf-railway-startup-fix-20261008): COLD START. The live reach of 2026-10-08 ended browser_unavailable with
+  // `ENOENT … /run/omf/profile/chrome-out.log`: the runner had created only /run/omf/work, and the locked chrome-launcher
+  // (dist/chrome-launcher.js:150-152) opens its log files inside the supplied userDataDir without creating it. Here the
+  // connect seam runs the INSTALLED launcher's own prepare() — the first thing launch() does (:210) — on the directory
+  // the real runner supplies, from a runtime root nothing created, then hands back the synthetic browser. Chrome is
+  // never started (spawn is a trap). Both stages must reach their normal synthetic result and the runner's own cleanup
+  // must remove the profile; a launch that fails AFTER prepare() (Chrome missing) is still browser_unavailable with the
+  // profile removed. The launcher's log descriptors are closed again before the runner's rm (Windows holds open files).
+  async R14(ctx) {
+    need(ctx, 'R14', 'run', 'relay', 'drive', 'login');
+    const collectorRequire = createRequire(path.join(ctx.collectorDir, 'package.json'));
+    const installed = collectorRequire('chrome-launcher/package.json').version;
+    const locked = JSON.parse(await readFile(path.join(ctx.collectorDir, 'package-lock.json'), 'utf8')).packages?.['node_modules/chrome-launcher']?.version;
+    tag('R14', 'locked-launcher', typeof installed === 'string' && installed === locked, `installed chrome-launcher ${installed}, collector/package-lock.json ${locked}`);
+    const { Launcher } = await import(pathToFileURL(collectorRequire.resolve('chrome-launcher')).href);
+    const trap = () => { throw new Error('R14: Chrome must not be launched'); };
+    const prepareAtConnect = (fx, seen) => {
+      const real = fx.connect;
+      fx.connect = async options => {
+        seen.userDataDir = options?.customConfig?.userDataDir ?? null;
+        const launcher = new Launcher({ ...options.customConfig }, { spawn: trap });
+        try { launcher.prepare(); }
+        finally { for (const fd of [launcher.outFile, launcher.errFile]) if (typeof fd === 'number') closeSync(fd); }
+        seen.prepared = true;
+        seen.logs = ['chrome-out.log', 'chrome-err.log'].filter(name => existsSync(path.join(seen.userDataDir, name)));
+        return real(options);
+      };
+    };
+    const cases = [
+      { label: 'reach', stage: 'reach', outcome: 'login_form_shown' },
+      { label: 'collect', stage: 'collect', outcome: 'collected' },
+      { label: 'launch-fails-after-prepare', stage: 'reach', scenario: { connectThrows: true }, outcome: 'browser_unavailable', reason: /Failed to launch the browser process/ }
+    ];
+    const done = [];
+    for (const c of cases) {
+      const seen = { userDataDir: null, prepared: false, logs: [] };
+      const run = await driveProbe(ctx, { stage: c.stage, label: `r14-${c.label}`, scenario: c.scenario || {}, patch: fx => prepareAtConnect(fx, seen) });
+      try {
+        const profile = path.join(run.root, 'profile');
+        tag('R14', `${c.label}-profile-path`, seen.userDataDir === profile, `connect received userDataDir ${seen.userDataDir}, expected ${profile}`);
+        tag('R14', `${c.label}-prepared`, seen.prepared === true && seen.logs.length === 2, `launcher prepare() ${seen.prepared ? 'wrote ' + JSON.stringify(seen.logs) : 'did not complete'}; outcome ${run.record.outcome} (${run.record.reason})`);
+        tag('R14', `${c.label}-outcome`, run.record.outcome === c.outcome && (!c.reason || c.reason.test(String(run.record.reason))), `outcome ${run.record.outcome} (${run.record.reason})`);
+        if (c.stage === 'collect') { assertEvents('R14', run.events, R1_EVENTS); tag('R14', `${c.label}-manifest`, run.record.manifest?.pageCount === 4 && run.record.manifest?.sha256 === digest(fake.syntheticCsv(4)), `manifest ${JSON.stringify(run.record.manifest)}`); }
+        if (c.outcome === 'login_form_shown') tag('R14', `${c.label}-pagekind`, run.record.pageKind === 'login', `pageKind ${run.record.pageKind}`);
+        tag('R14', `${c.label}-one-connect`, run.fx.counts.connects === 1 && run.transport.state.opens === 1, `${run.fx.counts.connects} connects, ${run.transport.state.opens} sessions`);
+        const left = ['profile', 'download', 'work'].filter(name => existsSync(path.join(run.root, name)));
+        tag('R14', `${c.label}-runtime-removed`, left.length === 0, `left under the runtime root after the run: ${left.join(',')}`);
+        tag('R14', `${c.label}-next`, run.record.next === NEXT_EXPECTED[c.outcome] && run.exitCode === 0, `next ${JSON.stringify(run.record.next)}, exit ${run.exitCode}`);
+        done.push(`${c.label}:${run.record.outcome}`);
+      } finally { await run.cleanup(); }
+    }
+    return `cold start from a runtime root nothing created, the installed chrome-launcher ${installed} prepare() run at connect: ${done.join(', ')}; profile/download/work removed after each, no Chrome`;
   }
 };
 
