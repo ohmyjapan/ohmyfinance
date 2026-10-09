@@ -41,7 +41,7 @@ export async function click(page, selector, text, origin, pathname) {
   const point = await page.evaluate(({ selector, text }) => {
     const targets = [...document.querySelectorAll(selector)].filter(e => !e.disabled && e.getBoundingClientRect().height && (text === null || e.textContent.trim() === text));
     if (targets.length !== 1) throw new Error('Amex control did not uniquely match');
-    targets[0].scrollIntoView({ block: 'center' });
+    targets[0].scrollIntoView({ block: 'center', behavior: 'instant' });
     const rect = targets[0].getBoundingClientRect();
     const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
     if (!targets[0].contains(document.elementFromPoint(x, y))) throw new Error('Amex control is covered by another element');
