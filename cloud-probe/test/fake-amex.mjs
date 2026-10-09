@@ -3,9 +3,14 @@
 // statementSnapshot shapes) with canned shapes per surface, and after login() / code() it renders the
 // canaries VISIBLY: value attributes, a text node, a child frame text node, a percent-encoded href. The
 // string step in cloud-probe/run.mjs must scrub them; nothing here hides them. Synthetic data only.
+// Plan omf-amex-human-verification-20261009: a scenario may mount the reCAPTCHA Amex's public login bundle shows —
+// visible, hidden (no layout box) or script-only (no container) — with the first login render or when #loginSubmit
+// is clicked. The runner's public DOM detector (cloud-probe/run.mjs visibleChallenge) runs its OWN source against a
+// minimal document of that container; nothing private (React state, LGON018) exists here, as in production.
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import vm from 'node:vm';
 import { HEADERS } from '../../shared/amex.mjs';
 import { statementSnapshot } from '../../collector/statement.mjs';
 
@@ -47,20 +52,38 @@ const DEFAULTS = {
   connectThrows: false,       // connect() throws like a missing Chrome
   domStepThrowsForFrame: null, // index of the frame whose DOM step throws
   events: null,               // shared event list
-  onTypeCode: null            // hook run when the code is typed
+  onTypeCode: null,           // hook run when the code is typed
+  challenge: null,            // null | 'visible' | 'hidden' | 'script-only': the reCAPTCHA the page mounts (public DOM only)
+  challengeAt: 'start',       // 'start' (with the first login render; a login navigation re-mounts it) | 'afterLogin' (when #loginSubmit is clicked; a navigation clears it)
+  unknownUrl: NOTICE_URL      // the url of the unknown surface
 };
 
 export function fakeAmex(scenario = {}) {
   const s = { ...DEFAULTS, ...scenario };
   const events = s.events || [];
   const typed = { username: '', password: '', code: '' };
-  const counts = { password: 0, connects: 0, screenshots: 0, closes: 0, connectOptions: null };
-  let url = 'about:blank', surface = 'blank', selected = false, dialogOpen = false, csvChecked = false, focused = null, pending = null, downloadPath = null;
+  const counts = { password: 0, connects: 0, screenshots: 0, closes: 0, connectOptions: null, loginNavigations: 0 };
+  let url = 'about:blank', surface = 'blank', selected = false, dialogOpen = false, csvChecked = false, focused = null, pending = null, downloadPath = null, challengeMounted = false;
   const cdpHandlers = new Map();
 
   const go = name => {
     surface = name;
-    url = { login: LOGIN_URL, channels: VERIFY_URL, code: VERIFY_URL, authenticated: HOME_URL, unknown: NOTICE_URL }[name] || NOTICE_URL;
+    url = { login: LOGIN_URL, channels: VERIFY_URL, code: VERIFY_URL, authenticated: HOME_URL, unknown: s.unknownUrl }[name] || s.unknownUrl;
+  };
+  // The public DOM the detector may read: the one container when the scenario mounts one — a layout box only when it
+  // is visible — and nothing else. The detector's own source runs against it (page.evaluate has no closure either).
+  const publicDom = () => {
+    const present = challengeMounted && (s.challenge === 'visible' || s.challenge === 'hidden');
+    const visible = present && s.challenge === 'visible';
+    const container = present ? { getBoundingClientRect: () => ({ width: visible ? 304 : 0, height: visible ? 78 : 0 }), checkVisibility: () => visible } : null;
+    return { querySelector: selector => /recaptcha-container|g-recaptcha/.test(String(selector)) ? container : null };
+  };
+  const inPublicDom = fn => vm.runInContext(`(${fn.toString()})()`, vm.createContext({ document: publicDom() }));
+  const challengeMarkup = () => {
+    if (!challengeMounted || !s.challenge) return '';
+    if (s.challenge === 'visible') return '<div data-testid="recaptcha-container" data-synthetic="visible-challenge"><button data-testid="recaptcha-close-button">閉じる</button></div>';
+    if (s.challenge === 'hidden') return '<div data-testid="recaptcha-container" data-synthetic="hidden-challenge" style="display:none"></div>';
+    return '<!-- synthetic script-only challenge: a loader, no container -->';
   };
   const attr = value => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   const render = frameIndex => {
@@ -72,6 +95,7 @@ export function fakeAmex(scenario = {}) {
       parts.push(`<a id="profile" href="/ja-jp/account/profile?user=${encodeURIComponent(typed.username)}">プロフィール</a>`);
     }
     if (typed.code) parts.push(`<input id="question-input" autocomplete="one-time-code" value="${attr(typed.code)}"><p id="echo">入力された認証コード ${typed.code}</p>`);
+    parts.push(challengeMarkup());
     parts.push(`<p id="surface">${surface}</p>`);
     const text = [typed.username && `ようこそ ${typed.username} さん`, typed.code && `入力された認証コード ${typed.code}`, surface].filter(Boolean).join('\n');
     return { html: `<html><head><title>${surface}</title></head><body>${parts.join('')}</body></html>`, text };
@@ -112,6 +136,7 @@ export function fakeAmex(scenario = {}) {
   const evaluate = async (frameIndex, fn, arg) => {
     const src = typeof fn === 'function' ? fn.toString() : String(fn);
     if (fn === statementSnapshot) return snapshot();
+    if (src.includes('recaptcha-container')) { if (frameIndex !== 0) throw new Error('fake-amex: unexpected child-frame evaluate'); return inPublicDom(fn); }
     if (src.includes('outerHTML')) {
       if (s.domStepThrowsForFrame === frameIndex) throw new Error('Execution context was destroyed, most likely because of a navigation.');
       return render(frameIndex);
@@ -154,7 +179,7 @@ export function fakeAmex(scenario = {}) {
     async goto(target) {
       if (s.gotoThrows) throw new Error('net::ERR_NAME_NOT_RESOLVED at ' + target);
       const u = new URL(target);
-      if (u.origin === WWW && u.pathname === '/ja-jp/account/login') go(s.start);
+      if (u.origin === WWW && u.pathname === '/ja-jp/account/login') { counts.loginNavigations += 1; challengeMounted = !!s.challenge && s.challengeAt === 'start'; go(s.start); }
       else if (u.origin === GLOBAL && u.pathname === '/activity/statement') {
         url = target;
         if (u.searchParams.has('end')) surface = 'statement';
@@ -176,7 +201,7 @@ export function fakeAmex(scenario = {}) {
       async click() {
         const target = pending; pending = null;
         if (!target) throw new Error('fake-amex: click without a resolved control');
-        if (target.selector === '#loginSubmit') { events.push('login'); if (!s.loginRejected) go(s.afterLogin); return; }
+        if (target.selector === '#loginSubmit') { events.push('login'); if (s.challenge && s.challengeAt === 'afterLogin') challengeMounted = true; if (!s.loginRejected) go(s.afterLogin); return; }
         if (target.selector.startsWith('label[for=') && surface === 'channels') { selected = true; events.push('choose-email'); return; }
         if (target.selector === 'button' && target.text === '次へ') {
           if (surface === 'channels') { events.push('request-code'); go('code'); }
@@ -230,5 +255,5 @@ export function fakeAmex(scenario = {}) {
     return { browser, page };
   };
 
-  return { connect, browser, page, events, typed, counts, state: () => ({ url, surface, selected, dialogOpen, csvChecked }) };
+  return { connect, browser, page, events, typed, counts, state: () => ({ url, surface, selected, dialogOpen, csvChecked, challengeMounted }) };
 }

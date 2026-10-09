@@ -76,8 +76,11 @@ export async function collectStatement(account, settings, directory, status, { g
   return collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory) });
 }
 
-export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null } = {}) {
-  await ensureLogin(page, settings, status, { account, mailbox, claims });
+// `ui` (optional): a login UI for ensureLogin in place of its own default loginUi(page) — the cloud probe's adapter
+// (cloud-probe/run.mjs cloudLoginUi). Undefined = the Windows collector's login, unchanged; collectStatement never passes one.
+/** @param {any} page @param {any} browser @param {any} account @param {any} settings @param {string} directory @param {any} status @param {{ mailbox?: any, claims?: any, ui?: any }} [options] */
+export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null, ui } = {}) {
+  await ensureLogin(page, settings, status, { account, mailbox, claims, ui });
   await status('running', 'Selecting the latest closed Amex statement');
   const { selected, pageCount } = await selectLatestStatement(page, account.primaryCard);
   await status('running', `Downloading the closed statement ${selected.start} to ${selected.end}`);

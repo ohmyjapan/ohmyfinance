@@ -1,6 +1,7 @@
 // Fixture for plan omf-railway-amex-probe-20261007 (§4), its review fold omf-railway-amex-review-fold-20261008
-// (F2-F5), the startup fix omf-railway-startup-fix-20261008 (R14/D26) and the execution-user fix
-// omf-railway-user-fix-20261008 (R15/D27). Run ONLY through the hub verifier:
+// (F2-F5), the startup fix omf-railway-startup-fix-20261008 (R14/D26), the execution-user fix
+// omf-railway-user-fix-20261008 (R15/D27) and the cloud-only human-verification stop
+// omf-amex-human-verification-20261009 (R17/R18, D29-D43). Run ONLY through the hub verifier:
 //   node scripts/zoomer-verify.mjs --run-fixture railway-amex-probe.mjs --cwd <this worktree>
 // No recorded case: it drives cloud-probe/run.mjs, relay.mjs and local/drive.mjs through an in-process stream
 // pair in place of ssh with the fake page of cloud-probe/test/fake-amex.mjs, and the real collector/browser.mjs
@@ -8,8 +9,8 @@
 // vault or network (R14 runs the installed chrome-launcher's prepare() on the runner's profile directory, never a
 // Chrome process; R15 pins the driver's ssh command boundary with spawn replaced and assesses the evidence file of
 // the MANUAL Linux acceptance cloud-probe/test/linux-execution.mjs only when OMF_LINUX_EXECUTION_EVIDENCE names
-// one — that entry is never run from here). Legs R1-R16 (cloud-probe/test/probe.test.mjs; the collector suite
-// inside R6a) and defects D1-D28, each built as a defective copy of the module it names (run.mjs, relay.mjs,
+// one — that entry is never run from here). Legs R1-R18 (cloud-probe/test/probe.test.mjs; the collector suite
+// inside R6a) and defects D1-D43, each built as a defective copy of the module it names (run.mjs, relay.mjs,
 // local/drive.mjs under a temp cloud-probe/; collector/browser.mjs under a temp collector/ for the executed wrapper)
 // and expected RED at the leg's tag.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -66,7 +67,29 @@ const DEFECTS = [
   { id: 'D26', what: 'profile directory not created before connect', file: 'run.mjs', leg: 'R14', find: "await mkdir(path.join(root, 'profile'), { recursive: true });", replace: '' },
   // omf-railway-user-fix-20261008 — the privilege switch removed: the runner inherits the ssh session's root again
   { id: 'D27', what: 'privilege switch removed from the container command (root runner)', file: 'local/drive.mjs', leg: 'R15', find: "export const CONTAINER_COMMAND = 'exec /usr/bin/setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs node /app/cloud-probe/run.mjs';", replace: "export const CONTAINER_COMMAND = 'node /app/cloud-probe/run.mjs';" },
-  { id: 'D28', what: 'init reaper removed from container entrypoint', file: 'Dockerfile', leg: 'R16', find: 'ENTRYPOINT ["/usr/bin/tini", "--", "node", "cloud-probe/idle.mjs"]', replace: 'ENTRYPOINT ["node", "cloud-probe/idle.mjs"]' }
+  { id: 'D28', what: 'init reaper removed from container entrypoint', file: 'Dockerfile', leg: 'R16', find: 'ENTRYPOINT ["/usr/bin/tini", "--", "node", "cloud-probe/idle.mjs"]', replace: 'ENTRYPOINT ["node", "cloud-probe/idle.mjs"]' },
+  // omf-amex-human-verification-20261009 — the cloud-only stop at a visible reCAPTCHA (the 2026-10-08 five-minute wait)
+  { id: 'D29', what: 'the cloud adapter not passed to collectFromPage (the fix absent: loginUi alone, the five-minute wait)', file: 'run.mjs', leg: 'R17', find: 'claims: relay.claims(), ui });', replace: 'claims: relay.claims() });' },
+  { id: 'D30', what: 'challenge check removed from the adapter', file: 'run.mjs', leg: 'R17', find: 'if (challengeSurface() && await page.evaluate(visibleChallenge)) return { kind: HUMAN_VERIFICATION };', replace: '' },
+  { id: 'D31', what: 'challenge check reordered behind the login controls (a mounted form wins over the visible challenge)', file: 'run.mjs', leg: 'R17', find: 'if (challengeSurface() && await page.evaluate(visibleChallenge)) return { kind: HUMAN_VERIFICATION };', replace: "const current = await base.state(); if (current.kind === 'login') return current; if (challengeSurface() && await page.evaluate(visibleChallenge)) return { kind: HUMAN_VERIFICATION };" },
+  { id: 'D32', what: 'a container without a layout box treated as a visible challenge', file: 'run.mjs', leg: 'R18', find: 'if (!(rect.width > 0 && rect.height > 0)) return false;', replace: '' },
+  { id: 'D33', what: 'a container hidden by CSS treated as a visible challenge', file: 'run.mjs', leg: 'R18', find: "return typeof container.checkVisibility !== 'function' || container.checkVisibility({ visibilityProperty: true, opacityProperty: true });", replace: 'return true;' },
+  { id: 'D34', what: 'secrets left in the challenge capture', file: 'run.mjs', leg: 'R17', find: "fields.capture = await capture(page, secrets, { screenshot: stage === 'reach' });", replace: "fields.capture = await capture(page, ending.reasonCode === HUMAN_VERIFICATION_REQUIRED ? [] : secrets, { screenshot: stage === 'reach' });" },
+  { id: 'D35', what: 'the login named in the reason, the reason no longer scrubbed', file: 'run.mjs', leg: 'R17', edits: [
+    { find: "for (const key of ['reason', 'url', 'pageKind']) result[key] = result[key] == null ? null : scrub(result[key], secrets);", replace: "for (const key of ['url', 'pageKind']) result[key] = result[key] == null ? null : scrub(result[key], secrets);" },
+    { find: '} catch (error) { return { ...classify(error, page, session.navigation), reason: message(error) }; }', replace: "} catch (error) { return { ...classify(error, page, session.navigation), reason: message(error) + ' (login ' + (credentials ? credentials.username : '') + ')' }; }" }
+  ] },
+  { id: 'D36', what: 'a retry after the challenge', file: 'run.mjs', leg: 'R17', find: 'const ending = await attempt();', replace: "let ending = await attempt(); if (ending.reasonCode === HUMAN_VERIFICATION_REQUIRED) { await page.goto('https://www.americanexpress.com/ja-jp/account/login?inav=iNavLnkLog', { waitUntil: 'domcontentloaded', timeout: 60000 }); ending = await attempt(); }" },
+  { id: 'D37', what: 'any surface accepted as the challenge surface (unrelated path/origin)', file: 'run.mjs', leg: 'R18', find: 'const challengeSurface = () => onSurface(page, WWW, LOGIN_PATH) || onSurface(page, WWW, VERIFY_PATH);', replace: 'const challengeSurface = () => true;' },
+  { id: 'D38', what: 'the Windows wrapper takes and forwards a ui option (text pin)', file: 'collector/browser.mjs', leg: 'R6a', edits: [
+    { find: 'export async function collectStatement(account, settings, directory, status, { gmail } = {}) {', replace: 'export async function collectStatement(account, settings, directory, status, { gmail, ui } = {}) {' },
+    { find: 'claims: new LoginClaims(directory) });', replace: 'claims: new LoginClaims(directory), ui });' }
+  ] },
+  { id: 'D39', what: 'a null ui default leaks from the Windows wrapper into ensureLogin (executed)', file: 'collector/browser.mjs', leg: 'R6c', find: '{ mailbox = null, claims = null, ui } = {}) {', replace: '{ mailbox = null, claims = null, ui = null } = {}) {' },
+  { id: 'D40', what: 'next missing for human_verification_required', file: 'local/drive.mjs', leg: 'R17', find: "  human_verification_required: '", replace: "  human_verification_removed: '" },
+  { id: 'D41', what: 'human verification classified as service_failure', file: 'run.mjs', leg: 'R17', find: "if (error && error.reasonCode === HUMAN_VERIFICATION_REQUIRED) return { outcome: 'attention', reasonCode: HUMAN_VERIFICATION_REQUIRED };", replace: '' },
+  { id: 'D42', what: 'terminal pageKind read by loginUi instead of the one detector', file: 'run.mjs', leg: 'R17', find: 'const state = await withBudget(cloudLoginUi(page).detect(), 5000);', replace: 'const state = await withBudget(loginUi(page).state(), 5000);' },
+  { id: 'D43', what: 'verification_required status not emitted before the stop', file: 'run.mjs', leg: 'R17', find: "if (status) await status('verification_required', HUMAN_VERIFICATION_STATUS);", replace: '' }
 ];
 
 function mutate(source, defect) {
@@ -116,12 +139,12 @@ export default {
     const started = Date.now();
     let suite;
     try { suite = await import(pathToFileURL(path.join(PROBE_DIR, 'test', 'probe.test.mjs')).href); }
-    catch (error) { return { pass: false, message: `legs R1-R16 red: cloud-probe/test/probe.test.mjs could not be loaded: ${error?.message || error}` }; }
+    catch (error) { return { pass: false, message: `legs R1-R18 red: cloud-probe/test/probe.test.mjs could not be loaded: ${error?.message || error}` }; }
     const lines = [];
     let pass = true;
     let ctx;
     try { ctx = await suite.makeContext(); }
-    catch (error) { return { pass: false, message: `legs R1-R16 red: context could not be built: ${error?.message || error}` }; }
+    catch (error) { return { pass: false, message: `legs R1-R18 red: context could not be built: ${error?.message || error}` }; }
     for (const [name, error] of Object.entries(ctx.modules.errors)) lines.push(`module ${name} not loadable (${error})`);
     const legs = await suite.runLegs(ctx);
     for (const leg of legs) { if (!leg.ok) pass = false; lines.push(`${leg.name} ${leg.ok ? 'ok' : 'RED'} (${Math.round(leg.ms / 1000)}s): ${leg.message}`); }
@@ -145,6 +168,6 @@ export default {
     } finally {
       if (path.resolve(base).startsWith(path.resolve(os.tmpdir()) + path.sep)) await rm(base, { recursive: true, force: true });
     }
-    return { pass, message: `${pass ? 'legs R1-R16 green and D1-D28 red' : 'FAILED'} in ${Math.round((Date.now() - started) / 1000)}s — ${lines.join(' · ')}` };
+    return { pass, message: `${pass ? 'legs R1-R18 green and D1-D43 red' : 'FAILED'} in ${Math.round((Date.now() - started) / 1000)}s — ${lines.join(' · ')}` };
   }
 };

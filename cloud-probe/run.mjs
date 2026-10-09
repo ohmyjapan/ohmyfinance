@@ -6,20 +6,31 @@
 // runs the collector's own collectFromPage with the relay mailbox/claims stubs (the Gmail token and the claims file
 // stay on Ryzen 7). Exactly one result line, built from scrubbed strings only; every exit named; no retry; no
 // automatic bot verdict (the owner reads the capture, S8); /run/omf/{profile,download,work} removed at the end.
+// Both stages read the page through cloudLoginUi (plan omf-amex-human-verification-20261009): a VISIBLE reCAPTCHA on
+// the Amex login/verification surface ends the attempt at once as attention/human_verification_required — the
+// 2026-10-08 observation, where the login controls stayed mounted behind the challenge and the collector's own loginUi
+// read `login` for five minutes. The Windows collector keeps loginUi; nothing here solves or retries a challenge.
 import { mkdir, rm, statfs } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { amexPage, collectFromPage } from '../collector/browser.mjs';
 import { loginUi } from '../collector/login.mjs';
-import { poll } from '../collector/interaction.mjs';
-import { ContainerRelay, scrub } from './relay.mjs';
+import { onSurface, poll } from '../collector/interaction.mjs';
+import { ContainerRelay, fault, scrub } from './relay.mjs';
 export { scrub } from './relay.mjs';
 
 export const ROOT = '/run/omf';
 export const CHROME_PATH = '/usr/bin/google-chrome-stable';
 export const STAGES = ['reach', 'collect'];
 export const OUTCOMES = ['login_form_shown', 'collected', 'attention', 'issuer_unavailable', 'unknown_page', 'browser_unavailable', 'service_failure'];
+// The cloud-only stop at a visible reCAPTCHA: the pageKind it names, the reasonCode it carries under outcome attention,
+// the one status line and the one reason it emits. Not a bot verdict (S8): the issuer asked a human to verify.
+export const HUMAN_VERIFICATION = 'human_verification';
+export const HUMAN_VERIFICATION_REQUIRED = 'human_verification_required';
+export const HUMAN_VERIFICATION_STATUS = 'Amex is asking for human verification (reCAPTCHA); the account holder must complete it';
+export const HUMAN_VERIFICATION_REASON = 'Amex requires human verification before this login can continue; no automatic retry';
+const WWW = 'https://www.americanexpress.com', LOGIN_PATH = '/ja-jp/account/login', VERIFY_PATH = '/ja-jp/account/reauth/verify';
 // One TOTAL budget for the whole frame sweep (playbook §5 rule 2), not per frame — review F2.
 const FRAME_SWEEP_BUDGET_MS = 2500, REACH_WAIT_MS = 30000;
 
@@ -78,9 +89,46 @@ export async function capture(page, secrets, { screenshot = false } = {}) {
 const message = error => String((error && error.message) || error || 'unknown error');
 const safeUrl = page => { try { return String((page && page.url()) || ''); } catch { return ''; } };
 
+// Runs inside the page (page.evaluate: no closure): the PUBLIC DOM only. True when the reCAPTCHA container Amex's public
+// login bundle mounts has a layout box and is not hidden by CSS. Private React state and the LGON018 code were the
+// 2026-10-08 diagnosis evidence, not production input; a loader script or a hidden container is not a challenge.
+export function visibleChallenge() {
+  const container = document.querySelector('[data-testid="recaptcha-container"], .g-recaptcha');
+  if (!container) return false;
+  const rect = container.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) return false;
+  return typeof container.checkVisibility !== 'function' || container.checkVisibility({ visibilityProperty: true, opacityProperty: true });
+}
+
+// The cloud login UI (collectFromPage's optional `ui`): loginUi with ONE check in front of its classification — a visible
+// challenge on the Amex login or verification surface, nowhere else. detect() names it human_verification (also the
+// terminal pageKind); state(), the seam ensureLogin polls, reports verification_required once and ends the attempt, so
+// no password, channel or code is ever submitted against a challenge and run() never retries. Every other surface is
+// loginUi's own reading, unchanged.
+/** @param {any} page @param {((state: string, text: string) => Promise<void>) | null} [status] */
+export function cloudLoginUi(page, status = null) {
+  const base = loginUi(page);
+  const challengeSurface = () => onSurface(page, WWW, LOGIN_PATH) || onSurface(page, WWW, VERIFY_PATH);
+  const detect = async () => {
+    if (challengeSurface() && await page.evaluate(visibleChallenge)) return { kind: HUMAN_VERIFICATION };
+    return base.state();
+  };
+  return {
+    ...base,
+    detect,
+    async state() {
+      const current = await detect();
+      if (current.kind !== HUMAN_VERIFICATION) return current;
+      if (status) await status('verification_required', HUMAN_VERIFICATION_STATUS);
+      throw fault(HUMAN_VERIFICATION_REASON, HUMAN_VERIFICATION_REQUIRED);
+    }
+  };
+}
+
 // Every exit named (house rule 7). No automatic bot_rejected: Amex's block page is not on record (S8).
 export function classify(error, page, navigation) {
   const text = message(error);
+  if (error && error.reasonCode === HUMAN_VERIFICATION_REQUIRED) return { outcome: 'attention', reasonCode: HUMAN_VERIFICATION_REQUIRED };
   if (error && error.reasonCode) return { outcome: 'service_failure', reasonCode: error.reasonCode };
   if (/needs attention/.test(text)) return { outcome: 'attention', reasonCode: null };
   if (/already used/.test(text)) return { outcome: 'service_failure', reasonCode: 'claim_failed' };
@@ -97,7 +145,8 @@ async function egressAddress() {
   } catch { return null; }
 }
 async function shmBytes(statfsFn) { try { const stats = await statfsFn('/dev/shm'); return Number(stats.bsize) * Number(stats.blocks); } catch { return null; } }
-async function pageKind(page) { try { const state = await withBudget(loginUi(page).state(), 5000); return (state && state.kind) || null; } catch { return null; } }
+// The terminal pageKind through the same detector the attempt used: human_verification when the challenge is still shown.
+async function pageKind(page) { try { const state = await withBudget(cloudLoginUi(page).detect(), 5000); return (state && state.kind) || null; } catch { return null; } }
 async function browserFacts(browser, page) {
   const facts = { chrome: null, userAgent: null, webdriver: null, languages: null, timeZone: null };
   try { facts.chrome = await withBudget(browser.version(), 5000); } catch {}
@@ -137,13 +186,14 @@ async function probe({ relay, output, connect, root, fetchIp, secrets, session }
   };
   const attempt = async () => {
     try {
+      // The cloud login UI for both stages: loginUi behind the visible-challenge check, `status` for its one stop line.
+      const ui = cloudLoginUi(page, status);
       if (stage === 'reach') {
-        const ui = loginUi(page);
         await ui.open();
         const state = await poll(async () => { const current = await ui.state(); return current && current.kind && current.kind !== 'unknown' ? current : null; }, REACH_WAIT_MS);
         return { outcome: state?.kind === 'login' ? 'login_form_shown' : 'unknown_page', reasonCode: null, reason: null };
       }
-      const collected = await collectFromPage(page, browser, account, credentials, path.join(root, 'work'), status, { mailbox: relay.mailbox({ onCode: code => secrets.push(code) }), claims: relay.claims() });
+      const collected = await collectFromPage(page, browser, account, credentials, path.join(root, 'work'), status, { mailbox: relay.mailbox({ onCode: code => secrets.push(code) }), claims: relay.claims(), ui });
       return { outcome: 'collected', reasonCode: null, reason: null, manifest: collected.manifest };
     } catch (error) { return { ...classify(error, page, session.navigation), reason: message(error) }; }
   };

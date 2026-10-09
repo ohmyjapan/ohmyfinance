@@ -38,7 +38,7 @@ export const ALLOWLIST = [
 export const NEXT = {
   login_form_shown: 'owner go for --stage collect',
   collected: 'owner compares pageCount/sha256 with outbox/<accountId>/<jobId>/manifest.json',
-  attention: 'owner classifies — login page after signIn 1 = Amex returned to login; channels/unknown under /reauth/verify = a challenge the automation does not handle (the G2 bot-vs-OTP reading); code page with finds>0 and found=false = no account-login mail within 150 s; verify failed = mailbox',
+  attention: 'owner classifies — login page after signIn 1 = the login page is still shown after one sign-in (no redirect was measured; read the scrubbed capture); channels/unknown under /reauth/verify = a challenge the automation does not handle (the G2 bot-vs-OTP reading); code page with finds>0 and found=false = no account-login mail within 150 s; verify failed = mailbox',
   issuer_unavailable: 'owner decides region/egress (U4) in the dashboard; a second reach run only on his go',
   browser_unavailable: "builder fixes image/flags; re-run only on the owner's go",
   unknown_page: "NO LANE AFTER UNKNOWN_PAGE (owner S8): no automatic recovery; the owner reads pageKind, the scrubbed capture and the reach PNG; a bot_rejected reading is his, never the probe's",
@@ -49,9 +49,16 @@ export const NEXT = {
     row_count_mismatch: "owner compares the probe's pageCount with the Windows manifest; re-run only on go"
   }
 };
+// A reasonCode with a follow-up of its own (plan omf-amex-human-verification-20261009): the cloud-only stop at a visible
+// reCAPTCHA (cloud-probe/run.mjs cloudLoginUi). Nothing automated follows it either: no retry, resend, second password
+// or challenge solving — the issuer asked a human.
+export const NEXT_BY_REASON = {
+  human_verification_required: 'Amex requires the account holder to complete human verification (reCAPTCHA); no automatic retry, resend, second password or challenge solving — the owner decides with the account holder how it is completed'
+};
 const BUILDER_FIX = 'builder fix; re-run only on go';
 export function nextFor(outcome, reasonCode) {
   if (outcome === 'service_failure') return NEXT.service_failure[reasonCode] ?? BUILDER_FIX;
+  if (typeof reasonCode === 'string' && Object.hasOwn(NEXT_BY_REASON, reasonCode)) return NEXT_BY_REASON[reasonCode];
   return NEXT[outcome] ?? BUILDER_FIX;
 }
 

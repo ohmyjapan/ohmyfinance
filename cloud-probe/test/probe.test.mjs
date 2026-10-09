@@ -9,7 +9,9 @@
 // child whose only replaced seam is spawn (--ssh-transport-child) and assesses the evidence file of the MANUAL
 // Linux acceptance ./linux-execution.mjs when OMF_LINUX_EXECUTION_EVIDENCE names one — the in-process stream pair
 // never establishes a Linux identity and is not pretended to. No Chrome, no PowerShell, no Gmail, no vault, no
-// network. Synthetic data only.
+// network. Synthetic data only. R17/R18 (plan omf-amex-human-verification-20261009) pin the cloud-only stop at a
+// VISIBLE reCAPTCHA on the Amex login/verification surface — measured on the real clock, never with the fast clock —
+// and everything that must NOT be read as one (hidden or script-only markers, another surface, the unknown page).
 //
 //   node cloud-probe/test/probe.test.mjs [R1 R2 ...]   runs the legs under node:test
 //   scripts/zoomer-fixtures/railway-amex-probe.mjs      runs them plus the collector suite and the defects
@@ -27,6 +29,7 @@ import { createInterface } from 'node:readline';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import vm from 'node:vm';
 import * as fake from './fake-amex.mjs';
 import { assessEvidence, commandMismatches, describeContainerCommand, readHoldEvent, summarizeEvidence } from './linux-execution.mjs';
 
@@ -40,7 +43,7 @@ const REDACTED = '[REDACTED]';
 export const NEXT_EXPECTED = {
   login_form_shown: 'owner go for --stage collect',
   collected: 'owner compares pageCount/sha256 with outbox/<accountId>/<jobId>/manifest.json',
-  attention: 'owner classifies — login page after signIn 1 = Amex returned to login; channels/unknown under /reauth/verify = a challenge the automation does not handle (the G2 bot-vs-OTP reading); code page with finds>0 and found=false = no account-login mail within 150 s; verify failed = mailbox',
+  attention: 'owner classifies — login page after signIn 1 = the login page is still shown after one sign-in (no redirect was measured; read the scrubbed capture); channels/unknown under /reauth/verify = a challenge the automation does not handle (the G2 bot-vs-OTP reading); code page with finds>0 and found=false = no account-login mail within 150 s; verify failed = mailbox',
   issuer_unavailable: 'owner decides region/egress (U4) in the dashboard; a second reach run only on his go',
   browser_unavailable: "builder fixes image/flags; re-run only on the owner's go",
   unknown_page: "NO LANE AFTER UNKNOWN_PAGE (owner S8): no automatic recovery; the owner reads pageKind, the scrubbed capture and the reach PNG; a bot_rejected reading is his, never the probe's",
@@ -52,8 +55,16 @@ export const NEXT_EXPECTED = {
     runner_crash: 'builder fix; re-run only on go'
   }
 };
+// Plan omf-amex-human-verification-20261009: the follow-up a reasonCode names on its own, kept here independently of
+// cloud-probe/local/drive.mjs (R17). Nothing automated follows it either.
+export const NEXT_EXPECTED_BY_REASON = {
+  human_verification_required: 'Amex requires the account holder to complete human verification (reCAPTCHA); no automatic retry, resend, second password or challenge solving — the owner decides with the account holder how it is completed'
+};
 
-// Plan S1: the exact Windows wiring after the split (whitespace-normalised lines) — R6a's preservation pin.
+// Plan S1: the exact Windows wiring after the split (whitespace-normalised lines) — R6a's preservation pin. The
+// collectFromPage header and first statement carry the ONE optional-ui seam of plan omf-amex-human-verification-20261009:
+// `ui`, undefined for the Windows wrapper (ensureLogin's own default loginUi(page) then applies), the cloud adapter for
+// cloud-probe/run.mjs. collectStatement itself is unchanged and never passes one.
 export const PLANNED_COLLECT_STATEMENT = [
   'export async function collectStatement(account, settings, directory, status, { gmail } = {}) {',
   "const profile = settings.profile || path.join(directory, 'profiles', account.primaryCard);",
@@ -61,8 +72,13 @@ export const PLANNED_COLLECT_STATEMENT = [
   'return collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory) });',
   '}'
 ];
-export const PLANNED_COLLECT_FROM_PAGE_HEADER = 'export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null } = {}) {';
-export const PLANNED_FIRST_STATEMENT = 'await ensureLogin(page, settings, status, { account, mailbox, claims });';
+export const PLANNED_COLLECT_FROM_PAGE_HEADER = 'export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null, ui } = {}) {';
+export const PLANNED_FIRST_STATEMENT = 'await ensureLogin(page, settings, status, { account, mailbox, claims, ui });';
+// R17 measures the stop on the REAL clock: an attempt still running after this long is the five-minute login wait the
+// stop exists to end. The fake's evaluate is then made to throw so that run ends and cleans up instead of holding the
+// loop for 300 s; the leg is already red.
+export const PROMPT_MS = 20000;
+export const CHALLENGE_SELECTOR = '[data-testid="recaptcha-container"], .g-recaptcha';
 // Plan omf-railway-user-fix-20261008 (the approved proposed-driver.patch): the one foreground command of the ssh
 // session selects the image's user before the runner starts — R15's literal pin, beside the shape and spawn checks.
 export const PLANNED_CONTAINER_COMMAND = 'exec /usr/bin/setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs node /app/cloud-probe/run.mjs';
@@ -269,6 +285,21 @@ async function driveProbe(ctx, { stage, scenario = {}, mailbox = undefined, clai
   const { record, exitCode } = await ctx.modules.drive.runProbe({ stage, account: ctx.fake.ACCOUNT, credentials: stage === 'collect' ? ctx.fake.CREDENTIALS : null, mailbox: mailboxObject, claims: claimsObject, transport, out: outDir, log: line => summary.push(line) });
   const settled = await Promise.all(transport.state.settled);
   return { record, exitCode, summary, transport, fx, events, dir, out: outDir, root, claimsDir, settled, cleanup: () => removeTemp(dir) };
+}
+
+async function promptly(ctx, options, leg, label) {
+  let abort = false;
+  const run = driveProbe(ctx, { ...options, patch: fx => { const evaluate = fx.page.evaluate; fx.page.evaluate = (...args) => { if (abort) throw new Error(`synthetic: the ${leg} ${label} prompt deadline passed`); return evaluate(...args); }; } });
+  let timer;
+  const expired = new Promise(resolve => { timer = setTimeout(() => resolve('expired'), PROMPT_MS); });
+  const first = await Promise.race([run.then(() => 'ended', () => 'ended'), expired]);
+  clearTimeout(timer);
+  if (first === 'expired') {
+    abort = true;
+    try { const late = await run; await late.cleanup(); } catch {}
+    throw new Error(`[${leg}:${label}-prompt] the attempt was still running after ${PROMPT_MS} ms (the five-minute login wait instead of the stop)`);
+  }
+  return run;
 }
 
 const forms = secret => [secret, Buffer.from(secret, 'utf8').toString('base64'), Buffer.from(secret, 'utf8').toString('hex'), encodeURIComponent(secret)];
@@ -942,6 +973,123 @@ export const legs = {
     tag('R16', 'package', /apt-get install[^\n]*\btini\b/.test(dockerfile), 'the init package is not installed');
     tag('R16', 'user', /^USER omf$/m.test(dockerfile), 'the image no longer starts as omf');
     return 'image selects tini as PID1 and idle Node as its child; actual init identity and reaping are measured by manual Linux acceptance in R15';
+  },
+
+  // R17 (plan omf-amex-human-verification-20261009): a VISIBLE reCAPTCHA on the Amex login or verification surface ends
+  // the cloud attempt at once as attention/human_verification_required with pageKind human_verification — before any
+  // password when it is there at the start, after exactly one when Amex mounts it on the login answer (the 2026-10-08
+  // observation: the login controls stay mounted behind it, which loginUi alone reads as `login`), after one password
+  // and before any channel or code when it sits on /reauth/verify. Measured on the real clock: no five-minute wait, no
+  // fast clock. One verification_required status with the named text, the named reason and follow-up, one session,
+  // one login navigation, zero channel/code/claim, the capture redacted with the structural container present, no
+  // screenshot in collect, runtime removed. The reach stage reports the same without credentials, with its screenshot.
+  async R17(ctx) {
+    need(ctx, 'R17', 'run', 'relay', 'drive', 'login');
+    const { HUMAN_VERIFICATION, HUMAN_VERIFICATION_REQUIRED, HUMAN_VERIFICATION_REASON, HUMAN_VERIFICATION_STATUS } = ctx.modules.run;
+    tag('R17', 'names', HUMAN_VERIFICATION === 'human_verification' && HUMAN_VERIFICATION_REQUIRED === 'human_verification_required' && typeof HUMAN_VERIFICATION_REASON === 'string' && HUMAN_VERIFICATION_REASON.length > 0 && typeof HUMAN_VERIFICATION_STATUS === 'string' && HUMAN_VERIFICATION_STATUS.length > 0, 'run.mjs does not export the human-verification names');
+    const secrets = [...fake.CANARIES];
+    const expectedNext = NEXT_EXPECTED_BY_REASON.human_verification_required;
+    const cases = [
+      { label: 'before-sign-in', stage: 'collect', scenario: { challenge: 'visible', challengeAt: 'start' }, passwords: 0 },
+      { label: 'after-sign-in', stage: 'collect', scenario: { challenge: 'visible', challengeAt: 'afterLogin', afterLogin: 'login' }, passwords: 1 },
+      { label: 'on-verify', stage: 'collect', scenario: { challenge: 'visible', challengeAt: 'afterLogin', afterLogin: 'channels' }, passwords: 1 },
+      { label: 'reach', stage: 'reach', scenario: { challenge: 'visible', challengeAt: 'start' }, passwords: 0 }
+    ];
+    const done = [];
+    for (const c of cases) {
+      const started = Date.now();
+      const run = await promptly(ctx, { stage: c.stage, label: `r17-${c.label}`, scenario: c.scenario }, 'R17', c.label);
+      const elapsed = Date.now() - started;
+      try {
+        tag('R17', `${c.label}-outcome`, run.record.outcome === 'attention' && run.record.reasonCode === HUMAN_VERIFICATION_REQUIRED, `outcome ${run.record.outcome}/${run.record.reasonCode} (${run.record.reason})`);
+        tag('R17', `${c.label}-prompt`, elapsed < PROMPT_MS, `the attempt took ${elapsed} ms`);
+        tag('R17', `${c.label}-reason`, run.record.reason === HUMAN_VERIFICATION_REASON, `reason ${JSON.stringify(run.record.reason)}`);
+        tag('R17', `${c.label}-pagekind`, run.record.pageKind === HUMAN_VERIFICATION, `pageKind ${run.record.pageKind}`);
+        tag('R17', `${c.label}-status`, run.record.lastStatus?.state === 'verification_required' && run.record.lastStatus?.text === HUMAN_VERIFICATION_STATUS, `lastStatus ${JSON.stringify(run.record.lastStatus)}`);
+        const statusLines = run.transport.state.stdoutLines.filter(line => line.includes('"event":"status"') && line.includes('"verification_required"'));
+        tag('R17', `${c.label}-one-status`, statusLines.length === 1, `${statusLines.length} verification_required status lines`);
+        tag('R17', `${c.label}-passwords`, count(run.events, 'login') === c.passwords && run.fx.counts.password === c.passwords, `${count(run.events, 'login')} logins, ${run.fx.counts.password} passwords (expected ${c.passwords})`);
+        tag('R17', `${c.label}-no-otp`, count(run.events, 'choose-email') === 0 && count(run.events, 'request-code') === 0 && count(run.events, 'type-code') === 0 && count(run.events, 'claim') === 0 && run.record.tally.requestCode === 0 && run.record.tally.finds === 0 && run.record.tally.claims === 0, `events ${run.events.join(',')} tally ${JSON.stringify(run.record.tally)}`);
+        tag('R17', `${c.label}-one-session`, run.transport.state.opens === 1 && run.fx.counts.connects === 1 && run.fx.counts.closes === 1 && run.fx.counts.loginNavigations === 1, `sessions ${run.transport.state.opens}, connects ${run.fx.counts.connects}, closes ${run.fx.counts.closes}, login navigations ${run.fx.counts.loginNavigations}`);
+        tag('R17', `${c.label}-next`, run.record.next === expectedNext && run.summary.length === 1 && run.summary[0] === `attention: ${expectedNext}` && run.exitCode === 0, `next ${JSON.stringify(run.record.next)} summary ${JSON.stringify(run.summary)} exit ${run.exitCode}`);
+        const written = JSON.parse(await readFile(path.join(run.out, 'result.json'), 'utf8'));
+        tag('R17', `${c.label}-file`, written.outcome === 'attention' && written.reasonCode === HUMAN_VERIFICATION_REQUIRED && written.pageKind === HUMAN_VERIFICATION && written.next === expectedNext && written.stage === c.stage, 'result.json differs from the record');
+        const files = await filesUnder(path.join(run.out, 'capture'));
+        const names = files.map(f => path.basename(f));
+        tag('R17', `${c.label}-capture-files`, names.includes('main.html') && names.includes('main.txt') && names.includes('frame-1.html') && names.includes('frame-1.txt') && names.includes('screenshot.png') === (c.stage === 'reach'), `capture files ${names.join(',')}`);
+        const main = await readFile(path.join(run.out, 'capture', 'main.html'), 'utf8');
+        tag('R17', `${c.label}-capture-container`, main.includes('data-testid="recaptcha-container"'), 'the structural container marker is missing from the capture');
+        for (const file of files) { if (file.endsWith('.png')) continue; const found = leak(await readFile(file, 'utf8'), secrets); tag('R17', `${c.label}-capture-clean`, !found, `${path.basename(file)} carries ${found}`); }
+        if (c.passwords) tag('R17', `${c.label}-redacted`, main.includes(`id="eliloUserID" value="${REDACTED}"`) && main.includes(`id="eliloPassword" type="password" value="${REDACTED}"`) && main.includes(`ようこそ ${REDACTED} さん`), 'the typed credentials were not replaced by [REDACTED] in the challenge capture');
+        for (const line of run.transport.state.stdoutLines) { const found = leak(scannable(line), secrets); tag('R17', `${c.label}-stdout-clean`, !found, `a stdout line carries ${found}`); }
+        const result = resultLine(run.transport.state.stdoutLines).parsed;
+        tag('R17', `${c.label}-one-result`, run.transport.state.stdoutLines.filter(l => l.includes('"event":"result"')).length === 1 && result.reasonCode === HUMAN_VERIFICATION_REQUIRED && (typeof result.capture?.screenshot === 'string') === (c.stage === 'reach'), 'not exactly one result line naming the reason, or a screenshot outside reach');
+        if (c.stage === 'reach') tag('R17', 'reach-no-credentials', !('credentials' in JSON.parse(run.transport.state.stdinLines[0])), 'the reach stdin line carries credentials');
+        const left = ['profile', 'download', 'work'].filter(name => existsSync(path.join(run.root, name)));
+        tag('R17', `${c.label}-runtime-removed`, left.length === 0, `left under the runtime root: ${left.join(',')}`);
+        done.push(`${c.label} ${elapsed} ms`);
+      } finally { await run.cleanup(); }
+    }
+    return `visible challenge → attention/human_verification_required, pageKind human_verification, on the real clock (${done.join(', ')}); passwords 0/1/1/0, no channel/code/claim, one status, one session, one login navigation, capture redacted with the container marker, runtime removed`;
+  },
+
+  // R18 (plan omf-amex-human-verification-20261009): what is NOT human verification. The public DOM detector alone, its
+  // own source against minimal documents: absent, no layout box, hidden by CSS, visible, visible on an engine without
+  // checkVisibility — reading one public selector and nothing private. Then through the runner: a hidden container, a
+  // script-only loader, the ordinary login/OTP path itself (R1's events, unchanged under the adapter), a visible container
+  // on a surface that is not the Amex login/verification path (same origin, other path; another origin — reach and
+  // collect) and the existing unknown page: never human_verification, never the named status.
+  async R18(ctx) {
+    need(ctx, 'R18', 'run', 'relay', 'drive', 'login');
+    const { visibleChallenge, HUMAN_VERIFICATION_REQUIRED, HUMAN_VERIFICATION_STATUS } = ctx.modules.run;
+    tag('R18', 'detector-export', typeof visibleChallenge === 'function', 'run.mjs does not export visibleChallenge');
+    const box = { width: 304, height: 78 }, none = { width: 0, height: 0 };
+    const documents = {
+      absent: { element: null, expected: false },
+      'no-box': { element: { getBoundingClientRect: () => none, checkVisibility: () => true }, expected: false },
+      'css-hidden': { element: { getBoundingClientRect: () => box, checkVisibility: () => false }, expected: false },
+      visible: { element: { getBoundingClientRect: () => box, checkVisibility: () => true }, expected: true },
+      'visible-no-checkvisibility': { element: { getBoundingClientRect: () => box }, expected: true }
+    };
+    for (const [name, { element, expected }] of Object.entries(documents)) {
+      const selectors = [];
+      const document = { querySelector: selector => { selectors.push(String(selector)); return element; } };
+      const value = vm.runInContext(`(${visibleChallenge.toString()})()`, vm.createContext({ document }));
+      tag('R18', `detector-${name}`, value === expected, `visibleChallenge() returned ${JSON.stringify(value)} for ${name}`);
+      tag('R18', `detector-${name}-selector`, selectors.length === 1 && selectors[0] === CHALLENGE_SELECTOR, `the detector queried ${JSON.stringify(selectors)}`);
+    }
+    tag('R18', 'detector-public-only', !/react|fiber|LGON|grecaptcha|stateNode|__/i.test(visibleChallenge.toString()), 'the detector reads something other than the public DOM');
+    const cases = [
+      { label: 'hidden', stage: 'collect', scenario: { challenge: 'hidden', challengeAt: 'start' }, outcome: 'collected' },
+      { label: 'hidden-after-sign-in', stage: 'collect', scenario: { challenge: 'hidden', challengeAt: 'afterLogin' }, outcome: 'collected' },
+      { label: 'script-only', stage: 'collect', scenario: { challenge: 'script-only', challengeAt: 'start' }, outcome: 'collected' },
+      { label: 'ordinary', stage: 'collect', scenario: {}, outcome: 'collected' },
+      { label: 'other-path', stage: 'reach', scenario: { start: 'unknown', challenge: 'visible', challengeAt: 'start' }, outcome: 'unknown_page', pageKind: 'unknown', fast: true },
+      { label: 'other-origin', stage: 'reach', scenario: { start: 'unknown', unknownUrl: 'https://verify.example.invalid/challenge', challenge: 'visible', challengeAt: 'start' }, outcome: 'unknown_page', pageKind: 'unknown', fast: true },
+      { label: 'other-origin-collect', stage: 'collect', scenario: { start: 'unknown', unknownUrl: 'https://verify.example.invalid/challenge', challenge: 'visible', challengeAt: 'start' }, outcome: 'attention', pageKind: 'unknown', fast: true, generic: true },
+      { label: 'unknown-page', stage: 'reach', scenario: { start: 'unknown' }, outcome: 'unknown_page', pageKind: 'unknown', fast: true }
+    ];
+    const done = [];
+    for (const c of cases) {
+      const go = () => driveProbe(ctx, { stage: c.stage, label: `r18-${c.label}`, scenario: c.scenario });
+      const run = c.fast ? await withFastClock(go) : await go();
+      try {
+        tag('R18', `${c.label}-outcome`, run.record.outcome === c.outcome && run.record.reasonCode === null, `outcome ${run.record.outcome}/${run.record.reasonCode} (${run.record.reason})`);
+        tag('R18', `${c.label}-not-human-verification`, run.record.reasonCode !== HUMAN_VERIFICATION_REQUIRED && run.record.pageKind !== 'human_verification' && !run.transport.state.stdoutLines.some(line => line.includes(HUMAN_VERIFICATION_STATUS)), `pageKind ${run.record.pageKind}, lastStatus ${JSON.stringify(run.record.lastStatus)}`);
+        if (c.outcome === 'collected') {
+          assertEvents('R18', run.events, R1_EVENTS);
+          tag('R18', `${c.label}-one-password`, count(run.events, 'login') === 1 && run.fx.counts.password === 1, `${run.fx.counts.password} passwords`);
+          tag('R18', `${c.label}-manifest`, run.record.manifest?.pageCount === 4 && run.record.manifest?.sha256 === digest(fake.syntheticCsv(4)), `manifest ${JSON.stringify(run.record.manifest)}`);
+        } else {
+          tag('R18', `${c.label}-pagekind`, run.record.pageKind === c.pageKind, `pageKind ${run.record.pageKind}`);
+          tag('R18', `${c.label}-no-password`, count(run.events, 'login') === 0 && run.fx.counts.password === 0 && count(run.events, 'request-code') === 0, `events ${run.events.join(',')}`);
+        }
+        if (c.generic) tag('R18', `${c.label}-generic-attention`, run.record.lastStatus?.state === 'verification_required' && run.record.lastStatus?.text === 'Complete the Amex login or email verification in Chrome' && run.record.next === NEXT_EXPECTED.attention && /needs attention/.test(String(run.record.reason)), `lastStatus ${JSON.stringify(run.record.lastStatus)} next ${JSON.stringify(run.record.next)} reason ${JSON.stringify(run.record.reason)}`);
+        tag('R18', `${c.label}-one-session`, run.transport.state.opens === 1 && run.fx.counts.connects === 1 && run.fx.counts.closes === 1 && run.exitCode === 0, `sessions ${run.transport.state.opens}, connects ${run.fx.counts.connects}, closes ${run.fx.counts.closes}, exit ${run.exitCode}`);
+        done.push(`${c.label}:${run.record.outcome}`);
+      } finally { await run.cleanup(); }
+    }
+    return `detector: absent/no-box/css-hidden false, visible true (with and without checkVisibility), one public selector; runner: ${done.join(', ')} — never human_verification`;
   }
 };
 
