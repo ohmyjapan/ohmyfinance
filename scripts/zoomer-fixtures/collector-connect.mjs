@@ -19,7 +19,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const timeoutMs = 900000;
+// Native activation/recovery includes three post-canary interruption legs in addition to the original flow.
+export const timeoutMs = 1200000;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
@@ -30,7 +31,7 @@ const HTTP_COVERS = ['server/api/finance/collector-connect/[...path].ts', 'serve
 function runScript(script, env) {
   return new Promise(resolve => {
     const started = Date.now();
-    execFile(process.execPath, ['--import', 'tsx', script], { cwd: REPO_ROOT, windowsHide: true, timeout: 840000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout, stderr) => {
+    execFile(process.execPath, ['--import', 'tsx', script], { cwd: REPO_ROOT, windowsHide: true, timeout: 1140000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout, stderr) => {
       const text = String(stdout || '');
       const lines = text.split(/\r?\n/);
       const passes = lines.filter(line => line.startsWith('PASS ')).map(line => line.slice(5));

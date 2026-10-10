@@ -414,14 +414,40 @@ async function connect({resume=false}={}) {
         await secrets.withLock(()=>saveJournal({...previous,phase:'delivered',code:undefined,verifier:undefined}));
         return finishConnect(pending);
       }
-      // A terminal refusal can abandon only its own initial, empty enrollment. Re-read under the writer lease:
-      // active/legacy/reset state and even a partially saved canary remain on the existing recovery path.
+      // A terminal refusal can restart only its own never-activated enrollment. Preserve real/foreign logins;
+      // archive its setup check and empty metadata before clearing the connection, under the same writer lease.
       const restarted=await secrets.withLock(async()=>{
         const current=await vaultState(),failed=await secrets.enrollmentJournal(),saved=await secrets.connection();
         if(current?.v===3&&current.phase==='enrolling'&&current.connect===true&&!current.resetPending
           &&failed?.phase==='failed'&&failed.id===connectJournal?.id&&failed.installationId===current.installationId
-          &&failed.generation===current.generation&&failed.publicKey===current.publicKey&&failed.origin===saved?.baseUrl
-          &&!(await secrets.list()).length&&!await legacyBlobPresent()){
+          &&failed.generation===current.generation&&failed.publicKey===current.publicKey&&failed.origin===saved?.baseUrl){
+          const entries=await secrets.list();
+          if(entries.some(id=>id!=='check'))return false;
+          if(entries.length){
+            const check=await secrets.read('check').catch(()=>null);
+            if(!check||check.aad.generation!==current.generation
+              ||JSON.stringify(entryBinding(check))!==JSON.stringify(aadFor(current.installationId,'check',null,saved)))return false;
+          }
+          const hasMetadata=await legacyBlobPresent();
+          if(hasMetadata){
+            await secrets.assertContained(path.basename(vault.file));
+            const blob=await vault.read(),protection=blob.protection;
+            if(protection?.installationId!==current.installationId||protection.generation!==current.generation
+              ||protection.publicKey!==current.publicKey||blob.baseUrl!==saved.baseUrl||blob.token!==saved.token
+              ||blob.mode!=='protected'||Object.keys(blob.accounts||{}).length||Object.keys(blob.services||{}).length||blob.gmail)return false;
+          }
+          assertAuthorization(pending);
+          if(entries.length||hasMetadata||failed.recoveryArchive){
+            const folder=failed.recoveryArchive||`unreadable-${Date.now()}-${randomBytes(8).toString('hex')}`;
+            // Persist the archive name before the first move; a crash or Lock can resume the same archive.
+            if(!failed.recoveryArchive)await saveJournal({...failed,recoveryArchive:folder});
+            await secrets.moveAside(folder);
+            if(hasMetadata){
+              const archive=path.join(directory,folder);await mkdir(archive,{recursive:true});
+              if((await readdir(archive)).includes(path.basename(vault.file)))throw coded('conflict','Setup recovery already has an archived metadata file; the current file was preserved.');
+              await rename(vault.file,path.join(archive,path.basename(vault.file)));
+            }
+          }
           assertAuthorization(pending);
           // Keep the failed journal until its replacement is durable; a crash after this write can start over too.
           await secrets.connection(null);return true;

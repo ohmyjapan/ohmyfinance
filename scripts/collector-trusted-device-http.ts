@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {randomBytes,createHash} from 'node:crypto'
 import {spawn,execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdtemp,mkdir,readFile,writeFile,rm,rmdir,unlink} from 'node:fs/promises'
+import {mkdtemp,mkdir,readFile,writeFile,rm,rmdir,unlink,readdir} from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import net from 'node:net'
@@ -39,6 +39,7 @@ async function main(){
   // (upstream completed, the client never hears back) for the process-crash leg.
   let failNextExchange=false,failNextAck=false,stallExchange=false,held:any=null,stalledResolve:()=>void=()=>{};const stalled=new Promise<void>(resolve=>{stalledResolve=resolve});const extraCollectors:any[]=[]
   let beforeAck:(()=>Promise<void>)|null=null
+  let beforeKeyRead:(()=>Promise<void>)|null=null
   const pass=(name:string)=>{checks++;console.log('PASS '+name)}
   try{
     await mongoose.connect(mongo.getUri('collector_trusted_http_isolated'));assert.equal(mongoose.connection.name,'collector_trusted_http_isolated')
@@ -66,6 +67,7 @@ async function main(){
     proxy=https.createServer({key:await readFile(keyFile),cert:ca},async(req,res)=>{
       const route=(req.url||'').split('?')[0];counts.set(route,(counts.get(route)||0)+1)
       if(route==='/api/finance/collector-connect/ack'&&beforeAck){const change=beforeAck;beforeAck=null;await change()}
+      if(req.method==='GET'&&route.startsWith('/api/finance/collector-security/keys/')&&beforeKeyRead)await beforeKeyRead()
       const forward=http.request({host:'127.0.0.1',port:appPort,path:req.url,method:req.method,headers:req.headers},async upstream=>{
         if(route==='/api/finance/collector-security/requests'&&req.method==='POST'&&upstream.statusCode===200&&failNextRequest){failNextRequest=false;upstream.resume();res.writeHead(503,{'Content-Type':'application/json'});res.end('{"statusMessage":"Synthetic lost approval response"}');return;}
         if(route==='/api/finance/collector-connect/exchange'&&req.method==='POST'&&upstream.statusCode===200){
@@ -265,7 +267,7 @@ async function main(){
     const pub=(route:string,body?:any,method=body===undefined?'GET':'POST',headers:any={})=>new Promise<any>((resolve,reject)=>{
       const req=https.request(baseUrl+route,{method,agent,headers:{'Content-Type':'application/json',...headers}},res=>{let text='';res.on('data',b=>{text+=b});res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{return reject(Error('Non-JSON test response '+res.statusCode))}if((res.statusCode||500)>=400)return reject(Object.assign(Error(value.statusMessage||'Request rejected'),{status:res.statusCode}));resolve(value)})});req.on('error',reject);req.end(body===undefined?undefined:JSON.stringify(body))
     })
-    const drivePage=async(connectUrl:string,label:string,screenshotTo='')=>{
+    const drivePage=async(connectUrl:string,label:string,screenshotTo='',identity={user,secret,account})=>{
       const uiRoot=path.join(temp,'ui-'+label),profile=ephemeralProfile(uiRoot,'synthetic','omf','connect',label)
       browser=await browserFor(profile,{ephemeral:true,root:uiRoot as any,headless:true})
       const page=await browser.newPage(),cdp=await page.createCDPSession()
@@ -276,18 +278,20 @@ async function main(){
       await page.goto(connectUrl,{waitUntil:'networkidle0'})
       await page.waitForSelector('#email',{timeout:20000})
       const before=await page.$eval('main',(e:any)=>e.textContent)
-      assert.equal(before.includes(user.email),false);assert.equal(before.includes(account.name),false);assert.ok(before.includes(hostname))
+      assert.equal(before.includes(identity.user.email),false);assert.equal(before.includes(identity.account.name),false);assert.ok(before.includes(hostname))
       assert.equal(await page.$eval('#password',(e:any)=>e.type),'password')
       assert.equal(await page.evaluate('document.documentElement.scrollWidth<=innerWidth'),true)
-      await page.type('#email',user.email);await page.type('#password',password);await page.type('#code',generateSync({secret}))
+      await page.type('#email',identity.user.email);await page.type('#password',password);await page.type('#code',generateSync({secret:identity.secret}))
+      const authentication=page.waitForResponse((r:any)=>r.url().startsWith(baseUrl+connectPrefix)&&r.url().endsWith('/authenticate')&&r.request().method()==='POST')
       await page.click('button[type=submit]')
+      assert.equal((await authentication).status(),200,'synthetic owner sign-in must reach account selection')
       await page.waitForSelector('input[name=accountIds]',{timeout:20000})
       assert.equal(await page.$eval('#pc-name',(e:any)=>e.value),hostname)
       const stored=await page.evaluate(()=>JSON.stringify([Object.values(localStorage),Object.values(sessionStorage)]))
       assert.equal(stored.includes(password),false);assert.equal(/[a-f0-9]{64}/.test(stored),false);assert.equal(stored.includes('eyJ'),false)
-      assert.ok((await page.$eval('main',(e:any)=>e.textContent)).includes(account.name))
+      assert.ok((await page.$eval('main',(e:any)=>e.textContent)).includes(identity.account.name))
       if(screenshotTo)await page.screenshot({path:screenshotTo,fullPage:true})
-      await page.click(`input[name=accountIds][value="${String(account._id)}"]`)
+      await page.click(`input[name=accountIds][value="${String(identity.account._id)}"]`)
       await Promise.all([page.waitForNavigation({waitUntil:'load',timeout:30000}),page.click('#approve')])
       assert.ok(page.url().startsWith('http://127.0.0.1:'));assert.ok((await page.$eval('body',(e:any)=>e.textContent)).includes('received'))
       await closeOwnedBrowsers();browser=null
@@ -383,7 +387,7 @@ async function main(){
         assert.equal((await retryStore.list()).length,0)
         const saved=await readFile(path.join(dir,'connection.dpapi')),journal=await readFile(path.join(dir,'connect-journal.dpapi'))
         if(kind==='revoked'){
-          // Never clear an already written canary/secret or an installation whose generation no longer matches.
+          // Never clear a damaged or unbound entry, or an installation whose generation no longer matches.
           await mkdir(path.join(dir,'secrets'),{recursive:true});const canary=retryStore.file('check'),sentinel='Retain existing sealed entry'
           await writeFile(canary,sentinel)
           await assert.rejects(current.call('/connect',{}),/already has a saved OMF connection/)
@@ -424,6 +428,104 @@ async function main(){
         pass(kind+' acknowledgement ends finishing; Connect after restart creates a fresh request and activates protection')
       }catch(error){const failure=kind+': '+String(error);recoveryFailures.push(failure);console.log('FAIL '+failure)}
       finally{beforeAck=null;await stop(current.child);await closeOwnedBrowsers();browser=null}
+    }
+    // Review F4: the first key read verifies the upload before check.sealed is committed; the second opens the
+    // committed canary. Refuse that second read through the actual revoke route, or lock there before revocation.
+    // A failed active-state write also exercises the real secret-free metadata saved by finishConnect.
+    for(const kind of ['after-check','lock-after-check','after-metadata']){
+      // Independent owners keep this expanded fixture below the real per-owner sign-in limit.
+      const caseSecret=generateSecret(),caseUser:any=await User.create({email:kind+'@example.invalid',name:'Synthetic recovery owner',password,twoFactorEnabled:true,twoFactorSecret:caseSecret})
+      const caseAccess=jwt.sign({userId:String(caseUser._id),email:caseUser.email,type:'access'},jwtSecret,{expiresIn:'1h'})
+      const caseAccount:any=await FinancialAccount.create({ownerId:caseUser._id,provider:'amex',name:'Synthetic recovery Amex',primaryCard:'12345',cardIdentifiers:['12345'],otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'})
+      const identity={user:caseUser,secret:caseSecret,account:caseAccount}
+      const dir=path.join(temp,'connect-retry-'+kind),retryPort=await port(),retryStore=new SplitStore(dir),retryVault=new Vault(dir)
+      let current=await startConnectCollector(dir,retryPort)
+      try{
+        const attempt=current.call('/connect',{}).then(()=>({error:null}),error=>({error}))
+        const link=await waitFor(async()=>(await current.call('/status')).approvalUrl,kind+' link'),id=new URL(link).searchParams.get('id')!
+        let reads=0,intercepted:Promise<void>|null=null
+        const revoke=async()=>{const row:any=await mongoose.connection.collection('collectorconnects').findOne({_id:id as any});assert.equal(row.status,'acknowledged');await api('/api/finance/collectors/'+String(row.collectorId),caseAccess,undefined,'DELETE')}
+        beforeKeyRead=async()=>{
+          if(++reads!==2)return
+          beforeKeyRead=null
+          intercepted=(async()=>{
+            assert.equal(await retryStore.has('check'),true,'second release follows a durable check entry')
+            if(kind==='after-metadata'){await mkdir(path.join(dir,'vault-state.json.new'));return}
+            if(kind==='lock-after-check'){
+              assert.equal((await current.call('/status')).connect.finishing,true)
+              await current.call('/lock',{})
+            }
+            await revoke()
+          })()
+          await intercepted
+        }
+        await drivePage(link,'retry-'+kind,'',identity)
+        assert.ok((await attempt).error,'activation must stop at the injected boundary')
+        await intercepted;assert.equal(reads,2)
+        if(kind==='after-metadata'){
+          await current.call('/lock',{})
+          const metadata=await retryVault.read();assert.deepEqual(metadata.accounts,{});assert.deepEqual(metadata.services,{})
+          await revoke();await rmdir(path.join(dir,'vault-state.json.new'))
+        }
+        if(kind!=='after-check')await current.call('/resume',{})
+        const status=await waitFor(async()=>{const s=await current.call('/status');return s.connect.phase==='failed'&&!s.authorizing&&!s.locking?s:null},kind+' terminal state')
+        assert.equal(status.protected,false);assert.equal(status.connect.finishing,false);assert.equal(status.connect.expired,true)
+        const stateFile=path.join(dir,'vault-state.json'),state=JSON.parse(await readFile(stateFile,'utf8'))
+        assert.equal(state.phase,'enrolling');assert.equal(state.connect,true)
+        const canary=retryStore.file('check'),checkBytes=await readFile(canary),check=await retryStore.read('check')
+        assert.equal(check.aad.generation,state.generation);assert.equal(check.aad.installationId,state.installationId)
+        const saved=await readFile(path.join(dir,'connection.dpapi'))
+        let metadataBytes:Buffer|null=null
+        if(kind==='after-check'){
+          // A valid envelope from another generation remains where it was, as does a bank-entry filename.
+          await writeFile(canary,JSON.stringify({...check,aad:{...check.aad,generation:'e'.repeat(64)}}))
+          const foreign=await readFile(canary)
+          await assert.rejects(current.call('/connect',{}),/already has a saved OMF connection/)
+          assert.deepEqual(await readFile(canary),foreign);assert.deepEqual(await readFile(path.join(dir,'connection.dpapi')),saved)
+          await writeFile(canary,checkBytes)
+          const bankFile=retryStore.file('amex-'+String(caseAccount._id));await writeFile(bankFile,checkBytes)
+          await assert.rejects(current.call('/connect',{}),/already has a saved OMF connection/)
+          assert.deepEqual(await readFile(bankFile),checkBytes);assert.deepEqual(await readFile(canary),checkBytes)
+          await unlink(bankFile)
+          pass('post-check retry preserves foreign-generation canaries and bank entries')
+        }
+        if(kind==='after-metadata'){
+          const metadata=await retryVault.read();metadataBytes=await readFile(retryVault.file)
+          await retryVault.update(()=>({...metadata,accounts:{12345:{username:'synthetic-retain',password:'Synthetic-retain-me'}}}))
+          const secretBlob=await readFile(retryVault.file)
+          await assert.rejects(current.call('/connect',{}),/already has a saved OMF connection/)
+          assert.deepEqual(await readFile(retryVault.file),secretBlob);assert.deepEqual(await readFile(canary),checkBytes)
+          await writeFile(retryVault.file,metadataBytes)
+          // Interrupt after the archive is durable but before the unusable connection can be cleared.
+          const blocker=path.join(dir,'connection.dpapi.new');await mkdir(blocker)
+          await assert.rejects(current.call('/connect',{}))
+          const failed=await retryStore.enrollmentJournal()
+          assert.match(failed.recoveryArchive||'',/^unreadable-\d+-[a-f0-9]{16}$/,'retry must journal and retain its setup archive')
+          const archive=path.join(dir,failed.recoveryArchive)
+          assert.deepEqual(await readFile(path.join(archive,'check.sealed')),checkBytes)
+          assert.deepEqual(await readFile(path.join(archive,'credentials.dpapi')),metadataBytes)
+          assert.deepEqual(await readFile(path.join(dir,'connection.dpapi')),saved)
+          assert.deepEqual(JSON.parse(await readFile(stateFile,'utf8')),state)
+          await rmdir(blocker)
+          pass('post-metadata retry preserves credentials and resumes after archiving but before connection replacement')
+        }
+        await stop(current.child);current=await startConnectCollector(dir,retryPort)
+        let retryError:any=null
+        const retried=current.call('/connect',{}).catch(error=>{retryError=error;return null})
+        const next=await waitFor(async()=>retryError?{error:retryError}:(await current.call('/status')).approvalUrl,kind+' retry link')
+        assert.equal(retryError,null,kind+' must permit a fresh Connect after its own setup check was saved')
+        assert.notEqual(new URL(next).searchParams.get('id'),id)
+        await drivePage(next,'retry-success-'+kind,'',identity)
+        assert.equal((await retried).protected,true)
+        assert.equal((await current.call('/status')).connect.phase,'idle')
+        const archives=(await readdir(dir)).filter(name=>/^unreadable-\d+-[a-f0-9]{16}$/.test(name))
+        assert.equal(archives.length,1,'interrupted recovery keeps one archive')
+        const archive=path.join(dir,archives[0]);assert.deepEqual(await readFile(path.join(archive,'check.sealed')),checkBytes)
+        if(metadataBytes)assert.deepEqual(await readFile(path.join(archive,'credentials.dpapi')),metadataBytes)
+        assert.notEqual((await retryStore.read('check')).aad.generation,state.generation)
+        pass(kind+' refusal after setup writes recovers through fresh Connect after restart; old files remain archived')
+      }catch(error){const failure=kind+': '+String(error);recoveryFailures.push(failure);console.log('FAIL '+failure)}
+      finally{beforeKeyRead=null;await stop(current.child);await closeOwnedBrowsers();browser=null}
     }
     assert.deepEqual(recoveryFailures,[],'every terminal setup refusal must have a working retry')
     const launches=(await readFile(launcherCalls,'utf8')).trim().split('\n').map(line=>JSON.parse(line).path)
