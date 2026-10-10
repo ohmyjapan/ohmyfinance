@@ -2,6 +2,7 @@ import { defineEventHandler, readMultipartFormData, createError } from 'h3';
 import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { processExcelFile } from '../../utils/excel-processor';
+import { requireAuth } from './auth';
 
 // Define allowed file types
 const ALLOWED_TYPES = {
@@ -21,11 +22,13 @@ export default defineEventHandler(async (event) => {
             return;
         }
 
-        const url = event.path || event.node.req.url;
-        if (!url || (!url.includes('/api/upload/transaction') &&
-            !url.includes('/api/upload/receipt'))) {
+        const pathname = (event.path || event.node.req.url || '').split('?')[0];
+        const uploadRoute = /^\/api\/upload\/(transaction|receipt)\/?$/.exec(pathname);
+        if (!uploadRoute) {
             return;
         }
+
+        requireAuth(event);
 
         // Parse the multipart form data
         const formData = await readMultipartFormData(event);
@@ -66,7 +69,7 @@ export default defineEventHandler(async (event) => {
             }
 
             // Determine target directory based on upload endpoint
-            const targetDir = url.includes('/api/upload/transaction')
+            const targetDir = uploadRoute[1] === 'transaction'
                 ? transactionsDir
                 : receiptsDir;
 
@@ -104,7 +107,7 @@ export default defineEventHandler(async (event) => {
             success: true,
             files: uploadedFiles
         };
-    } catch (error) {
+    } catch (error: any) {
         console.error('File upload error:', error);
 
         throw createError({

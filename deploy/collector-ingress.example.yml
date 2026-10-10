@@ -1,0 +1,22 @@
+# Example only: choose the public host and create a separate named tunnel first.
+# Preserve the existing OhMyCode tunnel. Add tunnel/credentials-file at deployment.
+ingress:
+  - hostname: omf-public.example.invalid
+    path: '^/(?:ja/|ko/)?(?:collector-connect|collector-approval|login|auth/login)/?$'
+    service: http://127.0.0.1:8080
+  - hostname: omf-public.example.invalid
+    path: '^/_nuxt/(?:[A-Za-z0-9_.-]+\.(?:js|css)|builds/latest\.json|builds/meta/[a-f0-9-]+\.json)$'
+    service: http://127.0.0.1:8080
+  - hostname: omf-public.example.invalid
+    path: '^/api/finance/collector-connect/(?:requests(?:/[a-f0-9]{64}(?:/(?:authenticate|approve|cancel))?)?|exchange|ack)$'
+    service: http://127.0.0.1:8080
+  - hostname: omf-public.example.invalid
+    path: '^/api/finance/collector-security/(?:requests(?:/[a-f0-9]{64})?|installations/[a-f0-9]{32}|exchange|session|keys(?:/[a-f0-9]{64})?|lock)$'
+    service: http://127.0.0.1:8080
+  - hostname: omf-public.example.invalid
+    path: '^/api/finance/collector/(?:accounts|claim|status|upload)$'
+    service: http://127.0.0.1:8080
+  - hostname: omf-public.example.invalid
+    path: '^/api/auth/(?:login|logout|refresh|me|2fa/verify)$'
+    service: http://127.0.0.1:8080
+  - service: http_status:404

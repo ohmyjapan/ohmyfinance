@@ -1,5 +1,6 @@
 // server/middleware/rateLimit.ts
-import { defineEventHandler, createError, getRequestIP, H3Event } from 'h3'
+import { defineEventHandler, createError, H3Event } from 'h3'
+import { requestClient } from '../utils/request-client'
 
 interface RateLimitEntry {
   count: number
@@ -21,47 +22,6 @@ const rateLimitConfig: Record<string, { maxRequests: number; windowMs: number }>
   '/api/auth/set-pin': { maxRequests: 5, windowMs: 60 * 1000 }, // 5 per minute
 }
 
-// Default rate limit for other API routes
-const defaultRateLimit = { maxRequests: 100, windowMs: 60 * 1000 } // 100 per minute
-
-// Auth endpoints that need rate limiting
-const authEndpoints = [
-  '/api/auth/login',
-  '/api/auth/register',
-  '/api/auth/2fa/verify',
-  '/api/auth/reset-password',
-  '/api/auth/verify-pin',
-  '/api/auth/set-pin'
-]
-
-/**
- * Get rate limit key for a request
- */
-function getRateLimitKey(event: H3Event, path: string): string {
-  const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown'
-  return `${ip}:${path}`
-}
-
-/**
- * Check if a path should be rate limited
- */
-function shouldRateLimit(path: string): boolean {
-  // Only rate limit auth endpoints for now
-  return authEndpoints.some(endpoint => path.startsWith(endpoint))
-}
-
-/**
- * Get rate limit config for a path
- */
-function getRateLimitConfigForPath(path: string): { maxRequests: number; windowMs: number } {
-  for (const [pattern, config] of Object.entries(rateLimitConfig)) {
-    if (path.startsWith(pattern)) {
-      return config
-    }
-  }
-  return defaultRateLimit
-}
-
 /**
  * Clean up expired entries
  */
@@ -78,21 +38,22 @@ function cleanupExpiredEntries(): void {
 setInterval(cleanupExpiredEntries, 5 * 60 * 1000)
 
 export default defineEventHandler(async (event: H3Event) => {
-  const path = event.path || event.node.req.url || ''
+  const pathname = (event.path || event.node.req.url || '').split('?')[0]
+  const route = Object.keys(rateLimitConfig).find(pattern => pathname.startsWith(pattern))
 
   // Skip rate limiting for non-rate-limited routes
-  if (!shouldRateLimit(path)) {
+  if (!route) {
     return
   }
 
-  const key = getRateLimitKey(event, path)
-  const config = getRateLimitConfigForPath(path)
+  const key = `${requestClient(event)}:${route}`
+  const config = rateLimitConfig[route]
   const now = Date.now()
 
   let entry = rateLimitStore.get(key)
 
   // Create new entry if doesn't exist or has expired
-  if (!entry || now > entry.resetTime) {
+  if (!entry || now >= entry.resetTime) {
     entry = {
       count: 1,
       resetTime: now + config.windowMs

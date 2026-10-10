@@ -5,6 +5,7 @@ import User from '../../../models/User'
 import { verifyToken as verifyTOTP, verifyBackupCode, generateDeviceId, hashDeviceId } from '../../../services/twoFactorService'
 import { verifyToken, completeLoginAfter2FA } from '../../../services/authService'
 import UsedAuthChallenge from '../../../models/UsedAuthChallenge'
+import { limitMfaAttempt } from '../../../services/authVerificationLimit'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'POST') {
@@ -32,6 +33,8 @@ export default defineEventHandler(async (event) => {
     if (!user || !user.isActive || !user.twoFactorEnabled || !user.twoFactorSecret) {
       throw createError({ statusCode: 404, statusMessage: 'User not found' })
     }
+
+    await limitMfaAttempt(event, String(user._id))
 
     // Try TOTP verification first
     let isValid = /^\d{6}$/.test(code) && verifyTOTP(user.twoFactorSecret!, code)
