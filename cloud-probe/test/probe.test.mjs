@@ -4,7 +4,7 @@
 // `[<leg>:<check>]`. The legs drive cloud-probe/run.mjs, relay.mjs and local/drive.mjs through an in-process stream
 // pair in place of ssh, with the fake page of ./fake-amex.mjs in place of Chrome. R6c runs the real
 // collector/browser.mjs collectStatement in a child of this file (--collect-statement-child) whose only replaced
-// seams are the Windows process probe, puppeteer-real-browser's connect and the googleapis client. R14 runs the
+// seams are the Windows process probe, rebrowser-puppeteer-core's launch and the googleapis client. R14 runs the
 // installed chrome-launcher's own prepare() at the connect seam. R15 pins the driver's ssh command boundary in a
 // child whose only replaced seam is spawn (--ssh-transport-child) and assesses the evidence file of the MANUAL
 // Linux acceptance ./linux-execution.mjs when OMF_LINUX_EXECUTION_EVIDENCE names one — the in-process stream pair
@@ -61,18 +61,17 @@ export const NEXT_EXPECTED_BY_REASON = {
   human_verification_required: 'Amex requires the account holder to complete human verification (reCAPTCHA); no automatic retry, resend, second password or challenge solving — the owner decides with the account holder how it is completed'
 };
 
-// Plan S1: the exact Windows wiring after the split (whitespace-normalised lines) — R6a's preservation pin. The
-// collectFromPage header and first statement carry the ONE optional-ui seam of plan omf-amex-human-verification-20261009:
-// `ui`, undefined for the Windows wrapper (ensureLogin's own default loginUi(page) then applies), the cloud adapter for
-// cloud-probe/run.mjs. collectStatement itself is unchanged and never passes one.
+// Security plan: the approved wrapper now selects an owned ephemeral profile and carries the outbox origin.
+// The optional cloud-only ui seam stays undefined for this Windows wrapper. R6a preserves the old statement
+// operations except the explicit owner/origin manifest addition; R6c executes the new profile/ownership wiring.
 export const PLANNED_COLLECT_STATEMENT = [
-  'export async function collectStatement(account, settings, directory, status, { gmail } = {}) {',
-  "const profile = settings.profile || path.join(directory, 'profiles', account.primaryCard);",
-  'const browser = await browserFor(profile), page = await amexPage(browser);',
-  'return collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory) });',
+  "export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '' } = {}) {",
+  "const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);",
+  'const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch }), page = await amexPage(browser);',
+  'return collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin });',
   '}'
 ];
-export const PLANNED_COLLECT_FROM_PAGE_HEADER = 'export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null, ui } = {}) {';
+export const PLANNED_COLLECT_FROM_PAGE_HEADER = "export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null, ui, origin = '' } = {}) {";
 export const PLANNED_FIRST_STATEMENT = 'await ensureLogin(page, settings, status, { account, mailbox, claims, ui });';
 // R17 measures the stop on the REAL clock: an attempt still running after this long is the five-minute login wait the
 // stop exists to end. The fake's evaluate is then made to throw so that run ends and cleans up instead of holding the
@@ -471,8 +470,8 @@ export const legs = {
     } finally { await run.cleanup(); }
   },
 
-  // R6a is a PRESERVATION CHECK, not wiring coverage: it pins the wrapper's text to the planned lines and the moved body
-  // to the 1f00be6d text, and runs the collector's own suite. The wrapper is EXECUTED by R6c.
+  // R6a preserves issuer selection/download logic, allowing only the security plan's owner/origin manifest addition.
+  // The changed launcher is exercised by R6c and collector-browser-boundary, not compared to the retired attach lane.
   async R6a(ctx) {
     const norm = lines => lines.map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const split = text => text.replace(/\r\n/g, '\n').split('\n');
@@ -484,7 +483,10 @@ export const legs = {
     };
     const ref = split(ctx.referenceSource), cur = split(ctx.browserSource);
     tag('R6a', 'reference', ref.length >= 123 && ref[72].startsWith('export async function collectStatement('), 'the reference text is not 1f00be6d collector/browser.mjs');
-    tag('R6a', 'prefix-unchanged', JSON.stringify(norm(cur.slice(0, 72))) === JSON.stringify(norm(ref.slice(0, 72))), 'lines 1-72 (imports, browserFor, amexPage, selectLatestStatement) changed');
+    for (const header of ['export async function amexPage(', 'export async function selectLatestStatement(']) {
+      const before=block(ref,header),after=block(cur,header);
+      tag('R6a','issuer-selection-unchanged',before && after && JSON.stringify(norm(before.lines))===JSON.stringify(norm(after.lines)),header+' changed');
+    }
     const statement = block(cur, 'export async function collectStatement(');
     tag('R6a', 'collect-statement', statement && JSON.stringify(norm(statement.lines)) === JSON.stringify(PLANNED_COLLECT_STATEMENT), `collectStatement is not the planned four lines: ${JSON.stringify(statement ? norm(statement.lines) : null)}`);
     const fromPage = block(cur, 'export async function collectFromPage(');
@@ -492,7 +494,8 @@ export const legs = {
     const body = norm(fromPage.lines);
     tag('R6a', 'collect-from-page-header', body[0] === PLANNED_COLLECT_FROM_PAGE_HEADER, `header ${body[0]}`);
     tag('R6a', 'one-substitution', body[1] === PLANNED_FIRST_STATEMENT, `first statement ${body[1]}`);
-    tag('R6a', 'body-verbatim', JSON.stringify(body.slice(2)) === JSON.stringify([...norm(ref.slice(76, 122)), '}']), 'the rest of collectFromPage is not 1f00be6d lines 77-122');
+    const expectedBody=[...norm(ref.slice(76,122)),'}'].map(line=>line.startsWith('const manifest = ')?line.replace('downloadedAt: new Date().toISOString() };',"downloadedAt: new Date().toISOString(), ...(account.ownerId ? { ownerId: String(account.ownerId) } : {}), ...(origin ? { origin } : {}) };"):line);
+    tag('R6a', 'body-verbatim', JSON.stringify(body.slice(2)) === JSON.stringify(expectedBody), 'collectFromPage changed beyond the approved owner/origin manifest addition');
     tag('R6a', 'order', statement.end < fromPage.start, 'collectFromPage must follow collectStatement');
     tag('R6a', 'nothing-else', cur.slice(fromPage.end + 1).every(line => line.trim() === ''), 'content follows collectFromPage');
     need(ctx, 'R6a', 'browser');
@@ -500,11 +503,11 @@ export const legs = {
     const testDir = path.join(ctx.collectorDir, 'test');
     const files = (await readdir(testDir)).filter(name => name.endsWith('.test.mjs')).sort().map(name => path.join('test', name));
     let suite;
-    try { suite = await execute(process.execPath, ['--test', '--test-reporter=tap', ...files], { cwd: ctx.collectorDir, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 180000 }); }
+    try { suite = await execute(process.execPath, ['--test', '--test-concurrency=1', '--test-reporter=tap', ...files], { cwd: ctx.collectorDir, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 180000 }); }
     catch (error) { tag('R6a', 'collector-suite', false, `collector suite red: ${String(error.stdout || error.message).split('\n').filter(l => /^not ok|^# (pass|fail)/.test(l.trim())).join(' | ').slice(0, 500)}`); }
     const pass = suite.stdout.match(/^# pass (\d+)/m)?.[1], fail = suite.stdout.match(/^# fail (\d+)/m)?.[1];
     tag('R6a', 'collector-suite', fail === '0' && Number(pass) > 0, `collector suite pass=${pass} fail=${fail}`);
-    return `preservation check only (text pin, not wiring coverage — R6c executes the wrapper): wrapper = planned text; body = 1f00be6d lines 77-122; collector suite ${pass} pass / 0 fail`;
+    return `issuer selection unchanged; approved ephemeral wrapper pinned; download body preserved except owner/origin manifest; collector suite ${pass} pass / 0 fail; R6c executes the wrapper`;
   },
 
   async R6b(ctx) {
@@ -540,9 +543,8 @@ export const legs = {
   },
 
   // R6c (review F5): the real collectStatement — the Windows wrapper — executed in a child of this file with only its
-  // external seams replaced (the powershell probe, puppeteer-real-browser's connect, the googleapis client). The child
-  // reports what the real code did; nothing here reads the wrapper's text. Twice: a configured profile (differs from
-  // the collector directory, so claims under the profile would be caught) and the default profile.
+  // external seams replaced (the powershell probe, rebrowser's launch, the googleapis client). A synthetic executable
+  // and a spawn trap prevent any real browser. Both retained-profile and no-profile inputs must select a new batch profile.
   async R6c(ctx) {
     need(ctx, 'R6c', 'browser', 'login');
     const done = [];
@@ -555,10 +557,12 @@ export const legs = {
         const noise = String(child.stderr || '').split('\n').filter(line => line.trim() && !/ExperimentalWarning|--trace-warnings/.test(line)).join(' | ').slice(0, 400);
         tag('R6c', `${mode}-child`, child.code === 0 && report && report.harness === 'collect-statement', `child exit ${child.code} (${noise}) last line ${String(child.lines.at(-1) ?? '').slice(0, 200)}`);
         tag('R6c', `${mode}-result`, report.error === null && report.result && report.result.manifest, `collectStatement did not return a manifest: ${report.error}`);
-        const expectedProfile = mode === 'configured' ? report.paths.configuredProfile : report.paths.defaultProfile;
+        const expectedProfile = path.join(report.paths.directory,'profiles','ephemeral',`synthetic-owner-amex-${fake.ACCOUNT._id}-synthetic-${mode}`);
         const probe = report.execFile[0] || { args: [] };
-        tag('R6c', `${mode}-profile`, report.execFile.length === 1 && probe.file === 'powershell.exe' && path.basename(String(probe.args[probe.args.indexOf('-File') + 1])) === 'browser-process.ps1' && probe.args[probe.args.indexOf('-ProfilePath') + 1] === expectedProfile && report.connect.length === 1 && report.connect[0].customConfig?.userDataDir === expectedProfile, `profile seams ${JSON.stringify({ expectedProfile, execFile: report.execFile, connect: report.connect })}`);
-        tag('R6c', `${mode}-chrome-flags`, report.connect[0].headless === false && report.connect[0].turnstile === false && JSON.stringify(report.connect[0].args) === JSON.stringify(['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8']) && report.connect[0].connectOption?.protocolTimeout === 30000 && report.connect[0].connectOption?.defaultViewport === null, `connect options ${JSON.stringify(report.connect[0])}`);
+        tag('R6c', `${mode}-profile`, report.execFile.length === 1 && probe.file === 'powershell.exe' && path.basename(String(probe.args[probe.args.indexOf('-File') + 1])) === 'browser-process.ps1' && probe.args[probe.args.indexOf('-ProfilePath') + 1] === expectedProfile && report.launch.length === 1 && report.launch[0].userDataDir === expectedProfile, `profile seams ${JSON.stringify({ expectedProfile, execFile: report.execFile, launch: report.launch })}`);
+        const launch=report.launch[0];
+        tag('R6c', `${mode}-chrome-flags`, launch.headless === false && launch.pipe === true && launch.executablePath === report.paths.executablePath && JSON.stringify(launch.args) === JSON.stringify(['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-sync']) && launch.protocolTimeout === 30000 && launch.defaultViewport === null, `launch options ${JSON.stringify(launch)}`);
+        tag('R6c', `${mode}-ownership`, report.ownership.length===1 && report.ownership[0].pid===32123 && report.ownership[0].sameBrowser && report.events.indexOf('own-browser')>=0 && report.events.indexOf('own-browser')<report.events.indexOf('login'),`ownership ${JSON.stringify(report.ownership)}`);
         tag('R6c', `${mode}-events`, JSON.stringify(report.events.filter(e => R6C_EVENTS.includes(e))) === JSON.stringify(R6C_EVENTS), `events ${JSON.stringify(report.events)}`);
         tag('R6c', `${mode}-claims-directory`, JSON.stringify(report.claimsAtTypeCode) === JSON.stringify([fake.MAIL_MATCH.id]) && JSON.stringify(report.claimsFinal) === JSON.stringify([fake.MAIL_MATCH.id]) && report.claimsElsewhere.length === 0, `claims at type-code ${JSON.stringify(report.claimsAtTypeCode)}, final ${JSON.stringify(report.claimsFinal)}, elsewhere ${JSON.stringify(report.claimsElsewhere)}`);
         tag('R6c', `${mode}-gmail`, JSON.stringify(report.google.oauth) === JSON.stringify([{ clientId: GMAIL_CONFIG.clientId, clientSecret: GMAIL_CONFIG.clientSecret }]) && JSON.stringify(report.google.credentials) === JSON.stringify([{ refresh_token: GMAIL_CONFIG.refreshToken }]) && JSON.stringify(report.google.gmail) === JSON.stringify([{ version: 'v1', authIsOAuth2: true }]) && report.google.getProfile === 1, `gmail wiring ${JSON.stringify(report.google)}`);
@@ -566,13 +570,14 @@ export const legs = {
         const floorMs = after * 1000 + 15000, requestedAt = report.stamps['request-code'];
         tag('R6c', `${mode}-mail-window`, report.google.list.length === 1 && report.google.list[0].userId === 'me' && report.google.list[0].maxResults === 20 && query.startsWith('from:AmericanExpress@welcome.americanexpress.com after:') && Number.isFinite(after) && requestedAt - floorMs >= 0 && requestedAt - floorMs < 1500 && report.google.list[0].at >= requestedAt && JSON.stringify(report.google.get) === JSON.stringify([{ id: fake.MAIL_MATCH.id, format: 'full' }]), `mail look-back ${JSON.stringify({ query, after, floorMs, requestedAt, list: report.google.list, get: report.google.get })}`);
         tag('R6c', `${mode}-manifest`, report.result.manifest.pageCount === 4 && report.result.manifest.sha256 === digest(fake.syntheticCsv(4)) && report.result.manifest.jobId === 'job-r6c' && report.result.manifest.accountId === fake.ACCOUNT._id && report.result.directory === path.join(report.paths.directory, 'outbox', fake.ACCOUNT._id, 'job-r6c') && report.manifestFile === true, `manifest ${JSON.stringify(report.result)}`);
+        tag('R6c', `${mode}-outbox-owner`, report.result.manifest.ownerId==='synthetic-owner' && report.result.manifest.origin==='https://synthetic-omf.invalid', 'outbox owner/origin binding missing');
         tag('R6c', `${mode}-typed`, report.typed.usernameMatches && report.typed.passwordMatches && report.typed.codeMatches && report.counts.password === 1, `typed ${JSON.stringify({ typed: report.typed, counts: report.counts })}`);
         tag('R6c', `${mode}-statuses`, ['Signing in to Amex', 'Requesting the Amex account-login email', 'Selecting the latest closed Amex statement'].every(text => report.statuses.some(s => s.text === text)), `statuses ${JSON.stringify(report.statuses)}`);
         tag('R6c', `${mode}-no-network`, report.fetch === 0, `fetch was called ${report.fetch} times`);
         done.push(mode);
       } finally { await removeTemp(dir); }
     }
-    return `real collectStatement ran in a mocked child for the ${done.join(' and ')} profile: Windows seams called with that profile, LoginMailbox(gmail) built from the config, claims under the collector directory before the code was typed, mail look-back anchored to the request, manifest in the outbox`;
+    return `real collectStatement ran for ${done.join(' and ')} inputs: retained profiles ignored; separate owner/account/batch profiles, pipe launcher, ownership before login, unchanged mailbox/claim timing, owner-bound outbox; zero real browser/network`;
   },
 
   async R7(ctx) {
@@ -619,31 +624,38 @@ export const legs = {
     const { capture } = ctx.modules.run;
     const never = () => new Promise(() => {});
     const frame = (name, { evaluate = 'stall', content = 'stall' } = {}) => {
-      const calls = { evaluate: 0, content: 0 };
+      const calls = { evaluate: 0, content: 0, started: [] };
       return {
         name, calls,
         url: () => `https://www.americanexpress.com/synthetic/${name}`,
-        evaluate: async () => { calls.evaluate += 1; if (evaluate === 'throw') throw new Error('Execution context was destroyed, most likely because of a navigation.'); if (evaluate === 'stall') return never(); return { html: `<html><body>${name}</body></html>`, text: name }; },
-        content: async () => { calls.content += 1; if (content === 'stall') return never(); return `<!-- content() --><html><body>${name}</body></html>`; }
+        evaluate: async () => { calls.started.push(performance.now()); calls.evaluate += 1; if (evaluate === 'throw') throw new Error('Execution context was destroyed, most likely because of a navigation.'); if (evaluate === 'stall') return never(); return { html: `<html><body>${name}</body></html>`, text: name }; },
+        content: async () => { calls.started.push(performance.now()); calls.content += 1; if (content === 'stall') return never(); return `<!-- content() --><html><body>${name}</body></html>`; }
       };
     };
     const pageOf = frames => ({ mainFrame: () => frames[0], frames: () => frames, screenshot: async () => '' });
     const sweep = async frames => { const started = Date.now(); const result = await keepAlive(() => capture(pageOf(frames), [])); return { result, elapsed: Date.now() - started }; };
     const indexed = (result, frames) => result.frames.length === frames.length && result.frames.every((f, i) => f.url === frames[i].url() && f.html === '' && f.text === '');
     const calls = frames => JSON.stringify(frames.map(f => ({ [f.name]: f.calls })));
+    // Node truncates timer delays to whole milliseconds. A timeout can settle while a fraction of the
+    // monotonic budget remains, legitimately allowing another frame. Assert actual start times, not
+    // an assumed timer/deadline ordering. The first DOM call gives an upper bound for the deadline.
+    const withinBudget = frames => frames.every(f => f.calls.evaluate <= 1 && f.calls.content <= 1 &&
+      f.calls.started.every(at => at <= frames[0].calls.started[0] + SWEEP_BUDGET_MS));
     // A: three frames whose DOM step and content() fallback both stall.
     const a = [frame('a0'), frame('a1'), frame('a2')];
     const stalled = await sweep(a);
     tag('R8', 'stalled-frames', indexed(stalled.result, a), `frames ${JSON.stringify(stalled.result.frames)}`);
     tag('R8', 'stalled-elapsed', stalled.elapsed >= SWEEP_BUDGET_MS - 100 && stalled.elapsed < 3000, `the sweep of 3 stalled frames took ${stalled.elapsed} ms (one ${SWEEP_BUDGET_MS} ms total budget expected)`);
-    tag('R8', 'stalled-no-more-work', a[0].calls.evaluate === 1 && a[0].calls.content === 0 && a.slice(1).every(f => f.calls.evaluate === 0 && f.calls.content === 0), `steps started ${calls(a)}`);
+    tag('R8', 'stalled-no-more-work', a[0].calls.evaluate === 1 && withinBudget(a), `steps started ${calls(a)}`);
     // B: the main frame is detached (its DOM step throws at once) and its content() fallback stalls; a fast frame and a
-    // stalled frame follow — both reached after exhaustion, both indexed, neither asked anything.
+    // stalled frame follow. Both stay indexed; they may be visited only while the total budget remains.
     const b = [frame('b0', { evaluate: 'throw', content: 'stall' }), frame('b1', { evaluate: 'fast', content: 'fast' }), frame('b2')];
     const detached = await sweep(b);
-    tag('R8', 'detached-frames', indexed(detached.result, b), `frames ${JSON.stringify(detached.result.frames)}`);
+    tag('R8', 'detached-frames', detached.result.frames.length === b.length && detached.result.frames.every((f, i) =>
+      f.url === b[i].url() && f.html === (i === 1 && b[i].calls.evaluate ? '<html><body>b1</body></html>' : '') &&
+      f.text === (i === 1 && b[i].calls.evaluate ? 'b1' : '')), `frames ${JSON.stringify(detached.result.frames)}`);
     tag('R8', 'detached-elapsed', detached.elapsed >= SWEEP_BUDGET_MS - 100 && detached.elapsed < 3000, `the sweep with a stalled fallback took ${detached.elapsed} ms`);
-    tag('R8', 'detached-no-more-work', b[0].calls.evaluate === 1 && b[0].calls.content === 1 && b.slice(1).every(f => f.calls.evaluate === 0 && f.calls.content === 0), `steps started ${calls(b)}`);
+    tag('R8', 'detached-no-more-work', b[0].calls.evaluate === 1 && b[0].calls.content === 1 && withinBudget(b), `steps started ${calls(b)}`);
     // C: with time left every frame is captured — the DOM step, or content() when the DOM step throws.
     const c = [frame('c0', { evaluate: 'fast' }), frame('c1', { evaluate: 'throw', content: 'fast' })];
     const quick = await sweep(c);
@@ -1121,24 +1133,29 @@ async function collectStatementChild(argv) {
   const realBrowserFile = path.join(REPO_ROOT, 'collector', 'browser.mjs');
   const browserFile = flag('--browser-file') || realBrowserFile;
   const realBrowserUrl = pathToFileURL(realBrowserFile).href;
-  const puppeteerUrl = import.meta.resolve('puppeteer-real-browser', realBrowserUrl);
+  const puppeteerUrl = import.meta.resolve('rebrowser-puppeteer-core', realBrowserUrl);
   const googleUrl = import.meta.resolve('googleapis', pathToFileURL(path.join(REPO_ROOT, 'collector', 'mail.mjs')).href);
-  const report = { harness: 'collect-statement', mode, events: [], stamps: {}, execFile: [], connect: [], google: { oauth: [], credentials: [], gmail: [], getProfile: 0, list: [], get: [] }, statuses: [], claimsAtTypeCode: null, claimsFinal: null, claimsElsewhere: [], manifestFile: false, result: null, error: null, fetch: 0, typed: null, counts: null, paths: null };
+  const report = { harness: 'collect-statement', mode, events: [], stamps: {}, execFile: [], launch: [], ownership: [], google: { oauth: [], credentials: [], gmail: [], getProfile: 0, list: [], get: [] }, statuses: [], claimsAtTypeCode: null, claimsFinal: null, claimsElsewhere: [], manifestFile: false, result: null, error: null, fetch: 0, typed: null, counts: null, paths: null };
   const directory = path.join(dir, 'collector-dir'), configuredProfile = path.join(dir, 'configured-profile');
   const defaultProfile = path.join(directory, 'profiles', fake.ACCOUNT.primaryCard);
-  report.paths = { directory, configuredProfile, defaultProfile };
+  const programFiles=path.join(dir,'synthetic-programs'),executablePath=path.join(programFiles,'Google','Chrome','Application','chrome.exe');
+  process.env.ProgramFiles=programFiles;process.env['ProgramFiles(x86)']=programFiles;process.env.LOCALAPPDATA=programFiles;
+  await mkdir(path.dirname(executablePath),{recursive:true});await writeFile(executablePath,'Synthetic launch mock only; not an executable.');
+  report.paths = { directory, configuredProfile, defaultProfile, executablePath };
   await mkdir(directory, { recursive: true });
   // Nothing may leave this process: fetch is a trap, the two process seams and the mail client are recorded fakes.
   globalThis.fetch = async () => { report.fetch += 1; throw new Error('network is forbidden in the collectStatement harness'); };
   const { mock } = await import('node:test');
   const execFileMock = (file, args, options, callback) => { (typeof options === 'function' ? options : callback)(new Error('collectStatement harness: the callback form of execFile is not expected')); };
   execFileMock[promisify.custom] = async (file, args, options) => { report.execFile.push({ file, args, options }); return { stdout: JSON.stringify({ matches: [], pids: [], unreadable: [] }) + '\n', stderr: '' }; };
-  mock.module('node:child_process', { namedExports: { ...childProcess, execFile: execFileMock }, defaultExport: { ...childProcess, execFile: execFileMock } });
+  const spawnTrap=()=>{throw new Error('real process launch is forbidden in the collectStatement harness');};
+  mock.module('node:child_process', { namedExports: { ...childProcess, spawn:spawnTrap,execFile: execFileMock }, defaultExport: { ...childProcess, spawn:spawnTrap,execFile: execFileMock } });
   const events = [];
   events.push = value => { if (!(value in report.stamps)) report.stamps[value] = Date.now(); return Array.prototype.push.call(events, value); };
   report.events = events;
   const fx = fake.fakeAmex({ events, onTypeCode: () => { try { report.claimsAtTypeCode = JSON.parse(readFileSync(path.join(directory, 'used-login-messages.json'), 'utf8')); } catch { report.claimsAtTypeCode = null; } } });
-  mock.module(puppeteerUrl, { namedExports: { connect: async options => { report.connect.push(options); return { browser: fx.browser, page: fx.page }; } } });
+  fx.browser.process=()=>({pid:32123,exitCode:0});
+  mock.module(puppeteerUrl, { defaultExport: { launch: async options => { report.launch.push(options); return fx.browser; } } });
   const mailbox = GMAIL_CONFIG.mailbox.toLowerCase();
   const loginMail = id => {
     const now = Date.now();
@@ -1163,7 +1180,7 @@ async function collectStatementChild(argv) {
   let moduleFile = browserFile;
   if (path.resolve(browserFile) !== path.resolve(realBrowserFile)) {
     let text = await readFile(browserFile, 'utf8');
-    for (const [find, replace] of [["from 'puppeteer-real-browser'", `from '${puppeteerUrl}'`], ['createRequire(import.meta.url)', `createRequire('${realBrowserUrl}')`]]) {
+    for (const [find, replace] of [["from 'rebrowser-puppeteer-core'", `from '${puppeteerUrl}'`]]) {
       const parts = text.split(find);
       if (parts.length !== 2) throw new Error(`collectStatement harness: ${find} found ${parts.length - 1} times in ${browserFile}`);
       text = parts.join(replace);
@@ -1173,7 +1190,7 @@ async function collectStatementChild(argv) {
   }
   const browser = await import(pathToFileURL(moduleFile).href);
   const settings = mode === 'configured' ? { ...fake.CREDENTIALS, profile: configuredProfile } : { ...fake.CREDENTIALS };
-  const account = { ...fake.ACCOUNT, jobId: 'job-r6c' };
+  const account = { ...fake.ACCOUNT, jobId: 'job-r6c', ownerId:'synthetic-owner' };
   const finish = async () => {
     try { report.claimsFinal = JSON.parse(await readFile(path.join(directory, 'used-login-messages.json'), 'utf8')); } catch { report.claimsFinal = null; }
     for (const candidate of [configuredProfile, defaultProfile, dir]) if (existsSync(path.join(candidate, 'used-login-messages.json'))) report.claimsElsewhere.push(candidate);
@@ -1187,7 +1204,7 @@ async function collectStatementChild(argv) {
   // deadline (login.mjs:119), and a wrapper that reached attention has already failed the leg.
   const status = async (state, text) => { report.statuses.push({ state, text }); if (state === 'verification_required') { report.error = `attention: ${text}`; await finish(); } };
   try {
-    const result = await browser.collectStatement(account, settings, directory, status, { gmail: { ...GMAIL_CONFIG } });
+    const result = await browser.collectStatement(account, settings, directory, status, { gmail: { ...GMAIL_CONFIG },batch:'synthetic-'+mode,origin:'https://synthetic-omf.invalid',onLaunch:async({pid,browser:owned})=>{report.ownership.push({pid,sameBrowser:owned===fx.browser});events.push('own-browser');} });
     report.result = { directory: result.directory, manifest: result.manifest };
   } catch (error) { report.error = String((error && error.message) || error); }
   await finish();

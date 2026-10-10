@@ -10,7 +10,7 @@
 // Chrome process; R15 pins the driver's ssh command boundary with spawn replaced and assesses the evidence file of
 // the MANUAL Linux acceptance cloud-probe/test/linux-execution.mjs only when OMF_LINUX_EXECUTION_EVIDENCE names
 // one — that entry is never run from here). Legs R1-R18 (cloud-probe/test/probe.test.mjs; the collector suite
-// inside R6a) and defects D1-D43, each built as a defective copy of the module it names (run.mjs, relay.mjs,
+// inside R6a) and defects D1-D46, each built as a defective copy of the module it names (run.mjs, relay.mjs,
 // local/drive.mjs under a temp cloud-probe/; collector/browser.mjs under a temp collector/ for the executed wrapper)
 // and expected RED at the leg's tag.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -23,6 +23,9 @@ const REPO_ROOT = path.resolve(here, '..', '..');
 const PROBE_DIR = path.join(REPO_ROOT, 'cloud-probe');
 const BROWSER_FILE = path.join(REPO_ROOT, 'collector', 'browser.mjs');
 const COPIED = ['run.mjs', 'relay.mjs', 'local/drive.mjs', 'Dockerfile'];
+// Includes serialized Windows native setup, all 46 sequential defects and their real-clock waits.
+// The baseline alone takes about 310 seconds on the tested Windows host.
+export const timeoutMs = 900000;
 
 // Each defect: the module, the exact source anchor (must occur exactly once) and its replacement — or `edits`, several
 // such pairs applied in order — and the leg that goes red. D1-D10 are the original plan's; D11-D25 the review fold's
@@ -37,7 +40,7 @@ const DEFECTS = [
   { id: 'D7', what: 'a screenshot taken in collect', file: 'run.mjs', leg: 'R3b', find: "{ screenshot: stage === 'reach' }", replace: '{ screenshot: true }' },
   { id: 'D8', what: 'scrub skipped for frame text', file: 'run.mjs', leg: 'R3b', find: 'text: scrub(text, secrets)', replace: 'text: text' },
   { id: 'D9', what: 'next missing for attention', file: 'local/drive.mjs', leg: 'R7', find: "  attention: '", replace: "  attention_removed: '" },
-  { id: 'D10', what: 'LoginClaims built from settings.profile instead of directory (text pin)', file: 'collector/browser.mjs', leg: 'R6a', find: 'claims: new LoginClaims(directory) });', replace: 'claims: new LoginClaims(settings.profile) });' },
+  { id: 'D10', what: 'LoginClaims built from settings.profile instead of directory (text pin)', file: 'collector/browser.mjs', leg: 'R6a', find: 'claims: new LoginClaims(directory), origin });', replace: 'claims: new LoginClaims(settings.profile), origin });' },
   // F2 — one total sweep budget
   { id: 'D11', what: 'per-frame capture budget restored', file: 'run.mjs', leg: 'R8', find: 'const remaining = () => Math.max(0, deadline - performance.now());', replace: 'const remaining = () => FRAME_SWEEP_BUDGET_MS;' },
   // F4 — the --out preflight
@@ -60,9 +63,12 @@ const DEFECTS = [
   { id: 'D21', what: 'shared/amex.mjs dropped from the upload allowlist', file: 'local/drive.mjs', leg: 'R13', find: "{ from: 'shared/amex.mjs' }", replace: '' },
   { id: 'D22', what: 'manifest hashes not the file bytes', file: 'local/drive.mjs', leg: 'R13', find: "files[to] = createHash('sha256').update(await readFile(source)).digest('hex');", replace: "files[to] = createHash('sha256').update(to).digest('hex');" },
   // F5 — the executed wrapper (collector/browser.mjs copies run by R6c's child)
-  { id: 'D23', what: 'LoginClaims built from settings.profile instead of directory (executed)', file: 'collector/browser.mjs', leg: 'R6c', find: 'claims: new LoginClaims(directory) });', replace: 'claims: new LoginClaims(settings.profile) });' },
+  { id: 'D23', what: 'LoginClaims built from settings.profile instead of directory (executed)', file: 'collector/browser.mjs', leg: 'R6c', find: 'claims: new LoginClaims(directory), origin });', replace: 'claims: new LoginClaims(settings.profile), origin });' },
   { id: 'D24', what: 'Gmail connection not wired into the mailbox', file: 'collector/browser.mjs', leg: 'R6c', find: 'mailbox: gmail ? new LoginMailbox(gmail) : null', replace: 'mailbox: null' },
-  { id: 'D25', what: 'configured profile ignored', file: 'collector/browser.mjs', leg: 'R6c', find: "const profile = settings.profile || path.join(directory, 'profiles', account.primaryCard);", replace: "const profile = path.join(directory, 'profiles', account.primaryCard);" },
+  { id: 'D25', what: 'retained profile reused instead of the security plan batch profile', file: 'collector/browser.mjs', leg: 'R6c', edits: [
+    {find:"const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);",replace:"const profile = settings.profile || path.join(directory, 'profiles', account.primaryCard);"},
+    {find:'browserFor(profile, { ephemeral: true, root: directory, onLaunch })',replace:'browserFor(profile, { ephemeral: false, root: directory, onLaunch })'}
+  ] },
   // omf-railway-startup-fix-20261008 — the profile directory created before connect (the 2026-10-08 live ENOENT)
   { id: 'D26', what: 'profile directory not created before connect', file: 'run.mjs', leg: 'R14', find: "await mkdir(path.join(root, 'profile'), { recursive: true });", replace: '' },
   // omf-railway-user-fix-20261008 — the privilege switch removed: the runner inherits the ssh session's root again
@@ -82,14 +88,17 @@ const DEFECTS = [
   { id: 'D36', what: 'a retry after the challenge', file: 'run.mjs', leg: 'R17', find: 'const ending = await attempt();', replace: "let ending = await attempt(); if (ending.reasonCode === HUMAN_VERIFICATION_REQUIRED) { await page.goto('https://www.americanexpress.com/ja-jp/account/login?inav=iNavLnkLog', { waitUntil: 'domcontentloaded', timeout: 60000 }); ending = await attempt(); }" },
   { id: 'D37', what: 'any surface accepted as the challenge surface (unrelated path/origin)', file: 'run.mjs', leg: 'R18', find: 'const challengeSurface = () => onSurface(page, WWW, LOGIN_PATH) || onSurface(page, WWW, VERIFY_PATH);', replace: 'const challengeSurface = () => true;' },
   { id: 'D38', what: 'the Windows wrapper takes and forwards a ui option (text pin)', file: 'collector/browser.mjs', leg: 'R6a', edits: [
-    { find: 'export async function collectStatement(account, settings, directory, status, { gmail } = {}) {', replace: 'export async function collectStatement(account, settings, directory, status, { gmail, ui } = {}) {' },
-    { find: 'claims: new LoginClaims(directory) });', replace: 'claims: new LoginClaims(directory), ui });' }
+    { find: "export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '' } = {}) {", replace: "export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', ui } = {}) {" },
+    { find: 'claims: new LoginClaims(directory), origin });', replace: 'claims: new LoginClaims(directory), origin, ui });' }
   ] },
-  { id: 'D39', what: 'a null ui default leaks from the Windows wrapper into ensureLogin (executed)', file: 'collector/browser.mjs', leg: 'R6c', find: '{ mailbox = null, claims = null, ui } = {}) {', replace: '{ mailbox = null, claims = null, ui = null } = {}) {' },
+  { id: 'D39', what: 'a null ui default leaks from the Windows wrapper into ensureLogin (executed)', file: 'collector/browser.mjs', leg: 'R6c', find: "{ mailbox = null, claims = null, ui, origin = '' } = {}) {", replace: "{ mailbox = null, claims = null, ui = null, origin = '' } = {}) {" },
   { id: 'D40', what: 'next missing for human_verification_required', file: 'local/drive.mjs', leg: 'R17', find: "  human_verification_required: '", replace: "  human_verification_removed: '" },
   { id: 'D41', what: 'human verification classified as service_failure', file: 'run.mjs', leg: 'R17', find: "if (error && error.reasonCode === HUMAN_VERIFICATION_REQUIRED) return { outcome: 'attention', reasonCode: HUMAN_VERIFICATION_REQUIRED };", replace: '' },
   { id: 'D42', what: 'terminal pageKind read by loginUi instead of the one detector', file: 'run.mjs', leg: 'R17', find: 'const state = await withBudget(cloudLoginUi(page).detect(), 5000);', replace: 'const state = await withBudget(loginUi(page).state(), 5000);' },
-  { id: 'D43', what: 'verification_required status not emitted before the stop', file: 'run.mjs', leg: 'R17', find: "if (status) await status('verification_required', HUMAN_VERIFICATION_STATUS);", replace: '' }
+  { id: 'D43', what: 'verification_required status not emitted before the stop', file: 'run.mjs', leg: 'R17', find: "if (status) await status('verification_required', HUMAN_VERIFICATION_STATUS);", replace: '' },
+  { id:'D44',what:'pipe transport disabled',file:'collector/browser.mjs',leg:'R6c',find:'executablePath, pipe: true, headless',replace:'executablePath, pipe: false, headless' },
+  { id:'D45',what:'browser ownership callback discarded',file:'collector/browser.mjs',leg:'R6c',find:'browserFor(profile, { ephemeral: true, root: directory, onLaunch })',replace:'browserFor(profile, { ephemeral: true, root: directory })' },
+  { id:'D46',what:'outbox origin omitted',file:'collector/browser.mjs',leg:'R6c',find:'...(origin ? { origin } : {})',replace:'...{}' }
 ];
 
 function mutate(source, defect) {
@@ -168,6 +177,6 @@ export default {
     } finally {
       if (path.resolve(base).startsWith(path.resolve(os.tmpdir()) + path.sep)) await rm(base, { recursive: true, force: true });
     }
-    return { pass, message: `${pass ? 'legs R1-R18 green and D1-D43 red' : 'FAILED'} in ${Math.round((Date.now() - started) / 1000)}s — ${lines.join(' · ')}` };
+    return { pass, message: `${pass ? 'legs R1-R18 green and D1-D46 red' : 'FAILED'} in ${Math.round((Date.now() - started) / 1000)}s — ${lines.join(' · ')}` };
   }
 };

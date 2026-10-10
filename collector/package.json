@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": { "start": "node run.mjs", "test": "node --test test/*.test.mjs" },
-  "dependencies": { "googleapis": "171.4.0", "puppeteer-real-browser": "1.4.4" },
-  "engines": { "node": ">=22" }
+  "dependencies": { "googleapis": "171.4.0", "puppeteer-real-browser": "1.4.4", "rebrowser-puppeteer-core": "23.10.3" },
+  "overrides": { "@puppeteer/browsers": "3.2.4", "get-uri": { "basic-ftp": "6.2.3" } },
+  "engines": { "node": ">=22.12.0" }
 }

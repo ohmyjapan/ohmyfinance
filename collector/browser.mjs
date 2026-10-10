@@ -1,46 +1,126 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync, realpath as realpathCallback } from 'node:fs';
+import { access, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-import { connect } from 'puppeteer-real-browser';
+import puppeteer from 'rebrowser-puppeteer-core';
 import { parseAmex } from '../shared/amex.mjs';
 import { ensureLogin, LoginClaims } from './login.mjs';
 import { LoginMailbox } from './mail.mjs';
 import { click, onSurface, poll } from './interaction.mjs';
 import { latestClosed, statementSnapshot, STATEMENT, verifyStatement } from './statement.mjs';
-import { cachedEndpoint, endpointAt, rememberEndpoint } from './endpoint.mjs';
 export { ensureLogin, LOGIN } from './login.mjs';
 
-const require = createRequire(import.meta.url);
-const puppeteer = require(require.resolve('rebrowser-puppeteer-core', { paths: [path.dirname(require.resolve('puppeteer-real-browser'))] }));
-const execute = promisify(execFile), sessions = new Map();
+const execute = promisify(execFile), realpathNative = promisify(realpathCallback.native);
+const PROBE = fileURLToPath(new URL('./windows/browser-process.ps1', import.meta.url));
 const GLOBAL = 'https://global.americanexpress.com', STATEMENT_PATH = '/activity/statement';
+// Owned Chrome only (plan omf-customer-credential-security-20261009 §2 site 5): launched by this process through
+// rebrowser-puppeteer-core with the pipe transport — no --no-sandbox, no --disable-web-security, no TCP debugging
+// port — on a profile no other Chrome is using. The collector never attaches to an existing browser.
+export const LAUNCH_ARGS = Object.freeze(['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync']);
+/** @type {Map<number, { key: string, profile: string, ephemeral: boolean, root: string|null, pid: number, browser: any, child: any }>} */
+const owned = new Map();
 
-export async function browserFor(profile) {
-  if (sessions.get(profile)?.connected) return sessions.get(profile);
+/** Stock Chrome in its three Windows locations (cloud-probe/test/interaction-browser.mjs:48-50). */
+export function chromeCandidates(env = process.env) {
+  return [
+    path.join(env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe')
+  ].filter(candidate => !candidate.startsWith(path.sep + 'Google'));
+}
+export function findChrome(env = process.env) { return chromeCandidates(env).find(candidate => existsSync(candidate)) || null; }
+const keyOf = value => path.resolve(value).replaceAll('\\', '/').toLowerCase();
+const safeName = value => String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || 'x';
+export const ephemeralRoot = root => path.join(root, 'profiles', 'ephemeral');
+/** profiles/ephemeral/<owner>-<provider>-<account>-<batch>: one fresh profile per batch, deleted at closure. */
+export function ephemeralProfile(root, ownerId, provider, accountId, batch) {
+  return path.join(ephemeralRoot(root), `${safeName(ownerId || 'local')}-${safeName(provider)}-${safeName(accountId)}-${safeName(batch)}`);
+}
+function assertEphemeralPath(profile, root) {
+  if (!root) throw new Error('An ephemeral profile needs the collector directory');
+  if (keyOf(path.dirname(profile)) !== keyOf(ephemeralRoot(root))) throw new Error('Ephemeral profiles live directly under profiles/ephemeral');
+}
+async function assertPlainDirectory(target) {
+  const stat = await lstat(target);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`${path.basename(target)} is a link or not a directory; refusing to use it`);
+  if (keyOf(await realpathNative(target)) !== keyOf(target)) throw new Error(`${path.basename(target)} resolves elsewhere; refusing to use it`);
+}
+async function probeProfile(profile) {
+  const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', PROBE, '-ProfilePath', profile], { windowsHide: true, timeout: 20000 });
+  return JSON.parse(stdout.trim());
+}
+export function ownedBrowsers() { return [...owned.values()].map(entry => ({ pid: entry.pid, profile: entry.profile, ephemeral: entry.ephemeral, connected: !!entry.browser.connected })); }
+
+/**
+ * Launches owned Chrome on `profile` (or returns the browser this process already launched there).
+ * options: ephemeral (the profile is deleted at closure; needs root), root (the collector directory), headless
+ * (false = the visible window of the first release; tests use true), onLaunch({pid, browser}) — the collector
+ * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows.
+ */
+export async function browserFor(profile, { ephemeral = false, root = null, headless = false, onLaunch = null } = {}) {
+  const key = keyOf(profile);
+  for (const entry of owned.values()) if (entry.key === key && entry.browser.connected) return entry.browser;
+  if (ephemeral) { assertEphemeralPath(profile, root); await mkdir(ephemeralRoot(root), { recursive: true }); await assertPlainDirectory(ephemeralRoot(root)); }
   await mkdir(profile, { recursive: true });
-  const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./windows/browser-process.ps1', import.meta.url)), '-ProfilePath', profile], { windowsHide: true, timeout: 15000 });
-  const probe = JSON.parse(stdout.trim()), running = probe.matches;
-  if (running.length > 1 || running.some(p => !p.port)) throw new Error('Close the duplicate or non-debuggable Amex profile before retrying');
-  const options = { defaultViewport: null, protocolTimeout: 30000 };
-  // Cache only identities discovered by an exact profile-path match. A lower-privilege
-  // collector can then reuse that browser without reading its protected command line.
-  const endpoint = running.length ? await endpointAt(running[0].port) : await cachedEndpoint(profile, probe.pids);
-  let browser;
-  if (endpoint) {
-    browser = await puppeteer.connect({ browserWSEndpoint: endpoint, ...options });
-    if (running.length) await rememberEndpoint(profile, running[0], endpoint);
-  } else {
-    const existingProfile = await access(path.join(profile, 'Default')).then(() => true, () => false);
-    const registeredProfile = await access(path.join(profile, '.omf-collector-browser.json')).then(() => true, () => false);
-    if (existingProfile && probe.unreadable.length && !registeredProfile) throw new Error('Chrome hides this profile from the collector. Register its existing browser session before retrying');
-    browser = (await connect({ headless: false, turnstile: false, args: ['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8'], customConfig: { userDataDir: profile }, connectOption: options })).browser;
+  const probe = await probeProfile(profile);
+  const existingProfile = await access(path.join(profile, 'Default')).then(() => true, () => false);
+  if (probe.matches.length || (existingProfile && probe.unreadable.length)) throw new Error('Close the Chrome window that is already using this profile before retrying; the collector never attaches to an existing browser');
+  const executablePath = findChrome();
+  if (!executablePath) throw new Error('Google Chrome was not found in its standard locations on this PC');
+  const browser = await puppeteer.launch({ executablePath, pipe: true, headless, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS] });
+  const child = browser.process(), pid = child && child.pid ? child.pid : -1;
+  const entry = { key, profile, ephemeral, root, pid, browser, child };
+  owned.set(pid, entry);
+  if (onLaunch) {
+    try { await onLaunch({ pid, browser }); }
+    catch (error) { await closeEntry(entry); throw error; }
   }
-  sessions.set(profile, browser);
-  browser.on('disconnected', () => sessions.delete(profile));
   return browser;
+}
+
+async function closeEntry(entry) {
+  const { browser, child } = entry;
+  try { if (browser.connected) await Promise.race([browser.close(), new Promise(resolve => setTimeout(resolve, 5000))]); } catch { /* closing */ }
+  if (child && child.exitCode === null) {
+    try { child.kill(); } catch { /* gone */ }
+    await Promise.race([new Promise(resolve => child.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5000))]);
+  }
+  owned.delete(entry.pid);
+  if (entry.ephemeral) await removeEphemeral(entry.profile, entry.root);
+}
+/** Closes every browser this process launched (lock, expiry, locked event, batch end), then deletes the ephemeral profiles. */
+export async function closeOwnedBrowsers() {
+  const closed = [];
+  for (const entry of [...owned.values()]) { await closeEntry(entry); closed.push(entry.pid); }
+  return closed;
+}
+/** Deletes one ephemeral profile directory after containment checks (direct child of profiles/ephemeral, no link). */
+export async function removeEphemeral(profile, root) {
+  assertEphemeralPath(profile, root);
+  let stat;
+  try { stat = await lstat(profile); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Refusing to remove a profile path that is a link or not a directory');
+  if (keyOf(await realpathNative(profile)) !== keyOf(profile)) throw new Error('Refusing to remove a profile path that resolves elsewhere');
+  for (let attempt = 0; ; attempt += 1) {
+    try { await rm(profile, { recursive: true, force: true }); return true; }
+    catch (error) { if (attempt >= 8) throw error; await new Promise(resolve => setTimeout(resolve, 500)); }
+  }
+}
+/** Startup crash recovery: ends leftover Chrome processes on ephemeral profiles (exact identity) and removes their folders. */
+export async function recoverEphemeral(root) {
+  const base = ephemeralRoot(root);
+  await mkdir(base, { recursive: true });
+  await assertPlainDirectory(base);
+  const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', PROBE, '-Root', base, '-Kill'], { windowsHide: true, timeout: 60000 });
+  const probe = JSON.parse(stdout.trim());
+  const removed = [], skipped = [];
+  for (const name of await readdir(base)) {
+    try { if (await removeEphemeral(path.join(base, name), root)) removed.push(name); }
+    catch { skipped.push(name); }
+  }
+  return { killed: Array.isArray(probe.killed) ? probe.killed : [], failed: Array.isArray(probe.failed) ? probe.failed : [], removed, skipped };
 }
 
 export async function amexPage(browser) {
@@ -70,16 +150,28 @@ export async function selectLatestStatement(page, primaryCard) {
   return { selected, pageCount };
 }
 
-export async function collectStatement(account, settings, directory, status, { gmail } = {}) {
-  const profile = settings.profile || path.join(directory, 'profiles', account.primaryCard);
-  const browser = await browserFor(profile), page = await amexPage(browser);
-  return collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory) });
+/**
+ * One batch's statement download in an owned, ephemeral, sandboxed Chrome: profiles/ephemeral/<owner>-amex-<account>-<batch>,
+ * deleted at closure; retained profiles are never opened. `settings` are the credentials opened inside the batch (none in
+ * the manual lane); `gmail` the mailbox grant opened inside the batch; `onLaunch` the ownership hand-over; `origin` binds
+ * the outbox manifest to the paired OMF.
+ */
+export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '' } = {}) {
+  const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);
+  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch });
+  try {
+    const page=await amexPage(browser);
+    return await collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin });
+  } finally {
+    const entry=owned.get(browser.process()?.pid);
+    if(entry)await closeEntry(entry);
+  }
 }
 
 // `ui` (optional): a login UI for ensureLogin in place of its own default loginUi(page) — the cloud probe's adapter
 // (cloud-probe/run.mjs cloudLoginUi). Undefined = the Windows collector's login, unchanged; collectStatement never passes one.
-/** @param {any} page @param {any} browser @param {any} account @param {any} settings @param {string} directory @param {any} status @param {{ mailbox?: any, claims?: any, ui?: any }} [options] */
-export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null, ui } = {}) {
+/** @param {any} page @param {any} browser @param {any} account @param {any} settings @param {string} directory @param {any} status @param {{ mailbox?: any, claims?: any, ui?: any, origin?: string }} [options] */
+export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null, ui, origin = '' } = {}) {
   await ensureLogin(page, settings, status, { account, mailbox, claims, ui });
   await status('running', 'Selecting the latest closed Amex statement');
   const { selected, pageCount } = await selectLatestStatement(page, account.primaryCard);
@@ -119,7 +211,7 @@ export async function collectFromPage(page, browser, account, settings, director
     if (parsed.rows.length !== pageCount) throw new Error('Downloaded row count does not match the Amex page');
     verifyStatement(await page.evaluate(statementSnapshot), selected, account.primaryCard);
     const { url: _url, ...coverage } = selected;
-    const manifest = { accountId: account._id, primaryCard: account.primaryCard, jobId: account.jobId, ...coverage, pageCount, sha256: parsed.sha256, filename, downloadedAt: new Date().toISOString() };
+    const manifest = { accountId: account._id, primaryCard: account.primaryCard, jobId: account.jobId, ...coverage, pageCount, sha256: parsed.sha256, filename, downloadedAt: new Date().toISOString(), ...(account.ownerId ? { ownerId: String(account.ownerId) } : {}), ...(origin ? { origin } : {}) };
     await writeFile(path.join(jobDir, 'manifest.json'), JSON.stringify(manifest, null, 2), { flag: 'wx', mode: 0o600 });
     return { directory: jobDir, manifest };
   } finally {

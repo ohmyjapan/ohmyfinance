@@ -101,11 +101,14 @@ export async function ensureYayoiLogin(page, credentials, status, { ui = yayoiUi
   await status('attention', 'Yayoi needs attention in Chrome. Check the login details or finish verification; the password was not retried.');
 }
 
-export async function openYayoi(config, directory, status, { getBrowser } = {}) {
+// Yayoi opens in its own owned, ephemeral, sandboxed Chrome — profiles/ephemeral/<owner>-yayoi-yayoi-<batch>, deleted at
+// closure (plan omf-customer-credential-security-20261009 §2 site 5): never a retained profile, never the Amex profile.
+export async function openYayoi(config, directory, status, { getBrowser = null, batch = 'manual', ownerId = 'local', onLaunch = null } = {}) {
   const credentials = yayoiCredentials(config.services?.yayoi);
-  const profile = config.services.yayoi.profile || Object.values(config.accounts || {}).find(a => a.profile)?.profile || (await import('node:path')).default.join(directory, 'profiles', 'yayoi');
+  const safe = value => String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || 'x';
+  const profile = (await import('node:path')).default.join(directory, 'profiles', 'ephemeral', `${safe(ownerId)}-yayoi-yayoi-${safe(batch)}`);
   if (!getBrowser) getBrowser = (await import('./browser.mjs')).browserFor;
-  const browser = await getBrowser(profile);
+  const browser = await getBrowser(profile, { ephemeral: true, root: directory, onLaunch });
   const pages = (await browser.pages()).filter(p => isYayoiPage(p.url()));
   if (pages.length > 1) throw new Error('Keep one Yayoi tab open before retrying');
   const page = pages[0] || await browser.newPage();

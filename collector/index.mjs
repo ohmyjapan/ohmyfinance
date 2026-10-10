@@ -1,25 +1,181 @@
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdir,readFile,writeFile,readdir } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdir,readFile,writeFile,readdir,rename } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Vault } from './vault.mjs';
-import { collectStatement } from './browser.mjs';
+import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf, keyName, sealEnvelope, openEnvelope, samePublicKey, replaceVaultFile, DIALOG_TIMEOUT_MS } from './vault.mjs';
+import { collectStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
+import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin } from './omf-authorization.mjs';
 
+// Saved bank/mail credentials open only during an authorized session. Remembered-PC access renews silently;
+// idle ticks, status and uploads do not open bank/mail credentials. Once v3 activation completes, the DPAPI blob
+// holds connection metadata and its collector token. Legacy credentials are read only by /protect after OMF approval.
 const directory=path.resolve(process.env.OMF_COLLECTOR_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(),'OhMyFinance','collector'));
-const vault=new Vault(directory), setupKey=randomBytes(32).toString('hex');
-let message='Save the login details for each account. Start a download from OMF after pairing.', running=false;
-let yayoiState={state:'idle',message:'Save your Yayoi login, then open Yayoi in Chrome.'};
-async function runYayoi() {
-  running=true;
+const vault=new Vault(directory), secrets=new SplitStore(directory), setupKey=randomBytes(32).toString('hex');
+const STATE_FILE=path.join(directory,'vault-state.json'), ACL_SCRIPT=fileURLToPath(new URL('./windows/private-acl.ps1',import.meta.url));
+const TICK_MS=Math.max(1000,Number(process.env.OMF_COLLECTOR_TICK_MS)||10000), BATCH_MS=Math.max(5000,Number(process.env.OMF_COLLECTOR_BATCH_MS)||20*60*1000);
+const execute=promisify(execFile);
+let message='Connect this PC once to let OMF download statements automatically.', running=false,activeAction=false;
+let yayoiState={state:'idle',message:'Connect this PC, save your Yayoi login, then open Yayoi in Chrome.'};
+let session=null;          // { id, broker, mode:'protected'|'manual', until, ran, browsers:Set<number>, publicKey, installationId }
+let authorization=null, closing=null;
+let keyLost=false, approvalUrl=null, reconnectNeeded=false, nextAutoAttempt=0, stopped=false, ticking=false;
+const startup={done:false,acl:null,elevated:null,chromeFound:null,capability:null,recovered:null};
+const coded=(code,text)=>Object.assign(new Error(text),{code});
+const codeOf=error=>({locked:409,legacy:409,conflict:409,forbidden:403,reparse:400}[error?.code] || 400);
+async function vaultState() { try { return JSON.parse(await readFile(STATE_FILE,'utf8')); } catch(error) { if(error.code==='ENOENT')return null; throw error; } }
+async function writeState(state) { await replaceVaultFile(STATE_FILE,JSON.stringify(state,null,2)); }
+async function legacyBlobPresent() { return readFile(vault.file).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error;}); }
+// Connection metadata can include the polling token, but never saved bank/mail credentials after activation.
+async function metadata() {
+  const state=await vaultState();
+  if(state?.v===3 && state.phase==='active')return vault.read();
+  const connection=await secrets.connection();
+  if(connection)return connection;
+  if(state?.v===2)return vault.read(); // old v2 metadata; legacy sealed entries remain unreadable here
+  if(await legacyBlobPresent())throw coded('legacy','Connect to OMF to authorize migration of your saved logins.');
+  return {accounts:{}};
+}
+const activated=(state,config)=>!!(state?.v===3 && state.phase==='active' && !state.resetPending && config?.protection?.activatedAt);
+const capabilityOf=()=>true;
+async function updateMetadata(updater) {
+  return secrets.withLock(async()=>{
+    const state=await vaultState();
+    if(state?.v===3&&state.phase==='active')return vault.update(updater);
+    return secrets.connection(await updater(await secrets.connection()||{accounts:{}}));
+  });
+}
+
+function aadFor(installationId,provider,account,config) {
+  if(provider==='amex') return aadOf({installationId,origin:config.baseUrl,ownerId:account.ownerId,provider,accountId:account._id});
+  // Service credentials and the canary bind to the single owner of the current pairing.
+  let origin='',ownerId=`local:${installationId}`;
+  if(config?.token || config?.baseUrl) {
+    origin=validateOrigin(config.baseUrl);
+    if(!/^omfc_[a-f\d]{64}$/.test(config.token))throw coded('conflict','Reconnect OMF before saving or opening this login');
+    const owners=[...new Set((config.accountInfo||[]).map(a=>String(a.ownerId||'')))];
+    if(owners.some(id=>!/^[a-f\d]{24}$/.test(id)) || owners.length>1)throw coded('conflict','OMF returned inconsistent account ownership; reconnect before using saved logins');
+    // An empty account list has no owner identity. Bind to this exact token until one is known.
+    ownerId=owners[0] || `pairing:${digest(config.token)}`;
+  }
+  return aadOf({installationId,origin,ownerId,provider,accountId:account?._id||provider});
+}
+async function boundSecret(id,installationId,provider,account,config) {
+  if(!(await secrets.has(id)))return false;
+  try{return JSON.stringify(entryBinding(await secrets.read(id)))===JSON.stringify(aadFor(installationId,provider,account,config));}catch{return false;}
+}
+async function privateAcl({verifyOnly=false}={}) {
+  const {stdout}=await execute('powershell.exe',['-NoProfile','-NonInteractive','-File',ACL_SCRIPT,'-Root',directory,...(verifyOnly?['-VerifyOnly']:[])],{windowsHide:true,timeout:60000});
+  return JSON.parse(stdout.trim());
+}
+async function probeCapability() { return {ok:true,provider:'CurrentUser DPAPI plus OMF key custody'}; }
+const liveSession=()=>session && !session.closing && Date.now()<session.until ? session : null;
+function assertSession(live) { if(!live || liveSession()!==live)throw coded('forbidden','The connection has ended. Reconnect this PC.'); }
+async function authorize(change) {
+  if(authorization || closing || session)throw coded('conflict','Pause syncing or wait for the current connection request to finish.');
+  let finish=()=>{};
+  const pending={cancelled:false,broker:null,abort:new AbortController(),done:new Promise(resolve=>{finish=()=>resolve(undefined);})};
+  authorization=pending; // Reserve before the first await: concurrent requests cannot create a second broker.
+  try { return await change(pending); }
+  finally { if(authorization===pending)authorization=null;finish(); }
+}
+function assertAuthorization(pending) { if(pending.cancelled)throw coded('conflict','Authorization was cancelled; nothing was unlocked'); }
+async function omfApproval(pending,config,context) {
+  assertAuthorization(pending);
+  const result=await approveWithOmf(config,context,{signal:pending.abort.signal,onLink:link=>{approvalUrl=link;}});
+  assertAuthorization(pending);return result;
+}
+async function ownerBroker(pending,config,state,localKey,action='batch',interactive=true) {
+  let broker;
+  try{broker=await startBroker('owner',{onEvent:brokerEvent});}catch(error){localKey?.close();throw error;}
+  pending.broker=broker;
+  const end=broker.end.bind(broker);let ended=false;
+  broker.end=async()=>{if(ended)return;ended=true;if(pending.broker===broker)pending.broker=null;localKey?.close();const remote=broker.remote;const revoke=remote?.end().catch(()=>{});try{await end();}finally{await revoke;}};
+  try {
+    const desktop=await broker.request('available',{},10000);
+    if(!desktop.ok||!desktop.available)throw coded('desktop','Syncing will resume after Windows is unlocked.');
+    const loadTrust=()=>secrets.trustCredential(state.generation,{create:interactive});
+    const trustToken=secrets.lease?await loadTrust():await secrets.withLock(loadTrust);
+    const context={action,installationId:state.installationId,generation:state.generation,publicKey:localKey?.publicKey||state.publicKey,trustHash:digest(trustToken),...(state.previousGeneration?{previousGeneration:state.previousGeneration}:{})};
+    const renew=()=>resumeWithOmf(config,context,trustToken,{signal:pending.abort.signal});
+    let approval;
+    if(action==='batch'||action==='pair'||(action==='reset'&&state.previousGeneration===state.generation)){
+      try{approval=await renew();}catch(error){if(!interactive||![401,403].includes(error.status))throw error;}
+    }
+    if(!approval)approval=await omfApproval(pending,config,context);
+    broker.generation=state.generation;broker.localKey=localKey;
+    if(approval.grant)broker.remote=keyService(config,approval,pending.abort.signal,{renew});
+    return broker;
+  }catch(error){await broker.end();throw error;}
+}
+
+async function endSession(reason) {
+  if(closing)return closing;
+  const current=session, pending=authorization;
+  if(!current && !pending)return;
+  if(current){current.closing=true;current.abort.abort();}
+  if(pending){pending.cancelled=true;pending.abort.abort();}
+  closing=(async()=>{
+    if(pending){await pending.broker?.end().catch(()=>{});await pending.done;}
+    try { await closeOwnedBrowsers(); } catch { /* the broker's job object ends what a close could not */ }
+    if(current)await current.broker.end();
+    if(session===current)session=null;
+    message=`Locked (${reason}).`;
+  })();
+  try { await closing; } finally { closing=null; }
+}
+function brokerEvent(event) {
+  if(['locked','closed'].includes(event.event) && (session?.broker===event.broker || authorization?.broker===event.broker))void endSession(event.event==='locked'?'Windows locked, signed out or sleeping':'the key broker ended').catch(()=>{message='Could not finish locking; restart the collector.';});
+}
+async function startSession(mode,{interactive=true}={}) {
+  return authorize(async pending=>{
+  if(session) throw coded('conflict','A batch is already unlocked');
+  if(running) throw coded('conflict','Wait for the current collector action to finish');
+  if(!startup.done) throw coded('conflict','Startup checks have not finished yet');
+  if(startup.elevated) throw coded('conflict','Run the collector without administrator rights before unlocking');
+  const acl=await privateAcl({verifyOnly:true}); startup.acl=acl; startup.elevated=acl.elevated;
+  if(!acl.verified) throw coded(acl.code==='reparse'?'reparse':'conflict','Private directory permissions are not verified; nothing is unlocked');
+  const state=await vaultState(), config=await metadata();
+  if(state?.resetPending)throw coded('conflict','Finish the interrupted reset through OMF first.');
+    if(config.paused)throw coded('conflict','Resume the collector first');
+  if(mode==='protected') {
+    if(!activated(state,config))throw coded('conflict','Connect to OMF and enable protection first');
+    let localKey;
+    try{localKey=await secrets.deviceKey(state.generation);}catch(error){keyLost=true;throw error;}
+    if(localKey.publicKey!==state.publicKey){localKey.close();keyLost=true;throw coded('conflict','The local key does not match this installation. Reset protection to reconnect.');}
+    const broker=await ownerBroker(pending,config,state,localKey,'batch',interactive);
+    try{
+      await secrets.open('check',aadFor(state.installationId,'check',null,config),broker);
+      assertAuthorization(pending);keyLost=false;
+      session={id:randomBytes(8).toString('hex'),broker,mode,until:broker.remote.until,ran:false,browsers:new Set(),publicKey:localKey.publicKey,installationId:state.installationId,abort:pending.abort};
+      reconnectNeeded=false;
+    }catch(error){if(error.status===404)keyLost=true;await broker.end();throw error;}
+
+  } else {
+    if(config.mode!=='manual') throw coded('conflict','Switch to manual sign-in mode first');
+    const broker=await startBroker('owner',{onEvent:brokerEvent});pending.broker=broker;
+    try {assertAuthorization(pending);}catch(error){await broker.end();throw error;}
+    session={id:randomBytes(8).toString('hex'),broker,mode,until:Date.now()+BATCH_MS,ran:false,browsers:new Set(),publicKey:null,installationId:state?.installationId||null,abort:new AbortController()};
+  }
+  message=mode==='protected' ? 'Connected. Statements will sync automatically while this PC is available.' : 'Manual batch started; sign in to the bank in the collector window.';
+  return session;
+  });
+}
+const ownBrowser=live=>async({pid})=>{ assertSession(live);live.browsers.add(pid);const reply=await live.broker.request('own',{pid},30000);assertSession(live);if(!reply.ok)throw new Error('The batch could not take ownership of the browser'); };
+function requireProtectedSession() { const live=liveSession();if(!live || live.mode!=='protected') throw coded('forbidden','Connect this PC before saving a login.'); return live; }
+const writeSecret=(live,id,aad,value)=>secrets.withLock(()=>{assertSession(live);return secrets.save(id,aad,value,live.broker);});
+async function runYayoi(credentials,live) {
+  running=true;activeAction=true;
   const status=async(state,message)=>{yayoiState={state,message};};
   await status('running','Opening Yayoi in real Chrome.');
-  try { await openYayoi(await vault.read(),directory,status); }
+  try { assertSession(live);await openYayoi({services:{yayoi:credentials}},directory,status,{batch:live.id,ownerId:'local',onLaunch:ownBrowser(live)}); }
   catch { await status('attention','Yayoi could not finish signing in. Check that one Yayoi tab is open, then retry from this screen.'); }
-  finally {running=false;}
+  finally {running=false;activeAction=false;}
 }
 export function validateOrigin(value) {
   const u=new URL(value);
@@ -27,49 +183,190 @@ export function validateOrigin(value) {
   if(u.protocol==='http:' && !['localhost','127.0.0.1'].includes(u.hostname) && !/^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/.test(u.hostname))throw new Error('Use HTTPS or the private Tailscale address');
   return u.origin;
 }
-async function api(config,route,body,query) {
+async function api(config,route,body,query,live) {
+  if(live)assertSession(live);
   const url=new URL('/api/finance/collector/'+route,config.baseUrl);if(query)url.search=new URLSearchParams(query).toString();
   const csv=Buffer.isBuffer(body);
-  const response=await fetch(url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':csv?'text/csv':'application/json'},...(body===undefined?{}:{body:csv?body:JSON.stringify(body)}),redirect:'error',signal:AbortSignal.timeout(30000)});
-  const data=await response.json();if(!response.ok)throw new Error(data.statusMessage || 'OMF connection failed');return data;
+  const response=await fetch(url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':csv?'text/csv':'application/json'},...(body===undefined?{}:{body:csv?body:JSON.stringify(body)}),redirect:'error',signal:live?AbortSignal.any([live.abort.signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)});
+  const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.statusMessage || 'OMF connection failed'),{status:response.status});return data;
 }
-async function pending(account) {
+// Pending files are bound to the owner and OMF origin that produced them; a re-pair cannot redirect another pairing's outbox.
+async function pending(account,config) {
   const root=path.join(directory,'outbox',account._id);let folders=[];try{folders=await readdir(root,{withFileTypes:true});}catch(e){if(e.code!=='ENOENT')throw e;}
   const result=[];
-  for(const folder of folders.filter(f=>f.isDirectory())){const dir=path.join(root,folder.name);try{const m=JSON.parse(await readFile(path.join(dir,'manifest.json'),'utf8'));if(!m.acknowledgedAt && m.accountId===account._id && m.primaryCard===account.primaryCard)result.push({directory:dir,manifest:m});}catch(e){if(e.code!=='ENOENT')throw e;}}
+  for(const folder of folders.filter(f=>f.isDirectory())){const dir=path.join(root,folder.name);try{const m=JSON.parse(await readFile(path.join(dir,'manifest.json'),'utf8'));if(!m.acknowledgedAt && m.accountId===account._id && m.primaryCard===account.primaryCard && m.ownerId===String(account.ownerId) && m.origin===config.baseUrl)result.push({directory:dir,manifest:m});}catch(e){if(e.code!=='ENOENT')throw e;}}
   return result;
 }
-async function upload(config,account,item) {
+async function upload(config,account,item,live) {
   const m=item.manifest;
   if(!/^[a-f\d-]{36}$/.test(m.filename))throw new Error('Invalid outbox filename');
   const bytes=await readFile(path.join(item.directory,m.filename));if(digest(bytes)!==m.sha256)throw new Error('Outbox file integrity check failed');
-  const result=await api(config,'upload',bytes,{accountId:account._id,jobId:account.jobId,kind:m.kind,start:m.start,end:m.end,pageCount:String(m.pageCount)});
+  const result=await api(config,'upload',bytes,{accountId:account._id,jobId:account.jobId,kind:m.kind,start:m.start,end:m.end,pageCount:String(m.pageCount)},live);
   await writeFile(path.join(item.directory,'manifest.json'),JSON.stringify({...m,acknowledgedAt:new Date().toISOString(),importId:result.id},null,2),{mode:0o600});return result;
 }
 async function tick() {
-  if(running)return;running=true;let config,account,heartbeat;
-  try {
-    config=await vault.read();if(!config.token || !config.baseUrl)return;
-    ({account}=await api(config,'claim',{}));if(!account)return;
-    let currentState='running',currentMessage='Connecting to Amex',heartbeatFailure;
-    const status=async(state,text)=>{if(heartbeatFailure)throw heartbeatFailure;currentState=state;currentMessage=text;message=`${account.name}: ${text}`;await api(config,'status',{accountId:account._id,jobId:account.jobId,state,message:text});};
-    heartbeat=setInterval(()=>{api(config,'status',{accountId:account._id,jobId:account.jobId,state:currentState,message:currentMessage}).catch(e=>{heartbeatFailure=e;});},45000);
-    const queued=await pending(account);
-    for(const item of queued) {await status('running','Sending a previously downloaded statement');await upload(config,account,item);}
-    if(!queued.length) {
-      const settings=config.accounts?.[account.primaryCard] || {};
-      const item=await collectStatement(account,settings,directory,status,{gmail:config.gmail});await status('running','Sending the downloaded statement to OMF');await upload(config,account,item);
+  if(ticking||stopped)return;ticking=true;
+  try{await tickWork();}catch(error){message=error.message||'Syncing will retry when OMF is available.';}finally{ticking=false;}
+}
+async function tickWork() {
+  if(!session&&!authorization&&!closing&&!running&&!reconnectNeeded&&Date.now()>=nextAutoAttempt){
+    nextAutoAttempt=Date.now()+30000;
+    const state=await vaultState(),config=await metadata();
+    if(activated(state,config)&&!config.paused&&config.mode==='protected'){
+      try{await startSession('protected',{interactive:false});}
+      catch(error){reconnectNeeded=[401,403].includes(error.status)||error.code==='reconnect'||keyLost;message=error.message;return;}
     }
+  }
+  if(session?.mode==='protected'&&!closing){
+    const live=session;
+    try{await live.broker.remote.refresh();if(session===live)live.until=live.broker.remote.until;}
+    catch(error){reconnectNeeded=[401,403].includes(error.status);await endSession('OMF access is unavailable');message=reconnectNeeded?'Reconnect this PC through OMF to continue automatic syncing.':'OMF is unavailable. Syncing will retry automatically.';return;}
+  }
+  // Expiry ends the batch first, even while a job is still running: its browser closes and the job fails closed.
+  if(session && Date.now()>session.until){await endSession('the batch expired');return;}
+  if(running)return;
+  const live=liveSession();if(!live)return;   // locked: no claim, no status post, no secret
+  running=true;let config,account,heartbeat;
+  try {
+    config=await metadata();if(config.paused || !config.token || !config.baseUrl)return;
+    ({account}=await api(config,'claim',{},undefined,live));
+    assertSession(live);
+    if(!account){ if(live.ran&&live.mode==='manual'){running=false;await endSession('batch complete');} return; }
+    activeAction=true;
+    let currentState='running',currentMessage='Connecting to Amex',heartbeatFailure;
+    const status=async(state,text)=>{assertSession(live);if(heartbeatFailure)throw heartbeatFailure;currentState=state;currentMessage=text;message=`${account.name}: ${text}`;await api(config,'status',{accountId:account._id,jobId:account.jobId,state,message:text},undefined,live);};
+    heartbeat=setInterval(()=>{api(config,'status',{accountId:account._id,jobId:account.jobId,state:currentState,message:currentMessage},undefined,live).catch(e=>{heartbeatFailure=e;});},45000);
+    const queued=await pending(account,config);
+    for(const item of queued) {await status('running','Sending a previously downloaded statement');await upload(config,account,item,live);}
+    if(!queued.length) {
+      let credentials={},gmail=null;
+      assertSession(live);
+      if(live.mode==='protected') {
+        // Secrets are opened only here, inside the authorized batch, for the claimed account only.
+        if(await secrets.has('amex-'+account._id))credentials=await secrets.open('amex-'+account._id,aadFor(live.installationId,'amex',account,config),live.broker);
+        if(await secrets.has('gmail'))gmail=await secrets.open('gmail',aadFor(live.installationId,'gmail',null,config),live.broker);
+      }
+      assertSession(live);
+      const item=await collectStatement(account,credentials,directory,status,{gmail,batch:live.id,onLaunch:ownBrowser(live),origin:config.baseUrl});credentials=null;gmail=null;await status('running','Sending the downloaded statement to OMF');await upload(config,account,item,live);
+    }
+    assertSession(live);live.ran=true;
     clearInterval(heartbeat);await status('complete','Statement saved in OMF for review');
   } catch(error) {
     // Do not log browser errors, URLs, mail bodies, credentials, or response objects.
-    message=account ? `${account.name}: ${error.message}` : 'OMF connection unavailable. Check the saved address and collector token.';
-    if(account && config)await api(config,'status',{accountId:account._id,jobId:account.jobId,state:'failed',message:'Open the collector setup screen on Ryzen 7 for details'}).catch(()=>{});
-  } finally {clearInterval(heartbeat);running=false;}
+    if([401,403].includes(error.status)){reconnectNeeded=true;await endSession('PC disconnected or account access changed');message='Reconnect this PC through OMF to continue automatic syncing.';return;}
+    message=account ? `${account.name}: ${error.message}` : (error.code==='legacy' ? error.message : 'OMF connection unavailable. Check the saved address and collector token.');
+    if(account && config)await api(config,'status',{accountId:account._id,jobId:account.jobId,state:'failed',message:'Open the collector setup screen on Ryzen 7 for details'},undefined,live).catch(()=>{});
+  } finally {clearInterval(heartbeat);running=false;activeAction=false;}
 }
+// Each legacy entry is saved and reopened through OMF before rewriting the old DPAPI blob without bank/mail
+// credentials. The v3 active marker finishes migration; /protect can resume either interrupted boundary.
+function withoutSecrets(blob,protection,info) {
+  const accounts={};
+  for(const [card,entry] of Object.entries(blob.accounts||{}))accounts[card]=entry&&entry.profile?{profile:entry.profile}:{};
+  const services={};
+  for(const [name,value] of Object.entries(blob.services||{}))services[name]=value?.profile?{profile:value.profile}:{};
+  const {gmail:_gmail,...rest}=blob;
+  return {...rest,accounts,services,...(info?{accountInfo:info}:{}),protection};
+}
+async function planEntries(blob,installationId) {
+  const entries=[],unmatched=[];
+  let info=Array.isArray(blob.accountInfo)?blob.accountInfo:[];
+  const legacyAccounts=Object.entries(blob.accounts||{}).filter(([,value])=>value&&(value.username||value.password));
+  if(blob.token && blob.baseUrl) {
+    const {accounts}=await api(blob,'accounts');
+    info=accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId)}));
+  }
+  for(const [card,entry] of legacyAccounts) {
+    const match=info.find(a=>a.primaryCard===card && a._id);
+    if(!match){unmatched.push(card);continue;}
+    const {profile:_profile,...secret}=entry;
+    entries.push({id:'amex-'+match._id,aad:aadOf({installationId,origin:blob.baseUrl,ownerId:match.ownerId,provider:'amex',accountId:match._id}),secret});
+  }
+  const binding={...blob,accountInfo:info};
+  for(const name of ['aplus','yayoi']){const value=blob.services?.[name];if(value&&(value.username||value.password)){const {profile:_profile,...secret}=value;entries.push({id:name,aad:aadFor(installationId,name,null,binding),secret});}}
+  if(blob.gmail)entries.push({id:'gmail',aad:aadFor(installationId,'gmail',null,binding),secret:blob.gmail});
+  entries.push({id:'check',aad:aadFor(installationId,'check',null,binding),secret:{canary:randomBytes(16).toString('hex')}});
+  const legacyId='legacy-'+Date.now();
+  entries.push({id:legacyId,aad:aadFor(installationId,'legacy',{_id:legacyId},binding),secret:blob});
+  return {entries,unmatched,info:info.length?info:null,legacyId};
+}
+async function bindLegacyOutbox(blob,info) {
+  if(!blob.baseUrl || !blob.token)return;
+  const origin=validateOrigin(blob.baseUrl);
+  for(const account of info||[]) {
+    if(!/^[a-f\d]{24}$/.test(account._id) || !/^[a-f\d]{24}$/.test(account.ownerId))continue;
+    const root=path.join(directory,'outbox',account._id);
+    let folders=[];try{folders=await readdir(root,{withFileTypes:true});}catch(error){if(error.code!=='ENOENT')throw error;}
+    for(const folder of folders.filter(f=>f.isDirectory())) {
+      const file=path.join(root,folder.name,'manifest.json');let manifest;
+      try{manifest=JSON.parse(await readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT')continue;throw error;}
+      if(manifest.acknowledgedAt || manifest.accountId!==account._id || manifest.primaryCard!==account.primaryCard)continue;
+      if((manifest.ownerId!==undefined && manifest.ownerId!==account.ownerId) || (manifest.origin!==undefined && manifest.origin!==origin))continue;
+      if(manifest.ownerId===account.ownerId && manifest.origin===origin)continue;
+      // Only the original verified pairing can supply missing provenance, before activation permits re-pair.
+      const temporary=file+'.binding-new';
+      await writeFile(temporary,JSON.stringify({...manifest,ownerId:account.ownerId,origin},null,2),{mode:0o600});
+      await rename(temporary,file);
+    }
+  }
+}
+async function protect() {
+  return authorize(async pending=>secrets.withLock(async()=>{
+    if(running||startup.elevated)throw coded('conflict','Stop the current action and run the collector without administrator rights.');
+    const acl=await privateAcl({verifyOnly:true});if(!acl.verified)throw coded('conflict','Private directory permissions must be verified before enabling protection.');
+    let state=await vaultState();const config=await metadata();
+    if(state?.resetPending)throw coded('conflict','Finish the interrupted reset before enabling protection.');
+    if(activated(state,config))throw coded('conflict','Protection is already enabled. Use Connect / reconnect.');
+    if(config.paused)throw coded('conflict','Resume the collector before enabling protection.');
+    secureOrigin(config.baseUrl);
+    if(state?.v===2&&state.installationId&&(await secrets.list()).length){keyLost=true;throw coded('conflict','This installation uses the older device-key format. Reset protection and reconnect the bank logins.');}
+    state=state?.v===3&&state.phase==='enrolling'?state:{v:3,phase:'enrolling',installationId:randomBytes(16).toString('hex'),generation:randomBytes(32).toString('hex'),legacyId:'legacy-'+Date.now()};
+    const localKey=await secrets.deviceKey(state.generation,{create:true});state.publicKey=localKey.publicKey;
+    await secrets.connection(config);await writeState(state);
+    let broker;
+    try {
+      const remote=await securityCall(config,'installations/'+state.installationId,{signal:pending.abort.signal});
+      if(remote.installation&&(remote.installation.generation!==state.generation||remote.installation.publicKey!==state.publicKey||!remote.installation.paired))throw coded('conflict','OMF has a different installation generation. Reconnect this collector.');
+      broker=await ownerBroker(pending,config,state,localKey,remote.installation?'batch':'enroll');
+      assertAuthorization(pending);
+      const blob=await vault.read(); // only after OMF authorizes this remembered PC or its initial approval
+      const hasLegacy=(Object.values(blob.accounts||{}).some(value=>value?.username||value?.password)||Object.values(blob.services||{}).some(value=>value?.username||value?.password)||!!blob.gmail);
+      if(hasLegacy&&blob.baseUrl&&validateOrigin(blob.baseUrl)!==config.baseUrl)throw coded('conflict','Saved logins belong to another OMF address. Reconnect those logins instead of transferring them automatically.');
+      if(hasLegacy&&blob.token){
+        const previous=(await api(blob,'accounts')).accounts;
+        const owners=new Set(previous.map(account=>String(account.ownerId)));
+        if(owners.size!==1||!owners.has(String(config.accountInfo?.[0]?.ownerId)))throw coded('conflict','Saved logins belong to another OMF owner.');
+      }
+      const plan=await planEntries({...blob,...config,accounts:blob.accounts,services:blob.services,gmail:blob.gmail},state.installationId);
+      const archived=plan.entries.find(entry=>entry.id===plan.legacyId);archived.id=state.legacyId;archived.aad=aadFor(state.installationId,'legacy',{_id:state.legacyId},config);
+      for(const entry of plan.entries){
+        assertAuthorization(pending);
+        if(!await secrets.has(entry.id))await secrets.save(entry.id,entry.aad,entry.secret,broker);
+        const restored=await secrets.open(entry.id,entry.aad,broker);
+        if(!['check',state.legacyId].includes(entry.id)&&JSON.stringify(restored)!==JSON.stringify(entry.secret))throw coded('conflict','Migration verification failed; the original data remains available.');
+      }
+      for(const id of await secrets.list()){const entry=await secrets.read(id);await secrets.open(id,entryBinding(entry),broker);}
+      const protection={installationId:state.installationId,generation:state.generation,keyProvider:'CurrentUser DPAPI + OMF',publicKey:state.publicKey,activatedAt:new Date().toISOString()};
+      await bindLegacyOutbox(blob,plan.info);assertAuthorization(pending);
+      await vault.update(()=>withoutSecrets({...blob,...config,accounts:blob.accounts,services:blob.services,mode:'protected'},protection,plan.info));
+      await writeState({...state,phase:'active',activatedAt:protection.activatedAt});
+      keyLost=false;
+      session={id:randomBytes(8).toString('hex'),broker,mode:'protected',until:broker.remote.until,ran:false,browsers:new Set(),publicKey:state.publicKey,installationId:state.installationId,abort:pending.abort};
+      reconnectNeeded=false;message='PC connected. Save your bank logins here; future syncing will resume automatically.';
+      return {protected:true,unlocked:true,unmatched:plan.unmatched};
+    }catch(error){if(broker)await broker.end();else localKey.close();throw error;}
+  }));
+}
+
 async function json(req) {let text='';for await(const data of req){text+=data;if(Buffer.byteLength(text)>20000)throw new Error('Request too large');}try{return JSON.parse(text);}catch{throw new Error('Invalid setup request');}}
+const field=(value,max=512)=>typeof value==='string'&&value.length>0&&value.length<=max;
 export async function startCollector() {
   await mkdir(directory,{recursive:true});
+  // Establish private permissions before creating the bearer setup capability or accepting requests.
+  startup.acl=await privateAcl().catch(error=>({protected:false,verified:false,elevated:null,error:error.message}));
+  startup.elevated=startup.acl.elevated ?? null;
+  if(!startup.acl.verified)throw new Error('Private collector permissions could not be established; no setup capability was created');
+  keyLost=!!(await vaultState())?.resetPending || ((await vaultState())?.v===2 && !!(await vaultState())?.installationId);
   const port=Number(process.env.OMF_COLLECTOR_PORT || 47831);if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid setup port');
   const origin=`http://127.0.0.1:${port}`;
   const server=http.createServer(async(req,res)=>{
@@ -79,43 +376,139 @@ export async function startCollector() {
       if(req.headers.host!==`127.0.0.1:${port}` || (req.headers.origin && req.headers.origin!==origin))return reply(403,{error:'Local setup access required'});
       if(req.method==='GET' && ['/','/setup.js'].includes(req.url)) {res.setHeader('Content-Type',req.url==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');res.end(await readFile(fileURLToPath(new URL(req.url==='/'?'./setup.html':'./setup.js',import.meta.url))));return;}
       if(req.headers['x-setup-key']!==setupKey)return reply(403,{error:'Reopen the setup screen from the collector launch link'});
-      if(req.method==='GET' && req.url==='/status') {const config=await vault.read();let info=config.accountInfo || [];if(config.token)try{info=(await api(config,'accounts')).accounts;}catch{}return reply(200,{message,baseUrl:config.baseUrl,busy:running,aplus:{hasCredentials:!!config.services?.aplus?.password},yayoi:{...yayoiState,hasCredentials:!!config.services?.yayoi?.password},accounts:info.map(a=>({id:a.primaryCard,name:a.name,hasCredentials:!!config.accounts?.[a.primaryCard]?.password}))});}
-      if(req.method==='POST' && req.url==='/pair') {const body=await json(req);if(!/^omfc_[a-f\d]{64}$/.test(body.token))throw new Error('Invalid collector token');const config={baseUrl:validateOrigin(body.baseUrl),token:body.token};const {accounts}=await api(config,'accounts');await vault.update(old=>({...old,...config,accountInfo:accounts.map(a=>({primaryCard:a.primaryCard,name:a.name}))}));return reply(200,{saved:true});}
-      if(req.method==='POST' && req.url==='/credentials') {const body=await json(req);if(!/^\d{5}$/.test(body.accountId)||![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256))throw new Error('Enter both Amex user ID and password');await vault.update(old=>{if(!old.accountInfo?.some(a=>a.primaryCard===body.accountId))throw new Error('Unknown account');return {...old,accounts:{...old.accounts,[body.accountId]:{...old.accounts?.[body.accountId],username:body.username,password:body.password}}};});return reply(200,{saved:true});}
-      if(req.method==='GET' && req.url==='/aplus/status') {const config=await vault.read();return reply(200,{busy:running,aplus:{hasCredentials:!!config.services?.aplus?.password}});}
-      if(req.method==='POST' && req.url==='/aplus/credentials') {
-        if(running)return reply(409,{error:'Wait for the current collector action to finish'});
-        const body=await json(req);
-        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['username','password'].includes(k)) || ![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256) || !body.username.trim())throw new Error('Enter both Aplus ID and password');
-        await vault.update(old=>{
-          if(running)throw new Error('Wait for the current collector action to finish');
-          return {...old,services:{...old.services,aplus:{...old.services?.aplus,username:body.username.trim(),password:body.password}}};
-        });
+      if(req.method==='GET' && req.url==='/status') {
+        // No secret is read here: entry presence comes from file names, metadata from the secret-free blob.
+        const state=await vaultState();let config,legacy=false;
+        try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;legacy=true;config={accounts:{}};}
+        let info=config.accountInfo || [],due=false;if(config.token)try{info=(await api(config,'accounts')).accounts;due=info.some(a=>a.jobState==='queued');}catch{}
+        const [aplus,yayoi,gmail]=await Promise.all(['aplus','yayoi','gmail'].map(id=>boundSecret(id,state?.installationId,id,null,config)));
+        const accounts=await Promise.all(info.map(async a=>({id:a.primaryCard,accountId:String(a._id||''),name:a.name,hasCredentials:await boundSecret('amex-'+String(a._id),state?.installationId,'amex',a,config)})));
+        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl,busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},accounts});
+      }
+      if(req.method==='POST' && req.url==='/pair') {
+        const body=await json(req);if(!/^omfc_[a-f\d]{64}$/.test(body.token))throw new Error('Invalid collector token');
+        if(session)throw coded('conflict','Lock the current batch before changing the connection.');
+        const config={baseUrl:secureOrigin(body.baseUrl),token:body.token,accountInfo:[]};const {accounts}=await api(config,'accounts');
+        config.accountInfo=accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId)}));
+        aadFor(null,'gmail',null,config);
+        await authorize(async pending=>secrets.withLock(async()=>{
+          const state=await vaultState();const current=await metadata().catch(error=>{if(error.code==='legacy')return null;throw error;});
+          if(state?.v===3&&state.installationId){
+            if(state.resetPending)throw coded('conflict','Finish the interrupted reset before changing the connection.');
+            if(current?.baseUrl!==config.baseUrl||String(current?.accountInfo?.[0]?.ownerId)!==String(config.accountInfo?.[0]?.ownerId))throw coded('conflict','Saved logins cannot move to another OMF owner or address. Use a separate collector setup and reconnect those logins.');
+            const remote=await securityCall(config,'installations/'+state.installationId,{signal:pending.abort.signal});
+            if(remote.installation){const broker=await ownerBroker(pending,config,state,null,'pair');await broker.end();assertAuthorization(pending);}
+            if(state.phase==='active')await vault.update(old=>({...old,...config}));
+          }
+          await secrets.connection(config);
+          if(!state)await writeState({v:3,phase:'pending'});
+        }));
+
         return reply(200,{saved:true});
       }
-      if(req.method==='GET' && req.url==='/yayoi/status') {const config=await vault.read();return reply(200,{busy:running,yayoi:{...yayoiState,hasCredentials:!!config.services?.yayoi?.password}});}
+      if(req.method==='POST' && req.url==='/credentials') {
+        const body=await json(req);if(!/^[a-f\d]{24}$/.test(String(body.accountId))||![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256))throw new Error('Enter both Amex user ID and password');
+        const live=requireProtectedSession();const config=await metadata();const info=(config.accountInfo||[]).find(a=>a._id===body.accountId);if(!info)throw new Error('Unknown account');
+        await writeSecret(live,'amex-'+info._id,aadOf({installationId:live.installationId,origin:config.baseUrl,ownerId:info.ownerId,provider:'amex',accountId:info._id}),{username:body.username,password:body.password});
+        return reply(200,{saved:true});
+      }
+      if(req.method==='GET' && req.url==='/aplus/status') {const state=await vaultState();let config;try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;config={};}return reply(200,{busy:running,unlocked:!!session,aplus:{hasCredentials:await boundSecret('aplus',state?.installationId,'aplus',null,config)}});}
+      if(req.method==='POST' && req.url==='/aplus/credentials') {
+        const body=await json(req);
+        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['username','password'].includes(k)) || ![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256) || !body.username.trim())throw new Error('Enter both Aplus ID and password');
+        const live=requireProtectedSession();
+        if(activeAction)return reply(409,{error:'Wait for the current collector action to finish'});
+        await writeSecret(live,'aplus',aadFor(live.installationId,'aplus',null,await metadata()),{username:body.username.trim(),password:body.password});
+        return reply(200,{saved:true});
+      }
+      if(req.method==='GET' && req.url==='/yayoi/status') {const state=await vaultState();let config;try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;config={};}return reply(200,{busy:running,unlocked:!!session,yayoi:{...yayoiState,hasCredentials:await boundSecret('yayoi',state?.installationId,'yayoi',null,config)}});}
       if(req.method==='POST' && req.url==='/yayoi/credentials') {
-        if(running)return reply(409,{error:'Wait for the current collector action to finish'});
         const credentials=yayoiCredentials(await json(req));
-        await vault.update(old=>({...old,services:{...old.services,yayoi:{...old.services?.yayoi,...credentials}}}));
-        yayoiState={state:'idle',message:'Yayoi login saved encrypted. Open Yayoi when ready.'};
+        const live=requireProtectedSession();
+        if(activeAction)return reply(409,{error:'Wait for the current collector action to finish'});
+        await writeSecret(live,'yayoi',aadFor(live.installationId,'yayoi',null,await metadata()),credentials);
+        yayoiState={state:'idle',message:'Yayoi login sealed. Open Yayoi when ready.'};
+        return reply(200,{saved:true});
+      }
+      if(req.method==='POST' && req.url==='/mailbox') {
+        const body=await json(req);
+        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['clientId','clientSecret','refreshToken','mailbox'].includes(k)) || !['clientId','clientSecret','refreshToken','mailbox'].every(k=>field(body[k])) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.mailbox))throw new Error('Enter the Gmail client ID, client secret, refresh token and mailbox address');
+        const live=requireProtectedSession();
+        await writeSecret(live,'gmail',aadFor(live.installationId,'gmail',null,await metadata()),{clientId:body.clientId,clientSecret:body.clientSecret,refreshToken:body.refreshToken,mailbox:body.mailbox.trim().toLowerCase()});
         return reply(200,{saved:true});
       }
       if(req.method==='POST' && req.url==='/yayoi/open') {
-        if(running)return reply(409,{error:'Wait for the current collector action to finish'});
-        const config=await vault.read();
-        if(!config.services?.yayoi?.password)return reply(400,{error:'Save your Yayoi login first'});
+        const live=liveSession();if(!live)return reply(409,{error:'Unlock one batch first'});
+        if(live.mode!=='protected')return reply(400,{error:'Yayoi needs a sealed login; manual mode has none'});
+        if(!(await secrets.has('yayoi')))return reply(400,{error:'Save your Yayoi login first'});
+        let credentials;
+        try { credentials=await secrets.open('yayoi',aadFor(live.installationId,'yayoi',null,await metadata()),live.broker);assertSession(live); }
+        catch { return reply(400,{error:'The saved Yayoi login cannot be opened for this OMF connection. Save it again after unlocking.'}); }
         if(running)return reply(409,{error:'Wait for the current collector action to finish'});
         // No credentials or arbitrary target URL can be supplied to the browser action.
-        void runYayoi();
+        void runYayoi(credentials,live);
         return reply(202,{started:true});
       }
+      if(req.method==='POST' && req.url==='/protect') { try { return reply(200,await protect()); } catch(error) { return reply(codeOf(error),{error:error.message,...(error.capability===false?{capability:false}:{}),aclProtected:startup.acl?!!startup.acl.verified:null}); } }
+      if(req.method==='POST' && req.url==='/unlock') { await json(req).catch(()=>({})); try { const live=await startSession('protected'); return reply(200,{unlocked:true,unlockUntil:new Date(live.until).toISOString()}); } catch(error) { return reply(codeOf(error),{error:error.message,keyLost}); } }
+      if(req.method==='POST' && req.url==='/batch/start') { await json(req).catch(()=>({})); try { const live=await startSession('manual'); return reply(200,{unlocked:true,mode:'manual',unlockUntil:new Date(live.until).toISOString()}); } catch(error) { return reply(codeOf(error),{error:error.message}); } }
+      if(req.method==='POST' && req.url==='/lock') { await json(req).catch(()=>({}));nextAutoAttempt=Infinity;await endSession('paused by you');await updateMetadata(old=>({...old,paused:true}));return reply(200,{unlocked:false,paused:true}); }
+      if(req.method==='POST' && req.url==='/pause') { await json(req).catch(()=>({}));nextAutoAttempt=Infinity;await endSession('paused');await updateMetadata(old=>({...old,paused:true}));return reply(200,{paused:true}); }
+      if(req.method==='POST' && req.url==='/resume') { await json(req).catch(()=>({})); await updateMetadata(old=>({...old,paused:false}));nextAutoAttempt=0;return reply(200,{paused:false}); }
+      if(req.method==='POST' && req.url==='/mode') {
+        const body=await json(req);return reply(200,await authorize(async()=>{
+        const state=await vaultState(),config=await metadata();
+        if(session)throw coded('conflict','Lock the current batch first');
+        if(body.mode==='manual') {
+          if((await secrets.list()).some(id=>id.startsWith('amex-')||['aplus','yayoi','gmail'].includes(id)))throw coded('conflict','Sealed logins exist; manual mode needs an empty vault');
+          await updateMetadata(old=>({...old,mode:'manual'}));return {mode:'manual'};
+        }
+        if(body.mode==='protected') { if(!activated(state,config))throw coded('conflict','Enable protection first'); await updateMetadata(old=>({...old,mode:'protected'}));return {mode:'protected'}; }
+        throw new Error('Unknown mode');
+        }));
+      }
+      if(req.method==='POST' && req.url==='/protect/reset') {
+        const body=await json(req);return reply(200,await authorize(async pending=>secrets.withLock(async()=>{
+        if(running)throw coded('conflict','Wait for the current collector action to finish');
+        if(!keyLost)throw coded('conflict','The protection key is not lost; nothing to reset');
+        if(session)throw coded('conflict','Lock the current batch first');
+        if(body.confirm!=='RESET')throw new Error('Type RESET to confirm; the sealed entries are moved aside, never deleted');
+        const state=await vaultState(),config=await metadata();
+        const resetPending=state?.resetPending || {folder:'unreadable-'+Date.now()+'-'+randomBytes(8).toString('hex'),previousInstallationId:state?.installationId||null,generation:randomBytes(32).toString('hex')};
+        const localKey=await secrets.deviceKey(resetPending.generation,{create:true});
+        const installationId=state?.v===3&&state.installationId?state.installationId:randomBytes(16).toString('hex');
+        await writeState({...state,resetPending});
+        let broker;
+        try{
+          const lookup=await securityCall(config,'installations/'+installationId,{signal:pending.abort.signal});
+          const action=lookup.installation?'reset':'enroll';
+          const candidate={installationId,generation:resetPending.generation,publicKey:localKey.publicKey,previousGeneration:lookup.installation?.generation};
+          broker=await ownerBroker(pending,config,candidate,localKey,action);
+          assertAuthorization(pending);
+          const moved=await secrets.moveAside(resetPending.folder);
+          // Leave the old metadata/blob untouched until the next explicitly authorized
+          // protection pass verifies its archive. Reset itself never decrypts it.
+          await secrets.connection({...config,recoveryArchive:resetPending.folder});
+          await writeState({v:3,phase:'enrolling',...candidate,legacyId:state?.legacyId||'legacy-'+Date.now(),reconnect:true,recoveryArchive:resetPending.folder});
+          keyLost=false;message='Protection reset. Enable protection and reconnect the bank logins.';
+          return {reset:true,moved:moved.moved.length,into:moved.folder?path.basename(moved.folder):null};
+        }finally{if(broker)await broker.end();else localKey.close();}
+
+        })));
+      }
       reply(404,{error:'Unknown setup endpoint'});
-    }catch(error){reply(400,{error:error.message});}
+    }catch(error){reply(codeOf(error),{error:error.message});}
   });
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>resolve(undefined));});
   await writeFile(path.join(directory,'setup-link.txt'),`${origin}/#${setupKey}`,{mode:0o600});
   console.log(`OMF collector listening on 127.0.0.1:${port}; setup link saved in the private collector directory`);
-  setInterval(tick,10000);tick();
+  // Startup checks (site 4 :72): protected DACL with verification, elevation, Chrome, crash recovery of ephemeral
+  // profiles, provider capability. Sessions refuse until they are done; secrets are never involved.
+  startup.chromeFound=!!findChrome();
+  startup.recovered=await recoverEphemeral(directory).catch(error=>({error:error.message}));
+  startup.capability=await probeCapability().then(result=>result.ok,()=>null);
+  startup.done=true;
+  const interval=setInterval(tick,TICK_MS);tick();
+  return {close:async()=>{stopped=true;clearInterval(interval);await endSession('stopped');await new Promise(resolve=>server.close(resolve));}};
 }
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url))startCollector().catch(()=>{console.error('OMF collector could not start. Check the setup port and Windows credential vault.');process.exitCode=1;});

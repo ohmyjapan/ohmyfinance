@@ -44,8 +44,16 @@ export class ResearchTools {
  async mailbox(){
   if(this.gmail)return this.gmail;
   if(!this.config.mailbox)throw Error('Purchase mailbox is not configured');
-  const vault=await new Vault(this.config.collectorDirectory||path.join(process.env.LOCALAPPDATA,'OhMyFinance','collector')).read(),g=vault.gmail;
-  if(!g||g.mailbox.toLowerCase()!==this.config.mailbox.toLowerCase())throw Error('Purchase mailbox identity mismatch');
+  // Supported path: the research worker's own grant (config.gmail in its own vault). The collector's legacy gmail is read
+  // only while that vault is still the unprotected monolithic blob; once sealed (vault-state.json v2) this is the exit.
+  let g=this.config.gmail;
+  if(!g){
+   const collectorDirectory=this.config.collectorDirectory||path.join(process.env.LOCALAPPDATA,'OhMyFinance','collector');
+   let sealed=false;try{sealed=JSON.parse(await fs.readFile(path.join(collectorDirectory,'vault-state.json'),'utf8')).v===2}catch(error){if(error.code!=='ENOENT')throw error}
+   if(!sealed)g=(await new Vault(collectorDirectory).read()).gmail;
+   if(!g)throw Error('Purchase mailbox is sealed on the collector; enroll a research mailbox (config.gmail in the research worker vault)');
+  }
+  if(!g.mailbox||g.mailbox.toLowerCase()!==this.config.mailbox.toLowerCase())throw Error('Purchase mailbox identity mismatch');
   const {google}=require('googleapis'),auth=new google.auth.OAuth2(g.clientId,g.clientSecret);auth.setCredentials({refresh_token:g.refreshToken});
   const gmail=google.gmail({version:'v1',auth}),profile=await gmail.users.getProfile({userId:'me'});
   if(profile.data.emailAddress.toLowerCase()!==g.mailbox.toLowerCase())throw Error('Purchase mailbox identity mismatch');this.gmail=gmail;this.googleAuth=auth;return gmail;

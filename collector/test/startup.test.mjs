@@ -11,7 +11,9 @@ test('process-container import starts the local collector without an argv entry-
   const child=spawn(process.execPath,['--input-type=module','-e',`import(${JSON.stringify(new URL('../run.mjs',import.meta.url).href)})`],{windowsHide:true,env:{...process.env,OMF_COLLECTOR_DIR:directory,OMF_COLLECTOR_PORT:String(port)},stdio:'ignore'});
   try {
     let healthy=false;
-    for(let attempt=0;attempt<50;attempt++){try{const r=await fetch(`http://127.0.0.1:${port}`,{signal:AbortSignal.timeout(500)});if(r.status===200){healthy=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
+    // Startup now establishes Windows permissions before exposing the local setup capability.
+    const deadline=Date.now()+30000;
+    while(Date.now()<deadline){if(child.exitCode!==null)break;try{const r=await fetch(`http://127.0.0.1:${port}`,{signal:AbortSignal.timeout(500)});if(r.status===200){healthy=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
     assert.equal(healthy,true);
     assert.equal((await fetch(`http://127.0.0.1:${port}/status`)).status,403);
     assert.equal((await fetch(`http://127.0.0.1:${port}`,{headers:{Origin:'https://untrusted.example.invalid'}})).status,403);
