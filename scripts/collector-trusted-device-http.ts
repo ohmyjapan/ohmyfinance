@@ -21,6 +21,7 @@ import {CollectorApproval} from '../server/models/FinanceCollectorSecurity'
 import {generateSecret} from '../server/services/twoFactorService'
 import {SplitStore,Vault,replaceVaultFile} from '../collector/vault.mjs'
 import {browserFor,ephemeralProfile,closeOwnedBrowsers,collectStatement,ownedBrowsers} from '../collector/browser.mjs'
+import {writePendingItem} from '../collector/test/fake-broker.mjs'
 
 const root=path.resolve(__dirname,'..'),collectorRoot=process.argv[2]?path.resolve(process.argv[2]):root,execute=promisify(execFile)
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex')
@@ -122,6 +123,12 @@ async function main(){
     const config={baseUrl,token:device.token,accountInfo:[{_id:String(account._id),ownerId:String(user._id),name:account.name,primaryCard:'12345'}],accounts:{}}
     const legacy={...config,accounts:{12345:{username:'legacy-user',password:'Legacy-bank-secret',profile:'retained-profile'}},services:{yayoi:{username:'legacy@example.invalid',password:'Legacy-yayoi-secret'},unknown:{password:'Legacy-unknown-secret'}},gmail:{refreshToken:'Legacy-mail-secret'}}
     await vault.update(()=>legacy)
+    const manifestAccount={_id:String(account._id),primaryCard:account.primaryCard}
+    const legacyManifest=await writePendingItem(data,manifestAccount,{jobId:'legacy-unbound'})
+    const foreignOwnerManifest=await writePendingItem(data,manifestAccount,{jobId:'legacy-foreign-owner',ownerId:'333333333333333333333333'})
+    const foreignOriginManifest=await writePendingItem(data,manifestAccount,{jobId:'legacy-foreign-origin',origin:'https://wrong.example.invalid'})
+    const acknowledgedManifest=await writePendingItem(data,manifestAccount,{jobId:'legacy-acknowledged',acknowledgedAt:'2026-01-01T00:00:00.000Z'})
+    const unchangedManifests=await Promise.all([foreignOwnerManifest,foreignOriginManifest,acknowledgedManifest].map(f=>readFile(f,'utf8')))
     await store.withLock(async()=>{await store.connection(config);await replaceVaultFile(path.join(data,'vault-state.json'),JSON.stringify({v:3,phase:'enrolling',installationId,generation,publicKey:key.publicKey,legacyId:'legacy-'+Date.now()}))})
     key.close();key=null
     let setup=''
@@ -158,6 +165,10 @@ async function main(){
     const migratedBlob=await vault.read();assert.equal(JSON.stringify(migratedBlob).includes('Legacy-'),false)
     assert.equal(migratedBlob.accounts['12345'].profile,'retained-profile')
     pass('migration recovers from a lost cloud save response and failed final marker without losing or leaving legacy credentials active')
+    const boundManifest=JSON.parse(await readFile(legacyManifest,'utf8'))
+    assert.equal(boundManifest.ownerId,String(user._id));assert.equal(boundManifest.origin,baseUrl)
+    assert.deepEqual(await Promise.all([foreignOwnerManifest,foreignOriginManifest,acknowledgedManifest].map(f=>readFile(f,'utf8'))),unchangedManifests)
+    pass('protection stamps only matching unfinished legacy outbox files and preserves foreign-owner, foreign-origin and acknowledged manifests')
     for(const candidate of [{username:' ',password:'bad'},{username:'id',password:''},{username:'id',password:'bad',url:'https://wrong.example.invalid'}])await assert.rejects(local('/aplus/credentials',candidate),e=>(e as any).status===400)
     await assert.rejects(local('/yayoi/credentials',{username:'invalid',password:'bad'}),e=>(e as any).status===400)
     await local('/yayoi/credentials',{username:'synthetic-yayoi@example.invalid',password:'Synthetic-yayoi-password'})

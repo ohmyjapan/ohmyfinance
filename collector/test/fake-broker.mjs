@@ -10,7 +10,7 @@
 // `locked` makes the broker print {event:'locked'} and exit, the way the real broker reacts to a Windows lock.
 // Imported, it exports those scripted controls and the collector/fake-OMF harness. Nothing runs at import.
 import { spawn } from 'node:child_process';
-import { createPublicKey, createPrivateKey, generateKeyPairSync, privateDecrypt, constants as cryptoConstants } from 'node:crypto';
+import { createPublicKey, createPrivateKey, generateKeyPairSync, privateDecrypt, randomUUID, createHash, constants as cryptoConstants } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import http from 'node:http';
@@ -170,6 +170,15 @@ export async function waitFor(read, timeoutMs = 10000, intervalMs = 150) {
 }
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+/** Synthetic statement already on disk; no provider or original statement file is used. */
+export async function writePendingItem(directory,account,{jobId,ownerId,origin,pageCount=1,acknowledgedAt}) {
+  const dir=path.join(directory,'outbox',account._id,jobId);await mkdir(dir,{recursive:true});
+  const filename=randomUUID(),bytes=Buffer.from('synthetic,csv\n'+jobId+'\n');
+  await writeFile(path.join(dir,filename),bytes);
+  const manifest={accountId:account._id,primaryCard:account.primaryCard,jobId,kind:'statement',start:'2026-04-22',end:'2026-05-21',pageCount,sha256:createHash('sha256').update(bytes).digest('hex'),filename,downloadedAt:new Date().toISOString(),...(ownerId?{ownerId}:{}),...(origin?{origin}:{}),...(acknowledgedAt?{acknowledgedAt}:{})};
+  const file=path.join(dir,'manifest.json');await writeFile(file,JSON.stringify(manifest,null,2));return file;
+}
+
 /** A fake OMF on loopback: the four collector routes, every call counted, claims handed out from a queue. */
 export async function startFakeOmf({ accounts = [] } = {}) {
   const counts = { accounts: 0, claim: 0, status: 0, upload: 0, unauthorized: 0 };
@@ -194,11 +203,15 @@ export async function startFakeOmf({ accounts = [] } = {}) {
 
 /**
  * Starts the real collector (run.mjs) as a child on a private directory and returns its setup client.
- * @param {{ directory: string, env?: Record<string, string>, timeoutMs?: number }} options
+ * @param {{ directory: string, env?: Record<string, string>, timeoutMs?: number, hideBrowser?: boolean }} options
  */
-export async function startCollector({ directory, env = {}, timeoutMs = 30000 }) {
+export async function startCollector({ directory, env = {}, timeoutMs = 30000, hideBrowser = false }) {
   const port = await freePort();
-  const child = spawn(process.execPath, [RUN_MJS], { windowsHide: true, env: { ...process.env, OMF_COLLECTOR_DIR: directory, OMF_COLLECTOR_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Test-only launcher: browser-module loading restores ProgramFiles on this Windows runtime. Override its
+  // search locations afterward, before importing run.mjs; no real browser can launch on an unexpected branch.
+  const noBrowser=path.join(directory,'no-browser');
+  const args=hideBrowser?['--input-type=module','-e',`await import(${JSON.stringify(new URL('../browser.mjs',import.meta.url).href)}); for(const key of ['ProgramFiles','ProgramFiles(x86)','LOCALAPPDATA']) process.env[key]=${JSON.stringify(noBrowser)}; await import(${JSON.stringify(new URL('../run.mjs',import.meta.url).href)});`]:[RUN_MJS];
+  const child = spawn(process.execPath, args, { windowsHide: true, env: { ...process.env, OMF_COLLECTOR_DIR: directory, OMF_COLLECTOR_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = [];
   child.stdout.on('data', data => output.push(String(data)));
   child.stderr.on('data', data => output.push(String(data)));

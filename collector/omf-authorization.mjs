@@ -42,7 +42,7 @@ export async function approveWithOmf(config,context,{signal,onLink=()=>{},call=s
     port=server.address().port;abort.throwIfAborted();
     const created=await call(config,'requests',{body:{...context,state,codeChallenge:createHash('sha256').update(verifier).digest('base64url'),redirectUri:`http://127.0.0.1:${port}/collector-callback`},signal:abort});
     const url=new URL(created.approvalUrl);
-    if(url.origin!==secureOrigin(config.baseUrl)||url.pathname!=='/collector-approval'||!/^[a-f0-9]{64}$/.test(created.id)||url.searchParams.get('id')!==created.id)throw new Error('OMF returned an invalid approval link.');
+    if(url.origin!==secureOrigin(config.baseUrl)||url.pathname!=='/collector-approval'||!/^[a-f0-9]{64}$/.test(created.id)||url.searchParams.get('id')!==created.id)throw new Error('OMF returned an invalid approval link. Check that the saved OMF address exactly matches OMF’s configured HTTPS address, then save the connection again.');
     onLink(url.href);
     // Cancellation must also finish while the OS browser launcher is still waiting.
     await Promise.race([Promise.resolve().then(()=>open(url.href)).catch(()=>{}),reply.then(()=>undefined)]);
