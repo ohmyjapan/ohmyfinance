@@ -1,13 +1,15 @@
 // collector/package/stage.mjs — the customer package of the collector (plan omf-customer-credential-security-20261009
-// §2 site 7, modelled on cloud-probe/local/drive.mjs stage()).
-//   node collector/package/stage.mjs --into <empty dir> [--no-install]
+// §2 site 7, modelled on cloud-probe/local/drive.mjs stage(); packaged origin per plan omf-customer-connect-20261010).
+//   node collector/package/stage.mjs --into <empty dir> --origin https://omf.example [--no-install]
 // Copies the customer allowlist (collector/*.mjs, collector/windows/*.ps1, setup.html, setup.js, package.json,
 // package-lock.json, shared/amex.mjs — NOT cloud-probe/** (the diagnostic exporter stays out of delivery), NOT
 // test/** (fake broker and test hooks stay out)) into an empty folder with a sha256 manifest and the git revision,
-// runs `npm ci --omit=dev --ignore-scripts` there, and prints the PM2 start line. When OMF_SIGNING_CERT names a
-// code-signing certificate thumbprint in CurrentUser\My, every *.ps1 is Authenticode-signed and a signed catalog
-// (collector.cat) authenticates every staged file including the manifest; otherwise the package is printed as
-// UNSIGNED and recorded as a test artifact, never a customer release.
+// writes collector/omf-config.json with the deployment-supplied HTTPS origin (the address the downloader connects to;
+// no secrets; covered by the manifest and catalog), runs `npm ci --omit=dev --ignore-scripts` there, and prints the
+// PM2 start line and the explicit setup-launch line. When OMF_SIGNING_CERT names a code-signing certificate
+// thumbprint in CurrentUser\My, every *.ps1 is Authenticode-signed and a signed catalog (collector.cat) authenticates
+// every staged file including the manifest; otherwise the package is printed as UNSIGNED and recorded as a test
+// artifact, never a customer release.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -33,9 +35,18 @@ async function powershell(script) {
 export async function listEntries(repoRoot = REPO_ROOT) {
   return ALLOWLIST.map(item=>({from:item.from,to:item.from}));
 }
-export async function stage({ repoRoot = REPO_ROOT, into = '', install = true, signingCert = process.env.OMF_SIGNING_CERT || '', log = console.log } = {}) {
+/** The packaged OMF address: exact HTTPS origin, no path, query, fragment or credentials. */
+export function packagedOrigin(value) {
+  let url;
+  try { url = new URL(String(value || '')); } catch { throw new Error('--origin <https://omf-host> (or OMF_COLLECTOR_PUBLIC_ORIGIN) is required: the HTTPS address the downloader connects to'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('--origin must be the plain HTTPS origin of OMF, such as https://omf.example');
+  return url.origin;
+}
+export const CONFIG_FILE = 'collector/omf-config.json';
+export async function stage({ repoRoot = REPO_ROOT, into = '', origin = process.env.OMF_COLLECTOR_PUBLIC_ORIGIN || '', install = true, signingCert = process.env.OMF_SIGNING_CERT || '', log = console.log } = {}) {
   if (!into) throw new Error('--into <dir> is required');
   into=path.resolve(into);
+  const publicOrigin = packagedOrigin(origin);
   if(signingCert && !/^[a-fA-F0-9]{40}$/.test(signingCert))throw new Error('Use the code-signing certificate thumbprint');
   let existing = [];
   try { existing = await readdir(into); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -50,7 +61,11 @@ export async function stage({ repoRoot = REPO_ROOT, into = '', install = true, s
     await copyFile(source, target);
     files[to] = sha256(await readFile(target));
   }
-  const manifest = { stagedAt: new Date().toISOString(), revision, files, signed: false, release: false };
+  // The packaged origin is deployment configuration read by an unconnected downloader; a connected one keeps its saved address.
+  const configBytes = JSON.stringify({ origin: publicOrigin, revision, stagedAt: new Date().toISOString() }, null, 2) + '\n';
+  await writeFile(path.join(into, CONFIG_FILE), configBytes, { mode: 0o600, flag: 'wx' });
+  files[CONFIG_FILE] = sha256(configBytes);
+  const manifest = { stagedAt: new Date().toISOString(), revision, origin: publicOrigin, files, signed: false, release: false };
   const collectorDir = path.join(into, 'collector');
   if (install) {
     await execute('npm ci --omit=dev --ignore-scripts --no-audit --no-fund', [], { cwd: collectorDir, windowsHide: true, shell: true, maxBuffer: 16 * 1024 * 1024 });
@@ -66,17 +81,18 @@ export async function stage({ repoRoot = REPO_ROOT, into = '', install = true, s
     for(const file of Object.keys(files))files[file]=sha256(await readFile(path.join(into,file)));
   }
   await writeFile(path.join(into, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
-  await writeFile(path.join(into, 'RELEASE-STATUS.txt'), `${signing.signed ? 'SIGNED' : 'UNSIGNED'} — ${signing.note}\nrevision ${revision}\nstart: pm2 start ${path.join(into, 'collector', 'run.mjs')} --name ${PM2_NAME}\n`, { mode: 0o600, flag: 'wx' });
+  await writeFile(path.join(into, 'RELEASE-STATUS.txt'), `${signing.signed ? 'SIGNED' : 'UNSIGNED'} — ${signing.note}\nrevision ${revision}\nOMF address ${publicOrigin}\nstart: pm2 start ${path.join(into, 'collector', 'run.mjs')} --name ${PM2_NAME}\nopen setup: node ${path.join(into, 'collector', 'run.mjs')} --open-setup\n`, { mode: 0o600, flag: 'wx' });
   // Finalize metadata before catalog creation. No covered file is changed afterward.
   const catalog=psLiteral(path.join(into,'collector.cat')), staged=psLiteral(into);
   await powershell(`$ErrorActionPreference='Stop'; New-FileCatalog -Path ${staged} -CatalogFilePath ${catalog} -CatalogVersion 2.0 | Out-Null; ${signingCert ? `${certLookup} $s=Set-AuthenticodeSignature -FilePath ${catalog} -Certificate $cert -HashAlgorithm SHA256; if($s.Status -ne 'Valid'){throw ('catalog signature '+$s.Status)};` : ''} $v=Test-FileCatalog -Path ${staged} -CatalogFilePath ${catalog} -FilesToSkip 'collector.cat'; if($v -ne 'Valid'){throw ('catalog '+$v)}`);
-  log(`staged ${Object.keys(files).length} files at ${revision} into ${into}${install ? ' (dependencies installed from the lock)' : ''}`);
+  log(`staged ${Object.keys(files).length} files at ${revision} for ${publicOrigin} into ${into}${install ? ' (dependencies installed from the lock)' : ''}`);
   log(`${signing.signed ? 'SIGNED' : 'UNSIGNED'}: ${signing.note}`);
   log(`pm2 start ${path.join(into, 'collector', 'run.mjs')} --name ${PM2_NAME}`);
-  return { manifest, signing, into };
+  log(`open setup: node ${path.join(into, 'collector', 'run.mjs')} --open-setup`);
+  return { manifest, signing, into, origin: publicOrigin };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2), index = args.indexOf('--into');
-  stage({ into: index >= 0 ? args[index + 1] : '', install: !args.includes('--no-install') }).then(() => { process.exitCode = 0; }, error => { console.error(error.message); process.exitCode = 1; });
+  const args = process.argv.slice(2), index = args.indexOf('--into'), originIndex = args.indexOf('--origin');
+  stage({ into: index >= 0 ? args[index + 1] : '', origin: originIndex >= 0 ? args[originIndex + 1] : process.env.OMF_COLLECTOR_PUBLIC_ORIGIN || '', install: !args.includes('--no-install') }).then(() => { process.exitCode = 0; }, error => { console.error(error.message); process.exitCode = 1; });
 }

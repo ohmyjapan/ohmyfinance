@@ -80,6 +80,17 @@ export function openEnvelope(envelope, dataKey, aad) {
 function validEnvelope(value) {
   return !!value && typeof value === 'object' && value.v === 1 && value.aad && typeof value.aad === 'object' && ['wrapped', 'iv', 'tag', 'data'].every(k => typeof value[k] === 'string' && value[k].length > 0);
 }
+/**
+ * Opens the initial-connection capsule OMF sealed to this installation's public key (the same envelope format as
+ * sealEnvelope): the expected AAD is compared first, the data key is unwrapped by the DPAPI-protected device key and
+ * zeroed after use. Nothing is decrypted when the capsule belongs to another request, installation or OMF address.
+ */
+export function openCapsule(localKey, capsule, aad) {
+  if (!validEnvelope(capsule)) throw new Error('OMF returned an invalid connection capsule.');
+  if (JSON.stringify(capsule.aad) !== JSON.stringify(aad)) throw Object.assign(new Error('The connection capsule does not belong to this request, installation or OMF address.'), {code:'aad'});
+  const key = localKey.unwrap(capsule.wrapped);
+  try { return openEnvelope(capsule, key, aad); } finally { key.fill(0); }
+}
 // Called under the exclusive vault writer lease. A .new file is never committed state: an interrupted write
 // can leave it behind. Unlink only that directory entry (never follow it), then create exclusively again.
 // Directories/locked files still fail; the previous committed file remains untouched until rename succeeds.
@@ -310,6 +321,21 @@ export class SplitStore extends SealedStore {
     await this.assertContained(name);
     if(value!==undefined){
       if(!this.lease)throw new Error('Connection changes require the vault writer lease');this.lease.assert();
+      await replaceVaultFile(file,await transform('protect',Buffer.from(JSON.stringify(value))));return value;
+    }
+    try{await assertPlain(file,name);const bytes=await transform('unprotect',await readFile(file));try{return JSON.parse(bytes.toString('utf8'));}finally{bytes.fill(0);}}
+    catch(error){if(error.code==='ENOENT')return null;throw error;}
+  }
+  /**
+   * DPAPI-protected journal of an initial connection (request identity, PKCE verifier, callback code, phase), beside the
+   * connection and trust files. Read without arguments; write a value, or null to remove it, under the writer lease.
+   */
+  async enrollmentJournal(value) {
+    const name='connect-journal.dpapi',file=path.join(this.root,name);
+    await this.assertContained(name);
+    if(value!==undefined){
+      if(!this.lease)throw new Error('Connection journal changes require the vault writer lease');this.lease.assert();
+      if(value===null){await unlink(file).catch(error=>{if(error.code!=='ENOENT')throw error;});return null;}
       await replaceVaultFile(file,await transform('protect',Buffer.from(JSON.stringify(value))));return value;
     }
     try{await assertPlain(file,name);const bytes=await transform('unprotect',await readFile(file));try{return JSON.parse(bytes.toString('utf8'));}finally{bytes.fill(0);}}

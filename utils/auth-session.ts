@@ -43,6 +43,7 @@ export function safeRedirect(value: unknown): string {
 
 export function publicAuthRoute(path: string): boolean {
   const plain = path.replace(/^\/(ja|ko)(?=\/|$)/, '') || '/'
-  return ['/login', '/auth/login', '/auth/register', '/auth/forgot-password', '/auth/reset-password', '/auth/accept-invite']
+  // /collector-connect is the downloader's own sign-in page: it authenticates inside its request and never reads a session.
+  return ['/login', '/auth/login', '/auth/register', '/auth/forgot-password', '/auth/reset-password', '/auth/accept-invite', '/collector-connect']
     .some(route => plain === route || plain.startsWith(route + '/'))
 }

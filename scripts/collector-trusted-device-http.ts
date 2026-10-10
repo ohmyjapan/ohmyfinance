@@ -35,6 +35,9 @@ async function main(){
   const mongo=await MongoMemoryServer.create({instance:{dbName:'collector_trusted_http_isolated'}})
   let app:any,collector:any,proxy:any,key:any,checks=0,browser:any
   let appLog='',collectorLog='',failNextKeySave=false,blockFinalMarker=false,failNextRequest=false;const counts=new Map<string,number>()
+  // Initial Connect hooks: a lost exchange/ack response (upstream completed, client sees 503) and a held exchange response
+  // (upstream completed, the client never hears back) for the process-crash leg.
+  let failNextExchange=false,failNextAck=false,stallExchange=false,held:any=null,stalledResolve:()=>void=()=>{};const stalled=new Promise<void>(resolve=>{stalledResolve=resolve});const extraCollectors:any[]=[]
   const pass=(name:string)=>{checks++;console.log('PASS '+name)}
   try{
     await mongoose.connect(mongo.getUri('collector_trusted_http_isolated'));assert.equal(mongoose.connection.name,'collector_trusted_http_isolated')
@@ -46,6 +49,11 @@ async function main(){
       const route=(req.url||'').split('?')[0];counts.set(route,(counts.get(route)||0)+1)
       const forward=http.request({host:'127.0.0.1',port:appPort,path:req.url,method:req.method,headers:req.headers},async upstream=>{
         if(route==='/api/finance/collector-security/requests'&&req.method==='POST'&&upstream.statusCode===200&&failNextRequest){failNextRequest=false;upstream.resume();res.writeHead(503,{'Content-Type':'application/json'});res.end('{"statusMessage":"Synthetic lost approval response"}');return;}
+        if(route==='/api/finance/collector-connect/exchange'&&req.method==='POST'&&upstream.statusCode===200){
+          if(stallExchange){stallExchange=false;upstream.resume();held=res;stalledResolve();return;}
+          if(failNextExchange){failNextExchange=false;upstream.resume();res.writeHead(503,{'Content-Type':'application/json'});res.end('{"statusMessage":"Synthetic lost exchange response"}');return;}
+        }
+        if(route==='/api/finance/collector-connect/ack'&&req.method==='POST'&&upstream.statusCode===200&&failNextAck){failNextAck=false;upstream.resume();res.writeHead(503,{'Content-Type':'application/json'});res.end('{"statusMessage":"Synthetic lost acknowledgement response"}');return;}
         if(route==='/api/finance/collector-security/keys'&&req.method==='POST'&&upstream.statusCode===200){
           if(blockFinalMarker){blockFinalMarker=false;await mkdir(path.join(data,'vault-state.json.new'));}
           if(failNextKeySave){failNextKeySave=false;upstream.resume();res.writeHead(503,{'Content-Type':'application/json'});res.end('{"statusMessage":"Synthetic lost key-save response"}');return;}
@@ -223,12 +231,117 @@ async function main(){
     assert.equal(approvalRequests(),approvalCount)
     const statusText=JSON.stringify(status);for(const secretText of [trustToken,nextTrust,device.token,password,'Synthetic-only-bank-password','After-server-restart','Reconnected-after-reset'])assert.equal(statusText.includes(secretText),false)
     pass('existing OMF Disconnect stops renewal and writes, ends the live session, and shows reconnect without opening approval')
+    // ── Initial Connect (plan omf-customer-connect-20261010): packaged origin, one sign-in on the public page, the token
+    //    minted at approval and delivered only inside the encrypted capsule, protection active without a second prompt.
+    const hostname=os.hostname(),connectPrefix='/api/finance/collector-connect/'
+    const startConnectCollector=async(dir:string,localPort:number)=>{
+      await mkdir(dir,{recursive:true})
+      const child=spawn(process.execPath,['collector/run.mjs'],{cwd:collectorRoot,windowsHide:true,env:{...process.env,NODE_EXTRA_CA_CERTS:certFile,OMF_COLLECTOR_DIR:dir,OMF_COLLECTOR_PORT:String(localPort),OMF_COLLECTOR_TICK_MS:'1000',OMF_COLLECTOR_ORIGIN:baseUrl},stdio:['ignore','pipe','pipe']})
+      extraCollectors.push(child)
+      let log='';for(const stream of [child.stdout,child.stderr])stream.on('data',(b:Buffer)=>{log=(log+b).slice(-8000)})
+      let setupKey='';const call=async(route:string,body?:any)=>{const r=await fetch(`http://127.0.0.1:${localPort}${route}`,{method:body===undefined?'GET':'POST',headers:{'X-Setup-Key':setupKey,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(240000)});const b:any=await r.json();if(!r.ok)throw Object.assign(Error(b.error||'Local request failed'),{status:r.status});return b}
+      await waitFor(async()=>{if(child.exitCode!==null)throw Error('connect collector exited: '+log.slice(-400));const link=await readFile(path.join(dir,'setup-link.txt'),'utf8');setupKey=new URL(link).hash.slice(1);return (await call('/status')).startupDone},'connect collector startup')
+      return {child,call,log:()=>log}
+    }
+    const pub=(route:string,body?:any,method=body===undefined?'GET':'POST',headers:any={})=>new Promise<any>((resolve,reject)=>{
+      const req=https.request(baseUrl+route,{method,agent,headers:{'Content-Type':'application/json',...headers}},res=>{let text='';res.on('data',b=>{text+=b});res.on('end',()=>{let value;try{value=JSON.parse(text)}catch{return reject(Error('Non-JSON test response '+res.statusCode))}if((res.statusCode||500)>=400)return reject(Object.assign(Error(value.statusMessage||'Request rejected'),{status:res.statusCode}));resolve(value)})});req.on('error',reject);req.end(body===undefined?undefined:JSON.stringify(body))
+    })
+    const drivePage=async(connectUrl:string,label:string,screenshotTo='')=>{
+      const uiRoot=path.join(temp,'ui-'+label),profile=ephemeralProfile(uiRoot,'synthetic','omf','connect',label)
+      browser=await browserFor(profile,{ephemeral:true,root:uiRoot as any,headless:true})
+      const page=await browser.newPage(),cdp=await page.createCDPSession()
+      await cdp.send('Security.setIgnoreCertificateErrors',{ignore:true})
+      await page.setRequestInterception(true)
+      page.on('request',(r:any)=>{const u=new URL(r.url());if(u.origin===baseUrl||(u.protocol==='http:'&&u.hostname==='127.0.0.1')||['about:','data:'].includes(u.protocol))return r.continue();return r.abort()})
+      await page.setViewport({width:390,height:844,isMobile:true,hasTouch:true})
+      await page.goto(connectUrl,{waitUntil:'networkidle0'})
+      await page.waitForSelector('#email',{timeout:20000})
+      const before=await page.$eval('main',(e:any)=>e.textContent)
+      assert.equal(before.includes(user.email),false);assert.equal(before.includes(account.name),false);assert.ok(before.includes(hostname))
+      assert.equal(await page.$eval('#password',(e:any)=>e.type),'password')
+      assert.equal(await page.evaluate('document.documentElement.scrollWidth<=innerWidth'),true)
+      await page.type('#email',user.email);await page.type('#password',password);await page.type('#code',generateSync({secret}))
+      await page.click('button[type=submit]')
+      await page.waitForSelector('input[name=accountIds]',{timeout:20000})
+      assert.equal(await page.$eval('#pc-name',(e:any)=>e.value),hostname)
+      const stored=await page.evaluate(()=>JSON.stringify([Object.values(localStorage),Object.values(sessionStorage)]))
+      assert.equal(stored.includes(password),false);assert.equal(/[a-f0-9]{64}/.test(stored),false);assert.equal(stored.includes('eyJ'),false)
+      assert.ok((await page.$eval('main',(e:any)=>e.textContent)).includes(account.name))
+      if(screenshotTo)await page.screenshot({path:screenshotTo,fullPage:true})
+      await page.click(`input[name=accountIds][value="${String(account._id)}"]`)
+      await Promise.all([page.waitForNavigation({waitUntil:'load',timeout:30000}),page.click('#approve')])
+      assert.ok(page.url().startsWith('http://127.0.0.1:'));assert.ok((await page.$eval('body',(e:any)=>e.textContent)).includes('received'))
+      await closeOwnedBrowsers();browser=null
+    }
+    // Flow 1: packaged origin, lost exchange and acknowledgement responses, no token-based approval, one collector.
+    const data2=path.join(temp,'collector-connect'),connectPort=await port()
+    let c2=await startConnectCollector(data2,connectPort)
+    let s2=await c2.call('/status')
+    assert.equal(s2.baseUrl,baseUrl);assert.equal(s2.protected,false);assert.equal(s2.connect?.phase,'idle');assert.equal(s2.connect?.resumable,false);assert.equal(s2.pcName,hostname)
+    const connectCreates=counts.get(connectPrefix+'requests')||0
+    failNextExchange=true;failNextAck=true
+    const connecting=c2.call('/connect',{})
+    const link=await waitFor(async()=>(await c2.call('/status')).approvalUrl,'connect link')
+    const connectUrl=new URL(link);assert.equal(connectUrl.origin,baseUrl);assert.equal(connectUrl.pathname,'/collector-connect');const requestId=connectUrl.searchParams.get('id')!;assert.match(requestId,/^[a-f0-9]{64}$/)
+    assert.equal((await c2.call('/status')).connect.phase,'created')
+    const inspected=await pub(connectPrefix+'requests/'+requestId)
+    assert.deepEqual(Object.keys(inspected).sort(),['expiresAt','id','intent','pcName','status']);assert.equal(inspected.pcName,hostname)
+    await assert.rejects(pub(connectPrefix+'requests/'+requestId+'/approve',{accountIds:[String(account._id)]},'POST',{Authorization:'Bearer '+access,Origin:baseUrl}),e=>[400,401].includes((e as any).status))
+    await assert.rejects(pub(connectPrefix+'requests/'+requestId+'/authenticate',{email:user.email,password,code:generateSync({secret})},'POST',{Origin:'https://wrong.example.invalid'}),e=>(e as any).status===403)
+    await assert.rejects(pub(connectPrefix+'requests/'+requestId+'/authenticate',{email:user.email,password,code:generateSync({secret})},'POST',{}),e=>(e as any).status===403)
+    await drivePage(link,'first',path.join(root,'..','..','ohmycode','output','omf-customer-credential-security-20261009','customer-connect','collector-connect-mobile.png'))
+    const connected=await connecting
+    assert.equal(connected.protected,true);assert.equal(connected.unlocked,true)
+    s2=await c2.call('/status')
+    assert.equal(s2.protected,true);assert.equal(s2.unlocked,true);assert.equal(s2.mode,'protected');assert.equal(s2.approvalUrl,null);assert.equal(s2.connect.phase,'idle');assert.equal(s2.baseUrl,baseUrl)
+    assert.deepEqual(s2.accounts.map((a:any)=>a.accountId),[String(account._id)]);assert.equal(s2.accounts[0].hasCredentials,false);assert.equal(s2.mailbox.hasCredentials,false)
+    assert.equal(counts.get(connectPrefix+'exchange'),2);assert.equal(counts.get(connectPrefix+'ack'),2);assert.equal(counts.get(prefix+'requests'),approvalCount)
+    // The legacy legs leave the first token's collector un-revoked (only its replacement was disconnected): count the connect ones by PC name.
+    const connectedPcs=async()=>(await api('/api/finance/collectors',access)).collectors.filter((d:any)=>!d.revokedAt&&d.name===hostname)
+    const listed=await connectedPcs()
+    assert.equal(listed.length,1);assert.deepEqual(listed[0].accountIds,[String(account._id)])
+    const connectRow:any=await mongoose.connection.collection('collectorconnects').findOne({_id:requestId as any})
+    assert.equal(connectRow.status,'acknowledged');assert.equal(connectRow.capsule,undefined);assert.equal(JSON.stringify(connectRow).includes('omfc_'),false)
+    await c2.call('/credentials',{accountId:String(account._id),username:'synthetic-amex',password:'Synthetic-amex-password'})
+    assert.equal((await c2.call('/status')).accounts[0].hasCredentials,true)
+    assert.equal(await readFile(path.join(data2,'connect-journal.dpapi')).then(()=>true,(e:any)=>{if(e.code==='ENOENT')return false;throw e}),false)
+    const meta2=await new Vault(data2).read();assert.equal(meta2.baseUrl,baseUrl);assert.equal(meta2.mode,'protected');assert.equal(JSON.stringify(meta2).includes('Synthetic-amex-password'),false)
+    pass('Connect to OMF on the packaged origin: public sign-in page, token minted at approval and delivered in the capsule, lost exchange/ack responses retried, protection active with no token-based approval and no plaintext token in Mongo')
+    // Flow 2: the process dies after the loopback callback while the exchange response is held; resume finishes the same request.
+    const data3=path.join(temp,'collector-connect-crash'),crashPort=await port()
+    let c3=await startConnectCollector(data3,crashPort)
+    stallExchange=true
+    const connecting3=c3.call('/connect',{}).catch((e:any)=>e)
+    const link3=await waitFor(async()=>(await c3.call('/status')).approvalUrl,'crash-flow connect link')
+    await drivePage(link3,'crash')
+    await stalled
+    await stop(c3.child);held?.destroy();held=null;await connecting3
+    assert.ok((await readFile(path.join(data3,'connect-journal.dpapi'))).length>0)
+    c3=await startConnectCollector(data3,crashPort)
+    let s3=await c3.call('/status');assert.equal(s3.protected,false);assert.equal(s3.connect.phase,'callback');assert.equal(s3.connect.resumable,true);assert.equal(s3.approvalUrl,null)
+    assert.equal((await c3.call('/connect/resume',{})).protected,true)
+    s3=await c3.call('/status');assert.equal(s3.unlocked,true);assert.equal(s3.connect.phase,'idle')
+    assert.equal((await connectedPcs()).length,2)
+    const crashRow:any=await mongoose.connection.collection('collectorconnects').findOne({_id:new URL(link3).searchParams.get('id') as any});assert.equal(crashRow.status,'acknowledged')
+    assert.equal(counts.get(connectPrefix+'requests'),connectCreates+2)
+    await stop(c3.child)
+    pass('a collector killed between the loopback callback and the exchange response resumes the same request from its DPAPI journal and ends with one collector')
+    // Restart renews silently; the existing OMF disconnect ends the connected PC without opening approval.
+    await stop(c2.child);c2=await startConnectCollector(data2,connectPort)
+    await waitFor(async()=>(await c2.call('/status')).unlocked,'connected collector restart')
+    assert.equal(counts.get(prefix+'requests'),approvalCount);assert.equal(counts.get(connectPrefix+'requests'),connectCreates+2)
+    await api('/api/finance/collectors/'+listed[0]._id,access,undefined,'DELETE')
+    const gone=await waitFor(async()=>{const s=await c2.call('/status');return s.reconnectNeeded&&!s.unlocked?s:null},'connect revocation observed')
+    assert.equal(gone.approvalUrl,null);assert.equal(counts.get(prefix+'requests'),approvalCount)
+    for(const secretText of [password,'Synthetic-amex-password','omfc_'])assert.equal(JSON.stringify(gone).includes(secretText),false)
+    await stop(c2.child)
+    pass('a connected PC restarts and renews silently; the existing OMF disconnect ends it without opening approval')
     assert.equal((counts.get('/api/finance/collector/upload')||0),0)
     assert.equal(await FinancialAccount.countDocuments({jobState:{$in:['queued','running']}}),0)
     console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,approvalCount}))
   }catch(error){console.error('Isolated acceptance failed:',error);console.error('App tail:',appLog);console.error('Collector tail:',collectorLog);throw error}
   finally{
-    key?.close();await closeOwnedBrowsers();await stop(collector);await stop(app)
+    key?.close();await closeOwnedBrowsers();await stop(collector);for(const child of extraCollectors)await stop(child);held?.destroy();await stop(app)
     if(proxy){proxy.closeAllConnections();await new Promise<void>(resolve=>proxy.close(()=>resolve()))}
     await mongoose.disconnect();await mongo.stop()
     assert.equal(path.dirname(path.resolve(temp)),path.resolve(os.tmpdir()));assert.ok(path.basename(temp).startsWith('omf-trusted-http-'))

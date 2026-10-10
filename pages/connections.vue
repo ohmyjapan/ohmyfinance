@@ -33,11 +33,11 @@
       <label v-if="newAccount.provider === 'amex'">Amexの認証メール送信先<input v-model="newAccount.otpRecipient" type="email" required></label>
       <label v-if="newAccount.provider === 'amex'">Gmail APIで読むメールボックス<input v-model="newAccount.otpMailbox" type="email" required></label><button :disabled="busy">口座を追加</button>
     </form></details>
-    <details class="panel"><summary>取得用PCを接続</summary><p>ログイン情報は取得用PCの設定画面で保存します。ここでは接続トークンを発行します。</p>
-      <form @submit.prevent="run(pair)"><label>PCの名前<input v-model="collectorName" required></label>
-        <label v-for="account in accounts.filter(a => a.provider !== 'aplus')" :key="account._id" class="inline"><input v-model="pairAccounts" type="checkbox" :value="account._id">{{ account.name }}</label><button :disabled="busy || !pairAccounts.length">接続トークンを発行</button>
-      </form><div v-if="pairToken" class="notice"><p>取得用PCの設定画面に貼り付けてください。この画面を閉じると再表示できません。</p><input :value="pairToken" readonly aria-label="接続トークン"><button @click="copyToken">コピー</button><button @click="pairToken = ''">非表示</button></div>
-      <p v-for="device in collectors" :key="device._id">{{ device.name }} · {{ device.revokedAt ? '接続解除済み' : formatDate(device.lastSeenAt) }} <button v-if="!device.revokedAt" :disabled="busy" @click="run(() => revoke(device._id))">接続解除</button></p>
+    <details class="panel"><summary>取得用PCを接続</summary>
+      <p>取得用PCに明細ダウンローダーをインストールし、その設定画面で「Connect to OMF」を押します。開いた OMF のページでメールアドレス・パスワード・認証コードを一度入力し、取得するカードを選ぶと接続は完了します。接続先の住所やトークンを入力する必要はありません。カードのログイン情報はその PC の設定画面で保存され、OMF には送られません。</p>
+      <p>接続中は PC がサインイン済みでロックされていない間に取得が行われ、Amex が送るログインコードは PC の Chrome で入力します（メールボックス連携は別途）。</p>
+      <p v-if="!collectors.length">接続済みのPCはありません。</p>
+      <p v-for="device in collectors" :key="device._id">{{ device.name }} · {{ device.revokedAt ? '接続解除済み' : (device.lastSeenAt ? '最終接続 ' + formatDate(device.lastSeenAt) : '接続済み・取得待ち') }} <button v-if="!device.revokedAt" :disabled="busy" @click="run(() => revoke(device._id))">接続解除</button></p>
     </details>
     <section><h2>取得履歴</h2><p v-if="!imports.length">まだ明細がありません。</p>
       <button v-for="batch in imports" :key="batch._id" :data-import-id="batch._id" class="history" :disabled="busy" @click="run(() => review(batch._id))">{{ accountName(batch.accountId) }} · {{ batch.period.start }} ～ {{ batch.period.end }} · {{ batch.rowCount }}件</button>
@@ -61,7 +61,7 @@ import { useUserStore } from '~/stores/user'
 definePageMeta({ middleware: 'auth' })
 const user = useUserStore()
 const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), selected = ref<any>(null)
-const busy = ref(false), message = ref(''), pairToken = ref(''), collectorName = ref('Ryzen 7'), pairAccounts = ref<string[]>([])
+const busy = ref(false), message = ref('')
 const newAccount = reactive({ provider: 'amex', name: '', primaryCard: '', otpRecipient: '', otpMailbox: '' }), cardsText = ref('')
 const manual = reactive({ kind: 'statement', start: '', end: '', statementMonth: '', statementTotal: '', refundTotal: '', fiscalStart: '', fiscalEnd: '' }), file = ref<File | null>(null), choices = reactive<Record<number,string>>({}), reviewPanel = ref<HTMLElement | null>(null)
 const states: Record<string,string> = { idle:'未取得', queued:'PCの応答待ち', running:'取得中', verification_required:'Chromeで認証が必要', complete:'取得完了・内容確認待ち', failed:'取得できませんでした', statement_review:'明細・個別確認待ち', new:'新しい支出', repayment:'カードへの返済', credit_review:'返金など・確認待ち', posted:'登録済み', duplicate:'登録済みの明細', legacy_review:'既存取引と一致する可能性', correction_review:'処理日や外貨情報が変わった明細の可能性', overlap_review:'他の明細期間と重複する可能性', in_progress:'先の取り込み処理を再開してください' }
@@ -74,9 +74,8 @@ async function run(action: () => Promise<any>) { if (busy.value) return; busy.va
 async function refresh() { const [a,c,i] = await Promise.all([api('accounts'),api('collectors'),api('imports')]); accounts.value = a.accounts; collectors.value = c.collectors; imports.value = i.imports }
 async function addAccount() { await api('accounts', { method:'POST', body: { ...newAccount, cardIdentifiers:cardsText.value.split(',').map(v=>v.trim()).filter(Boolean) } }); await refresh(); message.value = '口座を追加しました' }
 async function sync(id: string) { await api(`accounts/${id}/sync`, { method:'POST' }); await refresh() }
-async function pair() { const result = await api('collectors', { method:'POST', body: { name:collectorName.value, accountIds:pairAccounts.value } }); pairToken.value = result.token; await refresh() }
+// Connections are created by the downloader's own Connect flow (POST /api/finance/collectors stays available for compatibility).
 async function revoke(id: string) { await api(`collectors/${id}`, { method:'DELETE' }); await refresh() }
-async function copyToken() { await navigator.clipboard.writeText(pairToken.value); message.value = 'コピーしました' }
 function selectFile(event: Event) { file.value = (event.target as HTMLInputElement).files?.[0] || null }
 async function upload(account: any) { const id = account._id; const metadata = manual.kind === 'pending' ? { kind: 'pending', ...(account.provider !== 'aplus' ? { start: manual.start, end: manual.end } : {}) } : account.provider === 'aplus' ? { kind: 'statement', statementMonth: manual.statementMonth, statementTotal: manual.statementTotal, refundTotal: manual.refundTotal, ...(manual.fiscalStart || manual.fiscalEnd ? { fiscalStart: manual.fiscalStart, fiscalEnd: manual.fiscalEnd } : {}) } : { kind: 'statement', start: manual.start, end: manual.end }; if (!file.value) throw Error('CSVを選択してください'); const result = await api(`accounts/${id}/imports`, { method:'POST', query: metadata, body:file.value, headers: { 'Content-Type':account.provider === 'aplus' && manual.kind === 'pending' ? 'application/json' : 'text/csv' } }); await refresh(); await review(result.id) }
 async function review(id: string) { selected.value = await api(`imports/${id}`); for (const key of Object.keys(choices)) delete choices[Number(key)]; for (const row of selected.value.rows) if (row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)) choices[row.line] = row.skipped ? 'skip' : row.state === 'new' ? 'import' : ''; await nextTick(); reviewPanel.value?.scrollIntoView({ behavior:'smooth' }) }

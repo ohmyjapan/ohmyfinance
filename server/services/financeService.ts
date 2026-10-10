@@ -66,12 +66,17 @@ export function accountInput(body: any) {
   const otpRecipient = provider === 'amex' ? body.otpRecipient.toLowerCase() : null, otpMailbox = provider === 'amex' ? body.otpMailbox.toLowerCase() : null
   return { name: body.name.trim(), provider, cardIdentifiers: cards, primaryCard: body.primaryCard, otpRecipient, otpMailbox, forwarded: otpRecipient !== otpMailbox }
 }
-export async function createCollector(ownerId: string, body: any) {
+// Collector name and account-identifier validation, shared with the downloader's initial Connect approval. Ownership,
+// activation and provider scope are checked by each caller against its own owner; this validates shape only.
+export function collectorInput(body: any) {
   if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 100 || !Array.isArray(body.accountIds) || !body.accountIds.length || body.accountIds.length > 30) fail(400, 'Collector name and accounts required')
-  const accountIds = [...new Set(body.accountIds.map(id))]
+  return { name: body.name.trim(), accountIds: [...new Set<string>(body.accountIds.map(id))] }
+}
+export async function createCollector(ownerId: string, body: any) {
+  const { name, accountIds } = collectorInput(body)
   if (await FinancialAccount.countDocuments({ ownerId, _id: { $in: accountIds }, active: true, provider: 'amex' }) !== accountIds.length) fail(400, 'Unknown account')
   const token = `omfc_${randomBytes(32).toString('hex')}`
-  const device = await FinanceCollector.create({ ownerId, name: body.name.trim(), tokenHash: digest(token), accountIds })
+  const device = await FinanceCollector.create({ ownerId, name, tokenHash: digest(token), accountIds })
   return { id: device._id.toString(), token }
 }
 export async function csvBody(event: H3Event): Promise<Buffer> {

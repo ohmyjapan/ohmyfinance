@@ -5,12 +5,13 @@ import { FinanceCollector, FinancialAccount } from '../models/Finance'
 import { CollectorInstallation, CollectorApproval, CollectorGrant, CollectorWrappedKey, CollectorThrottle } from '../models/FinanceCollectorSecurity'
 import { verifyToken as verifyTOTP, verifyBackupCode } from './twoFactorService'
 
-const hash=(value:string)=>createHash('sha256').update(value).digest('hex')
-const opaque=()=>randomBytes(32).toString('hex')
-const hex=/^[a-f0-9]{64}$/
-const deny=(message='Collector authorization is unavailable',statusCode=403):never=>{throw createError({statusCode,statusMessage:message})}
-const same=(a:string,b:string)=>typeof a==='string'&&typeof b==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b))
-const stamp=(u:any)=>hash(JSON.stringify([u.password,!!u.twoFactorEnabled,u.twoFactorSecret||'']))
+// Narrow helpers shared with the initial Connect service (financeCollectorConnectService.ts); their behaviour here is unchanged.
+export const hash=(value:string)=>createHash('sha256').update(value).digest('hex')
+export const opaque=()=>randomBytes(32).toString('hex')
+export const hex=/^[a-f0-9]{64}$/
+export const deny=(message='Collector authorization is unavailable',statusCode=403):never=>{throw createError({statusCode,statusMessage:message})}
+export const same=(a:string,b:string)=>typeof a==='string'&&typeof b==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b))
+export const stamp=(u:any)=>hash(JSON.stringify([u.password,!!u.twoFactorEnabled,u.twoFactorSecret||'']))
 const userSecrets='+password +twoFactorSecret +twoFactorBackupCodes'
 export async function initializeSecurity(){await Promise.all([CollectorInstallation,CollectorApproval,CollectorGrant,CollectorWrappedKey,CollectorThrottle].map(m=>m.init()))}
 export async function readInstallation(token:string,id:string,origin:string){
@@ -21,21 +22,21 @@ export async function readInstallation(token:string,id:string,origin:string){
   if(String(row.ownerId)!==String(device.ownerId)||row.origin!==origin)deny()
   return {installation:{installationId:row._id,generation:row.generation,publicKey:row.publicKey,paired:String(row.collectorId)===String(device._id)}}
 }
-async function activeUser(id:any){const u:any=await User.findOne({_id:id,isActive:true}).select(userSecrets);if(!u)deny();return u}
+export async function activeUser(id:any){const u:any=await User.findOne({_id:id,isActive:true}).select(userSecrets);if(!u)deny();return u}
 async function deviceFor(token:string){
   if(typeof token!=='string'||!/^omfc_[a-f0-9]{64}$/.test(token))deny()
   const d:any=await FinanceCollector.findOne({tokenHash:hash(token),revokedAt:null}).lean()
   if(!d)deny()
   return {device:d,user:await activeUser(d.ownerId)}
 }
-async function throttle(subject:string,limit:number,windowMs:number){
+export async function throttle(subject:string,limit:number,windowMs:number){
   const now=Date.now(),bucket=Math.floor(now/windowMs),_id=`${subject}:${bucket}`
   let row:any
   try{row=await CollectorThrottle.findOneAndUpdate({_id},{$inc:{count:1},$setOnInsert:{expiresAt:new Date((bucket+2)*windowMs)}},{upsert:true,new:true})}
   catch(error:any){if(error.code!==11000)throw error;row=await CollectorThrottle.findOneAndUpdate({_id},{$inc:{count:1}},{new:true})}
   if(!row||row.count>limit)deny('Too many approval attempts. Try again later.',429)
 }
-function publicIdentity(pem:unknown){
+export function publicIdentity(pem:unknown){
   if(typeof pem!=='string'||pem.length>6000||!pem.startsWith('-----BEGIN PUBLIC KEY-----'))deny('Invalid device public key',400)
   try{const key=createPublicKey(pem as string);const bits=key.asymmetricKeyDetails?.modulusLength
     if(key.asymmetricKeyType!=='rsa'||!bits||bits<2048||bits>4096)deny('Invalid device public key',400)
@@ -43,11 +44,37 @@ function publicIdentity(pem:unknown){
     return {publicKey,fingerprint:hash(publicKey)}
   }catch{return deny('Invalid device public key',400)}
 }
-function callback(value:unknown){
+export function callback(value:unknown){
   try{if(typeof value!=='string'||value.length>256)throw Error();const url=new URL(value)
     if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||Number(url.port)<1024||url.username||url.password||url.search||url.hash||url.pathname!=='/collector-callback')throw Error()
     return url.href
   }catch{deny('Invalid collector callback',400)}
+}
+// Fresh MFA for a request-scoped approval: enabled TOTP, or an unspent backup code whose hash is returned for one consumption.
+export async function verifyFreshMfa(user:any,value:unknown):Promise<string|undefined>{
+  if(!user.twoFactorEnabled)return undefined
+  const code=typeof value==='string'?value.trim().toUpperCase():''
+  let valid=!!user.twoFactorSecret&&/^\d{6}$/.test(code)&&verifyTOTP(user.twoFactorSecret,code)
+  let backup:string|undefined
+  if(!valid&&/^[A-F0-9]{8}$/.test(code)){
+    const result=await verifyBackupCode(code,user.twoFactorBackupCodes||[])
+    if(result.valid){valid=true;backup=user.twoFactorBackupCodes[result.index]}
+  }
+  if(!valid)deny('Password or verification code is incorrect.',401)
+  return backup
+}
+// Consume a backup atomically; a failed later transition spends the code safely.
+export async function consumeBackupCode(user:any,backup:string|undefined){
+  if(!backup)return
+  const spent=await User.updateOne({_id:user._id,isActive:true,twoFactorBackupCodes:backup,password:user.password,twoFactorSecret:user.twoFactorSecret},{$pull:{twoFactorBackupCodes:backup}})
+  if(spent.modifiedCount!==1)deny('Verification code already used.',401)
+}
+// Enrollment and grant rows built from an approved request row (also used by the initial Connect service).
+export function installationRecord(row:any){
+  return {ownerId:row.ownerId,collectorId:row.collectorId,generation:row.generation,publicKey:row.publicKey,fingerprint:row.fingerprint,origin:row.origin,trustHash:row.trustHash,authStamp:row.authStamp,accountIds:row.accountIds,trustedAt:new Date()}
+}
+export function grantRecord(grantHash:string,row:any,expiresAt:Date){
+  return {_id:grantHash,ownerId:row.ownerId,collectorId:row.collectorId,installationId:row.installationId,generation:row.generation,origin:row.origin,accountIds:row.accountIds,authStamp:row.authStamp,trustHash:row.trustHash,expiresAt}
 }
 export async function createRequest(token:string,body:any,origin:string){
   const {device,user}=await deviceFor(token)
@@ -102,18 +129,8 @@ export async function approveRequest(ownerId:string,id:string,body:any){
   const {user}=await currentContext(row)
   if(user.lockoutUntil&&user.lockoutUntil>new Date())deny('Account temporarily locked. Try again later.',429)
   if(typeof body?.password!=='string'||body.password.length>512||!await user.comparePassword(body.password))deny('Password or verification code is incorrect.',401)
-  let backup:string|undefined
-  if(user.twoFactorEnabled){
-    const code=typeof body.code==='string'?body.code.trim().toUpperCase():''
-    let valid=!!user.twoFactorSecret&&/^\d{6}$/.test(code)&&verifyTOTP(user.twoFactorSecret,code)
-    if(!valid&&/^[A-F0-9]{8}$/.test(code)){
-      const result=await verifyBackupCode(code,user.twoFactorBackupCodes||[])
-      if(result.valid){valid=true;backup=user.twoFactorBackupCodes[result.index]}
-    }
-    if(!valid)deny('Password or verification code is incorrect.',401)
-  }
-  // Consume a backup atomically; a failed later transition spends the code safely.
-  if(backup){const spent=await User.updateOne({_id:user._id,isActive:true,twoFactorBackupCodes:backup,password:user.password,twoFactorSecret:user.twoFactorSecret},{$pull:{twoFactorBackupCodes:backup}});if(spent.modifiedCount!==1)deny('Verification code already used.',401)}
+  const backup=await verifyFreshMfa(user,body.code)
+  await consumeBackupCode(user,backup)
   await currentContext(row)
   const code=opaque()
   const changed=await CollectorApproval.updateOne({_id:id,status:'pending',expiresAt:{$gt:new Date()}},{$set:{status:'approved',codeHash:hash(code),expiresAt:new Date(Date.now()+60000)}})
@@ -127,7 +144,7 @@ export async function exchangeRequest(token:string,id:string,code:string,verifie
   await currentContext(row)
   const used=await CollectorApproval.updateOne({_id:id,status:'approved',expiresAt:{$gt:new Date()},codeHash:row.codeHash},{$set:{status:'used'},$unset:{codeHash:1}})
   if(used.modifiedCount!==1)deny('Approval already used.',401)
-  const next={ownerId:row.ownerId,collectorId:row.collectorId,generation:row.generation,publicKey:row.publicKey,fingerprint:row.fingerprint,origin:row.origin,trustHash:row.trustHash,authStamp:row.authStamp,accountIds:row.accountIds,trustedAt:new Date()}
+  const next=installationRecord(row)
   if(row.action==='reset')await CollectorGrant.updateMany({installationId:row.installationId,ownerId:row.ownerId,revokedAt:null},{$set:{revokedAt:new Date()}})
   if(row.action==='enroll'){
     try{await CollectorInstallation.create({_id:row.installationId,...next})}catch(error:any){if(error.code===11000)deny('Installation already enrolled. Start again.',409);throw error}
@@ -139,7 +156,7 @@ export async function exchangeRequest(token:string,id:string,code:string,verifie
   }
   const grant=opaque(),expiresAt=new Date(Date.now()+20*60000)
   // Only enroll/batch grants read keys. Pair/reset grants authorize their single change.
-  if(row.action==='enroll'||row.action==='batch')await CollectorGrant.create({_id:hash(grant),ownerId:row.ownerId,collectorId:row.collectorId,installationId:row.installationId,generation:row.generation,origin:row.origin,accountIds:row.accountIds,authStamp:row.authStamp,trustHash:row.trustHash,expiresAt})
+  if(row.action==='enroll'||row.action==='batch')await CollectorGrant.create(grantRecord(hash(grant),row,expiresAt))
   return {grant:row.action==='enroll'||row.action==='batch'?grant:null,expiresAt,installationId:row.installationId,generation:row.generation,publicKey:row.publicKey,action:row.action}
 }
 // Remembered-PC access is a separate credential, never a polling token or a normal OMF login.

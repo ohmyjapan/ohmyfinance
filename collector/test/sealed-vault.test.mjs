@@ -5,11 +5,12 @@ import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {mkdtemp,readFile} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import {startCollector,removeOwnedTemp,startFakeOmf,brokerEnv,readCalls,waitFor,writePendingItem} from './fake-broker.mjs';
-import {SplitStore} from '../vault.mjs';
+import {SplitStore,openCapsule,sealEnvelope} from '../vault.mjs';
 
 const execute=promisify(execFile),root=fileURLToPath(new URL('../../',import.meta.url));
 export async function runSealedVaultLegs(){
@@ -60,6 +61,37 @@ export async function runOutboxDeliveryLeg(){
   }finally{await collector?.stop();await omf.close();await removeOwnedTemp(directory,{tmpdir:os.tmpdir()});}
 }
 test('bound outbox uploads precede browser work and manual session ends at empty claim',runOutboxDeliveryLeg);
+
+// Initial Connect (plan omf-customer-connect-20261010): the DPAPI journal that makes the flow resumable, and the capsule
+// that delivers the token/grant to this installation only. Real Windows DPAPI on an owned temporary directory.
+test('DPAPI connection journal round-trips under the writer lease, is removed on null, and the capsule opens only with its AAD',async()=>{
+  assert.equal(process.platform,'win32');
+  const directory=await mkdtemp(path.join(os.tmpdir(),'omf-connect-journal-')),store=new SplitStore(directory);
+  let key;
+  try{
+    assert.equal(await store.enrollmentJournal(),null);
+    await assert.rejects(store.enrollmentJournal({v:1,phase:'requested'}),/lease/);
+    const journal={v:1,phase:'created',origin:'https://omf.example.invalid',installationId:'a'.repeat(32),generation:'b'.repeat(64),state:'c'.repeat(64),verifier:'v'.repeat(43),id:'d'.repeat(64),port:49123};
+    await store.withLock(()=>store.enrollmentJournal(journal));
+    assert.deepEqual(await new SplitStore(directory).enrollmentJournal(),journal);
+    const bytes=await readFile(path.join(directory,'connect-journal.dpapi'));
+    for(const secret of [journal.verifier,journal.state,journal.id])assert.equal(bytes.includes(Buffer.from(secret)),false);
+    await store.withLock(()=>store.enrollmentJournal({...journal,phase:'callback',code:'e'.repeat(64)}));
+    assert.equal((await store.enrollmentJournal()).code,'e'.repeat(64));
+    await store.withLock(()=>store.enrollmentJournal(null));
+    assert.equal(await store.enrollmentJournal(),null);
+    assert.equal(existsSync(path.join(directory,'connect-journal.dpapi')),false);
+    key=await store.withLock(()=>store.deviceKey(journal.generation,{create:true}));
+    const aad={v:1,kind:'collector-connect',requestId:journal.id,origin:journal.origin,installationId:journal.installationId,generation:journal.generation,ownerId:'1'.repeat(24),collectorId:'2'.repeat(24),accountIds:['3'.repeat(24)],pcName:'Synthetic PC'};
+    const secret={token:'omfc_'+'f'.repeat(64),grant:'0'.repeat(64)};
+    const capsule=sealEnvelope(key.publicKey,aad,secret);
+    assert.deepEqual(openCapsule(key,capsule,aad),secret);
+    assert.throws(()=>openCapsule(key,capsule,{...aad,pcName:'Other PC'}),/does not belong/);
+    assert.throws(()=>openCapsule(key,{...capsule,aad:{...aad,pcName:'Other PC'}},{...aad,pcName:'Other PC'}));
+    assert.throws(()=>openCapsule(key,{...capsule,data:''},aad),/invalid connection capsule/);
+    key.close();assert.throws(()=>openCapsule(key,capsule,aad),/locked/);
+  }finally{key?.close();await removeOwnedTemp(directory,{tmpdir:os.tmpdir()});}
+});
 
 test('startup protects existing collector files to the current Windows user and SYSTEM',async()=>{
   assert.equal(process.platform,'win32');

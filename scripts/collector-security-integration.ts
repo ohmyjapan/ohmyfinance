@@ -1,6 +1,9 @@
 // Owned, ephemeral Mongo only; no app environment file, bank service or real user.
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomBytes, privateDecrypt, constants } from 'node:crypto'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import mongoose from 'mongoose'
 import { MongoMemoryServer } from 'mongodb-memory-server'
 import { generateSync } from 'otplib'
@@ -8,10 +11,214 @@ import User from '../server/models/User'
 import { FinanceCollector, FinancialAccount } from '../server/models/Finance'
 import { generateSecret, hashBackupCodes } from '../server/services/twoFactorService'
 
+// Initial Connect (plan omf-customer-connect-20261010): token-less request, one fresh sign-in, request-scoped proof,
+// scoped issuance delivered only through an encrypted capsule, bounded idempotent retries, cancel/expire/revoke.
+// Each server binding is also removed in turn from a mutant copy of the service to prove this leg catches it.
+const CONNECT_SERVICE=path.resolve(__dirname,'..','server','services','financeCollectorConnectService.ts')
+const BINDINGS=['proof','origin','scope','authstamp','pkce','code','expiry','revoked']
+async function withMutant(marker:string,fn:(mutant:any)=>Promise<void>){
+  const lines=(await readFile(CONNECT_SERVICE,'utf8')).split('\n'),index=lines.findIndex(line=>line.includes('// binding:'+marker))
+  assert.ok(index>=0,'binding marker missing: '+marker);lines.splice(index,1)
+  const mutantFile=path.join(path.dirname(CONNECT_SERVICE),`financeCollectorConnectService.mutant-${marker}-${process.pid}.ts`)
+  await writeFile(mutantFile,lines.join('\n'),{flag:'wx'})
+  try{await fn(await import(pathToFileURL(mutantFile).href))}finally{await unlink(mutantFile)}
+}
+async function connectLegs(context:{pass:(name:string)=>void,digest:(v:string)=>string,origin:string,user:any,other:any,account:any,password:string,secret:string,legacyToken:string,service:any,models:any}){
+  const {pass,digest,origin,user,other,account,password,secret,legacyToken,service,models}=context
+  let connect:any,connectModels:any
+  try{connect=await import('../server/services/financeCollectorConnectService');connectModels=await import('../server/models/FinanceCollectorConnect')}
+  catch(error:any){console.log('FAIL initial connect service is missing: '+String(error?.message||error).split('\n')[0]);throw error}
+  const {CollectorConnect}=connectModels
+  await connect.initializeConnect()
+  const S256=(v:string)=>createHash('sha256').update(v).digest('base64url')
+  const second:any=await FinancialAccount.create({ownerId:user._id,provider:'amex',name:'Second synthetic card',cardIdentifiers:['23456'],primaryCard:'23456',otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'})
+  const aplus:any=await FinancialAccount.create({ownerId:user._id,provider:'aplus',name:'Synthetic Aplus',cardIdentifiers:['1234'],primaryCard:'1234'})
+  const foreign:any=await FinancialAccount.create({ownerId:other._id,provider:'amex',name:'Foreign card',cardIdentifiers:['34567'],primaryCard:'34567',otpRecipient:'other@example.invalid',otpMailbox:'other@example.invalid'})
+  const ids=[String(account._id)]
+  const totp=()=>generateSync({secret})
+  async function fresh(){
+    await models.CollectorThrottle.deleteMany({})
+    const pair=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
+    const installationId=randomBytes(16).toString('hex'),generation=randomBytes(32).toString('hex'),verifier=randomBytes(32).toString('base64url'),state=randomBytes(32).toString('hex'),trustToken=randomBytes(32).toString('hex')
+    const input={installationId,generation,publicKey:pair.publicKey,trustHash:digest(trustToken),state,codeChallenge:S256(verifier),redirectUri:'http://127.0.0.1:49123/collector-callback',pcName:'Synthetic PC'}
+    const created=await connect.createConnectRequest(input,origin,'127.0.0.1')
+    return {pair,installationId,generation,verifier,state,trustToken,input,id:created.id as string,created}
+  }
+  async function authenticated(){const r=await fresh();const auth=await connect.authenticateConnect(r.id,{email:user.email,password,code:totp()},origin);return {...r,auth,proof:auth.proof as string}}
+  async function approved(accountIds=ids){const r=await authenticated();const yes=await connect.approveConnect(r.id,{proof:r.proof,accountIds,pcName:'Synthetic PC'},origin);return {...r,code:new URL(yes.redirectUri).searchParams.get('code') as string}}
+  const full=(id:string)=>CollectorConnect.findById(id).select('+state +codeChallenge +authStamp +proofHash +tokenHash +grantHash +capsule +codeHash').lean()
+  // 1. Token-less request: bindings validated, duplicate create reused, public inspection generic.
+  const first=await fresh()
+  assert.match(first.id,/^[a-f0-9]{64}$/);assert.equal(first.created.connectUrl,origin+'/collector-connect?id='+first.id)
+  assert.equal((await connect.createConnectRequest(first.input,origin,'127.0.0.1')).id,first.id)
+  for(const bad of [{redirectUri:'http://evil.example.invalid/collector-callback'},{redirectUri:'http://127.0.0.1:49123/other'},{publicKey:'junk'},{codeChallenge:'short'},{state:'x'},{pcName:''},{pcName:'x'.repeat(101)}])await assert.rejects(connect.createConnectRequest({...first.input,...bad,installationId:randomBytes(16).toString('hex')},origin,'127.0.0.1'),(e:any)=>e.statusCode===400)
+  const view=await connect.inspectConnectRequest(first.id)
+  assert.deepEqual(Object.keys(view).sort(),['expiresAt','id','intent','pcName','status']);assert.equal(view.intent,'connect');assert.equal(view.pcName,'Synthetic PC');assert.equal(view.status,'pending')
+  assert.equal(JSON.stringify(view).includes(user.email),false)
+  pass('token-less connect request binds loopback callback, PKCE and public key; a repeated create reuses the pending request; public inspection shows only intent and PC name')
+  // 2. Fresh sign-in: password and enabled MFA once; lockout, inactive user, consumed backup code; proof stored as a digest.
+  await assert.rejects(connect.authenticateConnect(first.id,{email:user.email,password:'wrong',code:totp()},origin),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.authenticateConnect(first.id,{email:user.email,password,code:''},origin),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.authenticateConnect(first.id,{email:user.email,password,code:'000000'},origin),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.authenticateConnect(first.id,{email:'nobody@example.invalid',password,code:totp()},origin),(e:any)=>e.statusCode===401)
+  const auth=await connect.authenticateConnect(first.id,{email:user.email,password,code:totp()},origin)
+  assert.match(auth.proof,/^[a-f0-9]{64}$/);assert.deepEqual(auth.accounts.map((a:any)=>a.id).sort(),[String(account._id),String(second._id)].sort());assert.equal(auth.pcName,'Synthetic PC')
+  assert.equal(auth.accounts.some((a:any)=>a.id===String(aplus._id)||a.id===String(foreign._id)),false)
+  let row:any=await full(first.id)
+  assert.equal(row.proofHash,digest(auth.proof));assert.equal(row.status,'authenticated');assert.equal(JSON.stringify(row).includes(auth.proof),false);assert.equal(String(row.ownerId),String(user._id))
+  assert.equal((await connect.inspectConnectRequest(first.id)).status,'authenticated')
+  const backupA=await authenticated();void backupA
+  const withBackup=await fresh();await connect.authenticateConnect(withBackup.id,{email:user.email,password,code:'CCDD3344'},origin)
+  const withBackupAgain=await fresh();await assert.rejects(connect.authenticateConnect(withBackupAgain.id,{email:user.email,password,code:'CCDD3344'},origin),(e:any)=>e.statusCode===401)
+  const locked=await fresh()
+  for(let i=0;i<5;i++)await assert.rejects(connect.authenticateConnect(locked.id,{email:user.email,password:'wrong',code:totp()},origin),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.authenticateConnect(locked.id,{email:user.email,password,code:totp()},origin),(e:any)=>e.statusCode===401&&/locked/i.test(e.statusMessage))
+  assert.ok(((await User.findById(user._id).lean()) as any).lockoutUntil>new Date())
+  await User.updateOne({_id:user._id},{$set:{loginAttempts:0},$unset:{lockoutUntil:1}})
+  await User.updateOne({_id:user._id},{$set:{isActive:false}})
+  await assert.rejects(connect.authenticateConnect((await fresh()).id,{email:user.email,password,code:totp()},origin),(e:any)=>e.statusCode===401)
+  await User.updateOne({_id:user._id},{$set:{isActive:true}})
+  pass('connect sign-in verifies the password and enabled MFA once with the ordinary lockout; a backup code is consumed once; inactive users and wrong codes are refused; the proof is stored only as a digest')
+  // 3. Approval: proof, exact origin, unchanged auth state, live eligible scope; duplicate/crash retry keeps one reserved collector.
+  await assert.rejects(connect.approveConnect(first.id,{proof:'0'.repeat(64),accountIds:ids},origin),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:ids},'https://other.example.invalid'),(e:any)=>e.statusCode===403)
+  for(const scope of [[],[String(foreign._id)],[String(aplus._id)],[String(account._id),String(foreign._id)],['nope']])await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:scope},origin),(e:any)=>[400,403].includes(e.statusCode))
+  await FinancialAccount.updateOne({_id:second._id},{$set:{active:false}})
+  await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:[String(second._id)]},origin),(e:any)=>[400,403].includes(e.statusCode))
+  await FinancialAccount.updateOne({_id:second._id},{$set:{active:true}})
+  const previousSecret=secret
+  await User.updateOne({_id:user._id},{$set:{twoFactorSecret:generateSecret()}})
+  await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:ids},origin),(e:any)=>e.statusCode===401)
+  await User.updateOne({_id:user._id},{$set:{twoFactorSecret:previousSecret}})
+  const beforeCount=await FinanceCollector.countDocuments({ownerId:user._id})
+  const yes=await connect.approveConnect(first.id,{proof:auth.proof,accountIds:ids,pcName:'Synthetic PC'},origin)
+  const target=new URL(yes.redirectUri);assert.equal(target.origin+target.pathname,'http://127.0.0.1:49123/collector-callback');assert.equal(target.searchParams.get('state'),first.state)
+  const code1=target.searchParams.get('code') as string;assert.match(code1,/^[a-f0-9]{64}$/)
+  row=await full(first.id);assert.equal(row.status,'ready');assert.ok(row.collectorId);assert.ok(row.capsule);assert.equal(JSON.stringify(row).includes(code1),false)
+  const reserved=String(row.collectorId)
+  const device:any=await FinanceCollector.findById(reserved).lean();assert.equal(device.name,'Synthetic PC');assert.deepEqual(device.accountIds.map(String),ids)
+  // Duplicate click: a new code, the same reserved collector.
+  const again=await connect.approveConnect(first.id,{proof:auth.proof,accountIds:ids},origin)
+  const code2=new URL(again.redirectUri).searchParams.get('code') as string;assert.notEqual(code2,code1)
+  assert.equal(String(((await full(first.id)) as any).collectorId),reserved)
+  // A crash after the prepared row was saved but before the collector row existed: the retry continues that preparation.
+  await FinanceCollector.deleteOne({_id:reserved});await CollectorConnect.updateOne({_id:first.id},{$set:{status:'preparing'}})
+  const resumed=await connect.approveConnect(first.id,{proof:auth.proof,accountIds:ids},origin)
+  const code3=new URL(resumed.redirectUri).searchParams.get('code') as string
+  assert.equal(String(((await full(first.id)) as any).collectorId),reserved);assert.ok(await FinanceCollector.exists({_id:reserved}))
+  assert.equal(await FinanceCollector.countDocuments({ownerId:user._id}),beforeCount+1)
+  await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:[String(account._id),String(second._id)]},origin),(e:any)=>e.statusCode===409)
+  assert.equal(await FinanceCollector.countDocuments({ownerId:user._id}),beforeCount+1)
+  pass('approval needs the request proof, exact origin, unchanged auth state and live eligible scope; duplicate clicks and a prepare-crash retry keep one reserved collector; a changed selection is refused')
+  // 4. Exchange: approved code and PKCE; duplicates return one capsule; collector primitives open it; Mongo holds no plaintext.
+  await assert.rejects(connect.exchangeConnect({id:first.id,code:code2,verifier:first.verifier}),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.exchangeConnect({id:first.id,code:code3,verifier:'a'.repeat(43)}),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.exchangeConnect({id:first.id,code:'f'.repeat(64),verifier:first.verifier}),(e:any)=>e.statusCode===401)
+  const settled=await Promise.allSettled([1,2].map(()=>connect.exchangeConnect({id:first.id,code:code3,verifier:first.verifier})))
+  assert.deepEqual(settled.map(s=>s.status),['fulfilled','fulfilled'])
+  const [delivered,duplicate]=settled.map((s:any)=>s.value)
+  assert.deepEqual(duplicate.capsule,delivered.capsule);assert.equal(delivered.installationId,first.installationId);assert.equal(delivered.generation,first.generation);assert.equal(delivered.collectorId,reserved);assert.equal(delivered.pcName,'Synthetic PC')
+  assert.deepEqual(delivered.accounts.map((a:any)=>a._id),ids);assert.equal(delivered.accounts[0].ownerId,String(user._id));assert.equal(delivered.accounts[0].primaryCard,'12345')
+  const later=await connect.exchangeConnect({id:first.id,code:code3,verifier:first.verifier});assert.deepEqual(later.capsule,delivered.capsule)
+  const {openEnvelope}=await import('../collector/vault.mjs')
+  const aad=connect.connectAad({requestId:first.id,origin,installationId:first.installationId,generation:first.generation,ownerId:String(user._id),collectorId:reserved,accountIds:ids,pcName:'Synthetic PC'})
+  assert.deepEqual(delivered.capsule.aad,aad)
+  const dataKey=privateDecrypt({key:first.pair.privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(delivered.capsule.wrapped,'base64'))
+  const opened=openEnvelope(delivered.capsule,dataKey,aad);dataKey.fill(0)
+  assert.match(opened.token,/^omfc_[a-f0-9]{64}$/);assert.match(opened.grant,/^[a-f0-9]{64}$/)
+  assert.throws(()=>openEnvelope(delivered.capsule,Buffer.alloc(32),{...aad,pcName:'Other PC'}))
+  row=await full(first.id)
+  assert.equal(row.status,'delivered');assert.equal(row.tokenHash,digest(opened.token));assert.equal(row.grantHash,digest(opened.grant))
+  for(const secretText of [opened.token,opened.grant,code3,auth.proof])assert.equal(JSON.stringify(row).includes(secretText),false)
+  assert.equal(((await FinanceCollector.findById(reserved).select('+tokenHash').lean()) as any).tokenHash,digest(opened.token))
+  const installed:any=await models.CollectorInstallation.findById(first.installationId).select('+trustHash').lean()
+  assert.ok(installed);assert.equal(String(installed.collectorId),reserved);assert.equal(installed.trustHash,digest(first.trustToken));assert.equal(installed.origin,origin)
+  const canaryKeyId=randomBytes(32).toString('hex')
+  const canaryAad={v:3,installationId:first.installationId,origin,ownerId:String(user._id),provider:'check',accountId:'check',generation:first.generation,keyId:canaryKeyId}
+  const canary=await connect.sealCapsule(first.pair.publicKey,canaryAad,{canary:'x'})
+  await service.putKey(opened.token,opened.grant,{keyId:canaryKeyId,entryId:'check',aad:canaryAad,wrapped:canary.wrapped})
+  assert.equal((await service.getKey(opened.token,opened.grant,canaryKeyId)).wrapped,canary.wrapped)
+  pass('exchange needs the approved code and PKCE verifier; duplicates return the one encrypted capsule; the collector primitives open it to a scoped token and grant Mongo never stores in plaintext; the grant releases keys')
+  // 5. Acknowledgement: delivered token plus remembered-PC secret, idempotent, clears delivery material; silent resume afterwards.
+  await assert.rejects(connect.acknowledgeConnect(opened.token,{id:first.id,installationId:first.installationId,generation:first.generation,trustToken:'0'.repeat(64)},origin),(e:any)=>[401,403].includes(e.statusCode))
+  await assert.rejects(connect.acknowledgeConnect(legacyToken,{id:first.id,installationId:first.installationId,generation:first.generation,trustToken:first.trustToken},origin),(e:any)=>[401,403].includes(e.statusCode))
+  await assert.rejects(connect.acknowledgeConnect(opened.token,{id:first.id,installationId:first.installationId,generation:first.generation,trustToken:first.trustToken},'https://other.example.invalid'),(e:any)=>[401,403].includes(e.statusCode))
+  assert.equal((await connect.acknowledgeConnect(opened.token,{id:first.id,installationId:first.installationId,generation:first.generation,trustToken:first.trustToken},origin)).acknowledged,true)
+  assert.equal((await connect.acknowledgeConnect(opened.token,{id:first.id,installationId:first.installationId,generation:first.generation,trustToken:first.trustToken},origin)).acknowledged,true)
+  row=await full(first.id);assert.equal(row.status,'acknowledged');assert.equal(row.capsule,undefined);assert.equal(row.codeHash,undefined);assert.equal(row.proofHash,undefined)
+  await assert.rejects(connect.exchangeConnect({id:first.id,code:code3,verifier:first.verifier}),(e:any)=>[401,409].includes(e.statusCode))
+  await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:ids},origin),(e:any)=>[401,409].includes(e.statusCode))
+  assert.ok((await service.resumeSession(opened.token,{installationId:first.installationId,generation:first.generation,trustToken:first.trustToken},origin)).grant)
+  assert.equal((await connect.inspectConnectRequest(first.id)).status,'finished')
+  pass('acknowledgement needs the delivered token and remembered-PC secret, is idempotent and clears delivery material; the remembered PC then resumes silently')
+  // 6. Cancel, expiry, revocation and an MFA change between phases.
+  const cancelled=await approved()
+  const cancelledRow:any=await full(cancelled.id)
+  assert.ok(await FinanceCollector.exists({_id:cancelledRow.collectorId,revokedAt:null}))
+  await assert.rejects(connect.cancelConnect(cancelled.id,{proof:'0'.repeat(64)}),(e:any)=>[401,403].includes(e.statusCode))
+  const bye=await connect.cancelConnect(cancelled.id,{proof:cancelled.proof});assert.equal(new URL(bye.redirectUri).searchParams.get('error'),'access_denied')
+  assert.equal(((await full(cancelled.id)) as any).status,'cancelled');assert.ok(((await FinanceCollector.findById(cancelledRow.collectorId).lean()) as any).revokedAt)
+  assert.equal(await models.CollectorInstallation.exists({_id:cancelled.installationId}),null)
+  await assert.rejects(connect.exchangeConnect({id:cancelled.id,code:cancelled.code,verifier:cancelled.verifier}),(e:any)=>[401,409].includes(e.statusCode))
+  const byState=await fresh();await connect.cancelConnect(byState.id,{state:byState.state});assert.equal((await connect.inspectConnectRequest(byState.id)).status,'cancelled')
+  await assert.rejects(connect.cancelConnect((await fresh()).id,{state:'0'.repeat(64)}),(e:any)=>[401,403].includes(e.statusCode))
+  const expired=await approved()
+  await CollectorConnect.updateOne({_id:expired.id},{$set:{expiresAt:new Date(Date.now()-1000)}})
+  await assert.rejects(connect.exchangeConnect({id:expired.id,code:expired.code,verifier:expired.verifier}),(e:any)=>e.statusCode===401)
+  assert.ok(await connect.expireConnectRequests()>=1)
+  const expiredRow:any=await full(expired.id);assert.equal(expiredRow.status,'expired');assert.equal(expiredRow.capsule,undefined)
+  assert.ok(((await FinanceCollector.findById(expiredRow.collectorId).lean()) as any).revokedAt)
+  assert.equal((await connect.inspectConnectRequest(expired.id)).status,'expired')
+  const revoked=await approved()
+  await FinanceCollector.updateOne({_id:((await full(revoked.id)) as any).collectorId},{$set:{revokedAt:new Date()}})
+  await assert.rejects(connect.exchangeConnect({id:revoked.id,code:revoked.code,verifier:revoked.verifier}),(e:any)=>e.statusCode===401)
+  const mfaChange=await approved()
+  const mfaDelivered=await connect.exchangeConnect({id:mfaChange.id,code:mfaChange.code,verifier:mfaChange.verifier})
+  const mfaKey=privateDecrypt({key:mfaChange.pair.privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(mfaDelivered.capsule.wrapped,'base64'))
+  const mfaOpened=openEnvelope(mfaDelivered.capsule,mfaKey,mfaDelivered.capsule.aad);mfaKey.fill(0)
+  await User.updateOne({_id:user._id},{$set:{twoFactorSecret:generateSecret()}})
+  await assert.rejects(connect.acknowledgeConnect(mfaOpened.token,{id:mfaChange.id,installationId:mfaChange.installationId,generation:mfaChange.generation,trustToken:mfaChange.trustToken},origin),(e:any)=>e.statusCode===401)
+  await assert.rejects(service.resumeSession(mfaOpened.token,{installationId:mfaChange.installationId,generation:mfaChange.generation,trustToken:mfaChange.trustToken},origin))
+  await assert.rejects(service.getKey(mfaOpened.token,mfaOpened.grant,canaryKeyId))
+  await User.updateOne({_id:user._id},{$set:{twoFactorSecret:previousSecret}})
+  // Ordinary logins still issue sessions; the connect page never did.
+  const {loginUser}=await import('../server/services/authService')
+  assert.equal((await loginUser(user.email,password)).requires2FA,true)
+  await assert.rejects(loginUser(user.email,'wrong'),/Invalid email or password/)
+  pass('cancel and expiry revoke only the reserved collector and remove delivery material; revocation or an MFA change between phases blocks later use; ordinary login semantics are unchanged')
+  // 7. Each binding check removed in turn: the attack then succeeds, so this leg would catch its loss.
+  const attacks:Record<string,(mutant:any)=>Promise<void>>={
+    proof:async m=>{const r=await authenticated();await assert.rejects(connect.approveConnect(r.id,{proof:'0'.repeat(64),accountIds:ids},origin));await m.approveConnect(r.id,{proof:'0'.repeat(64),accountIds:ids},origin)},
+    origin:async m=>{const r=await authenticated();await assert.rejects(connect.approveConnect(r.id,{proof:r.proof,accountIds:ids},'https://other.example.invalid'));await m.approveConnect(r.id,{proof:r.proof,accountIds:ids},'https://other.example.invalid')},
+    scope:async m=>{const r=await authenticated();await assert.rejects(connect.approveConnect(r.id,{proof:r.proof,accountIds:[String(foreign._id)]},origin));await m.approveConnect(r.id,{proof:r.proof,accountIds:[String(foreign._id)]},origin)},
+    authstamp:async m=>{const r=await authenticated();await User.updateOne({_id:user._id},{$set:{twoFactorSecret:generateSecret()}});try{await assert.rejects(connect.approveConnect(r.id,{proof:r.proof,accountIds:ids},origin));await m.approveConnect(r.id,{proof:r.proof,accountIds:ids},origin)}finally{await User.updateOne({_id:user._id},{$set:{twoFactorSecret:previousSecret}})}},
+    pkce:async m=>{const r=await approved();await assert.rejects(connect.exchangeConnect({id:r.id,code:r.code,verifier:'a'.repeat(43)}));await m.exchangeConnect({id:r.id,code:r.code,verifier:'a'.repeat(43)})},
+    code:async m=>{const r=await approved();await assert.rejects(connect.exchangeConnect({id:r.id,code:'f'.repeat(64),verifier:r.verifier}));await m.exchangeConnect({id:r.id,code:'f'.repeat(64),verifier:r.verifier})},
+    expiry:async m=>{const r=await approved();await CollectorConnect.updateOne({_id:r.id},{$set:{expiresAt:new Date(Date.now()-1000)}});await assert.rejects(connect.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier}));await m.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier})},
+    revoked:async m=>{const r=await approved();await FinanceCollector.updateOne({_id:((await full(r.id)) as any).collectorId},{$set:{revokedAt:new Date()}});await assert.rejects(connect.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier}));await m.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier})}
+  }
+  for(const marker of BINDINGS)await withMutant(marker,attacks[marker])
+  pass('each of the '+BINDINGS.length+' server bindings ('+BINDINGS.join(', ')+') was removed in turn and its attack then succeeded; the real service refuses all of them')
+  await models.CollectorThrottle.deleteMany({})
+  const throttled=await fresh()
+  for(let i=0;i<10;i++)await assert.rejects(connect.authenticateConnect(throttled.id,{email:'nobody@example.invalid',password,code:''},origin),(e:any)=>e.statusCode===401)
+  await assert.rejects(connect.authenticateConnect(throttled.id,{email:'nobody@example.invalid',password,code:''},origin),(e:any)=>e.statusCode===429)
+  await models.CollectorThrottle.deleteMany({})
+  for(let i=0;i<30;i++)await connect.createConnectRequest({...first.input,installationId:randomBytes(16).toString('hex'),state:randomBytes(32).toString('hex')},origin,'10.0.0.9')
+  await assert.rejects(connect.createConnectRequest({...first.input,installationId:randomBytes(16).toString('hex'),state:randomBytes(32).toString('hex')},origin,'10.0.0.9'),(e:any)=>e.statusCode===429)
+  await models.CollectorThrottle.deleteMany({})
+  pass('connect sign-in attempts and token-less request creation are throttled by request and by caller, not only by a rotatable installation ID')
+}
+
 async function main() {
   const service = await import('../server/services/financeCollectorSecurityService')
   const models = await import('../server/models/FinanceCollectorSecurity')
   const mongo = await MongoMemoryServer.create({instance:{dbName:'collector_security_isolated'}})
+  // The connect legs audit through server/utils/audit.ts → ensureConnection(), which (re)opens process.env.MONGO_URI.
+  // Point it at this script's own ephemeral server so that call is a same-URI no-op, never a reach for any other database.
+  process.env.MONGO_URI = mongo.getUri('collector_security_isolated')
+  // authService refuses to load without a JWT secret; a synthetic one is enough (no session is ever issued here).
+  process.env.JWT_SECRET ||= randomBytes(32).toString('hex')
   let checks = 0
   const pass = (name: string) => { checks++; console.log('PASS '+name) }
   const digest = (v: string) => createHash('sha256').update(v).digest('hex')
@@ -141,7 +348,11 @@ async function main() {
     await mongoose.disconnect();await mongoose.connect(mongo.getUri('collector_security_isolated'))
     await assert.rejects(service.approveRequest(String(user._id),fresh.id,{password,code:''}),(error:any)=>error.statusCode===429)
     pass('authentication attempt limit survives database reconnect')
+    // The legacy legs rotated the MFA secret and spent one backup code; restore the known secret for the connect legs.
+    await User.updateOne({_id:user._id},{$set:{twoFactorSecret:secret,loginAttempts:0},$unset:{lockoutUntil:1}})
+    await connectLegs({pass,digest,origin,user,other,account,password,secret,legacyToken:token,service,models})
     console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0}))
   } finally {await mongoose.disconnect();await mongo.stop()}
 }
-main().catch(error=>{console.error(error);process.exitCode=1})
+// authService's import starts the token-blacklist cleanup interval, which would keep this child alive after the receipt.
+main().then(()=>0,error=>{console.error(error);return 1}).then(code=>{process.stdout.write('',()=>process.exit(code))})

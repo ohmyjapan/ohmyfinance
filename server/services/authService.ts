@@ -132,21 +132,19 @@ export async function registerUser(data: {
   }
 }
 
-export async function loginUser(email: string, password: string, deviceId?: string): Promise<{
-  user: any
-  organizations: any[]
-  tokens: AuthTokens
-  requires2FA?: boolean
-  tempToken?: string
-}> {
+// The primary-credential check shared by the ordinary login and the downloader's request-scoped Connect sign-in:
+// user lookup, account lockout, password comparison with attempt counting, active check, attempt reset and the audits.
+// It issues no session and decides nothing about MFA or trusted devices; `purpose` only labels the audit entries.
+export async function authenticatePrimary(email: string, password: string, options: { select?: string; purpose?: string } = {}): Promise<any> {
+  const metadata = (extra: Record<string, any>) => options.purpose ? { ...extra, purpose: options.purpose } : extra
   // Find user with password
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password +twoFactorSecret')
+  const user = await User.findOne({ email: email.toLowerCase() }).select(options.select || '+password +twoFactorSecret')
   if (!user) {
     // Log failed attempt (user not found)
     await logAudit({
       action: 'login_failed',
       entityType: 'auth',
-      metadata: { email, reason: 'user_not_found' }
+      metadata: metadata({ email, reason: 'user_not_found' })
     })
     throw new Error('Invalid email or password')
   }
@@ -159,7 +157,7 @@ export async function loginUser(email: string, password: string, deviceId?: stri
       entityType: 'auth',
       entityId: user._id.toString(),
       userId: user._id.toString(),
-      metadata: { reason: 'account_locked', remainingMinutes }
+      metadata: metadata({ reason: 'account_locked', remainingMinutes })
     })
     throw new Error(`Account is locked. Try again in ${remainingMinutes} minutes.`)
   }
@@ -180,7 +178,7 @@ export async function loginUser(email: string, password: string, deviceId?: stri
         entityType: 'auth',
         entityId: user._id.toString(),
         userId: user._id.toString(),
-        metadata: { attempts: user.loginAttempts }
+        metadata: metadata({ attempts: user.loginAttempts })
       })
 
       throw new Error(`Account locked due to too many failed attempts. Try again in ${LOCKOUT_DURATION_MINUTES} minutes.`)
@@ -193,7 +191,7 @@ export async function loginUser(email: string, password: string, deviceId?: stri
       entityType: 'auth',
       entityId: user._id.toString(),
       userId: user._id.toString(),
-      metadata: { attempts: user.loginAttempts, remaining: MAX_LOGIN_ATTEMPTS - user.loginAttempts }
+      metadata: metadata({ attempts: user.loginAttempts, remaining: MAX_LOGIN_ATTEMPTS - user.loginAttempts })
     })
 
     throw new Error('Invalid email or password')
@@ -209,6 +207,18 @@ export async function loginUser(email: string, password: string, deviceId?: stri
   user.lockoutUntil = undefined
   user.lastLoginAt = new Date()
   await user.save()
+
+  return user
+}
+
+export async function loginUser(email: string, password: string, deviceId?: string): Promise<{
+  user: any
+  organizations: any[]
+  tokens: AuthTokens
+  requires2FA?: boolean
+  tempToken?: string
+}> {
+  const user = await authenticatePrimary(email, password)
 
   // Check if 2FA is enabled
   const deviceHash = hashDeviceId(deviceId)

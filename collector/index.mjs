@@ -6,11 +6,11 @@ import { promisify } from 'node:util';
 import { mkdir,readFile,writeFile,readdir,rename } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf, keyName, sealEnvelope, openEnvelope, samePublicKey, replaceVaultFile, DIALOG_TIMEOUT_MS } from './vault.mjs';
+import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf, keyName, sealEnvelope, openEnvelope, samePublicKey, replaceVaultFile, DIALOG_TIMEOUT_MS, openCapsule } from './vault.mjs';
 import { collectStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
-import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin } from './omf-authorization.mjs';
+import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin, connectWithOmf, acknowledgeWithOmf, cancelConnectWithOmf, launch } from './omf-authorization.mjs';
 
 // Saved bank/mail credentials open only during an authorized session. Remembered-PC access renews silently;
 // idle ticks, status and uploads do not open bank/mail credentials. Once v3 activation completes, the DPAPI blob
@@ -25,7 +25,16 @@ let yayoiState={state:'idle',message:'Connect this PC, save your Yayoi login, th
 let session=null;          // { id, broker, mode:'protected'|'manual', until, ran, browsers:Set<number>, publicKey, installationId }
 let authorization=null, closing=null;
 let keyLost=false, approvalUrl=null, reconnectNeeded=false, nextAutoAttempt=0, stopped=false, ticking=false;
-const startup={done:false,acl:null,elevated:null,chromeFound:null,capability:null,recovered:null};
+const startup={done:false,acl:null,elevated:null,chromeFound:null,capability:null,recovered:null,packagedOrigin:null};
+let connectJournal=null;   // in-memory copy of the DPAPI connect journal (connect-journal.dpapi); null when no connection is pending
+// The packaged OMF address (collector/omf-config.json written by package/stage.mjs; OMF_COLLECTOR_ORIGIN for isolated tests
+// and staged deployments). Consulted only for an unconnected installation: a saved connection keeps its own address.
+const CONFIG_FILE=fileURLToPath(new URL('./omf-config.json',import.meta.url));
+async function packagedOrigin() {
+  if(process.env.OMF_COLLECTOR_ORIGIN)return secureOrigin(process.env.OMF_COLLECTOR_ORIGIN);
+  let text;try{text=await readFile(CONFIG_FILE,'utf8');}catch(error){if(error.code==='ENOENT')return null;throw error;}
+  const value=JSON.parse(text);return value&&typeof value.origin==='string'?secureOrigin(value.origin):null;
+}
 const coded=(code,text)=>Object.assign(new Error(text),{code});
 const codeOf=error=>({locked:409,legacy:409,conflict:409,forbidden:403,reparse:400}[error?.code] || 400);
 async function vaultState() { try { return JSON.parse(await readFile(STATE_FILE,'utf8')); } catch(error) { if(error.code==='ENOENT')return null; throw error; } }
@@ -90,7 +99,9 @@ async function omfApproval(pending,config,context) {
   const result=await approveWithOmf(config,context,{signal:pending.abort.signal,onLink:link=>{approvalUrl=link;}});
   assertAuthorization(pending);return result;
 }
-async function ownerBroker(pending,config,state,localKey,action='batch',interactive=true) {
+// `approval` (initial Connect): the grant delivered inside the connection capsule is used as this session's authorization;
+// no renewal or approval request is made for it, so the one sign-in on the OMF page is the only human step.
+async function ownerBroker(pending,config,state,localKey,action='batch',interactive=true,{approval:delivered=null}={}) {
   let broker;
   try{broker=await startBroker('owner',{onEvent:brokerEvent});}catch(error){localKey?.close();throw error;}
   pending.broker=broker;
@@ -103,8 +114,8 @@ async function ownerBroker(pending,config,state,localKey,action='batch',interact
     const trustToken=secrets.lease?await loadTrust():await secrets.withLock(loadTrust);
     const context={action,installationId:state.installationId,generation:state.generation,publicKey:localKey?.publicKey||state.publicKey,trustHash:digest(trustToken),...(state.previousGeneration?{previousGeneration:state.previousGeneration}:{})};
     const renew=()=>resumeWithOmf(config,context,trustToken,{signal:pending.abort.signal});
-    let approval;
-    if(action==='batch'||action==='pair'||(action==='reset'&&state.previousGeneration===state.generation)){
+    let approval=delivered&&Date.parse(delivered.expiresAt)>Date.now()+60000?delivered:null;
+    if(!approval&&(action==='batch'||action==='pair'||(action==='reset'&&state.previousGeneration===state.generation))){
       try{approval=await renew();}catch(error){if(!interactive||![401,403].includes(error.status))throw error;}
     }
     if(!approval)approval=await omfApproval(pending,config,context);
@@ -209,6 +220,13 @@ async function tick() {
   try{await tickWork();}catch(error){message=error.message||'Syncing will retry when OMF is available.';}finally{ticking=false;}
 }
 async function tickWork() {
+  // A delivered connection whose activation was interrupted (crash, locked desktop) is finished without any human step:
+  // the token is on disk, the remembered-PC secret renews the grant, the canary and activation journaling complete it.
+  if(connectJournal&&['delivered','acknowledged'].includes(connectJournal.phase)&&!session&&!authorization&&!closing&&!running&&Date.now()>=nextAutoAttempt){
+    nextAutoAttempt=Date.now()+30000;
+    try{await authorize(pending=>finishConnect(pending));}catch(error){message=error.message;}
+    return;
+  }
   if(!session&&!authorization&&!closing&&!running&&!reconnectNeeded&&Date.now()>=nextAutoAttempt){
     nextAutoAttempt=Date.now()+30000;
     const state=await vaultState(),config=await metadata();
@@ -255,7 +273,7 @@ async function tickWork() {
     // Do not log browser errors, URLs, mail bodies, credentials, or response objects.
     if([401,403].includes(error.status)){reconnectNeeded=true;await endSession('PC disconnected or account access changed');message='Reconnect this PC through OMF to continue automatic syncing.';return;}
     message=account ? `${account.name}: ${error.message}` : (error.code==='legacy' ? error.message : 'OMF connection unavailable. Check the saved address and collector token.');
-    if(account && config)await api(config,'status',{accountId:account._id,jobId:account.jobId,state:'failed',message:'Open the collector setup screen on Ryzen 7 for details'},undefined,live).catch(()=>{});
+    if(account && config)await api(config,'status',{accountId:account._id,jobId:account.jobId,state:'failed',message:'Open the downloader setup screen on the connected PC for details'},undefined,live).catch(()=>{});
   } finally {clearInterval(heartbeat);running=false;activeAction=false;}
 }
 // Each legacy entry is saved and reopened through OMF before rewriting the old DPAPI blob without bank/mail
@@ -358,17 +376,151 @@ async function protect() {
   }));
 }
 
+// ── Initial Connect (plan omf-customer-connect-20261010) ─────────────────────────────────────────────────────────────
+// One serialized flow in the same authorization slot as approvals. A DPAPI journal (request identity, PKCE verifier,
+// state, callback port, then the code and the delivery) is persisted before each step so a crash resumes where it
+// stopped: Resume connection on the setup page before the code arrived, automatically afterwards. The capsule OMF
+// returns is opened with the device key, the connection is saved atomically with the journal, OMF is acknowledged, and
+// the protected store is activated through the existing owner broker and canary. The journal is removed only then.
+const CONNECT_MS=10*60000, FINISHING=['delivered','acknowledged'], ENDED=['cancelled','failed','done'];
+async function saveJournal(value) { connectJournal=await secrets.enrollmentJournal(value); }
+function connectStatus() {
+  const j=connectJournal;
+  if(!j)return {phase:'idle',resumable:false,finishing:false,expired:false,expiresAt:null};
+  const finishing=FINISHING.includes(j.phase),expired=!finishing&&(ENDED.includes(j.phase)||!j.expiresAt||Date.parse(j.expiresAt)<=Date.now());
+  return {phase:j.phase,resumable:!finishing&&!expired&&!authorization,finishing,expired,expiresAt:j.expiresAt||null};
+}
+// The capsule AAD rebuilt from local facts (request, origin, installation, generation) and the response fields the
+// connection will be saved with; a capsule sealed for anything else does not open.
+const connectAadFor=(journal,result)=>({v:1,kind:'collector-connect',requestId:String(journal.id),origin:String(journal.origin),installationId:String(journal.installationId),generation:String(journal.generation),ownerId:String(result.ownerId),collectorId:String(result.collectorId),accountIds:result.accounts.map(a=>String(a._id)).sort(),pcName:String(result.pcName)});
+async function connect({resume=false}={}) {
+  return authorize(async pending=>{
+    if(session)throw coded('conflict','Pause syncing or wait for the current connection to finish.');
+    if(running)throw coded('conflict','Wait for the current collector action to finish');
+    if(!startup.done)throw coded('conflict','Startup checks have not finished yet');
+    if(startup.elevated)throw coded('conflict','Run the collector without administrator rights before connecting');
+    const acl=await privateAcl({verifyOnly:true});startup.acl=acl;startup.elevated=acl.elevated;
+    if(!acl.verified)throw coded(acl.code==='reparse'?'reparse':'conflict','Private directory permissions are not verified; nothing is connected');
+    if(connectJournal&&FINISHING.includes(connectJournal.phase))return finishConnect(pending);
+    const state=await vaultState();
+    if(state?.resetPending)throw coded('conflict','Finish the interrupted reset through OMF first.');
+    const config=await metadata().catch(error=>{if(error.code==='legacy')throw coded('legacy','This directory holds logins from the previous setup. Use Enable protection for them, or start the downloader on a new private directory to connect.');throw error;});
+    if(activated(state,config))throw coded('conflict','This PC is already connected. Use Connect / reconnect, or disconnect it in OMF first.');
+    if(config.token||config.baseUrl){
+      // A crash between the connection save and the journal update: the delivery is durable, so finish it.
+      const previous=connectJournal;
+      if(previous?.phase==='callback'&&previous.origin===config.baseUrl&&state?.installationId===previous.installationId&&state?.generation===previous.generation){
+        await secrets.withLock(()=>saveJournal({...previous,phase:'delivered',code:undefined,verifier:undefined}));
+        return finishConnect(pending);
+      }
+      throw coded('conflict','This PC already has a saved OMF connection. Use Enable protection for it, or start on a new private directory.');
+    }
+    if(config.paused)throw coded('conflict','Resume the collector first');
+    const origin=startup.packagedOrigin;
+    if(!origin)throw coded('conflict','This downloader package has no OMF address. Install the package staged for your OMF site.');
+    const previous=connectJournal;
+    const usable=!!previous&&previous.origin===origin&&!ENDED.includes(previous.phase)&&Date.parse(previous.expiresAt)>Date.now();
+    let journal,localKey;
+    if(resume&&usable){
+      journal=previous;
+      localKey=await secrets.deviceKey(journal.generation);
+      if(localKey.publicKey!==journal.publicKey){localKey.close();keyLost=true;throw coded('conflict','The local key does not match the pending connection. Reset protection to reconnect.');}
+    } else {
+      if(previous?.id&&!ENDED.includes(previous.phase))cancelConnectWithOmf({baseUrl:previous.origin},previous).catch(()=>{});
+      journal=await secrets.withLock(async()=>{
+        const installationId=randomBytes(16).toString('hex'),generation=randomBytes(32).toString('hex');
+        localKey=await secrets.deviceKey(generation,{create:true});
+        const trustToken=await secrets.trustCredential(generation,{create:true});
+        const next={v:1,phase:'requested',origin,installationId,generation,publicKey:localKey.publicKey,trustHash:digest(trustToken),pcName:os.hostname(),state:randomBytes(32).toString('hex'),verifier:randomBytes(32).toString('base64url'),createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+CONNECT_MS).toISOString()};
+        await writeState({v:3,phase:'enrolling',installationId,generation,publicKey:localKey.publicKey,legacyId:state?.legacyId||'legacy-'+Date.now(),connect:true});
+        await saveJournal(next);return next;
+      });
+    }
+    try{
+      const result=await connectWithOmf({baseUrl:origin},{installationId:journal.installationId,generation:journal.generation,publicKey:journal.publicKey,trustHash:journal.trustHash,pcName:journal.pcName},{
+        signal:pending.abort.signal,onLink:link=>{approvalUrl=link;},
+        resume:{id:journal.id,port:journal.port,code:journal.code,state:journal.state,verifier:journal.verifier},
+        record:async(phase,data)=>{journal={...journal,...data,phase};await secrets.withLock(()=>saveJournal(journal));}
+      });
+      assertAuthorization(pending);
+      const opened=openCapsule(localKey,result.capsule,connectAadFor(journal,result));
+      if(!/^omfc_[a-f\d]{64}$/.test(opened.token)||!/^[a-f0-9]{64}$/.test(opened.grant))throw coded('conflict','OMF returned an invalid connection credential.');
+      const connection={baseUrl:origin,token:opened.token,accountInfo:result.accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId)})),accounts:{},mode:'protected'};
+      aadFor(journal.installationId,'gmail',null,connection);
+      const grant={grant:opened.grant,expiresAt:result.expiresAt,installationId:journal.installationId,generation:journal.generation};
+      opened.token=null;opened.grant=null;
+      // Durable save: the DPAPI connection first, then the journal phase; a crash between them resumes at the exchange.
+      await secrets.withLock(async()=>{await secrets.connection(connection);journal={...journal,phase:'delivered',collectorId:result.collectorId,code:undefined,verifier:undefined};await saveJournal(journal);});
+      return await finishConnect(pending,{localKey,grant});
+    }catch(error){
+      localKey.close();
+      if(pending.cancelled&&journal&&!FINISHING.includes(journal.phase)){
+        await secrets.withLock(()=>saveJournal({...journal,phase:'cancelled'})).catch(()=>{});
+        if(journal.id)cancelConnectWithOmf({baseUrl:origin},journal).catch(()=>{});
+      }
+      throw error;
+    }
+  });
+}
+// Acknowledges a delivered connection and activates the empty protected store: owner broker, canary save/open,
+// secret-free metadata, active state, journal removed. Non-interactive: a lost grant is renewed with the remembered-PC
+// secret; it never opens an approval. Takes ownership of `localKey` on success.
+async function finishConnect(pending,{localKey=null,grant=null}={}) {
+  let journal=connectJournal;
+  if(!journal||!FINISHING.includes(journal.phase))throw coded('conflict','No delivered connection to finish');
+  const state=await vaultState(),config=await secrets.connection();
+  if(!config?.token||config.baseUrl!==journal.origin||state?.installationId!==journal.installationId||state?.generation!==journal.generation)throw coded('conflict','The saved connection does not match the pending journal. Reset protection to reconnect.');
+  if(!localKey){localKey=await secrets.deviceKey(journal.generation);if(localKey.publicKey!==journal.publicKey){localKey.close();keyLost=true;throw coded('conflict','The local key does not match this installation. Reset protection to reconnect.');}}
+  let broker;
+  try{
+    if(journal.phase==='delivered'){
+      const loadTrust=()=>secrets.trustCredential(journal.generation);
+      const trustToken=secrets.lease?await loadTrust():await secrets.withLock(loadTrust);
+      await acknowledgeWithOmf(config,{id:journal.id,installationId:journal.installationId,generation:journal.generation,trustToken},{signal:pending.abort.signal});
+      assertAuthorization(pending);
+      journal={...journal,phase:'acknowledged'};await secrets.withLock(()=>saveJournal(journal));
+    }
+    broker=await ownerBroker(pending,config,{installationId:journal.installationId,generation:journal.generation,publicKey:journal.publicKey},localKey,'batch',false,{approval:grant});
+    assertAuthorization(pending);
+    const canary=aadFor(journal.installationId,'check',null,config);
+    await secrets.withLock(async()=>{
+      if(!await secrets.has('check'))await secrets.save('check',canary,{canary:randomBytes(16).toString('hex')},broker);
+      await secrets.open('check',canary,broker);
+      assertAuthorization(pending);
+      const protection={installationId:journal.installationId,generation:journal.generation,keyProvider:'CurrentUser DPAPI + OMF',publicKey:journal.publicKey,activatedAt:new Date().toISOString()};
+      await vault.update(()=>withoutSecrets({...config,accounts:{},services:{},mode:'protected'},protection,config.accountInfo));
+      await writeState({...state,phase:'active',activatedAt:protection.activatedAt});
+      await saveJournal(null);
+    });
+    keyLost=false;
+    session={id:randomBytes(8).toString('hex'),broker,mode:'protected',until:broker.remote.until,ran:false,browsers:new Set(),publicKey:journal.publicKey,installationId:journal.installationId,abort:pending.abort};
+    reconnectNeeded=false;message='PC connected. Save your bank logins here; syncing resumes automatically.';
+    return {connected:true,protected:true,unlocked:true};
+  }catch(error){
+    if(broker)await broker.end();else localKey.close();
+    // OMF refused this delivered connection (revoked, account changed): nothing can finish it; Connect starts a new one.
+    if([401,403].includes(error.status)){await secrets.withLock(()=>saveJournal({...journal,phase:'failed'})).catch(()=>{});reconnectNeeded=true;}
+    throw error;
+  }
+}
+
 async function json(req) {let text='';for await(const data of req){text+=data;if(Buffer.byteLength(text)>20000)throw new Error('Request too large');}try{return JSON.parse(text);}catch{throw new Error('Invalid setup request');}}
 const field=(value,max=512)=>typeof value==='string'&&value.length>0&&value.length<=max;
-export async function startCollector() {
+// `openSetup` is the explicit launch (run.mjs --open-setup): the setup page opens once, after readiness; when this
+// directory's collector already listens, the running instance's link is opened instead and nothing else starts.
+// Background starts never open a window. `open` is a constructor dependency for isolated tests.
+export async function startCollector({openSetup=false,open=launch}={}) {
+  stopped=false;
   await mkdir(directory,{recursive:true});
   // Establish private permissions before creating the bearer setup capability or accepting requests.
   startup.acl=await privateAcl().catch(error=>({protected:false,verified:false,elevated:null,error:error.message}));
   startup.elevated=startup.acl.elevated ?? null;
   if(!startup.acl.verified)throw new Error('Private collector permissions could not be established; no setup capability was created');
   keyLost=!!(await vaultState())?.resetPending || ((await vaultState())?.v===2 && !!(await vaultState())?.installationId);
+  startup.packagedOrigin=await packagedOrigin().catch(()=>null);
+  connectJournal=await secrets.enrollmentJournal().catch(()=>null);
   const port=Number(process.env.OMF_COLLECTOR_PORT || 47831);if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid setup port');
-  const origin=`http://127.0.0.1:${port}`;
+  const origin=`http://127.0.0.1:${port}`,linkFile=path.join(directory,'setup-link.txt');
   const server=http.createServer(async(req,res)=>{
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'");
     const reply=(code,value)=>{res.writeHead(code,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
@@ -383,8 +535,9 @@ export async function startCollector() {
         let info=config.accountInfo || [],due=false;if(config.token)try{info=(await api(config,'accounts')).accounts;due=info.some(a=>a.jobState==='queued');}catch{}
         const [aplus,yayoi,gmail]=await Promise.all(['aplus','yayoi','gmail'].map(id=>boundSecret(id,state?.installationId,id,null,config)));
         const accounts=await Promise.all(info.map(async a=>({id:a.primaryCard,accountId:String(a._id||''),name:a.name,hasCredentials:await boundSecret('amex-'+String(a._id),state?.installationId,'amex',a,config)})));
-        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl,busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},accounts});
+        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},accounts});
       }
+      if(req.method==='POST' && ['/connect','/connect/resume'].includes(req.url)) { await json(req).catch(()=>({})); try { return reply(200,await connect({resume:req.url==='/connect/resume'})); } catch(error) { return reply(codeOf(error),{error:error.message,keyLost}); } }
       if(req.method==='POST' && req.url==='/pair') {
         const body=await json(req);if(!/^omfc_[a-f\d]{64}$/.test(body.token))throw new Error('Invalid collector token');
         if(session)throw coded('conflict','Lock the current batch before changing the connection.');
@@ -499,8 +652,16 @@ export async function startCollector() {
       reply(404,{error:'Unknown setup endpoint'});
     }catch(error){reply(codeOf(error),{error:error.message});}
   });
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>resolve(undefined));});
-  await writeFile(path.join(directory,'setup-link.txt'),`${origin}/#${setupKey}`,{mode:0o600});
+  try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>resolve(undefined));});}
+  catch(error){
+    if(error.code!=='EADDRINUSE'||!openSetup)throw error;
+    const link=(await readFile(linkFile,'utf8')).trim();
+    if(!link.startsWith(`${origin}/#`))throw new Error('Another collector holds the setup port but left no setup link');
+    await open(link);
+    return {reused:true,close:async()=>{}};
+  }
+  const link=`${origin}/#${setupKey}`;
+  await writeFile(linkFile,link,{mode:0o600});
   console.log(`OMF collector listening on 127.0.0.1:${port}; setup link saved in the private collector directory`);
   // Startup checks (site 4 :72): protected DACL with verification, elevation, Chrome, crash recovery of ephemeral
   // profiles, provider capability. Sessions refuse until they are done; secrets are never involved.
@@ -509,6 +670,7 @@ export async function startCollector() {
   startup.capability=await probeCapability().then(result=>result.ok,()=>null);
   startup.done=true;
   const interval=setInterval(tick,TICK_MS);tick();
+  if(openSetup)await open(link).catch(()=>{console.error('Open the setup link saved in the private collector directory.');});
   return {close:async()=>{stopped=true;clearInterval(interval);await endSession('stopped');await new Promise(resolve=>server.close(resolve));}};
 }
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url))startCollector().catch(()=>{console.error('OMF collector could not start. Check the setup port and Windows credential vault.');process.exitCode=1;});
