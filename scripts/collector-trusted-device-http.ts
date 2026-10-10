@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {randomBytes,createHash} from 'node:crypto'
 import {spawn,execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdtemp,mkdir,readFile,writeFile,rm,rmdir} from 'node:fs/promises'
+import {mkdtemp,mkdir,readFile,writeFile,rm,rmdir,unlink} from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import net from 'node:net'
@@ -38,15 +38,34 @@ async function main(){
   // Initial Connect hooks: a lost exchange/ack response (upstream completed, client sees 503) and a held exchange response
   // (upstream completed, the client never hears back) for the process-crash leg.
   let failNextExchange=false,failNextAck=false,stallExchange=false,held:any=null,stalledResolve:()=>void=()=>{};const stalled=new Promise<void>(resolve=>{stalledResolve=resolve});const extraCollectors:any[]=[]
+  let beforeAck:(()=>Promise<void>)|null=null
   const pass=(name:string)=>{checks++;console.log('PASS '+name)}
   try{
     await mongoose.connect(mongo.getUri('collector_trusted_http_isolated'));assert.equal(mongoose.connection.name,'collector_trusted_http_isolated')
     const appPort=await port(),tlsPort=await port(),localPort=await port(),baseUrl=`https://127.0.0.1:${tlsPort}`
+    // The real collector launches the system browser; this harness already drives a separate isolated Chrome.
+    // Intercept ONLY that OS-launch call in these child processes, retaining native DPAPI/broker subprocesses.
+    const launcherStub=path.join(temp,'browser-launcher.cjs'),launcherCalls=path.join(temp,'browser-launches.jsonl')
+    await writeFile(launcherStub,[
+      "const cp=require('node:child_process'),fs=require('node:fs'),assert=require('node:assert/strict');",
+      "const original=cp.execFile;",
+      "function execFile(file,...args){",
+      "  if(file!=='rundll32.exe')return Reflect.apply(original,this,[file,...args]);",
+      "  const [argv]=args,done=args.at(-1);assert.equal(argv[0],'url.dll,FileProtocolHandler');",
+      `  const target=new URL(argv[1]);assert.equal(target.origin,${JSON.stringify(baseUrl)});`,
+      "  assert.ok(['/collector-connect','/collector-approval'].includes(target.pathname));assert.equal(typeof done,'function');",
+      `  fs.appendFileSync(${JSON.stringify(launcherCalls)},JSON.stringify({path:target.pathname})+'\\n');`,
+      "  queueMicrotask(()=>done(null,'',''));return new (require('node:events').EventEmitter)();",
+      "}",
+      "for(const symbol of Object.getOwnPropertySymbols(original))Object.defineProperty(execFile,symbol,Object.getOwnPropertyDescriptor(original,symbol));",
+      "cp.execFile=execFile;require('node:module').syncBuiltinESMExports();"
+    ].join('\n'))
     const certFile=path.join(temp,'test-ca.pem'),keyFile=path.join(temp,'test-ca-key.pem')
     await execute('C:/Program Files/Git/usr/bin/openssl.exe',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',keyFile,'-out',certFile,'-days','1','-subj','/CN=OMF isolated test','-addext','subjectAltName=IP:127.0.0.1'],{windowsHide:true})
     const ca=await readFile(certFile),agent=new https.Agent({ca})
-    proxy=https.createServer({key:await readFile(keyFile),cert:ca},(req,res)=>{
+    proxy=https.createServer({key:await readFile(keyFile),cert:ca},async(req,res)=>{
       const route=(req.url||'').split('?')[0];counts.set(route,(counts.get(route)||0)+1)
+      if(route==='/api/finance/collector-connect/ack'&&beforeAck){const change=beforeAck;beforeAck=null;await change()}
       const forward=http.request({host:'127.0.0.1',port:appPort,path:req.url,method:req.method,headers:req.headers},async upstream=>{
         if(route==='/api/finance/collector-security/requests'&&req.method==='POST'&&upstream.statusCode===200&&failNextRequest){failNextRequest=false;upstream.resume();res.writeHead(503,{'Content-Type':'application/json'});res.end('{"statusMessage":"Synthetic lost approval response"}');return;}
         if(route==='/api/finance/collector-connect/exchange'&&req.method==='POST'&&upstream.statusCode===200){
@@ -110,7 +129,7 @@ async function main(){
     assert.ok((await page.$eval('main',(e:any)=>e.textContent)).includes('通常の起動や取得のたびに承認する必要はありません'))
     assert.equal(await page.evaluate('document.documentElement.scrollWidth<=innerWidth'),true)
     assert.equal(await page.$eval('#password',(e:any)=>e.value),'')
-    const screenshot=path.join(root,'..','..','ohmycode','output','omf-customer-credential-security-20261009','trusted-device-approval-mobile.png')
+    const screenshot=path.join(temp,'trusted-device-approval-mobile.png')
     await page.screenshot({path:screenshot,fullPage:true})
     // Submit through the actual page. A closed synthetic callback is harmless; approval state is durable.
     await page.type('#password',password);await page.type('#code',generateSync({secret}))
@@ -142,7 +161,7 @@ async function main(){
     let setup=''
     const local=async(route:string,body?:any)=>{const r=await fetch(`http://127.0.0.1:${localPort}${route}`,{method:body===undefined?'GET':'POST',headers:{'X-Setup-Key':setup,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const b:any=await r.json();if(!r.ok)throw Object.assign(Error(b.error||'Local request failed'),{status:r.status});return b}
     const startCollector=async()=>{
-      collector=spawn(process.execPath,['collector/run.mjs'],{cwd:collectorRoot,windowsHide:true,env:{...process.env,NODE_EXTRA_CA_CERTS:certFile,OMF_COLLECTOR_DIR:data,OMF_COLLECTOR_PORT:String(localPort),OMF_COLLECTOR_TICK_MS:'1000'},stdio:['ignore','pipe','pipe']})
+      collector=spawn(process.execPath,['--require',launcherStub,'collector/run.mjs'],{cwd:collectorRoot,windowsHide:true,env:{...process.env,NODE_EXTRA_CA_CERTS:certFile,OMF_COLLECTOR_DIR:data,OMF_COLLECTOR_PORT:String(localPort),OMF_COLLECTOR_TICK_MS:'1000'},stdio:['ignore','pipe','pipe']})
       for(const stream of [collector.stdout,collector.stderr])stream.on('data',(b:Buffer)=>{collectorLog=(collectorLog+b).slice(-8000)})
       await waitFor(async()=>{const link=await readFile(path.join(data,'setup-link.txt'),'utf8');setup=new URL(link).hash.slice(1);return (await local('/status')).startupDone},'collector startup')
     }
@@ -236,7 +255,7 @@ async function main(){
     const hostname=os.hostname(),connectPrefix='/api/finance/collector-connect/'
     const startConnectCollector=async(dir:string,localPort:number)=>{
       await mkdir(dir,{recursive:true})
-      const child=spawn(process.execPath,['collector/run.mjs'],{cwd:collectorRoot,windowsHide:true,env:{...process.env,NODE_EXTRA_CA_CERTS:certFile,OMF_COLLECTOR_DIR:dir,OMF_COLLECTOR_PORT:String(localPort),OMF_COLLECTOR_TICK_MS:'1000',OMF_COLLECTOR_ORIGIN:baseUrl},stdio:['ignore','pipe','pipe']})
+      const child=spawn(process.execPath,['--require',launcherStub,'collector/run.mjs'],{cwd:collectorRoot,windowsHide:true,env:{...process.env,NODE_EXTRA_CA_CERTS:certFile,OMF_COLLECTOR_DIR:dir,OMF_COLLECTOR_PORT:String(localPort),OMF_COLLECTOR_TICK_MS:'1000',OMF_COLLECTOR_ORIGIN:baseUrl},stdio:['ignore','pipe','pipe']})
       extraCollectors.push(child)
       let log='';for(const stream of [child.stdout,child.stderr])stream.on('data',(b:Buffer)=>{log=(log+b).slice(-8000)})
       let setupKey='';const call=async(route:string,body?:any)=>{const r=await fetch(`http://127.0.0.1:${localPort}${route}`,{method:body===undefined?'GET':'POST',headers:{'X-Setup-Key':setupKey,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(240000)});const b:any=await r.json();if(!r.ok)throw Object.assign(Error(b.error||'Local request failed'),{status:r.status});return b}
@@ -289,7 +308,7 @@ async function main(){
     await assert.rejects(pub(connectPrefix+'requests/'+requestId+'/approve',{accountIds:[String(account._id)]},'POST',{Authorization:'Bearer '+access,Origin:baseUrl}),e=>[400,401].includes((e as any).status))
     await assert.rejects(pub(connectPrefix+'requests/'+requestId+'/authenticate',{email:user.email,password,code:generateSync({secret})},'POST',{Origin:'https://wrong.example.invalid'}),e=>(e as any).status===403)
     await assert.rejects(pub(connectPrefix+'requests/'+requestId+'/authenticate',{email:user.email,password,code:generateSync({secret})},'POST',{}),e=>(e as any).status===403)
-    await drivePage(link,'first',path.join(root,'..','..','ohmycode','output','omf-customer-credential-security-20261009','customer-connect','collector-connect-mobile.png'))
+    await drivePage(link,'first',path.join(temp,'collector-connect-mobile.png'))
     const connected=await connecting
     assert.equal(connected.protected,true);assert.equal(connected.unlocked,true)
     s2=await c2.call('/status')
@@ -334,8 +353,83 @@ async function main(){
     const gone=await waitFor(async()=>{const s=await c2.call('/status');return s.reconnectNeeded&&!s.unlocked?s:null},'connect revocation observed')
     assert.equal(gone.approvalUrl,null);assert.equal(counts.get(prefix+'requests'),approvalCount)
     for(const secretText of [password,'Synthetic-amex-password','omfc_'])assert.equal(JSON.stringify(gone).includes(secretText),false)
+    await waitFor(async()=>{const s=await c2.call('/status');return !s.locking&&!s.authorizing},'active connection finished locking')
+    const activeBlob=await readFile(new Vault(data2).file),activeConnection=await readFile(path.join(data2,'connection.dpapi'))
+    await assert.rejects(c2.call('/connect',{}),/already connected/)
+    assert.deepEqual(await readFile(new Vault(data2).file),activeBlob);assert.deepEqual(await readFile(path.join(data2,'connection.dpapi')),activeConnection)
     await stop(c2.child)
     pass('a connected PC restarts and renews silently; the existing OMF disconnect ends it without opening approval')
+    // Review F1/F2: change the owned server row between delivery and acknowledgement. These are real built-route
+    // refusals, not mocked client status codes. Keep both failures visible in the fail-first receipt.
+    const recoveryFailures:string[]=[]
+    for(const kind of ['expired','revoked','not-found']){
+      const dir=path.join(temp,'connect-retry-'+kind),retryPort=await port(),retryStore=new SplitStore(dir)
+      let current=await startConnectCollector(dir,retryPort)
+      try{
+        const attempt=current.call('/connect',{}).then(()=>({error:null}),error=>({error}))
+        const link=await waitFor(async()=>(await current.call('/status')).approvalUrl,kind+' link'),id=new URL(link).searchParams.get('id')!
+        beforeAck=async()=>{
+          const rows=mongoose.connection.collection('collectorconnects'),row:any=await rows.findOne({_id:id as any})
+          assert.equal(row.status,'delivered')
+          if(kind==='expired')await rows.updateOne({_id:id as any},{$set:{expiresAt:new Date(Date.now()-1000)}})
+          if(kind==='revoked')await api('/api/finance/collectors/'+String(row.collectorId),access,undefined,'DELETE')
+          if(kind==='not-found')await rows.deleteOne({_id:id as any})
+        }
+        await drivePage(link,'retry-'+kind)
+        assert.ok((await attempt).error,'the terminal acknowledgement must reject the first attempt')
+        const status=await current.call('/status')
+        assert.equal(status.connect.phase,'failed',kind+' must end automatic finishing')
+        assert.equal(status.connect.finishing,false);assert.equal(status.connect.expired,true);assert.equal(status.protected,false)
+        assert.equal((await retryStore.list()).length,0)
+        const saved=await readFile(path.join(dir,'connection.dpapi')),journal=await readFile(path.join(dir,'connect-journal.dpapi'))
+        if(kind==='revoked'){
+          // Never clear an already written canary/secret or an installation whose generation no longer matches.
+          await mkdir(path.join(dir,'secrets'),{recursive:true});const canary=retryStore.file('check'),sentinel='Retain existing sealed entry'
+          await writeFile(canary,sentinel)
+          await assert.rejects(current.call('/connect',{}),/already has a saved OMF connection/)
+          assert.equal(await readFile(canary,'utf8'),sentinel);assert.deepEqual(await readFile(path.join(dir,'connection.dpapi')),saved)
+          await unlink(canary)
+          const stateFile=path.join(dir,'vault-state.json'),state=JSON.parse(await readFile(stateFile,'utf8'))
+          await replaceVaultFile(stateFile,JSON.stringify({...state,generation:'e'.repeat(64)}))
+          await assert.rejects(current.call('/connect',{}),/already has a saved OMF connection/)
+          assert.deepEqual(await readFile(path.join(dir,'connection.dpapi')),saved);assert.deepEqual(await readFile(path.join(dir,'connect-journal.dpapi')),journal)
+          await replaceVaultFile(stateFile,JSON.stringify(state))
+          const legacyVault=new Vault(dir)
+          await legacyVault.update(()=>({accounts:{12345:{username:'synthetic-legacy',password:'Synthetic-retain-me'}}}))
+          const legacyBytes=await readFile(legacyVault.file)
+          await assert.rejects(current.call('/connect',{}),/already has a saved OMF connection/)
+          assert.deepEqual(await readFile(legacyVault.file),legacyBytes);assert.deepEqual(await readFile(path.join(dir,'connection.dpapi')),saved)
+          await unlink(legacyVault.file)
+          pass('failed Connect preserves a saved sealed entry, foreign generation and legacy vault instead of clearing them')
+          // Interrupt the real retry after it clears the failed connection but before the new state can be written.
+          // Keep the durable failed journal and old state; after restart the same Connect action must still succeed.
+          await mkdir(stateFile+'.new')
+          await assert.rejects(current.call('/connect',{}))
+          assert.equal(await retryStore.connection(),null)
+          assert.deepEqual(await readFile(path.join(dir,'connect-journal.dpapi')),journal)
+          assert.deepEqual(JSON.parse(await readFile(stateFile,'utf8')),state)
+          await rmdir(stateFile+'.new')
+          pass('interrupted replacement leaves its failed journal intact after clearing only the unusable connection')
+        }
+        await stop(current.child);current=await startConnectCollector(dir,retryPort)
+        assert.equal((await current.call('/status')).connect.phase,'failed')
+        let retryError:any=null
+        const retried=current.call('/connect',{}).catch(error=>{retryError=error;return null})
+        const next=await waitFor(async()=>retryError?{error:retryError}:(await current.call('/status')).approvalUrl,kind+' retry link')
+        assert.equal(retryError,null,kind+' must permit a fresh Connect')
+        assert.notEqual(new URL(next).searchParams.get('id'),id)
+        await drivePage(next,'retry-success-'+kind)
+        assert.equal((await retried).protected,true)
+        assert.equal((await current.call('/status')).connect.phase,'idle')
+        pass(kind+' acknowledgement ends finishing; Connect after restart creates a fresh request and activates protection')
+      }catch(error){const failure=kind+': '+String(error);recoveryFailures.push(failure);console.log('FAIL '+failure)}
+      finally{beforeAck=null;await stop(current.child);await closeOwnedBrowsers();browser=null}
+    }
+    assert.deepEqual(recoveryFailures,[],'every terminal setup refusal must have a working retry')
+    const launches=(await readFile(launcherCalls,'utf8')).trim().split('\n').map(line=>JSON.parse(line).path)
+    // Legacy approvals above are driven directly by the fixture; initial Connect invokes the real OS launcher.
+    assert.ok(launches.includes('/collector-connect'))
+    pass('system-browser launches are intercepted only in the test children; isolated Chrome still drives the real sign-in pages')
     assert.equal((counts.get('/api/finance/collector/upload')||0),0)
     assert.equal(await FinancialAccount.countDocuments({jobState:{$in:['queued','running']}}),0)
     console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,approvalCount}))

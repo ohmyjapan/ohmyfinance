@@ -404,8 +404,9 @@ async function connect({resume=false}={}) {
     if(connectJournal&&FINISHING.includes(connectJournal.phase))return finishConnect(pending);
     const state=await vaultState();
     if(state?.resetPending)throw coded('conflict','Finish the interrupted reset through OMF first.');
-    const config=await metadata().catch(error=>{if(error.code==='legacy')throw coded('legacy','This directory holds logins from the previous setup. Use Enable protection for them, or start the downloader on a new private directory to connect.');throw error;});
+    let config=await metadata().catch(error=>{if(error.code==='legacy')throw coded('legacy','This directory holds logins from the previous setup. Use Enable protection for them, or start the downloader on a new private directory to connect.');throw error;});
     if(activated(state,config))throw coded('conflict','This PC is already connected. Use Connect / reconnect, or disconnect it in OMF first.');
+    if(config.paused)throw coded('conflict','Resume the collector first');
     if(config.token||config.baseUrl){
       // A crash between the connection save and the journal update: the delivery is durable, so finish it.
       const previous=connectJournal;
@@ -413,9 +414,23 @@ async function connect({resume=false}={}) {
         await secrets.withLock(()=>saveJournal({...previous,phase:'delivered',code:undefined,verifier:undefined}));
         return finishConnect(pending);
       }
-      throw coded('conflict','This PC already has a saved OMF connection. Use Enable protection for it, or start on a new private directory.');
+      // A terminal refusal can abandon only its own initial, empty enrollment. Re-read under the writer lease:
+      // active/legacy/reset state and even a partially saved canary remain on the existing recovery path.
+      const restarted=await secrets.withLock(async()=>{
+        const current=await vaultState(),failed=await secrets.enrollmentJournal(),saved=await secrets.connection();
+        if(current?.v===3&&current.phase==='enrolling'&&current.connect===true&&!current.resetPending
+          &&failed?.phase==='failed'&&failed.id===connectJournal?.id&&failed.installationId===current.installationId
+          &&failed.generation===current.generation&&failed.publicKey===current.publicKey&&failed.origin===saved?.baseUrl
+          &&!(await secrets.list()).length&&!await legacyBlobPresent()){
+          assertAuthorization(pending);
+          // Keep the failed journal until its replacement is durable; a crash after this write can start over too.
+          await secrets.connection(null);return true;
+        }
+        return false;
+      });
+      if(!restarted)throw coded('conflict','This PC already has a saved OMF connection. Use Enable protection for it, or start on a new private directory.');
+      config={accounts:{}};
     }
-    if(config.paused)throw coded('conflict','Resume the collector first');
     const origin=startup.packagedOrigin;
     if(!origin)throw coded('conflict','This downloader package has no OMF address. Install the package staged for your OMF site.');
     const previous=connectJournal;
@@ -499,7 +514,7 @@ async function finishConnect(pending,{localKey=null,grant=null}={}) {
   }catch(error){
     if(broker)await broker.end();else localKey.close();
     // OMF refused this delivered connection (revoked, account changed): nothing can finish it; Connect starts a new one.
-    if([401,403].includes(error.status)){await secrets.withLock(()=>saveJournal({...journal,phase:'failed'})).catch(()=>{});reconnectNeeded=true;}
+    if([401,403].includes(error.status)||(journal.phase==='delivered'&&[404,409].includes(error.status))){await secrets.withLock(()=>saveJournal({...journal,phase:'failed'})).catch(()=>{});reconnectNeeded=true;}
     throw error;
   }
 }
