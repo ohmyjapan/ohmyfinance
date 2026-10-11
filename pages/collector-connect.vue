@@ -3,6 +3,7 @@
     <section class="w-full max-w-md rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-6 sm:p-8 shadow-sm">
       <p class="text-sm font-semibold text-primary-main">OhMyFinance</p>
       <h1 class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">明細ダウンローダーを接続</h1>
+      <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">ダウンローダーはPCごとに1つです。対応する複数のカード口座をまとめて接続でき、カードごとのインストールは不要です。</p>
       <p v-if="loading" class="mt-4 text-gray-600 dark:text-gray-300">接続内容を確認しています…</p>
       <template v-else-if="request && !finished">
         <p class="mt-4 text-gray-600 dark:text-gray-300"><strong>{{ request.pcName }}</strong> からの接続リクエストです。</p>
@@ -18,7 +19,7 @@
           <button type="button" :disabled="busy" class="w-full text-sm text-gray-600 dark:text-gray-300" @click="leave">キャンセル</button>
         </form>
         <form v-else class="mt-6 space-y-4" @submit.prevent="approve">
-          <p class="text-sm text-gray-600 dark:text-gray-300">この PC に明細の取得を許可するカードを選び、PC の名前を確認してください。カードのログイン情報はこのあと PC 側の設定画面で保存します。</p>
+          <p class="text-sm text-gray-600 dark:text-gray-300">このPCで取得するカード口座を選んでください（複数選択可）。カード会社へのログイン・認証は、このあとPC側の設定画面で各社のアカウントごとに行います。</p>
           <p v-if="!accounts.length" class="text-sm text-gray-700 dark:text-gray-200">取得できるカード口座がまだありません。<NuxtLink to="/connections" class="underline">カード連携で口座を追加</NuxtLink>してから、ダウンローダーでもう一度「Connect to OMF」を押してください。</p>
           <label v-for="account in accounts" :key="account.id" class="flex items-start gap-3 rounded-lg border border-gray-200 dark:border-slate-600 p-3 text-gray-900 dark:text-white">
             <input v-model="selected" type="checkbox" name="accountIds" :value="account.id" class="mt-1" />

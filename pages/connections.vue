@@ -3,6 +3,20 @@
     <header><div><h1>カード連携</h1><p>カードの明細を取り込み、内容を確認してから取引に登録します。</p></div><button :disabled="busy" @click="run(refresh)">更新</button></header>
     <NuxtLink class="mapping-link" to="/mapping">顧客・区分のマッピングを確認 →</NuxtLink>
     <p v-if="message" role="status" class="notice">{{ message }}</p>
+    <section class="downloader-guide" aria-labelledby="downloader-guide-title">
+      <h2 id="downloader-guide-title">ダウンローダーはPCごとに1つ</h2>
+      <p><strong>カードごとのインストールは不要です。</strong>1つのダウンローダーで、対応する複数のカード口座を扱えます。カード会社へのログイン・認証は、各社のアカウントごとに行います。</p>
+      <ol class="setup-steps">
+        <li><strong>PCをOMFに接続</strong><p>ダウンローダーで「Connect to OMF」を押し、開いたOMFの画面でサインインします。</p></li>
+        <li><strong>取得する口座をまとめて選択</strong><p>このPCで扱う口座を選び、カード会社のログイン情報をPC側の設定画面で保存します。認証コードを求められたらChromeで入力します。</p></li>
+        <li><strong>明細をOMFで確認</strong><p>PCが利用できる間に明細を取得し、OMFへ送信します。内容や分類の確認は、これまでどおりOMFのブラウザ画面で行います。</p></li>
+      </ol>
+      <p>現在、自動取得はAmexに対応しています。Aplusは明細ファイルを取り込めます。一般向けインストーラーは準備中です。</p>
+      <details><summary>取得のタイミングと保存される情報</summary>
+        <p>自動取得には、ダウンローダーが起動し、Windowsにサインイン済みでロックされていないPCが必要です。電源が切れている間やスリープ中は取得せず、利用可能になってから再開します。カード会社が追加認証を求めた場合は、操作が必要になることがあります。</p>
+        <p>保存したカード会社のID・パスワードは、そのPCで暗号化して保管します。取得した明細はOMFに送信し、マッピングや取引の確認に使います。</p>
+      </details>
+    </section>
     <div class="account-grid">
       <section v-for="account in accounts" :key="account._id">
         <h2>{{ account.name }}</h2><p>カード {{ account.cardIdentifiers.map((v: string) => v.slice(-4)).join(' / ') }}</p>
@@ -34,8 +48,8 @@
       <label v-if="newAccount.provider === 'amex'">Gmail APIで読むメールボックス<input v-model="newAccount.otpMailbox" type="email" required></label><button :disabled="busy">口座を追加</button>
     </form></details>
     <details class="panel"><summary>取得用PCを接続</summary>
-      <p>取得用PCに明細ダウンローダーをインストールし、その設定画面で「Connect to OMF」を押します。開いた OMF のページでメールアドレス・パスワード・認証コードを一度入力し、取得するカードを選ぶと接続は完了します。接続先の住所やトークンを入力する必要はありません。カードのログイン情報はその PC の設定画面で保存され、OMF には送られません。</p>
-      <p>接続中は PC がサインイン済みでロックされていない間に取得が行われ、Amex が送るログインコードは PC の Chrome で入力します（メールボックス連携は別途）。</p>
+      <p>このPCのダウンローダーで「Connect to OMF」を押し、OMFにサインインして取得する口座を選びます。複数の口座を選んでも、ダウンローダーを追加でインストールする必要はありません。</p>
+      <p>接続後は、PC側の設定画面でカード会社のログイン情報を保存します。明細取得時に届く認証コードはChromeで入力します（メールボックス連携は別途）。</p>
       <p v-if="!collectors.length">接続済みのPCはありません。</p>
       <p v-for="device in collectors" :key="device._id">{{ device.name }} · {{ device.revokedAt ? '接続解除済み' : (device.lastSeenAt ? '最終接続 ' + formatDate(device.lastSeenAt) : '接続済み・取得待ち') }} <button v-if="!device.revokedAt" :disabled="busy" @click="run(() => revoke(device._id))">接続解除</button></p>
     </details>
@@ -92,5 +106,6 @@ onUnmounted(() => clearInterval(poll))
 
 <style scoped>
 .mapping-link{display:inline-block;color:#acd0ff;padding:14px 0}.notice a{color:#acd0ff;text-decoration:underline}
+.setup-steps{display:grid;gap:16px;margin:18px 0;padding-left:24px;list-style:decimal}.setup-steps li{padding-left:4px}.setup-steps p{margin-bottom:0}.downloader-guide strong{color:inherit}
 .connections{max-width:1200px;margin:auto;padding:16px;color:#e2e8f0;background:#0f172a;min-height:100vh;border-radius:16px}.connections h1{font-size:26px;font-weight:700}.connections h2{font-size:19px;font-weight:600}.connections p,.connections small{color:#aabbd1;line-height:1.6;margin:8px 0}.connections header>button{flex-shrink:0;white-space:nowrap}.connections header{display:flex;gap:16px;align-items:start;justify-content:space-between}.connections section,.panel{background:#182338;border:1px solid #344158;border-radius:12px;padding:18px;margin:16px 0;min-width:0}.connections button,.connections input,.connections select{border:1px solid #52647f;border-radius:8px;background:#101b2d;color:#edf2fa;padding:11px;max-width:100%}.connections button{background:#254f9b;cursor:pointer;margin-top:10px}.connections button:disabled{opacity:.5;cursor:default}.connections label{display:block;margin:12px 0}.connections label input,.connections select{display:block;width:100%;margin-top:6px}.connections .inline{display:flex;gap:10px}.connections .inline input{width:auto}.connections details{margin-top:16px}.connections summary{cursor:pointer;min-height:30px}.notice{padding:14px;background:#26374e;border-radius:8px;overflow-wrap:anywhere}.history{display:block;width:100%;text-align:left}.review-list article{border-top:1px solid #344158;padding:18px 0;display:grid;gap:12px;overflow-wrap:anywhere}.review-list strong{display:block}.muted{opacity:.6}.account-grid{display:grid;gap:16px}.account-grid section{margin-bottom:0}@media(min-width:760px){.account-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.review-list article{grid-template-columns:2fr 1fr 2fr}}
 </style>
