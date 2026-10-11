@@ -1,9 +1,9 @@
 <template>
   <div class="connections">
-    <header><div><h1>カード連携</h1><p>カードの明細を取り込み、内容を確認してから取引に登録します。</p></div><button :disabled="busy" @click="run(refresh)">更新</button></header>
+    <header><div><h1>カード連携</h1><p>カードの明細を取り込み、内容を確認してから取引に登録します。</p></div><button class="btn btn-secondary" :disabled="busy" @click="run(refresh)">更新</button></header>
     <NuxtLink class="mapping-link" to="/mapping">顧客・区分のマッピングを確認 →</NuxtLink>
     <p v-if="message" role="status" class="notice">{{ message }}</p>
-    <section class="downloader-guide" aria-labelledby="downloader-guide-title">
+    <section class="card downloader-guide" aria-labelledby="downloader-guide-title">
       <h2 id="downloader-guide-title">ダウンローダーはPCごとに1つ</h2>
       <p><strong>カードごとのインストールは不要です。</strong>1つのダウンローダーで、対応する複数のカード口座を扱えます。カード会社へのログイン・認証は、各社のアカウントごとに行います。</p>
       <ol class="setup-steps">
@@ -18,11 +18,11 @@
       </details>
     </section>
     <div class="account-grid">
-      <section v-for="account in accounts" :key="account._id">
+      <section class="card" v-for="account in accounts" :key="account._id">
         <h2>{{ account.name }}</h2><p>カード {{ account.cardIdentifiers.map((v: string) => v.slice(-4)).join(' / ') }}</p>
         <p>{{ states[account.jobState] || account.jobState }} · {{ account.lastMessage || '未取得' }}</p>
         <small>最終取得: {{ formatDate(account.lastSuccessAt) }}<template v-if="account.provider !== 'aplus'"><br>認証メール: {{ account.otpRecipient }} → {{ account.otpMailbox }}</template></small>
-        <button v-if="account.provider !== 'aplus'" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
+        <button class="btn btn-primary" v-if="account.provider !== 'aplus'" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
         <details><summary>明細ファイルを取り込む</summary><form @submit.prevent="run(() => upload(account))">
           <label>明細の状態<select v-model="manual.kind"><option value="statement">確定明細</option><option value="pending">未請求・確定待ち</option></select></label>
           <p v-if="manual.kind === 'pending'">購入件数に含めてマッピングできます。確定明細との照合までは帳簿に登録しません。Amexは確定前の利用を含まないCSV、Aplusは取得ツールの元ページ付きJSONを選択します。</p>
@@ -35,28 +35,28 @@
             <p>元の利用日が会計期間外の明細は個別確認に回します。</p>
           </template>
           <template v-else-if="account.provider !== 'aplus'"><label>明細期間の開始<input v-model="manual.start" type="date" required></label><label>明細期間の終了<input v-model="manual.end" type="date" required></label></template>
-          <label>{{ account.provider === 'aplus' && manual.kind === 'pending' ? 'Aplus 未請求明細 JSON' : 'カード会社のCSV' }}<input type="file" :accept="account.provider === 'aplus' && manual.kind === 'pending' ? '.json' : '.csv'" required @change="selectFile"></label><button :disabled="busy">確認画面へ</button>
+          <label>{{ account.provider === 'aplus' && manual.kind === 'pending' ? 'Aplus 未請求明細 JSON' : 'カード会社のCSV' }}<input type="file" :accept="account.provider === 'aplus' && manual.kind === 'pending' ? '.json' : '.csv'" required @change="selectFile"></label><button class="btn btn-primary" :disabled="busy">確認画面へ</button>
         </form></details>
       </section>
     </div>
-    <details class="panel"><summary>カード口座を追加</summary><form @submit.prevent="run(addAccount)">
+    <details class="card panel"><summary>カード口座を追加</summary><form @submit.prevent="run(addAccount)">
       <label>カード会社<select v-model="newAccount.provider"><option value="amex">Amex</option><option value="aplus">Aplus</option></select></label>
       <label>表示名<input v-model="newAccount.name" required maxlength="100"></label>
       <label>{{ newAccount.provider === 'aplus' ? 'CSVのカード番号下4桁（カンマ区切り）' : 'CSVの会員番号（5桁、カンマ区切り）' }}<input v-model="cardsText" required :placeholder="newAccount.provider === 'aplus' ? '1234, 5678' : '12345, 23456'"></label>
       <label>{{ newAccount.provider === 'aplus' ? 'メインカードの下4桁' : 'メインカードの会員番号（5桁）' }}<input v-model="newAccount.primaryCard" required :pattern="newAccount.provider === 'aplus' ? '[0-9]{4}' : '[0-9]{5}'"></label>
       <label v-if="newAccount.provider === 'amex'">Amexの認証メール送信先<input v-model="newAccount.otpRecipient" type="email" required></label>
-      <label v-if="newAccount.provider === 'amex'">Gmail APIで読むメールボックス<input v-model="newAccount.otpMailbox" type="email" required></label><button :disabled="busy">口座を追加</button>
+      <label v-if="newAccount.provider === 'amex'">Gmail APIで読むメールボックス<input v-model="newAccount.otpMailbox" type="email" required></label><button class="btn btn-primary" :disabled="busy">口座を追加</button>
     </form></details>
-    <details class="panel"><summary>取得用PCを接続</summary>
+    <details class="card panel"><summary>取得用PCを接続</summary>
       <p>このPCのダウンローダーで「Connect to OMF」を押し、OMFにサインインして取得する口座を選びます。複数の口座を選んでも、ダウンローダーを追加でインストールする必要はありません。</p>
       <p>接続後は、PC側の設定画面でカード会社のログイン情報を保存します。明細取得時に届く認証コードはChromeで入力します（メールボックス連携は別途）。</p>
       <p v-if="!collectors.length">接続済みのPCはありません。</p>
-      <p v-for="device in collectors" :key="device._id">{{ device.name }} · {{ device.revokedAt ? '接続解除済み' : (device.lastSeenAt ? '最終接続 ' + formatDate(device.lastSeenAt) : '接続済み・取得待ち') }} <button v-if="!device.revokedAt" :disabled="busy" @click="run(() => revoke(device._id))">接続解除</button></p>
+      <p v-for="device in collectors" :key="device._id">{{ device.name }} · {{ device.revokedAt ? '接続解除済み' : (device.lastSeenAt ? '最終接続 ' + formatDate(device.lastSeenAt) : '接続済み・取得待ち') }} <button class="btn btn-secondary" v-if="!device.revokedAt" :disabled="busy" @click="run(() => revoke(device._id))">接続解除</button></p>
     </details>
-    <section><h2>取得履歴</h2><p v-if="!imports.length">まだ明細がありません。</p>
-      <button v-for="batch in imports" :key="batch._id" :data-import-id="batch._id" class="history" :disabled="busy" @click="run(() => review(batch._id))">{{ accountName(batch.accountId) }} · {{ batch.period.start }} ～ {{ batch.period.end }} · {{ batch.rowCount }}件</button>
+    <section class="card"><h2>取得履歴</h2><p v-if="!imports.length">まだ明細がありません。</p>
+      <button class="btn btn-secondary history" v-for="batch in imports" :key="batch._id" :data-import-id="batch._id" :disabled="busy" @click="run(() => review(batch._id))">{{ accountName(batch.accountId) }} · {{ batch.period.start }} ～ {{ batch.period.end }} · {{ batch.rowCount }}件</button>
     </section>
-    <section v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件</p></div><button :disabled="busy" @click="run(downloadOriginal)">元の明細ファイル</button></header>
+    <section class="card" v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件</p></div><button class="btn btn-secondary" :disabled="busy" @click="run(downloadOriginal)">元の明細ファイル</button></header>
       <p>口座振替はカードへの返済として保管します。返金などのマイナス明細は確認待ちです。同じ取引の可能性がある行は、既存取引への紐付け・別の支出として登録・保留から選んでください。</p>
       <p v-if="(selected.requiresDraft || selected.mappingPreview)" class="notice">この明細の顧客・区分は分類案の確認中です。<NuxtLink :to="{ path: '/mapping', query: { import: selected.id } }">マッピングを確認 →</NuxtLink></p>
       <div class="review-list"><article v-for="row in selected.rows" :key="row.line" :class="{ muted: ['posted','duplicate'].includes(row.state) }">
@@ -65,7 +65,7 @@
         <label v-if="!(selected.requiresDraft || selected.mappingPreview) && row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)">この行の処理
           <select v-model="choices[row.line]"><option value="">選択してください</option><option value="skip">保留する</option><option value="import">{{ ['legacy_review','overlap_review','correction_review'].includes(row.state) ? '別の支出と確認して登録する' : '取引に登録する' }}</option><option v-for="existing in row.existing" :key="existing.id" :value="'link:' + existing.id">既存取引に紐付け: {{ existing.description }} · {{ yen(existing.amount) }}</option></select>
         </label>
-      </article></div><button v-if="!(selected.requiresDraft || selected.mappingPreview)" :disabled="busy || !decisionCount" @click="run(commit)">選択した {{ decisionCount }} 件を処理</button>
+      </article></div><button class="btn btn-primary" v-if="!(selected.requiresDraft || selected.mappingPreview)" :disabled="busy || !decisionCount" @click="run(commit)">選択した {{ decisionCount }} 件を処理</button>
     </section>
   </div>
 </template>
@@ -105,7 +105,38 @@ onUnmounted(() => clearInterval(poll))
 </script>
 
 <style scoped>
-.mapping-link{display:inline-block;color:#acd0ff;padding:14px 0}.notice a{color:#acd0ff;text-decoration:underline}
-.setup-steps{display:grid;gap:16px;margin:18px 0;padding-left:24px;list-style:decimal}.setup-steps li{padding-left:4px}.setup-steps p{margin-bottom:0}.downloader-guide strong{color:inherit}
-.connections{max-width:1200px;margin:auto;padding:16px;color:#e2e8f0;background:#0f172a;min-height:100vh;border-radius:16px}.connections h1{font-size:26px;font-weight:700}.connections h2{font-size:19px;font-weight:600}.connections p,.connections small{color:#aabbd1;line-height:1.6;margin:8px 0}.connections header>button{flex-shrink:0;white-space:nowrap}.connections header{display:flex;gap:16px;align-items:start;justify-content:space-between}.connections section,.panel{background:#182338;border:1px solid #344158;border-radius:12px;padding:18px;margin:16px 0;min-width:0}.connections button,.connections input,.connections select{border:1px solid #52647f;border-radius:8px;background:#101b2d;color:#edf2fa;padding:11px;max-width:100%}.connections button{background:#254f9b;cursor:pointer;margin-top:10px}.connections button:disabled{opacity:.5;cursor:default}.connections label{display:block;margin:12px 0}.connections label input,.connections select{display:block;width:100%;margin-top:6px}.connections .inline{display:flex;gap:10px}.connections .inline input{width:auto}.connections details{margin-top:16px}.connections summary{cursor:pointer;min-height:30px}.notice{padding:14px;background:#26374e;border-radius:8px;overflow-wrap:anywhere}.history{display:block;width:100%;text-align:left}.review-list article{border-top:1px solid #344158;padding:18px 0;display:grid;gap:12px;overflow-wrap:anywhere}.review-list strong{display:block}.muted{opacity:.6}.account-grid{display:grid;gap:16px}.account-grid section{margin-bottom:0}@media(min-width:760px){.account-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.review-list article{grid-template-columns:2fr 1fr 2fr}}
+.connections { @apply text-sm text-gray-800 dark:text-gray-100; }
+.connections h1 { @apply text-xl font-semibold text-gray-800 dark:text-gray-100; }
+.connections h2 { @apply text-sm font-semibold text-gray-900 dark:text-gray-100; }
+.connections p, .connections small { @apply my-2 leading-relaxed text-gray-500 dark:text-gray-400; }
+.connections small { @apply block break-words text-xs; }
+.connections header { @apply flex flex-col items-start justify-between gap-4 sm:flex-row; }
+.connections header > button { @apply shrink-0 whitespace-nowrap; }
+.connections section, .panel { @apply my-6 min-w-0 p-4 sm:p-6; }
+.connections button { @apply max-w-full text-sm; }
+.connections button:disabled { @apply cursor-default opacity-50; }
+.connections form > button, .connections .account-grid section > button { @apply mt-3; }
+.connections input, .connections select { @apply max-w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white; }
+.connections label { @apply my-3 block; }
+.connections label input, .connections select { @apply mt-1 block w-full; }
+.connections .inline { @apply flex gap-3; }
+.connections .inline input { @apply w-auto; }
+.connections details { @apply mt-4; }
+.connections summary { @apply min-h-10 cursor-pointer py-2 font-medium text-gray-700 dark:text-gray-200; }
+.connections summary:focus-visible { @apply rounded-lg outline-none ring-2 ring-primary-main ring-offset-2; }
+.mapping-link { @apply my-4 inline-flex text-sm font-medium text-primary-main hover:underline dark:text-primary-light; }
+.notice { @apply break-words rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm dark:border-white/10 dark:bg-white/5; }
+.notice a { @apply text-primary-main underline dark:text-primary-light; }
+.history { @apply mt-3 block w-full text-left; }
+.review-list article { @apply grid gap-3 break-words border-t border-gray-200 py-5 dark:border-white/10; }
+.review-list strong { @apply block; }
+.muted { @apply opacity-60; }
+.account-grid { @apply grid gap-4 md:grid-cols-2; }
+.account-grid section { @apply m-0; }
+.setup-steps { @apply my-5 grid list-decimal gap-4 pl-6; }
+.setup-steps li { @apply pl-1; }
+.setup-steps li::marker { @apply font-semibold text-primary-main dark:text-primary-light; }
+.setup-steps p { @apply mb-0; }
+.downloader-guide strong { @apply font-medium text-gray-800 dark:text-gray-100; }
+@media (min-width: 768px) { .review-list article { grid-template-columns: 2fr 1fr 2fr; } }
 </style>

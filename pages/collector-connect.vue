@@ -1,8 +1,8 @@
 <template>
-  <main class="min-h-screen flex items-center justify-center px-4 py-12 bg-gray-50 dark:bg-slate-950">
-    <section class="w-full max-w-md rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-6 sm:p-8 shadow-sm">
+  <main class="min-h-screen flex items-center justify-center px-4 py-12 bg-background-default dark:bg-transparent">
+    <section class="card w-full max-w-md p-6 sm:p-8">
       <p class="text-sm font-semibold text-primary-main">OhMyFinance</p>
-      <h1 class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">明細ダウンローダーを接続</h1>
+      <h1 class="mt-2 text-xl font-semibold text-gray-800 dark:text-gray-100">明細ダウンローダーを接続</h1>
       <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">ダウンローダーはPCごとに1つです。対応する複数のカード口座をまとめて接続でき、カードごとのインストールは不要です。</p>
       <p v-if="loading" class="mt-4 text-gray-600 dark:text-gray-300">接続内容を確認しています…</p>
       <template v-else-if="request && !finished">
@@ -10,12 +10,12 @@
         <form v-if="step === 'signin'" class="mt-6 space-y-4" @submit.prevent="signIn">
           <p class="text-sm text-gray-600 dark:text-gray-300">OMF のメールアドレス・パスワード・認証コードでサインインします。このサインインはこの接続のためだけに使われ、ブラウザや PC に OMF のセッションは残りません。</p>
           <div><label for="email" class="block text-sm font-medium text-gray-700 dark:text-gray-200">メールアドレス</label>
-            <input id="email" v-model="email" type="email" autocomplete="username" required maxlength="254" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
+            <input id="email" v-model="email" type="email" autocomplete="username" required maxlength="254" class="mt-1 w-full rounded-xl border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
           <div><label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-200">OMF のパスワード</label>
-            <input id="password" v-model="password" type="password" autocomplete="current-password" required maxlength="512" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
+            <input id="password" v-model="password" type="password" autocomplete="current-password" required maxlength="512" class="mt-1 w-full rounded-xl border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
           <div><label for="code" class="block text-sm font-medium text-gray-700 dark:text-gray-200">認証コード（またはバックアップコード・有効にしている場合）</label>
-            <input id="code" v-model="code" autocomplete="one-time-code" maxlength="8" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
-          <button type="submit" :disabled="busy" class="w-full rounded-lg bg-primary-main px-4 py-3 font-medium text-white disabled:opacity-50">{{ busy ? '確認しています…' : 'サインインして続ける' }}</button>
+            <input id="code" v-model="code" autocomplete="one-time-code" maxlength="8" class="mt-1 w-full rounded-xl border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
+          <button type="submit" :disabled="busy" class="btn btn-primary w-full justify-center text-sm disabled:opacity-50">{{ busy ? '確認しています…' : 'サインインして続ける' }}</button>
           <button type="button" :disabled="busy" class="w-full text-sm text-gray-600 dark:text-gray-300" @click="leave">キャンセル</button>
         </form>
         <form v-else class="mt-6 space-y-4" @submit.prevent="approve">
@@ -26,8 +26,8 @@
             <span><strong>{{ account.name }}</strong><br /><span class="text-sm text-gray-600 dark:text-gray-300">カード {{ account.cards.join(' / ') }}</span></span>
           </label>
           <div><label for="pc-name" class="block text-sm font-medium text-gray-700 dark:text-gray-200">PC の名前</label>
-            <input id="pc-name" v-model="pcName" required maxlength="100" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
-          <button id="approve" type="submit" :disabled="busy || !selected.length" class="w-full rounded-lg bg-primary-main px-4 py-3 font-medium text-white disabled:opacity-50">{{ busy ? '接続しています…' : '接続する' }}</button>
+            <input id="pc-name" v-model="pcName" required maxlength="100" class="mt-1 w-full rounded-xl border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-gray-900 dark:text-white" /></div>
+          <button id="approve" type="submit" :disabled="busy || !selected.length" class="btn btn-primary w-full justify-center text-sm disabled:opacity-50">{{ busy ? '接続しています…' : '接続する' }}</button>
           <button type="button" :disabled="busy" class="w-full text-sm text-gray-600 dark:text-gray-300" @click="cancel">キャンセル</button>
         </form>
       </template>
