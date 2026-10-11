@@ -1,5 +1,5 @@
 <template>
-  <main class="min-h-screen flex items-center justify-center px-4 py-12 bg-background-default dark:bg-transparent">
+  <main class="min-h-screen flex items-center justify-center px-4 py-12 bg-background-default dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
     <section class="card w-full max-w-md p-6 sm:p-8">
       <p class="text-sm font-semibold text-primary-main">OhMyFinance</p>
       <h1 class="mt-2 text-xl font-semibold text-gray-800 dark:text-gray-100">明細ダウンローダーを接続</h1>
