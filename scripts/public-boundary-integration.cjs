@@ -24,7 +24,7 @@ async function request(port, route, { method = 'POST', token, body, raw, headers
         resolve({ status: res.statusCode, headers: res.headers, data })
       })
     })
-    req.on('error', reject); req.setTimeout(15000, () => req.destroy(Error('HTTP timeout'))); req.end(bytes)
+    req.on('error', reject); req.setTimeout(15000, () => req.destroy(Error('HTTP timeout: ' + method + ' ' + route + ' on owned port ' + port))); req.end(bytes)
   })
 }
 
@@ -33,6 +33,18 @@ async function main() {
   const { matchIngress, exampleConfig, publicOrigin, builtAssets } = await import('./check-collector-ingress.mjs')
   const assets = await builtAssets(path.join(root, '.output/public/_nuxt'))
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'omf-public-http-'))
+  // Only these owned Node children receive the clock preload. Product code has
+  // no test-time switch. Mongo, the parent and the machine clock stay unchanged.
+  const clockFile = path.join(temp, 'clock-offset.txt'), clockPreload = path.join(temp, 'clock.cjs')
+  let clockOffset = 0
+  const appNow = () => Date.now() + clockOffset
+  async function setAppTime(epoch) {
+    clockOffset = epoch - Date.now()
+    await fs.writeFile(clockFile + '.next', String(clockOffset))
+    await fs.rename(clockFile + '.next', clockFile)
+  }
+  await setAppTime(Math.ceil(Date.now() / 900000) * 900000 + 60000)
+  await fs.writeFile(clockPreload, `const fs=require('node:fs'), NativeDate=Date; class OwnedDate extends NativeDate { constructor(...args){ super(...(args.length?args:[OwnedDate.now()])) } static now(){ return NativeDate.now()+Number(fs.readFileSync(${JSON.stringify(clockFile)},'utf8')) } } Object.defineProperty(OwnedDate,'name',{value:'Date'}); global.Date=OwnedDate;`)
   const children = new Set(), proxies = [], logs = []
   let mongo, client, checks = 0
   const pass = name => { checks++; console.log('PASS ' + name) }
@@ -43,7 +55,7 @@ async function main() {
     assert.notEqual(db.databaseName, 'ohmyfinance')
     async function start(port = undefined) {
       port ||= await freePort()
-      const child = spawn(process.execPath, [path.join(root, '.output/server/index.mjs')], {
+      const child = spawn(process.execPath, ['--require', clockPreload, path.join(root, '.output/server/index.mjs')], {
         cwd: temp, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...cleanEnv(), NODE_ENV: 'production', MONGO_URI: uri, NUXT_MONGO_URI: uri, JWT_SECRET: jwtSecret, HOST: '127.0.0.1', NITRO_HOST: '127.0.0.1', PORT: String(port), NITRO_PORT: String(port), OMF_DATA_DIR: path.join(temp, 'evidence'), OMF_TRUST_CLOUDFLARE_LOOPBACK: '1', OMF_COLLECTOR_PUBLIC_ORIGIN: publicOrigin }
       })
       children.add(child); let output = ''
@@ -110,7 +122,7 @@ async function main() {
 
     async function enable(i, userToken) {
       const setup = await direct('/api/auth/2fa/setup', { token: userToken }); assert.equal(setup.status, 200)
-      const data = setup.data, code = () => otp.generateSync({ secret: data.secret, strategy: 'totp' })
+      const data = setup.data, code = () => otp.generateSync({ secret: data.secret, strategy: 'totp', epoch: Math.floor(appNow() / 1000) })
       const enabled = await direct('/api/auth/2fa/enable', { token: userToken, body: { code: code(), backupCodes: data.backupCodes } }); assert.equal(enabled.status, 200)
       return { ...data, code }
     }
@@ -125,31 +137,62 @@ async function main() {
     assert.equal((await call('/api/auth/me', { method: 'GET', token: renewed.data.tokens.accessToken })).status, 200)
     pass('recovery MFA, one-use challenge, backup code, refresh and profile work through the restricted path set')
 
+    // Exercise connection identity before changing the test clock.
+    const connectWindow = Math.floor(appNow() / 60000)
+    const publicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ type: 'spki', format: 'pem' })
+    const connectBody = () => ({ installationId: crypto.randomBytes(16).toString('hex'), generation: crypto.randomBytes(32).toString('hex'), trustHash: crypto.randomBytes(32).toString('hex'), state: crypto.randomBytes(32).toString('hex'), codeChallenge: crypto.randomBytes(32).toString('base64url'), pcName: 'Synthetic PC', publicKey, redirectUri: 'http://127.0.0.1:45678/collector-callback' })
+    const routeConnect = '/api/finance/collector-connect/requests', bodyA = connectBody(), bodyB = connectBody()
+    let requestId
+    for (let i = 0; i < 30; i++) {
+      const response = await call(routeConnect, { body: bodyA, headers: { 'x-test-peer': '198.51.100.41', 'x-forwarded-for': '192.0.2.' + i } })
+      assert.equal(response.status, 200); requestId ||= response.data.id; assert.equal(response.data.id, requestId)
+    }
+    assert.equal((await call(routeConnect, { body: bodyA, headers: { 'x-test-peer': '198.51.100.41' } })).status, 429)
+    const separate = await otherCall(routeConnect, { body: bodyB, headers: { 'x-test-peer': '198.51.100.42' } })
+    assert.equal(separate.status, 200); assert.notEqual(separate.data.id, requestId)
+    assert.equal((await otherCall(routeConnect, { body: bodyA, headers: { 'x-test-peer': '198.51.100.41' } })).status, 429)
+    pass('initial Connect separates proxy clients across workers and preserves idempotent retries')
+    const directBody = connectBody()
+    for (let i = 0; i < 30; i++) assert.equal((await direct(routeConnect, { body: directBody, headers: { 'cf-connecting-ip': '203.0.113.' + i, 'x-forwarded-for': '192.0.2.' + i } })).status, 200)
+    assert.equal((await direct(routeConnect, { body: directBody, headers: { 'cf-connecting-ip': '203.0.113.99' } })).status, 429)
+    assert.equal(Math.floor(appNow() / 60000), connectWindow, 'connection probes must stay in one minute')
+    pass('direct Connect retains socket identity despite forged forwarded headers')
+
+
     const token2 = await register(2), mfa2 = await enable(2, token2)
     const challengeA = await challenge(2), challengeB = await challenge(2)
-    // Keep this race within one fixed window; wait only when near its boundary.
-    let remaining = 60000 - Date.now() % 60000
-    if (remaining < 25000) await pause(remaining + 50)
-    const windowKey = Math.floor(Date.now() / 60000) * 60000
+    const windowKey = Math.floor(appNow() / 900000) * 900000
     const attempts = await Promise.all(Array.from({ length: 16 }, (_, i) => (i % 2 ? call : otherCall)('/api/auth/2fa/verify?q=' + i, { body: { tempToken: i % 2 ? challengeA : challengeB, code: 'INVALID' }, headers: { 'x-test-peer': '192.0.2.' + (i + 1) } })))
-    assert.equal(Math.floor(Date.now() / 60000) * 60000, windowKey, 'race must stay in one window')
+    assert.equal(Math.floor(appNow() / 900000) * 900000, windowKey, 'race must stay in one window')
     assert.equal(attempts.filter(r => r.status === 400).length, 10)
     assert.equal(attempts.filter(r => r.status === 429).length, 6)
     const user = await db.collection('users').findOne({ email: credentials(2).email })
     const counterId = `${user._id}:${windowKey}`
     const counter = await db.collection('authverificationattempts').findOne({ _id: counterId }); assert.equal(counter.count, 16)
     assert.deepEqual(Object.keys(counter).filter(key => key !== '__v').sort(), ['_id', 'count', 'expiresAt'])
+    assert.equal(counter.expiresAt.getTime(), windowKey + 900000)
+    const auditFilter = { entityType: 'auth', action: 'lockout', userId: String(user._id), 'metadata.reason': 'mfa_verification_limit' }
+    const audits = await db.collection('auditlogs').find(auditFilter).toArray()
+    assert.equal(audits.length, 1)
+    assert.deepEqual(audits[0].metadata, { reason: 'mfa_verification_limit', windowStart: new Date(windowKey).toISOString(), expiresAt: new Date(windowKey + 900000).toISOString(), count: 11, maxAttempts: 10, windowMs: 900000 })
     pass('two app workers and new challenges share exactly ten MFA attempts in the same account/window')
+    pass('concurrent excess MFA attempts write exactly one threshold audit with account/window/count and no code')
     await stop(app); app = await start(app.port)
     const persisted = await call('/api/auth/2fa/verify?after=restart', { body: { tempToken: challengeA, code: mfa2.code() }, headers: { 'x-test-peer': '192.0.2.80' } })
     assert.equal(persisted.status, 429)
     const independent = await call('/api/auth/2fa/verify', { body: { tempToken: await challenge(1), code: mfa.code() }, headers: { 'x-test-peer': '192.0.2.81' } }); assert.equal(independent.status, 200)
     pass('restart preserves exhausted MFA budget; a different account still signs in')
-    const wait = Number(persisted.headers['retry-after']); assert.ok(wait > 0 && wait <= 60)
-    console.log('WAIT account cooldown ' + wait + 's')
-    await pause(wait * 1000 + 100)
-    const recovered = await call('/api/auth/2fa/verify', { body: { tempToken: challengeA, code: mfa2.code() } }); assert.equal(recovered.status, 200)
-    pass('MFA cooldown expires automatically without clearing the database or requiring manual approval')
+    const wait = Number(persisted.headers['retry-after']); assert.ok(wait > 60 && wait <= 900)
+    await setAppTime(appNow() + 61000)
+    assert.equal((await call('/api/auth/2fa/verify', { body: { tempToken: challengeA, code: mfa2.code() }, headers: { 'x-test-peer': '192.0.2.82' } })).status, 429)
+    assert.equal(await db.collection('auditlogs').countDocuments(auditFilter), 1)
+    await setAppTime(windowKey + 900000 + 1000)
+    const expired = await call('/api/auth/2fa/verify', { body: { tempToken: challengeA, code: mfa2.code() } }); assert.equal(expired.status, 401)
+    const recovered = await call('/api/auth/2fa/verify', { body: { tempToken: await challenge(2), code: mfa2.code() } }); assert.equal(recovered.status, 200)
+    assert.equal(await db.collection('authverificationattempts').countDocuments({ _id: counterId }), 1, 'recovery does not depend on deleting the prior counter')
+    assert.equal(await db.collection('auditlogs').countDocuments(auditFilter), 1)
+    pass('owned clock proves fifteen-minute cooldown and fresh-challenge recovery without deleting the old counter')
+
 
     const userToken = recovered.data.tokens.accessToken
     const finance = (route, body) => direct('/api/finance/' + route, { token: userToken, body })
@@ -167,7 +210,7 @@ async function main() {
     const repeat = await call(route, { token: collectorToken, raw: csv, headers: { 'content-type': 'text/csv' } }); assert.equal(repeat.data.id, uploaded.data.id); assert.equal(repeat.data.duplicateFile, true)
     assert.equal(await db.collection('financeimports').countDocuments(), 1)
     pass('scoped collector lists/claims/uploads with required query parameters; retry retains one imported statement')
-    console.log(JSON.stringify({ pass: true, checks, assets: assets.length, retainedSyntheticDirectory: temp, limitation: 'Local forwarding simulation; public edge and issuer acceptance not run' }))
+    console.log(JSON.stringify({ pass: true, checks, assets: assets.length, retainedSyntheticDirectory: temp, limitation: 'Local forwarding simulation and controlled clocks in owned Node children; no real edge, issuer or wall-clock TTL acceptance' }))
   } catch (error) { console.error(error); console.error('Owned app tail:', logs.map(read => read()).join('\n').slice(-3000)); process.exitCode = 1 }
   finally {
     for (const proxy of proxies) { proxy.closeAllConnections(); await new Promise(r => proxy.close(r)) }

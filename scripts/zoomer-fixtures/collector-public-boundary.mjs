@@ -12,7 +12,7 @@ function run(args) {
 }
 export default {
   name: 'collector-public-boundary',
-  covers: built ? ['server/middleware/file-upload.ts', 'server/middleware/rateLimit.ts', 'server/utils/request-client.ts', 'server/models/AuthVerificationAttempt.ts', 'server/services/authVerificationLimit.ts', 'server/api/auth/2fa/verify.ts', 'deploy/collector-ingress.example.yml', 'scripts/check-collector-ingress.mjs', 'scripts/public-boundary.test.cjs', 'scripts/public-boundary-integration.cjs'] : [],
+  covers: built ? ['server/middleware/file-upload.ts', 'server/middleware/rateLimit.ts', 'server/utils/request-client.ts', 'server/models/AuthVerificationAttempt.ts', 'server/services/authVerificationLimit.ts', 'server/api/auth/2fa/verify.ts', 'server/api/finance/collector-connect/[...path].ts', 'deploy/collector-ingress.example.yml', 'scripts/check-collector-ingress.mjs', 'scripts/public-boundary.test.cjs', 'scripts/public-boundary-integration.cjs'] : [],
   async run() {
     if (!built) return { pass: false, message: 'Build OMF first; no HTTP coverage claimed without its built server/assets.' }
     const binary = process.env.OMF_TEST_CLOUDFLARED || (process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared')
@@ -24,7 +24,7 @@ export default {
     let receipt
     try { receipt = JSON.parse(http.stdout.split(/\r?\n/).find(s => s.startsWith('{"pass":')) || 'null') } catch {}
     const passes = http.stdout.split(/\r?\n/).filter(s => s.startsWith('PASS '))
-    const pass = http.code === 0 && receipt?.pass === true && receipt.checks === passes.length && receipt.checks >= 9 && receipt.assets > 0
+    const pass = http.code === 0 && receipt?.pass === true && receipt.checks === passes.length && receipt.checks >= 12 && receipt.assets > 0
     return { pass, message: pass ? `Unit/mutation tests green. ${ingress.stdout.trim()} HTTP: ${passes.join(' | ')}. Local forwarding simulation only; deployed edge/issuer acceptance remains open.` : 'Built HTTP boundary failed: ' + (http.stdout + http.stderr).slice(-2200) }
   }
 }

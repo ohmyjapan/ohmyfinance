@@ -129,10 +129,11 @@ test('behavior probes detect reintroduced upload and rate-limit defects', async 
 })
 
 function mfaHarness(sourceTransform = s => s) {
-  const counters = new Map(); let checks = 0, race = false, databaseDown = false
+  const counters = new Map(), audits = []; let checks = 0, race = false, databaseDown = false, lastEvent
   const h = harness({ sourceTransform, dependency: id => {
     if (id === 'h3') return { ...h3, readBody: async event => event.body }
     if (id.endsWith('/database')) return { ensureConnection: async () => {} }
+    if (id.endsWith('/audit')) return { logAudit: async entry => { audits.push(entry) } }
     if (id.endsWith('/User')) return { default: { findById: () => ({ select: async () => ({ _id: 'verified-user', isActive: true, twoFactorEnabled: true, twoFactorSecret: 'synthetic' }) }) }, __esModule: true }
     if (id.endsWith('/authService')) return { verifyToken: token => token === 'invalid' ? null : { type: '2fa_pending', jti: token, userId: 'verified-user', exp: 9999999 } }
     if (id.endsWith('/twoFactorService')) return { verifyToken: () => { checks++; return false } }
@@ -141,11 +142,11 @@ function mfaHarness(sourceTransform = s => s) {
       if (databaseDown) throw Error('synthetic database failure')
       if (race) { race = false; counters.set(_id, { count: 1 }); throw Object.assign(Error('race'), { code: 11000 }) }
       const entry = counters.get(_id) || { count: 0, expiresAt: update.$setOnInsert.expiresAt }
-      entry.count++; counters.set(_id, entry); return entry
+      entry.count++; counters.set(_id, entry); return { ...entry }
     } } }
   } })
   const verify = h.load('server/api/auth/2fa/verify.ts').default
-  return { ...h, counters, checks: () => checks, race: () => { race = true }, databaseDown: () => { databaseDown = true }, attempt: token => { const event = h.event('/api/auth/2fa/verify'); event.body = { tempToken: token, code: '123456' }; return verify(event) } }
+  return { ...h, counters, audits, lastEvent: () => lastEvent, checks: () => checks, race: () => { race = true }, databaseDown: () => { databaseDown = true }, attempt: token => { const event = lastEvent = h.event('/api/auth/2fa/verify'); event.body = { tempToken: token, code: '123456' }; return verify(event) } }
 }
 
 test('MFA reserves verified-account budget before OTP work, recovers after time and handles insert races', async () => {
@@ -155,7 +156,11 @@ test('MFA reserves verified-account budget before OTP work, recovers after time 
   for (let i = 0; i < 10; i++) await assert.rejects(h.attempt('signed-' + i), e => e.statusCode === 400)
   await assert.rejects(h.attempt('signed-next'), e => e.statusCode === 429)
   assert.equal(h.checks(), 10)
-  h.advance(60000); await assert.rejects(h.attempt('signed-later'), e => e.statusCode === 400)
+  h.advance(60000); await assert.rejects(h.attempt('signed-one-minute'), e => e.statusCode === 429)
+  assert.equal(h.checks(), 10)
+  h.advance(739999); await assert.rejects(h.attempt('signed-before-expiry'), e => e.statusCode === 429)
+  assert.equal(Number(h.lastEvent().responseHeaders['Retry-After']), 1)
+  h.advance(1); await assert.rejects(h.attempt('signed-later'), e => e.statusCode === 400)
   assert.equal(h.checks(), 11)
   const raced = mfaHarness(); raced.race()
   await assert.rejects(raced.attempt('signed-race'), e => e.statusCode === 400)
@@ -163,6 +168,59 @@ test('MFA reserves verified-account budget before OTP work, recovers after time 
   const unavailable = mfaHarness(); unavailable.databaseDown()
   await assert.rejects(unavailable.attempt('signed-outage'), e => e.statusCode === 500)
   assert.equal(unavailable.checks(), 0)
+})
+
+async function auditProbe(h) {
+  const results = await Promise.allSettled(Array.from({ length: 16 }, (_, i) => h.attempt('signed-' + i)))
+  assert.equal(results.filter(r => r.status === 'rejected' && r.reason.statusCode === 400).length, 10)
+  assert.equal(results.filter(r => r.status === 'rejected' && r.reason.statusCode === 429).length, 6)
+  assert.equal(h.audits.length, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(h.audits[0])), {
+    action: 'lockout', entityType: 'auth', userId: 'verified-user',
+    metadata: { reason: 'mfa_verification_limit', windowStart: new Date(900000).toISOString(), expiresAt: new Date(1800000).toISOString(), count: 11, maxAttempts: 10, windowMs: 900000 }
+  })
+}
+
+test('one MFA threshold audit per account/window under concurrency; a later window may audit again', async () => {
+  const h = mfaHarness(); await auditProbe(h)
+  await assert.rejects(h.attempt('signed-more'), e => e.statusCode === 429)
+  assert.equal(h.audits.length, 1)
+  h.advance(900000)
+  for (let i = 0; i < 10; i++) await assert.rejects(h.attempt('later-' + i), e => e.statusCode === 400)
+  await assert.rejects(h.attempt('later-limit'), e => e.statusCode === 429)
+  assert.equal(h.audits.length, 2)
+  assert.notEqual(h.audits[0].metadata.windowStart, h.audits[1].metadata.windowStart)
+})
+
+async function connectIdentityProbe(sourceTransform = s => s) {
+  const seen = [], env = { OMF_TRUST_CLOUDFLARE_LOOPBACK: '1', OMF_COLLECTOR_PUBLIC_ORIGIN: 'https://omf-public.example.invalid' }
+  const h = harness({ env, sourceTransform, dependency: id => {
+    if (id.endsWith('/database')) return { ensureConnection: async () => {} }
+    if (id.endsWith('/financeCollectorSecurityService')) return { initializeSecurity: async () => {} }
+    if (id.endsWith('/financeCollectorConnectService')) return { initializeConnect: async () => {}, expireConnectRequests: async () => {}, createConnectRequest: async (_body, _origin, client) => { seen.push(client); return { accepted: true } } }
+  } })
+  const handler = h.load('server/api/finance/collector-connect/[...path].ts').default
+  for (const peer of ['127.0.0.1', '192.0.2.10']) for (const client of ['203.0.113.7', '203.0.113.8']) {
+    const event = h.event('/api/finance/collector-connect/requests', { peer, headers: { host: 'omf-public.example.invalid', 'cf-connecting-ip': client, 'x-forwarded-for': '198.51.100.99' } })
+    event.node.req[Symbol.asyncIterator] = async function* () { yield Buffer.from('{}') }
+    assert.equal((await handler(event)).accepted, true)
+  }
+  assert.deepEqual(seen, ['203.0.113.7', '203.0.113.8', '192.0.2.10', '192.0.2.10'])
+}
+
+test('initial Connect passes verified tunnel identity and retains direct socket identity', async () => { await connectIdentityProbe() })
+
+test('review regression probes detect missing audit, shorter MFA window and raw Connect socket', async () => {
+  const mutations = [
+    [s => s.replace('await logAudit({', 'await Promise.resolve({'), async transform => auditProbe(mfaHarness(transform))],
+    [s => s.replace('windowMs = 15 * 60_000', 'windowMs = 60_000'), async transform => { const h = mfaHarness(transform); for (let i = 0; i < 10; i++) await assert.rejects(h.attempt('signed-' + i), e => e.statusCode === 400); h.advance(60000); await assert.rejects(h.attempt('signed-later'), e => e.statusCode === 429) }],
+    [s => s.replace('const client=requestClient(event)', "const client=event.node.req.socket?.remoteAddress||''"), connectIdentityProbe]
+  ]
+  for (const [mutate, probe] of mutations) {
+    let applied = false
+    await assert.rejects(() => probe(s => { const next = mutate(s); applied ||= next !== s; return next }), { code: 'ERR_ASSERTION' })
+    assert.equal(applied, true)
+  }
 })
 
 test('MFA probes detect removing either reservation or enforcement', async () => {

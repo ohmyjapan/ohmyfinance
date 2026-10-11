@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getHeader, setHeader } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import { initializeSecurity } from '../../../services/financeCollectorSecurityService'
+import { requestClient } from '../../../utils/request-client'
 import { initializeConnect, createConnectRequest, inspectConnectRequest, authenticateConnect, approveConnect, cancelConnect, exchangeConnect, acknowledgeConnect, expireConnectRequests } from '../../../services/financeCollectorConnectService'
 
 // Initial connection of a statement downloader (plan omf-customer-connect-20261010). HTTPS-only on the configured public
@@ -25,7 +26,7 @@ export default defineEventHandler(async event=>{
   await expireConnectRequests()
   const route=(event.path.split('?')[0].split('/api/finance/collector-connect/')[1]||'').split('/')
   const token=(getHeader(event,'authorization')||'').replace(/^Bearer /,'')
-  const client=event.node.req.socket?.remoteAddress||''
+  const client=requestClient(event)
   const body=async()=>{
     if(Number(getHeader(event,'content-length')||0)>20000)throw createError({statusCode:413,statusMessage:'Request too large'})
     let length=0;const chunks:Buffer[]=[]
