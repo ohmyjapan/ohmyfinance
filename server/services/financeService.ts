@@ -74,7 +74,7 @@ export function collectorInput(body: any) {
 }
 export async function createCollector(ownerId: string, body: any) {
   const { name, accountIds } = collectorInput(body)
-  if (await FinancialAccount.countDocuments({ ownerId, _id: { $in: accountIds }, active: true, provider: 'amex' }) !== accountIds.length) fail(400, 'Unknown account')
+  if (await FinancialAccount.countDocuments({ ownerId, _id: { $in: accountIds }, active: true, provider: { $in: ['amex', 'aplus'] } }) !== accountIds.length) fail(400, 'Unknown account')
   const token = `omfc_${randomBytes(32).toString('hex')}`
   const device = await FinanceCollector.create({ ownerId, name, tokenHash: digest(token), accountIds })
   return { id: device._id.toString(), token }

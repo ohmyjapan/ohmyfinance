@@ -74,7 +74,7 @@ const freshProof=(row:any,proof:unknown)=>{
   if(typeof proof!=='string'||!hex.test(proof)||!row.proofHash||!same(row.proofHash,hash(proof)))deny('Sign in again on the connection page.',401) // binding:proof
   if(!row.proofExpiresAt||row.proofExpiresAt<=new Date())deny('Sign-in expired. Sign in again on the connection page.',401)
 }
-const liveScope=async(ownerId:any,accountIds:any[])=>await FinancialAccount.countDocuments({_id:{$in:accountIds},ownerId,active:true,provider:'amex'})===accountIds.length
+const liveScope=async(ownerId:any,accountIds:any[])=>await FinancialAccount.countDocuments({_id:{$in:accountIds},ownerId,active:true,provider:{$in:['amex','aplus']}})===accountIds.length
 const connectUrl=(origin:string,id:string)=>new URL('/collector-connect?id='+id,origin).href
 
 // Token-less request from the downloader: installation identity, public key, remembered-PC digest, state, PKCE challenge,
@@ -116,7 +116,7 @@ export async function authenticateConnect(id:unknown,body:any,origin:string){
   const changed=await CollectorConnect.updateOne({_id:row._id,status:{$in:['pending','authenticated','ready']},expiresAt:{$gt:new Date()},$or:[{ownerId:null},{ownerId:user._id}]},{$set:{status:row.status==='ready'?'ready':'authenticated',ownerId:user._id,authStamp:stamp(user),proofHash:hash(proof),proofExpiresAt}})
   if(changed.modifiedCount!==1)deny('Connection request changed. '+START_AGAIN,409)
   await logAudit({action:'login',entityType:'auth',entityId:String(user._id),userId:String(user._id),metadata:{purpose:'collector-connect',requestId:row._id}})
-  const accounts:any[]=await FinancialAccount.find({ownerId:user._id,active:true,provider:'amex'}).select('name cardIdentifiers').lean()
+  const accounts:any[]=await FinancialAccount.find({ownerId:user._id,active:true,provider:{$in:['amex','aplus']}}).select('name cardIdentifiers').lean()
   return {proof,proofExpiresAt,pcName:row.pcName,selected:(row.accountIds||[]).map(String),accounts:accounts.map(a=>({id:String(a._id),name:a.name,cards:(a.cardIdentifiers||[]).map((v:string)=>v.slice(-4))}))}
 }
 
@@ -176,9 +176,9 @@ export async function exchangeConnect(body:any){
   await CollectorGrant.updateOne({_id:row.grantHash},{$setOnInsert:grantFields},{upsert:true})
   const grant:any=await CollectorGrant.findById(row.grantHash).lean()
   if(!grant||grant.revokedAt)deny('This connection was revoked. '+START_AGAIN,401)
-  const accounts:any[]=await FinancialAccount.find({_id:{$in:row.accountIds},ownerId:row.ownerId}).select('name primaryCard ownerId').lean()
+  const accounts:any[]=await FinancialAccount.find({_id:{$in:row.accountIds},ownerId:row.ownerId}).select('name primaryCard ownerId provider').lean()
   await ownerContext(row)
-  return {id:row._id,installationId:row.installationId,generation:row.generation,collectorId:String(row.collectorId),ownerId:String(row.ownerId),pcName:row.pcName,accounts:row.accountIds.map((accountId:any)=>{const a=accounts.find(v=>String(v._id)===String(accountId));return {_id:String(accountId),primaryCard:a?.primaryCard||'',name:a?.name||'',ownerId:String(row.ownerId)}}),capsule:row.capsule,expiresAt:grant.expiresAt}
+  return {id:row._id,installationId:row.installationId,generation:row.generation,collectorId:String(row.collectorId),ownerId:String(row.ownerId),pcName:row.pcName,accounts:row.accountIds.map((accountId:any)=>{const a=accounts.find(v=>String(v._id)===String(accountId));return {_id:String(accountId),primaryCard:a?.primaryCard||'',name:a?.name||'',ownerId:String(row.ownerId),provider:a?.provider||'amex'}}),capsule:row.capsule,expiresAt:grant.expiresAt}
 }
 
 // Receipt from the downloader after its durable local save: the delivered token, the installation identity and the

@@ -5,8 +5,8 @@ export function onSurface(page, origin, pathname) {
   catch { return false; }
 }
 
-export function requireSurface(page, origin, pathname) {
-  if (!onSurface(page, origin, pathname)) throw new Error('The Amex page changed; check Chrome before retrying');
+export function requireSurface(page, origin, pathname, label = 'Amex') {
+  if (!onSurface(page, origin, pathname)) throw new Error(`The ${label} page changed; check Chrome before retrying`);
 }
 
 export async function poll(read, timeoutMs = 30000, intervalMs = 500) {
@@ -23,30 +23,30 @@ export async function poll(read, timeoutMs = 30000, intervalMs = 500) {
 }
 
 // Native input avoids ElementHandle's isolated-world calls in the real Chrome connection.
-export async function fill(page, selector, value, origin, pathname) {
-  requireSurface(page, origin, pathname);
-  await page.evaluate(selector => {
+export async function fill(page, selector, value, origin, pathname, label = 'Amex') {
+  requireSurface(page, origin, pathname, label);
+  await page.evaluate(({ selector, label }) => {
     const input = document.querySelector(selector);
-    if (!input || input.disabled || input.readOnly || !input.getBoundingClientRect().height) throw new Error('Amex input unavailable');
+    if (!input || input.disabled || input.readOnly || !input.getBoundingClientRect().height) throw new Error(label + ' input unavailable');
     input.focus();
-  }, selector);
-  requireSurface(page, origin, pathname);
+  }, { selector, label });
+  requireSurface(page, origin, pathname, label);
   await page.keyboard.down('Control');
   try { await page.keyboard.press('A'); } finally { await page.keyboard.up('Control'); }
   await page.keyboard.type(value);
 }
 
-export async function click(page, selector, text, origin, pathname) {
-  requireSurface(page, origin, pathname);
-  const point = await page.evaluate(({ selector, text }) => {
+export async function click(page, selector, text, origin, pathname, label = 'Amex') {
+  requireSurface(page, origin, pathname, label);
+  const point = await page.evaluate(({ selector, text, label }) => {
     const targets = [...document.querySelectorAll(selector)].filter(e => !e.disabled && e.getBoundingClientRect().height && (text === null || e.textContent.trim() === text));
-    if (targets.length !== 1) throw new Error('Amex control did not uniquely match');
+    if (targets.length !== 1) throw new Error(label + ' control did not uniquely match');
     targets[0].scrollIntoView({ block: 'center', behavior: 'instant' });
     const rect = targets[0].getBoundingClientRect();
     const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
-    if (!targets[0].contains(document.elementFromPoint(x, y))) throw new Error('Amex control is covered by another element');
+    if (!targets[0].contains(document.elementFromPoint(x, y))) throw new Error(label + ' control is covered by another element');
     return { x, y };
-  }, { selector, text });
-  requireSurface(page, origin, pathname);
+  }, { selector, text, label });
+  requireSurface(page, origin, pathname, label);
   await page.mouse.click(point.x, point.y);
 }

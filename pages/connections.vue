@@ -11,7 +11,7 @@
         <li><strong>取得する口座をまとめて選択</strong><p>このPCで扱う口座を選び、カード会社のログイン情報をPC側の設定画面で保存します。認証コードを求められたらChromeで入力します。</p></li>
         <li><strong>明細をOMFで確認</strong><p>PCが利用できる間に明細を取得し、OMFへ送信します。内容や分類の確認は、これまでどおりOMFのブラウザ画面で行います。</p></li>
       </ol>
-      <p>現在、自動取得はAmexに対応しています。Aplusは明細ファイルを取り込めます。一般向けインストーラーは準備中です。</p>
+      <p>現在、自動取得はAmexとAplusに対応しています。Aplusは確定明細と未請求明細を取得し、明細ファイルの取り込みも引き続き利用できます。一般向けインストーラーは準備中です。</p>
       <details><summary>取得のタイミングと保存される情報</summary>
         <p>自動取得には、ダウンローダーが起動し、Windowsにサインイン済みでロックされていないPCが必要です。電源が切れている間やスリープ中は取得せず、利用可能になってから再開します。カード会社が追加認証を求めた場合は、操作が必要になることがあります。</p>
         <p>保存したカード会社のID・パスワードは、そのPCで暗号化して保管します。取得した明細はOMFに送信し、マッピングや取引の確認に使います。</p>
@@ -22,7 +22,7 @@
         <h2>{{ account.name }}</h2><p>カード {{ account.cardIdentifiers.map((v: string) => v.slice(-4)).join(' / ') }}</p>
         <p>{{ states[account.jobState] || account.jobState }} · {{ account.lastMessage || '未取得' }}</p>
         <small>最終取得: {{ formatDate(account.lastSuccessAt) }}<template v-if="account.provider !== 'aplus'"><br>認証メール: {{ account.otpRecipient }} → {{ account.otpMailbox }}</template></small>
-        <button class="btn btn-primary" v-if="account.provider !== 'aplus'" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
+        <button class="btn btn-primary" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
         <details><summary>明細ファイルを取り込む</summary><form @submit.prevent="run(() => upload(account))">
           <label>明細の状態<select v-model="manual.kind"><option value="statement">確定明細</option><option value="pending">未請求・確定待ち</option></select></label>
           <p v-if="manual.kind === 'pending'">購入件数に含めてマッピングできます。確定明細との照合までは帳簿に登録しません。Amexは確定前の利用を含まないCSV、Aplusは取得ツールの元ページ付きJSONを選択します。</p>

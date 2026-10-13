@@ -7,7 +7,7 @@ import { mkdir,readFile,writeFile,readdir,rename } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf, keyName, sealEnvelope, openEnvelope, samePublicKey, replaceVaultFile, DIALOG_TIMEOUT_MS, openCapsule } from './vault.mjs';
-import { collectStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
+import { collectStatement, collectAplusStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
 import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin, connectWithOmf, acknowledgeWithOmf, cancelConnectWithOmf, launch } from './omf-authorization.mjs';
@@ -61,7 +61,7 @@ async function updateMetadata(updater) {
 }
 
 function aadFor(installationId,provider,account,config) {
-  if(provider==='amex') return aadOf({installationId,origin:config.baseUrl,ownerId:account.ownerId,provider,accountId:account._id});
+  if(provider==='amex'||(provider==='aplus'&&account)) return aadOf({installationId,origin:config.baseUrl,ownerId:account.ownerId,provider,accountId:account._id});
   // Service credentials and the canary bind to the single owner of the current pairing.
   let origin='',ownerId=`local:${installationId}`;
   if(config?.token || config?.baseUrl) {
@@ -194,11 +194,12 @@ export function validateOrigin(value) {
   if(u.protocol==='http:' && !['localhost','127.0.0.1'].includes(u.hostname) && !/^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/.test(u.hostname))throw new Error('Use HTTPS or the private Tailscale address');
   return u.origin;
 }
-async function api(config,route,body,query,live) {
+// A Buffer body is sent as-is with the caller's content type (text/csv unless told otherwise); JSON bodies are unchanged.
+async function api(config,route,body,query,live,{contentType}={}) {
   if(live)assertSession(live);
   const url=new URL('/api/finance/collector/'+route,config.baseUrl);if(query)url.search=new URLSearchParams(query).toString();
   const csv=Buffer.isBuffer(body);
-  const response=await fetch(url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':csv?'text/csv':'application/json'},...(body===undefined?{}:{body:csv?body:JSON.stringify(body)}),redirect:'error',signal:live?AbortSignal.any([live.abort.signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)});
+  const response=await fetch(url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':csv?(contentType||'text/csv'):'application/json'},...(body===undefined?{}:{body:csv?body:JSON.stringify(body)}),redirect:'error',signal:live?AbortSignal.any([live.abort.signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)});
   const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.statusMessage || 'OMF connection failed'),{status:response.status});return data;
 }
 // Pending files are bound to the owner and OMF origin that produced them; a re-pair cannot redirect another pairing's outbox.
@@ -208,12 +209,52 @@ async function pending(account,config) {
   for(const folder of folders.filter(f=>f.isDirectory())){const dir=path.join(root,folder.name);try{const m=JSON.parse(await readFile(path.join(dir,'manifest.json'),'utf8'));if(!m.acknowledgedAt && m.accountId===account._id && m.primaryCard===account.primaryCard && m.ownerId===String(account.ownerId) && m.origin===config.baseUrl)result.push({directory:dir,manifest:m});}catch(e){if(e.code!=='ENOENT')throw e;}}
   return result;
 }
-async function upload(config,account,item,live) {
+// The upload query of a retained artifact: Amex manifests keep today's shape (pageCount always present); Aplus statements
+// add their displayed totals and Aplus pending captures carry no CSV row count.
+export function uploadQuery(m,account) {
+  const query={accountId:account._id,jobId:account.jobId,kind:m.kind,start:m.start,end:m.end};
+  if(m.pageCount!==undefined&&m.pageCount!==null)query.pageCount=String(m.pageCount);
+  if(m.kind==='statement'&&m.statementMonth!==undefined){query.statementMonth=m.statementMonth;query.statementTotal=String(m.statementTotal);if(m.refundTotal!==undefined&&m.refundTotal!==null)query.refundTotal=String(m.refundTotal);}
+  return query;
+}
+// Sends the exact retained bytes with the manifest-derived content type; the acknowledgement is written only after OMF answered.
+export async function upload(config,account,item,live) {
   const m=item.manifest;
   if(!/^[a-f\d-]{36}$/.test(m.filename))throw new Error('Invalid outbox filename');
   const bytes=await readFile(path.join(item.directory,m.filename));if(digest(bytes)!==m.sha256)throw new Error('Outbox file integrity check failed');
-  const result=await api(config,'upload',bytes,{accountId:account._id,jobId:account.jobId,kind:m.kind,start:m.start,end:m.end,pageCount:String(m.pageCount)},live);
-  await writeFile(path.join(item.directory,'manifest.json'),JSON.stringify({...m,acknowledgedAt:new Date().toISOString(),importId:result.id},null,2),{mode:0o600});return result;
+  const result=await api(config,'upload',bytes,uploadQuery(m,account),live,{contentType:m.sourceFormat==='json'?'application/json':'text/csv'});
+  await replaceVaultFile(path.join(item.directory,'manifest.json'),JSON.stringify({...m,acknowledgedAt:new Date().toISOString(),importId:result.id},null,2));return result;
+}
+// The sealed entry a claimed account's bank login lives in: its own `<provider>-<id>` entry; else, for Aplus, the single
+// legacy `aplus` service entry when exactly one Aplus account is in scope (it can only be that one); else none → manual sign-in.
+export function credentialEntryFor(account,entries,scope=[]) {
+  const provider=account?.provider||'amex',own=provider+'-'+account._id;
+  if(entries.includes(own))return own;
+  if(provider==='aplus'&&entries.includes('aplus')&&scope.filter(a=>(a.provider||'amex')==='aplus').length===1)return 'aplus';
+  return null;
+}
+// Finalized months already retained in this account's outbox (acknowledged or not): a manifest on disk is never downloaded again.
+async function outboxMonths(account,root,config) {
+  const base=path.join(root,'outbox',account._id);let folders=[];try{folders=await readdir(base,{withFileTypes:true});}catch(e){if(e.code!=='ENOENT')throw e;}
+  const months=new Set();
+  for(const folder of folders.filter(f=>f.isDirectory())){try{const m=JSON.parse(await readFile(path.join(base,folder.name,'manifest.json'),'utf8'));if(m.accountId===account._id&&m.primaryCard===account.primaryCard&&m.ownerId===String(account.ownerId)&&m.origin===config.baseUrl&&m.kind==='statement'&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(m.statementMonth||'')))months.add(m.statementMonth);}catch(e){if(e.code!=='ENOENT')throw e;}}
+  return [...months];
+}
+// One claimed Aplus job (plan omf-aplus-automation-20261013 §2 P2/C3): drain the outbox, collect what neither OMF nor the
+// outbox holds, upload every new artifact, and complete only once each is acknowledged. A failed upload leaves the rest
+// unacknowledged for the next claim. `deps` are the fixture's seams; the collector passes its own.
+export async function runAplusJob(account,config,live,{status,covered=[],credentials={},pending:listPending=pending,upload:send=upload,collect=collectAplusStatement,directory:root=directory,onLaunch=null,batch='batch'}={}) {
+  const label=item=>item.manifest.kind==='pending'?'未請求明細を送信中':`${item.manifest.statementMonth||'確定明細'} を送信中`;
+  const drained={statement:0,pending:0};
+  for(const item of await listPending(account,config)){await status('running',label(item));await send(config,account,item,live);drained[item.manifest.kind==='pending'?'pending':'statement']++;}
+  const held=[...new Set([...covered,...await outboxMonths(account,root,config)])];
+  const result=await collect(account,credentials,root,status,{batch,onLaunch,origin:config.baseUrl,covered:held,jobId:account.jobId});
+  for(const item of [...result.items,...(result.pending?[result.pending]:[])]){await status('running',label(item));await send(config,account,item,live);}
+  if(result.failed){await status('failed',result.failed);return {drained,items:result.items.length,pending:!!result.pending,nothing:false,failed:result.failed,message:result.failed};}
+  const statements=result.items.length+drained.statement,pendings=(result.pending?1:0)+drained.pending;
+  const message=statements+pendings===0?'すべての確定明細を取得済み':`確定明細 ${statements}件・未請求 ${pendings}件を保存`+(result.unavailable?.length?`（未提供: ${result.unavailable.join(', ')}）`:'');
+  await status('complete',message);
+  return {drained,items:result.items.length,pending:!!result.pending,nothing:statements+pendings===0,failed:null,message};
 }
 async function tick() {
   if(ticking||stopped)return;ticking=true;
@@ -244,16 +285,32 @@ async function tickWork() {
   if(session && Date.now()>session.until){await endSession('the batch expired');return;}
   if(running)return;
   const live=liveSession();if(!live)return;   // locked: no claim, no status post, no secret
-  running=true;let config,account,heartbeat;
+  running=true;let config,account,covered,heartbeat;
   try {
     config=await metadata();if(config.paused || !config.token || !config.baseUrl)return;
-    ({account}=await api(config,'claim',{},undefined,live));
+    ({account,covered}=await api(config,'claim',{},undefined,live));
     assertSession(live);
     if(!account){ if(live.ran&&live.mode==='manual'){running=false;await endSession('batch complete');} return; }
     activeAction=true;
-    let currentState='running',currentMessage='Connecting to Amex',heartbeatFailure;
+    const aplusJob=(account.provider||'amex')==='aplus';
+    let currentState='running',currentMessage=aplusJob?'明細の取得を開始':'Connecting to Amex',heartbeatFailure;
     const status=async(state,text)=>{assertSession(live);if(heartbeatFailure)throw heartbeatFailure;currentState=state;currentMessage=text;message=`${account.name}: ${text}`;await api(config,'status',{accountId:account._id,jobId:account.jobId,state,message:text},undefined,live);};
     heartbeat=setInterval(()=>{api(config,'status',{accountId:account._id,jobId:account.jobId,state:currentState,message:currentMessage},undefined,live).catch(e=>{heartbeatFailure=e;});},45000);
+    if(aplusJob) {
+      // Aplus (plan omf-aplus-automation-20261013): the outbox is drained, the missing finalized months and the unbilled page
+      // are collected, each artifact is acknowledged, then the job completes. The saved login is opened only here, for the
+      // claimed account's own entry (or the single legacy aplus entry when it can only belong to this account).
+      let credentials={};
+      assertSession(live);
+      if(live.mode==='protected') {
+        const entry=credentialEntryFor(account,await secrets.list(),config.accountInfo||[]);
+        if(entry)credentials=await secrets.open(entry,aadFor(live.installationId,'aplus',entry==='aplus'?null:account,config),live.broker);
+      }
+      assertSession(live);
+      await runAplusJob(account,config,live,{status,covered:covered?.statements||[],credentials,onLaunch:ownBrowser(live),batch:live.id});credentials=null;
+      assertSession(live);live.ran=true;
+      clearInterval(heartbeat);
+    } else {
     const queued=await pending(account,config);
     for(const item of queued) {await status('running','Sending a previously downloaded statement');await upload(config,account,item,live);}
     if(!queued.length) {
@@ -269,6 +326,7 @@ async function tickWork() {
     }
     assertSession(live);live.ran=true;
     clearInterval(heartbeat);await status('complete','Statement saved in OMF for review');
+    }
   } catch(error) {
     // Do not log browser errors, URLs, mail bodies, credentials, or response objects.
     if([401,403].includes(error.status)){reconnectNeeded=true;await endSession('PC disconnected or account access changed');message='Reconnect this PC through OMF to continue automatic syncing.';return;}
@@ -292,7 +350,7 @@ async function planEntries(blob,installationId) {
   const legacyAccounts=Object.entries(blob.accounts||{}).filter(([,value])=>value&&(value.username||value.password));
   if(blob.token && blob.baseUrl) {
     const {accounts}=await api(blob,'accounts');
-    info=accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId)}));
+    info=accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId),provider:a.provider||'amex'}));
   }
   for(const [card,entry] of legacyAccounts) {
     const match=info.find(a=>a.primaryCard===card && a._id);
@@ -486,7 +544,7 @@ async function connect({resume=false}={}) {
       assertAuthorization(pending);
       const opened=openCapsule(localKey,result.capsule,connectAadFor(journal,result));
       if(!/^omfc_[a-f\d]{64}$/.test(opened.token)||!/^[a-f0-9]{64}$/.test(opened.grant))throw coded('conflict','OMF returned an invalid connection credential.');
-      const connection={baseUrl:origin,token:opened.token,accountInfo:result.accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId)})),accounts:{},mode:'protected'};
+      const connection={baseUrl:origin,token:opened.token,accountInfo:result.accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId),provider:a.provider||'amex'})),accounts:{},mode:'protected'};
       aadFor(journal.installationId,'gmail',null,connection);
       const grant={grant:opened.grant,expiresAt:result.expiresAt,installationId:journal.installationId,generation:journal.generation};
       opened.token=null;opened.grant=null;
@@ -575,7 +633,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;legacy=true;config={accounts:{}};}
         let info=config.accountInfo || [],due=false;if(config.token)try{info=(await api(config,'accounts')).accounts;due=info.some(a=>a.jobState==='queued');}catch{}
         const [aplus,yayoi,gmail]=await Promise.all(['aplus','yayoi','gmail'].map(id=>boundSecret(id,state?.installationId,id,null,config)));
-        const accounts=await Promise.all(info.map(async a=>({id:a.primaryCard,accountId:String(a._id||''),name:a.name,hasCredentials:await boundSecret('amex-'+String(a._id),state?.installationId,'amex',a,config)})));
+        const accounts=await Promise.all(info.map(async a=>{const provider=a.provider||'amex';return {id:a.primaryCard,accountId:String(a._id||''),name:a.name,provider,hasCredentials:await boundSecret(provider+'-'+String(a._id),state?.installationId,provider,a,config)};}));
         return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},accounts});
       }
       if(req.method==='POST' && ['/connect','/connect/resume'].includes(req.url)) { await json(req).catch(()=>({})); try { return reply(200,await connect({resume:req.url==='/connect/resume'})); } catch(error) { return reply(codeOf(error),{error:error.message,keyLost}); } }
@@ -583,7 +641,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         const body=await json(req);if(!/^omfc_[a-f\d]{64}$/.test(body.token))throw new Error('Invalid collector token');
         if(session)throw coded('conflict','Lock the current batch before changing the connection.');
         const config={baseUrl:secureOrigin(body.baseUrl),token:body.token,accountInfo:[]};const {accounts}=await api(config,'accounts');
-        config.accountInfo=accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId)}));
+        config.accountInfo=accounts.map(a=>({_id:String(a._id),primaryCard:a.primaryCard,name:a.name,ownerId:String(a.ownerId),provider:a.provider||'amex'}));
         aadFor(null,'gmail',null,config);
         await authorize(async pending=>secrets.withLock(async()=>{
           const state=await vaultState();const current=await metadata().catch(error=>{if(error.code==='legacy')return null;throw error;});
@@ -601,9 +659,10 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         return reply(200,{saved:true});
       }
       if(req.method==='POST' && req.url==='/credentials') {
-        const body=await json(req);if(!/^[a-f\d]{24}$/.test(String(body.accountId))||![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256))throw new Error('Enter both Amex user ID and password');
+        const body=await json(req);if(!/^[a-f\d]{24}$/.test(String(body.accountId))||![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256))throw new Error('Enter both the card login ID and password');
         const live=requireProtectedSession();const config=await metadata();const info=(config.accountInfo||[]).find(a=>a._id===body.accountId);if(!info)throw new Error('Unknown account');
-        await writeSecret(live,'amex-'+info._id,aadOf({installationId:live.installationId,origin:config.baseUrl,ownerId:info.ownerId,provider:'amex',accountId:info._id}),{username:body.username,password:body.password});
+        const provider=info.provider||'amex';
+        await writeSecret(live,provider+'-'+info._id,aadOf({installationId:live.installationId,origin:config.baseUrl,ownerId:info.ownerId,provider,accountId:info._id}),{username:body.username,password:body.password});
         return reply(200,{saved:true});
       }
       if(req.method==='GET' && req.url==='/aplus/status') {const state=await vaultState();let config;try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;config={};}return reply(200,{busy:running,unlocked:!!session,aplus:{hasCredentials:await boundSecret('aplus',state?.installationId,'aplus',null,config)}});}
@@ -654,7 +713,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         const state=await vaultState(),config=await metadata();
         if(session)throw coded('conflict','Lock the current batch first');
         if(body.mode==='manual') {
-          if((await secrets.list()).some(id=>id.startsWith('amex-')||['aplus','yayoi','gmail'].includes(id)))throw coded('conflict','Sealed logins exist; manual mode needs an empty vault');
+          if((await secrets.list()).some(id=>id.startsWith('amex-')||id.startsWith('aplus-')||['aplus','yayoi','gmail'].includes(id)))throw coded('conflict','Sealed logins exist; manual mode needs an empty vault');
           await updateMetadata(old=>({...old,mode:'manual'}));return {mode:'manual'};
         }
         if(body.mode==='protected') { if(!activated(state,config))throw coded('conflict','Enable protection first'); await updateMetadata(old=>({...old,mode:'protected'}));return {mode:'protected'}; }

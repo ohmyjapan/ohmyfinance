@@ -186,11 +186,16 @@ async function activeGrant(token:string,grantToken:string){
 async function binding(context:any,record:any){
   const {grant,device}=context, a=record?.aad
   if(!a||a.v!==3||!hex.test(record.keyId)||a.keyId!==record.keyId||a.generation!==grant.generation||a.installationId!==grant.installationId||a.origin!==grant.origin||a.ownerId!==String(grant.ownerId)||JSON.stringify(Object.keys(a).sort())!==JSON.stringify(['v','installationId','origin','ownerId','provider','accountId','generation','keyId'].sort()))deny('Key binding mismatch.',400)
-  if(a.provider==='amex'){
-    if(record.entryId!=='amex-'+a.accountId||!grant.accountIds.some((v:any)=>String(v)===a.accountId)||!device.accountIds.some((v:any)=>String(v)===a.accountId)||!await FinancialAccount.exists({_id:a.accountId,ownerId:grant.ownerId,active:true,provider:'amex'}))deny('Card is unavailable for this batch.')
-  }else if(a.provider==='legacy'){
-    if(!/^legacy-\d+$/.test(record.entryId)||a.accountId!==record.entryId)deny('Invalid archived key entry.',400)
-  }else if(!['gmail','aplus','yayoi','check'].includes(a.provider)||record.entryId!==a.provider||a.accountId!==a.provider)deny('Invalid key entry.',400)
+  // Per-account card entries (amex-<id>, aplus-<id>) bind to the grant, the device and the live account; service entries
+  // (gmail, the single legacy aplus login, yayoi, check) and archived legacy entries bind by name. Each `// binding:<name>`
+  // line is one guard; scripts/collector-security-integration.ts removes each in turn to prove it is load-bearing.
+  const perAccount=a.provider==='amex'||(a.provider==='aplus'&&/^[a-f0-9]{24}$/.test(a.accountId))
+  if(perAccount&&record.entryId!==a.provider+'-'+a.accountId)deny('Card is unavailable for this batch.') // binding:entry
+  if(perAccount&&!grant.accountIds.some((v:any)=>String(v)===a.accountId))deny('Card is unavailable for this batch.') // binding:grant-scope
+  if(perAccount&&!device.accountIds.some((v:any)=>String(v)===a.accountId))deny('Card is unavailable for this batch.') // binding:device-scope
+  if(perAccount&&!await FinancialAccount.exists({_id:a.accountId,ownerId:grant.ownerId,active:true,provider:a.provider}))deny('Card is unavailable for this batch.') // binding:account-live
+  if(!perAccount&&a.provider==='legacy'&&(!/^legacy-\d+$/.test(record.entryId)||a.accountId!==record.entryId))deny('Invalid archived key entry.',400)
+  if(!perAccount&&a.provider!=='legacy'&&(!['gmail','aplus','yayoi','check'].includes(a.provider)||record.entryId!==a.provider||a.accountId!==a.provider))deny('Invalid key entry.',400) // binding:service
 }
 export async function putKey(token:string,grantToken:string,body:any){
   const context=await activeGrant(token,grantToken);await binding(context,body)

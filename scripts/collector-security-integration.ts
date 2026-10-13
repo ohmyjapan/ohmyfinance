@@ -15,13 +15,21 @@ import { generateSecret, hashBackupCodes } from '../server/services/twoFactorSer
 // scoped issuance delivered only through an encrypted capsule, bounded idempotent retries, cancel/expire/revoke.
 // Each server binding is also removed in turn from a mutant copy of the service to prove this leg catches it.
 const CONNECT_SERVICE=path.resolve(__dirname,'..','server','services','financeCollectorConnectService.ts')
+const SECURITY_SERVICE=path.resolve(__dirname,'..','server','services','financeCollectorSecurityService.ts')
 const BINDINGS=['proof','origin','scope','authstamp','pkce','code','expiry','revoked']
-async function withMutant(marker:string,fn:(mutant:any)=>Promise<void>){
-  const lines=(await readFile(CONNECT_SERVICE,'utf8')).split('\n'),index=lines.findIndex(line=>line.includes('// binding:'+marker))
+const SECURITY_BINDINGS=['entry','grant-scope','device-scope','account-live','service']
+// One `// binding:<marker>` line removed from a copy written beside its original (relative imports resolve); a copy that
+// fails to import is a harness fault, printed as FAIL and never counted as detection.
+async function withMutant(file:string,marker:string,fn:(mutant:any)=>Promise<void>){
+  const lines=(await readFile(file,'utf8')).split('\n'),index=lines.findIndex(line=>line.includes('// binding:'+marker))
   assert.ok(index>=0,'binding marker missing: '+marker);lines.splice(index,1)
-  const mutantFile=path.join(path.dirname(CONNECT_SERVICE),`financeCollectorConnectService.mutant-${marker}-${process.pid}.ts`)
+  const mutantFile=path.join(path.dirname(file),`${path.basename(file,'.ts')}.mutant-${marker}-${process.pid}.ts`)
   await writeFile(mutantFile,lines.join('\n'),{flag:'wx'})
-  try{await fn(await import(pathToFileURL(mutantFile).href))}finally{await unlink(mutantFile)}
+  try{
+    let mutant:any
+    try{mutant=await import(pathToFileURL(mutantFile).href)}catch(error:any){console.log('FAIL mutant invalid: '+marker+' — '+String(error?.message||error).split('\n')[0]);throw error}
+    await fn(mutant)
+  }finally{await unlink(mutantFile)}
 }
 async function connectLegs(context:{pass:(name:string)=>void,digest:(v:string)=>string,origin:string,user:any,other:any,account:any,password:string,secret:string,legacyToken:string,service:any,models:any}){
   const {pass,digest,origin,user,other,account,password,secret,legacyToken,service,models}=context
@@ -62,8 +70,8 @@ async function connectLegs(context:{pass:(name:string)=>void,digest:(v:string)=>
   await assert.rejects(connect.authenticateConnect(first.id,{email:user.email,password,code:'000000'},origin),(e:any)=>e.statusCode===401)
   await assert.rejects(connect.authenticateConnect(first.id,{email:'nobody@example.invalid',password,code:totp()},origin),(e:any)=>e.statusCode===401)
   const auth=await connect.authenticateConnect(first.id,{email:user.email,password,code:totp()},origin)
-  assert.match(auth.proof,/^[a-f0-9]{64}$/);assert.deepEqual(auth.accounts.map((a:any)=>a.id).sort(),[String(account._id),String(second._id)].sort());assert.equal(auth.pcName,'Synthetic PC')
-  assert.equal(auth.accounts.some((a:any)=>a.id===String(aplus._id)||a.id===String(foreign._id)),false)
+  assert.match(auth.proof,/^[a-f0-9]{64}$/);assert.deepEqual(auth.accounts.map((a:any)=>a.id).sort(),[String(account._id),String(second._id),String(aplus._id)].sort());assert.equal(auth.pcName,'Synthetic PC')
+  assert.equal(auth.accounts.some((a:any)=>a.id===String(foreign._id)),false)
   let row:any=await full(first.id)
   assert.equal(row.proofHash,digest(auth.proof));assert.equal(row.status,'authenticated');assert.equal(JSON.stringify(row).includes(auth.proof),false);assert.equal(String(row.ownerId),String(user._id))
   assert.equal((await connect.inspectConnectRequest(first.id)).status,'authenticated')
@@ -82,7 +90,7 @@ async function connectLegs(context:{pass:(name:string)=>void,digest:(v:string)=>
   // 3. Approval: proof, exact origin, unchanged auth state, live eligible scope; duplicate/crash retry keeps one reserved collector.
   await assert.rejects(connect.approveConnect(first.id,{proof:'0'.repeat(64),accountIds:ids},origin),(e:any)=>e.statusCode===401)
   await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:ids},'https://other.example.invalid'),(e:any)=>e.statusCode===403)
-  for(const scope of [[],[String(foreign._id)],[String(aplus._id)],[String(account._id),String(foreign._id)],['nope']])await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:scope},origin),(e:any)=>[400,403].includes(e.statusCode))
+  for(const scope of [[],[String(foreign._id)],[String(account._id),String(foreign._id)],['nope']])await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:scope},origin),(e:any)=>[400,403].includes(e.statusCode))
   await FinancialAccount.updateOne({_id:second._id},{$set:{active:false}})
   await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:[String(second._id)]},origin),(e:any)=>[400,403].includes(e.statusCode))
   await FinancialAccount.updateOne({_id:second._id},{$set:{active:true}})
@@ -110,6 +118,11 @@ async function connectLegs(context:{pass:(name:string)=>void,digest:(v:string)=>
   await assert.rejects(connect.approveConnect(first.id,{proof:auth.proof,accountIds:[String(account._id),String(second._id)]},origin),(e:any)=>e.statusCode===409)
   assert.equal(await FinanceCollector.countDocuments({ownerId:user._id}),beforeCount+1)
   pass('approval needs the request proof, exact origin, unchanged auth state and live eligible scope; duplicate clicks and a prepare-crash retry keep one reserved collector; a changed selection is refused')
+  // A same-owner Aplus account is eligible (plan omf-aplus-automation-20261013): selected alone, delivered with its provider.
+  const aplusConnect=await approved([String(aplus._id)])
+  const aplusDelivered=await connect.exchangeConnect({id:aplusConnect.id,code:aplusConnect.code,verifier:aplusConnect.verifier})
+  assert.deepEqual(aplusDelivered.accounts.map((a:any)=>({_id:a._id,provider:a.provider,primaryCard:a.primaryCard})),[{_id:String(aplus._id),provider:'aplus',primaryCard:'1234'}])
+  pass('a same-owner Aplus account can be selected at Connect and is delivered with its provider; empty, malformed and foreign-owner selections stay refused')
   // 4. Exchange: approved code and PKCE; duplicates return one capsule; collector primitives open it; Mongo holds no plaintext.
   await assert.rejects(connect.exchangeConnect({id:first.id,code:code2,verifier:first.verifier}),(e:any)=>e.statusCode===401)
   await assert.rejects(connect.exchangeConnect({id:first.id,code:code3,verifier:'a'.repeat(43)}),(e:any)=>e.statusCode===401)
@@ -197,7 +210,7 @@ async function connectLegs(context:{pass:(name:string)=>void,digest:(v:string)=>
     expiry:async m=>{const r=await approved();await CollectorConnect.updateOne({_id:r.id},{$set:{expiresAt:new Date(Date.now()-1000)}});await assert.rejects(connect.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier}));await m.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier})},
     revoked:async m=>{const r=await approved();await FinanceCollector.updateOne({_id:((await full(r.id)) as any).collectorId},{$set:{revokedAt:new Date()}});await assert.rejects(connect.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier}));await m.exchangeConnect({id:r.id,code:r.code,verifier:r.verifier})}
   }
-  for(const marker of BINDINGS)await withMutant(marker,attacks[marker])
+  for(const marker of BINDINGS)await withMutant(CONNECT_SERVICE,marker,attacks[marker])
   pass('each of the '+BINDINGS.length+' server bindings ('+BINDINGS.join(', ')+') was removed in turn and its attack then succeeded; the real service refuses all of them')
   await models.CollectorThrottle.deleteMany({})
   const throttled=await fresh()
@@ -208,6 +221,56 @@ async function connectLegs(context:{pass:(name:string)=>void,digest:(v:string)=>
   await assert.rejects(connect.createConnectRequest({...first.input,installationId:randomBytes(16).toString('hex'),state:randomBytes(32).toString('hex')},origin,'10.0.0.9'),(e:any)=>e.statusCode===429)
   await models.CollectorThrottle.deleteMany({})
   pass('connect sign-in attempts and token-less request creation are throttled by request and by caller, not only by a rotatable installation ID')
+}
+
+// Shared guard binding() (server/services/financeCollectorSecurityService.ts; plan omf-aplus-automation-20261013 §4b): a
+// baseline of an active, selected, same-owner Aplus account A in both grant and device scope, five one-field attacks and
+// the five single-line mutants. The real service refuses every attack; each mutant accepts exactly its own and nothing
+// else. The Amex corpus is refused by the real service and each mutant exposes only its own shared predicate (account-live
+// also releases the inactive Amex account's key — the defect the real line prevents). Fresh key IDs per attempt so the
+// idempotent re-registration path never masks a refusal.
+async function securityBindingLegs({pass,digest,origin,user,service,models}:{pass:(name:string)=>void,digest:(v:string)=>string,origin:string,user:any,service:any,models:any}){
+  const {sealEnvelope}=await import('../collector/vault.mjs')
+  const fresh:any=await User.findById(user._id).select('+password +twoFactorSecret +twoFactorBackupCodes')
+  const authStamp=service.stamp(fresh),trustToken=randomBytes(32).toString('hex')
+  const pair=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
+  const A:any=await FinancialAccount.create({ownerId:user._id,provider:'aplus',name:'Binding Aplus A',cardIdentifiers:['4321'],primaryCard:'4321'})
+  const B:any=await FinancialAccount.create({ownerId:user._id,provider:'aplus',name:'Binding Aplus B',cardIdentifiers:['8765'],primaryCard:'8765'})
+  const X:any=await FinancialAccount.create({ownerId:user._id,provider:'amex',name:'Binding Amex X',cardIdentifiers:['45678'],primaryCard:'45678',otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'})
+  const device=async(accountIds:any[])=>{const token='omfc_'+randomBytes(32).toString('hex');const row:any=await FinanceCollector.create({ownerId:user._id,name:'Binding PC',tokenHash:digest(token),accountIds});return {token,row}}
+  const installation=async(collectorId:any,accountIds:any[])=>{const id=randomBytes(16).toString('hex'),generation=randomBytes(32).toString('hex');await models.CollectorInstallation.create({_id:id,ownerId:user._id,collectorId,generation,publicKey:pair.publicKey,fingerprint:digest(pair.publicKey),origin,trustHash:digest(trustToken),authStamp,accountIds,trustedAt:new Date()});return {id,generation}}
+  const grant=async(collectorId:any,inst:{id:string,generation:string},accountIds:any[])=>{const token=randomBytes(32).toString('hex');await models.CollectorGrant.create({_id:digest(token),ownerId:user._id,collectorId,installationId:inst.id,generation:inst.generation,origin,accountIds,authStamp,trustHash:digest(trustToken),expiresAt:new Date(Date.now()+20*60000)});return token}
+  // The main device holds A, B and X with a matching grant; a narrower grant on the same device holds only B
+  // (grant-scope attack); a second device holds only B while its grant names A and X (device-scope attack).
+  const main=await device([A._id,B._id,X._id]),inst=await installation(main.row._id,[A._id,B._id,X._id]),mainGrant=await grant(main.row._id,inst,[A._id,B._id,X._id])
+  const narrowGrant=await grant(main.row._id,inst,[B._id])
+  const narrow=await device([B._id]),narrowInst=await installation(narrow.row._id,[B._id]),narrowDeviceGrant=await grant(narrow.row._id,narrowInst,[A._id,X._id])
+  const record=(provider:string,accountId:string,entryId:string,at:{id:string,generation:string}=inst)=>{const keyId=randomBytes(32).toString('hex');const aad={v:3,installationId:at.id,origin,ownerId:String(user._id),provider,accountId,generation:at.generation,keyId};return {keyId,entryId,aad,wrapped:sealEnvelope(pair.publicKey,aad,{username:'synthetic',password:randomBytes(8).toString('hex')}).wrapped}}
+  const refused=async(attempt:Promise<any>)=>{try{await attempt;return false}catch(error:any){if([400,403].includes(error?.statusCode))return true;throw error}}
+  const aplusAttacks:Record<string,(svc:any)=>Promise<any>>={
+    'entry':svc=>svc.putKey(main.token,mainGrant,record('aplus',String(A._id),'aplus-'+String(B._id))),
+    'grant-scope':svc=>svc.putKey(main.token,narrowGrant,record('aplus',String(A._id),'aplus-'+String(A._id))),
+    'device-scope':svc=>svc.putKey(narrow.token,narrowDeviceGrant,record('aplus',String(A._id),'aplus-'+String(A._id),narrowInst)),
+    'account-live':svc=>svc.putKey(main.token,mainGrant,record('aplus',String(X._id),'aplus-'+String(X._id))),
+    'service':svc=>svc.putKey(main.token,mainGrant,record('aplus','aplus','aplus-x'))
+  }
+  const amexAttacks:Record<string,(svc:any)=>Promise<any>>={
+    'entry':svc=>svc.putKey(main.token,mainGrant,record('amex',String(X._id),'amex-'+String(A._id))),
+    'grant-scope':svc=>svc.putKey(main.token,narrowGrant,record('amex',String(X._id),'amex-'+String(X._id))),
+    'device-scope':svc=>svc.putKey(narrow.token,narrowDeviceGrant,record('amex',String(X._id),'amex-'+String(X._id),narrowInst)),
+    'account-live':async svc=>{await FinancialAccount.updateOne({_id:X._id},{$set:{active:false}});try{return await svc.putKey(main.token,mainGrant,record('amex',String(X._id),'amex-'+String(X._id)))}finally{await FinancialAccount.updateOne({_id:X._id},{$set:{active:true}})}}
+  }
+  const baseline=record('aplus',String(A._id),'aplus-'+String(A._id)),amexBaseline=record('amex',String(X._id),'amex-'+String(X._id))
+  await service.putKey(main.token,mainGrant,baseline);assert.equal((await service.getKey(main.token,mainGrant,baseline.keyId)).wrapped,baseline.wrapped)
+  await service.putKey(main.token,mainGrant,amexBaseline);assert.equal((await service.getKey(main.token,mainGrant,amexBaseline.keyId)).wrapped,amexBaseline.wrapped)
+  for(const name of SECURITY_BINDINGS)assert.equal(await refused(aplusAttacks[name](service)),true,'the real service accepted the Aplus attack '+name)
+  for(const name of Object.keys(amexAttacks))assert.equal(await refused(amexAttacks[name](service)),true,'the real service accepted the Amex attack '+name)
+  pass('binding(): the real service releases the baseline Aplus and Amex keys of a selected, active, same-owner account and refuses the five Aplus attacks (entry, grant-scope, device-scope, account-live, service) and the four Amex attacks')
+  for(const marker of SECURITY_BINDINGS)await withMutant(SECURITY_SERVICE,marker,async m=>{
+    for(const name of SECURITY_BINDINGS)assert.equal(await refused(aplusAttacks[name](m)),name!==marker,`mutant ${marker}: the Aplus attack ${name} was ${name===marker?'still refused':'accepted'}`)
+    for(const name of Object.keys(amexAttacks))assert.equal(await refused(amexAttacks[name](m)),name!==marker,`mutant ${marker}: the Amex attack ${name} was ${name===marker?'still refused':'accepted'}`)
+  })
+  pass('each of the '+SECURITY_BINDINGS.length+' binding mutants accepts exactly its own Aplus attack and only its own shared Amex predicate (account-live: the inactive Amex account), refusing every other attack')
 }
 
 async function main() {
@@ -351,7 +414,8 @@ async function main() {
     // The legacy legs rotated the MFA secret and spent one backup code; restore the known secret for the connect legs.
     await User.updateOne({_id:user._id},{$set:{twoFactorSecret:secret,loginAttempts:0},$unset:{lockoutUntil:1}})
     await connectLegs({pass,digest,origin,user,other,account,password,secret,legacyToken:token,service,models})
-    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0}))
+    await securityBindingLegs({pass,digest,origin,user,service,models})
+    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,connectMutants:BINDINGS.length,securityMutants:SECURITY_BINDINGS.length}))
   } finally {await mongoose.disconnect();await mongo.stop()}
 }
 // authService's import starts the token-blacklist cleanup interval, which would keep this child alive after the receipt.

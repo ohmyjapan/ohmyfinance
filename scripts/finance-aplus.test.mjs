@@ -19,7 +19,7 @@ test('annual fee and separate refund remain exceptions with missing source field
  const result=parse([fee,refund],{statementTotal:500,refundTotal:100}),[a,b]=result.rows;
  assert.equal(a.kind,'statement_review');assert.equal(a.cardIdentifier,null);assert.equal(a.purchaseDate,null);assert.equal(b.kind,'credit_review');assert.equal(b.paymentAmount,null);assert.equal(b.amount,-100);assert.equal(b.separateRefund,true);
  const mappings=mappingRows({hash:result.sha256,rows:result.rows});assert.equal(mappings[0].cardLast4,'');assert.equal(mappings[0].purpose,'statement_review');assert.match(mappings[0].reason,/年会費/);assert.equal(mappings[0].statementMonth,'2026-08');
- assert.deepEqual(result.reconciliation,{statementTotal:500,purchaseTotal:400,separateRefundTotal:100,verified:true});
+ assert.deepEqual(result.reconciliation,{statementTotal:500,purchaseTotal:400,separateRefundTotal:100,sourceRefundTotal:100,accountAdjustmentTotal:0,verified:true,version:2});
 });
 test('earlier fiscal purchases and installment payments remain outside expense drafts',()=>{
  assert.equal(parse([row({1:'20251031'})]).rows[0].kind,'statement_review');
@@ -31,7 +31,8 @@ test('both bank totals must reconcile before acceptance',()=>{
  assert.throws(()=>parse([row()],{refundTotal:100}));
  assert.throws(()=>parse([row()],{statementTotal:''}));
  assert.throws(()=>parse([row()],{refundTotal:-1}));
- assert.throws(()=>parse([row({3:'-100',6:'',7:'',8:'返品'})],{statementTotal:0}));
+ assert.throws(()=>parse([row({3:'-100',6:'',7:'',8:'返品'})],{statementTotal:0,refundTotal:0}));
+ assert.equal(parse([row({3:'-100',6:'',7:'',8:'返品'})],{statementTotal:0}).reconciliation.separateRefundTotal,null);
 });
 test('malformed cards, dates, amounts, headers, encoding and provisional data are rejected',()=>{
  for(const changes of [{0:'≪****-****-****-9999≫'},{0:''},{1:'20260230'},{1:'20260901'},{3:'1.2'},{7:''},{3:'1,20'},{2:''}]) assert.throws(()=>parse([row(changes)]));

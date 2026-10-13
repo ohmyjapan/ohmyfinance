@@ -11,11 +11,14 @@ export default defineEventHandler(async event => {
   try {
     if (parts[0] === 'collector') {
       const device = await financeDevice(event)
-      const scope = { ownerId: device.ownerId, _id: { $in: device.accountIds }, active: true, provider: 'amex' }
+      const scope = { ownerId: device.ownerId, _id: { $in: device.accountIds }, active: true, provider: { $in: ['amex', 'aplus'] } }
       if (parts[1] === 'accounts' && parts.length === 2 && method === 'GET') return { accounts: await FinancialAccount.find(scope).select('-commitLease -commitLeaseUntil').lean() }
       if (parts[1] === 'claim' && parts.length === 2 && method === 'POST') {
-        const account = await FinancialAccount.findOneAndUpdate({ ...scope, $or: [{ jobState: 'queued' }, { jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $lt: new Date() } }] }, { $set: { jobState: 'running', jobDeviceId: device._id, jobLeaseUntil: new Date(Date.now() + 180000), lastAttemptAt: new Date(), lastMessage: 'Connecting to Amex' } }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
-        return { account }
+        const account: any = await FinancialAccount.findOneAndUpdate({ ...scope, $or: [{ jobState: 'queued' }, { jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $lt: new Date() } }] }, { $set: { jobState: 'running', jobDeviceId: device._id, jobLeaseUntil: new Date(Date.now() + 180000), lastAttemptAt: new Date(), lastMessage: '明細の取得を開始' } }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
+        if (account?.provider !== 'aplus') return { account }
+        // Finalized Aplus statement months OMF already holds (read only): the collector never downloads them again.
+        const held: any[] = await FinanceImport.find({ ownerId: device.ownerId, accountId: account._id, provider: 'aplus', 'period.kind': 'statement' }).select('period').lean()
+        return { account, covered: { statements: [...new Set(held.map(b => b.period?.statementMonth).filter((m: any): m is string => typeof m === 'string'))] } }
       }
       if (parts[1] === 'status' && parts.length === 2 && method === 'POST') {
         const body = await readBody(event)
@@ -28,8 +31,10 @@ export default defineEventHandler(async event => {
         const query = getQuery(event)
         const account: any = await FinancialAccount.findOne({ ...scope, _id: { $in: device.accountIds, $eq: id(query.accountId) }, jobId: query.jobId, jobDeviceId: device._id, jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $gt: new Date() } }).lean()
         if (!account) fail(409, 'Job is unavailable or expired')
-        if (!getHeader(event,'content-type')?.startsWith('text/csv')) fail(415, 'CSV required')
-        return await acceptImport(device.ownerId.toString(), account, await csvBody(event), { kind: query.kind, start: query.start, end: query.end, fiscalStart: query.fiscalStart, fiscalEnd: query.fiscalEnd, pageCount: query.pageCount }, device._id.toString())
+        const json = account.provider === 'aplus' && query.kind === 'pending'
+        if (!getHeader(event,'content-type')?.startsWith(json ? 'application/json' : 'text/csv')) fail(415, json ? 'Bank page JSON capture required' : 'CSV required')
+        // A JSON page capture proves its own page and row counts (shared/finance-pending.mjs); its manifest page count is not a CSV row count.
+        return await acceptImport(device.ownerId.toString(), account, await csvBody(event), { kind: query.kind, start: query.start, end: query.end, fiscalStart: query.fiscalStart, fiscalEnd: query.fiscalEnd, pageCount: json ? undefined : query.pageCount, statementMonth: query.statementMonth, statementTotal: query.statementTotal, refundTotal: query.refundTotal }, device._id.toString())
       }
       fail(404, 'Collector endpoint not found')
     }
@@ -49,7 +54,6 @@ export default defineEventHandler(async event => {
         return { account: await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId }, { $set: input }, { new: true }) }
       }
       if (parts[2] === 'sync' && parts.length === 3 && method === 'POST') {
-        if (account.provider === 'aplus') fail(400, 'Upload the finalized Aplus CSV from Card connections')
         if (!await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null })) fail(409, 'Pair a collector for this account first')
         const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: new Date(), lastMessage: 'Waiting for collector' }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
         if (!updated) fail(409, 'A synchronization is already queued or running')

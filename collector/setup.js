@@ -71,9 +71,10 @@ async function refresh() {
   }
   for(const account of data.accounts) {
     const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p'),form=document.createElement('form');
-    title.textContent=account.name;note.textContent=account.hasCredentials?'Login saved on this PC. Enter both fields to replace it.':'Enter the login for this Amex account once. It is encrypted on this PC and never sent to OMF.';
+    const issuer=account.provider==='aplus'?'My APLUS':'Amex';
+    title.textContent=account.name;note.textContent=account.hasCredentials?'Login saved on this PC. Enter both fields to replace it.':`Enter the login for this ${issuer} account once. It is encrypted on this PC and never sent to OMF.`;
     const values={};
-    for(const [name,label,type] of [['username','Amex user ID','text'],['password','Amex password','password']]) {
+    for(const [name,label,type] of [['username',issuer==='Amex'?'Amex user ID':'My APLUS ID','text'],['password',issuer+' password','password']]) {
       const el=document.createElement('input'),l=document.createElement('label');el.id=account.id+name;el.type=type;el.required=true;el.autocomplete='off';l.htmlFor=el.id;l.textContent=label;form.append(l,el);values[name]=el;
     }
     const button=document.createElement('button');button.textContent='Save encrypted login';button.disabled=!(data.unlocked && data.mode==='protected') || !!data.busy;form.append(button);
