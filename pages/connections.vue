@@ -23,6 +23,15 @@
         <p>{{ states[account.jobState] || account.jobState }} · {{ account.lastMessage || '未取得' }}</p>
         <small>最終取得: {{ formatDate(account.lastSuccessAt) }}<template v-if="account.provider !== 'aplus'"><br>認証メール: {{ account.otpRecipient }} → {{ account.otpMailbox }}</template></small>
         <button class="btn btn-primary" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
+        <details v-if="account.provider === 'aplus' && fiscalInputs[account._id]"><summary>自動取得の会計期間：{{ account.fiscalPeriod ? account.fiscalPeriod.start + ' ～ ' + account.fiscalPeriod.end : '未設定' }}</summary>
+          <form @submit.prevent="run(() => saveFiscalPeriod(account._id))">
+            <label>開始日<input v-model="fiscalInputs[account._id].start" type="date" required></label>
+            <label>終了日<input v-model="fiscalInputs[account._id].end" type="date" required></label>
+            <p>この口座の自動取得に使用します。期間外の購入も保存し、個別確認に回します。変更は新しい取り込みに適用されます。</p>
+            <p v-if="!account.fiscalPeriod">未設定の間は、会計期間外かどうかの確認は行いません。</p>
+            <button class="btn btn-secondary" :disabled="busy">会計期間を保存</button>
+          </form>
+        </details>
         <details><summary>明細ファイルを取り込む</summary><form @submit.prevent="run(() => upload(account))">
           <label>明細の状態<select v-model="manual.kind"><option value="statement">確定明細</option><option value="pending">未請求・確定待ち</option></select></label>
           <p v-if="manual.kind === 'pending'">購入件数に含めてマッピングできます。確定明細との照合までは帳簿に登録しません。Amexは確定前の利用を含まないCSV、Aplusは取得ツールの元ページ付きJSONを選択します。</p>
@@ -75,6 +84,7 @@ import { useUserStore } from '~/stores/user'
 definePageMeta({ middleware: 'auth' })
 const user = useUserStore()
 const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), selected = ref<any>(null)
+const fiscalInputs = reactive<Record<string, { start: string; end: string }>>({})
 const busy = ref(false), message = ref('')
 const newAccount = reactive({ provider: 'amex', name: '', primaryCard: '', otpRecipient: '', otpMailbox: '' }), cardsText = ref('')
 const manual = reactive({ kind: 'statement', start: '', end: '', statementMonth: '', statementTotal: '', refundTotal: '', fiscalStart: '', fiscalEnd: '' }), file = ref<File | null>(null), choices = reactive<Record<number,string>>({}), reviewPanel = ref<HTMLElement | null>(null)
@@ -85,7 +95,8 @@ const yen = (amount: number) => new Intl.NumberFormat('ja-JP', { style:'currency
 const formatDate = (date: string) => date ? new Date(date).toLocaleString('ja-JP') : '未接続'
 const accountName = (id: string) => accounts.value.find(a => a._id === id)?.name || 'カード'
 async function run(action: () => Promise<any>) { if (busy.value) return; busy.value = true; message.value = ''; try { await action() } catch (error: any) { message.value = error.data?.data?.message || error.data?.statusMessage || error.message || '処理できませんでした' } finally { busy.value = false } }
-async function refresh() { const [a,c,i] = await Promise.all([api('accounts'),api('collectors'),api('imports')]); accounts.value = a.accounts; collectors.value = c.collectors; imports.value = i.imports }
+async function refresh() { const [a,c,i] = await Promise.all([api('accounts'),api('collectors'),api('imports')]); accounts.value = a.accounts; collectors.value = c.collectors; imports.value = i.imports; for (const account of a.accounts) if (account.provider === 'aplus' && !fiscalInputs[account._id]) fiscalInputs[account._id] = { start: account.fiscalPeriod?.start || '', end: account.fiscalPeriod?.end || '' } }
+async function saveFiscalPeriod(id: string) { await api(`accounts/${id}/fiscal-period`, { method: 'PUT', body: fiscalInputs[id] }); await refresh(); message.value = '自動取得の会計期間を保存しました' }
 async function addAccount() { await api('accounts', { method:'POST', body: { ...newAccount, cardIdentifiers:cardsText.value.split(',').map(v=>v.trim()).filter(Boolean) } }); await refresh(); message.value = '口座を追加しました' }
 async function sync(id: string) { await api(`accounts/${id}/sync`, { method:'POST' }); await refresh() }
 // Connections are created by the downloader's own Connect flow (POST /api/finance/collectors stays available for compatibility).

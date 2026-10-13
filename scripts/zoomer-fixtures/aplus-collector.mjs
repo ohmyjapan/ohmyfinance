@@ -246,6 +246,43 @@ try {
   }
   assert.equal((await FinanceImport.findOne({ hash: pendingItem.manifest.sha256 }).lean()).sourceFormat, 'json');
   pass('the exported upload() delivers a statement CSV and a pending JSON capture end to end; the archived bytes equal each manifest hash and each manifest is acknowledged');
+  // F1: use the account's saved fiscal period on real collector uploads, including a rollover capture.
+  await FinancialAccount.updateOne({_id:accountId},{$set:{accounting:{version:1,accountName:'Synthetic existing account'}}});
+  const fiscal={start:'2026-11-01',end:'2027-10-31'};
+  const setting=await call('accounts/'+accountId+'/fiscal-period',{method:'PUT',body:fiscal});
+  assert.equal(setting.status,200,JSON.stringify(setting));
+  assert.equal((await FinancialAccount.findById(accountId).lean()).accounting.accountName,'Synthetic existing account');
+  assert.deepEqual((await call('accounts')).data.accounts.find(a=>a._id===accountId).fiscalPeriod,fiscal);
+  assert.equal((await call('accounts/'+accountId+'/fiscal-period',{method:'PUT',body:{start:'2026-02-30',end:fiscal.end}})).status,400);
+  const rollover=csv([purchase({1:'20261031',2:'Synthetic previous fiscal year'}),purchase({1:'20261101',2:'Synthetic current fiscal year'})]);
+  const rolloverQuery={accountId,jobId:jobId3,kind:'statement',statementMonth:'2026-11',statementTotal:'2400'};
+  const imported=await call('collector/upload',{method:'POST',token,body:rollover,type:'text/csv',query:rolloverQuery});
+  assert.equal(imported.status,200,JSON.stringify(imported));
+  const fiscalBatch=await FinanceImport.findById(imported.data.id).lean();
+  assert.deepEqual(fiscalBatch.period.fiscalPeriod,fiscal);
+  assert.equal(fiscalBatch.rows[0].kind,'statement_review');assert.match(fiscalBatch.rows[0].sourceReviewReason,/会計期間外/);
+  assert.equal(fiscalBatch.rows[1].kind,'expense');
+  const boundaryCapture=Buffer.from(JSON.stringify(aplusCapture([{merchant:'Synthetic pending prior year',amount:500,date:'2026-10-31',month:'26/11'},{merchant:'Synthetic pending new year',amount:700,date:'2026-11-01',month:'26/12'}])));
+  const boundary=await call('collector/upload',{method:'POST',token,body:boundaryCapture,type:'application/json',query:{accountId,jobId:jobId3,kind:'pending',fiscalStart:'2000-01-01',fiscalEnd:'2000-12-31'}});
+  assert.equal(boundary.status,200,JSON.stringify(boundary));
+  const boundaryBatch=await FinanceImport.findById(boundary.data.id).lean();assert.deepEqual(boundaryBatch.period.fiscalPeriod,fiscal);
+  assert.deepEqual(boundaryBatch.rows.map(r=>r.kind),['statement_review','expense']);
+  await call('accounts/'+accountId+'/fiscal-period',{method:'PUT',body:{start:'2027-11-01',end:'2028-10-31'}});
+  const retryFiscal=await call('collector/upload',{method:'POST',token,body:rollover,type:'text/csv',query:rolloverQuery});
+  assert.equal(retryFiscal.status,200,JSON.stringify(retryFiscal));assert.equal(retryFiscal.data.id,imported.data.id);assert.equal(retryFiscal.data.duplicateFile,true);
+  await FinancialAccount.updateOne({_id:accountId},{$unset:{'accounting.fiscalPeriod':''}});
+  const manualSeed=await call('accounts/'+accountId+'/imports',{method:'POST',body:csv([purchase({1:'20261102',2:'Synthetic owner-selected fiscal period'})]),type:'text/csv',query:{kind:'statement',statementMonth:'2026-12',statementTotal:'1200',fiscalStart:fiscal.start,fiscalEnd:fiscal.end}});
+  assert.equal(manualSeed.status,200,JSON.stringify(manualSeed));
+  const inherited=await call('collector/upload',{method:'POST',token,body:csv([purchase({1:'20261030',2:'Synthetic history period fallback'})]),type:'text/csv',query:{accountId,jobId:jobId3,kind:'statement',statementMonth:'2027-01',statementTotal:'1200'}});
+  assert.equal(inherited.status,200,JSON.stringify(inherited));
+  assert.equal((await FinanceImport.findById(inherited.data.id).lean()).rows[0].kind,'statement_review');
+  const foreign=await FinancialAccount.create({ownerId:new mongoose.Types.ObjectId(),name:'Synthetic other owner',provider:'aplus',primaryCard:'9999',cardIdentifiers:['9999']});
+  assert.equal((await call('accounts/'+foreign._id+'/fiscal-period',{method:'PUT',body:fiscal})).status,404);
+  assert.equal((await FinancialAccount.findById(foreign._id).lean()).accounting,undefined);
+  await FinancialAccount.updateOne({_id:accountId},{$set:{accounting:null}});
+  assert.equal((await call('accounts/'+accountId+'/fiscal-period',{method:'PUT',body:fiscal})).status,200);
+  assert.deepEqual((await FinancialAccount.findById(accountId).lean()).accounting.fiscalPeriod,fiscal);
+  pass('collector applies saved fiscal period, retains rollover review rows, accepts crossing pending pages, ignores client overrides, retries old files idempotently and inherits the owner-selected history period');
   console.log(JSON.stringify({ pass: true, checks }));
 } finally { (await import(u('server/services/tokenBlacklistService.ts'))).stopCleanup(); if (server) await new Promise(r => server.close(r)); await mongoose.disconnect(); await mongo.stop(); }
 `;
@@ -412,6 +449,12 @@ export default {
         const bad = fakeUi({ pages: pendingPages(pendingItems(2), 2).map(p => ({ ...p, summary: '未請求のご利用金額\n\n未確定\n9,999円' })) }), { result: refused, outbox } = await run('f2', bad, { covered: ['2026-09', '2026-08', '2026-07'] });
         assert.equal(refused.pending, null); assert.match(refused.failed || '', /未請求明細の読み取りを確認できませんでした/); assert.equal(await exists(path.join(outbox, ACCOUNT.jobId + '-pending')), false);
         return 'covered → 0 CSV clicks, pending captured; refused capture leaves no folder';
+      });
+      await leg('L5l an offered month without a payment total is unavailable; pending capture continues', async () => {
+        const ui = fakeUi({ options: ['2026/09'], totalText: '' }), { result } = await run('unavailable', ui);
+        assert.deepEqual(result.unavailable, ['2026-09']); assert.equal(result.failed, null);
+        assert.equal(ui.counts.csv, 0); assert.equal(ui.counts.save, 0); assert.ok(result.pending);
+        return 'no CSV/SMS request for the unavailable month; the unbilled capture remains available';
       });
       await leg('L5g three-page pagination accepted; changed pageNumbers or wrong activePage on page 2 refused, nothing written', async () => {
         const ok = fakeUi({ options: ['2026/09'], pages: pendingPages(pendingItems(7), 3) }), { result } = await run('g1', ok, { covered: ['2026-09'] });

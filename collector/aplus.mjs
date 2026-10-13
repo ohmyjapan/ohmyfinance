@@ -235,6 +235,13 @@ export async function collectAplusFromPage(page, browser, account, settings, dir
 // /cards/billing/details after hovering 利用明細・利用可能額 (a full navigation shows the error page); the month select,
 // the お支払金額 price and the -<card> label on details; 保存 then CSV; the four-digit code at /authentication/otp/sms;
 // the class-scoped next-period control to /cards/billing/unbilled (nav1 is duplicated; never use #nav1).
+// Hold references to the rendered content, not the selected navigation control. New nodes count as a render even when
+// their text is identical; reused nodes count when their content changes. Unrelated long-lived requests are irrelevant.
+const renderedContent = (page, selector) => page.evaluateHandle(s => [...document.querySelectorAll(s)].map(node => ({ node, text: node.textContent, children: [...node.childNodes] })), selector);
+const contentChanged = (page, previous, selector) => page.evaluate((old, s) => {
+  const nodes = [...document.querySelectorAll(s)];
+  return nodes.length !== old.length || nodes.some((node, i) => node !== old[i].node || node.textContent !== old[i].text || node.childNodes.length !== old[i].children.length || [...node.childNodes].some((child, n) => child !== old[i].children[n]));
+}, previous, selector);
 function aplusUi(page, browser) {
   const paths = { loginPath: LOGIN_PATH, otpPath: OTP_PATH, detailsPath: DETAILS_PATH, unbilledPath: UNBILLED_PATH };
   const ui = {
@@ -265,22 +272,22 @@ function aplusUi(page, browser) {
       await page.mouse.move(menu.x, menu.y);
       await pause(500);
       await click(page, 'a[href="/cards/billing/details"]', null, APLUS, null, LABEL);
-      const loaded = await poll(async () => (await ui.state()).kind === 'details' && !!(await ui.snapshot()).total, 45000);
+      const loaded = await poll(async () => (await ui.state()).kind === 'details' && monthOf((await ui.snapshot()).month), 45000);
       if (!loaded) throw new Error('The My APLUS statement did not finish loading');
     },
     async snapshot() {
-      return page.evaluate(() => ({ url: location.href, month: document.querySelector('.m-navDate__chooseButton')?.innerText.trim() || '', selectedMonth: document.querySelector('.m-navDate__chooseSelect')?.value || '', total: document.querySelector('.m-particularsOverview__price')?.innerText.trim() || '',
+      return page.evaluate(() => ({ url: location.href, month: document.querySelector('.m-navDate__chooseButton')?.innerText.trim() || '', selectedMonth: document.querySelector('.m-navDate__chooseSelect')?.value || '', total: document.querySelector('.m-particularsOverview__price')?.innerText.trim() || '', totalPresent: !!document.querySelector('.m-particularsOverview__price'),
         account: [...document.querySelectorAll('button')].map(e => e.innerText.trim()).find(t => /-\d{4}$/.test(t)) || '', options: [...document.querySelectorAll('.m-navDate__chooseSelect option')].map(o => o.value).filter(v => /^20\d{2}\/\d{2}$/.test(v)) }));
     },
     async selectMonth(month) {
       const value = month.replace('-', '/'), before = await ui.snapshot();
-      if (before.month === value && before.selectedMonth === value && before.total) return;
-      await page.select('.m-navDate__chooseSelect', value);
-      // The select changes before the statement request finishes. Wait for the request and the rendered period,
-      // including when consecutive statements have the same total; an arbitrary delay cannot identify the statement.
-      await page.waitForNetworkIdle({ idleTime: 500, timeout: 45000 });
-      const loaded = await poll(async () => { if (!onSurface(page, APLUS, DETAILS_PATH)) return null; const s = await ui.snapshot(); return s.month === value && s.total ? s : null; }, 45000);
-      if (!loaded) throw new Error('My APLUS did not load the selected month');
+      if (before.month === value && before.selectedMonth === value && before.totalPresent) return;
+      const selector = '.m-particularsOverview__price, .m-listDetails__item', previous = await renderedContent(page, selector);
+      try {
+        await page.select('.m-navDate__chooseSelect', value);
+        const loaded = await poll(async () => { if (!onSurface(page, APLUS, DETAILS_PATH)) return null; const s = await ui.snapshot(); return s.month === value && s.totalPresent && await contentChanged(page, previous, selector) ? s : null; }, 45000);
+        if (!loaded) throw new Error('My APLUS did not load the selected month');
+      } finally { await previous.dispose().catch(() => {}); }
     },
     async save() { await click(page, 'button', '保存', APLUS, DETAILS_PATH, LABEL); },
     async csv() {
@@ -303,12 +310,12 @@ function aplusUi(page, browser) {
     },
     async pageNumbers() { return page.evaluate(() => { const links = [...document.querySelectorAll('.pagination a')].map(e => e.textContent.trim()).filter(t => /^\d+$/.test(t)); return links.length ? links : ['1']; }); },
     async goToPage(number) {
-      await click(page, '.pagination a', number, APLUS, UNBILLED_PATH, LABEL);
-      await page.waitForNetworkIdle({ idleTime: 500, timeout: 15000 });
-      // Two legitimate purchases can have identical first-row text on adjacent pages. Use the completed page request
-      // and the selected page identity; the capture parser still verifies all page numbers, rows and the displayed total.
-      const settled = await poll(() => page.evaluate(n => { const active = document.querySelector('.pagination .active a')?.textContent.trim(), first = document.querySelector('.m-listDetails__item'); return active === n && !!first && first.getClientRects().length > 0; }, number), 15000);
-      if (!settled) throw new Error('My APLUS unbilled page ' + number + ' did not finish loading');
+      const selector = '.m-listDetails__item', previous = await renderedContent(page, selector);
+      try {
+        await click(page, '.pagination a', number, APLUS, UNBILLED_PATH, LABEL);
+        const settled = await poll(async () => await contentChanged(page, previous, selector) && await page.evaluate(n => { const active = document.querySelector('.pagination .active a')?.textContent.trim(), first = document.querySelector('.m-listDetails__item'); return active === n && !!first && first.getClientRects().length > 0; }, number), 15000);
+        if (!settled) throw new Error('My APLUS unbilled page ' + number + ' did not finish loading');
+      } finally { await previous.dispose().catch(() => {}); }
     },
     async readPage() {
       return page.evaluate(() => ({ activePage: document.querySelector('.pagination .active a')?.textContent.trim() || (document.querySelector('.pagination') ? '' : '1'), pageNumbers: (() => { const links = [...document.querySelectorAll('.pagination a')].map(e => e.textContent.trim()).filter(t => /^\d+$/.test(t)); return links.length ? links : ['1']; })(), summary: document.querySelector('.m-particularsOverview')?.innerText || '',

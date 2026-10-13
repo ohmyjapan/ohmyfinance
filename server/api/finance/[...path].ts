@@ -3,7 +3,7 @@ import { readMerchantLink, saveMerchantLink } from '../../services/financeSuppli
 import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
+import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
 
 export default defineEventHandler(async event => {
   const parts = (event.path.split('?')[0].split('/api/finance/')[1] || '').split('/').filter(Boolean)
@@ -42,11 +42,20 @@ export default defineEventHandler(async event => {
     const ownerId = await financeUser(event)
     setHeader(event, 'Cache-Control', 'no-store')
     if (parts[0] === 'accounts' && parts.length === 1) {
-      if (method === 'GET') return { accounts: await FinancialAccount.find({ ownerId }).select('-commitLease -commitLeaseUntil').sort({ createdAt: 1 }).lean() }
+      if (method === 'GET') {
+        const accounts = await FinancialAccount.find({ ownerId }).select('-commitLease -commitLeaseUntil').sort({ createdAt: 1 }).lean()
+        return { accounts: await Promise.all(accounts.map(async account => ({ ...account, fiscalPeriod: await accountFiscalPeriod(ownerId, account) }))) }
+      }
       if (method === 'POST') return { account: await FinancialAccount.create({ ownerId, ...accountInput(await readBody(event)) }) }
     }
     if (parts[0] === 'accounts' && parts.length >= 2) {
       const account = await ownedAccount(ownerId, parts[1])
+      if (parts[2] === 'fiscal-period' && parts.length === 3 && method === 'PUT') {
+        if (account.provider !== 'aplus') fail(400, 'Aplus account required')
+        const fiscalPeriod = fiscalPeriodInput(await readBody(event))
+        await FinancialAccount.updateOne({ _id: account._id, ownerId }, [{ $set: { accounting: { $mergeObjects: [{ $ifNull: ['$accounting', {}] }, { fiscalPeriod }] } } }])
+        return { fiscalPeriod }
+      }
       if (parts.length === 2 && method === 'PATCH') {
         const input = accountInput({ provider: account.provider || 'amex', ...await readBody(event) })
         if (input.provider !== (account.provider || 'amex')) fail(400, 'The provider of an existing card account cannot be changed')

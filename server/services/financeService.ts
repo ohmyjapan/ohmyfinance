@@ -12,6 +12,7 @@ import AccountCategoryModel, { type IAccountCategory } from '../models/AccountCa
 import { FinancialAccount, FinanceCollector, FinanceImport, FinanceEntry, initializeFinance } from '../models/Finance'
 import { digest, MAX_BYTES } from '../../shared/amex.mjs'
 import { parseCardImport, type CardRow } from '../../shared/card-import.mjs'
+import { aplusPeriod } from '../../shared/aplus.mjs'
 import { isPending, isFinalStatement } from '../../shared/finance-pending.mjs'
 
 import { FinanceDraft } from '../models/FinanceDraft'
@@ -52,6 +53,41 @@ export async function ownedImport(ownerId: string, importId: string): Promise<an
   const batch: any = await FinanceImport.findOne({ _id: id(importId), ownerId }).lean()
   if (!batch) fail(404, 'Import not found')
   return batch
+}
+export function fiscalPeriodInput(value: any): { start: string; end: string } {
+  try { return aplusPeriod({ kind: 'statement', statementMonth: '2000-01', fiscalStart: value?.start ?? '', fiscalEnd: value?.end ?? '' }).fiscalPeriod! }
+  catch { return fail(400, '会計期間の開始日と終了日を確認してください。') }
+}
+// An existing owner-selected import is the initial setting for accounts created before this option existed.
+// Never derive an accounting year from the statement month or today's date.
+export async function accountFiscalPeriod(ownerId: string, account: any) {
+  if (account.provider !== 'aplus') return null
+  if (account.accounting?.fiscalPeriod) return fiscalPeriodInput(account.accounting.fiscalPeriod)
+  const prior: any = await FinanceImport.findOne({ ownerId, accountId: account._id, provider: 'aplus', 'period.fiscalPeriod': { $exists: true } }).sort({ createdAt: -1, _id: -1 }).select('period').lean()
+  return prior?.period?.fiscalPeriod ? fiscalPeriodInput(prior.period.fiscalPeriod) : null
+}
+export async function collectorImportMetadata(ownerId: string, account: any, bytes: Buffer, metadata: any) {
+  if (account.provider !== 'aplus') return metadata
+  // A lost acknowledgement can be retried after the owner changes the active year. Preserve the already archived file's
+  // fiscal classification, while the normal duplicate checks still verify its kind, statement month and totals.
+  const prior: any = await FinanceImport.findOne({ ownerId, accountId: account._id, hash: digest(bytes) }).select('period').lean()
+  const fiscal = prior ? prior.period?.fiscalPeriod : await accountFiscalPeriod(ownerId, account)
+  const { fiscalStart: _start, fiscalEnd: _end, ...source } = metadata
+  return { ...source, ...(fiscal ? { fiscalStart: fiscal.start, fiscalEnd: fiscal.end } : {}) }
+}
+export function parseFinanceImport(bytes: Buffer, account: any, metadata: any) {
+  if (account.provider !== 'aplus' || metadata.kind !== 'pending' || (metadata.fiscalStart === undefined && metadata.fiscalEnd === undefined)) return parseCardImport(bytes, account, metadata)
+  // Pending pages can straddle the year end. Retain the whole capture and flag its outside-year rows instead of rejecting
+  // every download until those purchases leave the page. Pending sources remain unpostable until final reconciliation.
+  const fiscal = fiscalPeriodInput({ start: metadata.fiscalStart, end: metadata.fiscalEnd })
+  const { fiscalStart: _start, fiscalEnd: _end, ...source } = metadata
+  const parsed = parseCardImport(bytes, account, source)
+  parsed.period = { ...parsed.period, fiscalPeriod: fiscal }
+  for (const row of parsed.rows as any[]) if (row.purchaseDate && (row.purchaseDate < fiscal.start || row.purchaseDate > fiscal.end)) {
+    if (row.kind === 'expense') row.kind = 'statement_review'
+    row.sourceReviewReason = [row.sourceReviewReason, '元の利用日が対象の会計期間外です。返金などは別途確認してください。'].filter(Boolean).join(' ')
+  }
+  return parsed
 }
 export function accountInput(body: any) {
   if (!body || typeof body.name !== 'string' || !body.name.trim() || body.name.length > 100) fail(400, 'Account name required')
@@ -131,8 +167,9 @@ export async function pendingSettlements(batch: any) {
   return result
 }
 export async function acceptImport(ownerId: string, account: any, bytes: Buffer, metadata: any, collectorId?: string) {
+  if (collectorId) metadata = await collectorImportMetadata(ownerId, account, bytes, metadata)
   let parsed: ReturnType<typeof parseCardImport>
-  try { parsed = parseCardImport(bytes, account, metadata) } catch (error: any) { fail(400, error.message) }
+  try { parsed = parseFinanceImport(bytes, account, metadata) } catch (error: any) { fail(400, error.message) }
   if (metadata.pageCount !== undefined && (!Number.isSafeInteger(Number(metadata.pageCount)) || Number(metadata.pageCount) !== parsed!.rows.length)) fail(400, 'CSV row count does not match the card statement')
   const lookup = { ownerId, accountId: account._id, hash: parsed!.sha256 }
   const duplicate = (batch: any) => {
@@ -148,7 +185,7 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
   if (!locked) fail(409, 'Another import or draft is being saved; retry shortly')
   try {
     // Validate against the live card membership after obtaining the lease.
-    try { parsed = parseCardImport(bytes, locked, metadata) } catch (error: any) { fail(400, error.message) }
+    try { parsed = parseFinanceImport(bytes, locked, metadata) } catch (error: any) { fail(400, error.message) }
     const retry: any = await FinanceImport.findOne(lookup).lean()
     if (retry) {
       if (needsFinalization(retry)) {

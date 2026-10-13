@@ -23,15 +23,17 @@ const account = { _id: 'a'.repeat(24), ownerId: 'b'.repeat(24), provider: 'aplus
 
 function html(headers, delay) {
   return `<!doctype html><html lang="ja"><meta charset="utf-8"><style>button,a,select{display:inline-block;padding:10px;margin:5px}li{margin:12px}</style><body><a>ログアウト</a><div id="screen"></div><script>
-  const headers=${JSON.stringify(headers)}, delay=${Math.max(0,delay)}, duplicatePages=${delay===-1};let renderedMonth='2026/09',timer;window.downloaded=[];
+  const headers=${JSON.stringify(headers)}, delay=${Math.max(0,delay)}, duplicatePages=${delay===-1}, unavailable=${delay===-2}, unavailableFirst=${delay===-3};let renderedMonth='2026/09',timer;window.downloaded=[];
+  // A live page can retain a background request while the statement is already rendered.
+  fetch('/synthetic-background').catch(()=>{});
   const screen=document.getElementById('screen');
   const csv=month=>[headers,['≪****-****-****-1234≫','20260701','Synthetic statement '+month,'1200','Ｓ','1','01','1200','']].map(row=>row.map(v=>'"'+v+'"').join(',')).join('\\r\\n');
-  function draw(){screen.innerHTML='<span>利用明細・利用可能額</span><a href="/cards/billing/details" id="details">利用明細</a><button>Card-1234</button><button class="m-navDate__chooseButton">'+renderedMonth+'</button><select class="m-navDate__chooseSelect"><option value="2026/09">2026/09</option><option value="2026/08">2026/08</option></select><div class="m-particularsOverview__price">1,200円</div><button id="save">保存</button><div class="m-navDate__next"><a id="next">2026/10以降</a></div><div id="download"></div>';
-  const select=document.querySelector('select');select.value=renderedMonth;
-  select.onchange=()=>{const wanted=select.value;clearTimeout(timer);timer=setTimeout(()=>{renderedMonth=wanted;document.querySelector('.m-navDate__chooseButton').textContent=wanted;},delay);};
+  function draw(){screen.innerHTML='<span>利用明細・利用可能額</span><a href="/cards/billing/details" id="details">利用明細</a><button>Card-1234</button><button class="m-navDate__chooseButton">'+renderedMonth+'</button><select class="m-navDate__chooseSelect"><option value="2026/09">2026/09</option><option value="2026/08">2026/08</option></select><div class="m-particularsOverview__price">'+(unavailableFirst?'':'1,200円')+'</div><button id="save">保存</button><div class="m-navDate__next"><a id="next">2026/10以降</a></div><div id="download"></div>';
+  window.initialUnavailable=document.querySelector('.m-particularsOverview__price').textContent==='';const select=document.querySelector('select');select.value=renderedMonth;
+  select.onchange=()=>{const wanted=select.value;clearTimeout(timer);timer=setTimeout(()=>{renderedMonth=wanted;document.querySelector('.m-navDate__chooseButton').textContent=wanted;const old=document.querySelector('.m-particularsOverview__price'),price=old.cloneNode(true);price.textContent=(unavailable&&wanted==='2026/08'||unavailableFirst&&wanted==='2026/09')?'':'1,200円';old.replaceWith(price);},delay);};
   document.getElementById('details').onclick=e=>{e.preventDefault();history.pushState({},'', '/cards/billing/details');};
   document.getElementById('save').onclick=()=>{const d=document.getElementById('download');d.innerHTML='<a id="csv">CSV</a>';document.getElementById('csv').onclick=()=>{window.downloaded.push(renderedMonth);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv(renderedMonth)],{type:'text/csv'}));a.download='synthetic.csv';document.body.append(a);a.click();a.remove();};};
-  document.getElementById('next').onclick=()=>{history.pushState({},'', '/cards/billing/unbilled');screen.innerHTML='<div class="m-particularsOverview">未請求のご利用金額<br>未確定<br>1,200円</div><div class="m-listDetails__item"><div class="m-listDetails__name">Synthetic pending</div><div class="m-listDetails__date">26.09.01   1回払い</div><div class="m-listDetails__value">1,200円</div><ul class="m-listDetails__info"><li><span class="m-listDetails__infoTtl">カード番号下4桁</span><span class="m-listDetails__infoVal">1234</span></li><li><span class="m-listDetails__infoTtl">売上種別</span><span class="m-listDetails__infoVal">ショッピング</span></li><li><span class="m-listDetails__infoTtl">初回年月</span><span class="m-listDetails__infoVal">26/09</span></li></ul></div>';if(duplicatePages){document.querySelector('.m-particularsOverview').innerHTML='未請求のご利用金額<br>未確定<br>2,400円';screen.insertAdjacentHTML('beforeend','<ul class="pagination"><li class="active"><a>1</a></li><li><a>2</a></li></ul>');for(const a of document.querySelectorAll('.pagination a'))a.onclick=()=>{for(const li of document.querySelectorAll('.pagination li'))li.classList.remove('active');a.parentElement.classList.add('active');};}};}
+  document.getElementById('next').onclick=()=>{history.pushState({},'', '/cards/billing/unbilled');screen.innerHTML='<div class="m-particularsOverview">未請求のご利用金額<br>未確定<br>1,200円</div><div class="m-listDetails__item"><div class="m-listDetails__name">Synthetic pending</div><div class="m-listDetails__date">26.09.01   1回払い</div><div class="m-listDetails__value">1,200円</div><ul class="m-listDetails__info"><li><span class="m-listDetails__infoTtl">カード番号下4桁</span><span class="m-listDetails__infoVal">1234</span></li><li><span class="m-listDetails__infoTtl">売上種別</span><span class="m-listDetails__infoVal">ショッピング</span></li><li><span class="m-listDetails__infoTtl">初回年月</span><span class="m-listDetails__infoVal">26/09</span></li></ul></div>';if(duplicatePages){document.querySelector('.m-particularsOverview').innerHTML='未請求のご利用金額<br>未確定<br>2,400円';screen.insertAdjacentHTML('beforeend','<ul class="pagination"><li class="active"><a>1</a></li><li><a>2</a></li></ul>');for(const a of document.querySelectorAll('.pagination a'))a.onclick=()=>{for(const li of document.querySelectorAll('.pagination li'))li.classList.remove('active');a.parentElement.classList.add('active');setTimeout(()=>{const row=document.querySelector('.m-listDetails__item');row.replaceWith(row.cloneNode(true));window.pendingPageRendered=a.textContent;},750);};}};}
   draw();</script></body></html>`;
 }
 
@@ -44,15 +46,17 @@ return {
     const root = await mkdtemp(path.join(os.tmpdir(), 'omf-aplus-dom-'));
     const receipts = [];
     try {
-      for (const delay of [0, 2500, -1]) {
+      for (const delay of [0, 2500, -1, -2, -3]) {
         const id = `dom-${delay}`, profile = ephemeralProfile(root, account.ownerId, 'aplus', account._id, id);
         const browser = await browserFor(profile, { ephemeral: true, root, headless: true });
-        const original = browser.newPage.bind(browser); let networkRequests = 0, page;
+        const original = browser.newPage.bind(browser); let networkRequests = 0, page, renderedPage, initialUnavailable;
+        const closeBrowser = browser.close.bind(browser); browser.close = async (...args) => { if(page && !page.isClosed()) { const state=await page.evaluate(() => ({ renderedPage: window.pendingPageRendered || null, initialUnavailable: window.initialUnavailable })).catch(() => ({})); renderedPage=state.renderedPage; initialUnavailable=state.initialUnavailable; } return closeBrowser(...args); };
         browser.newPage = async () => {
           page = await original(); await page.setRequestInterception(true);
           page.on('request', r => {
             networkRequests++;
             if (r.url() === 'https://myaplus.aplus.co.jp/') return r.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: html(HEADERS, delay) });
+            if (r.url() === 'https://myaplus.aplus.co.jp/synthetic-background') return; // deliberately never completes
             if (r.url().startsWith('blob:')) return r.continue();
             return r.abort();
           });
@@ -68,9 +72,9 @@ return {
           const bytes = await readFile(path.join(item.directory, item.manifest.filename));
           originals.push({ intended: item.manifest.statementMonth, actual: /Synthetic statement (20\d{2}\/\d{2})/.exec(bytes.toString())?.[1]?.replace('/', '-'), sha256: createHash('sha256').update(bytes).digest('hex') });
         }
-        receipts.push({ delay, error, originals, pending: !!result?.pending, pendingRows: result?.pending?.manifest.rowCount, profileRemoved: !exists, ownedBrowsers: ownedBrowsers().length, interceptedRequests: networkRequests });
+        receipts.push({ delay, error, renderedPage, initialUnavailable, originals, unavailable: result?.unavailable, pending: !!result?.pending, pendingRows: result?.pending?.manifest.rowCount, profileRemoved: !exists, ownedBrowsers: ownedBrowsers().length, interceptedRequests: networkRequests });
       }
-      assert.ok(receipts.every(r => !r.error && r.originals.length === 1 && r.originals.every(o => o.intended === o.actual) && r.pending && r.pendingRows === (r.delay === -1 ? 2 : 1) && r.profileRemoved && r.ownedBrowsers === 0), JSON.stringify(receipts));
+      assert.ok(receipts.every(r => !r.error && (r.delay !== -3 || r.initialUnavailable === true) && (r.delay !== -1 || r.renderedPage === '2') && r.originals.length === (r.delay === -2 ? 0 : 1) && (r.delay !== -2 || r.unavailable?.includes('2026-08')) && r.originals.every(o => o.intended === o.actual) && r.pending && r.pendingRows === (r.delay === -1 ? 2 : 1) && r.profileRemoved && r.ownedBrowsers === 0), JSON.stringify(receipts));
       return { pass: true, message: JSON.stringify({ receipts, productionWrites: 0, bankRequests: 0, retainedSyntheticEvidence: root }) };
     } catch (error) {
       return { pass: false, message: JSON.stringify({ error: error.message, receipts, productionWrites: 0, bankRequests: 0, retainedSyntheticEvidence: root }) };
