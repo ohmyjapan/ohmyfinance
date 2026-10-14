@@ -10,7 +10,7 @@ import mongoose from 'mongoose'
 import Organization from '../models/Organization'
 import { Payment } from '../models/Payment'
 import { FinancialAccount, FinanceImport, FinanceNotice } from '../models/Finance'
-import { fail, id, ownedAccount, queueSync } from './financeService'
+import { fail, id, ownedAccount, ownedImport, queueSync } from './financeService'
 import { dateOnly } from '../../shared/amex.mjs'
 import { aplusPeriod } from '../../shared/aplus.mjs'
 import { BILLING_MAIL_PARSER } from '../../shared/billing-mail.mjs'
@@ -26,6 +26,17 @@ export const COMPLETED_NOTICE_STATES = ['linked', 'suppressed', 'review', 'queue
 export const WAKE_STATES = ['pending', 'unbound', 'unauthorized']
 export const RETRY_IMPORT_STATES = ['pending', 'unbound', 'due-date-unresolved', 'review', 'unauthorized']
 export const RETRY_NOTICE_STATES = ['pending', 'unbound', 'unauthorized', 'unpaired', 'no-account', 'inactive-account', 'queue-failed', 'due-date-unresolved']
+/**
+ * The one review reason a configuration change resolves without any member's choice (fold F1): two accounts reading one
+ * mailbox, or an Amex card suffix matching more than one account. Such a notice is not reported as covered, so the claim
+ * re-sends it and the re-delivery re-evaluates it; the member can also re-evaluate the stored notice at any time.
+ * Every other review reason keeps its owner: authentication is never retried, changed-body/candidates/company need a choice.
+ */
+export const RECOVERABLE_REVIEW_REASONS = ['ambiguous-account']
+export function retryableNotice(calendar: any) {
+  if (!calendar?.state || RETRY_NOTICE_STATES.includes(calendar.state)) return true
+  return calendar.state === 'review' && RECOVERABLE_REVIEW_REASONS.includes(calendar.reason) // guard:recoverable-retry
+}
 const PROVIDER_TITLE = /アプラス|aplus/i
 const noon = (day: string) => new Date(day + 'T12:00:00.000Z')
 const asId = (value: any) => (value === undefined || value === null || value === '' ? null : String(value))
@@ -37,21 +48,22 @@ async function member(ownerId: string, organizationId: any) {
   return !!await Organization.exists({ _id: org, 'members.userId': ownerId, isActive: true })
 }
 
-const BRAND_WORDS = /^(?:アプラス|aplus|luxury\s*card|ラグジュアリーカード|lc)$/i
-/** What names ONE card account in a hand-entered title: its four-digit card suffixes as whole numbers, or its own non-brand name. */
-function identityTokens(account: any): { suffixes: string[]; name: string | null } {
+/**
+ * What proves ONE card account in a hand-entered title (fold F3): one of its stored four-digit card suffixes as a whole
+ * number. An account nickname never does — 「法人カード」 or 「カード」 is a substring of many unrelated titles.
+ */
+function identityTokens(account: any): { suffixes: string[] } {
   const suffixes = (account?.cardIdentifiers || []).map((v: any) => String(v)).filter((v: string) => /^\d{4}$/.test(v))
-  const name = String(account?.name || '').trim()
-  return { suffixes, name: name.length >= 3 && !BRAND_WORDS.test(name) ? name.toLowerCase() : null }
+  return { suffixes }
 }
-function namesAccount(title: any, tokens: { suffixes: string[]; name: string | null }) {
+function namesAccount(title: any, tokens: { suffixes: string[] }) {
   const text = String(title || '')
-  return tokens.suffixes.some(s => new RegExp('(?<!\\d)' + s + '(?!\\d)').test(text)) || (!!tokens.name && text.toLowerCase().includes(tokens.name))
+  return tokens.suffixes.some(s => new RegExp('(?<!\\d)' + s + '(?!\\d)').test(text))
 }
 /**
- * Hand-entered Term Credit Card rows of the company in the cycle's payment window (B2, continuation F1). A brand word plus
- * a matching amount and date is NOT the identity of a parent card account: automatic adoption needs a row that names this
- * account (its card suffix or its own name) and no sibling Aplus account of the owner, with the exact amount and date.
+ * Hand-entered Term Credit Card rows of the company in the cycle's payment window (B2, continuation F1, fold F3). A brand
+ * word plus a matching amount and date is NOT the identity of a parent card account: automatic adoption needs a row that
+ * names this account's stored card suffix and no sibling Aplus account of the owner, with the exact amount and date.
  * Every other provider-looking row, and any other row with the same amount and date, is offered for the member's choice.
  */
 async function legacyCandidates(account: any, siblings: any[], company: string, evidence: BillEvidence, dueDate: string | null) {
@@ -159,11 +171,11 @@ export function importCalendarEligible(account: any, parsed: any) { return accou
  * or review of candidates/company). Nothing of another cycle or another account is touched; a review that needs more than a
  * bill choice (changed body, failed authentication, ambiguous account) is never re-run here.
  */
-export async function wakeCycleWork(ownerId: string, account: any, periodKey: string, statementMonth: string, exceptNoticeId?: any) {
+export async function wakeCycleWork(ownerId: string, account: any, periodKey: string, statementMonth: string, exceptNoticeId?: any, exceptImportId?: any) {
   const states = [...WAKE_STATES, 'review', 'due-date-unresolved']
   const choiceReview = (c: any) => c?.state !== 'review' || ['candidates', 'company'].includes(c?.reason)
   let imports = 0, notices = 0
-  const batches: any[] = await FinanceImport.find({ accountId: account._id, provider: 'aplus', 'period.key': periodKey, 'calendar.state': { $in: states } }).select('_id period reconciliation calendar hash collectorId').lean()
+  const batches: any[] = await FinanceImport.find({ accountId: account._id, provider: 'aplus', 'period.key': periodKey, ...(exceptImportId ? { _id: { $ne: exceptImportId } } : {}), 'calendar.state': { $in: states } }).select('_id period reconciliation calendar hash collectorId').lean()
   for (const batch of batches.filter(b => choiceReview(b.calendar))) {
     const calendar = await reconcileBill(ownerId, account, importEvidence(batch), 'statement-csv')
     await FinanceImport.updateOne({ _id: batch._id }, { $set: { calendar } }); imports++
@@ -192,10 +204,11 @@ export async function wakeAccountWork(ownerId: string, account: any) {
   return { imports, notices }
 }
 
-/** Mail ids the collector need not send again: completed or member-owned (B6: pending and transient states are retried). */
+/** Mail ids the collector need not send again: completed or member-owned (B6: pending and transient states are retried; fold F1: the recoverable review is re-sent). */
 export async function coveredNoticeIds(accountId: any): Promise<string[]> {
   const filter: any = { accountId, createdAt: { $gte: new Date(Date.now() - 60 * 86400000) } }
   filter['calendar.state'] = { $in: COMPLETED_NOTICE_STATES } // guard:covered-states
+  filter.$nor = [{ 'calendar.state': 'review', 'calendar.reason': { $in: RECOVERABLE_REVIEW_REASONS } }] // guard:recoverable-uncovered
   return FinanceNotice.distinct('mailId', filter)
 }
 
@@ -260,11 +273,14 @@ async function processNotice(ownerId: string, account: any, notice: any, hooks: 
   if (notice.kind === 'bill-confirmed') return reconcileBill(ownerId, account, noticeEvidence(notice), 'issuer-mail')
   // bill-ready: the matching Amex account of the same owner gets the existing download enqueued; no calendar value is invented
   const suffix = String(notice.claims.cardSuffix)
-  const targets: any[] = (await FinancialAccount.find({ ownerId, provider: 'amex' }).lean()).filter((a: any) => (suffix.length === 5 ? a.primaryCard === suffix : String(a.primaryCard || '').endsWith(suffix)))
-  if (!targets.length) return { state: 'no-account', evidence: 'issuer-mail', at }
-  if (targets.length > 1) return { state: 'review', reason: 'ambiguous-account', evidence: 'issuer-mail', candidates: targets.map(t => t._id), at }
-  const target = targets[0]
-  if (target.active === false) return { state: 'inactive-account', evidence: 'issuer-mail', targetAccountId: target._id, at }
+  const matches: any[] = (await FinancialAccount.find({ ownerId, provider: 'amex' }).lean()).filter((a: any) => (suffix.length === 5 ? a.primaryCard === suffix : String(a.primaryCard || '').endsWith(suffix)))
+  if (!matches.length) return { state: 'no-account', evidence: 'issuer-mail', at }
+  // Identity is decided among the owner's ACTIVE Amex accounts (fold F1): a suffix matching more than one of them is the
+  // recoverable ambiguity — corrected by changing a card identity or deactivating an account, then re-sent or retried.
+  const active = matches.filter((a: any) => a.active !== false)
+  if (active.length > 1) return { state: 'review', reason: 'ambiguous-account', detail: 'card-suffix', evidence: 'issuer-mail', candidates: active.map(t => t._id), at }
+  if (!active.length) return { state: 'inactive-account', evidence: 'issuer-mail', targetAccountId: matches[0]._id, at }
+  const target = active[0]
   // B6 (continuation F2): the intent to enqueue is durable on the notice BEFORE the enqueue. A retry after a crash between the
   // enqueue and the receipt finds the job the intent caused (requested at or after the intent) and records that one job;
   // it never queues a second. A crash before the enqueue leaves an intent with no job after it, and the retry enqueues once.
@@ -310,13 +326,22 @@ export async function recordBillingNotice(ownerId: string, account: any, artifac
     await FinanceNotice.updateOne({ _id: stored._id }, { $push: { versions: { bodySha256: input.bodySha256, receivedAt: at } }, $set: { calendar, lastAttemptAt: at } })
     return { id: String(stored._id), duplicate: true, changed: true, calendar }
   }
-  if (duplicate && stored.calendar && !RETRY_NOTICE_STATES.includes(stored.calendar.state)) return { id: String(stored._id), duplicate: true, calendar: stored.calendar }
-  let calendar: any
-  if (stored.authentication?.dkim !== 'pass' || stored.authentication?.dmarc !== 'pass') calendar = { state: 'review', reason: 'authentication', evidence: 'issuer-mail', at }
-  else if (await FinancialAccount.countDocuments({ ownerId, provider: 'aplus', _id: { $ne: account._id }, 'billingMail.enabled': true, 'billingMail.mailbox': input.mailbox }) > 0) calendar = { state: 'review', reason: 'ambiguous-account', evidence: 'issuer-mail', at }
-  else calendar = await processNotice(ownerId, account, stored, options.hooks || {})
+  if (duplicate && stored.calendar && !retryableNotice(stored.calendar)) return { id: String(stored._id), duplicate: true, calendar: stored.calendar }
+  const calendar = await evaluateNotice(ownerId, account, stored, options.hooks || {})
   await FinanceNotice.updateOne({ _id: stored._id }, { $set: { calendar, lastAttemptAt: at }, $inc: { attempts: 1 } })
   return { id: String(stored._id), duplicate, calendar }
+}
+
+/**
+ * The evaluation of a stored, authenticated notice against the CURRENT account context — shared by the first delivery, the
+ * collector's re-delivery and the member's explicit retry (fold F1): the mail's authentication verdicts, the mailbox
+ * ambiguity among the owner's Aplus accounts, then the bill (Aplus) or the Amex enqueue.
+ */
+async function evaluateNotice(ownerId: string, account: any, stored: any, hooks: NoticeHooks = {}) {
+  const at = new Date()
+  if (stored.authentication?.dkim !== 'pass' || stored.authentication?.dmarc !== 'pass') return { state: 'review', reason: 'authentication', evidence: 'issuer-mail', at }
+  if (await FinancialAccount.countDocuments({ ownerId, provider: 'aplus', _id: { $ne: account._id }, 'billingMail.enabled': true, 'billingMail.mailbox': String(stored.mailbox || '').toLowerCase() }) > 0) return { state: 'review', reason: 'ambiguous-account', detail: 'mailbox', evidence: 'issuer-mail', at }
+  return processNotice(ownerId, account, stored, hooks)
 }
 
 /** The collector's durable receipt of one mail read (B5): a failed read is recorded even when the bank run succeeds. */
@@ -332,27 +357,66 @@ export async function recordBillingMailStatus(account: any, body: any) {
   return { recorded: true }
 }
 
+/** The choices a review state offers to THIS member: candidate bills of companies the member belongs to now, named companies. */
+async function choiceOffers(ownerId: string, calendar: any, memberships = new Map<string, boolean>()) {
+  const isMember = async (org: any) => { const key = asId(org); if (!key) return false; if (!memberships.has(key)) memberships.set(key, await member(ownerId, key)); return memberships.get(key)! }
+  const candidateBills: any[] = [], companies: any[] = []
+  if (calendar?.state === 'review' && calendar.reason === 'candidates' && Array.isArray(calendar.candidates)) {
+    const bills: any[] = await Payment.find({ _id: { $in: calendar.candidates } }).select('_id title amount dueDate status organizationId').lean()
+    for (const b of bills) if (await isMember(b.organizationId)) candidateBills.push({ id: String(b._id), title: b.title, amount: b.amount, dueDate: b.dueDate, status: b.status })
+  }
+  if (calendar?.state === 'review' && calendar.reason === 'company' && Array.isArray(calendar.companies)) {
+    const orgs: any[] = await Organization.find({ _id: { $in: calendar.companies } }).select('_id name').lean()
+    for (const o of orgs) companies.push({ id: String(o._id), name: o.name })
+  }
+  return { candidateBills, companies }
+}
+
 // ── GET notices?accountId ──
 export async function listNotices(ownerId: string, accountId: string) {
   const account = await ownedAccount(ownerId, accountId)
   const rows: any[] = await FinanceNotice.find({ ownerId, accountId: account._id }).sort({ internalDate: -1, _id: -1 }).limit(100).lean()
   const memberships = new Map<string, boolean>()
-  const isMember = async (org: any) => { const key = asId(org); if (!key) return false; if (!memberships.has(key)) memberships.set(key, await member(ownerId, key)); return memberships.get(key)! }
   const notices: any[] = []
   for (const n of rows) {
-    const calendar = n.calendar || {}
-    const candidateBills: any[] = [], companies: any[] = []
-    if (calendar.state === 'review' && calendar.reason === 'candidates' && Array.isArray(calendar.candidates)) {
-      const bills: any[] = await Payment.find({ _id: { $in: calendar.candidates } }).select('_id title amount dueDate status organizationId').lean()
-      for (const b of bills) if (await isMember(b.organizationId)) candidateBills.push({ id: String(b._id), title: b.title, amount: b.amount, dueDate: b.dueDate, status: b.status })
-    }
-    if (calendar.state === 'review' && calendar.reason === 'company' && Array.isArray(calendar.companies)) {
-      const orgs: any[] = await Organization.find({ _id: { $in: calendar.companies } }).select('_id name').lean()
-      for (const o of orgs) companies.push({ id: String(o._id), name: o.name })
-    }
-    notices.push({ _id: String(n._id), mailId: n.mailId, issuer: n.issuer, kind: n.kind, subject: n.subject, internalDate: n.internalDate, claims: n.claims, calendar: n.calendar, action: n.action, versions: (n.versions || []).length, attempts: n.attempts, lastAttemptAt: n.lastAttemptAt, createdAt: n.createdAt, candidateBills, companies })
+    const offers = await choiceOffers(ownerId, n.calendar, memberships)
+    notices.push({ _id: String(n._id), mailId: n.mailId, issuer: n.issuer, kind: n.kind, subject: n.subject, internalDate: n.internalDate, claims: n.claims, calendar: n.calendar, action: n.action, versions: (n.versions || []).length, attempts: n.attempts, lastAttemptAt: n.lastAttemptAt, createdAt: n.createdAt, ...offers })
   }
   return { notices }
+}
+
+/**
+ * The member's explicit choice for one cycle, shared by the notice and the statement batch (fold F2): attach one of the
+ * offered bills (fresh membership of its company; association only, then the same reconciliation), choose one of the
+ * offered companies for an older cycle, or create beside the offered candidates. Returns null for a body that is not a
+ * choice; the result is the reconciliation's calendar state and the recorded action.
+ */
+async function applyChoice(ownerId: string, account: any, evidence: BillEvidence, calendar: any, body: any, source: BillSource, provenance: { noticeId?: any; importId?: any }) {
+  const state = calendar?.state, reason = calendar?.reason, at = new Date()
+  if (body?.paymentId !== undefined) {
+    if (state !== 'review' || reason !== 'candidates') fail(409, 'This record is not waiting for a bill choice')
+    const chosen = id(body.paymentId)
+    if (!(calendar.candidates || []).map(String).includes(chosen)) fail(400, 'Choose one of the offered bills')
+    const bill: any = await Payment.findOne({ _id: chosen, source: { $exists: false }, suppressedAt: { $exists: false } }).lean()
+    if (!bill) fail(409, 'The chosen bill changed; refresh and choose again')
+    if (!await member(ownerId, bill.organizationId)) fail(403, 'Access denied to this organization') // guard:choice-membership
+    const adopted = await Payment.findOneAndUpdate({ _id: bill._id, source: { $exists: false }, suppressedAt: { $exists: false } }, { $set: { source: { kind: 'card-statement', provider: 'aplus', accountId: account._id, periodKey: evidence.periodKey, statementMonth: evidence.statementMonth, ...(provenance.noticeId ? { noticeId: provenance.noticeId } : {}), ...(provenance.importId ? { importId: provenance.importId } : {}), statementTotal: evidence.statementTotal, dueDateEvidence: evidence.dueDateEvidence, adopted: true, adoptedAt: at, linkedBy: ownerId, linkedAt: at, updatedAt: at } } }, { new: true })
+    if (!adopted) fail(409, 'The chosen bill changed; refresh and choose again')
+    return { calendar: await reconcileBill(ownerId, account, evidence, source), action: { kind: 'payment', paymentId: bill._id, by: ownerId, at } }
+  }
+  if (body?.organizationId !== undefined) {
+    if (state !== 'review' || reason !== 'company') fail(409, 'This record is not waiting for a company choice')
+    const chosen = id(body.organizationId)
+    if (!(calendar.companies || []).map(String).includes(chosen)) fail(400, 'Choose one of the offered companies')
+    if (!await member(ownerId, chosen)) fail(403, 'Access denied to this organization')
+    return { calendar: await reconcileBill(ownerId, account, evidence, source, { company: chosen }), action: { kind: 'organization', organizationId: chosen, by: ownerId, at } }
+  }
+  if (body?.create === true) {
+    if (state !== 'review' || reason !== 'candidates') fail(409, 'This record is not waiting for a bill choice')
+    if (!await member(ownerId, account.organizationId)) fail(403, 'Access denied to this organization')
+    return { calendar: await reconcileBill(ownerId, account, evidence, source, { force: 'create' }), action: { kind: 'create', by: ownerId, at } }
+  }
+  return null
 }
 
 // ── PUT notices/:id/link — the member's explicit review action ──
@@ -360,44 +424,57 @@ export async function linkNotice(ownerId: string, noticeId: string, body: any) {
   const notice: any = await FinanceNotice.findOne({ _id: id(noticeId), ownerId }).lean()
   if (!notice) fail(404, 'Notice not found')
   const account = await ownedAccount(ownerId, String(notice.accountId))
-  if (notice.kind !== 'bill-confirmed') fail(409, 'This notice has no calendar bill')
   const state = notice.calendar?.state, reason = notice.calendar?.reason, at = new Date()
   let calendar: any, action: any
-  if (body?.restore === true) {
-    if (state !== 'suppressed' || !notice.calendar.paymentId) fail(409, 'This notice has no removed bill to restore')
-    const bill: any = await Payment.findById(notice.calendar.paymentId).lean()
-    if (!bill || !bill.suppressedAt) fail(409, 'The removed bill is no longer there')
-    if (!await member(ownerId, bill.organizationId)) fail(403, 'Access denied to this organization')
-    await Payment.updateOne({ _id: bill._id, suppressedAt: { $exists: true } }, { $unset: { suppressedAt: '', suppressedBy: '' } })
-    calendar = await reconcileBill(ownerId, account, noticeEvidence(notice), 'issuer-mail'); action = { kind: 'restore', paymentId: bill._id, by: ownerId, at }
-  } else if (body?.paymentId !== undefined) {
-    if (state !== 'review' || reason !== 'candidates') fail(409, 'This notice is not waiting for a bill choice')
-    const chosen = id(body.paymentId)
-    if (!(notice.calendar.candidates || []).map(String).includes(chosen)) fail(400, 'Choose one of the offered bills')
-    const bill: any = await Payment.findOne({ _id: chosen, source: { $exists: false }, suppressedAt: { $exists: false } }).lean()
-    if (!bill) fail(409, 'The chosen bill changed; refresh and choose again')
-    if (!await member(ownerId, bill.organizationId)) fail(403, 'Access denied to this organization')
-    const evidence = noticeEvidence(notice)
-    const adopted = await Payment.findOneAndUpdate({ _id: bill._id, source: { $exists: false }, suppressedAt: { $exists: false } }, { $set: { source: { kind: 'card-statement', provider: 'aplus', accountId: account._id, periodKey: evidence.periodKey, statementMonth: evidence.statementMonth, noticeId: notice._id, statementTotal: evidence.statementTotal, dueDateEvidence: 'issuer-mail', adopted: true, adoptedAt: at, linkedBy: ownerId, linkedAt: at, updatedAt: at } } }, { new: true })
-    if (!adopted) fail(409, 'The chosen bill changed; refresh and choose again')
-    calendar = await reconcileBill(ownerId, account, evidence, 'issuer-mail'); action = { kind: 'payment', paymentId: bill._id, by: ownerId, at }
-  } else if (body?.organizationId !== undefined) {
-    if (state !== 'review' || reason !== 'company') fail(409, 'This notice is not waiting for a company choice')
-    const chosen = id(body.organizationId)
-    if (!(notice.calendar.companies || []).map(String).includes(chosen)) fail(400, 'Choose one of the offered companies')
-    if (!await member(ownerId, chosen)) fail(403, 'Access denied to this organization')
-    calendar = await reconcileBill(ownerId, account, noticeEvidence(notice), 'issuer-mail', { company: chosen }); action = { kind: 'organization', organizationId: chosen, by: ownerId, at }
-  } else if (body?.create === true) {
-    if (state !== 'review' || reason !== 'candidates') fail(409, 'This notice is not waiting for a bill choice')
-    if (!await member(ownerId, account.organizationId)) fail(403, 'Access denied to this organization')
-    calendar = await reconcileBill(ownerId, account, noticeEvidence(notice), 'issuer-mail', { force: 'create' }); action = { kind: 'create', by: ownerId, at }
-  } else if (body?.retry === true) {
-    if (state !== 'review' || reason !== 'changed-body') fail(409, 'This notice is not waiting for a retry')
-    calendar = await reconcileBill(ownerId, account, noticeEvidence(notice), 'issuer-mail'); action = { kind: 'retry', by: ownerId, at }
-  } else fail(400, 'Choose a bill, a company, create, retry or restore')
+  if (body?.retry === true) {
+    // changed-body: the member accepts the first claims again; ambiguous-account (fold F1): the stored notice is re-evaluated
+    // against the corrected configuration, for an Aplus bill or an Amex enqueue alike. No other review reason is retried.
+    if (state !== 'review' || !['changed-body', ...RECOVERABLE_REVIEW_REASONS].includes(reason)) fail(409, 'This notice is not waiting for a retry')
+    if (reason === 'changed-body' && notice.kind !== 'bill-confirmed') fail(409, 'This notice has no calendar bill')
+    if (RECOVERABLE_REVIEW_REASONS.includes(reason) && (!account.billingMail?.enabled || String(account.billingMail.mailbox || '').toLowerCase() !== String(notice.mailbox || '').toLowerCase())) fail(409, 'This account no longer reads the mailbox of this notice')
+    calendar = reason === 'changed-body' ? await reconcileBill(ownerId, account, noticeEvidence(notice), 'issuer-mail') : await evaluateNotice(ownerId, account, notice)
+    action = { kind: 'retry', by: ownerId, at }
+  } else {
+    if (notice.kind !== 'bill-confirmed') fail(409, 'This notice has no calendar bill')
+    if (body?.restore === true) {
+      if (state !== 'suppressed' || !notice.calendar.paymentId) fail(409, 'This notice has no removed bill to restore')
+      const bill: any = await Payment.findById(notice.calendar.paymentId).lean()
+      if (!bill || !bill.suppressedAt) fail(409, 'The removed bill is no longer there')
+      if (!await member(ownerId, bill.organizationId)) fail(403, 'Access denied to this organization')
+      await Payment.updateOne({ _id: bill._id, suppressedAt: { $exists: true } }, { $unset: { suppressedAt: '', suppressedBy: '' } })
+      calendar = await reconcileBill(ownerId, account, noticeEvidence(notice), 'issuer-mail'); action = { kind: 'restore', paymentId: bill._id, by: ownerId, at }
+    } else {
+      const chosen = await applyChoice(ownerId, account, noticeEvidence(notice), notice.calendar, body, 'issuer-mail', { noticeId: notice._id })
+      if (!chosen) return fail(400, 'Choose a bill, a company, create, retry or restore')
+      calendar = chosen.calendar; action = chosen.action
+    }
+  }
   await FinanceNotice.updateOne({ _id: notice._id }, { $set: { calendar, action, lastAttemptAt: at }, $inc: { attempts: 1 } })
   // The same choice completes the cycle's other waiting records (its statement batches, its other notices) — nothing else.
+  if (notice.kind !== 'bill-confirmed') return { calendar, woken: { imports: 0, notices: 0 } }
   const evidence = noticeEvidence(notice)
   const woken = await wakeCycleWork(ownerId, account, evidence.periodKey, evidence.statementMonth, notice._id)
+  return { calendar, woken }
+}
+
+// ── GET imports/:id/calendar — the statement batch's calendar state and the choices it offers this member (fold F2) ──
+export async function importCalendarReview(ownerId: string, importId: string) {
+  const batch = await ownedImport(ownerId, importId)
+  const offers = await choiceOffers(ownerId, batch.calendar)
+  return { id: String(batch._id), calendar: batch.calendar || null, action: batch.calendar?.action || null, ...offers }
+}
+
+// ── PUT imports/:id/calendar — the member's explicit choice for a statement batch, no notice required (fold F2) ──
+export async function linkImport(ownerId: string, importId: string, body: any) {
+  const batch = await ownedImport(ownerId, importId)
+  if (batch.provider !== 'aplus' || batch.period?.kind !== 'statement') fail(409, 'This import has no calendar bill')
+  const account = await ownedAccount(ownerId, String(batch.accountId))
+  const evidence = importEvidence(batch)
+  const chosen = await applyChoice(ownerId, account, evidence, batch.calendar, body, 'statement-csv', { importId: batch._id })
+  if (!chosen) return fail(400, 'Choose a bill, a company or create')
+  // The member's action travels inside the batch's calendar record (the import schema declares `calendar` only).
+  const calendar = { ...chosen.calendar, action: chosen.action }
+  await FinanceImport.updateOne({ _id: batch._id }, { $set: { calendar } })
+  const woken = await wakeCycleWork(ownerId, account, evidence.periodKey, evidence.statementMonth, undefined, batch._id)
   return { calendar, woken }
 }

@@ -103,6 +103,10 @@
             <button class="btn btn-secondary" v-for="company in notice.companies" :key="company.id" :disabled="busy" @click="run(() => linkNotice(notice._id, { organizationId: company.id }))">{{ company.name }} に登録</button>
           </template>
           <button class="btn btn-secondary" v-else-if="notice.calendar?.state === 'review' && notice.calendar.reason === 'changed-body'" :disabled="busy" @click="run(() => linkNotice(notice._id, { retry: true }))">最初の内容で再処理</button>
+          <template v-else-if="notice.calendar?.state === 'review' && notice.calendar.reason === 'ambiguous-account'">
+            <p>{{ notice.calendar.detail === 'card-suffix' ? '下4桁が複数のAmex口座に一致します。口座のカード番号を直してから「再処理」を押してください。' : '同じメールボックスを複数のAplus口座で読んでいます。読む口座を1つにしてから「再処理」を押してください。' }}</p>
+            <button class="btn btn-secondary" :disabled="busy" @click="run(() => linkNotice(notice._id, { retry: true }))">再処理</button>
+          </template>
           <button class="btn btn-secondary" v-else-if="notice.calendar?.state === 'suppressed'" :disabled="busy" @click="run(() => linkNotice(notice._id, { restore: true }))">削除した請求を復元</button>
         </div>
       </article>
@@ -110,6 +114,16 @@
     <section class="card" v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件</p></div><button class="btn btn-secondary" :disabled="busy" @click="run(downloadOriginal)">元の明細ファイル</button></header>
       <p>口座振替はカードへの返済として保管します。返金などのマイナス明細は確認待ちです。同じ取引の可能性がある行は、既存取引への紐付け・別の支出として登録・保留から選んでください。</p>
       <p v-if="(selected.requiresDraft || selected.mappingPreview)" class="notice">この明細の顧客・区分は分類案の確認中です。<NuxtLink :to="{ path: '/mapping', query: { import: selected.id } }">マッピングを確認 →</NuxtLink></p>
+      <div v-if="selectedCalendar?.calendar?.state" class="notice calendar-choice">
+        <p>支払カレンダー: {{ calendarLabel(selectedCalendar.calendar) }}</p>
+        <template v-if="selectedCalendar.calendar.state === 'review' && selectedCalendar.calendar.reason === 'candidates'">
+          <button class="btn btn-secondary" v-for="bill in selectedCalendar.candidateBills" :key="bill.id" :disabled="busy" @click="run(() => linkImport(selected.id, { paymentId: bill.id }))">既存の請求に紐付け: {{ bill.title }} · {{ yen(bill.amount) }} · {{ dayOf(bill.dueDate) }}</button>
+          <button class="btn btn-secondary" :disabled="busy" @click="run(() => linkImport(selected.id, { create: true }))">新しい請求として登録</button>
+        </template>
+        <template v-else-if="selectedCalendar.calendar.state === 'review' && selectedCalendar.calendar.reason === 'company'">
+          <button class="btn btn-secondary" v-for="company in selectedCalendar.companies" :key="company.id" :disabled="busy" @click="run(() => linkImport(selected.id, { organizationId: company.id }))">{{ company.name }} に登録</button>
+        </template>
+      </div>
       <div class="review-list"><article v-for="row in selected.rows" :key="row.line" :class="{ muted: ['posted','duplicate'].includes(row.state) }">
         <div><strong>{{ row.description }}</strong><p>{{ row.purchaseDate || '利用日未記載' }} · 処理日 {{ row.processingDate || '未記載' }} · カード {{ row.cardIdentifier?.slice(-4) || '未記載' }}</p><p v-if="row.sourceReviewReason">{{ row.sourceReviewReason }}</p><small v-if="row.provider === 'aplus'">請求月 {{ row.statementMonth }} · お支払金額 {{ row.paymentAmount === null ? '未記載' : yen(row.paymentAmount) }} · {{ row.statementDetails }}</small><small v-if="row.foreignAmount">外貨 {{ row.foreignAmount }} · レート {{ row.exchangeRate }}</small></div>
         <div><strong>{{ yen(row.amount) }}</strong><p>{{ states[row.state] || row.state }}{{ row.skipped ? '（保留済み）' : '' }}</p></div>
@@ -126,7 +140,7 @@ import { useUserStore } from '~/stores/user'
 import { billingMailSchedule } from '~/shared/billing-mail.mjs'
 definePageMeta({ middleware: 'auth' })
 const user = useUserStore()
-const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), notices = ref<any[]>([]), selected = ref<any>(null)
+const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), notices = ref<any[]>([]), selected = ref<any>(null), selectedCalendar = ref<any>(null)
 const fiscalInputs = reactive<Record<string, { start: string; end: string }>>({})
 const autoSyncInputs = reactive<Record<string, { enabled: boolean; hour: number }>>({})
 const calendarInputs = reactive<Record<string, string>>({})
@@ -137,7 +151,7 @@ const manual = reactive({ kind: 'statement', start: '', end: '', statementMonth:
 const states: Record<string,string> = { idle:'未取得', queued:'PCの応答待ち', running:'取得中', verification_required:'Chromeで認証が必要', complete:'取得完了・内容確認待ち', failed:'取得できませんでした', statement_review:'明細・個別確認待ち', new:'新しい支出', repayment:'カードへの返済', credit_review:'返金など・確認待ち', posted:'登録済み', duplicate:'登録済みの明細', legacy_review:'既存取引と一致する可能性', correction_review:'処理日や外貨情報が変わった明細の可能性', overlap_review:'他の明細期間と重複する可能性', in_progress:'先の取り込み処理を再開してください' }
 // Calendar link states of a statement batch or a billing notice (financeBillService): concise, one line each.
 const calendarStates: Record<string,string> = { pending:'処理待ち', linked:'支払カレンダー登録済み', unbound:'会社未設定', 'due-date-unresolved':'支払日未確認', unauthorized:'権限なし・記録のみ', suppressed:'削除済みの請求（自動再作成なし）', queued:'Amexの取得を予約', 'already-queued':'Amexの取得は予約済み', unpaired:'AmexのPCが未接続', 'no-account':'該当するAmex口座なし', 'inactive-account':'Amex口座が無効', 'queue-failed':'Amexの予約に失敗' }
-const reviewReasons: Record<string,string> = { candidates:'既存の請求と照合が必要', company:'会社の選択が必要', 'changed-body':'メール内容が変わりました・確認が必要', authentication:'送信元を確認できません・記録のみ', 'ambiguous-account':'口座の選択が必要' }
+const reviewReasons: Record<string,string> = { candidates:'既存の請求と照合が必要', company:'会社の選択が必要', 'changed-body':'メール内容が変わりました・確認が必要', authentication:'送信元を確認できません・記録のみ', 'ambiguous-account':'読み取り口座が1つに定まりません・設定の修正後に再処理' }
 const calendarLabel = (calendar: any) => { if (!calendar?.state) return ''; if (calendar.state === 'review') return reviewReasons[calendar.reason] || '確認が必要'; if (calendar.state === 'linked' && calendar.preserved) return '確定済みの請求を保持' + (calendar.observed?.amount !== undefined ? `（通知額 ${yen(calendar.observed.amount)}）` : ''); return calendarStates[calendar.state] || calendar.state }
 const companyName = (id: any) => { const org = (user.organizations || []).find((o: any) => String(o.id || o._id) === String(id || '')); return org ? org.name : '会社未設定' }
 // The effective mail schedule (shared/billing-mail.mjs): never "daily" while 自動取得 is off or no PC is connected.
@@ -162,14 +176,16 @@ async function saveFiscalPeriod(id: string) { await api(`accounts/${id}/fiscal-p
 async function saveAutoSync(id: string) { await api(`accounts/${id}/auto-sync`, { method: 'PUT', body: autoSyncInputs[id] }); await refresh(); message.value = '自動取得の設定を保存しました' }
 async function saveCalendar(id: string) { const result = await api(`accounts/${id}/calendar`, { method: 'PUT', body: { organizationId: calendarInputs[id] || null } }); await refresh(); message.value = !result.changed ? '会社の設定は変わっていません' : !calendarInputs[id] ? '会社の設定を解除しました' : result.existingBillsKept ? `会社を変更しました。既存の請求 ${result.existingBillsKept} 件は元の会社に残ります` : '会社を設定しました' }
 async function saveBillingMail(id: string) { await api(`accounts/${id}/billing-mail`, { method: 'PUT', body: billingMailInputs[id] }); await refresh(); message.value = '請求メールの設定を保存しました' }
-async function linkNotice(id: string, body: any) { await api(`notices/${id}/link`, { method: 'PUT', body }); await refresh(); message.value = '請求メールの処理を更新しました' }
+async function linkNotice(id: string, body: any) { await api(`notices/${id}/link`, { method: 'PUT', body }); await refresh(); if (selected.value) selectedCalendar.value = await api(`imports/${selected.value.id}/calendar`); message.value = '請求メールの処理を更新しました' }
+// The statement batch's own calendar choice (no mail notice needed): the same reconciliation and membership checks as a notice link.
+async function linkImport(id: string, body: any) { await api(`imports/${id}/calendar`, { method: 'PUT', body }); selectedCalendar.value = await api(`imports/${id}/calendar`); await refresh(); message.value = '支払カレンダーの請求を更新しました' }
 async function addAccount() { await api('accounts', { method:'POST', body: { ...newAccount, cardIdentifiers:cardsText.value.split(',').map(v=>v.trim()).filter(Boolean) } }); await refresh(); message.value = '口座を追加しました' }
 async function sync(id: string) { await api(`accounts/${id}/sync`, { method:'POST' }); await refresh() }
 // Connections are created by the downloader's own Connect flow (POST /api/finance/collectors stays available for compatibility).
 async function revoke(id: string) { await api(`collectors/${id}`, { method:'DELETE' }); await refresh() }
 function selectFile(event: Event) { file.value = (event.target as HTMLInputElement).files?.[0] || null }
 async function upload(account: any) { const id = account._id; const metadata = manual.kind === 'pending' ? { kind: 'pending', ...(account.provider !== 'aplus' ? { start: manual.start, end: manual.end } : {}) } : account.provider === 'aplus' ? { kind: 'statement', statementMonth: manual.statementMonth, statementTotal: manual.statementTotal, refundTotal: manual.refundTotal, ...(manual.paymentDueDate ? { paymentDueDate: manual.paymentDueDate } : {}), ...(manual.fiscalStart || manual.fiscalEnd ? { fiscalStart: manual.fiscalStart, fiscalEnd: manual.fiscalEnd } : {}) } : { kind: 'statement', start: manual.start, end: manual.end }; if (!file.value) throw Error('CSVを選択してください'); const result = await api(`accounts/${id}/imports`, { method:'POST', query: metadata, body:file.value, headers: { 'Content-Type':account.provider === 'aplus' && manual.kind === 'pending' ? 'application/json' : 'text/csv' } }); await refresh(); await review(result.id) }
-async function review(id: string) { selected.value = await api(`imports/${id}`); for (const key of Object.keys(choices)) delete choices[Number(key)]; for (const row of selected.value.rows) if (row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)) choices[row.line] = row.skipped ? 'skip' : row.state === 'new' ? 'import' : ''; await nextTick(); reviewPanel.value?.scrollIntoView({ behavior:'smooth' }) }
+async function review(id: string) { selected.value = await api(`imports/${id}`); selectedCalendar.value = selected.value.account?.provider === 'aplus' ? await api(`imports/${id}/calendar`) : null; for (const key of Object.keys(choices)) delete choices[Number(key)]; for (const row of selected.value.rows) if (row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)) choices[row.line] = row.skipped ? 'skip' : row.state === 'new' ? 'import' : ''; await nextTick(); reviewPanel.value?.scrollIntoView({ behavior:'smooth' }) }
 async function commit() {
   const decisions = Object.entries(choices).filter(([,value]) => value).map(([line,value]) => ({ line:Number(line), action:value.startsWith('link:') ? 'link' : value, transactionId:value.startsWith('link:') ? value.slice(5) : undefined, confirmNew:value === 'import' }))
   try { const result = await api(`imports/${selected.value.id}/commit`, { method:'POST', body: { decisions } }); message.value = `${result.posted}件登録・${result.linked}件紐付け・${result.skipped}件保留または登録済み` }
@@ -211,6 +227,7 @@ onUnmounted(() => clearInterval(poll))
 .notice-list article { @apply grid gap-3 break-words border-t border-gray-200 py-5 dark:border-white/10; }
 .notice-list strong { @apply block; }
 .notice-list article button { @apply mt-2 block w-full text-left; }
+.calendar-choice button { @apply mt-2 block w-full text-left; }
 .muted { @apply opacity-60; }
 .account-grid { @apply grid gap-4 md:grid-cols-2; }
 .account-grid section { @apply m-0; }

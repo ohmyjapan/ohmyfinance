@@ -3,7 +3,7 @@ import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
 import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, autoSyncInput, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
-import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice } from '../../services/financeBillService'
+import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
 
 // A JSON artifact of the collector (notice, mail receipt): bounded by csvBody, parsed once, never echoed back.
 async function jsonArtifact(event: any) {
@@ -163,6 +163,10 @@ export default defineEventHandler(async event => {
         return { imports: await FinanceImport.find({ ownerId, ...(accountId ? { accountId } : {}) }).select('-rows -decisions -mappingPreview -sourceReferences').sort({ createdAt: -1 }).limit(100).lean() }
       }
       if (parts.length === 2 && method === 'GET') return await reviewImport(ownerId, parts[1])
+      // The statement batch's calendar state with the choices it offers this member, and the explicit choice itself
+      // (GUARD: current membership of the chosen bill's or company's organization is checked at the write).
+      if (parts[2] === 'calendar' && parts.length === 3 && method === 'GET') return await importCalendarReview(ownerId, parts[1])
+      if (parts[2] === 'calendar' && parts.length === 3 && method === 'PUT') return await linkImport(ownerId, parts[1], await readBody(event))
       if (parts[2] === 'mapping' && parts.length === 3 && method === 'GET') return await reviewMapping(ownerId, parts[1])
       if (parts[2] === 'commit' && parts.length === 3 && method === 'POST') return await commitImport(ownerId, parts[1], await readBody(event))
       if (parts[2] === 'file' && parts.length === 3 && method === 'GET') {

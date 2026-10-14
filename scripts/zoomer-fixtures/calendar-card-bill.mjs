@@ -536,15 +536,152 @@ try {
     assert.equal((await Payment.findById(c2._id).lean()).source, undefined);
     return '3 mutants detected';
   });
-  await leg('N2b ambiguous account: two Aplus accounts of one owner reading the same mailbox → the notice is review (ambiguous-account), no bill; after the second account stops reading that mailbox the retry links', async () => {
-    const one = await mkAccount({ mailbox: 'shared@example.invalid' }), two = await mkAccount({ mailbox: 'shared@example.invalid' });
-    const mail = aplusConfirmation({ year: 2028, month: 1, day: 27, amount: 77 });
-    const r = await sendNotice(one, mail); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(r.data.calendar?.state, 'review'); assert.equal(r.data.calendar.reason, 'ambiguous-account'); assert.equal(await sourced(one, '2028-01'), null);
-    const { jobId, covered } = await claimJob(one); assert.ok(covered.notices.includes(mail.id), 'a review notice is not covered'); await finishJob(one, jobId);
-    await fin('accounts/' + two.id + '/billing-mail', { method: 'PUT', token: tokenA, body: { enabled: false, mailbox: 'shared@example.invalid' } });
-    await FinanceNotice.updateOne({ accountId: one.account._id, mailId: mail.id }, { $set: { 'calendar.state': 'pending' } });
-    const again = await sendNotice(one, mail); assert.equal(again.data.duplicate, true); assert.equal(again.data.calendar?.state, 'linked', JSON.stringify(again.data)); assert.ok(await sourced(one, '2028-01'));
-    return 'review while shared; linked once the mailbox is one account\'s';
+  // ── S11-F1a (replaces N2b): the ambiguity is recovered by the product — the claim does not cover it, the real re-delivery
+  // re-evaluates it once the configuration is corrected, and the rendered retry action does the same for a stored notice ──
+  await leg('S11-F1a Aplus shared mailbox: two accounts reading one mailbox → review (ambiguous-account), NOT covered by the claim, a re-delivery while still shared stays a truthful hold with no bill; after the other account stops reading that mailbox the next real re-delivery links exactly once and the claim then covers it; a second stored notice recovers through the explicit retry action, which also stays a hold while still ambiguous', async () => {
+    const one = await mkAccount({ mailbox: 'shared-a@example.invalid' }), two = await mkAccount({ mailbox: 'shared-a@example.invalid' });
+    const mail = aplusConfirmation({ year: 2030, month: 6, day: 27, amount: 61 });
+    const r = await sendNotice(one, mail); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(r.data.calendar?.state, 'review'); assert.equal(r.data.calendar.reason, 'ambiguous-account'); assert.equal(await sourced(one, '2030-06'), null);
+    const c1 = await claimJob(one); assert.equal(c1.covered.notices.includes(mail.id), false, 'an ambiguous-account notice is covered (no product recovery): ' + JSON.stringify(c1.covered)); await finishJob(one, c1.jobId);
+    const still = await sendNotice(one, mail); assert.equal(still.data.duplicate, true); assert.equal(still.data.calendar?.state, 'review', JSON.stringify(still.data)); assert.equal(still.data.calendar.reason, 'ambiguous-account'); assert.equal(await sourced(one, '2030-06'), null, 'a still-ambiguous notice produced a bill');
+    await fin('accounts/' + two.id + '/billing-mail', { method: 'PUT', token: tokenA, body: { enabled: false, mailbox: 'shared-a@example.invalid' } });
+    const again = await sendNotice(one, mail); assert.equal(again.data.duplicate, true); assert.equal(again.data.calendar?.state, 'linked', 'the corrected configuration did not recover the notice: ' + JSON.stringify(again.data));
+    const bill = await sourced(one, '2030-06'); assert.ok(bill); assert.equal(bill.amount, 61); assert.equal(String(bill.organizationId), A);
+    const once = await sendNotice(one, mail); assert.equal(once.data.calendar.state, 'linked'); assert.equal(await Payment.countDocuments({ 'source.accountId': one.account._id, 'source.periodKey': period('2030-06').key }), 1);
+    const c2 = await claimJob(one); assert.equal(c2.covered.notices.includes(mail.id), true, 'a linked notice is not covered'); await finishJob(one, c2.jobId);
+    await fin('accounts/' + two.id + '/billing-mail', { method: 'PUT', token: tokenA, body: { enabled: true, mailbox: 'shared-a@example.invalid' } });
+    const mail2 = aplusConfirmation({ year: 2030, month: 7, day: 27, amount: 62 });
+    const r2 = await sendNotice(one, mail2); assert.equal(r2.data.calendar?.reason, 'ambiguous-account');
+    const hold = await fin('notices/' + r2.data.id + '/link', { method: 'PUT', token: tokenA, body: { retry: true } }); assert.equal(hold.status, 200, 'the retry action is refused for an ambiguous notice: ' + JSON.stringify(hold)); assert.equal(hold.data.calendar.state, 'review'); assert.equal(hold.data.calendar.reason, 'ambiguous-account'); assert.equal(await sourced(one, '2030-07'), null, 'a retry while still ambiguous produced a bill');
+    await fin('accounts/' + two.id + '/billing-mail', { method: 'PUT', token: tokenA, body: { enabled: false, mailbox: 'shared-a@example.invalid' } });
+    const retried = await fin('notices/' + r2.data.id + '/link', { method: 'PUT', token: tokenA, body: { retry: true } }); assert.equal(retried.status, 200, JSON.stringify(retried)); assert.equal(retried.data.calendar.state, 'linked'); assert.ok(await sourced(one, '2030-07'));
+    assert.equal((await FinanceNotice.findById(r2.data.id).lean()).action?.kind, 'retry');
+    return 'hold while shared (not covered, re-delivery and retry both hold), linked once after the correction, covered after';
+  });
+  await leg('S11-F1b Amex multi-match: a 4-digit suffix matching two Amex accounts → review (ambiguous-account) with no job, not covered; after the owner corrects one account\'s card through the existing PATCH route, the real re-delivery queues exactly one intended job; a stored notice older than the mail look-back recovers through the retry action', async () => {
+    const acct = await mkAccount();
+    const m1 = await FinancialAccount.create({ ownerId, name: 'Synthetic Amex M1', provider: 'amex', primaryCard: '88019', cardIdentifiers: ['88019'], otpRecipient: 'otp@example.invalid', otpMailbox: 'otp@example.invalid' });
+    const m2 = await FinancialAccount.create({ ownerId, name: 'Synthetic Amex M2', provider: 'amex', primaryCard: '98019', cardIdentifiers: ['98019'], otpRecipient: 'otp@example.invalid', otpMailbox: 'otp@example.invalid' });
+    const pair = await fin('collectors', { method: 'POST', token: tokenA, body: { name: 'Synthetic Amex M PC', accountIds: [String(m1._id), String(m2._id)] } }); assert.equal(pair.status, 200);
+    const mail = amexConfirmation({ suffix: '8019', digits: 4 });
+    const r = await sendNotice(acct, mail); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(r.data.calendar?.state, 'review', JSON.stringify(r.data)); assert.equal(r.data.calendar.reason, 'ambiguous-account');
+    for (const a of [m1, m2]) assert.equal((await FinancialAccount.findById(a._id).lean()).jobState, 'idle', 'a job was queued on an ambiguous match');
+    const c1 = await claimJob(acct); assert.equal(c1.covered.notices.includes(mail.id), false, 'an ambiguous Amex notice is covered'); await finishJob(acct, c1.jobId);
+    const patched = await fin('accounts/' + String(m2._id), { method: 'PATCH', token: tokenA, body: { name: 'Synthetic Amex M2', cardIdentifiers: ['98029'], primaryCard: '98029', otpRecipient: 'otp@example.invalid', otpMailbox: 'otp@example.invalid' } }); assert.equal(patched.status, 200, JSON.stringify(patched));
+    const again = await sendNotice(acct, mail); assert.equal(again.data.duplicate, true); assert.equal(again.data.calendar?.state, 'queued', 'the corrected configuration did not recover the Amex notice: ' + JSON.stringify(again.data)); assert.equal(String(again.data.calendar.targetAccountId), String(m1._id));
+    const queued = await FinancialAccount.findById(m1._id).lean(); assert.equal(queued.jobState, 'queued'); assert.equal(queued.jobId, again.data.calendar.jobId); assert.equal((await FinancialAccount.findById(m2._id).lean()).jobState, 'idle');
+    const once = await sendNotice(acct, mail); assert.equal(once.data.calendar.state, 'queued'); assert.equal(once.data.calendar.jobId, queued.jobId); assert.equal((await FinancialAccount.findById(m1._id).lean()).jobId, queued.jobId, 'a second job was queued');
+    const c2 = await claimJob(acct); assert.equal(c2.covered.notices.includes(mail.id), true); await finishJob(acct, c2.jobId);
+    const m3 = await FinancialAccount.create({ ownerId, name: 'Synthetic Amex M3', provider: 'amex', primaryCard: '77039', cardIdentifiers: ['77039'], otpRecipient: 'otp@example.invalid', otpMailbox: 'otp@example.invalid' });
+    const m4 = await FinancialAccount.create({ ownerId, name: 'Synthetic Amex M4', provider: 'amex', primaryCard: '87039', cardIdentifiers: ['87039'], otpRecipient: 'otp@example.invalid', otpMailbox: 'otp@example.invalid' });
+    assert.equal((await fin('collectors', { method: 'POST', token: tokenA, body: { name: 'Synthetic Amex M PC 2', accountIds: [String(m3._id), String(m4._id)] } })).status, 200);
+    const old = amexConfirmation({ suffix: '7039', digits: 4 }); old.internalDate = String(Date.now() - 70 * 86400000);
+    const r3 = await sendNotice(acct, old); assert.equal(r3.data.calendar?.reason, 'ambiguous-account');
+    assert.equal((await fin('accounts/' + String(m4._id), { method: 'PATCH', token: tokenA, body: { name: 'Synthetic Amex M4', cardIdentifiers: ['87049'], primaryCard: '87049', otpRecipient: 'otp@example.invalid', otpMailbox: 'otp@example.invalid' } })).status, 200);
+    const retried = await fin('notices/' + r3.data.id + '/link', { method: 'PUT', token: tokenA, body: { retry: true } }); assert.equal(retried.status, 200, 'the retry action is refused for an ambiguous bill-ready notice: ' + JSON.stringify(retried)); assert.equal(retried.data.calendar.state, 'queued'); assert.equal(String(retried.data.calendar.targetAccountId), String(m3._id));
+    assert.equal((await FinancialAccount.findById(m3._id).lean()).jobState, 'queued'); assert.equal((await FinancialAccount.findById(m4._id).lean()).jobState, 'idle');
+    return 'ambiguous → hold, no job; PATCH corrected → one job ' + queued.jobId.slice(0, 8) + '; 70-day-old notice → retry action → one job';
+  });
+  await leg('S11-F1c no blanket retry: authentication and candidates reviews stay covered by the claim, a re-delivery leaves them as they are, and the retry action refuses them; a queued bill-ready notice accepts no bill choice and no retry', async () => {
+    const acct = await mkAccount();
+    const failedAuth = await sendNotice(acct, aplusConfirmation({ year: 2030, month: 8, day: 27, amount: 81, auth: AUTH_FAIL })); assert.equal(failedAuth.data.calendar?.reason, 'authentication');
+    const row = await Payment.create({ title: 'アプラス', amount: 82, currency: 'JPY', dueDate: noon('2030-09-27'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const cand = await sendNotice(acct, aplusConfirmation({ year: 2030, month: 9, day: 27, amount: 82 })); assert.equal(cand.data.calendar?.reason, 'candidates');
+    const { jobId, covered } = await claimJob(acct); assert.ok(covered.notices.includes(failedAuth.data.calendar ? (await FinanceNotice.findById(failedAuth.data.id).lean()).mailId : ''), 'an authentication review is not covered'); assert.ok(covered.notices.includes((await FinanceNotice.findById(cand.data.id).lean()).mailId), 'a candidates review is not covered'); await finishJob(acct, jobId);
+    const authAgain = await sendNotice(acct, aplusConfirmation({ year: 2030, month: 8, day: 27, amount: 81, auth: AUTH_FAIL, id: (await FinanceNotice.findById(failedAuth.data.id).lean()).mailId })); assert.equal(authAgain.data.duplicate, true); assert.equal(authAgain.data.calendar.reason, 'authentication'); assert.equal(await sourced(acct, '2030-08'), null);
+    assert.equal((await fin('notices/' + failedAuth.data.id + '/link', { method: 'PUT', token: tokenA, body: { retry: true } })).status, 409, 'an authentication review was retried');
+    assert.equal((await fin('notices/' + cand.data.id + '/link', { method: 'PUT', token: tokenA, body: { retry: true } })).status, 409, 'a candidates review was retried instead of chosen');
+    assert.equal((await Payment.findById(row._id).lean()).source, undefined);
+    const amex = await FinancialAccount.create({ ownerId, name: 'Synthetic Amex F1c', provider: 'amex', primaryCard: '55039', cardIdentifiers: ['55039'], otpRecipient: 'otp@example.invalid', otpMailbox: 'otp@example.invalid' });
+    assert.equal((await fin('collectors', { method: 'POST', token: tokenA, body: { name: 'Synthetic Amex F1c PC', accountIds: [String(amex._id)] } })).status, 200);
+    const ready = await sendNotice(acct, amexConfirmation({ suffix: '55039', digits: 5 })); assert.equal(ready.data.calendar?.state, 'queued');
+    assert.equal((await fin('notices/' + ready.data.id + '/link', { method: 'PUT', token: tokenA, body: { paymentId: String(row._id) } })).status, 409);
+    assert.equal((await fin('notices/' + ready.data.id + '/link', { method: 'PUT', token: tokenA, body: { retry: true } })).status, 409, 'a queued bill-ready notice was retried');
+    return 'authentication/candidates: covered, unchanged on re-delivery, retry 409; queued bill-ready: 409 for both bodies';
+  });
+  // ── S11-F2: a statement-only cycle gets its own calendar choice ──
+  await leg('S11-F2 statement-only choice: a CSV cycle with no notice → GET imports/:id/calendar offers only authorized candidates (foreign owner 404, removed member sees none and PUT is 403 with nothing written); PUT {paymentId} links the paid row preserved and completes the same cycle\'s waiting notice with one bill; a repeat is a safe 409; two concurrent choices → one bill; create beside candidates; a company choice for an older cycle after a rebind; sibling cycle and other account untouched', async () => {
+    const acct = await mkAccount(), other = await mkAccount(); const month = '2030-10', due = '2030-10-28';
+    const paid = await Payment.create({ title: 'アプラス', amount: 7100, currency: 'JPY', dueDate: noon(due), type: 'expense', status: 'paid', category: 'Term Credit Card', recurring: false, organizationId: A, settledAt: new Date() });
+    const forecast = await Payment.create({ title: 'アプラス 予測', amount: 7150, currency: 'JPY', dueDate: noon(due), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const paidBefore = snap(await Payment.findById(paid._id).lean());
+    const csv = await deliver(acct, { month, total: 7100, paymentDueDate: due }); assert.equal(csv.data.calendar?.state, 'review', JSON.stringify(csv.data));
+    const get = await fin('imports/' + csv.data.id + '/calendar', { token: tokenA }); assert.equal(get.status, 200, 'no statement-only calendar review: ' + JSON.stringify(get)); assert.equal(get.data.calendar?.state, 'review'); assert.deepEqual(get.data.candidateBills.map(c => c.id).sort(), [String(paid._id), String(forecast._id)].sort()); assert.ok(get.data.candidateBills.every(c => typeof c.title === 'string' && typeof c.amount === 'number'));
+    assert.equal((await fin('imports/' + csv.data.id + '/calendar', { token: tokenFor(owner2, user2.email, A2) })).status, 404);
+    await removeMember(A, user._id);
+    try {
+      const hidden = await fin('imports/' + csv.data.id + '/calendar', { token: tokenA }); assert.equal(hidden.status, 200); assert.deepEqual(hidden.data.candidateBills, [], 'candidates disclosed without membership');
+      const refused = await fin('imports/' + csv.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { paymentId: String(paid._id) } }); assert.equal(refused.status, 403, JSON.stringify(refused));
+      assert.equal((await fin('imports/' + csv.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { create: true } })).status, 403);
+      assert.equal((await Payment.findById(paid._id).lean()).source, undefined); assert.equal(await sourced(acct, month), null);
+    } finally { await addMember(A, user._id); }
+    const notice = await sendNotice(acct, aplusConfirmation({ year: 2030, month: 10, day: 28, amount: 7100 })); assert.equal(notice.data.calendar?.state, 'review');
+    const otherCsv = await deliver(other, { month, total: 7100, paymentDueDate: due }); assert.equal(otherCsv.data.calendar?.state, 'review');
+    const put = await fin('imports/' + csv.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { paymentId: String(paid._id) } }); assert.equal(put.status, 200, JSON.stringify(put)); assert.equal(put.data.calendar.state, 'linked'); assert.equal(put.data.calendar.preserved, true); assert.equal(String(put.data.calendar.paymentId), String(paid._id)); assert.equal(put.data.woken?.notices, 1, JSON.stringify(put.data));
+    const batch = await FinanceImport.findById(csv.data.id).lean(); assert.equal(batch.calendar.state, 'linked'); assert.equal(String(batch.calendar.paymentId), String(paid._id)); assert.equal(batch.calendar.action?.kind, 'payment'); assert.equal(String(batch.calendar.action.by), ownerId);
+    const reviewed = await fin('imports/' + csv.data.id + '/calendar', { token: tokenA }); assert.equal(reviewed.data.calendar.state, 'linked'); assert.equal(reviewed.data.action?.kind, 'payment');
+    const n = await FinanceNotice.findById(notice.data.id).lean(); assert.equal(n.calendar.state, 'linked', 'the waiting notice was not completed by the batch choice'); assert.equal(String(n.calendar.paymentId), String(paid._id));
+    const adopted = await Payment.findById(paid._id).lean(); assert.equal(adopted.source.adopted, true); assert.equal(String(adopted.source.importId), csv.data.id); assert.equal(snap(withoutSource(adopted)), snap(withoutSource(JSON.parse(paidBefore))), 'the paid row changed beyond source'); assert.equal(adopted.amount, 7100); assert.equal(adopted.status, 'paid');
+    assert.equal(await Payment.countDocuments({ 'source.accountId': acct.account._id, 'source.periodKey': period(month).key }), 1); assert.equal((await Payment.findById(forecast._id).lean()).source, undefined);
+    assert.equal((await FinanceImport.findById(otherCsv.data.id).lean()).calendar.state, 'review', 'another account\'s batch was changed');
+    const repeat = await fin('imports/' + csv.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { paymentId: String(paid._id) } }); assert.equal(repeat.status, 409, 'a repeated choice was not a safe refusal: ' + JSON.stringify(repeat));
+    assert.equal((await fin('imports/' + csv.data.id + '/calendar', { method: 'PUT', token: tokenA, body: {} })).status, 400);
+    const month2 = '2030-11', due2 = '2030-11-27'; const d1 = await Payment.create({ title: 'アプラス', amount: 7200, currency: 'JPY', dueDate: noon(due2), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const csv2 = await deliver(acct, { month: month2, total: 7200, paymentDueDate: due2 }); assert.equal(csv2.data.calendar?.state, 'review');
+    const [x, y] = await Promise.all([fin('imports/' + csv2.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { paymentId: String(d1._id) } }), fin('imports/' + csv2.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { paymentId: String(d1._id) } })]);
+    assert.deepEqual([x.status, y.status].sort(), [200, 409], JSON.stringify([x.data, y.data])); assert.equal(await Payment.countDocuments({ 'source.accountId': acct.account._id, 'source.periodKey': period(month2).key }), 1); assert.equal((await Payment.findById(d1._id).lean()).source?.adopted, true);
+    const month3 = '2030-12', due3 = '2030-12-27'; const e1 = await Payment.create({ title: 'アプラス', amount: 7300, currency: 'JPY', dueDate: noon(due3), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const csv3 = await deliver(acct, { month: month3, total: 7350, paymentDueDate: due3 }); assert.equal(csv3.data.calendar?.state, 'review');
+    const created = await fin('imports/' + csv3.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { create: true } }); assert.equal(created.status, 200, JSON.stringify(created)); assert.equal(created.data.calendar.state, 'linked'); assert.equal(created.data.calendar.created, true);
+    const own = await sourced(acct, month3); assert.equal(own.amount, 7350); assert.notEqual(String(own._id), String(e1._id)); assert.equal((await Payment.findById(e1._id).lean()).source, undefined);
+    const moved = await mkAccount(); assert.equal((await fin('accounts/' + moved.id + '/calendar', { method: 'PUT', token: tokenA, body: { organizationId: B } })).status, 200);
+    const oldCsv = await deliver(moved, { month: '2026-04', total: 7400, paymentDueDate: '2026-04-27' }); assert.equal(oldCsv.data.calendar?.state, 'review', JSON.stringify(oldCsv.data)); assert.equal(oldCsv.data.calendar.reason, 'company');
+    const offers = await fin('imports/' + oldCsv.data.id + '/calendar', { token: tokenA }); assert.deepEqual(offers.data.companies.map(c => c.id).sort(), [A, B].sort()); assert.ok(offers.data.companies.every(c => typeof c.name === 'string'));
+    assert.equal((await fin('imports/' + oldCsv.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { organizationId: C } })).status, 400);
+    const chose = await fin('imports/' + oldCsv.data.id + '/calendar', { method: 'PUT', token: tokenA, body: { organizationId: A } }); assert.equal(chose.status, 200, JSON.stringify(chose)); assert.equal(chose.data.calendar.state, 'linked'); assert.equal(String((await sourced(moved, '2026-04')).organizationId), A);
+    return 'GET offers 2, foreign 404, removed member sees none/403; link → batch + notice linked, paid row preserved; repeat 409; concurrent 200/409 → 1 bill; create beside → own bill; company choice → created in A';
+  });
+  // ── S11-F3: only a stored card suffix proves automatic identity ──
+  await leg('S11-F3 nicknames: accounts nicknamed 法人カード or カード never adopt a 「JCB法人カード」 row with the equal amount and date (review, no write); a row naming the stored card suffix still adopts; a sibling\'s suffix still reviews; the generic account name itself in a title proves nothing', async () => {
+    // the nicknamed account is created alone first: no sibling name may mask the hole through the sibling check
+    const generic = await mkAccount({ name: '法人カード' });
+    const jcb = await Payment.create({ title: 'JCB法人カード', amount: 8100, currency: 'JPY', dueDate: noon('2031-01-27'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const r = await sendNotice(generic, aplusConfirmation({ year: 2031, month: 1, day: 27, amount: 8100 })); assert.equal(r.data.calendar?.state, 'review', 'a nickname proved identity: ' + JSON.stringify(r.data)); assert.deepEqual(r.data.calendar.candidates.map(String), [String(jcb._id)]); assert.equal((await Payment.findById(jcb._id).lean()).source, undefined);
+    const short = await mkAccount({ name: 'カード' });
+    const jcb2 = await Payment.create({ title: 'JCBカード', amount: 8200, currency: 'JPY', dueDate: noon('2031-02-27'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const r2 = await sendNotice(short, aplusConfirmation({ year: 2031, month: 2, day: 27, amount: 8200 })); assert.equal(r2.data.calendar?.state, 'review', 'a three-character nickname proved identity: ' + JSON.stringify(r2.data)); assert.equal((await Payment.findById(jcb2._id).lean()).source, undefined);
+    const named = await Payment.create({ title: '法人カード 2月分', amount: 8250, currency: 'JPY', dueDate: noon('2031-03-27'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const r3 = await sendNotice(generic, aplusConfirmation({ year: 2031, month: 3, day: 27, amount: 8250 })); assert.equal(r3.data.calendar?.state, 'review', 'the account name in a title proved identity: ' + JSON.stringify(r3.data)); assert.equal((await Payment.findById(named._id).lean()).source, undefined);
+    const mine = await Payment.create({ title: 'アプラス ' + generic.card + ' 分', amount: 8300, currency: 'JPY', dueDate: noon('2031-04-27'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const r4 = await sendNotice(generic, aplusConfirmation({ year: 2031, month: 4, day: 27, amount: 8300 })); assert.equal(r4.data.calendar?.state, 'linked', JSON.stringify(r4.data)); assert.equal(r4.data.calendar.adopted, true); assert.equal(String(r4.data.calendar.paymentId), String(mine._id));
+    const theirs = await Payment.create({ title: 'アプラス -' + short.card, amount: 8400, currency: 'JPY', dueDate: noon('2031-05-27'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const r5 = await sendNotice(generic, aplusConfirmation({ year: 2031, month: 5, day: 27, amount: 8400 })); assert.equal(r5.data.calendar?.state, 'review'); assert.equal((await Payment.findById(theirs._id).lean()).source, undefined);
+    return '法人カード/カード/own-name titles → review; suffix → adopted; sibling suffix → review';
+  });
+  await leg('S11 mutants: the claim covering ambiguous notices; the ambiguous retry disabled; the batch choice without the membership check; the nickname identity token restored — each DETECTED', async () => {
+    const acct = await mkAccount({ mailbox: 'shared-m@example.invalid' }), twin = await mkAccount({ mailbox: 'shared-m@example.invalid' });
+    const mail = aplusConfirmation({ year: 2031, month: 6, day: 27, amount: 91 }); const r = await sendNotice(acct, mail); assert.equal(r.data.calendar?.reason, 'ambiguous-account');
+    assert.equal((await bills.coveredNoticeIds(acct.account._id)).includes(mail.id), false);
+    await mutant('server/services/financeBillService.ts', [{ marker: 'recoverable-uncovered' }], async m => { assert.equal((await m.coveredNoticeIds(acct.account._id)).includes(mail.id), true, 'mutant NOT detected (claim coverage)'); });
+    await fin('accounts/' + twin.id + '/billing-mail', { method: 'PUT', token: tokenA, body: { enabled: false, mailbox: 'shared-m@example.invalid' } });
+    await mutant('server/services/financeBillService.ts', [{ marker: 'recoverable-retry' }], async m => { const again = await m.recordBillingNotice(ownerId, await acct.read(), artifact(mail, { mailbox: acct.mailbox }), acct.collectorId); assert.equal(again.calendar.reason, 'ambiguous-account', 'mutant NOT detected (retry): ' + JSON.stringify(again.calendar)); });
+    const honest = await bills.recordBillingNotice(ownerId, await acct.read(), artifact(mail, { mailbox: acct.mailbox }), acct.collectorId); assert.equal(honest.calendar.state, 'linked');
+    const month = '2031-07', due = '2031-07-28'; const row = await Payment.create({ title: 'アプラス', amount: 92, currency: 'JPY', dueDate: noon(due), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const csv = await deliver(acct, { month, total: 92, paymentDueDate: due }); assert.equal(csv.data.calendar?.state, 'review');
+    await removeMember(A, user._id);
+    try {
+      await assert.rejects(bills.linkImport(ownerId, csv.data.id, { paymentId: String(row._id) }), e => e?.statusCode === 403);
+      assert.equal((await Payment.findById(row._id).lean()).source, undefined);
+      // without the membership check the association itself is written for a non-member (the later reconciliation still refuses the amounts: unauthorized) — the write is the detection
+      await mutant('server/services/financeBillService.ts', [{ marker: 'choice-membership' }], async m => { const r2 = await m.linkImport(ownerId, csv.data.id, { paymentId: String(row._id) }); assert.equal((await Payment.findById(row._id).lean()).source?.adopted, true, 'mutant NOT detected (membership): no association written: ' + JSON.stringify(r2.calendar)); });
+    } finally { await addMember(A, user._id); await Payment.updateOne({ _id: row._id }, { $unset: { source: '' } }); await FinanceImport.updateOne({ _id: csv.data.id }, { $set: { 'calendar.state': 'review' } }); }
+    // a nickname no sibling account shares, in a title no sibling name is a substring of: only the mutant's name token can match it
+    const nick = await mkAccount({ name: 'ビジネス決済' }); const jcb = await Payment.create({ title: 'JCBビジネス決済', amount: 93, currency: 'JPY', dueDate: noon('2031-08-27'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: A });
+    const ev = evidenceFor('2031-08', 93, '2031-08-27'); const fresh = await nick.read();
+    assert.equal((await bills.reconcileBill(ownerId, fresh, ev, 'issuer-mail')).state, 'review');
+    await mutant('server/services/financeBillService.ts', [{ from: 'return { suffixes }', to: "return { suffixes, name: String(account?.name || '').trim().toLowerCase() }" }, { from: 'return tokens.suffixes.some(s => new RegExp(', to: "if (tokens.name && text.toLowerCase().includes(tokens.name)) return true; return tokens.suffixes.some(s => new RegExp(" }], async m => { const r3 = await m.reconcileBill(ownerId, fresh, ev, 'issuer-mail'); assert.equal(r3.state, 'linked', 'mutant NOT detected (nickname): ' + JSON.stringify(r3)); assert.equal(r3.adopted, true); });
+    await Payment.updateOne({ _id: jcb._id }, { $unset: { source: '' } });
+    return '4 mutants detected';
   });
 
   // ── N3 / B2: legacy candidates ──
@@ -1082,7 +1219,7 @@ try {
   await mongoose.connect(uri); assert.equal(mongoose.connection.name, 'calendar_card_bill_app_isolated');
   const Organization = (await import(u('server/models/Organization.ts'))).default;
   const { Payment } = await import(u('server/models/Payment.ts'));
-  const { FinancialAccount, FinanceNotice, initializeFinance } = await import(u('server/models/Finance.ts'));
+  const { FinancialAccount, FinanceImport, FinanceNotice, initializeFinance } = await import(u('server/models/Finance.ts'));
   const browserModule = await import(u('collector/browser.mjs')); closeOwnedBrowsers = browserModule.closeOwnedBrowsers;
   const { browserFor, ephemeralProfile, findChrome } = browserModule;
   await initializeFinance(); await Payment.init();
@@ -1165,6 +1302,49 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'horizontal overflow at 390 px');
     assert.deepEqual(pageErrors, [], 'page errors: ' + pageErrors.join(' | ').slice(0, 600));
     return 'review → linked by one click; adopted 750 → 700; 0 page errors';
+  });
+  await leg('H4 statement-only action (S11-F2): a statement batch waiting on a bill choice, opened from 取得履歴, shows its calendar choices in the selected panel; choosing the offered bill links the batch (label 登録済み) and adopts the row; no transaction import happens', async () => {
+    const paired2 = await api('/api/finance/collectors', token, { name: 'Synthetic UI PC 3', accountIds: [accountId] }); assert.equal(paired2.status, 200);
+    const row = await Payment.create({ title: 'アプラス', amount: 2400, currency: 'JPY', dueDate: new Date('2027-08-27T12:00:00.000Z'), type: 'expense', status: 'pending', category: 'Term Credit Card', organizationId: org._id });
+    const sync = await api('/api/finance/accounts/' + accountId + '/sync', token, {}); assert.equal(sync.status, 200, JSON.stringify(sync));
+    const claimed = await api('/api/finance/collector/claim', paired2.data.token, {}); assert.equal(claimed.status, 200); const jobId = claimed.data.account.jobId;
+    const { HEADERS } = await import(u('shared/aplus.mjs'));
+    const csv = Buffer.from('﻿' + [HEADERS, ['≪****-****-****-1234≫', '20270801', 'Synthetic shop ui', '2400', 'Ｓ', '1', '01', '2400', '']].map(r => r.map(v => '"' + String(v).replaceAll('"', '""') + '"').join(',')).join('\r\n'));
+    const uploaded = await fetch(appOrigin + '/api/finance/collector/upload?' + new URLSearchParams({ accountId, jobId, kind: 'statement', start: '2027-08-01', end: '2027-08-31', statementMonth: '2027-08', statementTotal: '2400', paymentDueDate: '2027-08-27' }), { method: 'POST', headers: { 'Content-Type': 'text/csv', Authorization: 'Bearer ' + paired2.data.token }, body: csv });
+    const result = await uploaded.json(); assert.equal(uploaded.status, 200, JSON.stringify(result)); assert.equal(result.calendar?.state, 'review', JSON.stringify(result));
+    await api('/api/finance/collector/status', paired2.data.token, { accountId, jobId, state: 'complete', message: 'done' });
+    await until(id => [...document.querySelectorAll('button.history')].some(b => b.dataset.importId === id), 'history button', result.id);
+    await page.evaluate(id => { [...document.querySelectorAll('button.history')].find(b => b.dataset.importId === id).click(); }, result.id);
+    await until(() => !!document.querySelector('.calendar-choice') && [...document.querySelectorAll('.calendar-choice button')].some(b => b.textContent.includes('2,400') || b.textContent.includes('2400')), 'calendar choice rendered', null);
+    const labelBefore = await page.evaluate(() => document.querySelector('.calendar-choice')?.textContent || ''); assert.ok(labelBefore.includes('既存の請求と照合が必要'), labelBefore);
+    await page.evaluate(() => { [...document.querySelectorAll('.calendar-choice button')].find(b => b.textContent.includes('既存の請求に紐付け')).click(); });
+    await until(() => (document.querySelector('.calendar-choice')?.textContent || '').includes('登録済み'), 'batch linked label', null);
+    const adopted = await Payment.findById(row._id).lean(); assert.equal(adopted.source?.adopted, true); assert.equal(String(adopted.source.importId), result.id);
+    const batch = await FinanceImport.findById(result.id).lean(); assert.equal(batch.calendar.state, 'linked');
+    assert.equal(await mongoose.connection.collection('transactions').countDocuments({}), 0, 'a transaction was posted');
+    assert.deepEqual(pageErrors, [], 'page errors: ' + pageErrors.join(' | ').slice(0, 600));
+    return 'batch choice rendered and applied from the page; 0 transactions';
+  });
+  await leg('H4 ambiguity retry (S11-F1): a notice held because two accounts read one mailbox shows the explanation and a 再処理 button; after the other account stops reading the mailbox, the button links it', async () => {
+    const second = await api('/api/finance/accounts', token, { provider: 'aplus', name: 'Synthetic Aplus UI 2', primaryCard: '5678', cardIdentifiers: ['5678'] }); assert.equal(second.status, 200, JSON.stringify(second));
+    assert.equal((await api('/api/finance/accounts/' + second.data.account._id + '/billing-mail', token, { enabled: true, mailbox: 'bills@example.invalid' }, 'PUT')).status, 200);
+    const paired3 = await api('/api/finance/collectors', token, { name: 'Synthetic UI PC 4', accountIds: [accountId] }); assert.equal(paired3.status, 200);
+    const sync = await api('/api/finance/accounts/' + accountId + '/sync', token, {}); assert.equal(sync.status, 200, JSON.stringify(sync));
+    const claimed = await api('/api/finance/collector/claim', paired3.data.token, {}); assert.equal(claimed.status, 200); const jobId = claimed.data.account.jobId;
+    const mail = aplusConfirmation({ year: 2027, month: 9, day: 27, amount: 910 });
+    const { parseBillingMail, authenticationResults, BILLING_MAIL_PARSER } = await import(u('shared/billing-mail.mjs'));
+    const parsed = parseBillingMail(mail.headers, mail.text, { now: Date.now() });
+    const artifact = { kind: 'notice', parserVersion: BILLING_MAIL_PARSER, mailbox: 'bills@example.invalid', mailId: mail.id, threadId: mail.threadId, internalDate: Number(mail.internalDate), subject: mail.headers.subject, from: mail.headers.from, bodySha256: createHash('sha256').update(mail.text.replace(/\r/g, '')).digest('hex'), authentication: authenticationResults(mail.headers), issuer: parsed.issuer, noticeKind: parsed.kind, claims: parsed.claims, readAt: new Date().toISOString() };
+    const uploaded = await fetch(appOrigin + '/api/finance/collector/upload?' + new URLSearchParams({ accountId, jobId, kind: 'notice', mailId: mail.id }), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + paired3.data.token }, body: JSON.stringify(artifact) });
+    const result = await uploaded.json(); assert.equal(uploaded.status, 200, JSON.stringify(result)); assert.equal(result.calendar?.reason, 'ambiguous-account', JSON.stringify(result));
+    await api('/api/finance/collector/status', paired3.data.token, { accountId, jobId, state: 'complete', message: 'done' });
+    await until(() => [...document.querySelectorAll('.notice-list article')].some(a => a.textContent.includes('読む口座を1つに') && [...a.querySelectorAll('button')].some(b => b.textContent.includes('再処理'))), 'ambiguity explanation and retry button', null);
+    assert.equal((await api('/api/finance/accounts/' + second.data.account._id + '/billing-mail', token, { enabled: false, mailbox: 'bills@example.invalid' }, 'PUT')).status, 200);
+    await page.evaluate(() => { const a = [...document.querySelectorAll('.notice-list article')].find(x => x.textContent.includes('読む口座を1つに')); [...a.querySelectorAll('button')].find(b => b.textContent.includes('再処理')).click(); });
+    await until(() => [...document.querySelectorAll('.notice-list article')].some(a => a.textContent.includes('2027-09') && a.textContent.includes('登録済み')), 'retried notice linked', null);
+    const bill = await Payment.findOne({ 'source.accountId': accountId, 'source.statementMonth': '2027-09' }).lean(); assert.ok(bill, 'no bill after the retry'); assert.equal(bill.amount, 910);
+    assert.deepEqual(pageErrors, [], 'page errors: ' + pageErrors.join(' | ').slice(0, 600));
+    return 'explanation + 再処理 rendered; one click after the correction → linked';
   });
   console.log(JSON.stringify({ pass: legs.every(Boolean), checks: legs.filter(Boolean).length, database: await databaseReceipt(mongoose, mongo) }));
 } catch (error) {
