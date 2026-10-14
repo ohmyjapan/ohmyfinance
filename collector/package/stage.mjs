@@ -20,7 +20,7 @@ import { promisify } from 'node:util';
 const execute = promisify(execFile);
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const ALLOWLIST = [
-  ...['browser','index','interaction','login','mail','run','statement','vault','yayoi','omf-authorization','aplus','aplus-verification'].map(name=>({from:`collector/${name}.mjs`})),
+  ...['browser','index','interaction','login','mail','run','statement','vault','yayoi','omf-authorization','aplus','aplus-verification','sms-source'].map(name=>({from:`collector/${name}.mjs`})),
   ...['browser-process','key-broker','private-acl','vault'].map(name=>({from:`collector/windows/${name}.ps1`})),
   { from: 'collector/setup.html' }, { from: 'collector/setup.js' }, { from: 'collector/package.json' }, { from: 'collector/package-lock.json' },
   { from: 'shared/amex.mjs' }, { from: 'shared/aplus.mjs' }, { from: 'shared/finance-pending.mjs' }

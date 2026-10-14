@@ -9,7 +9,7 @@ import path from 'node:path';
 import { parseAplus } from '../shared/aplus.mjs';
 import { parsePendingImport } from '../shared/finance-pending.mjs';
 import { click, fill, onSurface, pause, poll } from './interaction.mjs';
-import { matchStatementCode } from './aplus-verification.mjs';
+import { matchStatementCode, STATEMENT_CODE_VALIDITY_MS } from './aplus-verification.mjs';
 
 const APLUS = 'https://myaplus.aplus.co.jp';
 const LOGIN_PATH = '/login/id/input', DETAILS_PATH = '/cards/billing/details', UNBILLED_PATH = '/cards/billing/unbilled', OTP_PATH = '/authentication/otp/sms';
@@ -64,16 +64,24 @@ export async function captureUnbilled(ui, { now = Date.now } = {}) {
  * target: the retained file is named by the download GUID). Completion = the completed event for the GUID that began, or
  * one GUID-named file in the directory whose size is stable across two polls with no .crdownload sibling — the second arm
  * covers the event lost across the SMS navigation. The verification page during the wait is reported once through
- * `onVerification` and extends the deadline once. Expiry throws {code:'timeout'}; there is never a second request here.
+ * `onVerification` and extends the deadline once. With a `codeSource` (plan omf-auto-sync-build-20261014 §2 A8) the source
+ * is read every `codePollMs` while the verification page shows, only within the code's validity after `requestedAt`
+ * (STATEMENT_CODE_VALIDITY_MS); the one matching code is claimed, then typed through `code` once. A failed read leaves the
+ * person to type; a cancellation (`signal`) propagates — it is rechecked after every awaited read and claim, before
+ * anything is typed, and never becomes a manual-fallback null. Expiry throws {code:'timeout'}; there is never a second
+ * request here.
  */
-export async function awaitDownload({ jobDir, session = null, request, state, onVerification = null, timeoutMs = 300000, extensionMs = 300000, pollMs = 1000, now = Date.now, wait = pause }) {
+export async function awaitDownload({ jobDir, session = null, request, state, onVerification = null, code = null, codeSource = null, requestedAt = null, signal = null, codePollMs = 5000, timeoutMs = 300000, extensionMs = 300000, pollMs = 1000, now = Date.now, wait = pause }) {
   let guid = null, completed = null, canceled = false, multiple = false;
   session?.on('Browser.downloadWillBegin', event => { if (guid) multiple = true; else guid = event.guid; });
   session?.on('Browser.downloadProgress', event => { if (!guid || event.guid !== guid) return; if (event.state === 'completed') completed = guid; if (event.state === 'canceled') canceled = true; });
+  signal?.throwIfAborted();
+  if (requestedAt === null) requestedAt = now();
   await request();
-  let deadline = now() + timeoutMs, extended = false, noticed = false;
+  let deadline = now() + timeoutMs, extended = false, noticed = false, typed = false, nextPoll = 0;
   const sizes = new Map();
   for (;;) {
+    signal?.throwIfAborted();
     if (multiple) throw new Error('Multiple downloads started; check the My APLUS tab');
     if (canceled) throw new Error('My APLUS canceled the CSV download');
     if (completed) return completed;
@@ -88,6 +96,14 @@ export async function awaitDownload({ jobDir, session = null, request, state, on
     if (current?.kind === 'verification') {
       if (!noticed) { noticed = true; if (onVerification) await onVerification(); }
       if (!extended) { extended = true; deadline += extensionMs; }
+      if (codeSource && code && !typed && now() - requestedAt <= STATEMENT_CODE_VALIDITY_MS && now() >= nextPoll) {
+        nextPoll = now() + codePollMs;
+        let match = null;
+        try { match = matchStatementCode(await codeSource.messages({ requestedAt, signal }), { requestedAt, now: now() }); }
+        catch (error) { if (signal?.aborted || error?.name === 'AbortError') throw error; match = null; } // a failed read: the person types
+        signal?.throwIfAborted();
+        if (match) { await codeSource.claim(match.id); signal?.throwIfAborted(); await code(match.code); typed = true; }
+      }
     }
     if (now() >= deadline) throw Object.assign(new Error('My APLUS CSV download did not complete'), { code: 'timeout' });
     await wait(pollMs);
@@ -153,7 +169,7 @@ async function ensureAplusLogin(ui, credentials, status, { now, wait, timeoutMs 
  * outbox/<accountId>/<jobId>-<month> and outbox/<accountId>/<jobId>-pending. `ui` is injectable (fixture); the default is
  * the real page. Returns { items, pending, nothing, unavailable, failed, skipped }.
  */
-export async function collectAplusFromPage(page, browser, account, settings, directory, status, { ui = null, covered = [], codeSource = null, jobId = account?.jobId, now = Date.now, wait = pause, origin = '', loginTimeoutMs = 300000, downloadTimeoutMs = 300000, extensionMs = 300000, pollMs = 1000 } = {}) {
+export async function collectAplusFromPage(page, browser, account, settings, directory, status, { ui = null, covered = [], codeSource = null, signal = null, jobId = account?.jobId, now = Date.now, wait = pause, origin = '', loginTimeoutMs = 300000, downloadTimeoutMs = 300000, extensionMs = 300000, pollMs = 1000 } = {}) {
   ui ||= aplusUi(page, browser);
   if (!/^[a-f\d]{24}$/.test(String(account?._id ?? '')) || typeof jobId !== 'string' || !jobId) throw new Error('A claimed account with a job is required');
   await ensureAplusLogin(ui, settings, status, { now, wait, timeoutMs: loginTimeoutMs });
@@ -184,15 +200,10 @@ export async function collectAplusFromPage(page, browser, account, settings, dir
     let filename;
     try {
       await status('running', month + ' の確定明細をダウンロード');
+      // The notice is given once; the code source is read inside awaitDownload's bounded wait, cancelled with `signal`.
       filename = await awaitDownload({ jobDir, session, request: async () => { await ui.save(); await ui.csv(); }, state: () => ui.state(), now, wait, pollMs, timeoutMs: downloadTimeoutMs, extensionMs,
-        onVerification: async () => {
-          await status('verification_required', 'My APLUSの認証コードをChromeで入力してください');
-          await ui.show();
-          if (!codeSource) return;
-          let match = null;
-          try { match = matchStatementCode(await codeSource.messages({ requestedAt }), { requestedAt, now: now() }); } catch { match = null; }
-          if (match) { await codeSource.claim(match.id); await ui.code(match.code); }
-        } });
+        codeSource, requestedAt, signal, code: value => ui.code(value),
+        onVerification: async () => { await status('verification_required', 'My APLUSの認証コードをChromeで入力してください'); await ui.show(); } });
     } catch (error) {
       if (error?.code !== 'timeout') throw error;
       failed = 'ダウンロードが完了しませんでした。再度「確定明細を取得」を押してください';

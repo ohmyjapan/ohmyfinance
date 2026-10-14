@@ -11,6 +11,7 @@ import { collectStatement, collectAplusStatement, closeOwnedBrowsers, findChrome
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
 import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin, connectWithOmf, acknowledgeWithOmf, cancelConnectWithOmf, launch } from './omf-authorization.mjs';
+import { AdbSmsSource, smsSourceInput, findAdb } from './sms-source.mjs';
 
 // Saved bank/mail credentials open only during an authorized session. Remembered-PC access renews silently;
 // idle ticks, status and uploads do not open bank/mail credentials. Once v3 activation completes, the DPAPI blob
@@ -243,12 +244,12 @@ async function outboxMonths(account,root,config) {
 // One claimed Aplus job (plan omf-aplus-automation-20261013 §2 P2/C3): drain the outbox, collect what neither OMF nor the
 // outbox holds, upload every new artifact, and complete only once each is acknowledged. A failed upload leaves the rest
 // unacknowledged for the next claim. `deps` are the fixture's seams; the collector passes its own.
-export async function runAplusJob(account,config,live,{status,covered=[],credentials={},pending:listPending=pending,upload:send=upload,collect=collectAplusStatement,directory:root=directory,onLaunch=null,batch='batch'}={}) {
+export async function runAplusJob(account,config,live,{status,covered=[],credentials={},pending:listPending=pending,upload:send=upload,collect=collectAplusStatement,directory:root=directory,onLaunch=null,batch='batch',codeSource=null,signal=null}={}) {
   const label=item=>item.manifest.kind==='pending'?'未請求明細を送信中':`${item.manifest.statementMonth||'確定明細'} を送信中`;
   const drained={statement:0,pending:0};
   for(const item of await listPending(account,config)){await status('running',label(item));await send(config,account,item,live);drained[item.manifest.kind==='pending'?'pending':'statement']++;}
   const held=[...new Set([...covered,...await outboxMonths(account,root,config)])];
-  const result=await collect(account,credentials,root,status,{batch,onLaunch,origin:config.baseUrl,covered:held,jobId:account.jobId});
+  const result=await collect(account,credentials,root,status,{batch,onLaunch,origin:config.baseUrl,covered:held,jobId:account.jobId,codeSource,signal});
   for(const item of [...result.items,...(result.pending?[result.pending]:[])]){await status('running',label(item));await send(config,account,item,live);}
   if(result.failed){await status('failed',result.failed);return {drained,items:result.items.length,pending:!!result.pending,nothing:false,failed:result.failed,message:result.failed};}
   const statements=result.items.length+drained.statement,pendings=(result.pending?1:0)+drained.pending;
@@ -307,7 +308,10 @@ async function tickWork() {
         if(entry)credentials=await secrets.open(entry,aadFor(live.installationId,'aplus',entry==='aplus'?null:account,config),live.broker);
       }
       assertSession(live);
-      await runAplusJob(account,config,live,{status,covered:covered?.statements||[],credentials,onLaunch:ownBrowser(live),batch:live.id});credentials=null;
+      // The statement-code source (plan omf-auto-sync-build-20261014 §2 A9): the configured tablet, read through adb inside
+      // this claimed job only; the session's abort (Windows lock, pause, expiry, revocation) cancels the wait.
+      const codeSource=config.smsSource?.serial?new AdbSmsSource({serial:config.smsSource.serial,directory}):null;
+      await runAplusJob(account,config,live,{status,covered:covered?.statements||[],credentials,onLaunch:ownBrowser(live),batch:live.id,codeSource,signal:live.abort.signal});credentials=null;
       assertSession(live);live.ran=true;
       clearInterval(heartbeat);
     } else {
@@ -634,7 +638,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         let info=config.accountInfo || [],due=false;if(config.token)try{info=(await api(config,'accounts')).accounts;due=info.some(a=>a.jobState==='queued');}catch{}
         const [aplus,yayoi,gmail]=await Promise.all(['aplus','yayoi','gmail'].map(id=>boundSecret(id,state?.installationId,id,null,config)));
         const accounts=await Promise.all(info.map(async a=>{const provider=a.provider||'amex';return {id:a.primaryCard,accountId:String(a._id||''),name:a.name,provider,hasCredentials:await boundSecret(provider+'-'+String(a._id),state?.installationId,provider,a,config)};}));
-        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},accounts});
+        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},smsSource:{serial:config.smsSource?.serial??null,adbFound:!!findAdb()},accounts});
       }
       if(req.method==='POST' && ['/connect','/connect/resume'].includes(req.url)) { await json(req).catch(()=>({})); try { return reply(200,await connect({resume:req.url==='/connect/resume'})); } catch(error) { return reply(codeOf(error),{error:error.message,keyLost}); } }
       if(req.method==='POST' && req.url==='/pair') {
@@ -673,6 +677,16 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         if(activeAction)return reply(409,{error:'Wait for the current collector action to finish'});
         await writeSecret(live,'aplus',aadFor(live.installationId,'aplus',null,await metadata()),{username:body.username.trim(),password:body.password});
         return reply(200,{saved:true});
+      }
+      if(req.method==='POST' && req.url==='/sms-source') {
+        // The statement-code source (plan omf-auto-sync-build-20261014 §2 A9): a tablet serial is not a secret; it lives in
+        // the secret-free metadata and is read only inside a claimed Aplus job. Shape (400), then the protected session
+        // (403), then no collector action in flight (409).
+        const {serial}=smsSourceInput(await json(req));
+        requireProtectedSession();
+        if(activeAction)return reply(409,{error:'Wait for the current collector action to finish'});
+        await updateMetadata(old=>({...old,smsSource:serial?{kind:'adb',serial}:undefined}));
+        return reply(200,{saved:!!serial,smsSource:serial?{kind:'adb',serial}:null});
       }
       if(req.method==='GET' && req.url==='/yayoi/status') {const state=await vaultState();let config;try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;config={};}return reply(200,{busy:running,unlocked:!!session,yayoi:{...yayoiState,hasCredentials:await boundSecret('yayoi',state?.installationId,'yayoi',null,config)}});}
       if(req.method==='POST' && req.url==='/yayoi/credentials') {

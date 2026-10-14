@@ -115,6 +115,26 @@ export async function createCollector(ownerId: string, body: any) {
   const device = await FinanceCollector.create({ ownerId, name, tokenHash: digest(token), accountIds })
   return { id: device._id.toString(), token }
 }
+// Automatic Aplus collection (plan omf-auto-sync-build-20261014 §2 A2).
+export function autoSyncInput(body: any): { enabled: boolean; hour: number } {
+  if (!body || typeof body !== 'object' || typeof body.enabled !== 'boolean' || !Number.isInteger(body.hour) || body.hour < 0 || body.hour > 23) fail(400, '自動取得の時刻は0〜23で指定してください')
+  return { enabled: body.enabled, hour: body.hour }
+}
+// The manual 確定明細を取得 enqueue, moved verbatim from the route: same collector check, filter, $set/$unset and 409s.
+export async function queueSync(ownerId: string, account: any) {
+  if (!await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null })) fail(409, 'Pair a collector for this account first')
+  const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: new Date(), lastMessage: 'Waiting for collector' }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
+  if (!updated) fail(409, 'A synchronization is already queued or running')
+  return updated
+}
+// The scheduled enqueue: ONE atomic write whose filter carries every eligibility predicate at write time — the account is
+// still an active Aplus account with 自動取得 on, its hour has passed, it was not queued today, no job is queued or running,
+// and no job was attempted today (a manual claim sets lastAttemptAt). A disable, a later hour or a manual job between the
+// scan and this write makes it a no-op; two schedulers cannot both pass lastQueuedDay ≠ day. A running job with an expired
+// lease is NOT re-queued (a re-claim continues the same jobId). Returns the queued document or null, never 409.
+export async function queueScheduledSync(account: any, { day, hour, dayStartUtc, now = new Date() }: { day: string; hour: number; dayStartUtc: Date; now?: Date }) {
+  return FinancialAccount.findOneAndUpdate({ _id: account._id, provider: 'aplus', active: true, 'autoSync.enabled': true, 'autoSync.hour': { $lte: hour }, 'autoSync.lastQueuedDay': { $ne: day }, jobState: { $nin: ['queued','running','verification_required'] }, $or: [{ lastAttemptAt: { $exists: false } }, { lastAttemptAt: { $lt: dayStartUtc } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: now, lastMessage: '自動取得を予約しました', 'autoSync.lastQueuedDay': day }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true }).lean()
+}
 export async function csvBody(event: H3Event): Promise<Buffer> {
   if (Number(getHeader(event, 'content-length') || 0) > MAX_BYTES) fail(413, 'CSV exceeds 5MB')
   const chunks: Buffer[] = []; let length = 0

@@ -226,14 +226,16 @@ export async function collectFromPage(page, browser, account, settings, director
  * One job's Aplus collection (plan omf-aplus-automation-20261013) in an owned, ephemeral, sandboxed Chrome:
  * profiles/ephemeral/<owner>-aplus-<account>-<batch>, deleted at closure. `settings` are the credentials opened inside the
  * batch (none → the person signs in); `covered` the finalized months OMF or the outbox already holds; `jobId` the claimed
- * job. The page logic lives in ./aplus.mjs (no node_modules), so this is the lane's only puppeteer touchpoint.
+ * job; `codeSource` the statement-code SMS source and `signal` the session's abort (plan omf-auto-sync-build-20261014 §2
+ * A10); `ui` the same test seam collectFromPage has (undefined = the real page). The page logic lives in ./aplus.mjs (no
+ * node_modules), so this is the lane's only puppeteer touchpoint.
  */
-export async function collectAplusStatement(account, settings, directory, status, { batch = 'batch', onLaunch = null, origin = '', covered = [], jobId = account.jobId } = {}) {
+export async function collectAplusStatement(account, settings, directory, status, { batch = 'batch', onLaunch = null, origin = '', covered = [], jobId = account.jobId, codeSource = null, signal = null, ui = undefined } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'aplus', account._id, batch);
   const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch });
   try {
     const page = await browser.newPage();
-    return await collectAplusFromPage(page, browser, account, settings, directory, status, { covered, jobId, origin });
+    return await collectAplusFromPage(page, browser, account, settings, directory, status, { covered, jobId, origin, codeSource, signal, ui });
   } finally {
     const entry = owned.get(browser.process()?.pid);
     if (entry) await closeEntry(entry);

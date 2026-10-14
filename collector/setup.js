@@ -62,7 +62,7 @@ function showProtection(data) {
 }
 async function refresh() {
   const data=await call('/status');current=data;
-  showProtection(data);showYayoi(data.yayoi,data.busy,data);showAplus(data.aplus,data.busy,data);
+  showProtection(data);showYayoi(data.yayoi,data.busy,data);showAplus(data.aplus,data.busy,data);showSmsSource(data.smsSource,data.busy,data);
   const main=$('#accounts');main.replaceChildren();
   if(data.protected && !data.accounts.length) {
     const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p');
@@ -144,4 +144,24 @@ $('#aplus-form').onsubmit=async e=>{
   catch(error){$('#aplus-status').textContent=error.message;button.disabled=false;}
   finally{password.value='';}
 };
-refresh().catch(error=>{$('#connect-message').textContent=error.message;showYayoiError(error);$('#aplus-status').textContent=error.message;});
+// The statement-code SMS source (plan omf-auto-sync-build-20261014 §2 A11): the tablet serial, saved or removed through
+// /sms-source inside a protected connection; /status.smsSource shows what is saved and whether adb was found.
+function showSmsSource(data,busy,all=current) {
+  const source=data||{};
+  $('#sms-saved').textContent=(source.serial?`SMS source saved: tablet ${source.serial}. The statement code is read from its inbox during a download.`:'No SMS source saved. The My APLUS statement code is entered in Chrome.')+(source.adbFound===false?' adb was not found on this PC (install Android platform-tools before relying on it).':'');
+  const protectedBatch=!!all.unlocked && all.mode==='protected';
+  $('#sms-save').disabled=!!busy || !protectedBatch;
+  $('#sms-remove').disabled=!!busy || !protectedBatch || !source.serial;
+}
+$('#sms-form').onsubmit=async e=>{
+  e.preventDefault();const button=$('#sms-save'),serial=$('#sms-serial');
+  button.disabled=true;
+  try {await call('/sms-source',{serial:serial.value.trim()});serial.value='';$('#sms-status').textContent='SMS source saved on this computer.';await refresh();}
+  catch(error){$('#sms-status').textContent=error.message;button.disabled=false;}
+};
+$('#sms-remove').onclick=async()=>{
+  const button=$('#sms-remove');button.disabled=true;
+  try {await call('/sms-source',{serial:null});$('#sms-status').textContent='SMS source removed.';await refresh();}
+  catch(error){$('#sms-status').textContent=error.message;button.disabled=false;}
+};
+refresh().catch(error=>{$('#connect-message').textContent=error.message;showYayoiError(error);$('#aplus-status').textContent=error.message;$('#sms-status').textContent=error.message;});

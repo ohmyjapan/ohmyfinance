@@ -14,6 +14,9 @@ const account = new Schema({
   forwarded: { type: Boolean, default: false }, active: { type: Boolean, default: true },
   jobId: String, jobState: { type: String, default: 'idle' }, jobRequestedAt: Date,
   jobDeviceId: oid, jobLeaseUntil: Date, lastAttemptAt: Date, lastSuccessAt: Date, lastMessage: String,
+  // Automatic Aplus collection (plan omf-auto-sync-build-20261014 §2 A1): on/off per account, the JST hour after which one
+  // job per day is queued, and the JST day (YYYY-MM-DD) last queued by the schedule.
+  autoSync: { enabled: { type: Boolean, default: false }, hour: { type: Number, min: 0, max: 23, default: 9 }, lastQueuedDay: String },
   accounting: Schema.Types.Mixed,
   commitLease: String, commitLeaseUntil: Date
 }, common)

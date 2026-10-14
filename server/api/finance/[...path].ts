@@ -1,9 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import { readMerchantLink, saveMerchantLink } from '../../services/financeSupplierService'
 import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
+import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, autoSyncInput, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
 
 export default defineEventHandler(async event => {
   const parts = (event.path.split('?')[0].split('/api/finance/')[1] || '').split('/').filter(Boolean)
@@ -56,18 +55,20 @@ export default defineEventHandler(async event => {
         await FinancialAccount.updateOne({ _id: account._id, ownerId }, [{ $set: { accounting: { $mergeObjects: [{ $ifNull: ['$accounting', {}] }, { fiscalPeriod }] } } }])
         return { fiscalPeriod }
       }
+      if (parts[2] === 'auto-sync' && parts.length === 3 && method === 'PUT') {
+        if (account.provider !== 'aplus') fail(400, 'Aplus account required')
+        const autoSync = autoSyncInput(await readBody(event))
+        // Dotted paths: the schedule's own lastQueuedDay is kept.
+        await FinancialAccount.updateOne({ _id: account._id, ownerId }, { $set: { 'autoSync.enabled': autoSync.enabled, 'autoSync.hour': autoSync.hour } })
+        return { autoSync }
+      }
       if (parts.length === 2 && method === 'PATCH') {
         const input = accountInput({ provider: account.provider || 'amex', ...await readBody(event) })
         if (input.provider !== (account.provider || 'amex')) fail(400, 'The provider of an existing card account cannot be changed')
         if (await FinanceImport.exists({ accountId: account._id }) && account.cardIdentifiers.some((v: string) => !input.cardIdentifiers.includes(v))) fail(409, 'Imported card identifiers cannot be removed')
         return { account: await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId }, { $set: input }, { new: true }) }
       }
-      if (parts[2] === 'sync' && parts.length === 3 && method === 'POST') {
-        if (!await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null })) fail(409, 'Pair a collector for this account first')
-        const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: new Date(), lastMessage: 'Waiting for collector' }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
-        if (!updated) fail(409, 'A synchronization is already queued or running')
-        return { account: updated }
-      }
+      if (parts[2] === 'sync' && parts.length === 3 && method === 'POST') return { account: await queueSync(ownerId, account) }
       if (parts[2] === 'imports' && parts.length === 3 && method === 'POST') {
         const jsonCapture = account.provider === 'aplus' && getQuery(event).kind === 'pending'
         if (!getHeader(event,'content-type')?.startsWith(jsonCapture ? 'application/json' : 'text/csv')) fail(415, jsonCapture ? 'Bank page JSON capture required' : 'CSV required')

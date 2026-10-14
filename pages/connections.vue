@@ -32,6 +32,14 @@
             <button class="btn btn-secondary" :disabled="busy">会計期間を保存</button>
           </form>
         </details>
+        <details v-if="account.provider === 'aplus' && autoSyncInputs[account._id]"><summary>自動取得：{{ account.autoSync?.enabled ? '毎日 ' + account.autoSync.hour + ':00 以降（PCが利用可能なとき）' : 'オフ' }}</summary>
+          <form @submit.prevent="run(() => saveAutoSync(account._id))">
+            <label class="check"><input v-model="autoSyncInputs[account._id].enabled" type="checkbox"> 毎日自動で取得する</label>
+            <label>取得を始める時刻<select v-model.number="autoSyncInputs[account._id].hour"><option v-for="h in 24" :key="h - 1" :value="h - 1">{{ h - 1 }}:00</option></select></label>
+            <p>PCが起動・サインイン済み・ロック解除のときに取得します。取得できなかった日は、次に利用可能になったとき1回だけ取得します。認証コードは、PC側でSMS読み取り元を設定していればダウンローダーが入力します。未設定の間はChromeで入力してください。</p>
+            <button class="btn btn-secondary" :disabled="busy">自動取得を保存</button>
+          </form>
+        </details>
         <details><summary>明細ファイルを取り込む</summary><form @submit.prevent="run(() => upload(account))">
           <label>明細の状態<select v-model="manual.kind"><option value="statement">確定明細</option><option value="pending">未請求・確定待ち</option></select></label>
           <p v-if="manual.kind === 'pending'">購入件数に含めてマッピングできます。確定明細との照合までは帳簿に登録しません。Amexは確定前の利用を含まないCSV、Aplusは取得ツールの元ページ付きJSONを選択します。</p>
@@ -85,6 +93,7 @@ definePageMeta({ middleware: 'auth' })
 const user = useUserStore()
 const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), selected = ref<any>(null)
 const fiscalInputs = reactive<Record<string, { start: string; end: string }>>({})
+const autoSyncInputs = reactive<Record<string, { enabled: boolean; hour: number }>>({})
 const busy = ref(false), message = ref('')
 const newAccount = reactive({ provider: 'amex', name: '', primaryCard: '', otpRecipient: '', otpMailbox: '' }), cardsText = ref('')
 const manual = reactive({ kind: 'statement', start: '', end: '', statementMonth: '', statementTotal: '', refundTotal: '', fiscalStart: '', fiscalEnd: '' }), file = ref<File | null>(null), choices = reactive<Record<number,string>>({}), reviewPanel = ref<HTMLElement | null>(null)
@@ -95,8 +104,9 @@ const yen = (amount: number) => new Intl.NumberFormat('ja-JP', { style:'currency
 const formatDate = (date: string) => date ? new Date(date).toLocaleString('ja-JP') : '未接続'
 const accountName = (id: string) => accounts.value.find(a => a._id === id)?.name || 'カード'
 async function run(action: () => Promise<any>) { if (busy.value) return; busy.value = true; message.value = ''; try { await action() } catch (error: any) { message.value = error.data?.data?.message || error.data?.statusMessage || error.message || '処理できませんでした' } finally { busy.value = false } }
-async function refresh() { const [a,c,i] = await Promise.all([api('accounts'),api('collectors'),api('imports')]); accounts.value = a.accounts; collectors.value = c.collectors; imports.value = i.imports; for (const account of a.accounts) if (account.provider === 'aplus' && !fiscalInputs[account._id]) fiscalInputs[account._id] = { start: account.fiscalPeriod?.start || '', end: account.fiscalPeriod?.end || '' } }
+async function refresh() { const [a,c,i] = await Promise.all([api('accounts'),api('collectors'),api('imports')]); accounts.value = a.accounts; collectors.value = c.collectors; imports.value = i.imports; for (const account of a.accounts) if (account.provider === 'aplus' && !fiscalInputs[account._id]) fiscalInputs[account._id] = { start: account.fiscalPeriod?.start || '', end: account.fiscalPeriod?.end || '' }; for (const account of a.accounts) if (account.provider === 'aplus' && !autoSyncInputs[account._id]) autoSyncInputs[account._id] = { enabled: !!account.autoSync?.enabled, hour: account.autoSync?.hour ?? 9 } }
 async function saveFiscalPeriod(id: string) { await api(`accounts/${id}/fiscal-period`, { method: 'PUT', body: fiscalInputs[id] }); await refresh(); message.value = '自動取得の会計期間を保存しました' }
+async function saveAutoSync(id: string) { await api(`accounts/${id}/auto-sync`, { method: 'PUT', body: autoSyncInputs[id] }); await refresh(); message.value = '自動取得の設定を保存しました' }
 async function addAccount() { await api('accounts', { method:'POST', body: { ...newAccount, cardIdentifiers:cardsText.value.split(',').map(v=>v.trim()).filter(Boolean) } }); await refresh(); message.value = '口座を追加しました' }
 async function sync(id: string) { await api(`accounts/${id}/sync`, { method:'POST' }); await refresh() }
 // Connections are created by the downloader's own Connect flow (POST /api/finance/collectors stays available for compatibility).
@@ -130,6 +140,7 @@ onUnmounted(() => clearInterval(poll))
 .connections input, .connections select { @apply max-w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white; }
 .connections label { @apply my-3 block; }
 .connections label input, .connections select { @apply mt-1 block w-full; }
+.connections label.check input { @apply mr-2 mt-0 inline-block w-auto; }
 .connections .inline { @apply flex gap-3; }
 .connections .inline input { @apply w-auto; }
 .connections details { @apply mt-4; }
