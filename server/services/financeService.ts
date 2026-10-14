@@ -16,6 +16,7 @@ import { aplusPeriod } from '../../shared/aplus.mjs'
 import { isPending, isFinalStatement } from '../../shared/finance-pending.mjs'
 
 import { FinanceDraft } from '../models/FinanceDraft'
+import { reconcileBill, importEvidence, importCalendarEligible, RETRY_IMPORT_STATES } from './financeBillService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { buildSourceReferences, sourceReferenceGroups, sourceReferenceAt, verifySourceReferences, activeImportRows } from '../../shared/finance-import-overlap.mjs'
 
@@ -186,18 +187,33 @@ export async function pendingSettlements(batch: any) {
   for (const row of activeImportRows(batch)) if (!result.has(row.line)) result.set(row.line, { state: 'pending' })
   return result
 }
+// The calendar link of a statement batch (plan omf-calendar-gmail-build-20261015 §2 S15): runs after the batch is stored
+// and again on every re-delivery while the earlier result is unfinished (pending, unbound, no due date, review, no
+// authority). It never blocks the import: a failure here leaves the batch pending for the next delivery or binding.
+async function linkImportCalendar(ownerId: string, account: any, batch: any, metadata: any) {
+  let calendar: any
+  try {
+    const fresh: any = await FinancialAccount.findById(account._id).lean()
+    calendar = await reconcileBill(ownerId, fresh || account, importEvidence(batch, metadata?.paymentDueDate), 'statement-csv')
+  } catch (error: any) { calendar = { state: 'pending', retry: true, error: error?.name || 'Error', at: new Date() } }
+  await FinanceImport.updateOne({ _id: batch._id }, { $set: { calendar } })
+  return calendar
+}
 export async function acceptImport(ownerId: string, account: any, bytes: Buffer, metadata: any, collectorId?: string) {
   if (collectorId) metadata = await collectorImportMetadata(ownerId, account, bytes, metadata)
   let parsed: ReturnType<typeof parseCardImport>
   try { parsed = parseFinanceImport(bytes, account, metadata) } catch (error: any) { fail(400, error.message) }
   if (metadata.pageCount !== undefined && (!Number.isSafeInteger(Number(metadata.pageCount)) || Number(metadata.pageCount) !== parsed!.rows.length)) fail(400, 'CSV row count does not match the card statement')
   const lookup = { ownerId, accountId: account._id, hash: parsed!.sha256 }
-  const duplicate = (batch: any) => {
+  const duplicate = async (batch: any) => {
     if (account.provider === 'aplus' && JSON.stringify(batch.period) !== JSON.stringify(parsed!.period)) fail(409, 'This file was already uploaded with different statement metadata; review the original import')
-    return { id: String(batch._id), rowCount: batch.rowCount, duplicateFile: true }
+    // Unfinished calendar work is re-run on re-delivery (the owner's re-upload with the due date, the collector's retry);
+    // a historical batch without a calendar record is left alone.
+    const calendar = batch.calendar?.state && RETRY_IMPORT_STATES.includes(batch.calendar.state) ? await linkImportCalendar(ownerId, account, batch, metadata) : batch.calendar
+    return { id: String(batch._id), rowCount: batch.rowCount, duplicateFile: true, ...(calendar ? { calendar } : {}) }
   }
   const needsFinalization = (batch: any) => isPending(batch) && !parsed!.sourceStatus && parsed!.period.kind === 'statement'
-  const existing: any = await FinanceImport.findOne(lookup).select('_id rowCount period sourceStatus finalization').lean()
+  const existing: any = await FinanceImport.findOne(lookup).select('_id rowCount period sourceStatus finalization calendar reconciliation hash collectorId').lean()
   if (existing && !needsFinalization(existing)) return duplicate(existing)
   // Import creation and posting/draft writes share the same account lease.
   const lease = randomUUID()
@@ -222,7 +238,8 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
     const previous: any[] = await FinanceImport.find({ ownerId, accountId: account._id }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus finalization').limit(101).lean()
     if (previous.length > 100) fail(409, 'Too many overlapping imports; review the source history first')
     for (const prior of previous) await importSourceReferences(prior)
-    const data = { _id: new mongoose.Types.ObjectId(), ownerId, accountId: account._id, hash: parsed!.sha256, provider: account.provider || 'amex', sourceStatus: parsed!.sourceStatus, sourceFormat: parsed!.sourceFormat, sourceCapturedAt: parsed!.sourceCapturedAt, reconciliation: parsed!.reconciliation, originalName: (account.provider || 'amex') + '-activity.' + (parsed!.sourceFormat || 'csv'), bytes: bytes.length, encoding: parsed!.encoding, parserVersion: parsed!.parserVersion, period: parsed!.period, rows: parsed!.rows, rowCount: parsed!.rows.length, downloadedAt: new Date(), collectorId }
+    const calendarEligible = importCalendarEligible(locked, parsed!)
+    const data = { _id: new mongoose.Types.ObjectId(), ownerId, accountId: account._id, hash: parsed!.sha256, provider: account.provider || 'amex', sourceStatus: parsed!.sourceStatus, sourceFormat: parsed!.sourceFormat, sourceCapturedAt: parsed!.sourceCapturedAt, reconciliation: parsed!.reconciliation, originalName: (account.provider || 'amex') + '-activity.' + (parsed!.sourceFormat || 'csv'), bytes: bytes.length, encoding: parsed!.encoding, parserVersion: parsed!.parserVersion, period: parsed!.period, rows: parsed!.rows, rowCount: parsed!.rows.length, downloadedAt: new Date(), collectorId, ...(calendarEligible ? { calendar: { state: 'pending', at: new Date() } } : {}) }
     const sourceReferences = buildSourceReferences(data, previous)
     try { verifySourceReferences({ ...data, sourceReferences }, previous) } catch { fail(409, 'Overlapping purchase groups need source review before this file can be imported') }
     const target = archivePath(parsed!.sha256); await mkdir(path.dirname(target), { recursive: true })
@@ -233,7 +250,8 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
     if (!await FinancialAccount.exists({ _id: account._id, ownerId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } })) fail(409, 'Import lease expired; retry')
     const batch = await FinanceImport.create({ ...data, sourceReferences })
     await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: lease }, { $set: { lastSuccessAt: new Date(), lastMessage: parsed!.rows.length + ' rows downloaded' } })
-    return { id: batch._id.toString(), rowCount: batch.rowCount, duplicateFile: false }
+    const calendar = calendarEligible ? await linkImportCalendar(ownerId, locked, batch, metadata) : undefined
+    return { id: batch._id.toString(), rowCount: batch.rowCount, duplicateFile: false, ...(calendar ? { calendar } : {}) }
   } finally { await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: lease }, { $unset: { commitLease: '', commitLeaseUntil: '' } }) }
 }
 

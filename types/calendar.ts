@@ -8,6 +8,22 @@ export interface BankTransferInfo {
   accountHolder: string      // 口座名義
 }
 
+// The evidence a card bill came from (server/models/Payment.ts IPaymentSource); present only on bills the issuer's
+// notice or statement produced or adopted. Such a bill settles without a second purchase expense.
+export interface PaymentSource {
+  kind: 'card-statement'
+  provider: 'aplus'
+  accountId: string
+  periodKey: string
+  statementMonth: string
+  importId?: string
+  noticeId?: string
+  sourceHash?: string
+  statementTotal?: number
+  dueDateEvidence?: 'issuer-page' | 'user-entered' | 'issuer-mail'
+  adopted?: boolean
+}
+
 export interface Payment {
   id: string
   title: string
@@ -21,6 +37,9 @@ export interface Payment {
   recurringFrequency?: 'weekly' | 'monthly' | 'quarterly' | 'yearly'
   bankTransfer?: BankTransferInfo
   notes?: string
+  organizationId?: string
+  source?: PaymentSource
+  settledAt?: string
   createdAt: string
   updatedAt: string
 }

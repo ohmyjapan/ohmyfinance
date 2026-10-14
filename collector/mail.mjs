@@ -1,4 +1,6 @@
 import { google } from 'googleapis';
+import { digest } from '../shared/amex.mjs';
+import { BILLING_MAIL_PARSER, billingMailQuery, parseBillingMail, authenticationResults } from '../shared/billing-mail.mjs';
 
 const SUBJECT = '［American Express］認証コードのお知らせ';
 function parts(part, mime) {
@@ -45,5 +47,46 @@ export class LoginMailbox {
     }
     // Multiple valid messages can be a resend or another login. Leave that case to the user.
     return matches.length===1 ? matches[0] : null;
+  }
+}
+// One Gmail message → the notice artifact the collector uploads (plan omf-calendar-gmail-build-20261015 §2 S10/S11): the
+// parsed claims, the headers that identify the mail, the body's hash and its authentication verdicts — never the body.
+export function billingNotice(message, mailbox, now=Date.now) {
+  const headers = Object.fromEntries((message.payload?.headers || []).map(h=>[h.name.toLowerCase(),h.value]));
+  const text = messageText(message.payload || {}).replace(/\r/g,'');
+  const parsed = parseBillingMail(headers, text, { now: now() });
+  if (!parsed) return null;
+  return { kind:'notice', parserVersion:BILLING_MAIL_PARSER, mailbox, mailId:message.id, threadId:message.threadId || message.id, internalDate:Number(message.internalDate) || null, subject:headers.subject || '', from:headers.from || '', bodySha256:digest(text), authentication:authenticationResults(headers), issuer:parsed.issuer, noticeKind:parsed.kind, claims:parsed.claims, readAt:new Date(now()).toISOString() };
+}
+// Read-only reader of the issuer billing notices (B5): the same OAuth construction and profile check as LoginMailbox, a
+// separate class with no shared state; it refuses before any inbox read unless the account names this very mailbox,
+// searches the two senders and the two confirmation subjects since `since`, walks every page, and never modifies a label.
+// `client` is the fixture's seam (a fake Gmail client); the collector passes none.
+export class BillingMailbox {
+  constructor(config,{client=null}={}) {
+    const auth = new google.auth.OAuth2(config.clientId,config.clientSecret);
+    auth.setCredentials({refresh_token:config.refreshToken});
+    this.gmail=client || google.gmail({version:'v1',auth}); this.mailbox=String(config.mailbox||'').toLowerCase();
+  }
+  async verify() {
+    const {data}=await this.gmail.users.getProfile({userId:'me'});
+    if (data.emailAddress?.toLowerCase()!==this.mailbox) throw new Error('Gmail connection belongs to a different mailbox');
+  }
+  async list(account,since,{signal=null,now=Date.now,maxPages=20}={}) {
+    const expected=String(account?.billingMail?.mailbox||'').toLowerCase();
+    if (!expected || expected!==this.mailbox) throw new Error('Account billing mailbox does not match the Gmail connection'); // guard:billing-mailbox
+    await this.verify();
+    const notices=[];let pageToken;
+    for(let page=0;page<maxPages;page++) {
+      signal?.throwIfAborted();
+      const {data}=await this.gmail.users.messages.list({userId:'me',q:billingMailQuery(since),maxResults:50,...(pageToken?{pageToken}:{})});
+      for(const item of data.messages || []) {
+        signal?.throwIfAborted();
+        const {data:message}=await this.gmail.users.messages.get({userId:'me',id:item.id,format:'full'});
+        const notice=billingNotice(message,this.mailbox,now);if(notice)notices.push(notice);
+      }
+      pageToken=data.nextPageToken;if(!pageToken)break;
+    }
+    return notices;
   }
 }

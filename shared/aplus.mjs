@@ -21,9 +21,13 @@ export function aplusPeriod(value) {
   }
   return {kind:'statement',start,end,key:'statement:'+start+':'+end,statementMonth:value.statementMonth,...(fiscalPeriod?{fiscalPeriod}:{})};
 }
+// The issuer-shown payment due date (My APLUS overview, the confirmation mail, or the owner's hand): optional, kept as
+// YYYY-MM-DD when valid, null when absent or unreadable — it never blocks an import.
+const dueDateOf=value=>{ if(value===undefined||value===null||value==='') return null; try{ return dateOnly(value); }catch{ return null; } };
 export function parseAplus(bytes,cardIdentifiers,metadata){
   if(!bytes.length||bytes.length>MAX_BYTES) throw Error('CSVは5MB以下にしてください');
   const coverage=aplusPeriod(metadata),expectedTotal=yen(metadata.statementTotal);
+  const paymentDueDate=metadata.paymentDueDate===undefined?undefined:dueDateOf(metadata.paymentDueDate);
   // The refund notice is optional: stated → it must equal the refund rows in the file; unstated → no equality check.
   const expectedRefund=metadata.refundTotal===undefined||metadata.refundTotal===null||metadata.refundTotal===''?null:yen(metadata.refundTotal);
   if(expectedRefund!==null&&expectedRefund<0) throw Error('別途返金額は正の金額で指定してください');
@@ -76,5 +80,5 @@ export function parseAplus(bytes,cardIdentifiers,metadata){
   if(paymentTotal!==expectedTotal) throw Error('CSVの支払金額合計とAplusの表示額が一致しません');
   if(expectedRefund!==null&&sourceRefundTotal!==expectedRefund) throw Error('CSVの別途返金額とAplusの返金通知額が一致しません');
   if(Buffer.byteLength(JSON.stringify(rows))>8*1024*1024) throw Error('CSVを小さい期間に分割してください');
-  return {parserVersion:PARSER_VERSION,encoding:'utf-8',sha256:digest(bytes),rows,period:coverage,reconciliation:{statementTotal:paymentTotal,purchaseTotal,separateRefundTotal:expectedRefund,sourceRefundTotal,accountAdjustmentTotal,verified:true,version:2}};
+  return {parserVersion:PARSER_VERSION,encoding:'utf-8',sha256:digest(bytes),rows,period:coverage,reconciliation:{statementTotal:paymentTotal,purchaseTotal,separateRefundTotal:expectedRefund,sourceRefundTotal,accountAdjustmentTotal,verified:true,version:2,...(paymentDueDate===undefined?{}:{paymentDueDate})}};
 }

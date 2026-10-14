@@ -3,11 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir,readFile,writeFile,readdir,rename } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { mkdir,readFile,writeFile,readdir,rename,link,unlink } from 'node:fs/promises';
+import { randomBytes,randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf, keyName, sealEnvelope, openEnvelope, samePublicKey, replaceVaultFile, DIALOG_TIMEOUT_MS, openCapsule } from './vault.mjs';
 import { collectStatement, collectAplusStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
+import { BillingMailbox } from './mail.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
 import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin, connectWithOmf, acknowledgeWithOmf, cancelConnectWithOmf, launch } from './omf-authorization.mjs';
@@ -211,11 +212,14 @@ async function pending(account,config) {
   return result;
 }
 // The upload query of a retained artifact: Amex manifests keep today's shape (pageCount always present); Aplus statements
-// add their displayed totals and Aplus pending captures carry no CSV row count.
+// add their displayed totals and the issuer-shown due date, Aplus pending captures carry no CSV row count, billing
+// notices carry their mail id, the mail read's receipt only its kind.
 export function uploadQuery(m,account) {
-  const query={accountId:account._id,jobId:account.jobId,kind:m.kind,start:m.start,end:m.end};
+  const query={accountId:account._id,jobId:account.jobId,kind:m.kind};
+  if(m.start!==undefined)query.start=m.start;if(m.end!==undefined)query.end=m.end;
   if(m.pageCount!==undefined&&m.pageCount!==null)query.pageCount=String(m.pageCount);
-  if(m.kind==='statement'&&m.statementMonth!==undefined){query.statementMonth=m.statementMonth;query.statementTotal=String(m.statementTotal);if(m.refundTotal!==undefined&&m.refundTotal!==null)query.refundTotal=String(m.refundTotal);}
+  if(m.kind==='statement'&&m.statementMonth!==undefined){query.statementMonth=m.statementMonth;query.statementTotal=String(m.statementTotal);if(m.refundTotal!==undefined&&m.refundTotal!==null)query.refundTotal=String(m.refundTotal);if(typeof m.paymentDueDate==='string'&&m.paymentDueDate)query.paymentDueDate=m.paymentDueDate;}
+  if(m.kind==='notice'&&m.mailId!==undefined)query.mailId=String(m.mailId);
   return query;
 }
 // Sends the exact retained bytes with the manifest-derived content type; the acknowledgement is written only after OMF answered.
@@ -241,13 +245,51 @@ async function outboxMonths(account,root,config) {
   for(const folder of folders.filter(f=>f.isDirectory())){try{const m=JSON.parse(await readFile(path.join(base,folder.name,'manifest.json'),'utf8'));if(m.accountId===account._id&&m.primaryCard===account.primaryCard&&m.ownerId===String(account.ownerId)&&m.origin===config.baseUrl&&m.kind==='statement'&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(m.statementMonth||'')))months.add(m.statementMonth);}catch(e){if(e.code!=='ENOENT')throw e;}}
   return [...months];
 }
-// One claimed Aplus job (plan omf-aplus-automation-20261013 §2 P2/C3): drain the outbox, collect what neither OMF nor the
-// outbox holds, upload every new artifact, and complete only once each is acknowledged. A failed upload leaves the rest
-// unacknowledged for the next claim. `deps` are the fixture's seams; the collector passes its own.
-export async function runAplusJob(account,config,live,{status,covered=[],credentials={},pending:listPending=pending,upload:send=upload,collect=collectAplusStatement,directory:root=directory,onLaunch=null,batch='batch',codeSource=null,signal=null}={}) {
-  const label=item=>item.manifest.kind==='pending'?'未請求明細を送信中':`${item.manifest.statementMonth||'確定明細'} を送信中`;
-  const drained={statement:0,pending:0};
-  for(const item of await listPending(account,config)){await status('running',label(item));await send(config,account,item,live);drained[item.manifest.kind==='pending'?'pending':'statement']++;}
+// A JSON artifact of the claimed job (a billing notice, the mail read's receipt) retained in the outbox exactly like a
+// statement: bound to the account, owner, origin and job, hashed, acknowledged only after OMF answered.
+async function writeJsonArtifact(root,bound,name,kind,value,extra,now) {
+  const dir=path.join(root,'outbox',bound.accountId,name);await mkdir(dir,{recursive:true});
+  const filename=randomUUID(),bytes=Buffer.from(JSON.stringify(value,null,2)+'\n');
+  await writeFile(path.join(dir,filename),bytes,{flag:'wx',mode:0o600});
+  const manifest={...bound,kind,sourceFormat:'json',...extra,sha256:digest(bytes),filename,downloadedAt:new Date(now()).toISOString()};
+  const file=path.join(dir,'manifest.json'),temporary=file+'.'+randomUUID()+'.tmp';
+  try{await writeFile(temporary,JSON.stringify(manifest,null,2),{flag:'wx',mode:0o600});await link(temporary,file);}
+  finally{await unlink(temporary).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+  return {directory:dir,manifest};
+}
+// One claimed Aplus job (plan omf-aplus-automation-20261013 §2 P2/C3): drain the outbox, read the issuer billing notices
+// when the account asks for it (plan omf-calendar-gmail-build-20261015 §2 S11: every notice OMF does not yet hold becomes
+// an outbox artifact and is uploaded; a durable receipt of the read follows, success or failure; a mail failure never
+// stops the statements), collect what neither OMF nor the outbox holds, upload every new artifact, and complete only
+// once each is acknowledged. A failed upload leaves the rest unacknowledged for the next claim. `deps` are the fixture's
+// seams; the collector passes its own.
+export async function runAplusJob(account,config,live,{status,covered=[],coveredNotices=[],mailbox=null,credentials={},pending:listPending=pending,upload:send=upload,collect=collectAplusStatement,directory:root=directory,onLaunch=null,batch='batch',codeSource=null,signal=null,now=Date.now}={}) {
+  const label=item=>item.manifest.kind==='pending'?'未請求明細を送信中':item.manifest.kind==='notice'?'請求メールを送信中':item.manifest.kind==='billing-mail'?'請求メールの結果を送信中':`${item.manifest.statementMonth||'確定明細'} を送信中`;
+  const drained={statement:0,pending:0,notice:0,mail:0};
+  const bucket=kind=>kind==='pending'?'pending':kind==='notice'?'notice':kind==='billing-mail'?'mail':'statement';
+  for(const item of await listPending(account,config)){await status('running',label(item));await send(config,account,item,live);drained[bucket(item.manifest.kind)]++;}
+  if(account.billingMail?.enabled) {
+    const bound={accountId:account._id,primaryCard:account.primaryCard,jobId:account.jobId,...(account.ownerId?{ownerId:String(account.ownerId)}:{}),origin:config.baseUrl,provider:'aplus'};
+    const mail={read:0,sent:0,error:null};
+    await status('running','請求メールを確認');
+    try {
+      if(!mailbox)throw new Error('メールボックスの接続が保存されていません');
+      const notices=await mailbox.list(account,now()-45*86400000,{signal,now});
+      mail.read=notices.length;
+      for(const notice of notices) {
+        signal?.throwIfAborted();
+        if(coveredNotices.includes(notice.mailId))continue;
+        const item=await writeJsonArtifact(root,bound,`${account.jobId}-notice-${notice.mailId}`,'notice',notice,{mailId:notice.mailId},now);
+        await status('running',label(item));await send(config,account,item,live);mail.sent++;
+      }
+    } catch(error) {
+      if(signal?.aborted||error?.name==='AbortError'||[401,403].includes(error?.status))throw error;
+      mail.error=error?.message||'請求メールを読めませんでした';
+    }
+    const receipt=await writeJsonArtifact(root,bound,`${account.jobId}-mail`,'billing-mail',{kind:'billing-mail',ok:!mail.error,readAt:new Date(now()).toISOString(),noticesRead:mail.read,noticesSent:mail.sent,...(mail.error?{error:String(mail.error).slice(0,300)}:{})},{},now);
+    await send(config,account,receipt,live);
+    if(mail.error)await status('running','請求メールを読めませんでした');
+  }
   const held=[...new Set([...covered,...await outboxMonths(account,root,config)])];
   const result=await collect(account,credentials,root,status,{batch,onLaunch,origin:config.baseUrl,covered:held,jobId:account.jobId,codeSource,signal});
   for(const item of [...result.items,...(result.pending?[result.pending]:[])]){await status('running',label(item));await send(config,account,item,live);}
@@ -301,17 +343,21 @@ async function tickWork() {
       // Aplus (plan omf-aplus-automation-20261013): the outbox is drained, the missing finalized months and the unbilled page
       // are collected, each artifact is acknowledged, then the job completes. The saved login is opened only here, for the
       // claimed account's own entry (or the single legacy aplus entry when it can only belong to this account).
-      let credentials={};
+      let credentials={},gmail=null;
       assertSession(live);
       if(live.mode==='protected') {
         const entry=credentialEntryFor(account,await secrets.list(),config.accountInfo||[]);
         if(entry)credentials=await secrets.open(entry,aadFor(live.installationId,'aplus',entry==='aplus'?null:account,config),live.broker);
+        // The mailbox grant is opened only when this claimed account reads its billing notices, exactly as the Amex branch
+        // opens it for its login codes; never for an idle tick, a status or an upload.
+        if(account.billingMail?.enabled&&await secrets.has('gmail'))gmail=await secrets.open('gmail',aadFor(live.installationId,'gmail',null,config),live.broker);
       }
       assertSession(live);
       // The statement-code source (plan omf-auto-sync-build-20261014 §2 A9): the configured tablet, read through adb inside
       // this claimed job only; the session's abort (Windows lock, pause, expiry, revocation) cancels the wait.
       const codeSource=config.smsSource?.serial?new AdbSmsSource({serial:config.smsSource.serial,directory}):null;
-      await runAplusJob(account,config,live,{status,covered:covered?.statements||[],credentials,onLaunch:ownBrowser(live),batch:live.id,codeSource,signal:live.abort.signal});credentials=null;
+      const mailbox=gmail?new BillingMailbox(gmail):null;gmail=null;
+      await runAplusJob(account,config,live,{status,covered:covered?.statements||[],coveredNotices:covered?.notices||[],mailbox,credentials,onLaunch:ownBrowser(live),batch:live.id,codeSource,signal:live.abort.signal});credentials=null;
       assertSession(live);live.ran=true;
       clearInterval(heartbeat);
     } else {

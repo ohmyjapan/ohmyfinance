@@ -190,6 +190,11 @@ export const useCalendarStore = defineStore('calendar', {
       // Update payment status
       const updatedPayment = await this.updatePayment(id, { status: 'paid' })
 
+      // A card bill from the issuer's statement or notice is settled by the status alone: its purchases are already
+      // ledger rows from the statement import, so no second purchase expense is posted. Decided on the server's echo,
+      // never on the row held before the request.
+      if (updatedPayment?.source?.kind === 'card-statement') return updatedPayment
+
       // Create a transaction for this payment
       try {
         await $fetch('/api/transactions', {

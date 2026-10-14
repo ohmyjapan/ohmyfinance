@@ -181,7 +181,7 @@ try {
   const synced = await call('accounts/' + accountId + '/sync', { method: 'POST' }); assert.equal(synced.status, 200, 'sync refused for Aplus: ' + JSON.stringify(synced)); assert.equal(synced.data.account.jobState, 'queued'); const jobId = synced.data.account.jobId;
   assert.equal((await call('accounts/' + accountId + '/sync', { method: 'POST' })).status, 409);
   const claimed = await call('collector/claim', { method: 'POST', token, body: {} }); assert.equal(claimed.status, 200, JSON.stringify(claimed)); assert.ok(claimed.data.account, 'claim returned no Aplus account'); assert.equal(claimed.data.account.jobId, jobId);
-  assert.deepEqual(claimed.data.covered, { statements: [] }); assert.equal(claimed.data.account.lastMessage, '明細の取得を開始');
+  assert.deepEqual(claimed.data.covered, { statements: [], notices: [] }); assert.equal(claimed.data.account.lastMessage, '明細の取得を開始');
   assert.equal((await call('collector/accounts', { token })).data.accounts.length, 1);
   pass('an Aplus account can be given to a collector, queued by 確定明細を取得 and claimed with an empty covered list');
   // Statement upload, duplicate, covered.
@@ -197,7 +197,7 @@ try {
   assert.equal(sha(await readFile(path.join(process.env.OMF_DATA_DIR, 'imports', stored.hash.slice(0, 2), stored.hash + '.csv'))), sha(statement));
   assert.equal((await call('collector/status', { method: 'POST', token, body: { accountId, jobId, state: 'complete', message: '確定明細 1件・未請求 0件を保存' } })).status, 200);
   const second = await call('accounts/' + accountId + '/sync', { method: 'POST' }); assert.equal(second.status, 200); const jobId2 = second.data.account.jobId; assert.notEqual(jobId2, jobId);
-  const claimed2 = await call('collector/claim', { method: 'POST', token, body: {} }); assert.deepEqual(claimed2.data.covered, { statements: ['2026-09'] }); assert.equal(claimed2.data.account.jobId, jobId2);
+  const claimed2 = await call('collector/claim', { method: 'POST', token, body: {} }); assert.deepEqual(claimed2.data.covered, { statements: ['2026-09'], notices: [] }); assert.equal(claimed2.data.account.jobId, jobId2);
   pass('a statement CSV uploads once with its metadata, re-uploads as the same import, is archived byte-exact, and the next claim lists it as covered');
   // Pending JSON through the collector route, with the pending manifest page count forwarded, then the matching final.
   // An unbilled capture taken after the September statement is finalized bills from 2026-10 on (first payment month 26/10).

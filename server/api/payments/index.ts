@@ -3,6 +3,7 @@ import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { Payment } from '../../models/Payment'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 // Parse date string to noon UTC to avoid timezone boundary issues
 // Input: "2026-01-26" -> Output: Date object representing 2026-01-26 12:00:00 UTC
@@ -32,12 +33,17 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  // GET - List all payments
+  // Every calendar reader and writer is scoped to the selected company, checked against its current membership
+  // (GUARD, plan omf-calendar-gmail-build-20261015 §2 S2/S16): no company or a lapsed membership answers 403.
+  const { organizationId } = await calendarCompany(event)
+
+  // GET - List the selected company's payments (bills the owner removed from the calendar stay hidden)
   if (method === 'GET') {
     const query = getQuery(event)
 
     // Build filter
-    const filter: Record<string, any> = {}
+    const filter: Record<string, any> = { suppressedAt: { $exists: false } }
+    filter.organizationId = organizationId // guard:company-filter
 
     if (query.type) {
       filter.type = query.type
@@ -97,7 +103,8 @@ export default defineEventHandler(async (event) => {
         recurring: body.recurring || false,
         recurringFrequency: body.recurringFrequency,
         bankTransfer: body.bankTransfer,
-        notes: body.notes
+        notes: body.notes,
+        organizationId
       })
 
       await payment.save()

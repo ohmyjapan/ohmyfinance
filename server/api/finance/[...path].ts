@@ -3,6 +3,12 @@ import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
 import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, autoSyncInput, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
+import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice } from '../../services/financeBillService'
+
+// A JSON artifact of the collector (notice, mail receipt): bounded by csvBody, parsed once, never echoed back.
+async function jsonArtifact(event: any) {
+  try { return JSON.parse((await csvBody(event)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; return fail(400, 'Invalid collector artifact JSON') }
+}
 
 export default defineEventHandler(async event => {
   const parts = (event.path.split('?')[0].split('/api/finance/')[1] || '').split('/').filter(Boolean)
@@ -16,8 +22,10 @@ export default defineEventHandler(async event => {
         const account: any = await FinancialAccount.findOneAndUpdate({ ...scope, $or: [{ jobState: 'queued' }, { jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $lt: new Date() } }] }, { $set: { jobState: 'running', jobDeviceId: device._id, jobLeaseUntil: new Date(Date.now() + 180000), lastAttemptAt: new Date(), lastMessage: '明細の取得を開始' } }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
         if (account?.provider !== 'aplus') return { account }
         // Finalized Aplus statement months OMF already holds (read only): the collector never downloads them again.
+        // Billing notices already completed or owned by a member (read only): the collector never sends them again; a
+        // pending or transient one is sent again and retried.
         const held: any[] = await FinanceImport.find({ ownerId: device.ownerId, accountId: account._id, provider: 'aplus', 'period.kind': 'statement' }).select('period').lean()
-        return { account, covered: { statements: [...new Set(held.map(b => b.period?.statementMonth).filter((m: any): m is string => typeof m === 'string'))] } }
+        return { account, covered: { statements: [...new Set(held.map(b => b.period?.statementMonth).filter((m: any): m is string => typeof m === 'string'))], notices: await coveredNoticeIds(account._id) } }
       }
       if (parts[1] === 'status' && parts.length === 2 && method === 'POST') {
         const body = await readBody(event)
@@ -30,10 +38,15 @@ export default defineEventHandler(async event => {
         const query = getQuery(event)
         const account: any = await FinancialAccount.findOne({ ...scope, _id: { $in: device.accountIds, $eq: id(query.accountId) }, jobId: query.jobId, jobDeviceId: device._id, jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $gt: new Date() } }).lean()
         if (!account) fail(409, 'Job is unavailable or expired')
-        const json = account.provider === 'aplus' && query.kind === 'pending'
+        const kind = String(query.kind || '')
+        const json = account.provider === 'aplus' && ['pending', 'notice', 'billing-mail'].includes(kind)
         if (!getHeader(event,'content-type')?.startsWith(json ? 'application/json' : 'text/csv')) fail(415, json ? 'Bank page JSON capture required' : 'CSV required')
+        // An issuer billing notice (parsed claims + body hash, never the body) and the mail read's receipt are JSON
+        // artifacts of the same claimed job; the statement CSV path is unchanged apart from the issuer-shown due date.
+        if (json && kind === 'notice') return await recordBillingNotice(device.ownerId.toString(), account, await jsonArtifact(event), device._id.toString())
+        if (json && kind === 'billing-mail') return await recordBillingMailStatus(account, await jsonArtifact(event))
         // A JSON page capture proves its own page and row counts (shared/finance-pending.mjs); its manifest page count is not a CSV row count.
-        return await acceptImport(device.ownerId.toString(), account, await csvBody(event), { kind: query.kind, start: query.start, end: query.end, fiscalStart: query.fiscalStart, fiscalEnd: query.fiscalEnd, pageCount: json ? undefined : query.pageCount, statementMonth: query.statementMonth, statementTotal: query.statementTotal, refundTotal: query.refundTotal }, device._id.toString())
+        return await acceptImport(device.ownerId.toString(), account, await csvBody(event), { kind: query.kind, start: query.start, end: query.end, fiscalStart: query.fiscalStart, fiscalEnd: query.fiscalEnd, pageCount: json ? undefined : query.pageCount, statementMonth: query.statementMonth, statementTotal: query.statementTotal, refundTotal: query.refundTotal, paymentDueDate: query.paymentDueDate }, device._id.toString())
       }
       fail(404, 'Collector endpoint not found')
     }
@@ -62,6 +75,19 @@ export default defineEventHandler(async event => {
         await FinancialAccount.updateOne({ _id: account._id, ownerId }, { $set: { 'autoSync.enabled': autoSync.enabled, 'autoSync.hour': autoSync.hour } })
         return { autoSync }
       }
+      // The payment-calendar company of this account (GUARD: current membership of the chosen company). Existing bills stay
+      // in the company they were created in; unfinished notice and statement work is re-run under the new binding.
+      if (parts[2] === 'calendar' && parts.length === 3 && method === 'PUT') {
+        if (account.provider !== 'aplus') fail(400, 'Aplus account required')
+        return await bindCalendarCompany(ownerId, account, await readBody(event))
+      }
+      // Billing mail read inside this account's collector job: the setting only; the status fields are the collector's.
+      if (parts[2] === 'billing-mail' && parts.length === 3 && method === 'PUT') {
+        if (account.provider !== 'aplus') fail(400, 'Aplus account required')
+        const billingMail = billingMailInput(await readBody(event))
+        await FinancialAccount.updateOne({ _id: account._id, ownerId }, { $set: { 'billingMail.enabled': billingMail.enabled, 'billingMail.mailbox': billingMail.mailbox } })
+        return { billingMail }
+      }
       if (parts.length === 2 && method === 'PATCH') {
         const input = accountInput({ provider: account.provider || 'amex', ...await readBody(event) })
         if (input.provider !== (account.provider || 'amex')) fail(400, 'The provider of an existing card account cannot be changed')
@@ -74,6 +100,12 @@ export default defineEventHandler(async event => {
         if (!getHeader(event,'content-type')?.startsWith(jsonCapture ? 'application/json' : 'text/csv')) fail(415, jsonCapture ? 'Bank page JSON capture required' : 'CSV required')
         return await acceptImport(ownerId, account, await csvBody(event), getQuery(event))
       }
+    }
+    // Issuer billing notices of one owned account (no bodies) and the member's explicit review action on one of them
+    // (GUARD: current membership of the chosen bill's or company's organization is checked at the write).
+    if (parts[0] === 'notices') {
+      if (parts.length === 1 && method === 'GET') return await listNotices(ownerId, id(getQuery(event).accountId))
+      if (parts.length === 3 && parts[2] === 'link' && method === 'PUT') return await linkNotice(ownerId, parts[1], await readBody(event))
     }
     if (parts[0] === 'collectors') {
       if (parts.length === 1 && method === 'GET') return { collectors: await FinanceCollector.find({ ownerId }).select('-tokenHash').lean() }

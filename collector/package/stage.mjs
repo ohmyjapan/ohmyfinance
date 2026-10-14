@@ -23,7 +23,7 @@ export const ALLOWLIST = [
   ...['browser','index','interaction','login','mail','run','statement','vault','yayoi','omf-authorization','aplus','aplus-verification','sms-source'].map(name=>({from:`collector/${name}.mjs`})),
   ...['browser-process','key-broker','private-acl','vault'].map(name=>({from:`collector/windows/${name}.ps1`})),
   { from: 'collector/setup.html' }, { from: 'collector/setup.js' }, { from: 'collector/package.json' }, { from: 'collector/package-lock.json' },
-  { from: 'shared/amex.mjs' }, { from: 'shared/aplus.mjs' }, { from: 'shared/finance-pending.mjs' }
+  { from: 'shared/amex.mjs' }, { from: 'shared/aplus.mjs' }, { from: 'shared/finance-pending.mjs' }, { from: 'shared/billing-mail.mjs' }
 ];
 export const PM2_NAME = 'OhMyFinance-collector';
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');

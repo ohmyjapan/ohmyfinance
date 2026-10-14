@@ -7,6 +7,7 @@ import { Payment } from '../../models/Payment'
 import Organization from '../../models/Organization'
 import User from '../../models/User'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'GET') {
@@ -33,16 +34,22 @@ export default defineEventHandler(async (event) => {
     }
 
     // Build query filter based on organization
-    // Note: Currently Transaction and Payment models don't have organizationId
+    // Note: Currently Transaction model doesn't have organizationId
     // So we fetch all data. When multi-tenancy is added, filter by organizationId
     const transactionFilter: Record<string, any> = {}
     const receiptFilter: Record<string, any> = {}
-    const paymentFilter: Record<string, any> = {}
+    const paymentFilter: Record<string, any> = { suppressedAt: { $exists: false } }
 
     // If organization exists and Receipt has organizationId, filter by it
     if (organizationId) {
       receiptFilter.organizationId = organizationId
     }
+
+    // Payments are company-scoped (plan omf-calendar-gmail-build-20261015 §2 S4, P1): the count is the selected
+    // company's, only for a current member of it; no company or a lapsed membership counts nothing.
+    let calendarOrganizationId = null
+    try { calendarOrganizationId = (await calendarCompany(event)).organizationId } catch { calendarOrganizationId = null }
+    paymentFilter.organizationId = calendarOrganizationId || { $in: [] } // guard:company-count
 
     // Get transaction stats
     const [

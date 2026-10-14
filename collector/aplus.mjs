@@ -110,7 +110,22 @@ export async function awaitDownload({ jobDir, session = null, request, state, on
   }
 }
 
-const statementManifest = (bound, month, statementTotal, filename, parsed, downloadedAt) => ({ ...bound, kind: 'statement', sourceFormat: 'csv', statementMonth: month, statementTotal, start: parsed.period.start, end: parsed.period.end, sha256: parsed.sha256, filename, rowCount: parsed.rows.length, downloadedAt });
+/**
+ * The payment due date My APLUS shows above a finalized statement (`MM/DD お支払い金額 … 確定`), as a YYYY-MM-DD in the
+ * statement month, or null: an unbilled summary, an unconfirmed total, a day outside the statement month (a Dec→Jan
+ * roll-over has no recorded case) or unreadable text give null — the date is fallback evidence; the issuer's mail is primary.
+ */
+export function aplusPaymentDueDate(overview, month) {
+  const text = String(overview ?? '');
+  const m = /(\d{2})\/(\d{2})\s*お支払い金額/.exec(text);
+  if (!m || !/確定/.test(text) || /未確定/.test(text) || !monthOf(month)) return null;
+  const [, mm, dd] = m;
+  if (mm !== month.slice(5, 7)) return null;
+  const day = month + '-' + dd, date = new Date(day + 'T00:00:00.000Z');
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === day ? day : null;
+}
+
+const statementManifest = (bound, month, statementTotal, filename, parsed, downloadedAt, paymentDueDate = null) => ({ ...bound, kind: 'statement', sourceFormat: 'csv', statementMonth: month, statementTotal, start: parsed.period.start, end: parsed.period.end, sha256: parsed.sha256, filename, rowCount: parsed.rows.length, downloadedAt, ...(paymentDueDate ? { paymentDueDate } : {}) });
 
 // Publish a complete new manifest exclusively. A killed or failed write leaves no partially readable manifest, and
 // link() retains the existing wx contract: another completed manifest is never overwritten.
@@ -133,8 +148,9 @@ async function completedAttempt(jobDir, bound, month, account, { now, wait, poll
   if (files.length !== 1 || names.includes(files[0] + '.crdownload')) return null;
   const filename = await awaitDownload({ jobDir, request: async () => {}, state: async () => ({ kind: 'recovering' }), timeoutMs: Math.max(2000, pollMs * 2), extensionMs: 0, now, wait, pollMs });
   const bytes = await readFile(path.join(jobDir, filename));
-  const parsed = parseAplus(bytes, account.cardIdentifiers, { kind: 'statement', statementMonth: month, statementTotal: marker.statementTotal });
-  const manifest = statementManifest(bound, month, marker.statementTotal, filename, parsed, new Date(now()).toISOString());
+  const paymentDueDate = typeof marker.paymentDueDate === 'string' ? marker.paymentDueDate : null;
+  const parsed = parseAplus(bytes, account.cardIdentifiers, { kind: 'statement', statementMonth: month, statementTotal: marker.statementTotal, paymentDueDate });
+  const manifest = statementManifest(bound, month, marker.statementTotal, filename, parsed, new Date(now()).toISOString(), paymentDueDate);
   await writeManifest(jobDir, manifest);
   return { directory: jobDir, manifest };
 }
@@ -193,8 +209,9 @@ export async function collectAplusFromPage(page, browser, account, settings, dir
     const snapshot = await ui.snapshot();
     if (!String(snapshot?.total ?? '').trim()) { unavailable.push(month); continue; }
     const statementTotal = verifyAplusStatement(snapshot, month, account);
+    const paymentDueDate = aplusPaymentDueDate(snapshot?.overview, month);
     await mkdir(jobDir, { recursive: true });
-    await writeFile(marker, JSON.stringify({ ...bound, requestedAt: stamp(), month, statementTotal }, null, 2), { flag: 'wx', mode: 0o600 });
+    await writeFile(marker, JSON.stringify({ ...bound, requestedAt: stamp(), month, statementTotal, ...(paymentDueDate ? { paymentDueDate } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
     const requestedAt = now();
     const session = ui.downloadSession ? await ui.downloadSession(jobDir) : null;
     let filename;
@@ -210,8 +227,8 @@ export async function collectAplusFromPage(page, browser, account, settings, dir
       break;
     } finally { await session?.close?.(); }
     const bytes = await readFile(path.join(jobDir, filename));
-    const parsed = parseAplus(bytes, account.cardIdentifiers, { kind: 'statement', statementMonth: month, statementTotal });
-    const manifest = statementManifest(bound, month, statementTotal, filename, parsed, stamp());
+    const parsed = parseAplus(bytes, account.cardIdentifiers, { kind: 'statement', statementMonth: month, statementTotal, paymentDueDate });
+    const manifest = statementManifest(bound, month, statementTotal, filename, parsed, stamp(), paymentDueDate);
     await writeManifest(jobDir, manifest);
     items.push({ directory: jobDir, manifest });
     await status('running', month + ' の確定明細を保存');
@@ -288,6 +305,7 @@ function aplusUi(page, browser) {
     },
     async snapshot() {
       return page.evaluate(() => ({ url: location.href, month: document.querySelector('.m-navDate__chooseButton')?.innerText.trim() || '', selectedMonth: document.querySelector('.m-navDate__chooseSelect')?.value || '', total: document.querySelector('.m-particularsOverview__price')?.innerText.trim() || '', totalPresent: !!document.querySelector('.m-particularsOverview__price'),
+        overview: document.querySelector('.m-particularsOverview')?.innerText || '',
         account: [...document.querySelectorAll('button')].map(e => e.innerText.trim()).find(t => /-\d{4}$/.test(t)) || '', options: [...document.querySelectorAll('.m-navDate__chooseSelect option')].map(o => o.value).filter(v => /^20\d{2}\/\d{2}$/.test(v)) }));
     },
     async selectMonth(month) {
