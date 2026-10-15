@@ -31,7 +31,7 @@
      <div v-for="field in resultFields" :key="field.key" :data-chat-research-finding="field.candidate ? field.key : undefined" class="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-3 py-2.5 text-xs"><dt class="text-gray-500">{{ field.label }}<span v-if="field.status" class="mt-0.5 block text-[10px]">{{ field.status }}</span></dt><dd class="min-w-0 whitespace-pre-wrap break-words font-medium text-gray-800 dark:text-gray-200">{{ field.value }}</dd></div>
     </dl>
     <p v-if="!researchView.stale && researchView.research.state!=='applied' && researchView.research.report.question" class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ researchView.research.report.question }}</p>
-    <p class="text-[11px] leading-relaxed text-gray-500">{{ researchView.research.state==='applied' ? (korean ? '확인한 후보는 아래 조사 내역에서 볼 수 있어요.' : '反映した項目は下の調査詳細で確認できます。') : (korean ? '후보는 아직 저장하지 않았어요. 아래에서 근거를 확인하고 반영할 수 있어요.' : '候補はまだ保存していません。下で根拠を確認して反映できます。') }}</p>
+    <p class="text-[11px] leading-relaxed text-gray-500">{{ researchFooter }}</p>
    </article>
    <p v-else-if="researchView?.research && ['queued','working','failed'].includes(researchView.research.state)" data-chat-research-progress role="status" class="flex items-start gap-2 text-xs leading-relaxed text-gray-500"><Loader2 v-if="researchView.research.state!=='failed'" class="h-3.5 w-3.5 shrink-0 animate-spin text-primary-main" />{{ researchProgress }}</p>
    <details v-if="panel" data-chat-research-details class="text-xs" :open="!researchView?.research?.report && !!current?.research?.requestId"><summary class="cursor-pointer py-2 font-medium text-primary-main">{{ korean ? '조사 근거와 후보 반영' : '調査の根拠・候補の反映' }}</summary><PurchaseResearch :draft="draft" :disabled="dirty || busy || draft.locked" :active="active" :research-request="current?.research?.requestId || ''" @updated="value => researchView=value" @changed="value => emit('saved',value)" /></details>
@@ -73,7 +73,33 @@ const display=(key:string,value:any)=>key==='purpose'?({customer:'顧客購入',
 const korean=computed(()=>/[가-힣]/.test(researchView.value?.research?.report?.summary || current.value?.text || ''))
 const researchProgress=computed(()=>{const r=researchView.value?.research;if(r?.state==='failed')return korean.value?'조사를 완료하지 못했어요. 아래 조사 내역에서 다시 시도할 수 있어요.':'調査を完了できませんでした。下の調査詳細から再試行できます。';if(r?.state==='queued')return korean.value?'조사를 기다리고 있어요.':'調査の受付を待っています。';const stage=r?.events?.at(-1)?.stage;return korean.value?({mail:'구매 메일을 확인하고 있어요.',web:'회사와 공개 자료를 확인하고 있어요.',document:'구매 서류를 확인하고 있어요.',registry:'인보이스 등록을 확인하고 있어요.'} as any)[stage]||'자료를 조사하고 있어요.':({mail:'購入メールを確認しています。',web:'会社と公開資料を確認しています。',document:'購入書類を確認しています。',registry:'インボイス登録を確認しています。'} as any)[stage]||'資料を調べています。'})
 function researchStatus(turn:any){const ko=/[가-힣]/.test(turn.text||'');if(turn.research.requestId){if(turn.id===conversation.value?.currentId&&researchView.value?.research){if(researchView.value.research.state==='applied')return ko?'후보를 반영한 조사 기록이 아래에 있어요.':'候補を反映した際の調査記録が下にあります。';if(researchView.value.stale)return ko?'이전 조사 결과가 있어요. 현재 내용은 다시 확인해야 해요.':'以前の調査結果があります。現在の内容は再確認が必要です。';if(researchView.value.research.report)return ko?'조사를 마쳤어요. 아래 답변에서 확인할 수 있어요.':'調査が終わりました。下の回答で確認できます。';return researchProgress.value}return ko?'이 메시지에서 조사를 요청했어요.':'このメッセージから調査を依頼しました。'}return turn.research.unavailable?(ko?'조사를 시작하지 못했어요: ':'調査を開始できませんでした：')+turn.research.unavailable:ko?'미리보기를 확인하면 조사를 시작해요.':'確認すると調査を開始します。'}
-const resultFields=computed(()=>{const report=researchView.value?.research?.report;if(!report)return [];const keys=['accountCategoryId','subAccountCategoryId','transactionCategoryId','taxCategoryId','taxRate','invoiceNumber','supplierId'];const extras=report.findings.map((f:any)=>f.field).filter((key:string)=>!keys.includes(key));return [...keys,...extras].map(key=>{const field=researchFields.find(f=>f.key===key),finding=report.findings.find((f:any)=>f.field===key);let value=finding?.value,status=finding?(korean.value?'후보':'候補'):'',candidate=!!finding;if(!finding&&key==='supplierId'&&report.supplier){value=report.supplier.legalName;status=korean.value?'후보 · 미저장':'候補・未保存';candidate=true}else if(!finding&&key==='invoiceNumber'&&report.supplier?.invoiceNumber){value=report.supplier.invoiceNumber;status=korean.value?'영수증·자료의 후보':'資料記載の候補';candidate=true}else if(!finding){value=props.draft.values[key];if(value!==''&&value!==null&&value!==undefined)status=korean.value?'현재 입력값 · 조사 확인 아님':'現在の入力値・調査確認ではありません'}if(field?.ref&&value&&!(key==='supplierId'&&report.supplier&&!finding))value=props.draft.references[field.ref]?.find((r:any)=>String(r._id)===value)?.name||value;if(key==='purpose')value=display(key,value);return {key,label:field?.label||key,value:value===''||value===null||value===undefined?(korean.value?'미확인':'未確認'):value,status,candidate}})})
+const researchFooter=computed(()=>researchView.value?.research?.state==='applied'
+ ? (korean.value?'확인한 후보는 아래 조사 내역에서 볼 수 있어요.':'反映した項目は下の調査詳細で確認できます。')
+ : researchView.value?.stale
+ ? (korean.value?'이전 후보는 바로 반영할 수 없어요. 아래 조사 내역에서 다시 조사해 주세요.':'以前の候補はそのまま反映できません。下の調査詳細から再調査してください。')
+ : (korean.value?'후보는 아직 저장하지 않았어요. 아래에서 근거를 확인하고 반영할 수 있어요.':'候補はまだ保存していません。下で根拠を確認して反映できます。'))
+const resultFields=computed(()=>{
+ const research=researchView.value?.research,report=research?.report;if(!report)return []
+ const keys=['accountCategoryId','subAccountCategoryId','transactionCategoryId','taxCategoryId','taxRate','invoiceNumber','supplierId']
+ const extras=report.findings.map((f:any)=>f.field).filter((key:string)=>!keys.includes(key))
+ return [...keys,...extras].map(key=>{
+  const field=researchFields.find(f=>f.key===key),finding=report.findings.find((f:any)=>f.field===key)
+  const clear=!!finding&&(finding.value===''||finding.value===null)
+  let value=finding?.value,status=finding?(korean.value?'후보':'候補'):'',candidate=!!finding
+  if(!finding&&key==='supplierId'&&report.supplier){
+   value=report.supplier.legalName;candidate=!research.supplierId
+   status=research.supplierId?(korean.value?'거래처 저장됨':'仕入れ先に保存済み'):(korean.value?'후보 · 미저장':'候補・未保存')
+  }else if(!finding&&key==='invoiceNumber'&&report.supplier?.invoiceNumber){
+   value=report.supplier.invoiceNumber;status=korean.value?'영수증·자료의 후보':'資料記載の候補';candidate=true
+  }else if(!finding){
+   value=props.draft.values[key];if(value!==''&&value!==null&&value!==undefined)status=korean.value?'현재 입력값 · 조사 확인 아님':'現在の入力値・調査確認ではありません'
+  }
+  if(field?.ref&&value&&!(key==='supplierId'&&report.supplier&&!finding))value=props.draft.references[field.ref]?.find((r:any)=>String(r._id)===value)?.name||value
+  if(key==='purpose')value=display(key,value)
+  const shown=clear?(korean.value?'비우기':'空欄にする'):value===''||value===null||value===undefined?(korean.value?'미확인':'未確認'):value
+  return {key,label:field?.label||key,value:shown,status,candidate}
+ })
+})
 const bind=()=>({revision:props.draft.revision,key:props.draft.key,sourceHash:props.draft.sourceHash,chatRevision:conversation.value?.revision||0})
 const message=(e:any)=>e.data?.data?.message||'会話を取得できませんでした。もう一度お試しください。'
 let loadTicket=0
