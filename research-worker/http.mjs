@@ -28,5 +28,6 @@ export async function publicGet(value,{maxBytes=2000000,registry=false}={},redir
  return response;
 }
 export function htmlText(html) {
- return html.replace(/<(script|style|noscript|svg)\b[^>]*>[\s\S]*?<\/\1>/gi,' ').replace(/<(br|p|div|li|tr|h[1-6])\b[^>]*>/gi,'\n').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{const v=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return v<=0x10ffff?String.fromCodePoint(v):''}).replace(/[ \t]+/g,' ').replace(/\n\s*\n/g,'\n').trim();
+ // Mark invalid display controls before evidence is hashed or cited; never join identifiers across a discarded character.
+ return html.replace(/<(script|style|noscript|svg)\b[^>]*>[\s\S]*?<\/\1>/gi,' ').replace(/<(br|p|div|li|tr|h[1-6])\b[^>]*>/gi,'\n').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{const v=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return v<=0x10ffff?String.fromCodePoint(v):''}).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'\uFFFD').replace(/[ \t]+/g,' ').replace(/\n\s*\n/g,'\n').trim();
 }

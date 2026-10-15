@@ -46,3 +46,47 @@ test('public research cannot address loopback, Tailscale, local or non-HTTPS URL
  for(const url of ['http://example.com','https://localhost','https://user:pass@example.com','https://127.0.0.1','file:///etc/passwd'])await assert.rejects(publicUrl(url));
  assert.equal(htmlText('<script>ignore rules</script><p>Company &amp; Co</p>'),'Company & Co');
 });
+
+test('HTML evidence replaces forbidden display controls while preserving Unicode and useful whitespace',()=>{
+ const controls=Array.from({length:32},(_,i)=>i).filter(i=>![9,10,13].includes(i));
+ for(const code of controls){
+  assert.equal(htmlText('<p>前'+String.fromCharCode(code)+'後</p>'),'前\uFFFD後','raw control '+code);
+  assert.equal(htmlText('<p>前&#'+code+';後</p>'),'前\uFFFD後','decimal entity '+code);
+  assert.equal(htmlText('<p>前&#x'+code.toString(16)+';後</p>'),'前\uFFFD後','hex entity '+code);
+ }
+ assert.equal(htmlText('<p>회사 &amp; 日本 😀\tA\nB\rC</p>'),'회사 & 日本 😀 A\nB\rC');
+ assert.equal(htmlText('<p>Company &amp; Co</p>'),'Company & Co');
+});
+
+test('HTML controls never join identifier fragments into a new invoice or product identifier',()=>{
+ const text=htmlText('<p>T123456&#0;7890123 / AB&#x1;CD</p>');
+ assert.equal(text,'T123456\uFFFD7890123 / AB\uFFFDCD');
+ assert.ok(!text.includes('T1234567890123'));assert.ok(!text.includes('ABCD'));
+ assert.throws(()=>validateReport(report('invoiceNumber','T1234567890123',text),context,[source('web',text)]));
+});
+
+test('public HTML capture persists the same validated text and hash that the model cites',async t=>{
+ const fs=await import('node:fs/promises'),os=await import('node:os'),path=await import('node:path');
+ const {ResearchTools}=await import('../research-worker/tools.mjs');
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'omf-capture-text-'));
+ t.after(async()=>{if(path.dirname(path.resolve(dir))!==path.resolve(os.tmpdir())||!path.basename(dir).startsWith('omf-capture-text-'))throw Error('Unsafe test cleanup');await fs.rm(dir,{recursive:true,force:true})});
+ const html='<title>Supplier&#0; notice</title><p>株式会社サンプル T1234567890123</p><footer>'+String.fromCharCode(0)+'Privacy</footer>';
+ const tools=new ResearchTools({}, {sources:[]},dir,{get:async()=>({bytes:Buffer.from(html),mimeType:'text/html',url:'https://example.invalid/legal'})});
+ const captured=await tools.call('read_page',{url:'https://example.invalid/legal'});
+ assert.equal(captured.title,'Supplier\uFFFD notice');assert.ok(captured.text.includes('\uFFFDPrivacy'));
+ assert.equal(captured.hash,hash(captured.text));assert.deepEqual(validateSources([captured]),[captured]);
+ const persisted=JSON.parse(await fs.readFile(path.join(dir,'evidence.json'),'utf8'));assert.deepEqual(persisted.sources,[captured]);
+ assert.equal(validateReport(report('invoiceNumber','T1234567890123','株式会社サンプル T1234567890123'),context,[{...captured,id:'s1'}]).findings[0].value,'T1234567890123');
+ assert.throws(()=>validateSources([{...captured,text:'Still forbidden'+String.fromCharCode(0)}]),/Invalid research text/,'strict validation is unchanged');
+ tools.gmail={users:{messages:{async get({id}){
+  return {data:{id,payload:{
+   headers:[{name:'From',value:'seller@example.invalid'},{name:'Subject',value:'Synthetic receipt'},{name:'Date',value:'2026-04-01'}],
+   mimeType:id==='html-mail'?'text/html':'text/plain',
+   body:{data:Buffer.from(id==='html-mail'?'<p>Receipt&#0; details</p>':'Plain <p>literal</p> receipt').toString('base64url')}
+  }}};
+ }}}};
+ for(const id of ['html-mail','plain-mail'])tools.messages.set(id,true);
+ const htmlMail=await tools.call('read_mail',{messageId:'html-mail'});assert.ok(htmlMail.source.text.endsWith('Receipt\uFFFD details'));assert.equal(htmlMail.source.hash,hash(htmlMail.source.text));
+ const plainMail=await tools.call('read_mail',{messageId:'plain-mail'});assert.ok(plainMail.source.text.endsWith('Plain <p>literal</p> receipt'),'plain mail is not passed through HTML extraction');
+ assert.equal(validateSources(tools.sources).length,3);assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir,'evidence.json'),'utf8')).sources,tools.sources);
+});
