@@ -8,4 +8,6 @@ The chat interpreter allows enough detail for the question instead of imposing t
 
 Both interpreters explicitly request `claude-opus-5-5` with `high` effort. Research review and correction use the same selection. The research runtime includes the shared role module in its implementation hash; its prompt hash includes the role text. These settings do not establish a model reliability rate.
 
+The main research and full correction prompts include the role. Search review and wording/evidence repair retain their own narrow prompts. When a review runs on settled input without captured search or spreadsheet results, a context-cited prose issue can use the existing wording-only correction and recheck. Context does not become purchase evidence. With search evidence present, coverage issues still require its citations. Correction cannot change mapped values, citations or the supplier; persistent or malformed issues keep their existing failure path. Repeated questions and search-scope overstatements retain distinct diagnostics.
+
 Callers: general and purchase chat use `teaching-worker/interpreter.mjs`; standalone, chat-started and evaluation research use `research-worker/worker.mjs`. Supplier save, draft application, posting, collector, calendar and invoice execution paths are unchanged.

@@ -29,19 +29,48 @@ test('scope repair can revise reasons or withdraw findings but cannot alter acco
  validateScopeRepair(before,{...before,findings:[{...before.findings[0],reason:'Qualified reason'}]});validateScopeRepair(before,report);
  for(const changed of [{valueJson:'"company"'},{basis:'literal'},{citations:[{sourceId:'s1',quote:'Other'}]}])assert.throws(()=>validateScopeRepair(before,{...before,findings:[{...before.findings[0],...changed}]}),{code:'search_scope_invalid'});
 });
-async function runScenario(t,responses,{initial=report,evidence=sources,jobContext=context}={}){
+async function runScenario(t,responses,{initial=report,evidence=sources,jobContext=context,mode='evaluation'}={}){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'omf-search-review-')),calls=[],deliveries=[];
  t.after(async()=>{if(path.dirname(dir)!==path.resolve(os.tmpdir())||!path.basename(dir).startsWith('omf-search-review-'))throw Error('Unsafe temporary path');await fs.rm(dir,{recursive:true,force:true})});
- const job={id:'synthetic-job',mode:'evaluation',lease:'synthetic-lease',context:jobContext,sources:evidence.slice(0,1),instruction:'Synthetic test only'};
+ const job={id:'synthetic-job',mode,lease:'synthetic-lease',context:jobContext,sources:evidence.slice(0,1),instruction:'Synthetic test only'};
  const worker=new ResearchWorker({baseUrl:'http://100.79.23.111:8080',cliPath:'unused',inferenceDirectory:dir},dir,{log:()=>{},invokeInterpreter:async(cli,args,options,payload,timeout)=>{
   calls.push({args,payload,timeout});assert(timeout>0&&timeout<=420000);
   if(calls.length===1){await fs.writeFile(path.join(path.dirname(options.env.OMF_RESEARCH_JOB_FILE),'evidence.json'),JSON.stringify({sources:evidence,registry:null}));return output(initial)}
   assert.equal(args[args.indexOf('--tools')+1],'');assert.equal(args[args.indexOf('--mcp-config')+1],'{"mcpServers":{}}');
   const result=responses.shift();assert.notEqual(result,undefined,'Unexpected interpreter call');if(result instanceof Error)throw result;return output(result);
  }});
- worker.api=async(route,body)=>{if(route==='claim')return {job:null};if(route==='evaluation/claim')return {job};if(route.endsWith('/result'))deliveries.push(body);return {success:true}};
- assert.equal(await worker.cycle(),true);assert.equal(deliveries.length,1);assert.equal(responses.length,0);return {calls,result:deliveries[0],dir};
+ worker.api=async(route,body)=>{if(route==='claim')return {job:mode==='research'?job:null};if(route==='evaluation/claim')return {job};if(route.endsWith('/result'))deliveries.push(body);return {success:true}};
+ assert.equal(await worker.cycle(),true);assert.equal(deliveries.length,1);assert.equal(responses.length,0,'Every expected review/correction response must be consumed before delivery');return {calls,result:deliveries[0],dir};
 }
+
+for(const mode of ['research','evaluation'])test(mode+' context-only summary overstatement reaches wording repair and delivers abstention',async t=>{
+ const jobContext={...context,values:{...context.values,purpose:'company'},evaluationTargets:['companyInfo','invoiceNumber','taxRate']};
+ const evidence=[source('context',JSON.stringify(jobContext))];
+ const initial={summary:'No transaction email exists.',question:'Which store issued the receipt?',findings:[],supplier:null};
+ const scopeIssue={path:'summary',quote:initial.summary,sourceIds:['s0'],explanation:'No mail search was captured; mailbox absence is unproven.'};
+ const fixed={...initial,summary:'The mailbox could not be checked. The vendor and purchase tax remain unresolved.'};
+ const {result,calls}=await runScenario(t,[{issues:[scopeIssue]},wordingEdits(fixed),{issues:[]}],{initial,evidence,jobContext,mode});
+ assert.equal(result.failed,undefined,'An unsupported absence claim must receive wording repair, not suppress the abstaining report');
+ assert.equal(calls.length,4);assert.equal(calls[2].payload.validationFeedback.code,'search_scope_invalid');
+ assert.equal(result.report.summary,fixed.summary);assert.equal(result.report.question,initial.question);assert.deepEqual(result.report.findings,[]);assert.equal(result.report.supplier,null);
+});
+
+test('context-only finding reason repair preserves its value and citations',async t=>{
+ const jobContext={...context,values:{...context.values,purpose:'company'},evaluationTargets:['productName']};
+ const evidence=[source('context',JSON.stringify(jobContext))];
+ const initial={summary:'The item remains a hypothesis.',question:'Which item did you buy?',supplier:null,findings:[{field:'productName',valueJson:'"Synthetic"',basis:'reasoned',reason:'No other purchase record exists.',citations:[{sourceId:'s0',quote:'Synthetic'}]}]};
+ const scopeIssue={path:'findings.0.reason',quote:initial.findings[0].reason,sourceIds:['s0'],explanation:'No record search was captured.'};
+ const fixed=wordingEdits(initial);fixed.findings[0].reason='This is a hypothesis from the supplied descriptor only.';
+ const {result,calls}=await runScenario(t,[{issues:[scopeIssue]},fixed,{issues:[]}],{initial,evidence,jobContext});
+ assert.equal(result.failed,undefined);assert.equal(calls[2].payload.validationFeedback.code,'search_scope_invalid');assert.deepEqual(result.report.findings[0],{...initial.findings[0],reason:fixed.findings[0].reason});
+});
+
+test('persistent context-only overstatement retains the existing failed-report outcome after one repair',async t=>{
+ const jobContext={...context,values:{...context.values,purpose:'company'},evaluationTargets:['companyInfo']},evidence=[source('context',JSON.stringify(jobContext))];
+ const initial={summary:'No transaction email exists.',question:'Which store issued the receipt?',findings:[],supplier:null},scopeIssue={path:'summary',quote:initial.summary,sourceIds:['s0'],explanation:'Mailbox absence is unproven.'};
+ const {result,calls}=await runScenario(t,[{issues:[scopeIssue]},wordingEdits(initial),{issues:[scopeIssue]}],{initial,evidence,jobContext});
+ assert.equal(calls.length,4);assert.equal(result.failed,true);assert.equal(result.report,undefined);assert.deepEqual(result.diagnostic,{code:'search_scope_invalid',correctionAttempted:true});
+});
 test('flagged wording is repaired once and rechecked before delivery',async t=>{
  const fixed={...report,summary:'No matching transaction was found in the returned rows. The original ledger remains unverified.'};
  const {calls,result}=await runScenario(t,[{issues:[issue]},wordingEdits(fixed),{issues:[]}]);

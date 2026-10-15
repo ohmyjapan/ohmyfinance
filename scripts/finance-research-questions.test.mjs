@@ -43,7 +43,8 @@ test('current saved accounting explanations are retained but conflicting context
 test('question review feedback must cite context and quote the actual repeated question',()=>{
  const c=makeContext(),g=questionGuidance(c),sources=[proof(c)];assert.equal(validateSearchReview({issues:[issue]},report,sources,g).length,1);
  assert(searchReviewSchema(report,sources,g).properties.issues.items.properties.sourceIds.items.enum.includes('s0'));
- for(const change of [{path:'summary',quote:report.summary},{quote:'Invented question'},{sourceIds:['unknown']}])assert.throws(()=>validateSearchReview({issues:[{...issue,...change}]},report,sources,g));
+ assert.equal(validateSearchReview({issues:[{...issue,path:'summary',quote:report.summary}]},report,sources,g).length,1);
+ for(const change of [{quote:'Invented question'},{sourceIds:['unknown']}])assert.throws(()=>validateSearchReview({issues:[{...issue,...change}]},report,sources,g));
  assert.throws(()=>validateSearchReview({issues:[issue]},report,sources));assert.throws(()=>validateSearchReview({issues:[issue]},{...report,question:''},sources,g));
  assert.equal(validateDiagnostic({code:'question_repeated',correctionAttempted:true}).code,'question_repeated');assert.equal(validationFeedback({code:'question_repeated',issues:[issue]}).issues[0].quote,issue.quote);
 });

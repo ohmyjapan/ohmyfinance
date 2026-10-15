@@ -59,7 +59,7 @@ export class ResearchWorker {
     const output=await this.invokeInterpreter(this.config.cliPath,noTools(searchReviewSchema(report,sources,questions),searchReviewSystem),{cwd:this.config.inferenceDirectory,env},{report:reportProse(report),context:job.context,questionGuidance:questions,capturedSources:sources},remaining(90000));
     await fs.writeFile(path.join(dir,'search-review-'+attempt+'.json'),String(output));const checked=JSON.parse(output);for(const model of Object.keys(checked.modelUsage||{}))models.add(model);if(checked.is_error)throw Error('Search review failed');
     const issues=validateSearchReview(checked.structured_output||JSON.parse(checked.result||'{}'),report,sources,questions);
-    stage='output_invalid';if(issues.length){const error=searchScopeError(issues);if(issues.every(issue=>issue.sourceIds.some(id=>sources.find(s=>s.id===id)?.kind==='context')))error.code='question_repeated';throw error;}
+    stage='output_invalid';if(issues.length){const error=searchScopeError(issues);if(issues.every(issue=>issue.path==='question'&&issue.sourceIds.some(id=>sources.find(s=>s.id===id)?.kind==='context')))error.code='question_repeated';throw error;}
    };
    try{await check(0)}catch(error){
     if(stage==='search_review_failed'||error.message==='Research timed out')throw error;
