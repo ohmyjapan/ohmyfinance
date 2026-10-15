@@ -48,7 +48,7 @@
 import PurchaseConnections from './PurchaseConnections.vue'
 import {useUserStore} from '~/stores/user'
 import {researchFields} from '~/shared/finance-research.mjs'
-const props=defineProps<{draft:any;disabled:boolean}>(),emit=defineEmits(['changed'])
+const props=defineProps<{draft:any;disabled:boolean;researchRequest?:string}>(),emit=defineEmits(['changed'])
 const user=useUserStore(),data=ref<any>(null),instruction=ref(''),error=ref(''),busy=ref(false),selected=ref<string[]>([]),remember=ref(true)
 const requestId=()=>{const h=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');return [h.slice(0,8),h.slice(8,12),h.slice(12,16),h.slice(16,20),h.slice(20)].join('-')}
 let loadSequence=0,disposed=false
@@ -72,5 +72,6 @@ async function attach(a:any){await action(async()=>{const result:any=await $fetc
 let timer:ReturnType<typeof setInterval>|undefined
 onMounted(()=>{load();timer=setInterval(()=>{if(pending.value&&!busy.value)load()},4000)})
 watch(()=>[props.draft.importId,props.draft.line,props.draft.revision],()=>load())
+watch(()=>props.researchRequest,value=>{if(value)load()})
 onBeforeUnmount(()=>{disposed=true;loadSequence++;clearInterval(timer)})
 </script>

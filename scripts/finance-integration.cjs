@@ -44,6 +44,7 @@ async function main(){
   const qs='?kind=statement&start=2026-07-19&end=2026-08-18';
   async function upload(bytes,query=qs){return call('/api/finance/accounts/'+id+'/imports'+query,{method:'POST',token,body:bytes,raw:true});}
   if(process.env.OMF_TEST_ASSISTANT_ONLY){await require('./finance-assistant-scope-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,root,csv,row,pause});console.log(checks+' targeted assistant checks passed');return;}
+  if(process.env.OMF_TEST_DIALOGUE_ONLY){await require('./finance-dialogue-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,root,csv,row,pause});console.log(checks+' targeted dialogue checks passed');return;}
   if(process.env.OMF_TEST_WORKFLOW_ONLY){await require('./finance-workflow-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row,directory});console.log(checks+' targeted workflow checks passed');return;}
   if(process.env.OMF_TEST_EVALUATION_ONLY){await require('./finance-evaluation-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted evaluation checks passed');return;}
   if(process.env.OMF_TEST_RESEARCH_ONLY){await require('./finance-research-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted research checks passed');return;}
@@ -172,6 +173,7 @@ async function main(){
   await require('./finance-answers-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-chat-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-assistant-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
+  await require('./finance-dialogue-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-preparation-integration.cjs')({ db, call, request, upload, token, other, deviceToken, pass, csv, row });
   await require('./finance-supplier-integration.cjs')({ db, call, request, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token, other, origin, pass, root, csv, row, pause });

@@ -9,6 +9,7 @@ import { readDraft, saveDraft } from './financeDraftService'
 import { reviewContext } from './financeReviewService'
 import { validateChatProposal, reusableClassification } from '../../shared/finance-chat.mjs'
 import { consultationEvidence } from '../../shared/finance-consultation.mjs'
+import { startChatResearch, chatResearchContext } from './financeResearchService'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 const fingerprint=(v:any)=>hash(JSON.stringify(v))
 const pending=['queued','working','confirming']
@@ -17,6 +18,14 @@ const identity=(ownerId:string,importId:string,line:number)=>({ownerId,importId:
 function bound(d:any,b:any){if(b?.revision!==d.revision||b?.key!==d.key||b?.sourceHash!==d.sourceHash)fail(409,'下書きが変わりました。再読込してから続けてください。')}
 function editable(d:any){if(d.locked||d.source.kind!=='expense')fail(409,'この明細の購入内容は変更できません。')}
 function visible(c:any){return c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null}
+// Research started from a conversation turn. The turn keeps {instruction, when, requestId|unavailable, at}: a successful start may replace an
+// earlier unavailable, an unavailable never replaces a successful request (the array filter then leaves the turn untouched).
+const researchMarker=(started:any)=>Object.fromEntries(Object.entries('unavailable' in started?{unavailable:started.unavailable,at:new Date()}:{requestId:started.requestId,at:new Date()}).map(([k,v])=>['turns.$[turn].research.'+k,v]))
+const researchFilter=(turnId:string,started:any)=>'unavailable' in started?{'turn.id':turnId,'turn.research.requestId':{$exists:false}}:{'turn.id':turnId}
+async function chatResearch(ownerId:string,importId:string,line:number,chatId:string,turnId:string,instruction:string,expected:{revision:number,key:string,sourceHash:string}):Promise<{requestId:string}|{unavailable:string}>{
+ try{return await startChatResearch(ownerId,importId,line,chatId,turnId,instruction,expected)}
+ catch(e:any){console.error('[Finance chat] research start failed',e?.name||'Error');return {unavailable:'調査を開始できませんでした。'}}
+}
 export async function chatAgent(event:H3Event){
  const token=(getHeader(event,'authorization')||'').replace(/^Bearer /,'')
  if(!/^omft_[a-f\d]{64}$/.test(token))fail(401,'Teaching worker authorization required')
@@ -45,6 +54,18 @@ export async function getChat(ownerId:string,importId:string,line:number){
   await Chat.updateOne({_id:c._id,revision:c.revision,state:'confirming'},{$set:set,$unset:{lease:'',leaseUntil:''},$inc:{revision:1}},applied?{arrayFilters:[{'turn.id':c.currentId}]}:{})
   c=await Chat.findById(c._id).lean()
  }
+ // A confirmed turn whose deferred research was never started (the process died between the draft save and the final write) is started
+ // once, bound to the accepted draft-history revision; concurrent recoveries share one deterministic request and keep the successful marker.
+ const orphan=c?.turns.find((t:any)=>t.confirmedAt&&t.research?.when==='confirm'&&typeof t.research.instruction==='string'&&!t.research.requestId&&!t.research.unavailable)
+ if(orphan){
+  const saved:any=await FinanceDraft.findOne({ownerId,importId,line}).select('history').lean()
+  const applied=saved?.history.find((h:any)=>h.reviewId===String(c._id)&&h.replyTs===orphan.id&&h.channel==='web')
+  if(applied&&Number.isSafeInteger(applied.revision)){
+   const started=await chatResearch(ownerId,importId,line,String(c._id),orphan.id,orphan.research.instruction,{revision:applied.revision,key:c.context.key,sourceHash:c.context.sourceHash})
+   await Chat.updateOne({_id:c._id},{$set:researchMarker(started),...('unavailable' in started?{}:{$unset:{'turns.$[turn].research.unavailable':''}}),$inc:{revision:1}},{arrayFilters:[researchFilter(orphan.id,started)]})
+   c=await Chat.findById(c._id).lean()
+  }
+ }
  const connected=!!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}})
  return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'}
 }
@@ -62,7 +83,7 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')
  if(await Chat.countDocuments({ownerId,state:{$in:['queued','working']}})>=3)fail(409,'他の会話への回答を待ってから送信してください。')
  if(!c){try{c=(await Chat.create({...scope,accountId:d.source.account.id})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
- const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),
+ const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),research:await chatResearchContext(ownerId,importId,line,d),
   messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt}))}
  const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date()}}},{new:true}).lean()
  if(!updated)fail(409,'会話が更新されました。再読込してください。')
@@ -90,7 +111,15 @@ export async function finishChat(agent:any,chatId:string,body:any){
  const index=c.turns.findIndex((t:any)=>t.id===c.currentId),turn=c.turns[index]
  let proposal:any
  if(body.failed!==true){try{proposal=validateChatProposal(body.proposal,c.context,turn.text)}catch{fail(400,'Invalid teaching proposal')}}
- const turns=c.turns.map((t:any,i:number)=>i===index?{...t,...(proposal?{proposal}:{}),answeredAt:new Date()}:t)
+ // An explanation with a research request starts the research now, bound to the conversation's recorded draft state; a proposal defers it
+ // to the confirmation (queued now it would bind to the pre-confirm draft and go stale on confirm).
+ let research:any=null
+ if(proposal?.research){
+  const request={instruction:proposal.research.instruction,at:new Date()}
+  if(proposal.kind==='unclear'){const started=await chatResearch(String(agent.ownerId),String(c.importId),c.line,String(c._id),turn.id,request.instruction,{revision:c.context.revision,key:c.context.key,sourceHash:c.context.sourceHash});research={...request,when:'now',...('unavailable' in started?{unavailable:started.unavailable}:{requestId:started.requestId})}}
+  else research={...request,when:'confirm'}
+ }
+ const turns=c.turns.map((t:any,i:number)=>i===index?{...t,...(proposal?{proposal}:{}),...(research?{research}:{}),answeredAt:new Date()}:t)
  const result=await Chat.updateOne(filter,{$set:{turns,state:proposal?'ready':'failed'},$unset:{lease:'',leaseUntil:''},$inc:{revision:1}})
  if(!result.matchedCount)fail(409,'Teaching job changed');return {success:true}
 }
@@ -103,6 +132,7 @@ export async function confirmChat(ownerId:string,importId:string,line:number,bod
  const saved:any=await FinanceDraft.findOne({ownerId,importId,line}).lean()
  const applied=saved?.history.find((h:any)=>h.reviewId===String(c._id)&&h.replyTs===turn.id&&h.channel==='web')
  if(applied&&applied.reusable!==body.remember)fail(409,'既に別の記憶範囲で反映済みです。')
+ let accepted:number=applied?.revision
  if(!applied){
   if(body.chatRevision!==c.revision||!['ready','confirming'].includes(c.state)||(c.state==='confirming'&&c.leaseUntil>new Date()))fail(409,'会話が更新されたか、反映処理が進行中です。')
   const d=await readDraft(ownerId,importId,line);bound(d,body);editable(d)
@@ -112,9 +142,11 @@ export async function confirmChat(ownerId:string,importId:string,line:number,bod
   const lease=randomUUID(),locked=await Chat.updateOne({_id:c._id,revision:c.revision,state:c.state},{$set:{state:'confirming',lease,leaseUntil:new Date(Date.now()+120000)}})
   if(!locked.matchedCount)fail(409,'会話が更新されました。')
   try{
-   await saveDraft(ownerId,importId,line,{revision:d.revision,key:d.key,sourceHash:d.sourceHash,values,remember:[],confirm:false},{reviewId:String(c._id),replyTs:turn.id,text:turn.text,summary:proposal.summary,fields:Object.keys(proposal.patch),reusable:body.remember,channel:'web'})
+   accepted=(await saveDraft(ownerId,importId,line,{revision:d.revision,key:d.key,sourceHash:d.sourceHash,values,remember:[],confirm:false},{reviewId:String(c._id),replyTs:turn.id,text:turn.text,summary:proposal.summary,fields:Object.keys(proposal.patch),reusable:body.remember,channel:'web'})).revision
   }catch(e){await Chat.updateOne({_id:c._id,lease},{$set:{state:'ready'},$unset:{lease:'',leaseUntil:''}});throw e}
  }
- await Chat.updateOne({_id:c._id,currentId:turn.id},{$set:{state:'confirmed','turns.$[turn].confirmedAt':new Date(),'turns.$[turn].remembered':body.remember},$unset:{lease:'',leaseUntil:''},$inc:{revision:1}},{arrayFilters:[{'turn.id':turn.id}]})
+ // Deferred research starts only after the draft save succeeded, bound to the accepted revision; its result lands in the same final write.
+ const started=turn.research?.when==='confirm'&&!turn.research.requestId&&!turn.research.unavailable&&Number.isSafeInteger(accepted)?await chatResearch(ownerId,importId,line,String(c._id),turn.id,turn.research.instruction,{revision:accepted,key:c.context.key,sourceHash:c.context.sourceHash}):null
+ await Chat.updateOne({_id:c._id,currentId:turn.id},{$set:{state:'confirmed','turns.$[turn].confirmedAt':new Date(),'turns.$[turn].remembered':body.remember,...(started?researchMarker(started):{})},$unset:{lease:'',leaseUntil:'',...(started&&!('unavailable' in started)?{'turns.$[turn].research.unavailable':''}:{})},$inc:{revision:1}},{arrayFilters:[started?researchFilter(turn.id,started):{'turn.id':turn.id}]})
  return {...await getChat(ownerId,importId,line),draft:await readDraft(ownerId,importId,line)}
 }

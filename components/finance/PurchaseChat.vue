@@ -5,11 +5,11 @@
    <NuxtLink to="/learning" class="shrink-0 py-1 text-xs text-primary-main">学習ノート ↗</NuxtLink>
   </header>
   <div ref="transcript" :class="panel ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5' : 'max-h-[520px] space-y-5 overflow-y-auto px-4 py-5 sm:px-6'" role="log" aria-live="polite">
-   <details v-if="panel" class="text-xs"><summary class="cursor-pointer py-2 font-medium text-primary-main">会社・購入内容を調査する</summary><PurchaseResearch :draft="draft" :disabled="dirty || busy || draft.locked" @changed="value => emit('saved',value)" /></details>
    <div v-if="!turns.length" class="text-sm leading-relaxed text-gray-600 dark:text-gray-300"><p>{{ opening }}</p><p class="mt-2 text-xs text-gray-500 dark:text-gray-400">한국어・日本語で説明できます。会話はこの明細に保存されます。</p></div>
    <article v-for="turn in turns" :key="turn.id" :data-chat-turn="turn.id" class="space-y-3">
     <div class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
     <div v-if="turn.proposal" class="mr-2"><p class="mb-1 text-[11px] font-semibold text-primary-main">OMF</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ turn.proposal.summary }}</p>
+     <p v-if="turn.research" data-chat-research class="mt-2 text-xs" :class="turn.research.requestId ? 'text-gray-500' : turn.research.unavailable ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'">{{ turn.research.requestId ? '調査を開始しました。結果は下の調査カードに表示します。' : turn.research.unavailable ? '調査を開始できませんでした：' + turn.research.unavailable : '確認すると調査を開始します。' }}</p>
      <div v-if="turn.proposal.kind==='proposal'" class="mt-3 rounded-xl border border-gray-200 p-3 dark:border-white/10">
       <p class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ turn.confirmedAt ? '確認した内容' : '反映する内容の提案' }}</p>
       <dl class="mt-2 space-y-2"><div v-for="(value,key) in turn.proposal.patch" :key="key" class="text-xs"><dt class="text-gray-500">{{ labels[key] }}</dt><dd class="mt-0.5 break-words font-medium text-gray-800 dark:text-gray-200">{{ display(key,value) }}</dd></div></dl>
@@ -22,6 +22,7 @@
      </div>
     </div>
    </article>
+   <details v-if="panel" class="text-xs" :open="!!current?.research?.requestId"><summary class="cursor-pointer py-2 font-medium text-primary-main">会社・購入内容を調査する</summary><PurchaseResearch :draft="draft" :disabled="dirty || busy || draft.locked" :research-request="current?.research?.requestId || ''" @changed="value => emit('saved',value)" /></details>
    <p v-if="waiting" role="status" class="flex items-center gap-2 text-xs text-gray-500"><Loader2 class="h-3.5 w-3.5 shrink-0 animate-spin text-primary-main" />{{ conversation?.state==='confirming'?'下書きへの反映を確認しています…':!data?.connected?'メッセージは保存済みです。AIへの接続が戻ると続けます。':conversation?.state==='queued'?'メッセージは保存済みです。AIの受付を待っています…':'元の明細と過去の判断を確認しています…' }}</p>
    <div v-if="conversation?.state==='failed'" class="text-xs text-amber-700 dark:text-amber-400"><p>回答を取得できませんでした。メッセージは保存されています。</p><button type="button" class="mt-2 text-primary-main underline" :disabled="busy || unavailable" @click="retry">もう一度回答を取得</button></div>
   </div>

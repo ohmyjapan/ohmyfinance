@@ -10,7 +10,7 @@ import {reviewContext} from './financeReviewService'
 import {inventoryPreview} from './financeInventoryReviewService'
 import {readMerchantLink,saveMerchantLink,supplierReferences} from './financeSupplierService'
 import {consultationEvidence} from '../../shared/finance-consultation.mjs'
-import {validateSources,validateReport,parseRegistry} from '../../shared/finance-research.mjs'
+import {validateSources,validateReport,parseRegistry,researchSummary} from '../../shared/finance-research.mjs'
 import {normalizeMerchant,validateValues} from '../../shared/finance-draft.mjs'
 import {digest} from '../../shared/amex.mjs'
 const Supplier=SupplierModel as mongoose.Model<any>
@@ -119,4 +119,32 @@ export async function saveResearchSupplier(ownerId:string,importId:string,line:n
  }
  await Research.updateOne({_id:r._id,revision:r.revision},{$set:{supplierId:supplier._id},$inc:{revision:1}})
  return {supplierId:String(supplier._id),draft:await readDraft(ownerId,importId,line),...await researchView(ownerId,importId,line)}
+}
+// Research started from the purchase conversation. One research per chat turn: the request id is a deterministic digest of the chat and
+// turn, so a retry, a recovery or two concurrent recoveries find the same request instead of queueing twice. The binding is the caller's
+// (the conversation's recorded draft state for an explanation, the accepted draft-history revision after a confirmation): a draft that
+// moved on since is refused by queueResearch's own binding check and reported as unavailable, never replaced by whatever is current now.
+const chatRequestId=(chatId:string,turnId:string)=>{const h=digest('chat-research:'+chatId+':'+turnId);return [h.slice(0,8),h.slice(8,12),h.slice(12,16),h.slice(16,20),h.slice(20,32)].join('-')}
+const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
+export async function startChatResearch(ownerId:string,importId:string,line:number,chatId:string,turnId:string,instruction:string,expected:{revision:number,key:string,sourceHash:string}):Promise<{requestId:string,researchId:string,state:string}|{unavailable:string}>{
+ await init();const requestId=chatRequestId(chatId,turnId),query=scope(ownerId,importId,line)
+ const same=(r:any)=>r?.requestId===requestId?{requestId,researchId:String(r._id),state:String(r.state)}:null
+ const existing:any=await Research.findOne(query).select('revision requestId state').lean()
+ const already=same(existing);if(already)return already
+ try{
+  const view=await queueResearch(ownerId,importId,line,{revision:expected.revision,key:expected.key,sourceHash:expected.sourceHash,researchRevision:existing?.revision||0,requestId,instruction})
+  return {requestId,researchId:view.research!.id,state:String(view.research!.state)}
+ }catch(e:any){
+  if(!e?.statusCode)throw e
+  // A race with the same deterministic request (two recoveries, a retry after the queue landed): reread before calling it unavailable.
+  let again:any=await Research.findOne(query).select('revision requestId state').lean()
+  if(!same(again)&&again?.state==='idle'){await pause(250);again=await Research.findOne(query).select('revision requestId state').lean()}
+  return same(again)||{unavailable:String(e.data?.message||e.statusMessage||'調査を開始できませんでした。')}
+ }
+}
+// Snapshot of this purchase's research for the next chat turn, marked stale when its draft/source binding is no longer the current draft.
+export async function chatResearchContext(ownerId:string,importId:string,line:number,draft:any){
+ await init();const r:any=await Research.findOne(scope(ownerId,importId,line)).lean();if(!r)return null
+ const stale=r.state!=='applied'&&!!r.context&&(r.context.key!==draft.key||r.context.sourceHash!==draft.sourceHash||r.context.fingerprint!==fingerprint(draft.values)||r.context.revision!==draft.revision)
+ return researchSummary(r,draft.references,stale)
 }

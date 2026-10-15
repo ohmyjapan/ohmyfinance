@@ -93,6 +93,23 @@ export function validateReport(raw,context,sources) {
  }
  return {summary,question,findings,supplier};
 }
+// Bounded snapshot of a research row for the purchase-chat context: state, summary, question, findings (3 quotes of 300 characters each),
+// supplier candidate, applied fields. No captured source text, no URLs. A stale row (its draft or source moved on) keeps its summary and
+// question but omits findings and supplier, so old findings are never read as current settled evidence.
+const cut=(value,max)=>typeof value!=='string'?'':value.length>max?value.slice(0,max):value;
+export function researchSummary(research, references, stale=false) {
+ if(!research)return null;
+ const name=(key,value)=>{const field=researchFields.find(f=>f.key===key);if(!field?.ref||typeof value!=='string'||!value)return value;const row=(references?.[field.ref]||[]).find(r=>String(r._id)===value);return row?.name||value};
+ const report=research.report||null;
+ const findings=stale?[]:(report?.findings||[]).map(f=>({field:f.field,label:researchFields.find(x=>x.key===f.field)?.label||f.field,value:f.value,displayValue:name(f.field,f.value),basis:f.basis,reason:cut(f.reason,1200),quotes:(f.citations||[]).slice(0,3).map(c=>cut(c.quote,300))}));
+ return {
+  state:cut(research.state,30),stale:!!stale,instruction:cut(research.instruction,2000),summary:cut(report?.summary,600),question:cut(report?.question,300),findings,
+  supplier:!stale&&report?.supplier?{shopName:cut(report.supplier.shopName,200),legalName:cut(report.supplier.legalName,200),invoiceNumber:cut(report.supplier.invoiceNumber,14)}:null,
+  applied:research.applied?{fields:Array.isArray(research.applied.fields)?research.applied.fields.slice(0,30):[],at:research.applied.at||null}:null,
+  updatedAt:research.updatedAt||null,
+  meaning:stale?'This research ran against an earlier draft or source state; its findings are omitted because they are not current settled evidence. A new research request is needed for current findings.':'Findings and the supplier candidate are proposals from OMF\'s own research; each still needs on-page confirmation and is not a saved value.'
+ };
+}
 export function parseRegistry(raw,number,date) {
  if(!/^T[0-9]{13}$/.test(number)||!/^\d{4}-\d{2}-\d{2}$/.test(date)||new Date(date).toISOString().slice(0,10)!==date)throw Error('Invalid registry request');
  const rows=raw?.announcement;
