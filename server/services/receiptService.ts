@@ -1,6 +1,7 @@
 // server/services/receiptService.ts
 import Receipt from '../models/Receipt'
 import Transaction from '../models/Transaction'
+import type { ITransaction } from '../models/Transaction'
 import type { IReceipt } from '../models/Receipt'
 import { ensureConnection } from '../config/database'
 
@@ -304,7 +305,8 @@ export async function findMatchesForReceipt(receiptId: string) {
     const potentialMatches = await Transaction.find(matchQuery)
       .sort({ date: -1 })
       .limit(20)
-      .lean()
+      // Lean reads may contain old optional fields outside today's strict write schema. Keep their values unknown.
+      .lean<Array<ITransaction & { currency?: unknown; customer?: { name?: unknown } | null; reference?: unknown }>>()
 
     // Calculate confidence scores for each match
     const matches = potentialMatches.map(transaction => {

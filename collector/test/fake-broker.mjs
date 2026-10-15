@@ -171,6 +171,11 @@ export async function waitFor(read, timeoutMs = 10000, intervalMs = 150) {
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Synthetic statement already on disk; no provider or original statement file is used. */
+/**
+ * @param {string} directory
+ * @param {{_id: string, primaryCard?: string}} account
+ * @param {{jobId: string, ownerId?: string, origin?: string, pageCount?: number, acknowledgedAt?: string}} item
+ */
 export async function writePendingItem(directory,account,{jobId,ownerId,origin,pageCount=1,acknowledgedAt}) {
   const dir=path.join(directory,'outbox',account._id,jobId);await mkdir(dir,{recursive:true});
   const filename=randomUUID(),bytes=Buffer.from('synthetic,csv\n'+jobId+'\n');

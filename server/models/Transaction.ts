@@ -30,7 +30,7 @@ export interface IAttachment {
 }
 
 // Main transaction interface (OMF style - Japanese accounting)
-export interface ITransaction extends Document {
+export interface ITransaction extends Document<mongoose.Types.ObjectId> {
   referenceNumber?: string
   date: Date
   amount: number
@@ -166,4 +166,4 @@ TransactionSchema.index({ accountCategoryId: 1 })
 TransactionSchema.index({ createdAt: -1 })
 TransactionSchema.index({ referenceNumber: 'text', productName: 'text', notes: 'text' })
 
-export default mongoose.models.Transaction || mongoose.model<ITransaction>('Transaction', TransactionSchema)
+export default mongoose.models.Transaction as mongoose.Model<ITransaction> | undefined || mongoose.model<ITransaction>('Transaction', TransactionSchema)

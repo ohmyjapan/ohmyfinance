@@ -47,8 +47,8 @@ const CategorySchema = new Schema<ICategory>({
     virtuals: true,
     transform: (_, ret) => {
       ret.id = ret._id.toString()
-      delete ret._id
-      delete ret.__v
+      delete (ret as Partial<Pick<typeof ret, '_id'>>)._id
+      delete (ret as Partial<Pick<typeof ret, '__v'>>).__v
       return ret
     }
   }

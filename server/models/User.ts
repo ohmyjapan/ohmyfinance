@@ -2,7 +2,7 @@
 import mongoose, { Schema, Document } from 'mongoose'
 import bcrypt from 'bcryptjs'
 
-export interface IUser extends Document {
+export interface IUser extends Document<mongoose.Types.ObjectId> {
   email: string
   password: string
   name: string
@@ -130,14 +130,14 @@ UserSchema.virtual('id').get(function() {
 UserSchema.set('toJSON', {
   virtuals: true,
   transform: (doc, ret) => {
-    delete ret.password
+    delete (ret as Partial<Pick<typeof ret, 'password'>>).password
     delete ret.twoFactorSecret
     delete ret.twoFactorBackupCodes
     delete ret.trustedDevices
     if (ret.securityPreferences) delete ret.securityPreferences.pinHash
-    delete ret.__v
+    delete (ret as Partial<Pick<typeof ret, '__v'>>).__v
     return ret
   }
 })
 
-export default mongoose.models.User || mongoose.model<IUser>('User', UserSchema)
+export default mongoose.models.User as mongoose.Model<IUser> | undefined || mongoose.model<IUser>('User', UserSchema)

@@ -113,7 +113,7 @@ export default defineEventHandler(async (event) => {
 
       return {
         success: true,
-        message: `Merged ${deleteIds.length} duplicates into transaction ${keepTx.reference}`,
+        message: `Merged ${deleteIds.length} duplicates into transaction ${(keepTx as typeof keepTx & { reference?: unknown }).reference}`,
         kept: keepId,
         deleted: deleteIds.length
       }

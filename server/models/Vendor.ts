@@ -1,7 +1,7 @@
 // server/models/Vendor.ts
 import mongoose, { Schema, Document } from 'mongoose'
 
-export interface IVendor extends Document {
+export interface IVendor extends Document<mongoose.Types.ObjectId> {
   organizationId: mongoose.Types.ObjectId
   name: string
   email?: string
@@ -43,4 +43,4 @@ VendorSchema.index({ organizationId: 1, name: 1 }, { unique: true })
 VendorSchema.index({ name: 'text' })
 VendorSchema.index({ organizationId: 1, category: 1 })
 
-export default mongoose.models.Vendor || mongoose.model<IVendor>('Vendor', VendorSchema)
+export default mongoose.models.Vendor as mongoose.Model<IVendor> | undefined || mongoose.model<IVendor>('Vendor', VendorSchema)

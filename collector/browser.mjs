@@ -60,7 +60,7 @@ export function ownedBrowsers() { return [...owned.values()].map(entry => ({ pid
  * (false = the visible window of the first release; tests use true), onLaunch({pid, browser}) — the collector
  * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows.
  */
-export async function browserFor(profile, { ephemeral = false, root = null, headless = false, onLaunch = null } = {}) {
+export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null } = {}) {
   const key = keyOf(profile);
   for (const entry of owned.values()) if (entry.key === key && entry.browser.connected) return entry.browser;
   if (ephemeral) { assertEphemeralPath(profile, root); await mkdir(ephemeralRoot(root), { recursive: true }); await assertPlainDirectory(ephemeralRoot(root)); }

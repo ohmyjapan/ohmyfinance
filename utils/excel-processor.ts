@@ -10,7 +10,7 @@ import fs from 'fs/promises';
  * @param {string} outputDir Directory to save the processed JSON
  * @returns {Promise<string>} Path to the processed JSON file
  */
-export async function processExcelFile(filePath, outputDir) {
+export async function processExcelFile(filePath: string, outputDir: string) {
     try {
         // Create the directories if they don't exist
         await fs.mkdir(path.dirname(outputDir), { recursive: true });

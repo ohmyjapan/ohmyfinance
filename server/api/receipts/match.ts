@@ -3,6 +3,9 @@ import path from 'path';
 import fs from 'fs/promises';
 import { requireAuth } from '../../middleware/auth'
 
+// This try block throws h3 errors or filesystem Errors; absent h3 fields keep the existing fallback.
+type MatchFailure = Partial<Pick<ReturnType<typeof createError>, 'statusCode' | 'statusMessage'>>
+
 /**
  * Matches receipt with transaction data
  */
@@ -51,8 +54,8 @@ export default defineEventHandler(async (event) => {
         console.error('Receipt matching error:', error);
 
         throw createError({
-            statusCode: error.statusCode || 500,
-            statusMessage: error.statusMessage || 'Failed to match receipt with transaction'
+            statusCode: (error as MatchFailure).statusCode || 500,
+            statusMessage: (error as MatchFailure).statusMessage || 'Failed to match receipt with transaction'
         });
     }
 });

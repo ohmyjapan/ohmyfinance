@@ -72,7 +72,6 @@ export default defineNuxtConfig({
       { code: 'ko', iso: 'ko-KR', file: 'ko.json', name: '한국어' }
     ],
     defaultLocale: 'ja',
-    lazy: false,
     langDir: 'locales',
     strategy: 'prefix_except_default',
     detectBrowserLanguage: {
