@@ -2,7 +2,7 @@
 // merchant/date/amount only; the recorded owner case stays in the private replay input. Wired as OMF_TEST_DIALOGUE_ONLY=1
 // and in the full run of scripts/finance-integration.cjs. No model, no network, no production database.
 const assert=require('node:assert/strict'),{ObjectId}=require('mongodb'),crypto=require('node:crypto');
-module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row,pause})=>{
+module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row,pause,root})=>{
  const owner=(await db.collection('users').findOne({email:'finance-a@example.invalid'}))._id,account=await db.collection('financialaccounts').findOne({ownerId:owner,name:'Synthetic Amex'});
  const before={tx:await db.collection('transactions').countDocuments(),entries:await db.collection('financeentries').countDocuments()};
  const researches=()=>db.collection('financeresearches'),chats=()=>db.collection('financechats'),agents=()=>db.collection('financechatagents');
@@ -131,6 +131,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
  pass('4j applied research stays current for its own accepted draft update and becomes stale after a later owner correction');
 
  // 4f nothing posted
+ if(process.env.OMF_TEST_CHROME_PORT)await require('./finance-research-delivery-browser.cjs')({db,call,origin,pass,csv,row,pause,root,port:Number(process.env.OMF_TEST_CHROME_PORT)});
  assert.equal(await db.collection('transactions').countDocuments(),before.tx);assert.equal(await db.collection('financeentries').countDocuments(),before.entries);
  for(const id of [teacher.id,researcher.id,workspace.id])assert.equal((await call('/api/finance-chat/agents/'+id,{method:'DELETE',token})).status,200);
  assert.equal((await chatCall('claim')).status,401);

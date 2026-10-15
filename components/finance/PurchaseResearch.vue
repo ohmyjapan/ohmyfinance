@@ -48,7 +48,7 @@
 import PurchaseConnections from './PurchaseConnections.vue'
 import {useUserStore} from '~/stores/user'
 import {researchFields} from '~/shared/finance-research.mjs'
-const props=defineProps<{draft:any;disabled:boolean;researchRequest?:string}>(),emit=defineEmits(['changed'])
+const props=withDefaults(defineProps<{draft:any;disabled:boolean;researchRequest?:string;active?:boolean}>(),{active:true}),emit=defineEmits(['changed','updated'])
 const user=useUserStore(),data=ref<any>(null),instruction=ref(''),error=ref(''),busy=ref(false),selected=ref<string[]>([]),remember=ref(true)
 const requestId=()=>{const h=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');return [h.slice(0,8),h.slice(8,12),h.slice(12,16),h.slice(16,20),h.slice(20)].join('-')}
 let loadSequence=0,disposed=false
@@ -62,7 +62,7 @@ const binding=()=>({revision:props.draft.revision,key:props.draft.key,sourceHash
 const label=(key:string)=>researchFields.find(f=>f.key===key)?.label||key
 const source=(id:string)=>research.value?.sources.find((s:any)=>s.id===id)
 const display=(f:any)=>{const field=researchFields.find(x=>x.key===f.field);return field?.ref?props.draft.references[field.ref]?.find((r:any)=>String(r._id)===f.value)?.name||f.value:f.value}
-async function load(){const ticket=++loadSequence;try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadSequence)data.value=result}catch(e:any){if(!disposed&&ticket===loadSequence)error.value=e.data?.message||'調査を読み込めません。'}}
+async function load(){const ticket=++loadSequence;try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadSequence){data.value=result;error.value=''}}catch(e:any){if(!disposed&&ticket===loadSequence)error.value=e.data?.message||'調査を読み込めません。'}}
 async function action(fn:()=>Promise<void>){busy.value=true;error.value='';try{await fn()}catch(e:any){error.value=e.data?.message||e.message||'調査を更新できません。'}finally{busy.value=false}}
 async function start(){await action(async()=>{data.value=await $fetch(endpoint.value,{method:'POST',headers:user.authHeader,body:{...binding(),requestId:requestId(),instruction:instruction.value}});selected.value=[]})}
 async function apply(){await action(async()=>{const result:any=await $fetch(endpoint.value+'/apply',{method:'POST',headers:user.authHeader,body:{...binding(),confirm:true,fields:selected.value}});data.value=result;selected.value=[];emit('changed',result.draft)})}
@@ -70,8 +70,10 @@ async function saveSupplier(){await action(async()=>{const result:any=await $fet
 async function download(a:any){await action(async()=>{const blob:any=await $fetch('/api/finance-research/'+research.value.id+'/artifacts/'+a.id,{headers:user.authHeader,responseType:'blob'});const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=a.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)})}
 async function attach(a:any){await action(async()=>{const result:any=await $fetch('/api/finance-research/'+research.value.id+'/artifacts/'+a.id,{method:'POST',headers:user.authHeader,body:{...binding(),confirm:true}});emit('changed',result.draft);await load()})}
 let timer:ReturnType<typeof setInterval>|undefined
-onMounted(()=>{load();timer=setInterval(()=>{if(pending.value&&!busy.value)load()},4000)})
-watch(()=>[props.draft.importId,props.draft.line,props.draft.revision],()=>load())
+onMounted(()=>{load();timer=setInterval(()=>{if(props.active&&!busy.value)load()},4000)})
+watch(data,value=>emit('updated',value))
+watch(()=>[props.draft.importId,props.draft.line,props.draft.revision],(value,previous)=>{if(value[0]!==previous[0]||value[1]!==previous[1]){data.value=null;selected.value=[]}load()})
+watch(()=>props.active,value=>{if(value)load()})
 watch(()=>props.researchRequest,value=>{if(value)load()})
 onBeforeUnmount(()=>{disposed=true;loadSequence++;clearInterval(timer)})
 </script>
