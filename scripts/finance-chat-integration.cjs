@@ -18,6 +18,13 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  assert.equal((await researchPoll()).status,200);
  assert.equal((await call(base,{token})).data.connected,false,'A research-only heartbeat must not advertise chat availability');
  assert.equal((await call(base,{method:'POST',token,body})).status,409);
+ for(const route of ['claim','workspace-claim']){
+  await db.collection('financechatagents').updateOne({_id:new ObjectId(agent.data.id)},{$set:{chatLastSeenAt:new Date(0)}});
+  assert.equal((await call(base,{token})).data.connected,false,'Resetting the chat timestamp must disconnect the idle worker');
+  const idle=await workerCall(route);assert.equal(idle.status,200);assert.equal(idle.data.job,null,'The readiness poll must not require a queued job');
+  assert.equal((await call(base,{token})).data.connected,true,'An idle '+route+' poll must reconnect the existing teaching worker');
+ }
+ pass('idle legacy teaching reconnects through claim and workspace-claim without an explicit heartbeat or queued job');
  await workerCall('heartbeat');
  assert.equal((await call(base,{token})).data.connected,true,'The existing teaching heartbeat must still connect without new worker configuration');
  await db.collection('financechatagents').updateOne({_id:new ObjectId(agent.data.id)},{$set:{chatLastSeenAt:new Date(Date.now()-60000)}});
