@@ -116,6 +116,20 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row
  assert.equal((await reply(h2.job,unclear('下書きが調査後に変わったため、候補は再調査が必要です。'))).status,200);
  pass('4h a late reply never rebinds research to a changed draft, and a report older than the draft is marked stale without findings in the next context');
 
+ // An applied report survives its own draft update, but never a subsequent owner correction.
+ const extraImport=await upload(csv([row({0:'2026/08/10',1:'2026/08/12',2:'Synthetic EV charging station',5:'3300'})]));assert.equal(extraImport.status,200);
+ const extraId=extraImport.data.id,extraDraft='/api/finance/imports/'+extraId+'/drafts/2',extraResearch='/api/finance-research/imports/'+extraId+'/drafts/2',extraChat='/api/finance-chat/imports/'+extraId+'/drafts/2';
+ const extraGet=async p=>{const r=await call(p,{token});assert.equal(r.status,200,JSON.stringify(r));return r.data},extraPost=(p,body)=>call(p,{method:'POST',token,body});
+ let extraD=await extraGet(extraDraft);const extraQueued=await extraPost(extraResearch,{...bind(extraD),researchRevision:0,requestId:crypto.randomUUID(),instruction:'Confirm the captured tax rate.'});assert.equal(extraQueued.status,200,JSON.stringify(extraQueued));
+ const extraJob=(await researchCall('claim')).data.job;assert.ok(extraJob);assert.equal(extraJob.id,extraQueued.data.research.id);
+ assert.equal((await researchCall(extraJob.id+'/result',{lease:extraJob.lease,sources:[...extraJob.sources,source],report})).status,200);
+ const extraView=await extraGet(extraResearch);assert.equal((await extraPost(extraResearch+'/apply',{...bind(extraD),researchRevision:extraView.research.revision,confirm:true,fields:['taxRate']})).status,200);
+ async function extraContext(){extraD=await extraGet(extraDraft);const c=await extraGet(extraChat);assert.equal((await extraPost(extraChat,{...bind(extraD),chatRevision:c.conversation?.revision||0,requestId:crypto.randomUUID(),text:'Explain the recorded result.'})).status,200);const j=(await chatCall('claim')).data.job;assert.ok(j);assert.equal(j.context.source.description,'Synthetic EV charging station');assert.equal((await reply(j,unclear('Recorded result explanation.'))).status,200);return j.context.research}
+ const ownApplication=await extraContext();assert.equal(ownApplication.state,'applied');assert.equal(ownApplication.stale,false,'own research application stays current');assert.ok(ownApplication.findings.length);
+ extraD=await extraGet(extraDraft);assert.equal((await call(extraDraft,{method:'PUT',token,body:{...bind(extraD),values:{...extraD.values,productName:'Later owner correction'},confirm:false,remember:[]}})).status,200);
+ const afterCorrection=await extraContext();assert.equal(afterCorrection.stale,true,'applied research must become stale after a later owner correction');assert.deepEqual(afterCorrection.findings,[]);assert.equal(afterCorrection.supplier,null);
+ pass('4j applied research stays current for its own accepted draft update and becomes stale after a later owner correction');
+
  // 4f nothing posted
  assert.equal(await db.collection('transactions').countDocuments(),before.tx);assert.equal(await db.collection('financeentries').countDocuments(),before.entries);
  for(const id of [teacher.id,researcher.id,workspace.id])assert.equal((await call('/api/finance-chat/agents/'+id,{method:'DELETE',token})).status,200);

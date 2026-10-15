@@ -145,6 +145,9 @@ export async function startChatResearch(ownerId:string,importId:string,line:numb
 // Snapshot of this purchase's research for the next chat turn, marked stale when its draft/source binding is no longer the current draft.
 export async function chatResearchContext(ownerId:string,importId:string,line:number,draft:any){
  await init();const r:any=await Research.findOne(scope(ownerId,importId,line)).lean();if(!r)return null
- const stale=r.state!=='applied'&&!!r.context&&(r.context.key!==draft.key||r.context.sourceHash!==draft.sourceHash||r.context.fingerprint!==fingerprint(draft.values)||r.context.revision!==draft.revision)
+ // Applying this report saves exactly one draft revision. Preserve that accepted result, while later edits still invalidate the snapshot.
+ const applied=r.state==='applied'&&r.applied,revision=r.context?.revision+(applied?1:0)
+ const valuesHash=applied?fingerprint(validateValues({...r.context.values,...r.applied.values})):r.context?.fingerprint
+ const stale=!!r.context&&(r.context.key!==draft.key||r.context.sourceHash!==draft.sourceHash||valuesHash!==fingerprint(draft.values)||revision!==draft.revision)
  return researchSummary(r,draft.references,stale)
 }
