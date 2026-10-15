@@ -1,0 +1,37 @@
+# Assistant connection and layout map
+
+Scope: purchase replies, workspace replies, their worker liveness, and the shared assistant presentation. The repair starts at `70798b6`. It does not change ledger posting or purchase confirmation.
+
+## Request and worker lanes
+
+| Lane | Entry and owner | Behavior and verification |
+| --- | --- | --- |
+| Purchase chat | `PurchaseChat.vue` → finance-chat import/draft route → `financeChatService` | Owner/account scope remains. Readiness uses a fresh chat-specific heartbeat. A research-only poll cannot advertise chat. Existing queued turn/request ID survives disconnection. |
+| General chat | `AssistantConversation.vue` → finance-chat workspace route → `financeAssistantService` | Requires the existing explicit workspace capability and an actual chat heartbeat. Only the assigned agent can answer. General replies cannot edit purchases. |
+| Teaching runtime | `teaching-worker/run.mjs` → `TeachingWorker.cycle()` | Existing claim/workspace-claim/heartbeat requests refresh chat liveness. No new token, configuration, or worker upgrade is needed for this existing runtime to connect after the server release. |
+| Research runtime | `research-worker/run.mjs` → composed TeachingWorker → ResearchWorker | Existing account/token/CLI scope also services purchase chat. Document handling is disabled for the composed teacher. Every cycle still polls research after at most one chat. Active research keeps chat liveness current; its timer is removed on success or failure. |
+| Research/evaluation API | finance-research route → shared `chatAgent` authentication | Generic `lastSeenAt` continues unchanged. Research/evaluation calls alone do not update `chatLastSeenAt`. Existing research capability checks remain. |
+| Document API | finance-documents route and `financeDocumentService` | Existing document capability, account scope and generic heartbeat remain. No document permission is added by chat composition. |
+| Workflow | `financeWorkflowService` and finalization worker | Existing research-agent account selection and generic heartbeat remain unchanged. No workflow schedule or export step changes. |
+| Confirmation/learning | PurchaseChat confirmation → `confirmChat` → draft/teaching memory | Existing source binding, revision checks, quote validation, explicit confirmation and memory scope remain. Replies alone do not save a draft or post a ledger entry. |
+| Assistant layout | default layout → AssistantPanel → workspace/purchase component | Accordion is in normal page flow above the page body at every width. It reserves space, uses a bounded transcript and no backdrop/scroll lock/focus trap. Existing context, navigation, unsent text, logout and screen-lock behavior remain. |
+
+The chat readiness predicate is a changed guard: it narrows the existing freshness check to the service that actually consumes chat. Independent owner-ordered review is required before deployment. It does not add an account grant or a new user confirmation step. The existing account scope is used to widen the research worker's useful work instead of granting broader document access.
+
+## Verification
+
+`OMF_TEST_ASSISTANT_ONLY=1 node scripts/finance-integration.cjs` runs the actual built app against an isolated MongoDB. It covers a research-only false connection, a live legacy teacher, freshness, account isolation, saved-request recovery, competing teaching/research consumers, wrong-agent results, duplicate sends, expired leases, retries, revocation, explicit confirmation and unchanged drafts/ledger on read/reply.
+
+With `OMF_TEST_CHROME_PORT` pointing to owner-approved real Chrome, the same fixture signs in to synthetic accounts and checks desktop/mobile layout, no overlap or horizontal overflow, normal scrolling, keyboard close, navigation, saved/unsent conversation, draft protection and screen lock. Browser screenshots contain synthetic data only. No issuer, email, SMS, Slack or paid model is contacted by the default fixture.
+
+`node --test scripts/finance-chat.test.mjs scripts/finance-assistant.test.mjs scripts/finance-assistant-worker.test.mjs scripts/finance-research.test.mjs scripts/finance-evaluation.test.mjs scripts/finance-document-evidence.test.mjs` covers reply validation and composed-worker scheduling, including liveness during interrupted research and timer cleanup.
+
+Mutation evidence is retained in the orchestration task's `output/omf-assistant-feedback-20261015/` folder. Mutants alter isolated generated server files only, exercise real API behavior, and restore those files afterward. Neither test counts nor a single historical recovered message are reliability probabilities.
+
+Menu51 Article/Memo/customer and seller automation paths are outside this application's dependency graph and are unchanged. The general Menu51 maps were consulted; no existing unit map covered this seam. This document records its callers and continuations for review and release reconciliation. No new hub release hook is introduced; OMF's existing commit/push hook checks secrets, not this fixture.
+
+## Release obligations
+
+Deploy the reviewed OMF server revision with the normal fast-forward pull, Nuxt build and OhMyFinance PM2 restart. Then point the existing research PM2 service on the development machine at committed matching worker code, preserving its DPAPI data directory. Do not start a duplicate worker or replace credentials. Teaching, document, collector and workflow configurations stay intact.
+
+After release, verify fresh chat heartbeat and account coverage, run the scoped connected replay against the final deployed revision, and reconcile this map with that server/worker revision. Record any broader-suite failures separately, including whether they reproduce on the unchanged baseline. A successful local build or one recovered production message does not mean the permanent repair has been deployed.

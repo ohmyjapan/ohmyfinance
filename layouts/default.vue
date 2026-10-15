@@ -7,14 +7,15 @@
 
       <main class="flex-1 p-4 md:p-6">
         <div class="max-w-7xl mx-auto">
-          <slot />
+          <AssistantPanel />
+          <div data-page-content>
+            <slot />
+          </div>
         </div>
       </main>
 
       <AppFooter />
     </div>
-
-    <AssistantPanel />
 
     <!-- Screen Lock Overlay -->
     <ScreenLockOverlay />

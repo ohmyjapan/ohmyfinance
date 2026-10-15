@@ -3,7 +3,7 @@ import { defineEventHandler, setHeader } from 'h3'
 import { financeUser,fail,id } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
 import { FinanceChatAgent } from '../../models/FinanceChat'
-import { chatAgent,createChatAgent,getChat,sendChat,retryChat,claimChat,finishChat,confirmChat } from '../../services/financeChatService'
+import { chatAgent,chatHeartbeat,createChatAgent,getChat,sendChat,retryChat,claimChat,finishChat,confirmChat } from '../../services/financeChatService'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  const parts=(event.path.split('?')[0].split('/api/finance-chat/')[1]||'').split('/').filter(Boolean)
@@ -11,10 +11,10 @@ export default defineEventHandler(async event=>{
  try{
   if(parts[0]==='worker'){
    const agent=await chatAgent(event)
-   if(event.method==='POST'&&parts.length===2&&parts[1]==='heartbeat')return {success:true}
-   if(event.method==='POST'&&parts.length===2&&parts[1]==='workspace-claim')return await claimAssistant(agent)
+   if(event.method==='POST'&&parts.length===2&&parts[1]==='heartbeat'){await chatHeartbeat(agent);return {success:true}}
+   if(event.method==='POST'&&parts.length===2&&parts[1]==='workspace-claim'){await chatHeartbeat(agent);return await claimAssistant(agent)}
    if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='result')return await finishAssistant(agent,parts[2],await body())
-   if(event.method==='POST'&&parts.length===2&&parts[1]==='claim')return await claimChat(agent)
+   if(event.method==='POST'&&parts.length===2&&parts[1]==='claim'){await chatHeartbeat(agent);return await claimChat(agent)}
    if(event.method==='POST'&&parts.length===3&&parts[2]==='result')return await finishChat(agent,parts[1],await body())
    fail(404,'Teaching worker endpoint not found')
   }

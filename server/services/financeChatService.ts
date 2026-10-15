@@ -24,6 +24,9 @@ export async function chatAgent(event:H3Event){
  if(!agent||!await User.exists({_id:agent.ownerId}))fail(401,'Teaching worker unavailable')
  await Agent.updateOne({_id:agent._id},{$set:{lastSeenAt:new Date()}});return agent
 }
+export async function chatHeartbeat(agent:any){
+ await Agent.updateOne({_id:agent._id,ownerId:agent.ownerId,enabled:true,revokedAt:null},{$set:{chatLastSeenAt:new Date()}})
+}
 export async function createChatAgent(ownerId:string,body:any){
  await init()
  if(!Array.isArray(body?.accountIds)||!body.accountIds.length||body.accountIds.length>30)fail(400,'Choose accounts')
@@ -42,7 +45,7 @@ export async function getChat(ownerId:string,importId:string,line:number){
   await Chat.updateOne({_id:c._id,revision:c.revision,state:'confirming'},{$set:set,$unset:{lease:'',leaseUntil:''},$inc:{revision:1}},applied?{arrayFilters:[{'turn.id':c.currentId}]}:{})
   c=await Chat.findById(c._id).lean()
  }
- const connected=!!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,lastSeenAt:{$gt:new Date(Date.now()-65000)}})
+ const connected=!!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}})
  return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'}
 }
 export async function sendChat(ownerId:string,importId:string,line:number,body:any){
@@ -53,7 +56,7 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  const previous=c?.turns.find((t:any)=>t.id===body.requestId)
  if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getChat(ownerId,importId,line)}
  bound(d,body);editable(d)
- if(!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,lastSeenAt:{$gt:new Date(Date.now()-65000)}}))fail(409,'AIに接続できません。少し待って再試行してください。')
+ if(!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}))fail(409,'AIに接続できません。少し待って再試行してください。')
  if(c&&pending.includes(c.state))fail(409,'前のメッセージの処理が終わるまでお待ちください。')
  if((c?.turns.length||0)>=100)fail(409,'この会話は100件に達しました。下書きから直接編集してください。')
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')

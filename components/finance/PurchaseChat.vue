@@ -22,7 +22,7 @@
      </div>
     </div>
    </article>
-   <p v-if="waiting" role="status" class="flex items-center gap-2 text-xs text-gray-500"><Loader2 class="h-3.5 w-3.5 animate-spin text-primary-main" />{{ conversation?.state==='confirming'?'下書きへの反映を確認しています…':'元の明細と過去の判断を確認しています…' }}</p>
+   <p v-if="waiting" role="status" class="flex items-center gap-2 text-xs text-gray-500"><Loader2 class="h-3.5 w-3.5 shrink-0 animate-spin text-primary-main" />{{ conversation?.state==='confirming'?'下書きへの反映を確認しています…':!data?.connected?'メッセージは保存済みです。AIへの接続が戻ると続けます。':conversation?.state==='queued'?'メッセージは保存済みです。AIの受付を待っています…':'元の明細と過去の判断を確認しています…' }}</p>
    <div v-if="conversation?.state==='failed'" class="text-xs text-amber-700 dark:text-amber-400"><p>回答を取得できませんでした。メッセージは保存されています。</p><button type="button" class="mt-2 text-primary-main underline" :disabled="busy || unavailable" @click="retry">もう一度回答を取得</button></div>
   </div>
   <form class="shrink-0 border-t border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6" @submit.prevent="send">
@@ -30,7 +30,7 @@
    <p v-if="data?.stale" class="mb-3 text-xs leading-relaxed text-amber-700 dark:text-amber-400">下書きや判断の根拠が更新されています。最新の内容で新しいメッセージを送信してください。</p>
    <label for="purchase-chat-message" class="sr-only">購入内容を説明する</label>
    <textarea id="purchase-chat-message" v-model="text" rows="2" maxlength="2000" class="chat-input" placeholder="例：OMJ10が頼んだコートです。今回は…" :disabled="unavailable || waiting || busy" @keydown.ctrl.enter.prevent="send" />
-   <div class="mt-3 flex items-center justify-between gap-3"><p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ dirty?'先に下書きの変更を保存してください。':draft.locked?'登録済みの明細です。':!data?.connected?'AIへの接続を確認しています…':'提案を確認すると下書きに反映します。' }}</p><button type="submit" data-chat-send class="btn btn-primary shrink-0 text-xs" :disabled="!text.trim() || unavailable || waiting || busy"><Send class="mr-1.5 h-3.5 w-3.5" />送信</button></div>
+   <div class="mt-3 flex items-center justify-between gap-3"><p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ dirty?'先に下書きの変更を保存してください。':draft.locked?'登録済みの明細です。':!data?'接続を確認しています…':!data.connected?'このカードのAIに接続できません。会話は保存されています。':'提案を確認すると下書きに反映します。' }}</p><button type="submit" data-chat-send class="btn btn-primary shrink-0 text-xs" :disabled="!text.trim() || unavailable || waiting || busy"><Send class="mr-1.5 h-3.5 w-3.5" />送信</button></div>
   </form>
  </section>
 </template>

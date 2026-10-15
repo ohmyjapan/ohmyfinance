@@ -5,7 +5,11 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  const before={tx:await db.collection('transactions').countDocuments(),entries:await db.collection('financeentries').countDocuments(),drafts:await db.collection('financedrafts').countDocuments()};
  assert.equal((await call(endpoint)).status,401);assert.equal((await call(endpoint,{token:deviceToken})).status,401);assert.equal((await get()).conversation,null);
  const agent=(await call('/api/finance-chat/agents',{method:'POST',token,body:{accountIds:[String(account._id)],workspaceEnabled:true}})).data;
- const worker=(route,body={})=>call('/api/finance-chat/worker/'+route,{method:'POST',token:agent.token,body});await worker('heartbeat');
+ const worker=(route,body={})=>call('/api/finance-chat/worker/'+route,{method:'POST',token:agent.token,body});
+ await db.collection('financechatagents').updateOne({_id:new ObjectId(agent.id)},{$set:{researchEnabled:true}});
+ assert.equal((await call('/api/finance-research/worker/claim',{method:'POST',token:agent.token,body:{}})).status,200);
+ assert.equal((await get()).connected,false,'Workspace capability plus a research heartbeat is not a live chat consumer');
+ await worker('heartbeat');assert.equal((await get()).connected,true);
  const body={text:'マッピングと取引一覧はどう違う？',requestId:crypto.randomUUID(),chatRevision:0,context:{page:'mapping'}};
  const sent=await post(body);assert.equal(sent.status,200,JSON.stringify(sent));assert.equal((await post(body)).data.conversation.turns.length,1);assert.equal((await post({...body,text:'different'})).status,409);
  const j=(await worker('workspace-claim')).data.job;assert.equal(j.mode,'workspace');assert.equal(j.context.pageName,'明細マッピング');assert.ok(j.context.facts.mappingPreparation.statements.length);assert.ok(j.context.facts.mappingPreparation.statements.every(s=>Number.isInteger(s.invoiceNumberMissing)&&Number.isInteger(s.taxRateMissing)));assert.equal(j.context.facts.mappingPreparation.scope,'latest_import_per_account');assert.equal(j.context.facts.accounts[0].name,'Synthetic Amex');assert.ok(!JSON.stringify(j.context).includes('otpMailbox'));assert.equal((await worker('workspace-claim')).data.job,null);
@@ -46,10 +50,14 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
    await page.reload({waitUntil:'networkidle2'});await waitFor(()=>document.querySelector('#omf-assistant')?.getBoundingClientRect().width>0);assert.ok(await page.evaluate(()=>document.querySelector('section[aria-label="OMFの会話"]').textContent.includes('이 화면을 설명해 줘.')));
    await page.evaluate(()=>document.querySelector('[data-assistant-close]').click());await waitFor(()=>!!document.querySelector('[data-assistant-toggle]'));await page.evaluate(()=>document.querySelector('[data-assistant-toggle]').click());await waitFor(()=>!!document.querySelector('#assistant-message'));
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-assistant-desktop.png'),fullPage:true});
-   await page.setViewport({width:390,height:844});await waitFor(()=>document.querySelector('#omf-assistant')?.getAttribute('aria-modal')==='true');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-   await page.evaluate(()=>document.querySelector('[data-assistant-close]').focus());await page.keyboard.down('Shift');await page.keyboard.press('Tab');await page.keyboard.up('Shift');assert.equal(await page.evaluate(()=>document.querySelector('#omf-assistant').contains(document.activeElement)),true);
-   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-assistant-mobile.png'),captureBeyondViewport:false});
+   if(process.env.OMF_TEST_SCREENSHOT){await page.evaluate(()=>document.activeElement.blur());await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-assistant-desktop.png'),fullPage:true});}
+   const noOverlap=()=>{const panel=document.querySelector('[data-assistant-accordion]'),content=document.querySelector('[data-page-content]'),p=panel.getBoundingClientRect(),c=content.getBoundingClientRect();return getComputedStyle(panel).position==='static'&&c.top>=p.bottom&&document.documentElement.scrollWidth<=innerWidth&&!document.querySelector('[aria-modal="true"]')};
+   assert.equal(await page.evaluate(noOverlap),true,'Desktop assistant must reserve space above the page');
+   await page.setViewport({width:390,height:844});assert.equal(await page.evaluate(noOverlap),true,'Mobile assistant must reserve space without a modal');
+   assert.equal(await page.evaluate(()=>document.documentElement.style.overflow==='hidden'),false);
+   await page.evaluate(()=>document.querySelector('[data-assistant-close]').focus());await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.querySelector('#omf-assistant').contains(document.activeElement)),true);
+   if(process.env.OMF_TEST_SCREENSHOT){await page.evaluate(()=>document.activeElement.blur());await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-assistant-mobile.png'),captureBeyondViewport:false});}
+   await page.evaluate(()=>document.querySelector('#assistant-message').focus());
    await page.keyboard.press('Escape');await waitFor(()=>!!document.querySelector('[data-assistant-toggle]'));assert.equal(await page.evaluate(()=>document.activeElement.hasAttribute('data-assistant-toggle')),true);
    await page.goto(origin+'/mapping?import='+batch.data.id,{waitUntil:'networkidle2'});await waitFor(()=>!!document.querySelector('[data-row-assistant]'));await page.evaluate(()=>document.querySelector('[data-row-assistant]').click());await waitFor(()=>!!document.querySelector('#purchase-chat-message'));
    assert.equal(await page.evaluate(()=>location.pathname),'/mapping');assert.ok(await page.evaluate(()=>document.querySelector('[data-assistant-context]').textContent.includes('Summonable first purchase')));

@@ -7,7 +7,7 @@ import {ready,fail,id,ownedImport,reviewMapping} from './financeService'
 import {assistantPages,validateAssistantReply} from '../../shared/finance-assistant.mjs'
 async function init(){await ready();await Conversation.init()}
 const visible=(c:any)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null
-const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,lastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({lastSeenAt:-1}).lean()
+const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({chatLastSeenAt:-1}).lean()
 export async function getAssistant(ownerId:string){await init();return {conversation:visible(await Conversation.findOne({ownerId}).lean()),connected:!!await available(ownerId)}}
 async function pageContext(ownerId:string,input:any){
  if(!input||!Object.hasOwn(assistantPages,input.page))fail(400,'Invalid assistant page')

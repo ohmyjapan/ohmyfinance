@@ -21,10 +21,11 @@ const invoke=(cli,args,options,payload,timeoutMs)=>new Promise((resolve,reject)=
 });
 
 export class ResearchWorker {
- constructor(config,directory,{log=console.log,invokeInterpreter=invoke}={}){this.invokeInterpreter=invokeInterpreter;this.config=config;this.directory=directory;this.origin=teachingOrigin(config.baseUrl);this.log=log}
+ constructor(config,directory,{log=console.log,invokeInterpreter=invoke,chatWorker=null}={}){this.chatWorker=chatWorker;this.invokeInterpreter=invokeInterpreter;this.config=config;this.directory=directory;this.origin=teachingOrigin(config.baseUrl);this.log=log}
  async api(route,body={}){const r=await fetch(this.origin+'/api/finance-research/worker/'+route,{method:'POST',headers:{Authorization:'Bearer '+this.config.token,'Content-Type':'application/json'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('Research API '+r.status);return r.json()}
  async cycle(){
-  let {job}=await this.api('claim');if(!job)({job}=await this.api('evaluation/claim'));if(!job)return false;
+  const chatted=!!(this.chatWorker&&await this.chatWorker.cycle());
+  let {job}=await this.api('claim');if(!job)({job}=await this.api('evaluation/claim'));if(!job)return chatted;
   const jobRoute=(job.mode==='evaluation'?'evaluation/':'')+job.id,started=Date.now(),deadline=started+570000;
   const remaining=max=>{const ms=Math.min(max,deadline-Date.now());if(ms<1000)throw Error('Research timed out');return ms};
   const dir=path.join(this.directory,'jobs',randomUUID());await fs.mkdir(dir,{recursive:true});
@@ -35,6 +36,8 @@ export class ResearchWorker {
   const mcp={mcpServers:{omf_research:{command:process.execPath,args:[fileURLToPath(new URL('./mcp.mjs',import.meta.url))],env:{OMF_RESEARCH_DATA_DIR:this.directory,OMF_RESEARCH_JOB_FILE:env.OMF_RESEARCH_JOB_FILE}}}};
   const args=['-p','--output-format','json','--json-schema',JSON.stringify(reportSchema),'--tools','WebSearch','--allowedTools','WebSearch','mcp__omf_research__*','--mcp-config',JSON.stringify(mcp),'--strict-mcp-config','--setting-sources','','--settings','{"disableAllHooks":true}','--no-session-persistence','--max-turns','24','--system-prompt',researchSystem];
   let timer,busy=false,stage='interpreter_failed',correctionAttempted=false,sources=job.sources;
+  let chatHeartbeatBusy=false;
+  const chatHeartbeat=this.chatWorker?setInterval(async()=>{if(chatHeartbeatBusy)return;chatHeartbeatBusy=true;try{await this.chatWorker.api('heartbeat')}catch{}finally{chatHeartbeatBusy=false}},20000):undefined;
   const models=new Set();
   const runtime=async()=>{const h=createHash('sha256');for(const file of ['./worker.mjs','./tools.mjs','./sheets.mjs','./sheet-export.mjs','./issey-archive.mjs','./search-evidence.mjs','./search-review.mjs','./accounting-guidance.mjs','./question-guidance.mjs','./evidence-repair.mjs','../shared/finance-accounting-assessment.mjs','./mcp.mjs','../shared/finance-research.mjs','../shared/finance-draft.mjs'])h.update(await fs.readFile(new URL(file,import.meta.url)));return {models:[...models],promptHash:createHash('sha256').update(JSON.stringify([researchSystem,correctionSystem,searchReviewSystem,scopeRepairSystem,evidenceRepairSystem])).digest('hex'),implementationHash:h.digest('hex'),durationMs:Date.now()-started}};
   try{
@@ -77,6 +80,6 @@ export class ResearchWorker {
    try{await this.api(jobRoute+'/result',{lease:job.lease,failed:true,diagnostic,sources:validateSources(sources),runtime:await runtime()})}catch{try{await this.api(jobRoute+'/result',{lease:job.lease,failed:true,diagnostic})}catch{}}
    this.log('Research needs retry');return true
   }
-  finally{clearInterval(timer)}
+  finally{clearInterval(timer);clearInterval(chatHeartbeat)}
  }
 }

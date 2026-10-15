@@ -3,13 +3,13 @@
   <div ref="transcript" class="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5" role="log" aria-live="polite">
    <div v-if="!turns.length" class="text-sm leading-relaxed text-gray-600 dark:text-gray-300"><p>지금 보고 있는 화면에 대해 물어보세요. 기록과 판단의 근거를 함께 확인할 수 있어요.</p><div class="mt-5 flex flex-wrap gap-2"><button v-for="example in examples" :key="example" class="rounded-xl border border-gray-200 px-3 py-2 text-left text-xs text-gray-600 hover:border-primary-main dark:border-white/10 dark:text-gray-300" @click="text=example">{{ example }}</button></div></div>
    <article v-for="turn in turns" :key="turn.id" data-workspace-turn class="space-y-3"><div class="ml-5 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] text-gray-500">{{ turn.pageName }}<span v-if="turn.selection"> · {{ turn.selection }}</span></p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-100">{{ turn.text }}</p></div><div v-if="turn.proposal"><p class="mb-1 text-[11px] font-semibold text-primary-main">OMF</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-200">{{ turn.proposal.summary }}</p></div></article>
-   <p v-if="waiting" class="flex items-center gap-2 text-xs text-gray-500" role="status"><Loader2 class="h-4 w-4 animate-spin text-primary-main" />記録と会話を確認しています…</p>
+   <p v-if="waiting" class="flex items-center gap-2 text-xs text-gray-500" role="status"><Loader2 class="h-4 w-4 shrink-0 animate-spin text-primary-main" />{{ !data?.connected?'メッセージは保存済みです。AIへの接続が戻ると続けます。':data.conversation.state==='queued'?'メッセージは保存済みです。AIの受付を待っています…':'記録と会話を確認しています…' }}</p>
    <div v-if="data?.conversation?.state==='failed'" class="text-xs text-amber-700"><p>回答を取得できませんでした。会話は保存されています。</p><button class="mt-2 text-primary-main underline" :disabled="busy||!data?.connected" @click="retry">もう一度取得する</button></div>
   </div>
   <form class="shrink-0 border-t border-gray-100 p-4 dark:border-white/10" @submit.prevent="send">
    <p v-if="error" role="alert" class="mb-3 text-xs text-red-600">{{ error }}</p>
    <label for="assistant-message" class="sr-only">OMFへのメッセージ</label><textarea id="assistant-message" v-model="text" rows="3" maxlength="2000" placeholder="この判断の理由は？ / 이 화면에서…" class="assistant-input" :disabled="busy||waiting||!data?.connected" @keydown.ctrl.enter.prevent="send" />
-   <div class="mt-3 flex items-center justify-between gap-3"><p class="text-[11px] text-gray-500">{{ data?.connected?'한국어・日本語 · 会話を保存します':'AIへの接続を確認しています…' }}</p><button type="submit" data-assistant-send class="btn btn-primary shrink-0 text-xs" :disabled="busy||waiting||!data?.connected||!text.trim()"><Send class="mr-1 h-3.5 w-3.5" />送信</button></div>
+   <div class="mt-3 flex items-center justify-between gap-3"><p class="text-[11px] text-gray-500">{{ !data?'接続を確認しています…':data.connected?'한국어・日本語 · 会話を保存します':'AIに接続できません。会話は保存されています。' }}</p><button type="submit" data-assistant-send class="btn btn-primary shrink-0 text-xs" :disabled="busy||waiting||!data?.connected||!text.trim()"><Send class="mr-1 h-3.5 w-3.5" />送信</button></div>
   </form>
  </section>
 </template>
