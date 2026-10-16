@@ -21,6 +21,11 @@ const identity=(ownerId:string,importId:string,line:number)=>({ownerId,importId:
 function bound(d:any,b:any){if(b?.revision!==d.revision||b?.key!==d.key||b?.sourceHash!==d.sourceHash)fail(409,'下書きが変わりました。再読込してから続けてください。')}
 function editable(d:any){if(d.locked||d.source.kind!=='expense')fail(409,'この明細の購入内容は変更できません。')}
 function visible(c:any){return c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null}
+// Only this turn's completed draft writes authorize its accepted revision. Memory revisions are a separate counter.
+function draftActionRevision(c:any,actions:any[]):number|null{
+ const revisions=actions.filter((a:any)=>a.turnId===c.currentId&&a.state==='done'&&['save_draft_fields','apply_referenced_proposal','approve_draft'].includes(a.name)&&a.target?.importId===String(c.importId)&&a.target?.line===c.line&&Number.isSafeInteger(a.acceptedRevision)&&a.acceptedRevision>0).map((a:any)=>a.acceptedRevision)
+ return revisions.length?Math.max(...revisions):null
+}
 // The current turn's action receipts come from the durable journal while the worker is still at work (and after a crash); a
 // finished turn carries them in the document itself.
 async function withReceipts(c:any){
@@ -105,7 +110,7 @@ export async function getChat(ownerId:string,importId:string,line:number){
  const connected=!!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}})
  c=await withReceipts(c)
  // A draft revision this conversation's own completed action produced is not a stale view of the draft.
- const produced=!!c?.turns.find((t:any)=>t.id===c.currentId)?.actions?.some((a:any)=>a.state==='done'&&a.acceptedRevision===d.revision)
+ const produced=!!c&&draftActionRevision(c,c.turns.find((t:any)=>t.id===c.currentId)?.actions||[])===d.revision
  return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'&&!produced}
 }
 export async function sendChat(ownerId:string,importId:string,line:number,body:any){
@@ -133,7 +138,7 @@ export async function retryChat(ownerId:string,importId:string,line:number,body:
  await init();const d=await readDraft(ownerId,importId,line);bound(d,body);editable(d)
  const c:any=await Chat.findOne(identity(ownerId,importId,line)).lean()
  // A draft revision this turn's own completed action produced is not a foreign change: the retry reconciles those receipts first.
- const produced=!!c&&(await actionReceipts('purchase',String(c._id),c.currentId)).some((a:any)=>a.state==='done'&&a.acceptedRevision===d.revision)
+ const produced=!!c&&draftActionRevision(c,await actionReceipts('purchase',String(c._id),c.currentId))===d.revision
  if(!c||c.state!=='failed'||body.chatRevision!==c.revision||(c.context.fingerprint!==fingerprint(d.values)&&!produced))fail(409,'新しいメッセージとして送信してください。')
  await Chat.updateOne({_id:c._id,revision:c.revision,state:'failed'},{$set:{state:'queued',attempts:0},$inc:{revision:1}})
  return getChat(ownerId,importId,line)
@@ -156,18 +161,19 @@ export async function finishChat(agent:any,chatId:string,body:any){
  const index=c.turns.findIndex((t:any)=>t.id===c.currentId),turn=c.turns[index]
  let proposal:any
  if(body.failed!==true){try{proposal=validateChatProposal(body.proposal,c.context,turn.text)}catch{fail(400,'Invalid teaching proposal')}}
- // An explanation with a research request starts the research now, bound to the conversation's recorded draft state; a proposal defers it
+ const actions=await actionReceipts('purchase',chatId,turn.id)
+ // An explanation requests research against this turn's accepted save, or the original context when it saved nothing. The original
+ // key/source binding remains; a later owner edit is still refused by the research service. A proposal defers research
  // to the confirmation (queued now it would bind to the pre-confirm draft and go stale on confirm).
  let research:any=null
  if(proposal?.research){
   const request={instruction:proposal.research.instruction,at:new Date()}
-  if(proposal.kind==='unclear'){const started=await chatResearch(String(agent.ownerId),String(c.importId),c.line,String(c._id),turn.id,request.instruction,{revision:c.context.revision,key:c.context.key,sourceHash:c.context.sourceHash});research={...request,when:'now',...('unavailable' in started?{unavailable:started.unavailable}:{requestId:started.requestId})}}
+  if(proposal.kind==='unclear'){const started=await chatResearch(String(agent.ownerId),String(c.importId),c.line,String(c._id),turn.id,request.instruction,{revision:draftActionRevision(c,actions)??c.context.revision,key:c.context.key,sourceHash:c.context.sourceHash});research={...request,when:'now',...('unavailable' in started?{unavailable:started.unavailable}:{requestId:started.requestId})}}
   else research={...request,when:'confirm'}
  }
  // A proposal gets its immutable display reference; the turn's action receipts come from the journal (a failed final response
  // keeps every completed action). Only this turn's fields are set, never the whole array from this read.
  const reference=proposal?.kind==='proposal'?chatProposalReference(c,{...turn,proposal},c.context.revision):null
- const actions=await actionReceipts('purchase',chatId,turn.id)
  const set:any={state:proposal?'ready':'failed','turns.$[turn].answeredAt':new Date(),...(proposal?{'turns.$[turn].proposal':proposal}:{}),...(research?{'turns.$[turn].research':research}:{}),...(reference?{'turns.$[turn].reference':reference}:{}),'turns.$[turn].actions':actions}
  const result=await Chat.updateOne(filter,{$set:set,$unset:{lease:'',leaseUntil:''},$inc:{revision:1}},{arrayFilters:[{'turn.id':turn.id}]})
  if(!result.matchedCount)fail(409,'Teaching job changed');return {success:true}

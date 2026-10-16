@@ -225,6 +225,51 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  assert.equal((await act(l.job,1,'get_draft',{})).status,400,'a workspace action without a target names the missing purchase');
  assert.equal((await act(l.job,2,'unknown_tool',{})).status,400);
  assert.equal((await finish(l.job,unclear('口座一覧です。'))).status,200);
+
+ // N7: a final research request follows this turn's accepted draft save, never a memory revision or a later owner edit.
+ {
+  const importedR=await upload(csv(Array.from({length:6},(_,i)=>row({0:'2026/08/12',1:'2026/08/14',2:'Post-save research '+i,5:String(8500+i)}))));
+  assert.equal(importedR.status,200,JSON.stringify(importedR.data));const rid=importedR.data.id,roid=new ObjectId(rid);
+  const draftR=line=>ok('/api/finance/imports/'+rid+'/drafts/'+line,{token}),chatR=line=>ok('/api/finance-chat/imports/'+rid+'/drafts/'+line,{token});
+  async function saveR(line,fields){const d=await draftR(line);return ok('/api/finance/imports/'+rid+'/drafts/'+line,{method:'PUT',token,body:{...bind(d),values:{...d.values,...fields},remember:[],confirm:false}})}
+  async function askR(line,text,extra={}){const d=await draftR(line),c=await chatR(line),requestId=crypto.randomUUID();await ok('/api/finance-chat/imports/'+rid+'/drafts/'+line,{method:'POST',token,body:{...bind(d),chatRevision:c.conversation?.revision||0,requestId,text,...extra}});const job=(await worker('claim')).data.job;assert.ok(job);assert.equal(job.text,text);return {requestId,job}}
+  const finalResearch=()=>({...unclear('保存した内容で調査を依頼しました。'),research:{instruction:'保存した購入内容の事業者情報・登録番号・税率を調査'}});
+  const researchR=line=>researches().findOne({importId:roid,line});
+  // A memory event revision can numerically match a foreign draft edit. It is not a save receipt, including in stale/retry checks.
+  await saveR(2,{purpose:'company',accountCategoryId:X});
+  const memoryJob=await askR(2,'科目を記憶して、すぐ記憶だけを停止して');
+  const made=await acted(memoryJob.job,1,'remember_accounting_fields',{fields:['accountCategoryId']});
+  const pausedR=await acted(memoryJob.job,2,'set_memory_status',{memoryId:made.receipt.nativeResourceIds.memoryId,status:'paused'});assert.equal(pausedR.receipt.acceptedRevision,2);
+  const foreignR=await saveR(2,{productName:'Separate owner edit'});assert.equal(foreignR.revision,2);
+  const liveMemory=await chatR(2);assert.equal((await finish(memoryJob.job,null)).status,200);const failedMemory=await chatR(2);
+  const retryMemory=await call('/api/finance-chat/imports/'+rid+'/drafts/2/retry',{method:'POST',token,body:{...bind(foreignR),chatRevision:failedMemory.conversation.revision}});
+  assert.equal(liveMemory.stale,true,'navi:memory-revision-is-not-draft-save-live');assert.equal(failedMemory.stale,true,'navi:memory-revision-is-not-draft-save-finished');assert.equal(retryMemory.status,409,'navi:memory-revision-cannot-authorize-retry');
+  // The same collision must not rebind final-response research either.
+  const memoryResearch=await askR(2,'その記憶を有効にして、購入の事業者を調査して');
+  const memoryActive=await acted(memoryResearch.job,1,'set_memory_status',{memoryId:made.receipt.nativeResourceIds.memoryId,status:'active'});assert.equal(memoryActive.receipt.acceptedRevision,3);
+  await saveR(2,{productName:'Another separate owner edit'});assert.equal((await finish(memoryResearch.job,finalResearch())).status,200);
+  assert.equal(await researchR(2),null,'navi:memory-revision-cannot-bind-research');assert.equal(turnOf((await chatR(2)).conversation,memoryResearch.requestId).research.unavailable,'下書きが更新されています。再読込してください。');
+  // A stored proposal is applied once, then the reply queues against its accepted revision and values.
+  const preview=await askR(3,'会社の充電費用');await finish(preview.job,{kind:'proposal',summary:'会社の充電費用の候補です。',patch:{purpose:'company',productName:'充電費用'},quotes:{purpose:'会社',productName:'充電費用'}});
+  const refR=turnOf((await chatR(3)).conversation,preview.requestId).reference,applyR=await askR(3,'その提案を反映して、事業者と税率を調べて',{references:[refR]});
+  const appliedR=await acted(applyR.job,1,'apply_referenced_proposal',{kind:'chat'});assert.equal((await finish(applyR.job,finalResearch())).status,200);
+  let queuedR=await researchR(3);assert.ok(queuedR,'navi:post-apply-final-research-is-queued');assert.equal(queuedR.state,'queued');assert.equal(queuedR.context.revision,appliedR.receipt.acceptedRevision);assert.equal(queuedR.context.values.productName,'充電費用');
+  const firstRequest=queuedR.requestId;await chatR(3);await chatR(3);assert.equal((await researchR(3)).requestId,firstRequest);assert.equal(await researches().countDocuments({importId:roid,line:3}),1,'navi:post-apply-research-once');
+  // Multiple draft saves use the last accepted revision, even when a later memory receipt has a larger unrelated revision.
+  const saveJob=await askR(4,'用途と商品名を保存し、先ほどの科目の記憶を停止してから調査して');await acted(saveJob.job,1,'save_draft_fields',{fields:{purpose:'company'}});
+  const lastSave=await acted(saveJob.job,2,'save_draft_fields',{fields:{productName:'Two saves'}});assert.equal(lastSave.receipt.acceptedRevision,2);
+  const laterMemory=await acted(saveJob.job,3,'set_memory_status',{memoryId:made.receipt.nativeResourceIds.memoryId,status:'paused'});assert.equal(laterMemory.receipt.acceptedRevision,4);
+  assert.equal((await finish(saveJob.job,finalResearch())).status,200);queuedR=await researchR(4);assert.ok(queuedR,'navi:post-save-final-research-is-queued');assert.equal(queuedR.context.revision,2);assert.equal(queuedR.context.values.productName,'Two saves');
+  // A foreign edit after a successful action remains a conflict, not an invitation to use the current revision.
+  const changed=await askR(5,'会社経費として保存し、調査して');await acted(changed.job,1,'save_draft_fields',{fields:{purpose:'company'}});await saveR(5,{productName:'Owner edit after action'});
+  assert.equal((await finish(changed.job,finalResearch())).status,200);assert.equal(await researchR(5),null,'navi:own-save-does-not-adopt-later-owner-edit');const changedView=await chatR(5);assert.equal(changedView.stale,true);assert.ok(turnOf(changedView.conversation,changed.requestId).research.unavailable);
+  // An explicit research action already queued this turn; the final reply reuses it without a second queue or new instruction.
+  const already=await askR(6,'用途を保存して、事業者を調査して');const alreadySaved=await acted(already.job,1,'save_draft_fields',{fields:{purpose:'company'}});
+  const alreadyQueued=await acted(already.job,2,'start_purchase_research',{instruction:'操作から依頼した調査'}),priorQueue=await researchR(6);
+  assert.equal((await finish(already.job,finalResearch())).status,200);const sameQueue=await researchR(6);assert.equal(sameQueue.requestId,alreadyQueued.receipt.nativeResourceIds.requestId);assert.equal(sameQueue.revision,priorQueue.revision);assert.equal(sameQueue.instruction,'操作から依頼した調査');assert.equal(sameQueue.context.revision,alreadySaved.receipt.acceptedRevision);assert.equal(await researches().countDocuments({importId:roid,line:6}),1,'navi:action-and-final-research-share-one-request');
+  for(const line of [2,3,4,5,6])assert.equal((await draftR(line)).approvedAt,null);
+  pass('N7 final research follows this turn\'s own accepted draft revision once; memory revisions and later owner edits cannot authorize a rebind or retry');
+ }
  for(const id of [agent.id,narrow.id])assert.equal((await call('/api/finance-chat/agents/'+id,{method:'DELETE',token})).status,200);
  assert.equal((await act(l.job,3,'list_accounts',{})).status,401,'navi:revoked-worker-cannot-act');
  await call('/api/finance-chat/agents/'+agentB.id,{method:'DELETE',token:other});
