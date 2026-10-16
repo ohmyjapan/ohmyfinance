@@ -18,6 +18,17 @@ test('research worker can answer a saved card chat and still polls research in t
  assert.deepEqual(calls,['workspace-claim','claim','saved-chat/result','research/claim','research/evaluation/claim']);
 });
 
+test('a hosted chat job with the action catalogue is answered from the research worker with its own endpoint and the result route of the SAME job',async()=>{
+ const calls=[],jobs=[],config={baseUrl:'http://127.0.0.1:8080',token:'synthetic',documentEnabled:false,directory:'C:/synthetic-vault'};
+ const chatWorker=new TeachingWorker(config,{
+  request:async(url,options)=>{const route=url.split('/worker/')[1];calls.push(route);if(route==='workspace-claim')return {ok:true,json:async()=>({job:null})};if(route==='claim')return {ok:true,json:async()=>({job:{id:'0123456789abcdef01234567',lease:'existing-lease',text:'제안대로 등록해 줘',tools:[{name:'apply_referenced_proposal'}],nextSlot:1,actions:[],references:[{kind:'chat',snapshot:{summary:'s',patch:{purpose:'company'}}}]}})};assert.equal(route,'0123456789abcdef01234567/result');assert.equal(JSON.parse(options.body).lease,'existing-lease');return {ok:true,json:async()=>({success:true})}},
+  interpret:async(c,job)=>{jobs.push({config:c,job});return {kind:'unclear',summary:'등록했어요.',patch:{},quotes:{}}},log:()=>{}
+ });
+ const worker=new ResearchWorker(config,'unused',{chatWorker});worker.api=async route=>{calls.push('research/'+route);return {job:null}};
+ assert.equal(await worker.cycle(),true);
+ assert.deepEqual(calls,['workspace-claim','claim','0123456789abcdef01234567/result','research/claim','research/evaluation/claim']);
+ assert.equal(jobs[0].job.actionEndpoint,'http://127.0.0.1:8080/api/finance-chat/worker/0123456789abcdef01234567/actions');assert.equal(jobs[0].config.directory,'C:/synthetic-vault','the hosting Vault directory reaches the interpreter');
+});
 test('idle teaching does not consume document jobs or suppress research/evaluation polling',async()=>{
  const calls=[],config={baseUrl:'http://127.0.0.1:8080',token:'synthetic',documentEnabled:false};
  const chatWorker=new TeachingWorker(config,{request:async url=>{calls.push(url.split('/worker/')[1]);return {ok:true,json:async()=>({job:null})}},interpret:async()=>{assert.fail('No inference for an empty queue')},log:()=>{}});

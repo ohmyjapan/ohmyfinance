@@ -1,4 +1,8 @@
 import { spawn } from 'node:child_process';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { validateChatProposal } from '../shared/finance-chat.mjs';
 import { accountantRole, accountantModel, accountantEffort } from '../shared/finance-accountant-role.mjs';
 const fields={purpose:{type:'string',enum:['customer','company','unresolved']},customerId:{type:'string'},productName:{type:'string'}};
@@ -11,25 +15,51 @@ customerPurchaseContexts in evidence or workspace evidence contains owner-confir
 Return the JSON schema only. 'summary' is the reply shown to the user. Write that reply in ordinary Korean or Japanese, using the page labels. Never expose internal property paths, field keys, state tokens, booleans or English schema labels in the reply. For example, describe an unreviewed document association as 서류와 이 결제 건의 연결은 아직 확인되지 않았어요, and an unchecked registry as 등록번호의 공적 확인은 아직 안 됐어요. Lead with what the document says, then the specific uncertainty; do not recite implementation details. For an explanation or unresolved question use 'unclear' with empty patch and quotes. 'defer' means the user wants to wait. For a clear correction or explanation use 'proposal', changing only purpose, customerId, productName explicitly supported by the CURRENT message. Quote an exact substring of the CURRENT user text for each field. Earlier conversation is context, not permission to carry unconfirmed fields forward. A known customer explicitly named in the CURRENT message supports purpose customer as well as the registered customerId. ProductName must be verbatim inside its quote, not translated. Unknown names or ambiguous pronouns require a question, not a guess. Mixed company/personal use cannot be represented as company. Do not flatten conditional rules or exceptions into unconditional proposals; ask to clarify the current purchase. This interface confirms one purchase. An optional separate user confirmation remembers only purpose/customer for the EXACT current merchant+account, from the current purchase date; never claim to have saved anything yourself. Mention this limit if asked for broader rules. A proposal is always a preview, never a saved change.
 In purchase mode, never instruct the user to look up, verify or enter the company identity, the invoice registration number, 勘定科目, 補助科目, 区分, 税区分 or 消費税率 themselves, and never tell the user to start the research themselves: OMF investigates those. When one of those is missing and the CURRENT message supplies or confirms what was bought or for whom, or the user asks OMF to check, find or confirm something about this purchase, set research.instruction to one Korean or Japanese sentence naming what to establish for this purchase and carrying the facts the user just gave (what was bought, for whom, which mail or document to look for). Omit research for a pure explanation of existing evidence, when the user says they do not know or wants to wait, and when the supplied research context already answers it and the current message adds no new fact. A research request never replaces a proposal: still propose purpose, customerId and productName from the current message exactly as above. When you request research, the summary says that OMF will investigate and that the findings appear below in this conversation (after the confirmation when the reply is a proposal; at once otherwise). The supplied research context holds the state, summary, question, findings and supplier candidate of OMF's own research for this purchase: its findings are proposals that still need on-page confirmation, never saved values; a research marked stale belongs to an earlier draft or source state and is not current settled evidence; if its question is still unanswered, ask only that one question.`;
 export const chatSystem=system;
+// A job that carries the server's action catalogue (job.tools) gets the same accountant role with the owned omf_actions MCP tools:
+// the three sentences that deny tools are replaced by the action contract. The model never receives a token; the MCP server reads
+// it from the private Vault directory the worker runs from. Receipts, not tool calls, are the proof of a change.
+const toolContract='You have the omf_actions tools and nothing else. They read and change OMF\'s own records for this owner through the OMF server, which checks every call against this conversation and the owner\'s accounts; you never see credentials, bank data or other users. Reads (list_accounts, list_imports, get_mapping, get_draft, get_registered_choices, get_research, get_action_status) always return the current state: read before you change and read again after. Changing actions run only on an explicit instruction in the CURRENT message: save_draft_fields for a named field change (resolve a registered name with get_registered_choices first; if the name matches several choices, ask); apply_referenced_proposal when the user tells you to apply the proposal they are looking at, which the server applies from its stored reference (never retype its values; name kind when a chat proposal and a research report were both displayed); remember_accounting_fields or remember_customer_purpose when the user asks to remember a decision for the future; approve_draft only when the user explicitly approves the draft; post_selected_approved_rows only when the user explicitly orders the ledger posting; start_purchase_research when a check or investigation is requested. Saving, remembering, approving and posting are separate: never do one the user did not ask for, and "register this" is never a ledger posting. A question, a suggestion or a discussion changes nothing. Only a tool result with state done (or queued for research) is proof of a change; a validation error names the argument, correct it from the supplied evidence and retry once without changing the instruction\'s meaning; a conflict (a changed draft, a changed or missing proposal, two displayed proposals, a missing purchase purpose) is explained in one focused question and never resolved by applying something else. referencedProposals lists the proposals attached to this message; if the user names a proposal and none is attached, say so. completedActions of earlier turns are already done: never repeat them; a receipt in state working or unresolved must be read with get_action_status before anything else. A queued research is not a finished answer: say the findings will appear in this conversation. In the final JSON reply use kind unclear with a summary that states exactly what was done (fields, draft revision) and what remains; use kind proposal only when you executed no change and the user should confirm the suggested purpose/customer/product. Never claim a change a tool did not report.';
+const toolless=['You have no tools or access beyond the supplied context.','Account/category changes still require the draft fields and save workflow; never claim chat can apply them.','An optional separate user confirmation remembers only purpose/customer for the EXACT current merchant+account, from the current purchase date; never claim to have saved anything yourself.'];
+export function systemFor(job){
+ if(!Array.isArray(job?.tools)||!job.tools.length)return system;
+ let text=system;
+ for(const sentence of toolless)text=text.replace(sentence,'');
+ return text.replace(/ {2,}/g,' ')+'\n'+toolContract;
+}
 export function interpreterInput(job){
  const c=job.context;
+ const actions=Array.isArray(job.actions)&&job.actions.length?{completedActions:job.actions.map(a=>({name:a.name,state:a.state,target:a.target,requestedFields:a.requestedFields,acceptedRevision:a.acceptedRevision,safeError:a.safeError}))}:{};
  return c.mode==='workspace'
-  ? {mode:'workspace',page:c.pageName,evidence:c.facts,capabilities:c.capabilities,conversation:c.messages,currentMessage:job.text}
-  : {purchase:{description:c.source.description,date:c.source.purchaseDate,amount:c.source.amount,currency:'JPY',account:c.source.account.name},values:{purpose:c.values.purpose,customerId:c.values.customerId,productName:c.values.productName},mapping:c.mapping || null,evidence:c.study,research:c.research||null,customers:c.customers,conversation:c.messages,currentMessage:job.text};
+  ? {mode:'workspace',page:c.pageName,evidence:c.facts,capabilities:c.capabilities,...(job.target?{selectedStatement:job.target}:{}),...actions,conversation:c.messages,currentMessage:job.text}
+  : {purchase:{description:c.source.description,date:c.source.purchaseDate,amount:c.source.amount,currency:'JPY',account:c.source.account.name},values:{purpose:c.values.purpose,customerId:c.values.customerId,productName:c.values.productName},mapping:c.mapping || null,evidence:c.study,research:c.research||null,customers:c.customers,...(Array.isArray(job.references)&&job.references.length?{referencedProposals:job.references.map(r=>({kind:r.kind,snapshot:r.snapshot||null}))}:{}),...actions,conversation:c.messages,currentMessage:job.text};
 }
+const actionsServer=fileURLToPath(new URL('./actions-mcp.mjs',import.meta.url));
 export async function interpretChat(config,job){
  if(!config.cliPath||!config.inferenceDirectory)throw Error('Teaching interpreter not configured');
+ const tooled=Array.isArray(job.tools)&&job.tools.length>0;
+ if(tooled&&(!config.directory||typeof job.actionEndpoint!=='string'||typeof job.lease!=='string'))throw Error('Teaching interpreter not configured');
  const env={};for(const key of ['PATH','Path','SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH','LOCALAPPDATA','APPDATA','PROGRAMDATA','ComSpec'])if(process.env[key])env[key]=process.env[key];
  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1';if(config.claudeConfigDirectory)env.CLAUDE_CONFIG_DIR=config.claudeConfigDirectory;
- const args=['-p','--model',accountantModel,'--effort',accountantEffort,'--output-format','json','--json-schema',JSON.stringify(schema),'--tools','','--mcp-config','{"mcpServers":{}}','--strict-mcp-config','--setting-sources','','--settings','{"disableAllHooks":true}','--no-session-persistence','--system-prompt',system];
+ // The job file holds endpoint, lease, catalogue and next slot — no token; it lives under the private Vault directory and is removed after the child exits.
+ let jobDir=null,mcp='{"mcpServers":{}}',allowed=[];
+ if(tooled){
+  jobDir=path.join(config.directory,'jobs',randomUUID());await mkdir(jobDir,{recursive:true});
+  await writeFile(path.join(jobDir,'job.json'),JSON.stringify({endpoint:job.actionEndpoint,lease:job.lease,tools:job.tools,nextSlot:job.nextSlot||1,timeoutMs:20000}),{mode:0o600});
+  mcp=JSON.stringify({mcpServers:{omf_actions:{command:process.execPath,args:[actionsServer],env:{OMF_ACTIONS_DIR:config.directory,OMF_ACTIONS_JOB_FILE:path.join(jobDir,'job.json')}}}});
+  allowed=['--allowedTools','mcp__omf_actions__*','--max-turns','16'];
+ }
+ const args=['-p','--model',accountantModel,'--effort',accountantEffort,'--output-format','json','--json-schema',JSON.stringify(schema),'--tools','',...allowed,'--mcp-config',mcp,'--strict-mcp-config','--setting-sources','','--settings','{"disableAllHooks":true}','--no-session-persistence','--system-prompt',systemFor(job)];
  const input=interpreterInput(job);
- const raw=await new Promise((resolve,reject)=>{
-  const child=spawn(config.cliPath,args,{cwd:config.inferenceDirectory,env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});let output='',settled=false;
-  const done=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(error):resolve(value)};
-  const timer=setTimeout(()=>{child.kill();done(Error('Teaching interpretation timed out'))},90000);
-  child.stdout.on('data',chunk=>{output+=chunk;if(output.length>200000){child.kill();done(Error('Teaching response too large'))}});
-  child.stderr.resume();child.stdin.on('error',()=>{});child.once('error',()=>done(Error('Teaching interpreter unavailable')));child.once('close',code=>done(code===0?null:Error('Teaching interpreter failed'),output));child.stdin.end(JSON.stringify(input));
- });
- let result;try{result=JSON.parse(raw);if(result.is_error)throw Error();result=result.structured_output||JSON.parse(result.result||'{}')}catch{throw Error('Invalid teaching response')}
- return validateChatProposal(result,job.context,job.text);
+ try{
+  const raw=await new Promise((resolve,reject)=>{
+   const child=spawn(config.cliPath,args,{cwd:config.inferenceDirectory,env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});let output='',settled=false;
+   const done=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(error):resolve(value)};
+   // Tool turns take longer than a plain reply; the server-side journal keeps any mutation that completes even if this child is killed.
+   const timer=setTimeout(()=>{child.kill();done(Error('Teaching interpretation timed out'))},tooled?240000:90000);
+   child.stdout.on('data',chunk=>{output+=chunk;if(output.length>200000){child.kill();done(Error('Teaching response too large'))}});
+   child.stderr.resume();child.stdin.on('error',()=>{});child.once('error',()=>done(Error('Teaching interpreter unavailable')));child.once('close',code=>done(code===0?null:Error('Teaching interpreter failed'),output));child.stdin.end(JSON.stringify(input));
+  });
+  let result;try{result=JSON.parse(raw);if(result.is_error)throw Error();result=result.structured_output||JSON.parse(result.result||'{}')}catch{throw Error('Invalid teaching response')}
+  return validateChatProposal(result,job.context,job.text);
+ }finally{if(jobDir)await rm(jobDir,{recursive:true,force:true}).catch(()=>{})}
 }

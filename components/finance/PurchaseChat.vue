@@ -8,6 +8,7 @@
    <div v-if="!turns.length" class="text-sm leading-relaxed text-gray-600 dark:text-gray-300"><p>{{ opening }}</p><p class="mt-2 text-xs text-gray-500 dark:text-gray-400">한국어・日本語で説明できます。会話はこの明細に保存されます。</p></div>
    <article v-for="turn in turns" :key="turn.id" :data-chat-turn="turn.id" class="space-y-3">
     <div class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
+    <ul v-if="turn.actions?.length" data-chat-actions class="mr-2 space-y-1 text-xs"><li v-for="a in turn.actions" :key="a.operationId" :data-chat-action-state="a.state" class="flex items-start gap-2" :class="a.state==='failed' || a.state==='unresolved' ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'"><Loader2 v-if="a.state==='working'" class="mt-0.5 h-3 w-3 shrink-0 animate-spin text-primary-main" /><span>{{ actionLabel(a) }}</span></li></ul>
     <div v-if="turn.proposal" class="mr-2"><p class="mb-1 text-[11px] font-semibold text-primary-main">OMF</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ turn.proposal.summary }}</p>
      <p v-if="turn.research" data-chat-research :data-chat-research-status="turn.id===conversation?.currentId ? '' : undefined" class="mt-2 text-xs" :class="turn.research.requestId ? 'text-gray-500' : turn.research.unavailable ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'">{{ researchStatus(turn) }}</p>
      <div v-if="turn.proposal.kind==='proposal'" class="mt-3 rounded-xl border border-gray-200 p-3 dark:border-white/10">
@@ -102,12 +103,23 @@ const resultFields=computed(()=>{
 })
 const bind=()=>({revision:props.draft.revision,key:props.draft.key,sourceHash:props.draft.sourceHash,chatRevision:conversation.value?.revision||0})
 const message=(e:any)=>e.data?.data?.message||'会話を取得できませんでした。もう一度お試しください。'
+// The proposals on screen when the owner sends a command are frozen into the request: the unconfirmed proposal of the latest turn and
+// the current (not stale, not applied) research report. The server validates and stores exactly these; a later change is refused, never
+// substituted.
+const displayedReferences=()=>{const refs:any[]=[];const turn=current.value;if(turn?.proposal?.kind==='proposal'&&!turn.confirmedAt&&turn.reference)refs.push(turn.reference);const r=researchView.value?.research;if(r?.report&&r.reference&&!researchView.value?.stale&&r.state!=='applied')refs.push(r.reference);return refs}
+const actionNames:Record<string,string>={save_draft_fields:'下書きを保存',apply_referenced_proposal:'提案を下書きに反映',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼'}
+const actionStates:Record<string,string>={done:'完了',queued:'受付済み',working:'処理中…',failed:'できませんでした',unresolved:'結果の確認が必要です'}
+const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.state]||a.state)+(a.acceptedRevision?'（下書き改訂 '+a.acceptedRevision+'）':'')+(a.requestedFields?.length&&a.state==='done'?' · '+a.requestedFields.map((f:string)=>fieldLabels[f]||labels[f]||f).join('・'):'')+(a.safeError?' · '+a.safeError:'')
+const fieldLabels:Record<string,string>=Object.fromEntries(researchFields.map(f=>[f.key,f.label]))
+// A completed write on this purchase refreshes the draft the page shows (fetched fresh; the receipt is history, not state), once per operation.
+const refreshed=new Set<string>()
+async function refreshAfterActions(){for(const turn of turns.value)for(const a of turn.actions||[]){if(a.state!=='done'||refreshed.has(a.operationId)||!['save_draft_fields','apply_referenced_proposal','approve_draft'].includes(a.name))continue;refreshed.add(a.operationId);if(a.acceptedRevision&&a.acceptedRevision<=props.draft.revision)continue;try{const d:any=await $fetch('/api/finance/imports/'+props.draft.importId+'/drafts/'+props.draft.line,{headers:user.authHeader});if(!disposed)emit('saved',d)}catch{}}}
 let loadTicket=0
-let timer:ReturnType<typeof setTimeout>|undefined,disposed=false,request:{id:string,text:string}|null=null
-async function load(){const ticket=++loadTicket;try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadTicket)data.value=result}catch(e){if(!disposed&&ticket===loadTicket)error.value=message(e)}}
+let timer:ReturnType<typeof setTimeout>|undefined,disposed=false,request:{id:string,text:string,references:any[]}|null=null
+async function load(){const ticket=++loadTicket;try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadTicket){data.value=result;await refreshAfterActions()}}catch(e){if(!disposed&&ticket===loadTicket)error.value=message(e)}}
 function schedule(){timer=setTimeout(async()=>{if(disposed)return;if(props.active&&!busy.value)await load();if(!disposed)schedule()},4000)}
 async function act(action:()=>Promise<void>){busy.value=true;loadTicket++;error.value='';try{await action();await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})}catch(e){error.value=message(e)}finally{busy.value=false}}
-async function send(){if(!text.value.trim()||unavailable.value||waiting.value||busy.value)return;await act(async()=>{if(!request||request.text!==text.value.trim())request={id:Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join(''),text:text.value.trim()};data.value=await $fetch(endpoint.value,{method:'POST',headers:user.authHeader,body:{...bind(),text:request.text,requestId:request.id}});text.value='';request=null;remember.value=false})}
+async function send(){if(!text.value.trim()||unavailable.value||waiting.value||busy.value)return;await act(async()=>{if(!request||request.text!==text.value.trim())request={id:Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join(''),text:text.value.trim(),references:displayedReferences()};data.value=await $fetch(endpoint.value,{method:'POST',headers:user.authHeader,body:{...bind(),text:request.text,requestId:request.id,references:request.references}});text.value='';request=null;remember.value=false})}
 async function confirm(){await act(async()=>{const result:any=await $fetch(endpoint.value+'/confirm',{method:'POST',headers:user.authHeader,body:{...bind(),turnId:current.value.id,remember:remember.value}});data.value=result;emit('saved',result.draft);remember.value=false})}
 async function retry(){await act(async()=>{data.value=await $fetch(endpoint.value+'/retry',{method:'POST',headers:user.authHeader,body:bind()})})}
 onMounted(async()=>{await load();if(!disposed)schedule()});onBeforeUnmount(()=>{disposed=true;loadTicket++;clearTimeout(timer)})

@@ -8,6 +8,10 @@
 // chat/assistant/worker/research unit tests. No model, no network, no production database. `covers` is decided at load: the
 // built-app files are listed only when the build exists. Fail-first on 8192d2e: legs 1-4 red (no research on the validator
 // result, no chatSchema/researchSummary export, dialogue hook not wired), leg 5 green.
+// Since plan omf-navi-api-actions-20261016 the interpreter also exposes the owned action tools (job.tools) and the research
+// summary carries a server-computed proposal reference; leg 2 checks that a job WITHOUT tools produces the same input as before
+// and leg 3 that the summary without a passed reference carries none. A missing export is a setup failure of this fixture,
+// never behaviour evidence; the action behaviour itself is omf-navi-api-actions.mjs.
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -93,6 +97,8 @@ export default {
       assert.equal(mod.interpreterInput({ context, text: 't' }).research, null, 'no research row → null');
       const workspace = mod.interpreterInput({ context: { mode: 'workspace', pageName: 'p', facts: {}, capabilities: [], messages: [] }, text: 't' });
       assert.equal(Object.hasOwn(workspace, 'research'), false, 'workspace input unchanged');
+      assert.deepEqual(Object.keys(workspace), ['mode', 'page', 'evidence', 'capabilities', 'conversation', 'currentMessage'], 'a job without tools adds no action keys');
+      assert.equal(Object.hasOwn(withResearch, 'referencedProposals'), false); assert.equal(Object.hasOwn(withResearch, 'completedActions'), false);
       assert.ok(/research/.test(String(mod.chatSchema && readFileSync(path.join(REPO_ROOT, 'teaching-worker/interpreter.mjs'), 'utf8'))), 'prompt names research');
       return 'optional object, instruction ≤2000';
     });
@@ -119,6 +125,7 @@ export default {
       const text = JSON.stringify(s); assert.ok(!text.includes('SOURCE BODY'), 'no source text'); assert.ok(!text.includes('https://'), 'no URLs'); assert.equal(s.sources, undefined);
       const stale = researchSummary(row, references, true);
       assert.equal(stale.stale, true); assert.deepEqual(stale.findings, []); assert.equal(stale.supplier, null); assert.equal(stale.summary, 's'); assert.ok(stale.meaning && /stale|earlier|not current/i.test(stale.meaning));
+      assert.equal(s.reference, null, 'no server reference passed, none invented'); assert.equal(stale.reference, null);
       assert.equal(researchSummary({ state: 'queued', instruction: 'i', report: null }, references).findings.length, 0);
       return 'findings/quotes bounded, references named, stale marks';
     });

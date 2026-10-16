@@ -5,10 +5,18 @@ import {FinancialAccount,FinanceImport} from '../models/Finance'
 import {learningOverview,learningDetail} from './financeLearningService'
 import {ready,fail,id,ownedImport,reviewMapping} from './financeService'
 import {assistantPages,validateAssistantReply} from '../../shared/finance-assistant.mjs'
+import {actionTools,reconcileActions,actionReceipts,runAction} from './financeActionService'
 async function init(){await ready();await Conversation.init()}
 const visible=(c:any)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null
 const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({chatLastSeenAt:-1}).lean()
-export async function getAssistant(ownerId:string){await init();return {conversation:visible(await Conversation.findOne({ownerId}).lean()),connected:!!await available(ownerId)}}
+// The current turn's action receipts come from the durable journal while the worker is at work (and after a crash).
+async function withReceipts(c:any){
+ if(!c?.currentId)return c
+ const turn=c.turns.find((t:any)=>t.id===c.currentId);if(!turn||turn.actions)return c
+ const receipts=await actionReceipts('workspace',String(c._id),turn.id);if(!receipts.length)return c
+ return {...c,turns:c.turns.map((t:any)=>t.id===turn.id?{...t,actions:receipts}:t)}
+}
+export async function getAssistant(ownerId:string){await init();return {conversation:visible(await withReceipts(await Conversation.findOne({ownerId}).lean())),connected:!!await available(ownerId)}}
 async function pageContext(ownerId:string,input:any){
  if(!input||!Object.hasOwn(assistantPages,input.page))fail(400,'Invalid assistant page')
  const context:any={mode:'workspace',page:input.page,pageName:assistantPages[input.page],currency:'JPY',capabilities:['Explain supplied evidence and page purpose','For purchase changes select a statement and confirm its proposal','Never change ledger or settings from general conversation'],facts:{}}
@@ -46,9 +54,11 @@ export async function sendAssistant(ownerId:string,body:any){
  if((c?.turns.length||0)>=200)fail(409,'会話が200件に達しました。管理者に確認してください。')
  const agent:any=await available(ownerId);if(!agent)fail(409,'AIに接続できません。少し待って再試行してください。')
  const context=await pageContext(ownerId,body.context)
- context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null}))
+ context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:(t.actions||[]).filter((a:any)=>a.state==='done').map((a:any)=>({name:a.name,target:a.target,requestedFields:a.requestedFields,acceptedRevision:a.acceptedRevision}))}))
+ // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
+ const target=context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
- const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:body.requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null}}})
+ const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:body.requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null,...(target?{target}:{})}}})
  if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId)
 }
 export async function retryAssistant(ownerId:string,body:any){
@@ -63,7 +73,10 @@ export async function claimAssistant(agent:any){
  await Conversation.updateMany({...scope,state:'working',leaseUntil:{$lte:new Date()},attempts:{$gte:2}},{$set:{state:'failed'},$inc:{revision:1},$unset:{lease:'',leaseUntil:''}})
  const lease=randomUUID(),c:any=await Conversation.findOneAndUpdate({...scope,$or:[{state:'queued'},{state:'working',leaseUntil:{$lte:new Date()},attempts:{$lt:2}}]},{$set:{state:'working',lease,leaseUntil:new Date(Date.now()+120000)},$inc:{attempts:1,revision:1}},{new:true}).lean()
  if(!c)return {job:null};const turn=c.turns.find((t:any)=>t.id===c.currentId)
- return {job:{id:String(c._id),mode:'workspace',lease,text:turn.text,context:c.context}}
+ // A reclaim reconciles the previous attempt's claimed operations before the model runs again; the job carries their receipts,
+ // the next free slot, the frozen statement selection and the named tools it may call.
+ const {receipts,nextSlot}=await reconcileActions('workspace',String(c._id),turn.id)
+ return {job:{id:String(c._id),mode:'workspace',lease,text:turn.text,context:c.context,tools:actionTools('workspace'),actions:receipts,nextSlot,target:turn.target||null}}
 }
 export async function finishAssistant(agent:any,chatId:string,body:any){
  if(!agent.workspaceEnabled)fail(403,'Workspace conversation access required')
@@ -71,7 +84,11 @@ export async function finishAssistant(agent:any,chatId:string,body:any){
  const filter={_id:id(chatId),ownerId:agent.ownerId,agentId:agent._id,state:'working',lease:body.lease,leaseUntil:{$gt:new Date()}}
  const c:any=await Conversation.findOne(filter).lean();if(!c)fail(409,'Conversation job changed')
  let proposal:any;if(body.failed!==true){try{proposal=validateAssistantReply(body.proposal)}catch{fail(400,'A general conversation cannot edit a purchase')}}
- const turns=c.turns.map((t:any)=>t.id===c.currentId?{...t,...(proposal?{proposal}:{}),answeredAt:new Date()}:t)
- const r=await Conversation.updateOne(filter,{$set:{turns,state:proposal?'ready':'failed'},$inc:{revision:1},$unset:{lease:'',leaseUntil:''}})
+ // Only this turn's fields are set (never the whole array from this read); the receipts come from the journal, so a failed final
+ // response keeps every completed action.
+ const receipts=await actionReceipts('workspace',chatId,c.currentId)
+ const r=await Conversation.updateOne(filter,{$set:{state:proposal?'ready':'failed','turns.$[turn].answeredAt':new Date(),...(proposal?{'turns.$[turn].proposal':proposal}:{}),'turns.$[turn].actions':receipts},$inc:{revision:1},$unset:{lease:'',leaseUntil:''}},{arrayFilters:[{'turn.id':c.currentId}]})
  if(!r.matchedCount)fail(409,'Conversation job changed');return {success:true}
 }
+// A named Navi action on this worker's claimed workspace conversation (lease-bound; see financeActionService).
+export async function actionAssistant(agent:any,chatId:string,body:any){await init();if(!agent.workspaceEnabled)fail(403,'Workspace conversation access required');return runAction(agent,'workspace',chatId,body)}

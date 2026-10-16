@@ -1,9 +1,9 @@
-import {getAssistant,sendAssistant,retryAssistant,claimAssistant,finishAssistant} from '../../services/financeAssistantService'
+import {getAssistant,sendAssistant,retryAssistant,claimAssistant,finishAssistant,actionAssistant} from '../../services/financeAssistantService'
 import { defineEventHandler, setHeader } from 'h3'
 import { financeUser,fail,id } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
 import { FinanceChatAgent } from '../../models/FinanceChat'
-import { chatAgent,chatHeartbeat,createChatAgent,getChat,sendChat,retryChat,claimChat,finishChat,confirmChat } from '../../services/financeChatService'
+import { chatAgent,chatHeartbeat,createChatAgent,getChat,sendChat,retryChat,claimChat,finishChat,confirmChat,actionChat } from '../../services/financeChatService'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  const parts=(event.path.split('?')[0].split('/api/finance-chat/')[1]||'').split('/').filter(Boolean)
@@ -14,8 +14,12 @@ export default defineEventHandler(async event=>{
    if(event.method==='POST'&&parts.length===2&&parts[1]==='heartbeat'){await chatHeartbeat(agent);return {success:true}}
    if(event.method==='POST'&&parts.length===2&&parts[1]==='workspace-claim'){await chatHeartbeat(agent);return await claimAssistant(agent)}
    if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='result')return await finishAssistant(agent,parts[2],await body())
+   // Named, lease-bound Navi actions on the claimed conversation (workspace or purchase); the body carries lease, slot, name, args.
+   const actionBody=async()=>{try{return JSON.parse((await boundedBody(event,64000)).toString('utf8'))}catch(e:any){if(e.statusCode)throw e;fail(400,'Invalid action JSON')}}
+   if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='actions')return await actionAssistant(agent,parts[2],await actionBody())
    if(event.method==='POST'&&parts.length===2&&parts[1]==='claim'){await chatHeartbeat(agent);return await claimChat(agent)}
    if(event.method==='POST'&&parts.length===3&&parts[2]==='result')return await finishChat(agent,parts[1],await body())
+   if(event.method==='POST'&&parts.length===3&&parts[2]==='actions')return await actionChat(agent,parts[1],await actionBody())
    fail(404,'Teaching worker endpoint not found')
   }
   const ownerId=await financeUser(event)

@@ -2,14 +2,17 @@ import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { getHeader, type H3Event } from 'h3'
 import { FinanceChat as Chat, FinanceChatAgent as Agent } from '../models/FinanceChat'
 import { FinanceDraft } from '../models/FinanceDraft'
+import { FinanceResearch as Research } from '../models/FinanceResearch'
 import { FinancialAccount } from '../models/Finance'
 import User from '../models/User'
 import { ready, fail, id } from './financeService'
-import { readDraft, saveDraft } from './financeDraftService'
+import { readDraft, saveDraft, type DraftOperation } from './financeDraftService'
 import { reviewContext } from './financeReviewService'
 import { validateChatProposal, reusableClassification } from '../../shared/finance-chat.mjs'
 import { consultationEvidence } from '../../shared/finance-consultation.mjs'
+import { validateProposalReference, sameProposalReference, chatProposalReference, chatProposalContent, proposalHash, researchProposalReference, researchReportContent, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { startChatResearch, chatResearchContext } from './financeResearchService'
+import { actionTools, reconcileActions, actionReceipts, runAction } from './financeActionService'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 const fingerprint=(v:any)=>hash(JSON.stringify(v))
 const pending=['queued','working','confirming']
@@ -18,6 +21,39 @@ const identity=(ownerId:string,importId:string,line:number)=>({ownerId,importId:
 function bound(d:any,b:any){if(b?.revision!==d.revision||b?.key!==d.key||b?.sourceHash!==d.sourceHash)fail(409,'下書きが変わりました。再読込してから続けてください。')}
 function editable(d:any){if(d.locked||d.source.kind!=='expense')fail(409,'この明細の購入内容は変更できません。')}
 function visible(c:any){return c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null}
+// The current turn's action receipts come from the durable journal while the worker is still at work (and after a crash); a
+// finished turn carries them in the document itself.
+async function withReceipts(c:any){
+ if(!c?.currentId)return c
+ const turn=c.turns.find((t:any)=>t.id===c.currentId);if(!turn||turn.actions)return c
+ const receipts=await actionReceipts('purchase',String(c._id),turn.id);if(!receipts.length)return c
+ return {...c,turns:c.turns.map((t:any)=>t.id===turn.id?{...t,actions:receipts}:t)}
+}
+// The proposals a command may name: each must be exactly what this conversation displayed (the stored turn reference, or the
+// research row's current reference), unapplied, and bound to the current draft; a foreign, edited, changed or applied one is
+// refused here with one message. The bounded snapshot of what was displayed is stored beside the reference for the worker.
+async function storedReferences(ownerId:string,importId:string,line:number,c:any,d:any,input:any):Promise<any[]>{
+ if(input===undefined||input===null)return []
+ if(!Array.isArray(input)||input.length>2)fail(400,'参照する提案を確認してください。')
+ const refs=input.map((r:any)=>{try{return validateProposalReference(r)}catch{return fail(400,'参照する提案を確認してください。')}})
+ if(new Set(refs.map((r:ProposalReference)=>r.kind)).size!==refs.length)fail(400,'同じ種類の提案を複数参照することはできません。')
+ const out:any[]=[]
+ for(const ref of refs){
+  if(ref.importId!==importId||ref.line!==line)fail(409,'この明細に表示されていた提案ではありません。')
+  if(ref.kind==='chat'){
+   const turn=c?.turns.find((t:any)=>t.id===ref.turnId)
+   if(!turn?.reference||turn.proposal?.kind!=='proposal'||!sameProposalReference(turn.reference,ref)||proposalHash(chatProposalContent(turn.proposal))!==ref.hash)fail(409,'表示されていた提案が変わりました。再読込してください。')
+   if(turn.confirmedAt)fail(409,'この提案は既に反映済みです。')
+   out.push({...ref,snapshot:{summary:turn.proposal.summary,patch:turn.proposal.patch}})
+  }else{
+   const r:any=await Research.findOne(identity(ownerId,importId,line)).lean(),current=researchProposalReference(r)
+   if(!current||!sameProposalReference(current,ref))fail(409,'表示されていた調査結果が変わりました。再読込してください。')
+   if(r.state!=='ready'||r.context.key!==d.key||r.context.sourceHash!==d.sourceHash||r.context.revision!==d.revision)fail(409,'調査後に下書きが変わりました。再調査してください。')
+   out.push({...ref,snapshot:researchReportContent(r.report)})
+  }
+ }
+ return out
+}
 // Research started from a conversation turn. The turn keeps {instruction, when, requestId|unavailable, at}: a successful start may replace an
 // earlier unavailable, an unavailable never replaces a successful request (the array filter then leaves the turn untouched).
 const researchMarker=(started:any)=>Object.fromEntries(Object.entries('unavailable' in started?{unavailable:started.unavailable,at:new Date()}:{requestId:started.requestId,at:new Date()}).map(([k,v])=>['turns.$[turn].research.'+k,v]))
@@ -67,7 +103,10 @@ export async function getChat(ownerId:string,importId:string,line:number){
   }
  }
  const connected=!!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}})
- return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'}
+ c=await withReceipts(c)
+ // A draft revision this conversation's own completed action produced is not a stale view of the draft.
+ const produced=!!c?.turns.find((t:any)=>t.id===c.currentId)?.actions?.some((a:any)=>a.state==='done'&&a.acceptedRevision===d.revision)
+ return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'&&!produced}
 }
 export async function sendChat(ownerId:string,importId:string,line:number,body:any){
  await init()
@@ -83,16 +122,19 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')
  if(await Chat.countDocuments({ownerId,state:{$in:['queued','working']}})>=3)fail(409,'他の会話への回答を待ってから送信してください。')
  if(!c){try{c=(await Chat.create({...scope,accountId:d.source.account.id})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
+ const references=await storedReferences(ownerId,importId,line,c,d,body.references)
  const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),research:await chatResearchContext(ownerId,importId,line,d),
-  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt}))}
- const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date()}}},{new:true}).lean()
+  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:(t.actions||[]).filter((a:any)=>a.state==='done').map((a:any)=>({name:a.name,requestedFields:a.requestedFields,acceptedRevision:a.acceptedRevision}))}))}
+ const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),...(references.length?{references}:{})}}},{new:true}).lean()
  if(!updated)fail(409,'会話が更新されました。再読込してください。')
  return getChat(ownerId,importId,line)
 }
 export async function retryChat(ownerId:string,importId:string,line:number,body:any){
  await init();const d=await readDraft(ownerId,importId,line);bound(d,body);editable(d)
  const c:any=await Chat.findOne(identity(ownerId,importId,line)).lean()
- if(!c||c.state!=='failed'||body.chatRevision!==c.revision||c.context.fingerprint!==fingerprint(d.values))fail(409,'新しいメッセージとして送信してください。')
+ // A draft revision this turn's own completed action produced is not a foreign change: the retry reconciles those receipts first.
+ const produced=!!c&&(await actionReceipts('purchase',String(c._id),c.currentId)).some((a:any)=>a.state==='done'&&a.acceptedRevision===d.revision)
+ if(!c||c.state!=='failed'||body.chatRevision!==c.revision||(c.context.fingerprint!==fingerprint(d.values)&&!produced))fail(409,'新しいメッセージとして送信してください。')
  await Chat.updateOne({_id:c._id,revision:c.revision,state:'failed'},{$set:{state:'queued',attempts:0},$inc:{revision:1}})
  return getChat(ownerId,importId,line)
 }
@@ -102,7 +144,10 @@ export async function claimChat(agent:any){
  const lease=randomUUID(),c:any=await Chat.findOneAndUpdate({...scope,$or:[{state:'queued'},{state:'working',leaseUntil:{$lte:new Date()},attempts:{$lt:2}}]},{$set:{state:'working',lease,leaseUntil:new Date(Date.now()+120000),agentId:agent._id},$inc:{attempts:1,revision:1}},{sort:{updatedAt:1},new:true}).lean()
  if(!c)return {job:null}
  const turn=c.turns.find((t:any)=>t.id===c.currentId)
- return {job:{id:String(c._id),lease,text:turn.text,context:c.context}}
+ // A reclaim reconciles the previous attempt's claimed operations from their domain markers before the model runs again, and the
+ // job carries their receipts, the next free slot, the stored references and the named tools it may call.
+ const {receipts,nextSlot}=await reconcileActions('purchase',String(c._id),turn.id)
+ return {job:{id:String(c._id),lease,text:turn.text,context:c.context,tools:actionTools('purchase'),actions:receipts,nextSlot,references:turn.references||[]}}
 }
 export async function finishChat(agent:any,chatId:string,body:any){
  if(typeof body?.lease!=='string')fail(400,'Missing lease')
@@ -119,9 +164,27 @@ export async function finishChat(agent:any,chatId:string,body:any){
   if(proposal.kind==='unclear'){const started=await chatResearch(String(agent.ownerId),String(c.importId),c.line,String(c._id),turn.id,request.instruction,{revision:c.context.revision,key:c.context.key,sourceHash:c.context.sourceHash});research={...request,when:'now',...('unavailable' in started?{unavailable:started.unavailable}:{requestId:started.requestId})}}
   else research={...request,when:'confirm'}
  }
- const turns=c.turns.map((t:any,i:number)=>i===index?{...t,...(proposal?{proposal}:{}),...(research?{research}:{}),answeredAt:new Date()}:t)
- const result=await Chat.updateOne(filter,{$set:{turns,state:proposal?'ready':'failed'},$unset:{lease:'',leaseUntil:''},$inc:{revision:1}})
+ // A proposal gets its immutable display reference; the turn's action receipts come from the journal (a failed final response
+ // keeps every completed action). Only this turn's fields are set, never the whole array from this read.
+ const reference=proposal?.kind==='proposal'?chatProposalReference(c,{...turn,proposal},c.context.revision):null
+ const actions=await actionReceipts('purchase',chatId,turn.id)
+ const set:any={state:proposal?'ready':'failed','turns.$[turn].answeredAt':new Date(),...(proposal?{'turns.$[turn].proposal':proposal}:{}),...(research?{'turns.$[turn].research':research}:{}),...(reference?{'turns.$[turn].reference':reference}:{}),'turns.$[turn].actions':actions}
+ const result=await Chat.updateOne(filter,{$set:set,$unset:{lease:'',leaseUntil:''},$inc:{revision:1}},{arrayFilters:[{'turn.id':turn.id}]})
  if(!result.matchedCount)fail(409,'Teaching job changed');return {success:true}
+}
+// A named Navi action on this worker's claimed conversation (lease-bound; see financeActionService).
+export async function actionChat(agent:any,chatId:string,body:any){await init();return runAction(agent,'purchase',chatId,body)}
+// Shared acceptance of a displayed chat proposal: the one draft save (the chat-review marker makes a retry find its own write) and
+// the deferred research start bound to the accepted revision, then the turn is marked confirmed. Used by the existing confirm button
+// (the current turn, under the conversation's confirming lock) and by the explicit later command (the referenced earlier turn).
+async function acceptProposalDraft(ownerId:string,importId:string,line:number,c:any,turn:any,d:any,proposal:any,values:any,remember:boolean,operation?:DraftOperation){
+ return (await saveDraft(ownerId,importId,line,{revision:d.revision,key:d.key,sourceHash:d.sourceHash,values,remember:[],confirm:false},{reviewId:String(c._id),replyTs:turn.id,text:turn.text,summary:proposal.summary,fields:Object.keys(proposal.patch),reusable:remember,channel:'web'},undefined,undefined,operation)).revision
+}
+async function settleAcceptedTurn(ownerId:string,importId:string,line:number,c:any,turn:any,accepted:number,remember:boolean,finalState:string|null){
+ // Deferred research starts only after the draft save succeeded, bound to the accepted revision; its result lands in the same final write.
+ const started=turn.research?.when==='confirm'&&!turn.research.requestId&&!turn.research.unavailable&&Number.isSafeInteger(accepted)?await chatResearch(ownerId,importId,line,String(c._id),turn.id,turn.research.instruction,{revision:accepted,key:c.context.key,sourceHash:c.context.sourceHash}):null
+ const unset:any={...(finalState?{lease:'',leaseUntil:''}:{}),...(started&&!('unavailable' in started)?{'turns.$[turn].research.unavailable':''}:{})}
+ await Chat.updateOne({_id:c._id,...(finalState?{currentId:turn.id}:{})},{$set:{...(finalState?{state:finalState}:{}),'turns.$[turn].confirmedAt':new Date(),'turns.$[turn].remembered':remember,...(started?researchMarker(started):{})},...(Object.keys(unset).length?{$unset:unset}:{}),$inc:{revision:1}},{arrayFilters:[started?researchFilter(turn.id,started):{'turn.id':turn.id}]})
 }
 export async function confirmChat(ownerId:string,importId:string,line:number,body:any){
  await init();if(typeof body?.remember!=='boolean')fail(400,'記憶の範囲を確認してください。')
@@ -141,12 +204,29 @@ export async function confirmChat(ownerId:string,importId:string,line:number,bod
   if(body.remember&&!reusableClassification(proposal,values))fail(400,'顧客・用途が明確な提案だけを記憶できます。')
   const lease=randomUUID(),locked=await Chat.updateOne({_id:c._id,revision:c.revision,state:c.state},{$set:{state:'confirming',lease,leaseUntil:new Date(Date.now()+120000)}})
   if(!locked.matchedCount)fail(409,'会話が更新されました。')
-  try{
-   accepted=(await saveDraft(ownerId,importId,line,{revision:d.revision,key:d.key,sourceHash:d.sourceHash,values,remember:[],confirm:false},{reviewId:String(c._id),replyTs:turn.id,text:turn.text,summary:proposal.summary,fields:Object.keys(proposal.patch),reusable:body.remember,channel:'web'})).revision
-  }catch(e){await Chat.updateOne({_id:c._id,lease},{$set:{state:'ready'},$unset:{lease:'',leaseUntil:''}});throw e}
+  try{accepted=await acceptProposalDraft(ownerId,importId,line,c,turn,d,proposal,values,body.remember)}
+  catch(e){await Chat.updateOne({_id:c._id,lease},{$set:{state:'ready'},$unset:{lease:'',leaseUntil:''}});throw e}
  }
- // Deferred research starts only after the draft save succeeded, bound to the accepted revision; its result lands in the same final write.
- const started=turn.research?.when==='confirm'&&!turn.research.requestId&&!turn.research.unavailable&&Number.isSafeInteger(accepted)?await chatResearch(ownerId,importId,line,String(c._id),turn.id,turn.research.instruction,{revision:accepted,key:c.context.key,sourceHash:c.context.sourceHash}):null
- await Chat.updateOne({_id:c._id,currentId:turn.id},{$set:{state:'confirmed','turns.$[turn].confirmedAt':new Date(),'turns.$[turn].remembered':body.remember,...(started?researchMarker(started):{})},$unset:{lease:'',leaseUntil:'',...(started&&!('unavailable' in started)?{'turns.$[turn].research.unavailable':''}:{})},$inc:{revision:1}},{arrayFilters:[started?researchFilter(turn.id,started):{'turn.id':turn.id}]})
+ await settleAcceptedTurn(ownerId,importId,line,c,turn,accepted,body.remember,'confirmed')
  return {...await getChat(ownerId,importId,line),draft:await readDraft(ownerId,importId,line)}
+}
+// The explicit later command ("register it like that"): applies the STORED reference of an earlier displayed proposal turn, not the
+// current turn and not model-supplied values. The draft must still be the one the proposal was displayed against; a changed draft,
+// an edited or foreign reference or an applied proposal is refused with one message. Called by the action service under its journal.
+export async function applyChatProposal(ownerId:string,importId:string,line:number,c:any,ref:ProposalReference,remember:boolean,operation:DraftOperation){
+ const turn=c.turns.find((t:any)=>t.id===ref.turnId)
+ if(!turn?.reference||turn.proposal?.kind!=='proposal'||!sameProposalReference(turn.reference,ref)||proposalHash(chatProposalContent(turn.proposal))!==ref.hash)fail(409,'表示されていた提案が変わりました。再読込してください。')
+ const saved:any=await FinanceDraft.findOne({ownerId,importId,line}).lean()
+ const applied=saved?.history.find((h:any)=>h.reviewId===String(c._id)&&h.replyTs===turn.id&&h.channel==='web')
+ if(applied&&applied.reusable!==remember)fail(409,'既に別の記憶範囲で反映済みです。')
+ let accepted:number=applied?.revision
+ if(!applied){
+  const d=await readDraft(ownerId,importId,line);editable(d)
+  if(d.revision!==ref.draftRevision||d.key!==ref.key||d.sourceHash!==ref.sourceHash)fail(409,'提案の後に下書きが変わりました。現在の下書きを確認してから、改めて指示してください。')
+  const proposal=validateChatProposal(turn.proposal,{values:d.values,customers:c.context.customers},turn.text),values={...d.values,...proposal.patch}
+  if(remember&&!reusableClassification(proposal,values))fail(400,'顧客・用途が明確な提案だけを記憶できます。')
+  accepted=await acceptProposalDraft(ownerId,importId,line,c,turn,d,proposal,values,remember,operation)
+ }
+ if(!turn.confirmedAt)await settleAcceptedTurn(ownerId,importId,line,c,turn,accepted,remember,null)
+ return {revision:accepted,fields:Object.keys(turn.proposal.patch),draftId:saved?String(saved._id):String((await FinanceDraft.findOne({ownerId,importId,line}).select('_id').lean())?._id||''),turnId:turn.id}
 }

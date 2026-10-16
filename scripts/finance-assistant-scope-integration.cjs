@@ -22,4 +22,5 @@ module.exports=async context=>{
  assert.equal((await call('/api/finance-chat/workspace',{token})).status,200);
  await require('./finance-chat-integration.cjs')(context);
  await require('./finance-assistant-integration.cjs')(context);
+ await require('./finance-navi-actions-integration.cjs')(context);
 };

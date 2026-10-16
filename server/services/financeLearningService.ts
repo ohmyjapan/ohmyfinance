@@ -1,4 +1,5 @@
 import { FinanceDraft } from '../models/FinanceDraft'
+import { FinanceDecisionMemory } from '../models/FinanceDecisionMemory'
 import { FinanceLearningDataset as Dataset, FinanceLearningLibrary as Library, FinanceLearningRow as Row, FinanceLearningPattern as Pattern, FinanceLearningPolicy as Policy } from '../models/FinanceLearning'
 import mongoose from 'mongoose'
 import { FinanceCustomerContext } from '../models/FinanceCustomerContext'
@@ -23,13 +24,38 @@ const pageNumber = (value:any) => { const n = Number(value || 1); if (!Number.is
 const literal = (value:any) => { if (value !== undefined && (typeof value !== 'string' || value.length>120)) fail(400,'Search exceeds 120 characters'); return norm(value || '').replace(/[.*+?^${}()|[\]\\]/g,'\\$&') }
 // Confirmed conversation lessons live in the same atomic document as their draft update.
 // A later correction withdraws the lesson; resuming requires the classification to still match.
+// Independent classification memory events (a Navi "remember this customer/purpose" command) are read beside them with the same
+// policy shape; their status is their own, never tied to a draft approval. The legacy query keys map onto the event fields.
 export async function teachingPolicies(ownerId:string,query:any={}) {
  const drafts:any[]=await FinanceDraft.find({ownerId,'teachingMemory.id':{$exists:true},...query}).select('teachingMemory values.purpose values.customerId revision accountId importId line').sort({'teachingMemory.at':-1}).lean()
- return drafts.map(d=>{const m=d.teachingMemory;return {_id:d._id,kind:'teaching',revision:d.revision,title:m.merchantLabel,merchants:[m.merchant],accountIds:[d.accountId],accountName:m.accountName,decision:m.decision,effectiveFrom:m.effectiveFrom,reason:m.summary,sourceQuote:m.quote,status:m.enabled&&m.decision.purpose===d.values.purpose&&m.decision.customerId===d.values.customerId?'active':'deferred',importId:String(d.importId),line:d.line}})
+ const legacy=drafts.map(d=>{const m=d.teachingMemory;return {_id:d._id,kind:'teaching',revision:d.revision,title:m.merchantLabel,merchants:[m.merchant],accountIds:[d.accountId],accountName:m.accountName,decision:m.decision,effectiveFrom:m.effectiveFrom,reason:m.summary,sourceQuote:m.quote,status:m.enabled&&m.decision.purpose===d.values.purpose&&m.decision.customerId===d.values.customerId?'active':'deferred',importId:String(d.importId),line:d.line,at:m.at}})
+ const eventQuery:any={ownerId,kind:'classification'};if(query.accountId!==undefined)eventQuery.accountId=query.accountId;if(query['teachingMemory.merchant']!==undefined)eventQuery.merchant=query['teachingMemory.merchant']
+ const events=(await FinanceDecisionMemory.find(eventQuery).sort({at:-1}).lean()).map((e:any)=>memoryPolicy(e))
+ return [...legacy,...events].sort((a,b)=>new Date(b.at||0).getTime()-new Date(a.at||0).getTime()).map(({at,...p})=>p)
+}
+const memoryPolicy=(e:any)=>({_id:e._id,kind:'teaching',entry:'memory',memoryKind:e.kind,revision:e.revision,title:e.merchantLabel||e.merchant,merchants:[e.merchant],accountIds:[e.accountId],accountName:e.accountName,decision:e.decision||{purpose:e.purpose,customerId:e.customerId},fields:e.fields||[],values:e.values||null,effectiveFrom:e.effectiveFrom,reason:e.provenance?.summary||'',sourceQuote:e.provenance?.text||'',status:e.status==='active'?'active':'deferred',importId:e.source?.importId?String(e.source.importId):'',line:e.source?.line,at:e.at})
+// Active accounting memory events, shown in Learning beside the classification rules (they feed draft proposals, not purpose).
+export async function accountingMemories(ownerId:string){return (await FinanceDecisionMemory.find({ownerId,kind:'accounting'}).sort({at:-1}).limit(200).lean()).map((e:any)=>{const {at,...p}=memoryPolicy(e);return p})}
+// A memory event's status: compare-and-set on its revision, audited; `operation` is a Navi action's marker and makes a retry
+// return the already recorded change instead of bumping the revision again.
+export async function saveMemoryStatus(ownerId:string,memoryId:string,body:any,operation?:{operationId:string,name:string}){
+ if(!Number.isSafeInteger(body?.revision)||!['active','deferred','paused'].includes(body?.status))fail(400,'Invalid memory status')
+ const status=body.status==='active'?'active':'paused'
+ const event:any=await FinanceDecisionMemory.findOne({_id:id(memoryId),ownerId}).lean()
+ if(!event)fail(404,'Memory not found')
+ if(operation){const done=(event.audit||[]).find((a:any)=>a.operationId===operation.operationId);if(done)return {success:true,memory:memoryPolicy(event),revision:event.revision,recorded:done}}
+ if(event.revision!==body.revision)fail(409,'記憶が更新されました。再読込してください。')
+ const at=new Date(),revision=body.revision+1
+ const r=await FinanceDecisionMemory.updateOne({_id:event._id,ownerId,revision:body.revision},{$set:{status,revision},$push:{audit:{at,status,revision,...(operation?{operationId:operation.operationId,operation:operation.name}:{source:'web'})}}})
+ if(!r.matchedCount)fail(409,'記憶が更新されました。再読込してください。')
+ const updated:any=await FinanceDecisionMemory.findOne({_id:event._id}).lean()
+ return {success:true,memory:memoryPolicy(updated),revision,recorded:{at,status,revision}}
 }
 export async function saveTeachingStatus(ownerId:string,draftId:string,body:any){
  if(!Number.isSafeInteger(body?.revision)||!['active','deferred'].includes(body?.status))fail(400,'Invalid lesson status')
  const draft:any=await FinanceDraft.findOne({_id:id(draftId),ownerId,'teachingMemory.id':{$exists:true}}).lean()
+ // The same learning surface toggles an independent memory event (the page addresses every teaching rule as a lesson).
+ if(!draft&&await FinanceDecisionMemory.exists({_id:id(draftId),ownerId}))return saveMemoryStatus(ownerId,draftId,body)
  if(!draft)fail(404,'Teaching lesson not found')
  const m=draft.teachingMemory
  if(body.status==='active'&&(m.decision.purpose!==draft.values.purpose||m.decision.customerId!==draft.values.customerId))fail(409,'元の下書きが修正されています。会話から新しい内容を確認してください。')
@@ -41,7 +67,7 @@ export async function saveTeachingStatus(ownerId:string,draftId:string,body:any)
 export async function learningOverview(ownerId:string) {
  const dataset=await learningDataset(ownerId),counts:any={},policies=[...await Policy.find({ownerId}).sort({createdAt:1}).lean(),...await teachingPolicies(ownerId)]
  if(dataset)for(const status of ['proposed','confirmed','deferred'])counts[status]=await Pattern.countDocuments({ownerId,datasetId:dataset._id,status})
- return {dataset,counts,customers:await Customer.find({isActive:true}).select('name').sort({name:1}).lean(),policies,customerPurchaseContexts:await customerContextEvidence(ownerId)}
+ return {dataset,counts,customers:await Customer.find({isActive:true}).select('name').sort({name:1}).lean(),policies,accountingMemories:await accountingMemories(ownerId),customerPurchaseContexts:await customerContextEvidence(ownerId)}
 }
 export async function learningPatterns(ownerId:string,query:any) {
   const dataset = await learningDataset(ownerId), page = pageNumber(query.page)

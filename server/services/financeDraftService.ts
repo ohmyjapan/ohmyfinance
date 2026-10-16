@@ -8,6 +8,7 @@ import os from 'node:os'
 import mongoose from 'mongoose'
 import { getHeader, type H3Event } from 'h3'
 import { FinanceDraft, FinanceDocument } from '../models/FinanceDraft'
+import { FinanceDecisionMemory } from '../models/FinanceDecisionMemory'
 import { learningEvidence } from './financeLearningService'
 import { applyClassification } from '../../shared/finance-answers.mjs'
 import { FinancialAccount, FinanceEntry } from '../models/Finance'
@@ -125,17 +126,24 @@ async function propose(ctx: any, references: any) {
     for (const key of ['companyInfo', 'invoiceNumber']) if (supplier[key]) assign(key, supplier[key], { ...proof })
   }
   const scope = ctx.saved?.values || values
-  const memories: any[] = await FinanceDraft.find({ ownerId, accountId: account._id, 'memory.merchant': normalizeMerchant(row.description), 'memory.purpose': scope.purpose, 'memory.customerId': scope.customerId }).select('memory importId line').sort({ 'memory.at': -1, _id: -1 }).limit(200).lean()
+  const merchant = normalizeMerchant(row.description)
+  const memories: any[] = await FinanceDraft.find({ ownerId, accountId: account._id, 'memory.merchant': merchant, 'memory.purpose': scope.purpose, 'memory.customerId': scope.customerId }).select('memory importId line').sort({ 'memory.at': -1, _id: -1 }).limit(200).lean()
+  // Independent memory events (a Navi "remember" command) and legacy approval memories are merged per field by recency; a paused
+  // event does not contribute. An event may serve the very purchase it was remembered on: its draft stays unsaved and unapproved.
+  const events: any[] = await FinanceDecisionMemory.find({ ownerId, accountId: account._id, kind: 'accounting', status: 'active', merchant, purpose: scope.purpose, customerId: scope.customerId }).sort({ at: -1, _id: -1 }).limit(200).lean()
+  const remembered = [
+    ...memories.filter(previous => !(previous.importId.toString() === ctx.importId && previous.line === row.line)).map(previous => ({ at: new Date(previous.memory.at).getTime(), fields: previous.memory.fields || [], values: previous.memory.values || {}, proof: { draftId: previous._id.toString(), importId: previous.importId.toString(), line: previous.line, at: previous.memory.at } })),
+    ...events.map(event => ({ at: new Date(event.at).getTime(), fields: event.fields || [], values: event.values || {}, proof: { memoryId: event._id.toString(), importId: String(event.source?.importId || ''), line: event.source?.line, at: event.at, provenance: 'navi' } }))
+  ].sort((a, b) => b.at - a.at)
   const used = new Set<string>()
-  for (const previous of memories) {
-    if (previous.importId.toString() === ctx.importId && previous.line === row.line) continue
-    for (const key of previous.memory.fields || []) {
+  for (const previous of remembered) {
+    for (const key of previous.fields) {
       if (!learnedFields.includes(key) || used.has(key)) continue
       used.add(key)
-      const value = previous.memory.values[key]
+      const value = previous.values[key]
       const field = fields.find(f => f.key === key)!
       if (field.ref && value && !references[field.ref].some((item: any) => item._id.toString() === value)) continue
-      const learned = sourceEvidence('learned', '同じ口座・利用先・用途・顧客で、あなたが確認して記憶した値。', { draftId: previous._id.toString(), importId: previous.importId.toString(), line: previous.line, at: previous.memory.at })
+      const learned = sourceEvidence('learned', '同じ口座・利用先・用途・顧客で、あなたが確認して記憶した値。', previous.proof)
       if (!isEmpty(values[key]) && !sameValue(values[key], value)) evidence[key] = { ...evidence[key], state: 'conflict', alternative: value, alternativeEvidence: learned, reason: '元資料と記憶した値が異なります。内容を確認してください。' }
       else assign(key, value, learned)
     }
@@ -276,10 +284,15 @@ export async function withWritableDraft<T>(ownerId: string, importId: string, li
   })
 }
 
-export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean, channel?: 'web' | 'research', researchEvidence?: any[] }, serviceReviewKey?: string, customerReviewChoice?: {key:string,treatment:string}) {
+// `operation` is a Navi action's native marker: a save or approval already carrying this operationId in its draft history is
+// returned as is (the retry of an interrupted action finds its own write), and a new write records it in the same atomic
+// history entry, so a crash between the write and the receipt is reconciled from the draft itself.
+export type DraftOperation = { operationId: string, name: string }
+export async function saveDraft(ownerId: string, importId: string, line: number, body: any, reviewAnswer?: { reviewId: string, replyTs: string, text: string, summary: string, fields: string[], reusable: boolean, channel?: 'web' | 'research', researchEvidence?: any[] }, serviceReviewKey?: string, customerReviewChoice?: {key:string,treatment:string}, operation?: DraftOperation) {
   const initial = await context(ownerId, importId, line)
   return withLease(initial, async check => {
     const ctx = await context(ownerId, importId, line)
+    if (operation && ctx.saved?.history.some((h: any) => h.operation?.operationId === operation.operationId)) return view(ctx)
     if (reviewAnswer && ctx.saved?.history.some((h: any) => h.reviewId === reviewAnswer.reviewId && h.replyTs === reviewAnswer.replyTs)) return view(ctx)
     if(serviceReviewKey && ctx.saved && serviceReviewApplied({...ctx.saved,history:ctx.saved.history},serviceReviewKey))return view(ctx)
     if(customerReviewChoice&&ctx.saved&&customerReviewApplied(ctx.saved,customerReviewChoice.key,customerReviewChoice.treatment))return view(ctx)
@@ -378,7 +391,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     if (!sameValue(accountingResponse, ctx.saved?.accountingResponse || null)) changes.push({ action: 'accounting_reason', before: ctx.saved?.accountingResponse || null, after: accountingResponse, assessment })
     // No separate rule write: approval and remembered values commit atomically with the draft.
     const memory = body.confirm && body.remember.length ? { fields: body.remember, merchant: normalizeMerchant(ctx.row.description), purpose: values.purpose, customerId: values.customerId, values: Object.fromEntries(body.remember.map((key: string) => [key, values[key]])), at } : undefined
-    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: reviewAnswer?.channel === 'research' ? 'research_review' : customerReview ? 'customer_review' : serviceReview ? 'service_review' : reviewAnswer ? reviewAnswer.channel === 'web' ? 'chat_review' : 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}),...(serviceReview?{serviceReview}:{}),...(customerReview?{customerReview}:{}) }]
+    const history = [...(ctx.saved?.history || []), { revision: (ctx.saved?.revision || 0) + 1, at, action: reviewAnswer?.channel === 'research' ? 'research_review' : customerReview ? 'customer_review' : serviceReview ? 'service_review' : reviewAnswer ? reviewAnswer.channel === 'web' ? 'chat_review' : 'slack_review' : body.confirm ? 'approved' : 'saved', changes, rememberedFields: memory?.fields || [], ...(reviewAnswer ? reviewAnswer : {}),...(serviceReview?{serviceReview}:{}),...(customerReview?{customerReview}:{}), ...(operation ? { operation } : {}) }]
     if (history.length > 500) fail(409, 'この明細の変更履歴が上限に達しました。管理者に確認してください。')
     let teachingMemory = ctx.saved?.teachingMemory || null
     if (teachingMemory && (teachingMemory.decision.purpose !== values.purpose || teachingMemory.decision.customerId !== values.customerId)) teachingMemory = { ...teachingMemory, enabled: false, withdrawnAt: at }
@@ -395,6 +408,45 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     } else await FinanceDraft.create(set)
     return view(await context(ownerId, importId, line))
   })
+}
+
+// An explicit "remember" command: an independent memory event for the exact owner/account/merchant (and purpose/customer for
+// accounting fields), validated under the same lease, binding and posted/source locks as a save, without saving, approving or
+// posting the draft. `fields` are the exact accounting fields to remember with their CURRENT draft values (an empty subsidiary is
+// a value); a classification event remembers purpose/customer from the purchase date on, never the product. Insertion is unique
+// by operationId: a retried command returns the event it already wrote.
+const accountingMemoryFields = learnedFields
+export async function rememberDraftFields(ownerId: string, importId: string, line: number, input: { kind: 'accounting' | 'classification', fields?: string[], values?: any, decision?: { purpose?: string, customerId?: string }, binding: { revision: unknown, key: unknown, sourceHash: unknown }, operation: DraftOperation, provenance: any }) {
+  const existing: any = await FinanceDecisionMemory.findOne({ operationId: input.operation.operationId }).lean()
+  if (existing) return { memory: existing, inserted: false }
+  return withWritableDraft(ownerId, importId, line, input.binding, async (draft, check) => {
+    const references = draft.references, at = new Date(), merchant = normalizeMerchant(draft.source.description)
+    const event: any = { ownerId, accountId: draft.source.account.id, kind: input.kind, merchant, merchantLabel: draft.source.description, accountName: draft.source.account.name, effectiveFrom: draft.source.purchaseDate, status: 'active', revision: 1, operationId: input.operation.operationId, at,
+      source: { importId, line, key: draft.key, sourceHash: draft.sourceHash, draftRevision: draft.revision }, provenance: { ...input.provenance, operation: input.operation.name }, audit: [{ at, status: 'active', revision: 1, operationId: input.operation.operationId }] }
+    if (input.kind === 'accounting') {
+      const requested = input.fields
+      if (!Array.isArray(requested) || !requested.length || requested.length > accountingMemoryFields.length || new Set(requested).size !== requested.length || requested.some(f => !accountingMemoryFields.includes(f))) fail(400, '記憶できるのは勘定科目・補助科目・区分・税区分・税率・仕入れ先・法人情報だけです。')
+      let values: any = draft.values
+      if (input.values !== undefined) {
+        if (!input.values || typeof input.values !== 'object' || Array.isArray(input.values) || Object.keys(input.values).some(k => !requested.includes(k))) fail(400, '記憶する値は選択した項目だけ指定できます。')
+        try { values = validateValues({ ...draft.values, ...input.values }) } catch (error: any) { fail(400, error.message) }
+        await validateReferences(values, references)
+      }
+      event.purpose = values.purpose; event.customerId = values.customerId; event.fields = requested; event.values = Object.fromEntries(requested.map(key => [key, values[key]]))
+    } else {
+      const purpose = input.decision?.purpose ?? draft.values.purpose, customerId = input.decision?.customerId ?? (purpose === 'customer' ? draft.values.customerId : '')
+      if (!['company', 'customer'].includes(purpose) || (purpose === 'customer' && !customerId) || (purpose !== 'customer' && customerId)) fail(400, '顧客・用途が明確な判断だけを記憶できます。')
+      if (customerId && !references.customers.some((c: any) => c._id.toString() === customerId)) fail(400, '顧客を登録済みの項目から選択してください。')
+      event.purpose = purpose; event.customerId = customerId; event.decision = { purpose, customerId }
+    }
+    await check()
+    const inserted = await insertMemoryEvent(event)
+    return inserted
+  })
+}
+async function insertMemoryEvent(event: any) {
+  try { return { memory: (await FinanceDecisionMemory.create(event)).toObject(), inserted: true } }
+  catch (error: any) { if (error?.code !== 11000) throw error; return { memory: await FinanceDecisionMemory.findOne({ operationId: event.operationId }).lean(), inserted: false } }
 }
 
 export async function draftSnapshot(ownerId: string, batch: any, row: any, revision: unknown) {

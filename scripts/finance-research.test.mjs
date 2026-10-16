@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {emptyValues} from '../shared/finance-draft.mjs';
-import {validateSources,validateReport,parseRegistry} from '../shared/finance-research.mjs';
+import {validateSources,validateReport,parseRegistry,researchSummary} from '../shared/finance-research.mjs';
+import {proposalReference,proposalHash,validateProposalReference,sameProposalReference,researchProposalReference,researchReportContent,canonicalJson} from '../shared/finance-action-proposal.mjs';
 import {supplierRegistration} from '../shared/finance-supplier.mjs';
 import {publicAddress,publicUrl,htmlText} from '../research-worker/http.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
@@ -39,6 +40,23 @@ test('stored API verification cannot assert a different company or active period
  assert.equal(supplierRegistration(supplier).status,'verified');
  assert.equal(supplierRegistration({...supplier,metadata:{invoiceVerification:{...proof,asOf:'2026-06-01',checkedAt:'2026-06-02T00:00:00Z'}}}).status,'unverified');
  assert.equal(supplierRegistration({...supplier,companyName:'Other Co'}).status,'mismatch');
+});
+test('a displayed report is an immutable server reference: id, request, revision, content hash and draft binding; no latest lookup',()=>{
+ const row={_id:'e'.repeat(24),state:'ready',instruction:'i',requestId:'11111111-2222-3333-4444-555555555555',revision:5,importId:'b'.repeat(24),line:2,context:{key:'k',sourceHash:'ab12',revision:1},report:{summary:'s',question:'',findings:[{field:'invoiceNumber',value:'T1234567890123',basis:'literal',reason:'r',citations:[{sourceId:'s1',quote:'secret source text'}]}],supplier:null}};
+ const ref=researchProposalReference(row);
+ assert.deepEqual(Object.keys(ref).sort(),['draftRevision','hash','id','importId','key','kind','line','requestId','revision','sourceHash']);
+ assert.equal(ref.hash,proposalHash(researchReportContent(row.report)));assert.equal(ref.draftRevision,1);assert.equal(ref.revision,5);
+ assert.ok(!JSON.stringify(ref).includes('secret source text'),'the reference carries no captured text');
+ assert.notEqual(researchProposalReference({...row,report:{...row.report,findings:[{...row.report.findings[0],value:'T9999999999999'}]}}).hash,ref.hash,'a changed value changes the reference');
+ assert.equal(researchProposalReference({...row,report:{...row.report,findings:[{...row.report.findings[0],reason:'other wording'}]}}).hash,ref.hash,'the hash covers displayed values, not reasoning prose');
+ assert.equal(researchProposalReference({...row,report:null}),null);assert.equal(researchProposalReference({...row,requestId:'not-a-request'}),null);
+ assert.equal(canonicalJson({b:1,a:[2,{d:1,c:2}]}),canonicalJson({a:[2,{c:2,d:1}],b:1}));
+ assert.deepEqual(validateProposalReference({...ref,snapshot:{anything:true}}),ref);
+ for(const bad of [{...ref,kind:'latest'},{...ref,hash:'x'},{...ref,revision:'5'},{...ref,line:1},{...ref,requestId:'r'},{...ref,id:'short'}])assert.throws(()=>validateProposalReference(bad));
+ assert.equal(sameProposalReference(ref,{...ref}),true);assert.equal(sameProposalReference(ref,{...ref,revision:6}),false);
+ const summary=researchSummary(row,{},false,ref);assert.deepEqual(summary.reference,ref);assert.equal(researchSummary(row,{},true,ref).reference,null,'a stale report has no applicable reference');assert.equal(researchSummary(row,{}).reference,null);
+ const chat=proposalReference({kind:'chat',id:'c'.repeat(24),turnId:'d'.repeat(32),revision:2,content:{summary:'x',patch:{purpose:'company'}},importId:'b'.repeat(24),line:2,key:'k',sourceHash:'ab12',draftRevision:0});
+ assert.equal(chat.requestId,undefined);assert.equal(chat.turnId,'d'.repeat(32));assert.equal(sameProposalReference(chat,ref),false);
 });
 test('public research cannot address loopback, Tailscale, local or non-HTTPS URLs',async()=>{
  for(const address of ['127.0.0.1','100.79.23.111','10.0.0.1','172.16.1.1','192.168.1.1','169.254.169.254','::1'])assert.equal(publicAddress(address),false);

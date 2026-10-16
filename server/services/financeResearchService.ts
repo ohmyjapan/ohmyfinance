@@ -11,6 +11,7 @@ import {inventoryPreview} from './financeInventoryReviewService'
 import {readMerchantLink,saveMerchantLink,supplierReferences} from './financeSupplierService'
 import {consultationEvidence} from '../../shared/finance-consultation.mjs'
 import {validateSources,validateReport,parseRegistry,researchSummary} from '../../shared/finance-research.mjs'
+import {researchProposalReference,sameProposalReference,type ProposalReference} from '../../shared/finance-action-proposal.mjs'
 import {normalizeMerchant,validateValues} from '../../shared/finance-draft.mjs'
 import {digest} from '../../shared/amex.mjs'
 const Supplier=SupplierModel as mongoose.Model<any>
@@ -21,7 +22,9 @@ async function init(){await ready();await Research.init()}
 function binding(d:any,b:any){if(d.revision!==b?.revision||d.key!==b?.key||d.sourceHash!==b?.sourceHash)fail(409,'下書きが更新されています。再読込してください。');if(d.locked||d.source.kind!=='expense')fail(409,'この明細は調査・変更できません。')}
 function workerScope(agent:any){if(agent.researchEnabled!==true)fail(403,'Research capability required');return {ownerId:agent.ownerId,accountId:{$in:agent.accountIds}}}
 const workerFilter=(agent:any,researchId:string,lease:any)=>({...workerScope(agent),_id:id(researchId),agentId:agent._id,state:'working',lease:typeof lease==='string'?lease:'',leaseUntil:{$gt:new Date()}})
-function visible(r:any){if(!r)return null;return {id:String(r._id),revision:r.revision,state:r.state,instruction:r.instruction,report:r.report||null,sources:r.sources||[],artifacts:(r.artifacts||[]).filter((a:any)=>a.requestId===r.requestId),registry:r.registry||null,events:r.events||[],applied:r.applied||null,supplierId:r.supplierId?String(r.supplierId):'',history:(r.history||[]).map((h:any)=>({at:h.at,instruction:h.instruction,report:h.report,applied:h.applied})),updatedAt:r.updatedAt}}
+// `reference` is the immutable identity of the displayed report (research id, request id, row revision, content hash, draft/source
+// binding): the UI freezes it into a later "register it" command and the server applies exactly that, never a newer report.
+function visible(r:any){if(!r)return null;return {id:String(r._id),revision:r.revision,state:r.state,instruction:r.instruction,report:r.report||null,reference:researchProposalReference(r),sources:r.sources||[],artifacts:(r.artifacts||[]).filter((a:any)=>a.requestId===r.requestId),registry:r.registry||null,events:r.events||[],applied:r.applied||null,supplierId:r.supplierId?String(r.supplierId):'',history:(r.history||[]).map((h:any)=>({at:h.at,instruction:h.instruction,report:h.report,applied:h.applied})),updatedAt:r.updatedAt}}
 export async function researchView(ownerId:string,importId:string,line:number){
  await init();const draft=await readDraft(ownerId,importId,line);let r:any=await Research.findOne(scope(ownerId,importId,line)).lean()
  if(r?.state==='applying'&&r.leaseUntil<=new Date()){const saved:any=await FinanceDraft.findOne({ownerId,importId,line}).select('history').lean();const accepted=saved?.history.find((h:any)=>h.reviewId===String(r._id)&&h.channel==='research'&&h.replyTs.startsWith(r.requestId+':'));const applied=accepted?{fields:accepted.fields,values:Object.fromEntries(r.report.findings.filter((f:any)=>accepted.fields.includes(f.field)).map((f:any)=>[f.field,f.value])),at:accepted.at}:null;await Research.updateOne({_id:r._id,state:'applying',lease:r.lease},{$set:{state:applied?'applied':'ready',applied},$unset:{lease:'',leaseUntil:''},$inc:{revision:1}});r=await Research.findById(r._id).lean()}
@@ -82,8 +85,12 @@ export async function finishResearch(agent:any,researchId:string,body:any){
  const updated=await Research.updateOne(filter,{$set:{state:report?'ready':'failed',report,sources,registry},$unset:{lease:'',leaseUntil:''},$inc:{revision:1}})
  if(!updated.matchedCount)fail(409,'Research job changed');return {success:true}
 }
-export async function applyResearch(ownerId:string,importId:string,line:number,body:any){
+// `expected` (a Navi command applying the report the owner saw) is verified against the current row BEFORE the already-applied
+// shortcut and inside the same compare-and-set path: a report that changed after display is refused, never substituted.
+export async function applyResearch(ownerId:string,importId:string,line:number,body:any,expected?:ProposalReference|null){
  await init();const r:any=await Research.findOne(scope(ownerId,importId,line)).lean();if(!r?.report)fail(409,'調査結果を確認してください。')
+ const reference=researchProposalReference(r)
+ if(expected&&!sameProposalReference(expected,reference))fail(409,'表示されていた調査結果と現在の結果が異なります。最新の調査結果を確認してください。')
  if(!Array.isArray(body.fields)||!body.fields.length||new Set(body.fields).size!==body.fields.length||typeof body.confirm!=='boolean'||!body.confirm)fail(400,'反映する項目を選択してください。')
  const findings=r.report.findings.filter((f:any)=>body.fields.includes(f.field));if(findings.length!==body.fields.length)fail(400,'調査した項目だけを選択してください。')
  const selected=Object.fromEntries(findings.map((f:any)=>[f.field,f.value])),replyTs=r.requestId+':'+fingerprint(body.fields.slice().sort())
@@ -124,7 +131,7 @@ export async function saveResearchSupplier(ownerId:string,importId:string,line:n
 // turn, so a retry, a recovery or two concurrent recoveries find the same request instead of queueing twice. The binding is the caller's
 // (the conversation's recorded draft state for an explanation, the accepted draft-history revision after a confirmation): a draft that
 // moved on since is refused by queueResearch's own binding check and reported as unavailable, never replaced by whatever is current now.
-const chatRequestId=(chatId:string,turnId:string)=>{const h=digest('chat-research:'+chatId+':'+turnId);return [h.slice(0,8),h.slice(8,12),h.slice(12,16),h.slice(16,20),h.slice(20,32)].join('-')}
+export const chatRequestId=(chatId:string,turnId:string)=>{const h=digest('chat-research:'+chatId+':'+turnId);return [h.slice(0,8),h.slice(8,12),h.slice(12,16),h.slice(16,20),h.slice(20,32)].join('-')}
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 export async function startChatResearch(ownerId:string,importId:string,line:number,chatId:string,turnId:string,instruction:string,expected:{revision:number,key:string,sourceHash:string}):Promise<{requestId:string,researchId:string,state:string}|{unavailable:string}>{
  await init();const requestId=chatRequestId(chatId,turnId),query=scope(ownerId,importId,line)
@@ -149,5 +156,5 @@ export async function chatResearchContext(ownerId:string,importId:string,line:nu
  const applied=r.state==='applied'&&r.applied,revision=r.context?.revision+(applied?1:0)
  const valuesHash=applied?fingerprint(validateValues({...r.context.values,...r.applied.values})):r.context?.fingerprint
  const stale=!!r.context&&(r.context.key!==draft.key||r.context.sourceHash!==draft.sourceHash||valuesHash!==fingerprint(draft.values)||revision!==draft.revision)
- return researchSummary(r,draft.references,stale)
+ return researchSummary(r,draft.references,stale,researchProposalReference(r))
 }
