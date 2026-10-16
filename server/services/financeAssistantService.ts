@@ -5,17 +5,11 @@ import {FinancialAccount,FinanceImport} from '../models/Finance'
 import {learningOverview,learningDetail} from './financeLearningService'
 import {ready,fail,id,ownedImport,reviewMapping} from './financeService'
 import {assistantPages,validateAssistantReply} from '../../shared/finance-assistant.mjs'
-import {actionTools,reconcileActions,actionReceipts,runAction} from './financeActionService'
+import {actionTools,reconcileActions,actionReceipts,conversationReceipts,runAction} from './financeActionService'
 async function init(){await ready();await Conversation.init()}
 const visible=(c:any)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null
 const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({chatLastSeenAt:-1}).lean()
-// The current turn's action receipts come from the durable journal while the worker is at work (and after a crash).
-async function withReceipts(c:any){
- if(!c?.currentId)return c
- const turn=c.turns.find((t:any)=>t.id===c.currentId);if(!turn||turn.actions)return c
- const receipts=await actionReceipts('workspace',String(c._id),turn.id);if(!receipts.length)return c
- return {...c,turns:c.turns.map((t:any)=>t.id===turn.id?{...t,actions:receipts}:t)}
-}
+const withReceipts=(c:any)=>conversationReceipts('workspace',c)
 export async function getAssistant(ownerId:string){await init();return {conversation:visible(await withReceipts(await Conversation.findOne({ownerId}).lean())),connected:!!await available(ownerId)}}
 async function pageContext(ownerId:string,input:any){
  if(!input||!Object.hasOwn(assistantPages,input.page))fail(400,'Invalid assistant page')
@@ -54,7 +48,8 @@ export async function sendAssistant(ownerId:string,body:any){
  if((c?.turns.length||0)>=200)fail(409,'会話が200件に達しました。管理者に確認してください。')
  const agent:any=await available(ownerId);if(!agent)fail(409,'AIに接続できません。少し待って再試行してください。')
  const context=await pageContext(ownerId,body.context)
- context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:(t.actions||[]).filter((a:any)=>a.state==='done').map((a:any)=>({name:a.name,target:a.target,requestedFields:a.requestedFields,acceptedRevision:a.acceptedRevision}))}))
+ c=await withReceipts(c)
+ context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[]}))
  // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
  const target=context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}

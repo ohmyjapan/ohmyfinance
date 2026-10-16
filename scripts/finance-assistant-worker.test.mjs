@@ -6,6 +6,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 
+for(const mode of ['purchase','workspace'])for(const fails of [false,true])test(`long ${mode} chat renews only its own lease and stops after ${fails?'failure':'success'}`,async t=>{
+ t.mock.timers.enable({apis:['setInterval']});
+ let release,entered;const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>entered=resolve),beats=[],results=[];
+ const job={id:'owned-job',lease:'owned-lease',...(mode==='workspace'?{mode}:{}),tools:[{name:'get_draft'}]};
+ const worker=new TeachingWorker({baseUrl:'http://127.0.0.1:8080',token:'synthetic'},{
+  request:async(url,options)=>{const route=url.split('/worker/')[1],body=JSON.parse(options.body);if(route==='workspace-claim')return {ok:true,json:async()=>({job:mode==='workspace'?job:null})};if(route==='claim')return {ok:true,json:async()=>({job})};if(route==='heartbeat')beats.push(body);else results.push({route,body});return {ok:true,json:async()=>({success:true})}},
+  interpret:async()=>{entered();await gate;if(fails)throw Error('Synthetic failure');return {kind:'unclear',summary:'完了',patch:{},quotes:{}}},log:()=>{}
+ });
+ try{const pending=worker.cycle();await started;for(let i=0;i<11;i++){t.mock.timers.tick(20000);await new Promise(resolve=>setImmediate(resolve))}assert.ok(beats.length>=10,'Keep the original job alive beyond 120 seconds');assert.deepEqual(beats[0],{job:{id:job.id,mode,lease:job.lease}},'Renewal must identify the exact claimed job and lease');release();await pending;assert.equal(results.length,1);assert.equal(results[0].route,(mode==='workspace'?'workspace/':'')+job.id+'/result');assert.equal(results[0].body.lease,job.lease);assert.equal(results[0].body.failed===true,fails);const count=beats.length;t.mock.timers.tick(60000);await new Promise(resolve=>setImmediate(resolve));assert.equal(beats.length,count,'No ghost renewal after completion')}finally{release();t.mock.timers.reset()}
+});
+
 test('research worker can answer a saved card chat and still polls research in the same cycle',async()=>{
  const calls=[],config={baseUrl:'http://127.0.0.1:8080',token:'synthetic',documentEnabled:false};
  const chatWorker=new TeachingWorker(config,{

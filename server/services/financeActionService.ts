@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { Model } from 'mongoose'
 import { FinanceActionOperation as Operation } from '../models/FinanceActionOperation'
 import { FinanceChat as Chat } from '../models/FinanceChat'
 import { FinanceAssistant as Conversation } from '../models/FinanceAssistant'
@@ -49,7 +50,7 @@ export const actionCatalogue: Definition[] = [
   { name: 'get_research', effect: 'read', modes: ['workspace', 'purchase'], targeted: true, needsLine: true, description: 'Read the current research of one purchase: state, summary, question, findings (proposals, not saved values), supplier candidate and its reference. A stale research belongs to an earlier draft state.', inputSchema: schema(targetProps),
     async run(scope, _args, target) { const view = await researchView(scope.ownerId, target!.importId, target!.line!); const r = view.research; return { stale: view.stale, connected: view.connected, research: r ? { id: r.id, state: r.state, revision: r.revision, instruction: r.instruction, summary: r.report?.summary || '', question: r.report?.question || '', findings: (r.report?.findings || []).map((f: any) => ({ field: f.field, value: f.value, basis: f.basis, reason: String(f.reason || '').slice(0, 600) })), supplier: r.report?.supplier ? { shopName: r.report.supplier.shopName, legalName: r.report.supplier.legalName, invoiceNumber: r.report.supplier.invoiceNumber } : null, registry: r.registry ? { status: r.registry.active ? 'active_at_check' : 'not_active', asOf: r.registry.asOf } : null, applied: r.applied || null, reference: r.reference } : null } } },
   { name: 'get_action_status', effect: 'read', modes: ['workspace', 'purchase'], targeted: false, needsLine: false, description: 'Read the durable journal of this conversation\'s actions: every operation with its state (working, done, failed, unresolved), accepted revision and recovery owner. Optionally one operationId.', inputSchema: schema({ operationId: { type: 'string', pattern: '^[a-f0-9]{32}$' } }),
-    async run(scope, args) { const rows = await Operation.find({ conversationKind: scope.kind, conversationId: id(scope.conversationId), ...(args.operationId ? { operationId: args.operationId } : { turnId: scope.turnId }) }).sort({ slot: 1 }).lean(); return { receipts: rows.map(receiptOf) } } },
+    async run(scope, args) { return { receipts: await readReceipts(scope.kind, scope.conversationId, args.operationId ? { operationId: args.operationId } : { turnId: scope.turnId }) } } },
   { name: 'save_draft_fields', effect: 'write', modes: ['workspace', 'purchase'], targeted: true, needsLine: true, description: 'Save the given fields on one purchase draft (only the fields named; the rest keeps its current value). Explicit instruction only. Reference fields take registered ids. Returns the accepted draft revision.', inputSchema: schema({ ...targetProps, fields: { type: 'object', description: 'field key -> value', minProperties: 1 } }, ['fields']),
     async run(scope, args, target, operation) {
       const requested = Object.keys(args.fields || {})
@@ -203,7 +204,7 @@ async function journaled(scope: Scope, definition: Definition, body: any, args: 
     if (op.payloadHash !== payloadHash) fail(409, '同じ操作番号が別の内容で再利用されました。新しい番号で指示してください。')
     if (op.state !== 'claimed') return respond(definition, op)
     if (op.lease === body.lease) { const settled = await waitSettled(op._id); return respond(definition, settled || op) }
-    return respond(definition, await reconcileOne(scope.ownerId, op))
+    return respond(definition, (await recoverRows(scope.kind, scope.conversationId, [op]))[0])
   }
   try {
     const outcome: Outcome = await definition.run(scope, args, target, { operationId, name: definition.name })
@@ -220,19 +221,40 @@ const respond = (definition: Definition, op: any, result?: any) => ({ name: defi
 export function receiptOf(op: any) {
   return { operationId: op.operationId, turnId: op.turnId, slot: op.slot, name: op.name, target: op.target || null, requestedFields: op.receipt?.requestedFields || [], state: op.state === 'claimed' ? 'working' : op.receipt?.outcome && op.state === 'done' ? op.receipt.outcome : op.state, nativeResourceIds: op.receipt?.nativeResourceIds || null, acceptedRevision: op.receipt?.acceptedRevision ?? null, completedAt: op.completedAt || null, recoveryOwner: op.recoveryOwner || null, safeError: op.safeError || null }
 }
-// The receipts of one turn, from the journal (sorted by slot).
-export async function actionReceipts(kind: Mode, conversationId: string, turnId: string) {
-  const rows = await Operation.find({ conversationKind: kind, conversationId: id(conversationId), turnId }).sort({ slot: 1 }).lean()
-  return rows.map(receiptOf)
+// The journal remains authoritative after a final reply, a timeout, and on earlier turns. Reads reconcile expired claims;
+// they never repeat an effect. A still-owned, renewed job protects its in-flight calls even if their original lease is older.
+export async function actionReceipts(kind: Mode, conversationId: string, turnId?: string) {
+  return readReceipts(kind, conversationId, turnId === undefined ? {} : { turnId })
+}
+async function readReceipts(kind: Mode, conversationId: string, filter: any) {
+  const rows = await Operation.find({ conversationKind: kind, conversationId: id(conversationId), ...filter }).sort({ slot: 1 }).lean()
+  return (await recoverRows(kind, conversationId, rows)).map(receiptOf)
+}
+export async function conversationReceipts(kind: Mode, c: any) {
+  if (!c) return c
+  const receipts = await actionReceipts(kind, String(c._id))
+  return { ...c, turns: c.turns.map((turn: any) => { const current = receipts.filter(r => r.turnId === turn.id); return current.length ? { ...turn, actions: current } : turn }) }
 }
 // Before a reclaimed job runs the model again: every operation the previous attempt left claimed is reconciled from its domain
 // marker (a call still in flight within the grace window is left as working). Returns the receipts and the next free slot.
 const GRACE_MS = 20000
 export async function reconcileActions(kind: Mode, conversationId: string, turnId: string) {
   const rows: any[] = await Operation.find({ conversationKind: kind, conversationId: id(conversationId), turnId }).sort({ slot: 1 }).lean()
-  const receipts = []
-  for (const op of rows) receipts.push(receiptOf(op.state === 'claimed' && op.leaseUntil && new Date(op.leaseUntil).getTime() < Date.now() - GRACE_MS ? await reconcileOne(String(op.ownerId), op) : op))
+  const receipts = (await recoverRows(kind, conversationId, rows)).map(receiptOf)
   return { receipts, nextSlot: rows.reduce((max, op) => Math.max(max, op.slot), 0) + 1 }
+}
+async function recoverRows(kind: Mode, conversationId: string, rows: any[]) {
+  const cutoff = Date.now() - GRACE_MS
+  if (!rows.some(op => op.state === 'claimed' && op.leaseUntil && new Date(op.leaseUntil).getTime() < cutoff)) return rows
+  const model: Model<any> = kind === 'purchase' ? Chat : Conversation
+  const current: any = await model.findById(id(conversationId)).select('state currentId lease leaseUntil').lean()
+  const out = []
+  for (const op of rows) {
+    const renewed = current?.state === 'working' && current.currentId === op.turnId && current.lease === op.lease ? new Date(current.leaseUntil).getTime() : 0
+    const expires = Math.max(new Date(op.leaseUntil).getTime(), renewed)
+    out.push(op.state === 'claimed' && expires < cutoff ? await reconcileOne(String(op.ownerId), op) : op)
+  }
+  return out
 }
 // The domain marker decides: a write that carries this operationId (or its own native marker) happened and is done with its
 // recorded revision; no marker means the interruption came before the write (failed, the model may re-issue under a new slot);

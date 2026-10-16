@@ -6,6 +6,21 @@
     </header>
     <p v-if="error" role="alert" class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">{{ error }}</p>
     <CustomerPurchaseContext v-if="overview?.customerPurchaseContexts?.length" :contexts="overview.customerPurchaseContexts" class="card mb-6 p-4 sm:p-6" />
+    <section v-if="!loading && overview?.accountingMemories?.length" class="card mb-6 p-4 sm:p-6" aria-label="記憶した会計ルール">
+      <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">記憶した会計ルール</h2>
+      <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">同じ利用先・カード・用途・顧客に合う新しい下書きの候補に使います。停止しても、保存済みの下書きや帳簿は変わりません。</p>
+      <article v-for="memory in overview.accountingMemories" :key="memory._id" :data-accounting-memory="memory._id" class="mt-5 flex flex-wrap items-start justify-between gap-3 border-l-2 border-primary-main/40 pl-3">
+        <div class="min-w-0 flex-1">
+          <h3 class="break-words text-sm font-medium text-gray-800 dark:text-gray-200">{{ memory.title }}</h3>
+          <p class="mt-1 break-words text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ memory.status==='active'?'適用中':'停止中' }} · {{ memory.accountName || '指定口座のみ' }} · {{ memory.decision.purpose==='company'?'会社経費・顧客空欄':customerName(memory.decision.customerId) }}<span v-if="memory.effectiveFrom"> · {{ memory.effectiveFrom }}以降の購入</span></p>
+          <dl class="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2"><div v-for="field in memory.displayFields" :key="field.key"><dt class="text-gray-500 dark:text-gray-400">{{ field.label }}</dt><dd class="mt-1 whitespace-pre-wrap break-words font-medium text-gray-800 dark:text-gray-200">{{ field.value }}</dd></div></dl>
+          <p v-if="memory.reason" class="mt-3 whitespace-pre-wrap break-words text-xs text-gray-500 dark:text-gray-400">{{ memory.reason }}</p>
+          <details v-if="memory.sourceQuote" class="mt-3 text-xs text-gray-500 dark:text-gray-400"><summary class="cursor-pointer text-primary-main">記憶したときの指示</summary><p class="mt-2 whitespace-pre-wrap break-words">{{ memory.sourceQuote }}</p></details>
+          <NuxtLink v-if="memory.importId && memory.line" :to="`/mapping-draft/${memory.importId}/${memory.line}`" class="mt-2 inline-block text-xs text-primary-main">元の会話と下書き ↗</NuxtLink>
+        </div>
+        <button type="button" class="btn btn-secondary text-xs" :disabled="saving" :aria-label="`${memory.title}の会計ルールを${memory.status==='active'?'停止':'再開'}`" @click="togglePolicy(memory)">{{ memory.status==='active'?'停止する':'再開する' }}</button>
+      </article>
+    </section>
     <p v-if="loading" role="status" class="card p-12 text-center text-sm text-gray-500">学習ノートを読み込んでいます…</p>
     <div v-else-if="!overview?.dataset" class="card p-12 text-center"><BookOpen class="mx-auto mb-4 h-10 w-10 text-gray-300" /><h2 class="font-medium">学習元の記録を準備しています</h2><p class="mt-2 text-sm text-gray-500">スプレッドシートの読み込みが完了すると、根拠とルール案がここに並びます。</p></div>
     <template v-else>

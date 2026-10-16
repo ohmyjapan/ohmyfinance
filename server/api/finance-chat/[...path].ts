@@ -11,7 +11,7 @@ export default defineEventHandler(async event=>{
  try{
   if(parts[0]==='worker'){
    const agent=await chatAgent(event)
-   if(event.method==='POST'&&parts.length===2&&parts[1]==='heartbeat'){await chatHeartbeat(agent);return {success:true}}
+   if(event.method==='POST'&&parts.length===2&&parts[1]==='heartbeat'){await chatHeartbeat(agent,await body());return {success:true}}
    if(event.method==='POST'&&parts.length===2&&parts[1]==='workspace-claim'){await chatHeartbeat(agent);return await claimAssistant(agent)}
    if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='result')return await finishAssistant(agent,parts[2],await body())
    // Named, lease-bound Navi actions on the claimed conversation (workspace or purchase); the body carries lease, slot, name, args.

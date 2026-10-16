@@ -1,6 +1,9 @@
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
+import type { Model } from 'mongoose'
 import { getHeader, type H3Event } from 'h3'
 import { FinanceChat as Chat, FinanceChatAgent as Agent } from '../models/FinanceChat'
+import { FinanceAssistant as Conversation } from '../models/FinanceAssistant'
+import { FinanceActionOperation as Operation } from '../models/FinanceActionOperation'
 import { FinanceDraft } from '../models/FinanceDraft'
 import { FinanceResearch as Research } from '../models/FinanceResearch'
 import { FinancialAccount } from '../models/Finance'
@@ -12,7 +15,7 @@ import { validateChatProposal, reusableClassification } from '../../shared/finan
 import { consultationEvidence } from '../../shared/finance-consultation.mjs'
 import { validateProposalReference, sameProposalReference, chatProposalReference, chatProposalContent, proposalHash, researchProposalReference, researchReportContent, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { startChatResearch, chatResearchContext } from './financeResearchService'
-import { actionTools, reconcileActions, actionReceipts, runAction } from './financeActionService'
+import { actionTools, reconcileActions, actionReceipts, conversationReceipts, runAction } from './financeActionService'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 const fingerprint=(v:any)=>hash(JSON.stringify(v))
 const pending=['queued','working','confirming']
@@ -26,14 +29,7 @@ function draftActionRevision(c:any,actions:any[]):number|null{
  const revisions=actions.filter((a:any)=>a.turnId===c.currentId&&a.state==='done'&&['save_draft_fields','apply_referenced_proposal','approve_draft'].includes(a.name)&&a.target?.importId===String(c.importId)&&a.target?.line===c.line&&Number.isSafeInteger(a.acceptedRevision)&&a.acceptedRevision>0).map((a:any)=>a.acceptedRevision)
  return revisions.length?Math.max(...revisions):null
 }
-// The current turn's action receipts come from the durable journal while the worker is still at work (and after a crash); a
-// finished turn carries them in the document itself.
-async function withReceipts(c:any){
- if(!c?.currentId)return c
- const turn=c.turns.find((t:any)=>t.id===c.currentId);if(!turn||turn.actions)return c
- const receipts=await actionReceipts('purchase',String(c._id),turn.id);if(!receipts.length)return c
- return {...c,turns:c.turns.map((t:any)=>t.id===turn.id?{...t,actions:receipts}:t)}
-}
+const withReceipts=(c:any)=>conversationReceipts('purchase',c)
 // The proposals a command may name: each must be exactly what this conversation displayed (the stored turn reference, or the
 // research row's current reference), unapplied, and bound to the current draft; a foreign, edited, changed or applied one is
 // refused here with one message. The bounded snapshot of what was displayed is stored beside the reference for the worker.
@@ -74,7 +70,17 @@ export async function chatAgent(event:H3Event){
  if(!agent||!await User.exists({_id:agent.ownerId}))fail(401,'Teaching worker unavailable')
  await Agent.updateOne({_id:agent._id},{$set:{lastSeenAt:new Date()}});return agent
 }
-export async function chatHeartbeat(agent:any){
+export async function chatHeartbeat(agent:any,body:any={}){
+ if(body?.job!==undefined){
+  const job=body.job
+  if(!job||!['purchase','workspace'].includes(job.mode)||typeof job.id!=='string'||typeof job.lease!=='string'||!job.lease)fail(400,'Invalid conversation heartbeat')
+  if(job.mode==='workspace'&&!agent.workspaceEnabled)fail(403,'Workspace conversation access required')
+  const now=new Date(),leaseUntil=new Date(now.getTime()+120000),model:Model<any>=job.mode==='purchase'?Chat:Conversation
+  const filter={_id:id(job.id),ownerId:agent.ownerId,agentId:agent._id,state:'working',lease:job.lease,leaseUntil:{$gt:now},...(job.mode==='purchase'?{accountId:{$in:agent.accountIds}}:{})}
+  const renewed=await model.updateOne(filter,{$max:{leaseUntil}})
+  if(!renewed.matchedCount)fail(409,'Conversation job changed')
+  await Operation.updateMany({ownerId:agent.ownerId,agentId:agent._id,conversationKind:job.mode,conversationId:id(job.id),lease:job.lease,state:'claimed'},{$max:{leaseUntil}})
+ }
  await Agent.updateOne({_id:agent._id,ownerId:agent.ownerId,enabled:true,revokedAt:null},{$set:{chatLastSeenAt:new Date()}})
 }
 export async function createChatAgent(ownerId:string,body:any){
@@ -128,8 +134,9 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  if(await Chat.countDocuments({ownerId,state:{$in:['queued','working']}})>=3)fail(409,'他の会話への回答を待ってから送信してください。')
  if(!c){try{c=(await Chat.create({...scope,accountId:d.source.account.id})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
  const references=await storedReferences(ownerId,importId,line,c,d,body.references)
+ c=await withReceipts(c)
  const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),research:await chatResearchContext(ownerId,importId,line,d),
-  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:(t.actions||[]).filter((a:any)=>a.state==='done').map((a:any)=>({name:a.name,requestedFields:a.requestedFields,acceptedRevision:a.acceptedRevision}))}))}
+  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[]}))}
  const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),...(references.length?{references}:{})}}},{new:true}).lean()
  if(!updated)fail(409,'会話が更新されました。再読込してください。')
  return getChat(ownerId,importId,line)

@@ -270,6 +270,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
   for(const line of [2,3,4,5,6])assert.equal((await draftR(line)).approvedAt,null);
   pass('N7 final research follows this turn\'s own accepted draft revision once; memory revisions and later owner edits cannot authorize a rebind or retry');
  }
+ await require('./finance-navi-recovery-integration.cjs')({db,call,upload,token,other,pass,csv,row},agent,narrow);
  for(const id of [agent.id,narrow.id])assert.equal((await call('/api/finance-chat/agents/'+id,{method:'DELETE',token})).status,200);
  assert.equal((await act(l.job,3,'list_accounts',{})).status,401,'navi:revoked-worker-cannot-act');
  await call('/api/finance-chat/agents/'+agentB.id,{method:'DELETE',token:other});

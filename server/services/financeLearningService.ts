@@ -1,5 +1,7 @@
 import { FinanceDraft } from '../models/FinanceDraft'
 import { FinanceDecisionMemory } from '../models/FinanceDecisionMemory'
+import { draftReferences } from './financeDraftService'
+import { fields as draftFields } from '../../shared/finance-draft.mjs'
 import { FinanceLearningDataset as Dataset, FinanceLearningLibrary as Library, FinanceLearningRow as Row, FinanceLearningPattern as Pattern, FinanceLearningPolicy as Policy } from '../models/FinanceLearning'
 import mongoose from 'mongoose'
 import { FinanceCustomerContext } from '../models/FinanceCustomerContext'
@@ -34,8 +36,17 @@ export async function teachingPolicies(ownerId:string,query:any={}) {
  return [...legacy,...events].sort((a,b)=>new Date(b.at||0).getTime()-new Date(a.at||0).getTime()).map(({at,...p})=>p)
 }
 const memoryPolicy=(e:any)=>({_id:e._id,kind:'teaching',entry:'memory',memoryKind:e.kind,revision:e.revision,title:e.merchantLabel||e.merchant,merchants:[e.merchant],accountIds:[e.accountId],accountName:e.accountName,decision:e.decision||{purpose:e.purpose,customerId:e.customerId},fields:e.fields||[],values:e.values||null,effectiveFrom:e.effectiveFrom,reason:e.provenance?.summary||'',sourceQuote:e.provenance?.text||'',status:e.status==='active'?'active':'deferred',importId:e.source?.importId?String(e.source.importId):'',line:e.source?.line,at:e.at})
-// Active accounting memory events, shown in Learning beside the classification rules (they feed draft proposals, not purpose).
-export async function accountingMemories(ownerId:string){return (await FinanceDecisionMemory.find({ownerId,kind:'accounting'}).sort({at:-1}).limit(200).lean()).map((e:any)=>{const {at,...p}=memoryPolicy(e);return p})}
+// Both active and paused accounting rules remain inspectable, with registered labels rather than database identifiers.
+export async function accountingMemories(ownerId:string){
+ const events=await FinanceDecisionMemory.find({ownerId,kind:'accounting'}).sort({at:-1}).limit(200).lean()
+ if(!events.length)return []
+ const references:any=await draftReferences()
+ return events.map((e:any)=>{const {at,...p}=memoryPolicy(e);return {...p,displayFields:p.fields.map((key:string)=>{
+  const field=draftFields.find((f:any)=>f.key===key),value=p.values?.[key]
+  const display=value===''||value===null||value===undefined?'空欄として記憶':field?.ref?(references[field.ref]||[]).find((r:any)=>String(r._id)===String(value))?.name||'登録先を確認してください':key==='taxRate'?`${value}%`:String(value)
+  return {key,label:field?.label||key,value:display}
+ })}})
+}
 // A memory event's status: compare-and-set on its revision, audited; `operation` is a Navi action's marker and makes a retry
 // return the already recorded change instead of bumping the revision again.
 export async function saveMemoryStatus(ownerId:string,memoryId:string,body:any,operation?:{operationId:string,name:string}){
