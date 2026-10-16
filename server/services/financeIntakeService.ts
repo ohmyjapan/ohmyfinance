@@ -1,0 +1,247 @@
+// Intake (購入受付) service: owner-scoped records, original files and attachments by hash, sheet reading, import planning.
+// Plan omf-intake-feature-20261016 §2. Reuses fail/id/ready (financeService), digest (shared/amex.mjs), the wx temp file +
+// hard link store of acceptImport, the UTF-8-then-Shift_JIS decode of parseAmex and the signature checks of addDocument.
+import { randomUUID } from 'node:crypto'
+import { mkdir, writeFile, readFile, link, unlink } from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
+import mongoose from 'mongoose'
+import * as XLSX from 'xlsx'
+import { fail, id, ready } from './financeService'
+import { digest } from '../../shared/amex.mjs'
+import { IntakeRecord, IntakeDocument, IntakeBatch, IntakeTemplate, initializeIntake } from '../models/FinanceIntake'
+import { FIELDS, STATES, normalize, externalKey, manualKey, guessMapping, mappedRows, planImport, text, type IntakeValues, type IntakeMapping, type IntakeRecordShape } from '../../shared/finance-intake.mjs'
+
+export const MAX_BYTES = 10 * 1024 * 1024
+const MAX_ROWS = 5000
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', XLS_TYPE = 'application/vnd.ms-excel'
+const TEXT_TYPES = ['text/csv', 'text/tab-separated-values', 'text/plain']
+const SHEET_TYPES = new Set([XLSX_TYPE, XLS_TYPE, ...TEXT_TYPES])
+const FIELD_KEYS = FIELDS.map(f => f[0])
+const isXlsx = (b: Buffer) => b.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+const isXls = (b: Buffer) => b.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]))
+// UTF-8 first, Shift_JIS second (shared/amex.mjs:55-56); a NUL byte or an undecodable file is not text.
+export function decodeText(bytes: Buffer): string | null {
+  if (!bytes.length || bytes.includes(0)) return null
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch {}
+  try { return new TextDecoder('shift_jis', { fatal: true }).decode(bytes) } catch { return null }
+}
+const SIGNATURES: Record<string, (b: Buffer) => boolean> = {
+  'application/pdf': b => b.subarray(0, 5).toString() === '%PDF-',
+  'image/png': b => b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+  'image/jpeg': b => b[0] === 255 && b[1] === 216 && b[2] === 255,
+  'image/webp': b => b.subarray(0, 4).toString() === 'RIFF' && b.subarray(8, 12).toString() === 'WEBP',
+  [XLSX_TYPE]: isXlsx,
+  // Windows browsers label a .csv as application/vnd.ms-excel: accept BIFF bytes or decodable text under that type.
+  [XLS_TYPE]: b => isXls(b) || decodeText(b) !== null,
+  'text/csv': b => decodeText(b) !== null, 'text/tab-separated-values': b => decodeText(b) !== null, 'text/plain': b => decodeText(b) !== null
+}
+const TYPE_MESSAGE = 'PDF・PNG・JPEG・WebP・Excel・CSVを選択してください（最大10MB）。'
+async function init() { await ready(); await initializeIntake() }
+const str = (v: any, max: number) => typeof v === 'string' && v.length <= max && !/[\x00-\x08\x0b-\x1f]/.test(v)
+function filePath(ownerId: string, hash: string) {
+  if (!/^[a-f0-9]{64}$/.test(hash)) fail(400, 'Invalid document')
+  return path.join(process.env.OMF_DATA_DIR || path.join(os.homedir(), '.ohmyfinance'), 'intake', id(ownerId), hash)
+}
+function checkName(name: any) { if (typeof name !== 'string' || !name.trim() || name.length > 200 || /[\x00-\x1f\\/]/.test(name)) fail(400, 'ファイル名を確認してください。'); return name.trim() }
+function checkBytes(bytes: Buffer, mimeType: string) { if (!bytes.length || bytes.length > MAX_BYTES || !SIGNATURES[mimeType]?.(bytes)) fail(415, TYPE_MESSAGE) }
+function readWorkbook(bytes: Buffer): XLSX.WorkBook {
+  try {
+    if (isXlsx(bytes) || isXls(bytes)) return XLSX.read(bytes, { type: 'buffer' })
+    const decoded = decodeText(bytes); if (decoded === null) fail(415, TYPE_MESSAGE)
+    return XLSX.read(decoded.replace(/^﻿/, ''), { type: 'string', raw: true })
+  } catch (error: any) { if (error?.statusCode) throw error; return fail(415, 'Excel・CSVとして読み取れません。') }
+}
+function sheetRows(workbook: XLSX.WorkBook, sheet: string): string[][] {
+  const rows = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[sheet], { header: 1, raw: false, defval: '', blankrows: true })
+  if (rows.length > MAX_ROWS + 1) fail(400, '行数は5000行までです。ファイルを分割してください。')
+  return rows.map(row => (Array.isArray(row) ? row : []).map(text))
+}
+const documentView = (d: any) => ({ id: String(d._id), name: d.name, mimeType: d.mimeType, size: d.size, hash: d.hash, kind: d.kind, sheetNames: d.sheetNames || [], recordId: d.recordId ? String(d.recordId) : null, createdAt: d.createdAt, url: '/api/finance-intake/documents/' + d._id + '/file' })
+// Same bytes for the same owner = the same document and one file on disk (acceptImport's wx temp file + hard link).
+async function storeDocument(ownerId: string, name: string, bytes: Buffer, mimeType: string, kind: 'source' | 'attachment', sheetNames: string[]) {
+  const hash = digest(bytes)
+  const existing: any = await IntakeDocument.findOne({ ownerId, hash }).lean()
+  if (existing) return existing
+  const target = filePath(ownerId, hash); await mkdir(path.dirname(target), { recursive: true })
+  const temporary = target + '.' + randomUUID() + '.partial'
+  await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 })
+  try { await link(temporary, target) } catch (error: any) { if (error.code !== 'EEXIST') throw error; if (digest(await readFile(target)) !== hash) fail(500, 'Archived file integrity mismatch') }
+  finally { await unlink(temporary) }
+  const created = await IntakeDocument.create({ ownerId, hash, name, mimeType, size: bytes.length, kind, sheetNames })
+  return created.toObject()
+}
+async function ownedDocument(ownerId: string, documentId: string): Promise<any> {
+  const doc: any = await IntakeDocument.findOne({ _id: id(documentId), ownerId }).lean()
+  if (!doc) fail(404, '書類が見つかりません。')
+  return doc
+}
+async function ownedRecord(ownerId: string, recordId: string): Promise<any> {
+  const record: any = await IntakeRecord.findOne({ _id: id(recordId), ownerId }).lean()
+  if (!record) fail(404, '受付が見つかりません。')
+  return record
+}
+const shape = (r: any): IntakeRecordShape => ({ id: String(r._id), key: r.key, values: r.values, createdAt: r.createdAt, updatedAt: r.updatedAt, revision: r.revision, history: r.history || [], provenance: r.provenance || [], identityReview: !!r.identityReview, archived: !!r.archived })
+const recordView = (r: any, attachments?: any[]) => ({ id: String(r._id), key: r.key, values: r.values, provenance: (r.provenance || []).map((p: any) => ({ documentId: p.documentId, fileName: p.fileName, sheet: p.sheet, row: p.row, hash: p.hash })), history: r.history || [], revision: r.revision, identityReview: !!r.identityReview, archived: !!r.archived, archivedAt: r.archivedAt || null, createdAt: r.createdAt, updatedAt: r.updatedAt, ...(attachments ? { attachments: attachments.map(documentView) } : {}) })
+function valuesInput(input: any): Partial<IntakeValues> {
+  if (input === undefined) return {}
+  if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, '入力内容を確認してください。')
+  const out: any = {}
+  for (const [k, v] of Object.entries(input)) { if (!FIELD_KEYS.includes(k as any)) fail(400, '不明な項目があります: ' + String(k).slice(0, 40)); if (v === null || v === undefined) continue; if (typeof v === 'number') out[k] = String(v); else if (str(v, 2000)) out[k] = v; else fail(400, '入力内容を確認してください。') }
+  return out
+}
+const revisionOf = (body: any, record: any) => { if (!Number.isSafeInteger(Number(body?.revision)) || Number(body.revision) !== record.revision) fail(409, '他の画面で更新されています。再読み込みしてください。'); return record.revision as number }
+const STALE = '他の画面で更新されています。再読み込みしてください。'
+// The prototype's manual-save identity rule: an external key another active record already holds flags identity review and
+// keeps a manual key; otherwise the external key (or the previous key) is the identity.
+async function identityFor(ownerId: string, selfId: mongoose.Types.ObjectId, values: IntakeValues, previousKey: string) {
+  const external = externalKey(values)
+  const taken = !!external && !!await IntakeRecord.exists({ ownerId, _id: { $ne: selfId }, key: external })
+  return { identityReview: taken, key: taken ? manualKey(selfId.toHexString()) : external || previousKey }
+}
+export async function listRecords(ownerId: string, options: { archived?: boolean } = {}) {
+  await init()
+  const all: any[] = await IntakeRecord.find({ ownerId }).sort({ updatedAt: -1 }).limit(5000).lean()
+  const active = all.filter(r => !r.archived)
+  const counts: Record<string, number> = { total: all.length, archived: all.length - active.length, review: active.filter(r => r.identityReview).length }
+  for (const state of STATES) counts[state] = active.filter(r => r.values?.purchaseState === state).length
+  return { records: (options.archived ? all.filter(r => r.archived) : active).map(r => recordView(r)), counts }
+}
+export async function readRecord(ownerId: string, recordId: string) {
+  await init(); const record = await ownedRecord(ownerId, recordId)
+  return recordView(record, await IntakeDocument.find({ ownerId, recordId: record._id }).sort({ createdAt: 1 }).lean())
+}
+export async function createRecord(ownerId: string, body: any) {
+  await init()
+  const values = normalize(valuesInput(body?.values)), _id = new mongoose.Types.ObjectId(), now = new Date().toISOString()
+  const identity = await identityFor(ownerId, _id, values, manualKey(_id.toHexString()))
+  const created = await IntakeRecord.create({ _id, ownerId, key: identity.key, values, provenance: [], history: [{ at: now, kind: 'new', changes: [], source: null }], revision: 1, identityReview: identity.identityReview, archived: false })
+  return recordView(created.toObject(), [])
+}
+export async function patchRecord(ownerId: string, recordId: string, body: any) {
+  await init(); const record = await ownedRecord(ownerId, recordId); const revision = revisionOf(body, record)
+  const incoming = valuesInput(body?.values), merged: any = { ...record.values }
+  for (const [k, v] of Object.entries(incoming)) if (text(v) !== '') merged[k] = v
+  const values = normalize(merged), changes = FIELDS.filter(([k]) => (record.values[k] || '') !== values[k]).map(([k]) => ({ field: k, before: record.values[k] || '', after: values[k] }))
+  const identity = await identityFor(ownerId, record._id, values, record.key), now = new Date().toISOString()
+  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { values, key: identity.key, identityReview: identity.identityReview, revision: revision + 1 }, $push: { history: { at: now, kind: 'edit', changes, source: null } } })
+  if (!result.matchedCount) fail(409, STALE)
+  return readRecord(ownerId, recordId)
+}
+export async function archiveRecord(ownerId: string, recordId: string, body: any) {
+  await init(); const record = await ownedRecord(ownerId, recordId); const revision = revisionOf(body, record), archived = !!body?.archived, now = new Date().toISOString()
+  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { archived, archivedAt: archived ? new Date() : null, revision: revision + 1 }, $push: { history: { at: now, kind: archived ? 'archive' : 'restore', changes: [], source: null } } })
+  if (!result.matchedCount) fail(409, STALE)
+  return readRecord(ownerId, recordId)
+}
+export async function attachDocument(ownerId: string, recordId: string, name: any, kind: any, bytes: Buffer, mimeType: string) {
+  await init(); const record = await ownedRecord(ownerId, recordId)
+  if (kind !== 'attachment') fail(400, '書類の種類を確認してください。')
+  const fileName = checkName(name); checkBytes(bytes, mimeType)
+  const sheetNames = SHEET_TYPES.has(mimeType) && (isXlsx(bytes) || isXls(bytes) || decodeText(bytes) !== null) ? readWorkbook(bytes).SheetNames : []
+  const doc = await storeDocument(ownerId, fileName, bytes, mimeType, 'attachment', sheetNames)
+  if (doc.recordId && String(doc.recordId) !== String(record._id)) fail(409, 'この書類は別の受付に添付済みです。')
+  if (!doc.recordId) await IntakeDocument.updateOne({ _id: doc._id, ownerId }, { $set: { recordId: record._id } })
+  await IntakeRecord.updateOne({ _id: record._id, ownerId }, { $inc: { revision: 1 }, $push: { history: { at: new Date().toISOString(), kind: 'attachment', changes: [], source: null, name: fileName, documentId: String(doc._id) } } })
+  return readRecord(ownerId, recordId)
+}
+export async function downloadDocument(ownerId: string, documentId: string) {
+  await init(); const doc = await ownedDocument(ownerId, documentId)
+  const bytes = await readFile(filePath(ownerId, doc.hash))
+  if (digest(bytes) !== doc.hash || bytes.length !== doc.size) fail(409, '書類の整合性を確認できません。')
+  return { doc, bytes }
+}
+export async function uploadFile(ownerId: string, name: any, bytes: Buffer, mimeType: string) {
+  await init(); const fileName = checkName(name)
+  if (!SHEET_TYPES.has(mimeType)) fail(415, 'Excel（xlsx・xls）またはCSVを選択してください（最大10MB）。')
+  checkBytes(bytes, mimeType)
+  const workbook = readWorkbook(bytes); if (!workbook.SheetNames.length) fail(415, 'シートが見つかりません。')
+  const doc = await storeDocument(ownerId, fileName, bytes, mimeType, 'source', workbook.SheetNames)
+  if (!doc.sheetNames?.length) await IntakeDocument.updateOne({ _id: doc._id, ownerId }, { $set: { sheetNames: workbook.SheetNames } })
+  return { document: documentView({ ...doc, sheetNames: workbook.SheetNames }) }
+}
+async function sheetOf(ownerId: string, documentId: string, sheet: any, headerRow: any) {
+  const doc = await ownedDocument(ownerId, documentId)
+  const workbook = readWorkbook(await readFile(filePath(ownerId, doc.hash)))
+  const name = sheet ? String(sheet) : workbook.SheetNames[0]
+  if (!workbook.SheetNames.includes(name)) fail(400, 'シートが見つかりません。')
+  const header = headerRow === undefined || headerRow === '' ? 1 : Number(headerRow)
+  if (!Number.isSafeInteger(header) || header < 1 || header > 100) fail(400, '見出し行を確認してください。')
+  const rows = sheetRows(workbook, name), headers = rows[header - 1] || [], data = rows.slice(header)
+  return { doc, workbook, sheet: name, headerRow: header, headers, data }
+}
+export async function readSheet(ownerId: string, documentId: string, sheet: any, headerRow: any) {
+  await init(); const s = await sheetOf(ownerId, documentId, sheet, headerRow)
+  const filled = s.data.filter(r => r.some(Boolean))
+  return { document: documentView(s.doc), sheet: s.sheet, headerRow: s.headerRow, headers: s.headers, rows: filled.slice(0, 20), rowCount: filled.length, mapping: guessMapping(s.headers) }
+}
+function mappingInput(input: any, headers: string[]): IntakeMapping {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, '列の割り当てを確認してください。')
+  const out: any = {}
+  for (const k of FIELD_KEYS) { const v = input[k]; if (v === undefined || v === null || v === '') { out[k] = ''; continue } if (!/^\d{1,4}$/.test(String(v)) || Number(v) >= headers.length) fail(400, '列の割り当てを確認してください。'); out[k] = String(Number(v)) }
+  for (const k of Object.keys(input)) if (!FIELD_KEYS.includes(k as any)) fail(400, '不明な項目があります: ' + String(k).slice(0, 40))
+  return out
+}
+function defaultsInput(input: any) {
+  const values = valuesInput(input), out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(values)) if (text(v) !== '') out[k] = text(v)
+  return out
+}
+async function planFor(ownerId: string, documentId: string, body: any) {
+  const s = await sheetOf(ownerId, documentId, body?.sheet, body?.headerRow)
+  const mapping = mappingInput(body?.mapping, s.headers), defaults = defaultsInput(body?.defaults)
+  if (!Object.values(mapping).some(Boolean)) fail(400, '少なくとも一列を割り当ててください。')
+  const incoming = mappedRows(s.data, mapping, defaults, { hash: s.doc.hash, fileName: s.doc.name, documentId: String(s.doc._id), sheet: s.sheet, firstRow: s.headerRow + 1 }).filter(r => r.provenance.raw.some(Boolean))
+  const stored: any[] = await IntakeRecord.find({ ownerId }).limit(20001).lean()
+  if (stored.length > 20000) fail(409, '受付が多すぎます。先にアーカイブしてください。')
+  const plan = planImport(stored.map(shape), incoming, { id: () => new mongoose.Types.ObjectId().toHexString() })
+  return { ...s, mapping, defaults, plan }
+}
+const planCounts = (plan: any) => ({ new: plan.new, update: plan.update, unchanged: plan.unchanged, ambiguous: plan.ambiguous })
+export async function previewImport(ownerId: string, documentId: string, body: any) {
+  await init(); const p = await planFor(ownerId, documentId, body)
+  return { document: documentView(p.doc), sheet: p.sheet, headerRow: p.headerRow, headers: p.headers, mapping: p.mapping, defaults: p.defaults, counts: planCounts(p.plan), rows: p.plan.rows.map(r => ({ row: r.row, operation: r.operation, ambiguous: r.ambiguous, identityReview: r.record.identityReview, key: r.record.key, values: r.record.values, changes: r.changes })) }
+}
+// Inserts by the unique (ownerId, key) index or updates with the revision the plan read; a row another tab changed meanwhile
+// is a conflict (left alone; the next run shows it as unchanged or plans it again). No lease, no hold.
+export async function applyImport(ownerId: string, documentId: string, body: any) {
+  await init(); const p = await planFor(ownerId, documentId, body)
+  const counts = { ...planCounts(p.plan), conflicts: 0 }, recordIds: mongoose.Types.ObjectId[] = []
+  counts.new = 0; counts.update = 0; counts.unchanged = 0
+  for (const row of p.plan.rows) {
+    const r = row.record, _id = new mongoose.Types.ObjectId(r.id)
+    if (row.operation === 'new') {
+      try { await IntakeRecord.create({ _id, ownerId, key: r.key, values: r.values, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview, archived: false }); counts.new++; recordIds.push(_id) }
+      catch (error: any) { if (error?.code !== 11000) throw error; counts.conflicts++ }
+    } else if (row.operation === 'update') {
+      const result = await IntakeRecord.updateOne({ _id, ownerId, revision: r.revision - 1 }, { $set: { values: r.values, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview } })
+      if (result.matchedCount) { counts.update++; recordIds.push(_id) } else counts.conflicts++
+    } else { counts.unchanged++; recordIds.push(_id) }
+  }
+  const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, counts, recordIds })
+  const template = body?.template?.name !== undefined ? await saveTemplate(ownerId, { name: body.template.name, service: p.defaults.service || '', account: p.defaults.account || '', currency: p.defaults.currency || '', headers: p.headers, mapping: p.mapping }) : null
+  return { batch: batchView(batch.toObject(), p.doc), ...(template ? { template: template.template } : {}) }
+}
+const batchView = (b: any, doc: any) => ({ id: String(b._id), documentId: String(b.documentId), fileName: doc?.name || '', hash: b.hash, sheet: b.sheet, headerRow: b.headerRow, mapping: b.mapping, defaults: b.defaults, counts: b.counts, recordCount: (b.recordIds || []).length, createdAt: b.createdAt })
+export async function listBatches(ownerId: string) {
+  await init()
+  const batches: any[] = await IntakeBatch.find({ ownerId }).sort({ createdAt: -1 }).limit(200).lean()
+  const docs: any[] = await IntakeDocument.find({ ownerId, _id: { $in: batches.map(b => b.documentId) } }).select('name').lean()
+  const names = new Map(docs.map(d => [String(d._id), d]))
+  return { batches: batches.map(b => batchView(b, names.get(String(b.documentId)))) }
+}
+const templateView = (t: any) => ({ id: String(t._id), name: t.name, service: t.service || '', account: t.account || '', currency: t.currency || '', headers: t.headers || [], mapping: t.mapping, revision: t.revision, updatedAt: t.updatedAt })
+export async function listTemplates(ownerId: string) {
+  await init()
+  return { templates: (await IntakeTemplate.find({ ownerId }).sort({ name: 1 }).limit(500).lean()).map(templateView) }
+}
+export async function saveTemplate(ownerId: string, body: any) {
+  await init()
+  if (!str(body?.name, 100) || !body.name.trim()) fail(400, 'テンプレート名を確認してください。')
+  for (const k of ['service', 'account', 'currency']) if (body[k] !== undefined && !str(body[k], 200)) fail(400, 'テンプレートの既定値を確認してください。')
+  if (!Array.isArray(body?.headers) || body.headers.length > 500 || body.headers.some((h: any) => !str(h, 500))) fail(400, 'テンプレートの見出しを確認してください。')
+  const mapping = mappingInput(body?.mapping, body.headers)
+  if (!Object.values(mapping).some(Boolean)) fail(400, '少なくとも一列を割り当ててください。')
+  const saved: any = await IntakeTemplate.findOneAndUpdate({ ownerId, name: body.name.trim() }, { $set: { service: text(body.service), account: text(body.account), currency: text(body.currency), headers: body.headers.map(text), mapping }, $inc: { revision: 1 }, $setOnInsert: { ownerId, name: body.name.trim() } }, { upsert: true, new: true }).lean()
+  return { template: templateView(saved) }
+}
