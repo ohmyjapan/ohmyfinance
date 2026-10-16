@@ -57,4 +57,5 @@ module.exports=async({db,call,upload,token,other,pass,csv,row},agent,narrow)=>{
   const foreign=await call('/api/finance-chat/imports/'+importId+'/drafts/2',{token:other});assert.equal(foreign.status,404);
  }
  assert.equal((await worker('heartbeat')).status,200,'navi:idle-heartbeat-compatible');
+ assert.equal((await call('/api/finance-chat/worker/heartbeat',{method:'POST',token:agent.token})).status,200,'navi:empty-idle-heartbeat-compatible');
 };
