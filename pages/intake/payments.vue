@@ -18,9 +18,13 @@
 import BankStatementImporter from '~/components/intake/BankStatementImporter.vue'
 import IntakePaymentMatches from '~/components/intake/IntakePaymentMatches.vue'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
 definePageMeta({middleware:'auth'})
 useHead({title:'支払い照合 | OhMyFinance'})
 const user=useUserStore(),data=ref<any>({payments:[],accounts:[]}),selected=ref<any>(null),importing=ref(false),busy=ref(false),error=ref(''),filters=reactive({account:'',state:'all',from:'',to:''})
+const assistant=useAssistantStore(),selectionPath=useRoute().path
+watch(selected,p=>{assistant.pageSelection=p?{path:selectionPath,paymentKind:p.kind,...(p.kind==='card'?{paymentImportId:p.importId,paymentLine:p.line}:{}),label:p.kind==='card'?p.description:'銀行明細'}:null})
+onBeforeUnmount(()=>{if(assistant.pageSelection?.path===selectionPath&&assistant.pageSelection?.paymentKind)assistant.pageSelection=null})
 const detailHost=ref<HTMLElement|null>(null)
 function selectPayment(p:any){selected.value=p}
 async function scrollDetails(){await nextTick();detailHost.value?.focus({preventScroll:true});detailHost.value?.scrollIntoView({block:'start'})}

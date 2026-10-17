@@ -13,6 +13,7 @@ import { saveMemoryStatus } from './financeLearningService'
 import { researchView, applyResearch, startChatResearch, chatRequestId } from './financeResearchService'
 import { applyChatProposal } from './financeChatService'
 import { intakeActions, intakeActionArgs, isIntakeMutation, intakeActionOutcome, unresolvedIntakeAction } from './financeIntakeActionService'
+import { paymentActions, paymentActionArgs } from './financePaymentActionService'
 import { canonicalJson, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { fields as draftFields, learnedFields, validateValues } from '../../shared/finance-draft.mjs'
 
@@ -128,7 +129,7 @@ export const actionCatalogue: Definition[] = [
       if ('unavailable' in started) fail(409, started.unavailable)
       return { outcome: 'queued', receipt: { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: target!.importId, line: target!.line, requestId: started.requestId, researchId: started.researchId } }, result: { requestId: started.requestId, researchId: started.researchId, state: started.state, finished: false } }
     } }
-  , ...intakeActions
+  , ...intakeActions, ...paymentActions
 ]
 const provenance = (scope: Scope) => ({ conversationKind: scope.kind, conversationId: scope.conversationId, turnId: scope.turnId, text: String(scope.turn?.text || '').slice(0, 500), summary: '' })
 const acceptedRevision = (saved: any, operation: DraftOperation) => (saved.history || []).find((h: any) => h.operation && h.operation.operationId === operation.operationId)?.revision ?? saved.revision
@@ -185,6 +186,7 @@ export async function runAction(agent: any, kind: Mode, conversationId: string, 
   const turn = conversation.turns.find((t: any) => t.id === conversation.currentId)
   const scope: Scope = { agent, kind, ownerId: String(agent.ownerId), conversationId: String(conversation._id), turnId: conversation.currentId, conversation, turn }
   args = intakeActionArgs(definition.name, args, turn?.target)
+  args = paymentActionArgs(definition.name, args, turn?.target)
   const target = await resolveTarget(scope, definition, args)
   if (definition.effect === 'read') return { name: definition.name, effect: 'read', result: await definition.run(scope, args, target, null) }
   return journaled(scope, definition, body, args, target)

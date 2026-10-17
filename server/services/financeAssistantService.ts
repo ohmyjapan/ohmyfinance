@@ -7,6 +7,7 @@ import {ready,fail,id,ownedImport,reviewMapping} from './financeService'
 import {assistantPages,validateAssistantReply} from '../../shared/finance-assistant.mjs'
 import {actionTools,reconcileActions,actionReceipts,conversationReceipts,runAction} from './financeActionService'
 import {readRecord as readIntakeRecord,readSheet as readIntakeSheet} from './financeIntakeService'
+import {paymentView as readOwnedPayment} from './financePaymentMatchService'
 async function init(){await ready();await Conversation.init()}
 const visible=(c:any)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null
 const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({chatLastSeenAt:-1}).lean()
@@ -15,6 +16,19 @@ export async function getAssistant(ownerId:string){await init();return {conversa
 async function pageContext(ownerId:string,input:any){
  if(!input||!Object.hasOwn(assistantPages,input.page))fail(400,'Invalid assistant page')
  const context:any={mode:'workspace',page:input.page,pageName:assistantPages[input.page],currency:'JPY',capabilities:['Explain supplied evidence and page purpose','For purchase changes select a statement and confirm its proposal','Never change ledger or settings from general conversation'],facts:{}}
+ if(input.page==='intake-payments'){
+  // Selection is an owned pointer only. Financial rows/evidence are fetched through the claimed agent's live card scope.
+  context.capabilities=['Read assigned card payment matches and intake payment evidence with the supplied named tools','Bank payments and unassigned cards are unavailable in these tools; totals are partial and are not bank balances','No allocation, correction, bank import or ledger write tool is available']
+  if(input.paymentKind==='card'){
+   const importId=id(input.paymentImportId)
+   if(!Number.isSafeInteger(input.paymentLine)||input.paymentLine<2)fail(404,'明細が見つかりません。')
+   await readOwnedPayment(ownerId,'card',importId,input.paymentLine)
+   context.facts.paymentSelection={kind:'card',importId,line:input.paymentLine}
+  }else if(input.paymentKind==='bank')context.facts.paymentSelection={kind:'bank',available:false}
+  else if(input.paymentKind!==undefined)fail(400,'Invalid payment selection')
+  context.facts.pageGuide='支払い照合の画面です。接続担当に許可されたカードの配分・候補・履歴・会社とT番号の根拠を、参照ツールで確認できます。金額が一致するだけでは購入を断定しません。範囲外のカードと銀行の支払いを含まない集計なので、未払い総額や銀行残高として説明しないでください。銀行が選択中なら以前のカードを対象にせず、銀行参照の接続が未対応であると説明します。配分の確定・解除や銀行ファイルの取込はまだ操作できません。'
+  return context
+ }
  const overview=await learningOverview(ownerId)
  context.facts.customerPurchaseContexts=overview.customerPurchaseContexts
  context.facts.learning=overview.dataset?{title:overview.dataset.title,summary:overview.dataset.summary,counts:overview.counts}:null
@@ -42,7 +56,6 @@ async function pageContext(ownerId:string,input:any){
  }
  context.facts.pageGuide={dashboard:'Overview page. No live balance totals are included in this context.',transactions:'Saved ledger transactions. Mapping is the statement review stage before posting. No transaction rows or totals are included in this context.',mapping:'Review imported card statements, distinguish classification decisions from accounting input, and show invoice registration number and consumption-tax percentage gaps. Use mappingPreparation for the current batch scope. Source category registration adds literal source labels; it does not determine expense accounts or tax rates. Choose a row to discuss and confirm purpose/customer/product changes.',draft:'A purchase draft can be discussed using the current-purchase button. General conversation is separate from its saved values.',learning:'Source workbook history, classification candidates and confirmed instructions. A means user-confirmed classification, B means consistent historical evidence. Scores are not tax accuracy probabilities. Blank customer does not by itself mean company expense.',connections:'Configured card accounts and downloaded statements. Credentials and OTP details are not included.',settings:'Application settings. The assistant cannot change these settings.',reports:'Reports page. No report numbers are included in this context.',other:'Only the supplied general context is available.'}[input.page as keyof typeof assistantPages]
  if(input.page==='intake')context.facts.pageGuide='所有者の受付・履歴・原本・会社と登録番号の調査を確認できます。日本の経理担当者として根拠と推測を区別し、韓国語または日本語で自然に説明してください。保存の指示には対応するツールを実行し、保存済みと提案を区別してください。編集・アーカイブ・調査は最新の受付と調査を読み、取得した改訂を使います。取込前にプレビューし、会社とT番号の保存前に根拠を提示して利用者の指示を確認します。調査の受付は完了ではなく、保存は国税庁確認ではありません。一部保存・結果不明は自動で繰り返さず状態を調べます。'
- if(input.page==='intake-payments')context.facts.pageGuide='支払い照合の画面です。配分や銀行明細はこの会話の資料に含まれていません。必要な受付はintakeの参照ツールで確認できますが、配分の確定・解除や銀行ファイルの取込はまだ操作できません。'
  return context
 }
 export async function sendAssistant(ownerId:string,body:any){
@@ -59,7 +72,7 @@ export async function sendAssistant(ownerId:string,body:any){
  c=await withReceipts(c)
  context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[]}))
  // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
- const target=context.facts.intakeRecord?{recordId:context.facts.intakeRecord.id}:context.facts.intakeSheet?{documentId:context.facts.intakeSheet.document.id,sheet:context.facts.intakeSheet.sheet,headerRow:context.facts.intakeSheet.headerRow}:context.facts.statement?{importId:String(context.facts.statement.id)}:null
+ const target=context.facts.intakeRecord?{recordId:context.facts.intakeRecord.id}:context.facts.intakeSheet?{documentId:context.facts.intakeSheet.document.id,sheet:context.facts.intakeSheet.sheet,headerRow:context.facts.intakeSheet.headerRow}:context.facts.paymentSelection?.kind==='card'?{importId:context.facts.paymentSelection.importId,line:context.facts.paymentSelection.line}:context.facts.paymentSelection?.kind==='bank'?{paymentKind:'bank'}:context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
  const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:body.requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null,...(target?{target}:{})}}})
  if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId)
