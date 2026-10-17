@@ -103,9 +103,10 @@ watch([() => doc.value?.id, sheet, headerRow], () => {
 })
 onBeforeUnmount(() => { if (assistant.pageSelection?.path === intakePath && assistant.pageSelection?.documentId === doc.value?.id) assistant.pageSelection = null })
 watch(() => assistant.intakeSavedSequence, async () => {
-  const a = assistant.intakeSaved?.receipt
-  if (a?.name === 'save_intake_template' || a?.name === 'apply_intake_import') await loadTemplates()
-  if (a?.name === 'apply_intake_import' && a.nativeResourceIds?.documentId === doc.value?.id) {
+  const receipts = assistant.intakeSaved?.receipts || []
+  if (receipts.some((a: any) => a.name === 'save_intake_template' || a.name === 'apply_intake_import')) await loadTemplates()
+  const a = [...receipts].reverse().find((a: any) => a.name === 'apply_intake_import' && a.nativeResourceIds?.documentId === doc.value?.id)
+  if (a) {
     previewData.value = null
     if (a.state === 'done') result.value = { id: a.nativeResourceIds.batchId, counts: a.nativeResourceIds.counts }
     else { result.value = null; error.value = '取込の一部が保存されています。受付と取込履歴を確認してから続けてください。' }

@@ -26,7 +26,7 @@ test('research worker can answer a saved card chat and still polls research in t
  const worker=new ResearchWorker(config,'unused',{chatWorker});
  worker.api=async route=>{calls.push('research/'+route);return {job:null}};
  assert.equal(await worker.cycle(),true);
- assert.deepEqual(calls,['workspace-claim','claim','saved-chat/result','research/claim','research/evaluation/claim']);
+ assert.deepEqual(calls,['workspace-claim','claim','saved-chat/result','research/claim','research/evaluation/claim','research/intake/claim']);
 });
 
 test('a hosted chat job with the action catalogue is answered from the research worker with its own endpoint and the result route of the SAME job',async()=>{
@@ -37,15 +37,15 @@ test('a hosted chat job with the action catalogue is answered from the research 
  });
  const worker=new ResearchWorker(config,'unused',{chatWorker});worker.api=async route=>{calls.push('research/'+route);return {job:null}};
  assert.equal(await worker.cycle(),true);
- assert.deepEqual(calls,['workspace-claim','claim','0123456789abcdef01234567/result','research/claim','research/evaluation/claim']);
+ assert.deepEqual(calls,['workspace-claim','claim','0123456789abcdef01234567/result','research/claim','research/evaluation/claim','research/intake/claim']);
  assert.equal(jobs[0].job.actionEndpoint,'http://127.0.0.1:8080/api/finance-chat/worker/0123456789abcdef01234567/actions');assert.equal(jobs[0].config.directory,'C:/synthetic-vault','the hosting Vault directory reaches the interpreter');
 });
-test('idle teaching does not consume document jobs or suppress research/evaluation polling',async()=>{
+test('idle teaching does not consume document jobs or suppress research/evaluation/intake polling',async()=>{
  const calls=[],config={baseUrl:'http://127.0.0.1:8080',token:'synthetic',documentEnabled:false};
  const chatWorker=new TeachingWorker(config,{request:async url=>{calls.push(url.split('/worker/')[1]);return {ok:true,json:async()=>({job:null})}},interpret:async()=>{assert.fail('No inference for an empty queue')},log:()=>{}});
  const worker=new ResearchWorker(config,'unused',{chatWorker});worker.api=async route=>{calls.push('research/'+route);return {job:null}};
  assert.equal(await worker.cycle(),false);
- assert.deepEqual(calls,['workspace-claim','claim','research/claim','research/evaluation/claim']);
+ assert.deepEqual(calls,['workspace-claim','claim','research/claim','research/evaluation/claim','research/intake/claim']);
 });
 
 test('a long research job keeps its actual chat consumer connected and clears the heartbeat after failure',async t=>{

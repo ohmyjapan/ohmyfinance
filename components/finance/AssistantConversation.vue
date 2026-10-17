@@ -29,12 +29,12 @@ const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.s
 // A completed write names its purchase; that purchase is fetched fresh and handed to the store, which refreshes the draft page only if
 // it shows that same purchase and has no unsaved edits (the receipt itself is history, not state). Once per operation.
 const refreshed=new Set<string>()
-async function refreshAfterActions(){for(const turn of turns.value)for(const a of turn.actions||[]){
+async function refreshAfterActions(){const intakeReceipts:any[]=[];for(const turn of turns.value)for(const a of turn.actions||[]){
  if(refreshed.has(a.operationId))continue
- if(['done','queued','unresolved'].includes(a.state)&&/_intake_/.test(a.name)&&a.nativeResourceIds){assistant.receiveIntake(a);refreshed.add(a.operationId);continue}
+ if(['done','queued','unresolved'].includes(a.state)&&/_intake_/.test(a.name)&&a.nativeResourceIds){intakeReceipts.push(a);refreshed.add(a.operationId);continue}
  if(a.state!=='done'||!a.target?.importId||!a.target?.line||!['save_draft_fields','approve_draft'].includes(a.name))continue
  try{const d:any=await $fetch('/api/finance/imports/'+a.target.importId+'/drafts/'+a.target.line,{headers:user.authHeader});if(!disposed){assistant.receive(d);refreshed.add(a.operationId)}}catch{}
-}}
+}if(intakeReceipts.length&&!disposed)assistant.receiveIntake(intakeReceipts)}
 let timer:ReturnType<typeof setTimeout>|undefined,disposed=false,request:any=null,ticket=0
 async function load(){const current=++ticket;try{const result=await $fetch(endpoint,{headers:user.authHeader});if(!disposed&&current===ticket){data.value=result;await refreshAfterActions()}}catch(e){if(!disposed&&current===ticket)error.value=message(e)}}
 function schedule(){timer=setTimeout(async()=>{if(disposed)return;if(props.active&&!busy.value)await load();if(!disposed)schedule()},4000)}

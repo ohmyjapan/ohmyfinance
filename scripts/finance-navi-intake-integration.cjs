@@ -30,9 +30,9 @@ async function main(){
   const counts=async()=>Object.fromEntries(await Promise.all(['financeintakerecords','financeintakebatches','financepayments','transactions','financeentries','financeactionoperations'].map(async n=>[n,await db.collection(n).countDocuments()])));
   const before=await counts();
   const workspace='/api/finance-chat/workspace';
-  const ask=async context=>{const view=await ok(workspace,{token});await ok(workspace,{method:'POST',token,body:{requestId:crypto.randomUUID(),chatRevision:view.conversation?.revision||0,text:'이 구매의 저장된 내용과 근거를 확인해 줘.',context}});const r=await worker('workspace-claim');assert.equal(r.status,200,JSON.stringify(r.data));assert.ok(r.data.job);return r.data.job;};
+  const ask=async(context,text='이 구매의 저장된 내용과 근거를 확인해 줘.')=>{const view=await ok(workspace,{token});await ok(workspace,{method:'POST',token,body:{requestId:crypto.randomUUID(),chatRevision:view.conversation?.revision||0,text,context}});const r=await worker('workspace-claim');assert.equal(r.status,200,JSON.stringify(r.data));assert.ok(r.data.job);return r.data.job;};
   const act=(job,name,args={},auth=agent.token,lease=job.lease,slot=1)=>worker('workspace/'+job.id+'/actions',{lease,name,args,slot},auth);
-  const done=job=>worker('workspace/'+job.id+'/result',{lease:job.lease,proposal:{kind:'unclear',summary:'저장된 근거를 확인했어요. 아직 저장 작업은 하지 않았어요.',patch:{},quotes:{}}});
+  const done=(job,summary='저장된 근거를 확인했어요. 아직 저장 작업은 하지 않았어요.')=>worker('workspace/'+job.id+'/result',{lease:job.lease,proposal:{kind:'unclear',summary,patch:{},quotes:{}}});
   const job=await ask({page:'intake',recordId:record.id});
   assert.equal(job.context.facts.intakeRecord.id,record.id,'navi-intake:owned-context');assert.equal(job.target.recordId,record.id);
   assert.equal(job.tools.filter(t=>/intake/.test(t.name)).length,14);
@@ -151,6 +151,8 @@ async function main(){
   assert.equal((await done(liveJob)).status,200);
   assert.equal(await db.collection('transactions').countDocuments(),before.transactions);assert.equal(await db.collection('financeentries').countDocuments(),before.financeentries);
   pass('a renewed in-flight conversation retains its claim; intake actions create no ledger or transaction entries');
+  if(process.env.OMF_NAVI_INTAKE_BROWSER==='1')await require('./finance-navi-intake-browser.cjs')({root,origin,ok,token,ask,action:(job,name,args,slot)=>act(job,name,args,agent.token,job.lease,slot),done,heartbeat:()=>worker('heartbeat'),pause,pass});
+  if(process.env.OMF_NAVI_INTAKE_MODEL==='1')await (await import(require('node:url').pathToFileURL(path.join(root,'scripts/finance-navi-intake-model.mjs')).href)).default({root,origin,ok,token,agentToken:agent.token,ask,worker,db,pass});
   console.log(checks+' Navi intake API groups passed');
  }finally{
   if(child&&child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended;}

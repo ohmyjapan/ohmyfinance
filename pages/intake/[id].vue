@@ -169,11 +169,17 @@ async function load() { loading.value = true; await run(async () => receive(awai
 // Receipts identify affected records; they are not a replacement for fresh state. Keep the old revision and local
 // form together while the user edits, so a later save cannot silently overwrite a newer Navi change.
 watch(() => assistant.intakeSavedSequence, async () => {
-  const a = assistant.intakeSaved?.receipt, resources = a?.nativeResourceIds
-  if (!resources || (resources.recordId !== recordId && !(a.name === 'apply_intake_import'))) return
-  if (a.name === 'start_intake_research') { await loadResearch(); return }
-  if (dirty.value || busy.value) { error.value = 'OMFが保存内容を更新しました。編集中の内容は保持しています。確認するには再読み込みしてください。'; conflict.value = true; return }
-  try { const fresh = await $fetch(endpoint, { headers: user.authHeader }); if (!dirty.value && !busy.value) receive(fresh); else { error.value = 'OMFが保存内容を更新しました。編集中の内容は保持しています。'; conflict.value = true } await loadResearch() }
+  const relevant = (assistant.intakeSaved?.receipts || []).filter((a: any) => a.nativeResourceIds?.recordId === recordId || a.name === 'apply_intake_import')
+  if (!relevant.length || !record.value) return
+  if (relevant.every((a: any) => a.name === 'start_intake_research')) { await loadResearch(); return }
+  try {
+    const fresh: any = await $fetch(endpoint, { headers: user.authHeader })
+    if (fresh.revision !== record.value?.revision) {
+      if (!dirty.value && !busy.value) receive(fresh)
+      else { error.value = 'OMFが保存内容を更新しました。編集中の内容は保持しています。確認するには再読み込みしてください。'; conflict.value = true }
+    }
+    await loadResearch()
+  }
   catch (e) { error.value = errorMessage(e) }
 })
 async function save() {

@@ -55,7 +55,7 @@ test('search normalizes text without pretending bounded counts cover all history
 });
 test('fixture refuses zero-group and skipped-test success claims',async()=>{
  const {validateFixtureResults}=await import(pathToFileURL(path.join(root,'scripts/zoomer-fixtures/omf-navi-intake.mjs')).href);
- const unit={code:0,text:'# pass 9\n# fail 0\n# skipped 0'},api={code:0,text:'15 Navi intake API groups passed'};
+ const unit={code:0,text:'# pass 9\n# fail 0\n# skipped 0'},api={code:0,text:'16 Navi intake API groups passed'};
  assert.equal(validateFixtureResults(unit,api),true);
  assert.equal(validateFixtureResults(unit,{code:0,text:'0 Navi intake API groups passed'}),false);
  assert.equal(validateFixtureResults({code:0,text:'# pass 0\n# fail 0'},api),false);

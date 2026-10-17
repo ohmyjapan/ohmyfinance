@@ -9,6 +9,6 @@ export const useAssistantStore=defineStore('assistant',{
   close(){this.open=false;this.persist()},
   select(target:any){this.target=assistantTarget(target);this.persist()},
   receive(draft:any){this.saved={sequence:++this.savedSequence,draft}},
-  receiveIntake(receipt:any){this.intakeSaved={sequence:++this.intakeSavedSequence,receipt}}
+  receiveIntake(receipts:any[]){this.intakeSaved={sequence:++this.intakeSavedSequence,receipts}}
  }
 })
