@@ -3,7 +3,7 @@
 An additional feature inside the existing OhMyFinance shell (sidebar 取引 → 購入受付, `/intake`). The signed-in owner captures
 purchase/order requests by hand or from an Excel/CSV file, corrects them later, attaches originals, and the records wait in a
 pool. From the record's 店舗・商品URL the existing research worker finds the seller's company and T number (below). Bank/card
-statement matching, payment allocation and accounting posting are later plans. Intake writes no `transactions`,
+statement matching and payment allocation are described in [支払い照合](payment-matching.md); accounting posting remains a later plan. Intake writes no `transactions`,
 `financeimports`, `financedrafts`, `financeentries`, `financeresearches` or `suppliers`.
 
 ## Records

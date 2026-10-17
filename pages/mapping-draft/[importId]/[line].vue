@@ -20,6 +20,7 @@
         <p v-if="draft.source.statementMonth" class="mt-3 text-xs text-gray-500">請求月 {{ draft.source.statementMonth }} · お支払金額 {{ draft.source.paymentAmount === null ? '未記載' : yen(draft.source.paymentAmount) }}<span v-if="draft.source.statementDetails"> · {{ draft.source.statementDetails }}</span></p>
         <details v-if="draft.source.source || draft.source.reason" class="mt-4 text-xs text-gray-500 dark:text-gray-400"><summary class="cursor-pointer py-1 text-primary-main dark:text-primary-light">元データの照合根拠</summary><div class="mt-2 space-y-2 leading-relaxed"><p>{{ draft.source.reason }}</p><template v-if="draft.source.source"><p>{{ draft.source.source.sheet }} · {{ draft.source.source.rows.join(', ') }}行</p><p>顧客「{{ draft.source.source.client || '空欄' }}」 · 区分「{{ draft.source.source.category || '空欄' }}」</p><p v-if="draft.source.source.rows.length > 1">分類と件数は一致していますが、繰り返し明細の個々の行の対応は未確定です。</p></template></div></details>
       </section>
+      <IntakePaymentMatches class="mb-6" side="card" :import-id="importId" :line="line" :disabled="busy" />
       <p v-if="!isExpense" class="card p-6 text-sm text-gray-600 dark:text-gray-300">この明細は照合用に保持されています。返済・返金・日付未記載などの明細は、個別確認が必要です。</p>
       <template v-else>
         <button type="button" class="btn btn-secondary mb-6 text-sm" data-open-purchase-assistant @click="assistant.show({kind:'draft',importId,line})">この購入をOMFに相談</button>
@@ -100,6 +101,7 @@ import StatementStatus from '~/components/finance/StatementStatus.vue'
 import { ArrowLeft, Loader2 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import DraftField from '~/components/finance/DraftField.vue'
+import IntakePaymentMatches from '~/components/intake/IntakePaymentMatches.vue'
 import DocumentList from '~/components/finance/DocumentList.vue'
 import {useAssistantStore} from '~/stores/assistant'
 import PurchaseReview from '~/components/finance/PurchaseReview.vue'

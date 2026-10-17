@@ -257,6 +257,7 @@ const navItems = computed(() => [
       { name: '学習ノート', icon: 'FileText', route: '/learning' },
       { name: t('nav.importData'), icon: 'Upload', route: '/transactions/upload' },
       { name: '購入受付', icon: 'FileSpreadsheet', route: '/intake' },
+      { name: '支払い照合', icon: 'Wallet', route: '/intake/payments' },
       { name: t('nav.recurringPayments'), icon: 'RefreshCw', route: '/recurring' },
       { name: t('nav.duplicates'), icon: 'Copy', route: '/transactions/duplicates' }
     ]

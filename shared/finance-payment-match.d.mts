@@ -1,0 +1,12 @@
+export const BANK_FIELDS: [string,string,string[]][];
+export function round(n:number):number;
+export function money(value:any):number|null;
+export function guessBankMapping(headers:string[]):Record<string,string>;
+export function bankRowKey(row:any,source:any):Promise<string>;
+export function normalizeBankRow(values:any,source:any):Promise<any>;
+export function paymentCandidates(payment:any,records:any[]):any[];
+export function settlementCandidates(bank:any,cardRows:any[],batches:any[],bills:any[]):any[];
+export function residuals(payment:any):{allocated:number;remaining:number;state:string};
+export function recordTotals(record:any,allocations:any[]):any;
+export function changedSince(snapshot:any,current:any):any[];
+export function correctionPairs(existing:any[],incoming:any[]):any[];

@@ -95,6 +95,7 @@
         </details>
       </section>
 
+      <IntakePaymentMatches class="mb-6" side="record" :record-id="recordId" :record="record" :disabled="busy || record.archived" @changed="load" />
       <section class="card mb-6 p-4 sm:p-6" aria-label="添付・原本">
         <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">添付・原本</h2>
         <p v-if="!record.attachments.length" class="mt-2 text-sm text-gray-500 dark:text-gray-400">添付はありません。</p>
@@ -133,6 +134,7 @@
 import { Info, Loader2, Upload } from 'lucide-vue-next'
 import { FIELDS, FIELD_NAMES, STATES, STATE_NAMES } from '~/shared/finance-intake.mjs'
 import { useUserStore } from '~/stores/user'
+import IntakePaymentMatches from '~/components/intake/IntakePaymentMatches.vue'
 definePageMeta({ middleware: 'auth' })
 const user = useUserStore(), route = useRoute(), recordId = String(route.params.id), endpoint = '/api/finance-intake/records/' + recordId
 const record = ref<any>(null), loading = ref(true), busy = ref(false), error = ref(''), message = ref(''), conflict = ref(false)

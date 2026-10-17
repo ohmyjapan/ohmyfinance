@@ -45,14 +45,14 @@ function filePath(ownerId: string, hash: string) {
 }
 function checkName(name: any) { if (typeof name !== 'string' || !name.trim() || name.length > 200 || /[\x00-\x1f\\/]/.test(name)) fail(400, 'ファイル名を確認してください。'); return name.trim() }
 function checkBytes(bytes: Buffer, mimeType: string) { if (!bytes.length || bytes.length > MAX_BYTES || !SIGNATURES[mimeType]?.(bytes)) fail(415, TYPE_MESSAGE) }
-function readWorkbook(bytes: Buffer): XLSX.WorkBook {
+export function readWorkbook(bytes: Buffer): XLSX.WorkBook {
   try {
     if (isXlsx(bytes) || isXls(bytes)) return XLSX.read(bytes, { type: 'buffer' })
     const decoded = decodeText(bytes); if (decoded === null) fail(415, TYPE_MESSAGE)
     return XLSX.read(decoded.replace(/^﻿/, ''), { type: 'string', raw: true })
   } catch (error: any) { if (error?.statusCode) throw error; return fail(415, 'Excel・CSVとして読み取れません。') }
 }
-function sheetRows(workbook: XLSX.WorkBook, sheet: string): string[][] {
+export function sheetRows(workbook: XLSX.WorkBook, sheet: string): string[][] {
   const rows = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[sheet], { header: 1, raw: false, defval: '', blankrows: true })
   if (rows.length > MAX_ROWS + 1) fail(400, '行数は5000行までです。ファイルを分割してください。')
   return rows.map(row => (Array.isArray(row) ? row : []).map(text))
