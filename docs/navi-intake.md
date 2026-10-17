@@ -1,28 +1,19 @@
-# Navi: purchase-intake reads
+# Navi: purchase intake
 
-The workspace assistant recognises 購入受付 and 支払い照合. On an intake record it receives the selected owner's saved
-values, revision, provenance and latest12 history entries. While an intake upload is open it receives the uploaded
-document ID, selected sheet/header and JSON preview. The turn stores its default record/document target when sent;
-navigation or a later context update does not redirect that target. Explicitly named owned IDs can still be read.
+The workspace assistant recognises ???? and ?????. A message freezes its selected owned record or uploaded document/sheet/header. Later navigation does not redirect it. Explicit owned IDs can override these defaults. Reads fetch current native state; the initial record context contains the latest12 history entries and provenance. Binary upload, attachment and download remain in the browser UI.
 
-Seven named workspace tools call the same owner-scoped domain operations as the page: list_intake_records,
-get_intake_record, read_intake_sheet, preview_intake_import, list_intake_batches, list_intake_templates,
-get_intake_research. Reads fetch current state at execution. They retain the conversation lease/agent checks and
-native owner checks; the model receives no bearer token, file bytes, shell or generic HTTP/database tool.
+Fourteen named workspace tools use the same owner-scoped services as the page. Reads: list_intake_records, get_intake_record, read_intake_sheet, preview_intake_import, list_intake_batches, list_intake_templates, get_intake_research. Writes/queue: create_intake_record, patch_intake_record, set_intake_archived, apply_intake_import, save_intake_template, start_intake_research, confirm_intake_research. These are unavailable in a purchase-specific conversation. The model receives no token, file bytes, shell, generic HTTP or database tool.
 
-List search reports its limit and the native5000-record population cap. Sheets return the native first20 rows.
-Preview does not import. A research job being ready, a company publishing a T number, the number being saved,
-and native NTA verified:true are different facts. The assistant is told which actions are available.
+On explicit user instruction Navi can create/edit/archive intake, execute a previewed import, save its template, queue a URL investigation and confirm its company/T number into the intake record. Edits and research use freshly read native revisions. Blank values keep their existing value. Research acceptance is queued, not finished; published, saved and NTA verified:true remain different states. This does not create a Supplier, ledger transaction or matching allocation.
 
-This is the first intake tranche. Intake create/edit/archive/import execution, template saves, research queue/confirm,
-matching allocations, bank import and clean-page write refresh are not connected to Navi yet. Their native write
-markers/recovery must be implemented before registration; the existing unknown-action recovery fallback is not used
-for them. No write recovery is claimed by these seven read actions. The full all-feature Navi goal remains open.
+The existing action identity (conversation/turn/slot) controls duplicate calls. Native record history, template operations, completed import batches and research requests retain server-supplied operation markers. The journal persists intakeArgs separately because undeclared args are dropped by its strict schema; legacy15 action recovery is unchanged. Recovery reads markers and never repeats a mutation. Template acceptedRevision is null because its marker does not preserve a version; the native result contains its current revision. Record/research markers preserve the accepted version even after later edits or research rollover.
 
-Run only through the hub verifier:
-`node scripts/zoomer-verify.mjs --run-fixture omf-navi-intake.mjs --cwd <worktree>`.
-The fixture requires six source/unit tests and six built-app groups against its own ephemeral MongoDB with synthetic users,
-worker leases and uploaded CSV. API assertions exercise fresh reads, frozen defaults, other owners/agents/leases,
-source preview, verification flags and unchanged financial counts. A missing built app is NOT RUN and not green.
-Zero-group and skipped-test success are deliberately refused. This does not establish real model dialogue, browser interaction or production reliability. Independent review and
-release checks remain required; the locally layered matching commit has not been deployed by this work.
+An import validates its optional template before changing rows. Its completed batch is written after rows and template. Record/template markers without that batch are a partial outcome. Confirmation first saves company fields, then finalizes the research row; both markers are needed for a complete receipt. Partial outcomes report the saved resources, remain unresolved and belong to the user for inspection. An expired intake claim without owned proof also remains unresolved: lack of a marker does not prove a save never happened. Database failure during reconciliation leaves the claim available for later recovery rather than fabricating success.
+
+Receipts notify the intake list, selected record and importer. Pages fetch fresh data; a record with unsaved edits retains both its form and original revision and offers the existing reload action. A queued research request refreshes research state without resetting the record form. Imported counts distinguish conflicts from completed row changes.
+
+List search reports its limit and the native5000-record population cap. Sheet reads return the first20 rows. Recovery reports at most100 partial-import record IDs and identifies truncation. Neither is a complete accounting total.
+
+Run through the hub verifier: `node scripts/zoomer-verify.mjs --run-fixture omf-navi-intake.mjs --cwd <worktree>`. It requires9 unit checks and15 built-app API groups against owned ephemeral MongoDB, including real database rejections after partial saves, concurrent duplicates, actual native saves, synthetic lost acknowledgements, research rollover, partial outcomes, revisions and foreign-owner boundaries. Lost responses and partial crashes are simulated by restoring journal claims/removing completion evidence after real isolated native effects; this is not a process-kill or network-fault reliability measurement. Three deliberately damaged built copies must fail their specific behavioral assertions. The native API regression excludes its Chrome/model legs explicitly; those are not represented as completed elsewhere in this fixture. Zero groups, skipped unit success and missing builds cannot pass.
+
+The full all-feature Navi goal remains open. Matching allocations/bank imports, actual-model Korean/Japanese dialogue, browser refresh behavior, historical-model corpus, production observation and independent review/release are unfinished. Matching parent review findings and inherited polling-test failures remain separate release blockers. No production traffic or financial data is used by this fixture.

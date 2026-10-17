@@ -25,19 +25,19 @@ const batchSchema = new Schema({
   ownerId: { type: oid, required: true, index: true }, documentId: { type: oid, required: true }, hash: { type: String, required: true },
   sheet: { type: String, required: true }, headerRow: { type: Number, required: true },
   mapping: { type: Schema.Types.Mixed, required: true }, defaults: { type: Schema.Types.Mixed, required: true }, extras: { type: [Schema.Types.Mixed], default: [] },
-  counts: { type: Schema.Types.Mixed, required: true }, recordIds: { type: [oid], default: [] }
+  counts: { type: Schema.Types.Mixed, required: true }, recordIds: { type: [oid], default: [] }, operation: Schema.Types.Mixed
 }, { timestamps: true })
 const templateSchema = new Schema({
   ownerId: { type: oid, required: true, index: true }, name: { type: String, required: true },
   service: { type: String, default: '' }, account: { type: String, default: '' }, currency: { type: String, default: '' },
-  headers: { type: [String], default: [] }, mapping: { type: Schema.Types.Mixed, required: true }, extras: { type: [Schema.Types.Mixed], default: [] }, revision: { type: Number, required: true }
+  headers: { type: [String], default: [] }, mapping: { type: Schema.Types.Mixed, required: true }, extras: { type: [Schema.Types.Mixed], default: [] }, revision: { type: Number, required: true }, operations: { type: [Schema.Types.Mixed], default: [] }
 }, { timestamps: true })
 templateSchema.index({ ownerId: 1, name: 1 }, { unique: true })
 // One research row per record: the URL → company + T number lookup through the research worker. state idle | queued | working |
 // ready | failed | confirmed; failure '' | not_claimed | worker_lost | research_failed (why a row is failed).
 const researchSchema = new Schema({
   ownerId: { type: oid, required: true }, recordId: { type: oid, required: true },
-  revision: { type: Number, default: 0 }, state: { type: String, default: 'idle' }, requestId: String, instruction: String,
+  revision: { type: Number, default: 0 }, state: { type: String, default: 'idle' }, requestId: String, instruction: String, operation: Schema.Types.Mixed,
   context: Schema.Types.Mixed, sources: { type: [Schema.Types.Mixed], default: [] }, report: Schema.Types.Mixed, registry: Schema.Types.Mixed,
   events: { type: [Schema.Types.Mixed], default: [] }, history: { type: [Schema.Types.Mixed], default: [] },
   agentId: oid, lease: String, leaseUntil: Date, attempts: { type: Number, default: 0 },

@@ -134,9 +134,11 @@
 import { Info, Loader2, Upload } from 'lucide-vue-next'
 import { FIELDS, FIELD_NAMES, STATES, STATE_NAMES } from '~/shared/finance-intake.mjs'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
 import IntakePaymentMatches from '~/components/intake/IntakePaymentMatches.vue'
 definePageMeta({ middleware: 'auth' })
 const user = useUserStore(), route = useRoute(), recordId = String(route.params.id), endpoint = '/api/finance-intake/records/' + recordId
+const assistant = useAssistantStore()
 const record = ref<any>(null), loading = ref(true), busy = ref(false), error = ref(''), message = ref(''), conflict = ref(false)
 const form = reactive<Record<string, string>>(Object.fromEntries(FIELDS.map(f => [f[0], ''])))
 const extraForm = reactive<Record<string, string>>({}), extraNames = ref<string[]>([]), newExtraName = ref('')
@@ -164,6 +166,16 @@ async function run(action: () => Promise<void>) {
   finally { busy.value = false }
 }
 async function load() { loading.value = true; await run(async () => receive(await $fetch(endpoint, { headers: user.authHeader }))); loading.value = false; await loadResearch() }
+// Receipts identify affected records; they are not a replacement for fresh state. Keep the old revision and local
+// form together while the user edits, so a later save cannot silently overwrite a newer Navi change.
+watch(() => assistant.intakeSavedSequence, async () => {
+  const a = assistant.intakeSaved?.receipt, resources = a?.nativeResourceIds
+  if (!resources || (resources.recordId !== recordId && !(a.name === 'apply_intake_import'))) return
+  if (a.name === 'start_intake_research') { await loadResearch(); return }
+  if (dirty.value || busy.value) { error.value = 'OMFが保存内容を更新しました。編集中の内容は保持しています。確認するには再読み込みしてください。'; conflict.value = true; return }
+  try { const fresh = await $fetch(endpoint, { headers: user.authHeader }); if (!dirty.value && !busy.value) receive(fresh); else { error.value = 'OMFが保存内容を更新しました。編集中の内容は保持しています。'; conflict.value = true } await loadResearch() }
+  catch (e) { error.value = errorMessage(e) }
+})
 async function save() {
   await run(async () => {
     const values: Record<string, string> = {}; for (const [k] of FIELDS) if ((form[k] || '') !== (record.value.values[k] || '')) values[k] = form[k]

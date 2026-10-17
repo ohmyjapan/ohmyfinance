@@ -102,6 +102,10 @@ function extraInput(input: any): IntakeExtra {
 }
 const revisionOf = (body: any, record: any) => { if (!Number.isSafeInteger(Number(body?.revision)) || Number(body.revision) !== record.revision) fail(409, '他の画面で更新されています。再読み込みしてください。'); return record.revision as number }
 const STALE = '他の画面で更新されています。再読み込みしてください。'
+// Server-supplied journal identity only; never taken from an HTTP request body. The marker and domain change
+// share a single document write. Recovery reads it, without repeating a mutation whose response was lost.
+export type IntakeOperation = { operationId: string, name: string }
+export const intakeMarker = (operation?: IntakeOperation | null, revision: number | null = null) => operation ? { operation: { ...operation, revision } } : {}
 // The prototype's manual-save identity rule: an external key another active record already holds flags identity review and
 // keeps a manual key; otherwise the external key (or the previous key) is the identity.
 async function identityFor(ownerId: string, selfId: mongoose.Types.ObjectId, values: IntakeValues, previousKey: string) {
@@ -121,15 +125,15 @@ export async function readRecord(ownerId: string, recordId: string) {
   await init(); const record = await ownedRecord(ownerId, recordId)
   return recordView(record, await IntakeDocument.find({ ownerId, recordId: record._id }).sort({ createdAt: 1 }).lean())
 }
-export async function createRecord(ownerId: string, body: any) {
+export async function createRecord(ownerId: string, body: any, operation?: IntakeOperation | null) {
   await init()
   const values = normalize(valuesInput(body?.values)), _id = new mongoose.Types.ObjectId(), now = new Date().toISOString()
   const extra: IntakeExtra = {}; for (const [k, v] of Object.entries(extraInput(body?.extra))) if (text(v) !== '') extra[k] = text(v)
   const identity = await identityFor(ownerId, _id, values, manualKey(_id.toHexString()))
-  const created = await IntakeRecord.create({ _id, ownerId, key: identity.key, values, extra, provenance: [], history: [{ at: now, kind: 'new', changes: [], source: null }], revision: 1, identityReview: identity.identityReview, archived: false })
+  const created = await IntakeRecord.create({ _id, ownerId, key: identity.key, values, extra, provenance: [], history: [{ at: now, kind: 'new', changes: [], source: null, ...intakeMarker(operation, 1) }], revision: 1, identityReview: identity.identityReview, archived: false })
   return recordView(created.toObject(), [])
 }
-export async function patchRecord(ownerId: string, recordId: string, body: any) {
+export async function patchRecord(ownerId: string, recordId: string, body: any, operation?: IntakeOperation | null) {
   await init(); const record = await ownedRecord(ownerId, recordId); const revision = revisionOf(body, record)
   const incoming = valuesInput(body?.values), merged: any = { ...record.values }
   for (const [k, v] of Object.entries(incoming)) if (text(v) !== '') merged[k] = v
@@ -138,13 +142,13 @@ export async function patchRecord(ownerId: string, recordId: string, body: any) 
   const storedExtra: IntakeExtra = record.extra || {}, extra: IntakeExtra = { ...storedExtra }
   for (const [k, v] of Object.entries(extraInput(body?.extra))) if (text(v) !== '' && (storedExtra[k] || '') !== text(v)) { changes.push({ field: 'extra:' + k, before: storedExtra[k] || '', after: text(v) }); extra[k] = text(v) }
   const identity = await identityFor(ownerId, record._id, values, record.key), now = new Date().toISOString()
-  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { values, extra, key: identity.key, identityReview: identity.identityReview, revision: revision + 1 }, $push: { history: { at: now, kind: 'edit', changes, source: null } } })
+  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { values, extra, key: identity.key, identityReview: identity.identityReview, revision: revision + 1 }, $push: { history: { at: now, kind: 'edit', changes, source: null, ...intakeMarker(operation, revision + 1) } } })
   if (!result.matchedCount) fail(409, STALE)
   return readRecord(ownerId, recordId)
 }
-export async function archiveRecord(ownerId: string, recordId: string, body: any) {
+export async function archiveRecord(ownerId: string, recordId: string, body: any, operation?: IntakeOperation | null) {
   await init(); const record = await ownedRecord(ownerId, recordId); const revision = revisionOf(body, record), archived = !!body?.archived, now = new Date().toISOString()
-  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { archived, archivedAt: archived ? new Date() : null, revision: revision + 1 }, $push: { history: { at: now, kind: archived ? 'archive' : 'restore', changes: [], source: null } } })
+  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { archived, archivedAt: archived ? new Date() : null, revision: revision + 1 }, $push: { history: { at: now, kind: archived ? 'archive' : 'restore', changes: [], source: null, ...intakeMarker(operation, revision + 1) } } })
   if (!result.matchedCount) fail(409, STALE)
   return readRecord(ownerId, recordId)
 }
@@ -231,22 +235,27 @@ export async function previewImport(ownerId: string, documentId: string, body: a
 }
 // Inserts by the unique (ownerId, key) index or updates with the revision the plan read; a row another tab changed meanwhile
 // is a conflict (left alone; the next run shows it as unchanged or plans it again). No lease, no hold.
-export async function applyImport(ownerId: string, documentId: string, body: any) {
+export async function applyImport(ownerId: string, documentId: string, body: any, operation?: IntakeOperation | null) {
   await init(); const p = await planFor(ownerId, documentId, body)
+  const templateInput = body?.template?.name !== undefined ? { name: body.template.name, service: p.defaults.service || '', account: p.defaults.account || '', currency: p.defaults.currency || '', headers: p.headers, mapping: p.mapping, extras: p.extras } : null
+  // Validate the optional template before the first row changes, rather than failing after an otherwise valid import.
+  if (templateInput) templateInputFor(templateInput)
   const counts = { ...planCounts(p.plan), conflicts: 0 }, recordIds: mongoose.Types.ObjectId[] = []
   counts.new = 0; counts.update = 0; counts.unchanged = 0
   for (const row of p.plan.rows) {
     const r = row.record, _id = new mongoose.Types.ObjectId(r.id)
+    const history = operation && row.operation !== 'unchanged' ? r.history.map((entry: any, index: number) => index === r.history.length - 1 ? { ...entry, ...intakeMarker(operation, r.revision) } : entry) : r.history
     if (row.operation === 'new') {
-      try { await IntakeRecord.create({ _id, ownerId, key: r.key, values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview, archived: false }); counts.new++; recordIds.push(_id) }
+      try { await IntakeRecord.create({ _id, ownerId, key: r.key, values: r.values, extra: r.extra || {}, provenance: r.provenance, history, revision: r.revision, identityReview: r.identityReview, archived: false }); counts.new++; recordIds.push(_id) }
       catch (error: any) { if (error?.code !== 11000) throw error; counts.conflicts++ }
     } else if (row.operation === 'update') {
-      const result = await IntakeRecord.updateOne({ _id, ownerId, revision: r.revision - 1 }, { $set: { values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview } })
+      const result = await IntakeRecord.updateOne({ _id, ownerId, revision: r.revision - 1 }, { $set: { values: r.values, extra: r.extra || {}, provenance: r.provenance, history, revision: r.revision, identityReview: r.identityReview } })
       if (result.matchedCount) { counts.update++; recordIds.push(_id) } else counts.conflicts++
     } else { counts.unchanged++; recordIds.push(_id) }
   }
-  const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts, recordIds })
-  const template = body?.template?.name !== undefined ? await saveTemplate(ownerId, { name: body.template.name, service: p.defaults.service || '', account: p.defaults.account || '', currency: p.defaults.currency || '', headers: p.headers, mapping: p.mapping, extras: p.extras }) : null
+  const template = templateInput ? await saveTemplate(ownerId, templateInput, operation) : null
+  // The completed batch is last: row/template markers without this batch are a partial outcome, never a full success.
+  const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts, recordIds, ...intakeMarker(operation) })
   return { batch: batchView(batch.toObject(), p.doc), ...(template ? { template: template.template } : {}) }
 }
 const batchView = (b: any, doc: any) => ({ id: String(b._id), documentId: String(b.documentId), fileName: doc?.name || '', hash: b.hash, sheet: b.sheet, headerRow: b.headerRow, mapping: b.mapping, defaults: b.defaults, extras: b.extras || [], counts: b.counts, recordCount: (b.recordIds || []).length, createdAt: b.createdAt })
@@ -262,13 +271,19 @@ export async function listTemplates(ownerId: string) {
   await init()
   return { templates: (await IntakeTemplate.find({ ownerId }).sort({ name: 1 }).limit(500).lean()).map(templateView) }
 }
-export async function saveTemplate(ownerId: string, body: any) {
-  await init()
+function templateInputFor(body: any) {
   if (!str(body?.name, 100) || !body.name.trim()) fail(400, 'テンプレート名を確認してください。')
   for (const k of ['service', 'account', 'currency']) if (body[k] !== undefined && !str(body[k], 200)) fail(400, 'テンプレートの既定値を確認してください。')
   if (!Array.isArray(body?.headers) || body.headers.length > 500 || body.headers.some((h: any) => !str(h, 500))) fail(400, 'テンプレートの見出しを確認してください。')
   const mapping = mappingInput(body?.mapping, body.headers), extras = extrasInput(body?.extras, body.headers)
   if (!Object.values(mapping).some(Boolean) && !extras.length) fail(400, '少なくとも一列を割り当ててください。')
-  const saved: any = await IntakeTemplate.findOneAndUpdate({ ownerId, name: body.name.trim() }, { $set: { service: text(body.service), account: text(body.account), currency: text(body.currency), headers: body.headers.map(text), mapping, extras }, $inc: { revision: 1 }, $setOnInsert: { ownerId, name: body.name.trim() } }, { upsert: true, new: true }).lean()
+  return { service: text(body.service), account: text(body.account), currency: text(body.currency), headers: body.headers.map(text), mapping, extras }
+}
+export async function saveTemplate(ownerId: string, body: any, operation?: IntakeOperation | null) {
+  await init()
+  const values = templateInputFor(body)
+  const update: any = { $set: values, $inc: { revision: 1 }, $setOnInsert: { ownerId, name: body.name.trim() } }
+  if (operation) update.$push = { operations: { ...operation, revision: null } }
+  const saved: any = await IntakeTemplate.findOneAndUpdate({ ownerId, name: body.name.trim() }, update, { upsert: true, new: true }).lean()
   return { template: templateView(saved) }
 }

@@ -12,7 +12,7 @@ import { readDraft, saveDraft, draftReferences, rememberDraftFields, type DraftO
 import { saveMemoryStatus } from './financeLearningService'
 import { researchView, applyResearch, startChatResearch, chatRequestId } from './financeResearchService'
 import { applyChatProposal } from './financeChatService'
-import { intakeActions, intakeActionArgs } from './financeIntakeActionService'
+import { intakeActions, intakeActionArgs, isIntakeMutation, intakeActionOutcome, unresolvedIntakeAction } from './financeIntakeActionService'
 import { canonicalJson, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { fields as draftFields, learnedFields, validateValues } from '../../shared/finance-draft.mjs'
 
@@ -201,7 +201,7 @@ async function journaled(scope: Scope, definition: Definition, body: any, args: 
   const identity = { ownerId: scope.agent.ownerId, conversationKind: scope.kind, conversationId: scope.conversation._id, turnId: scope.turnId, slot: body.slot }
   const operationId = sha([scope.ownerId, scope.kind, scope.conversationId, scope.turnId, body.slot].join(':')).slice(0, 32)
   const now = new Date()
-  const claimed: any = await Operation.findOneAndUpdate(identity, { $setOnInsert: { operationId, name: definition.name, payloadHash, args, target, state: 'claimed', agentId: scope.agent._id, lease: body.lease, leaseUntil: scope.conversation.leaseUntil, claimedAt: now, attempts: 1 } }, { upsert: true, new: true, includeResultMetadata: true })
+  const claimed: any = await Operation.findOneAndUpdate(identity, { $setOnInsert: { operationId, name: definition.name, payloadHash, args, ...(isIntakeMutation(definition.name) ? { intakeArgs: args } : {}), target, state: 'claimed', agentId: scope.agent._id, lease: body.lease, leaseUntil: scope.conversation.leaseUntil, claimedAt: now, attempts: 1 } }, { upsert: true, new: true, includeResultMetadata: true })
   const op = claimed.value, inserted = !claimed.lastErrorObject?.updatedExisting
   if (!inserted) {
     if (op.payloadHash !== payloadHash) fail(409, '同じ操作番号が別の内容で再利用されました。新しい番号で指示してください。')
@@ -214,6 +214,15 @@ async function journaled(scope: Scope, definition: Definition, body: any, args: 
     await Operation.updateOne({ _id: op._id, state: 'claimed' }, { $set: { state: outcome.state || 'done', receipt: { ...outcome.receipt, ...(outcome.outcome ? { outcome: outcome.outcome } : {}) }, completedAt: new Date(), recoveryOwner: outcome.recoveryOwner || null, safeError: null } })
     return respond(definition, await Operation.findById(op._id).lean(), outcome.result)
   } catch (error: any) {
+    // An intake service can fail while reading its just-saved result, or between import/confirmation writes.
+    // Inspect domain evidence before labelling that exception as a failed save. Existing action semantics stay unchanged.
+    if (isIntakeMutation(definition.name)) {
+      const recovered = await intakeActionOutcome(scope.ownerId, { ...op, operationId, name: definition.name, args })
+      if (recovered) {
+        await Operation.updateOne({ _id: op._id, state: 'claimed' }, { $set: { state: recovered.state, receipt: { ...recovered.receipt, ...(recovered.outcome ? { outcome: recovered.outcome } : {}) }, recoveryOwner: recovered.recoveryOwner || null, completedAt: new Date(), safeError: recovered.state === 'unresolved' ? '一部の保存を確認しました。結果を確認してから続けてください。' : null } })
+        return respond(definition, await Operation.findById(op._id).lean())
+      }
+    }
     if (error?.statusCode) { await Operation.updateOne({ _id: op._id, state: 'claimed' }, { $set: { state: 'failed', safeError: String(error.data?.message || error.statusMessage || 'Action failed').slice(0, 500), recoveryOwner: error.statusCode === 400 ? 'model' : 'user', completedAt: new Date() } }); throw error }
     await Operation.updateOne({ _id: op._id, state: 'claimed' }, { $set: { state: 'unresolved', safeError: '処理が中断されました。結果の確認が必要です。', recoveryOwner: 'successor' } })
     throw error
@@ -269,6 +278,10 @@ async function reconcileOne(ownerId: string, op: any) {
   }
   const interrupted = (fields: string[] = []) => settle('failed', { requestedFields: fields, acceptedRevision: null, nativeResourceIds: null }, 'model', '前回の処理は書き込み前に中断されました。必要なら新しい操作として指示してください。')
   const target = op.target || {}, args = op.args || {}
+  if (isIntakeMutation(op.name)) {
+    const outcome = await intakeActionOutcome(ownerId, op) || unresolvedIntakeAction(op)
+    return settle(outcome.state, { ...outcome.receipt, ...(outcome.outcome ? { outcome: outcome.outcome } : {}) }, outcome.recoveryOwner || null, outcome.state === 'unresolved' ? '保存結果の確認が必要です。同じ処理を自動で繰り返さず、受付・取込履歴・調査の状態を確認してください。' : null)
+  }
   if (['save_draft_fields', 'approve_draft'].includes(op.name)) {
     const draft: any = await FinanceDraft.findOne({ ownerId, importId: id(target.importId), line: target.line }).select('history').lean()
     const entry = draft?.history.find((h: any) => h.operation?.operationId === op.operationId)

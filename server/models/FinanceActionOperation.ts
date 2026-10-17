@@ -8,7 +8,7 @@ const oid = Schema.Types.ObjectId, mixed = Schema.Types.Mixed
 const schema = new Schema({
  ownerId: { type: oid, required: true }, conversationKind: { type: String, required: true, enum: ['workspace', 'purchase'] }, conversationId: { type: oid, required: true },
  turnId: { type: String, required: true }, slot: { type: Number, required: true }, operationId: { type: String, required: true },
- name: { type: String, required: true }, payloadHash: { type: String, required: true }, target: mixed,
+ name: { type: String, required: true }, payloadHash: { type: String, required: true }, target: mixed, intakeArgs: mixed,
  state: { type: String, required: true, enum: ['claimed', 'done', 'failed', 'unresolved'], default: 'claimed' },
  agentId: oid, lease: String, leaseUntil: Date, claimedAt: Date, attempts: { type: Number, default: 1 },
  receipt: mixed, completedAt: Date, recoveryOwner: String, safeError: String

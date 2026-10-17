@@ -11,7 +11,7 @@ import {randomUUID} from 'node:crypto'
 import {IntakeRecord,IntakeResearch as Research,initializeIntake} from '../models/FinanceIntake'
 import {FinanceChatAgent as Agent} from '../models/FinanceChat'
 import {ready,fail,id} from './financeService'
-import {readRecord} from './financeIntakeService'
+import {readRecord,intakeMarker,type IntakeOperation} from './financeIntakeService'
 import {digest} from '../../shared/amex.mjs'
 import {validateSources,validateReport,parseRegistry} from '../../shared/finance-research.mjs'
 import {normalizeMerchant,emptyValues} from '../../shared/finance-draft.mjs'
@@ -57,7 +57,7 @@ export async function researchView(ownerId:string,recordId:string){
  const agent:any=await Agent.findOne({ownerId,researchEnabled:true,enabled:true,revokedAt:null}).sort({lastSeenAt:-1}).select('researchStatus').lean()
  return {research:visible(r),connected,settings:agent?.researchStatus||null,stale:stale(r,record)}
 }
-export async function queueResearch(ownerId:string,recordId:string,body:any){
+export async function queueResearch(ownerId:string,recordId:string,body:any,operation?:IntakeOperation|null){
  await init();const record=await ownedRecord(ownerId,recordId);revisionOf(body,record)
  const owner=body?.instruction===undefined?'':body.instruction
  if(typeof owner!=='string'||owner.length>2000||!/^[a-f0-9-]{36}$/.test(body?.requestId||''))fail(400,'調査内容を確認してください。')
@@ -79,8 +79,8 @@ export async function queueResearch(ownerId:string,recordId:string,body:any){
  if(text.length>80000)fail(400,'調査資料が多すぎます。')
  const s0={id:'s0',kind:'context',title:'OMFに保存された受付内容',url:'',text,hash:digest(text),capturedAt:new Date().toISOString()}
  if(!r){try{r=(await Research.create({ownerId,recordId:record._id})).toObject()}catch(e:any){if(e.code===11000)fail(409,'調査が更新されました。');throw e}}
- const history=r.report||r.failure?[...(r.history||[]),{at:r.updatedAt,instruction:r.instruction,report:r.report||null,sources:r.sources,registry:r.registry||null,failure:r.failure||'',confirmed:r.confirmed||null}]:r.history||[]
- const updated=await Research.updateOne({_id:r._id,revision:body.researchRevision,state:{$nin:active}},{$set:{state:'queued',failure:'',requestId:body.requestId,instruction,context,sources:[s0],report:null,registry:null,confirmed:null,attempts:0,events:[{at:new Date(),stage:'queued'}],history},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1}})
+ const history=r.requestId||r.report||r.failure?[...(r.history||[]),{at:r.updatedAt,requestId:r.requestId,operation:r.operation||null,instruction:r.instruction,report:r.report||null,sources:r.sources,registry:r.registry||null,failure:r.failure||'',confirmed:r.confirmed||null}]:r.history||[]
+ const updated=await Research.updateOne({_id:r._id,revision:body.researchRevision,state:{$nin:active}},{$set:{state:'queued',failure:'',requestId:body.requestId,operation:operation?{...operation,revision:body.researchRevision+1}:null,instruction,context,sources:[s0],report:null,registry:null,confirmed:null,attempts:0,events:[{at:new Date(),stage:'queued'}],history},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1}})
  if(!updated.matchedCount)fail(409,'調査が更新されました。');return researchView(ownerId,recordId)
 }
 export async function claimIntakeResearch(agent:any){
@@ -110,7 +110,7 @@ export async function finishIntakeResearch(agent:any,researchId:string,body:any)
 }
 // The owner confirms the displayed company and number into the record (values.supplierName / values.invoiceNumber, non-blank
 // only), bound to the record revision the research saw and to the URL it researched; the research row becomes confirmed.
-export async function confirmIntakeResearch(ownerId:string,recordId:string,body:any){
+export async function confirmIntakeResearch(ownerId:string,recordId:string,body:any,operation?:IntakeOperation|null){
  await init();const record=await ownedRecord(ownerId,recordId)
  const r:any=await Research.findOne({ownerId,recordId:record._id}).lean()
  if(!r||r.state!=='ready'||!r.report?.supplier||r.revision!==body?.researchRevision||body?.confirm!==true)fail(409,'会社情報と根拠を確認してください。')
@@ -120,8 +120,9 @@ export async function confirmIntakeResearch(ownerId:string,recordId:string,body:
  const next:Record<string,string>={supplierName:supplier.legalName}
  if(supplier.invoiceNumber)next.invoiceNumber=supplier.invoiceNumber
  const changes=Object.entries(next).filter(([k,after])=>(record.values[k]||'')!==after).map(([k,after])=>({field:k,before:record.values[k]||'',after}))
- const saved=await IntakeRecord.updateOne({_id:record._id,ownerId,revision},{$set:{values:{...record.values,...next},revision:revision+1},$push:{history:{at:now,kind:'research',changes,source:null,researchId:String(r._id),verified}}})
+ const saved=await IntakeRecord.updateOne({_id:record._id,ownerId,revision},{$set:{values:{...record.values,...next},revision:revision+1},$push:{history:{at:now,kind:'research',changes,source:null,researchId:String(r._id),verified,...intakeMarker(operation,revision+1)}}})
  if(!saved.matchedCount)fail(409,STALE)
- await Research.updateOne({_id:r._id,revision:r.revision},{$set:{state:'confirmed',confirmed:{at:now,supplierName:supplier.legalName,invoiceNumber:supplier.invoiceNumber||'',verified}},$inc:{revision:1}})
+ const finalized=await Research.updateOne({_id:r._id,ownerId,revision:r.revision},{$set:{state:'confirmed',confirmed:{at:now,supplierName:supplier.legalName,invoiceNumber:supplier.invoiceNumber||'',verified,...intakeMarker(operation,revision+1)}},$inc:{revision:1}})
+ if(!finalized.matchedCount)fail(409,'受付への保存後に調査が更新されました。保存結果を確認してください。')
  return {...await researchView(ownerId,recordId),record:await readRecord(ownerId,recordId)}
 }

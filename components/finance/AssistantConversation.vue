@@ -23,13 +23,18 @@ const text=computed({get:()=>assistant.buffers.workspace||'',set:v=>assistant.bu
 const turns=computed(()=>data.value?.conversation?.turns||[]),waiting=computed(()=>['queued','working'].includes(data.value?.conversation?.state))
 const examples=['マッピングと取引一覧はどう違う？','AとBの判断にはどんな違いがある？','지금 선택한 규칙의 근거를 설명해 줘.']
 const endpoint='/api/finance-chat/workspace',message=(e:any)=>e.data?.data?.message||'会話を取得できませんでした。'
-const actionNames:Record<string,string>={save_draft_fields:'下書きを保存',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼'}
+const actionNames:Record<string,string>={save_draft_fields:'下書きを保存',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼',create_intake_record:'受付を作成',patch_intake_record:'受付を保存',set_intake_archived:'受付のアーカイブを変更',apply_intake_import:'受付ファイルを取込',save_intake_template:'取込テンプレートを保存',start_intake_research:'会社・T番号の調査を依頼',confirm_intake_research:'調査結果を受付に保存'}
 const actionStates:Record<string,string>={done:'完了',queued:'受付済み',working:'処理中…',failed:'できませんでした',unresolved:'結果の確認が必要です'}
-const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.state]||a.state)+(a.target?.line?'（'+a.target.line+'行目'+(a.acceptedRevision?'・下書き改訂 '+a.acceptedRevision:'')+'）':a.acceptedRevision?'（下書き改訂 '+a.acceptedRevision+'）':'')+(a.safeError?' · '+a.safeError:'')
+const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.state]||a.state)+(a.target?.line?'（'+a.target.line+'行目'+(a.acceptedRevision?'・下書き改訂 '+a.acceptedRevision:'')+'）':a.acceptedRevision?'（改訂 '+a.acceptedRevision+'）':'')+(a.safeError?' · '+a.safeError:'')
 // A completed write names its purchase; that purchase is fetched fresh and handed to the store, which refreshes the draft page only if
 // it shows that same purchase and has no unsaved edits (the receipt itself is history, not state). Once per operation.
 const refreshed=new Set<string>()
-async function refreshAfterActions(){for(const turn of turns.value)for(const a of turn.actions||[]){if(a.state!=='done'||refreshed.has(a.operationId)||!a.target?.importId||!a.target?.line||!['save_draft_fields','approve_draft'].includes(a.name))continue;refreshed.add(a.operationId);try{const d:any=await $fetch('/api/finance/imports/'+a.target.importId+'/drafts/'+a.target.line,{headers:user.authHeader});if(!disposed)assistant.receive(d)}catch{}}}
+async function refreshAfterActions(){for(const turn of turns.value)for(const a of turn.actions||[]){
+ if(refreshed.has(a.operationId))continue
+ if(['done','queued','unresolved'].includes(a.state)&&/_intake_/.test(a.name)&&a.nativeResourceIds){assistant.receiveIntake(a);refreshed.add(a.operationId);continue}
+ if(a.state!=='done'||!a.target?.importId||!a.target?.line||!['save_draft_fields','approve_draft'].includes(a.name))continue
+ try{const d:any=await $fetch('/api/finance/imports/'+a.target.importId+'/drafts/'+a.target.line,{headers:user.authHeader});if(!disposed){assistant.receive(d);refreshed.add(a.operationId)}}catch{}
+}}
 let timer:ReturnType<typeof setTimeout>|undefined,disposed=false,request:any=null,ticket=0
 async function load(){const current=++ticket;try{const result=await $fetch(endpoint,{headers:user.authHeader});if(!disposed&&current===ticket){data.value=result;await refreshAfterActions()}}catch(e){if(!disposed&&current===ticket)error.value=message(e)}}
 function schedule(){timer=setTimeout(async()=>{if(disposed)return;if(props.active&&!busy.value)await load();if(!disposed)schedule()},4000)}

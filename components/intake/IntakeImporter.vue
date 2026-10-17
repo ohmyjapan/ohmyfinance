@@ -102,6 +102,15 @@ watch([() => doc.value?.id, sheet, headerRow], () => {
   if (doc.value) assistant.pageSelection = { path: intakePath, documentId: doc.value.id, sheet: sheet.value, headerRow: headerRow.value, label: doc.value.name }
 })
 onBeforeUnmount(() => { if (assistant.pageSelection?.path === intakePath && assistant.pageSelection?.documentId === doc.value?.id) assistant.pageSelection = null })
+watch(() => assistant.intakeSavedSequence, async () => {
+  const a = assistant.intakeSaved?.receipt
+  if (a?.name === 'save_intake_template' || a?.name === 'apply_intake_import') await loadTemplates()
+  if (a?.name === 'apply_intake_import' && a.nativeResourceIds?.documentId === doc.value?.id) {
+    previewData.value = null
+    if (a.state === 'done') result.value = { id: a.nativeResourceIds.batchId, counts: a.nativeResourceIds.counts }
+    else { result.value = null; error.value = '取込の一部が保存されています。受付と取込履歴を確認してから続けてください。' }
+  }
+})
 const sizeOf = (n: number) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B'
 const operationLabel = (op: string) => op === 'new' ? '新規' : op === 'update' ? '追加・更新' : '変更なし'
 const labelOf = (field: string) => field.startsWith('extra:') ? field.slice(6) : (FIELD_NAMES as Record<string, string>)[field] || field

@@ -93,9 +93,12 @@ import StatCard from '~/components/dashboard/StatCard.vue'
 import IntakeImporter from '~/components/intake/IntakeImporter.vue'
 import { FIELDS, STATES, STATE_NAMES, DEFAULT_SERVICE, DEFAULT_CURRENCY } from '~/shared/finance-intake.mjs'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '購入受付 | OhMyFinance' })
 const user = useUserStore(), api = '/api/finance-intake/'
+const assistant = useAssistantStore()
+watch(() => assistant.intakeSavedSequence, load)
 const records = ref<any[]>([]), counts = ref<Record<string, number>>({}), loading = ref(true), busy = ref(false), error = ref(''), message = ref(''), filter = ref('all'), search = ref(''), showForm = ref(false), showImporter = ref(false)
 const blank = (): Record<string, string> => Object.fromEntries(FIELDS.map(f => [f[0], f[0] === 'service' ? DEFAULT_SERVICE : f[0] === 'currency' ? DEFAULT_CURRENCY : f[0] === 'purchaseState' ? 'requested' : '']))
 const form = reactive(blank())
