@@ -26,8 +26,8 @@ export class ResearchWorker {
  async api(route,body={}){const r=await fetch(this.origin+'/api/finance-research/worker/'+route,{method:'POST',headers:{Authorization:'Bearer '+this.config.token,'Content-Type':'application/json'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('Research API '+r.status);return r.json()}
  async cycle(){
   const chatted=!!(this.chatWorker&&await this.chatWorker.cycle());
-  let {job}=await this.api('claim');if(!job)({job}=await this.api('evaluation/claim'));if(!job)return chatted;
-  const jobRoute=(job.mode==='evaluation'?'evaluation/':'')+job.id,started=Date.now(),deadline=started+570000;
+  let {job}=await this.api('claim');if(!job)({job}=await this.api('evaluation/claim'));if(!job)({job}=await this.api('intake/claim'));if(!job)return chatted;
+  const jobRoute=(job.mode==='evaluation'?'evaluation/':job.mode==='intake'?'intake/':'')+job.id,started=Date.now(),deadline=started+570000;
   const remaining=max=>{const ms=Math.min(max,deadline-Date.now());if(ms<1000)throw Error('Research timed out');return ms};
   const dir=path.join(this.directory,'jobs',randomUUID());await fs.mkdir(dir,{recursive:true});
   await fs.writeFile(path.join(dir,'job.json'),JSON.stringify(job),{mode:0o600});

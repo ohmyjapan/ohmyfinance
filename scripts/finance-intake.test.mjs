@@ -1,7 +1,7 @@
 // The ten prototype model cases (output/omf-intake-platform-20261016/model.test.cjs) against shared/finance-intake.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalize, planImport, applyPlan, mappedRows, guessMapping, FIELDS } from '../shared/finance-intake.mjs';
+import { normalize, planImport, applyPlan, mappedRows, guessMapping, FIELDS, MONEY } from '../shared/finance-intake.mjs';
 
 const proof = (row = 2, hash = 'a') => ({ hash, fileName: 'daily.xlsx', documentId: hash, sheet: 'Sheet1', row, raw: [] });
 const row = (values, provenance) => ({ values: normalize(values), provenance });
@@ -52,8 +52,36 @@ test('revised source documents append provenance while keeping one purchase iden
   const result = planImport(records, [row({ orderId: '001', amount: '120' }, proof(6, 'b'))]);
   assert.equal(applyPlan(records, result).length, 1); assert.equal(result.rows[0].record.provenance.length, 2); assert.equal(result.rows[0].record.history.at(-1).changes.find(c => c.field === 'amount').before, '100');
 });
-test('header guessing maps the prototype aliases onto the thirteen fields by column index', () => {
+test('header guessing maps the prototype aliases onto the twenty fields by column index', () => {
   const mapping = guessMapping(['注文番号', '商品名', '購入金額', '購入状況', 'unknown column']);
   assert.equal(mapping.orderId, '0'); assert.equal(mapping.description, '1'); assert.equal(mapping.amount, '2'); assert.equal(mapping.purchaseState, '3'); assert.equal(mapping.merchant, '');
-  assert.equal(FIELDS.length, 13); assert.deepEqual(Object.keys(mapping), FIELDS.map(f => f[0]));
+  assert.equal(FIELDS.length, 20); assert.deepEqual(Object.keys(mapping), FIELDS.map(f => f[0]));
+});
+test('the eight owner fields are guessed from their headers and the five money fields are cleaned alike', () => {
+  const mapping = guessMapping(['注文番号', '商品ID', '外部注文番号', 'URL', '商品価格', '税額', '送料', '手数料', '担当者']);
+  assert.deepEqual([mapping.orderId, mapping.itemId, mapping.externalOrderId, mapping.merchantUrl, mapping.itemPrice, mapping.tax, mapping.shippingFee, mapping.otherFee], ['0', '1', '2', '3', '4', '5', '6', '7']);
+  assert.ok(!Object.values(mapping).includes('8'), 'an unknown header stays unmapped');
+  assert.deepEqual(MONEY, ['amount', 'itemPrice', 'tax', 'shippingFee', 'otherFee']);
+  const v = normalize({ amount: '12,800', itemPrice: '¥1,000', tax: '￥0', shippingFee: '1 200', otherFee: '-500' });
+  assert.deepEqual([v.amount, v.itemPrice, v.tax, v.shippingFee, v.otherFee], ['12800', '1000', '0', '1200', '-500']);
+});
+test('identifiers and the research fields stay trimmed strings', () => {
+  const v = normalize({ externalOrderId: ' 000777 ', invoiceNumber: 'T1234567890123', supplierName: ' Synthetic 株式会社 ' });
+  assert.equal(v.externalOrderId, '000777'); assert.equal(v.invoiceNumber, 'T1234567890123'); assert.equal(v.supplierName, 'Synthetic 株式会社');
+});
+test('extra columns ride the same present/keep-blank rule and are labelled extra:<name> in changes', () => {
+  const extras = [{ name: '担当者', column: '1' }];
+  const rows = mappedRows([['001', '山田'], ['002', '']], { orderId: '0' }, defaults, { ...proof(), firstRow: 2 }, extras);
+  assert.equal(rows[0].extra['担当者'], '山田'); assert.ok(rows[0].present.includes('extra:担当者'));
+  assert.equal(rows[1].extra['担当者'], ''); assert.ok(!rows[1].present.includes('extra:担当者'));
+  const records = applyPlan([], planImport([], rows));
+  assert.equal(records.find(r => r.values.orderId === '001').extra['担当者'], '山田');
+  assert.deepEqual(records.find(r => r.values.orderId === '002').extra, {}, 'a blank extra cell is not stored on a new record');
+  const blank = planImport(records, mappedRows([['001', '']], { orderId: '0' }, defaults, { ...proof(2, 'b'), firstRow: 2 }, extras));
+  assert.equal(blank.rows[0].record.extra['担当者'], '山田', 'a blank extra cell keeps the stored value');
+  assert.equal(blank.rows[0].changes.length, 0);
+  const changed = planImport(records, mappedRows([['001', '田中']], { orderId: '0' }, defaults, { ...proof(2, 'c'), firstRow: 2 }, extras));
+  assert.equal(changed.rows[0].record.extra['担当者'], '田中');
+  assert.deepEqual(changed.rows[0].changes, [{ field: 'extra:担当者', before: '山田', after: '田中' }]);
+  assert.equal(records[0].extra['担当者'], '山田', 'the stored record is not mutated');
 });

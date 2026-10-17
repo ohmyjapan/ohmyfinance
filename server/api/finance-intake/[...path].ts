@@ -4,6 +4,7 @@ import { defineEventHandler, setHeader, getQuery, getHeader } from 'h3'
 import { financeUser, fail } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
 import * as intake from '../../services/financeIntakeService'
+import { researchView, queueResearch, confirmIntakeResearch } from '../../services/financeIntakeResearchService'
 export default defineEventHandler(async event => {
   setHeader(event, 'Cache-Control', 'no-store')
   try {
@@ -18,6 +19,9 @@ export default defineEventHandler(async event => {
       if (parts.length === 2 && method === 'PATCH') return intake.patchRecord(ownerId, parts[1], await json())
       if (parts.length === 3 && parts[2] === 'archive' && method === 'PUT') return intake.archiveRecord(ownerId, parts[1], await json())
       if (parts.length === 3 && parts[2] === 'documents' && method === 'POST') return intake.attachDocument(ownerId, parts[1], q('name'), q('kind'), await boundedBody(event, intake.MAX_BYTES), mime())
+      if (parts.length === 3 && parts[2] === 'research' && method === 'GET') return researchView(ownerId, parts[1])
+      if (parts.length === 3 && parts[2] === 'research' && method === 'POST') return queueResearch(ownerId, parts[1], await json())
+      if (parts.length === 4 && parts[2] === 'research' && parts[3] === 'confirm' && method === 'POST') return confirmIntakeResearch(ownerId, parts[1], await json())
     }
     if (parts[0] === 'documents' && parts.length === 3 && parts[2] === 'file' && method === 'GET') {
       const { doc, bytes } = await intake.downloadDocument(ownerId, parts[1])

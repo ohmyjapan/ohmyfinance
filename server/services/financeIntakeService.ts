@@ -10,7 +10,7 @@ import * as XLSX from 'xlsx'
 import { fail, id, ready } from './financeService'
 import { digest } from '../../shared/amex.mjs'
 import { IntakeRecord, IntakeDocument, IntakeBatch, IntakeTemplate, initializeIntake } from '../models/FinanceIntake'
-import { FIELDS, STATES, normalize, externalKey, manualKey, guessMapping, mappedRows, planImport, text, type IntakeValues, type IntakeMapping, type IntakeRecordShape } from '../../shared/finance-intake.mjs'
+import { FIELDS, STATES, normalize, externalKey, manualKey, guessMapping, mappedRows, planImport, text, type IntakeValues, type IntakeMapping, type IntakeRecordShape, type IntakeExtra, type IntakeExtraColumn } from '../../shared/finance-intake.mjs'
 
 export const MAX_BYTES = 10 * 1024 * 1024
 const MAX_ROWS = 5000
@@ -81,13 +81,23 @@ async function ownedRecord(ownerId: string, recordId: string): Promise<any> {
   if (!record) fail(404, '受付が見つかりません。')
   return record
 }
-const shape = (r: any): IntakeRecordShape => ({ id: String(r._id), key: r.key, values: r.values, createdAt: r.createdAt, updatedAt: r.updatedAt, revision: r.revision, history: r.history || [], provenance: r.provenance || [], identityReview: !!r.identityReview, archived: !!r.archived })
-const recordView = (r: any, attachments?: any[]) => ({ id: String(r._id), key: r.key, values: r.values, provenance: (r.provenance || []).map((p: any) => ({ documentId: p.documentId, fileName: p.fileName, sheet: p.sheet, row: p.row, hash: p.hash })), history: r.history || [], revision: r.revision, identityReview: !!r.identityReview, archived: !!r.archived, archivedAt: r.archivedAt || null, createdAt: r.createdAt, updatedAt: r.updatedAt, ...(attachments ? { attachments: attachments.map(documentView) } : {}) })
+const shape = (r: any): IntakeRecordShape => ({ id: String(r._id), key: r.key, values: r.values, extra: r.extra || {}, createdAt: r.createdAt, updatedAt: r.updatedAt, revision: r.revision, history: r.history || [], provenance: r.provenance || [], identityReview: !!r.identityReview, archived: !!r.archived })
+const recordView = (r: any, attachments?: any[]) => ({ id: String(r._id), key: r.key, values: r.values, extra: r.extra || {}, provenance: (r.provenance || []).map((p: any) => ({ documentId: p.documentId, fileName: p.fileName, sheet: p.sheet, row: p.row, hash: p.hash })), history: r.history || [], revision: r.revision, identityReview: !!r.identityReview, archived: !!r.archived, archivedAt: r.archivedAt || null, createdAt: r.createdAt, updatedAt: r.updatedAt, ...(attachments ? { attachments: attachments.map(documentView) } : {}) })
 function valuesInput(input: any): Partial<IntakeValues> {
   if (input === undefined) return {}
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, '入力内容を確認してください。')
   const out: any = {}
   for (const [k, v] of Object.entries(input)) { if (!FIELD_KEYS.includes(k as any)) fail(400, '不明な項目があります: ' + String(k).slice(0, 40)); if (v === null || v === undefined) continue; if (typeof v === 'number') out[k] = String(v); else if (str(v, 2000)) out[k] = v; else fail(400, '入力内容を確認してください。') }
+  return out
+}
+// Owner-named extra values: { name: value }, up to 30 names of up to 60 characters, values up to 2000 characters.
+const EXTRA_MESSAGE = '追加項目を確認してください。'
+const extraName = (name: any) => { if (!str(name, 60) || !name.trim()) fail(400, EXTRA_MESSAGE); return name.trim() as string }
+function extraInput(input: any): IntakeExtra {
+  if (input === undefined) return {}
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length > 30) fail(400, EXTRA_MESSAGE)
+  const out: IntakeExtra = {}
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) { const name = extraName(k); if (v === null || v === undefined) continue; if (typeof v === 'number') out[name] = String(v); else if (str(v, 2000)) out[name] = v as string; else fail(400, EXTRA_MESSAGE) }
   return out
 }
 const revisionOf = (body: any, record: any) => { if (!Number.isSafeInteger(Number(body?.revision)) || Number(body.revision) !== record.revision) fail(409, '他の画面で更新されています。再読み込みしてください。'); return record.revision as number }
@@ -114,17 +124,21 @@ export async function readRecord(ownerId: string, recordId: string) {
 export async function createRecord(ownerId: string, body: any) {
   await init()
   const values = normalize(valuesInput(body?.values)), _id = new mongoose.Types.ObjectId(), now = new Date().toISOString()
+  const extra: IntakeExtra = {}; for (const [k, v] of Object.entries(extraInput(body?.extra))) if (text(v) !== '') extra[k] = text(v)
   const identity = await identityFor(ownerId, _id, values, manualKey(_id.toHexString()))
-  const created = await IntakeRecord.create({ _id, ownerId, key: identity.key, values, provenance: [], history: [{ at: now, kind: 'new', changes: [], source: null }], revision: 1, identityReview: identity.identityReview, archived: false })
+  const created = await IntakeRecord.create({ _id, ownerId, key: identity.key, values, extra, provenance: [], history: [{ at: now, kind: 'new', changes: [], source: null }], revision: 1, identityReview: identity.identityReview, archived: false })
   return recordView(created.toObject(), [])
 }
 export async function patchRecord(ownerId: string, recordId: string, body: any) {
   await init(); const record = await ownedRecord(ownerId, recordId); const revision = revisionOf(body, record)
   const incoming = valuesInput(body?.values), merged: any = { ...record.values }
   for (const [k, v] of Object.entries(incoming)) if (text(v) !== '') merged[k] = v
-  const values = normalize(merged), changes = FIELDS.filter(([k]) => (record.values[k] || '') !== values[k]).map(([k]) => ({ field: k, before: record.values[k] || '', after: values[k] }))
+  const values = normalize(merged), changes: { field: string; before: string; after: string }[] = FIELDS.filter(([k]) => (record.values[k] || '') !== values[k]).map(([k]) => ({ field: k, before: record.values[k] || '', after: values[k] }))
+  // Extras follow the same rule: a blank or absent name keeps the stored value; changes are labelled extra:<name>.
+  const storedExtra: IntakeExtra = record.extra || {}, extra: IntakeExtra = { ...storedExtra }
+  for (const [k, v] of Object.entries(extraInput(body?.extra))) if (text(v) !== '' && (storedExtra[k] || '') !== text(v)) { changes.push({ field: 'extra:' + k, before: storedExtra[k] || '', after: text(v) }); extra[k] = text(v) }
   const identity = await identityFor(ownerId, record._id, values, record.key), now = new Date().toISOString()
-  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { values, key: identity.key, identityReview: identity.identityReview, revision: revision + 1 }, $push: { history: { at: now, kind: 'edit', changes, source: null } } })
+  const result = await IntakeRecord.updateOne({ _id: record._id, ownerId, revision }, { $set: { values, extra, key: identity.key, identityReview: identity.identityReview, revision: revision + 1 }, $push: { history: { at: now, kind: 'edit', changes, source: null } } })
   if (!result.matchedCount) fail(409, STALE)
   return readRecord(ownerId, recordId)
 }
@@ -182,6 +196,19 @@ function mappingInput(input: any, headers: string[]): IntakeMapping {
   for (const k of Object.keys(input)) if (!FIELD_KEYS.includes(k as any)) fail(400, '不明な項目があります: ' + String(k).slice(0, 40))
   return out
 }
+// Extra columns of an import or template: [{ name, column }], up to 30, unique names, column by the mapping rule above.
+function extrasInput(input: any, headers: string[]): IntakeExtraColumn[] {
+  if (input === undefined || input === null) return []
+  if (!Array.isArray(input) || input.length > 30) fail(400, EXTRA_MESSAGE)
+  const out: IntakeExtraColumn[] = [], seen = new Set<string>()
+  for (const item of input) {
+    if (!item || typeof item !== 'object') fail(400, EXTRA_MESSAGE)
+    const name = extraName(item.name), column = item.column
+    if (seen.has(name) || FIELD_KEYS.includes(name as any) || !/^\d{1,4}$/.test(String(column)) || Number(column) >= headers.length) fail(400, EXTRA_MESSAGE)
+    seen.add(name); out.push({ name, column: String(Number(column)) })
+  }
+  return out
+}
 function defaultsInput(input: any) {
   const values = valuesInput(input), out: Record<string, string> = {}
   for (const [k, v] of Object.entries(values)) if (text(v) !== '') out[k] = text(v)
@@ -189,18 +216,18 @@ function defaultsInput(input: any) {
 }
 async function planFor(ownerId: string, documentId: string, body: any) {
   const s = await sheetOf(ownerId, documentId, body?.sheet, body?.headerRow)
-  const mapping = mappingInput(body?.mapping, s.headers), defaults = defaultsInput(body?.defaults)
-  if (!Object.values(mapping).some(Boolean)) fail(400, '少なくとも一列を割り当ててください。')
-  const incoming = mappedRows(s.data, mapping, defaults, { hash: s.doc.hash, fileName: s.doc.name, documentId: String(s.doc._id), sheet: s.sheet, firstRow: s.headerRow + 1 }).filter(r => r.provenance.raw.some(Boolean))
+  const mapping = mappingInput(body?.mapping, s.headers), defaults = defaultsInput(body?.defaults), extras = extrasInput(body?.extras, s.headers)
+  if (!Object.values(mapping).some(Boolean) && !extras.length) fail(400, '少なくとも一列を割り当ててください。')
+  const incoming = mappedRows(s.data, mapping, defaults, { hash: s.doc.hash, fileName: s.doc.name, documentId: String(s.doc._id), sheet: s.sheet, firstRow: s.headerRow + 1 }, extras).filter(r => r.provenance.raw.some(Boolean))
   const stored: any[] = await IntakeRecord.find({ ownerId }).limit(20001).lean()
   if (stored.length > 20000) fail(409, '受付が多すぎます。先にアーカイブしてください。')
   const plan = planImport(stored.map(shape), incoming, { id: () => new mongoose.Types.ObjectId().toHexString() })
-  return { ...s, mapping, defaults, plan }
+  return { ...s, mapping, defaults, extras, plan }
 }
 const planCounts = (plan: any) => ({ new: plan.new, update: plan.update, unchanged: plan.unchanged, ambiguous: plan.ambiguous })
 export async function previewImport(ownerId: string, documentId: string, body: any) {
   await init(); const p = await planFor(ownerId, documentId, body)
-  return { document: documentView(p.doc), sheet: p.sheet, headerRow: p.headerRow, headers: p.headers, mapping: p.mapping, defaults: p.defaults, counts: planCounts(p.plan), rows: p.plan.rows.map(r => ({ row: r.row, operation: r.operation, ambiguous: r.ambiguous, identityReview: r.record.identityReview, key: r.record.key, values: r.record.values, changes: r.changes })) }
+  return { document: documentView(p.doc), sheet: p.sheet, headerRow: p.headerRow, headers: p.headers, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts: planCounts(p.plan), rows: p.plan.rows.map(r => ({ row: r.row, operation: r.operation, ambiguous: r.ambiguous, identityReview: r.record.identityReview, key: r.record.key, values: r.record.values, extra: r.record.extra || {}, changes: r.changes })) }
 }
 // Inserts by the unique (ownerId, key) index or updates with the revision the plan read; a row another tab changed meanwhile
 // is a conflict (left alone; the next run shows it as unchanged or plans it again). No lease, no hold.
@@ -211,18 +238,18 @@ export async function applyImport(ownerId: string, documentId: string, body: any
   for (const row of p.plan.rows) {
     const r = row.record, _id = new mongoose.Types.ObjectId(r.id)
     if (row.operation === 'new') {
-      try { await IntakeRecord.create({ _id, ownerId, key: r.key, values: r.values, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview, archived: false }); counts.new++; recordIds.push(_id) }
+      try { await IntakeRecord.create({ _id, ownerId, key: r.key, values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview, archived: false }); counts.new++; recordIds.push(_id) }
       catch (error: any) { if (error?.code !== 11000) throw error; counts.conflicts++ }
     } else if (row.operation === 'update') {
-      const result = await IntakeRecord.updateOne({ _id, ownerId, revision: r.revision - 1 }, { $set: { values: r.values, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview } })
+      const result = await IntakeRecord.updateOne({ _id, ownerId, revision: r.revision - 1 }, { $set: { values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview } })
       if (result.matchedCount) { counts.update++; recordIds.push(_id) } else counts.conflicts++
     } else { counts.unchanged++; recordIds.push(_id) }
   }
-  const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, counts, recordIds })
-  const template = body?.template?.name !== undefined ? await saveTemplate(ownerId, { name: body.template.name, service: p.defaults.service || '', account: p.defaults.account || '', currency: p.defaults.currency || '', headers: p.headers, mapping: p.mapping }) : null
+  const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts, recordIds })
+  const template = body?.template?.name !== undefined ? await saveTemplate(ownerId, { name: body.template.name, service: p.defaults.service || '', account: p.defaults.account || '', currency: p.defaults.currency || '', headers: p.headers, mapping: p.mapping, extras: p.extras }) : null
   return { batch: batchView(batch.toObject(), p.doc), ...(template ? { template: template.template } : {}) }
 }
-const batchView = (b: any, doc: any) => ({ id: String(b._id), documentId: String(b.documentId), fileName: doc?.name || '', hash: b.hash, sheet: b.sheet, headerRow: b.headerRow, mapping: b.mapping, defaults: b.defaults, counts: b.counts, recordCount: (b.recordIds || []).length, createdAt: b.createdAt })
+const batchView = (b: any, doc: any) => ({ id: String(b._id), documentId: String(b.documentId), fileName: doc?.name || '', hash: b.hash, sheet: b.sheet, headerRow: b.headerRow, mapping: b.mapping, defaults: b.defaults, extras: b.extras || [], counts: b.counts, recordCount: (b.recordIds || []).length, createdAt: b.createdAt })
 export async function listBatches(ownerId: string) {
   await init()
   const batches: any[] = await IntakeBatch.find({ ownerId }).sort({ createdAt: -1 }).limit(200).lean()
@@ -230,7 +257,7 @@ export async function listBatches(ownerId: string) {
   const names = new Map(docs.map(d => [String(d._id), d]))
   return { batches: batches.map(b => batchView(b, names.get(String(b.documentId)))) }
 }
-const templateView = (t: any) => ({ id: String(t._id), name: t.name, service: t.service || '', account: t.account || '', currency: t.currency || '', headers: t.headers || [], mapping: t.mapping, revision: t.revision, updatedAt: t.updatedAt })
+const templateView = (t: any) => ({ id: String(t._id), name: t.name, service: t.service || '', account: t.account || '', currency: t.currency || '', headers: t.headers || [], mapping: t.mapping, extras: t.extras || [], revision: t.revision, updatedAt: t.updatedAt })
 export async function listTemplates(ownerId: string) {
   await init()
   return { templates: (await IntakeTemplate.find({ ownerId }).sort({ name: 1 }).limit(500).lean()).map(templateView) }
@@ -240,8 +267,8 @@ export async function saveTemplate(ownerId: string, body: any) {
   if (!str(body?.name, 100) || !body.name.trim()) fail(400, 'テンプレート名を確認してください。')
   for (const k of ['service', 'account', 'currency']) if (body[k] !== undefined && !str(body[k], 200)) fail(400, 'テンプレートの既定値を確認してください。')
   if (!Array.isArray(body?.headers) || body.headers.length > 500 || body.headers.some((h: any) => !str(h, 500))) fail(400, 'テンプレートの見出しを確認してください。')
-  const mapping = mappingInput(body?.mapping, body.headers)
-  if (!Object.values(mapping).some(Boolean)) fail(400, '少なくとも一列を割り当ててください。')
-  const saved: any = await IntakeTemplate.findOneAndUpdate({ ownerId, name: body.name.trim() }, { $set: { service: text(body.service), account: text(body.account), currency: text(body.currency), headers: body.headers.map(text), mapping }, $inc: { revision: 1 }, $setOnInsert: { ownerId, name: body.name.trim() } }, { upsert: true, new: true }).lean()
+  const mapping = mappingInput(body?.mapping, body.headers), extras = extrasInput(body?.extras, body.headers)
+  if (!Object.values(mapping).some(Boolean) && !extras.length) fail(400, '少なくとも一列を割り当ててください。')
+  const saved: any = await IntakeTemplate.findOneAndUpdate({ ownerId, name: body.name.trim() }, { $set: { service: text(body.service), account: text(body.account), currency: text(body.currency), headers: body.headers.map(text), mapping, extras }, $inc: { revision: 1 }, $setOnInsert: { ownerId, name: body.name.trim() } }, { upsert: true, new: true }).lean()
   return { template: templateView(saved) }
 }

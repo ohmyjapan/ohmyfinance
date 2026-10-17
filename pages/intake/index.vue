@@ -116,7 +116,7 @@ const filterLabel = computed(() => filters.value.find(f => f.value === filter.va
 const filteredRows = computed(() => {
   const q = search.value.trim().toLowerCase()
   return records.value.filter(r => filter.value === 'all' || filter.value === 'archived' ? true : filter.value === 'review' ? r.identityReview : r.values.purchaseState === filter.value)
-    .filter(r => !q || Object.values(r.values as Record<string, string>).join(' ').toLowerCase().includes(q))
+    .filter(r => !q || [...Object.values(r.values as Record<string, string>), ...Object.values((r.extra || {}) as Record<string, string>)].join(' ').toLowerCase().includes(q))
 })
 const amountOf = (v: Record<string, string>) => v.amount === '' ? '—' : v.currency === 'JPY' && Number.isFinite(Number(v.amount)) ? '¥' + Number(v.amount).toLocaleString('ja-JP') : v.amount + ' ' + v.currency
 const stateClass = (s: string) => s === 'purchased' ? 'bg-green-100 text-green-800 dark:bg-green-500/10 dark:text-green-300' : s === 'cancelled' || s === 'refunded' ? 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300' : 'bg-primary-main/10 text-primary-main dark:text-primary-light'

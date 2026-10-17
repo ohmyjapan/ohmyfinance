@@ -32,7 +32,7 @@ export class ResearchTools {
  constructor(config,job,directory,{get=publicGet,extract=interpretDocument,searchSheet=searchBrowserSheet,archive=null}={}){this.config=config;this.job=job;this.directory=directory;this.sources=[...job.sources];this.get=get;this.extract=extract;this.searchSheet=searchSheet;this.archive=archive;this.isseyImages=new Map();this.sheetContinuations=new Map();this.messages=new Map();this.attachments=new Map();this.registry=null;this.calls=0}
  async persist(stage){await fs.writeFile(path.join(this.directory,'evidence.json'),JSON.stringify({sources:this.sources,registry:this.registry,stage}));}
  async api(route,body,raw=false){
-  const r=await fetch(this.config.baseUrl+'/api/finance-research/worker/'+(this.job.mode==='evaluation'?'evaluation/':'')+this.job.id+'/'+route,{method:'POST',headers:{Authorization:'Bearer '+this.config.token,'Content-Type':'application/json'},body:JSON.stringify({...body,lease:this.job.lease}),redirect:'error',signal:AbortSignal.timeout(30000)});
+  const r=await fetch(this.config.baseUrl+'/api/finance-research/worker/'+(this.job.mode==='evaluation'?'evaluation/':this.job.mode==='intake'?'intake/':'')+this.job.id+'/'+route,{method:'POST',headers:{Authorization:'Bearer '+this.config.token,'Content-Type':'application/json'},body:JSON.stringify({...body,lease:this.job.lease}),redirect:'error',signal:AbortSignal.timeout(30000)});
   if(!r.ok)throw Error('Research API '+r.status);return raw?Buffer.from(await r.arrayBuffer()):r.json();
  }
  async add(kind,title,text,url='',extra={}){
@@ -63,7 +63,7 @@ export class ResearchTools {
   const result=await this.extract(this.config,{mimeType},bytes);
   const text=result.pages.map(p=>'Page '+p.page+'\n'+p.text).join('\n')+'\nExtracted order candidates (not confirmed associations):\n'+JSON.stringify(result.records);
   const source=await this.add('document',title,text,url,extra);
-  if(!extra.documentId&&this.job.mode!=='evaluation'){
+  if(!extra.documentId&&this.job.mode!=='evaluation'&&this.job.mode!=='intake'){
    const endpoint=this.config.baseUrl+'/api/finance-research/worker/'+this.job.id+'/artifact';
    const query=new URLSearchParams({lease:this.job.lease,sourceId:source.id,name:title.replace(/[/\\\x00-\x1f]/g,'_').slice(0,180),mimeType});
    const response=await fetch(endpoint+'?'+query,{method:'POST',headers:{Authorization:'Bearer '+this.config.token,'Content-Type':mimeType},body:bytes,redirect:'error',signal:AbortSignal.timeout(30000)});

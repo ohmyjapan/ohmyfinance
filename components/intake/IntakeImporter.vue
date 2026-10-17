@@ -42,6 +42,15 @@
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">サービス内アカウント（既定）<input v-model="defaults.account" type="text" class="intake-control mt-1" data-default-account></label>
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">通貨（既定）<input v-model="defaults.currency" type="text" class="intake-control mt-1" data-default-currency></label>
       </div>
+      <div class="mt-3" data-import-extras>
+        <p class="text-xs text-gray-600 dark:text-gray-300">追加項目：上の項目にない列は、名前を付けてそのまま保存できます（受付ごとに表示・検索・編集できます）。</p>
+        <div v-for="(x, i) in extras" :key="i" class="mt-2 grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">項目名<input v-model="x.name" type="text" maxlength="60" placeholder="例: 担当者" class="intake-control mt-1" :data-extra-name="i"></label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">列<select v-model="x.column" class="intake-control mt-1" :data-extra-column="i"><option value="">（列なし）</option><option v-for="(h, j) in sheetData.headers" :key="j" :value="String(j)">{{ h || ('列 ' + (j + 1)) }}</option></select></label>
+          <button type="button" class="btn btn-secondary text-xs" :data-extra-remove="i" @click="extras.splice(i, 1)">削除</button>
+        </div>
+        <button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="extras.length >= 30" data-extra-add @click="extras.push({ name: '', column: '' })">＋追加項目</button>
+      </div>
       <details class="mt-3">
         <summary class="cursor-pointer text-xs text-gray-600 dark:text-gray-300">先頭 {{ sheetData.rows.length }} 行を見る</summary>
         <div class="mt-2 overflow-x-auto">
@@ -62,7 +71,7 @@
               <td class="px-2 py-1 tabular-nums">{{ r.row }}</td>
               <td class="px-2 py-1">{{ operationLabel(r.operation) }}<span v-if="r.ambiguous || r.identityReview" class="ml-1 text-amber-700 dark:text-amber-400">（ID確認）</span></td>
               <td class="px-2 py-1">{{ r.values.orderId }}</td><td class="px-2 py-1">{{ r.values.description }}</td><td class="px-2 py-1 text-right tabular-nums">{{ r.values.amount }}</td>
-              <td class="px-2 py-1">{{ r.changes.map((c: any) => FIELD_NAMES[c.field] + ': ' + (c.before || '（空）') + ' → ' + c.after).join('、') }}</td>
+              <td class="px-2 py-1">{{ r.changes.map((c: any) => labelOf(c.field) + ': ' + (c.before || '（空）') + ' → ' + c.after).join('、') }}</td>
             </tr>
           </tbody>
         </table>
@@ -84,12 +93,16 @@ const emit = defineEmits<{ (e: 'imported', batch: any): void; (e: 'close'): void
 const user = useUserStore(), api = '/api/finance-intake/'
 const busy = ref(false), error = ref(''), doc = ref<any>(null), sheet = ref(''), headerRow = ref(1), templates = ref<any[]>([]), templateId = ref(''), templateName = ref('')
 const sheetData = ref<any>(null), mapping = reactive<Record<string, string>>(Object.fromEntries(FIELDS.map(f => [f[0], '']))), defaults = reactive({ service: DEFAULT_SERVICE, account: '', currency: DEFAULT_CURRENCY })
+// Owner-named extra columns beside the fixed fields: { name, column }; sent only when both are filled.
+const extras = ref<{ name: string; column: string }[]>([])
 const previewData = ref<any>(null), result = ref<any>(null)
 const sizeOf = (n: number) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B'
 const operationLabel = (op: string) => op === 'new' ? '新規' : op === 'update' ? '追加・更新' : '変更なし'
+const labelOf = (field: string) => field.startsWith('extra:') ? field.slice(6) : (FIELD_NAMES as Record<string, string>)[field] || field
 function errorMessage(e: any) { return e.data?.data?.message || e.data?.statusMessage || e.message || '処理に失敗しました。再試行してください。' }
 async function run(action: () => Promise<void>) { busy.value = true; error.value = ''; try { await action() } catch (e: any) { error.value = errorMessage(e) } finally { busy.value = false } }
-const body = () => ({ sheet: sheet.value, headerRow: headerRow.value, mapping: { ...mapping }, defaults: { ...defaults } })
+const body = () => ({ sheet: sheet.value, headerRow: headerRow.value, mapping: { ...mapping }, defaults: { ...defaults }, extras: extras.value.filter(x => x.name.trim() && x.column !== '').map(x => ({ name: x.name.trim(), column: x.column })) })
+function applyExtras(source: any[] | undefined) { const limit = sheetData.value?.headers.length || 0; extras.value = (source || []).filter(x => x && typeof x.name === 'string' && x.name.trim() && Number(x.column) < limit).map(x => ({ name: x.name, column: String(x.column) })) }
 function contentType(file: File) { if (file.type) return file.type; const ext = file.name.toLowerCase().split('.').pop(); return ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : ext === 'xls' ? 'application/vnd.ms-excel' : 'text/csv' }
 async function loadTemplates() { try { templates.value = ((await $fetch(api + 'templates', { headers: user.authHeader })) as any).templates } catch { templates.value = [] } }
 async function upload(event: Event) {
@@ -106,14 +119,14 @@ async function readSheetNow() {
   const data: any = await $fetch(api + 'files/' + doc.value.id + '/sheet', { query: { sheet: sheet.value, headerRow: headerRow.value }, headers: user.authHeader })
   sheetData.value = data; previewData.value = null
   const template = templates.value.find(t => t.id === templateId.value)
-  if (template) applyMapping(template.mapping); else Object.assign(mapping, data.mapping)
+  if (template) { applyMapping(template.mapping); applyExtras(template.extras) } else { Object.assign(mapping, data.mapping); applyExtras(extras.value) }
 }
 function readSheet() { if (doc.value) run(readSheetNow) }
 function applyMapping(source: Record<string, string>) { const limit = sheetData.value?.headers.length || 0; for (const [k] of FIELDS) mapping[k] = source[k] !== undefined && source[k] !== '' && Number(source[k]) < limit ? String(source[k]) : '' }
 function applyTemplate() {
   const template = templates.value.find(t => t.id === templateId.value)
-  if (!template) { if (sheetData.value) Object.assign(mapping, sheetData.value.mapping); return }
-  applyMapping(template.mapping); defaults.service = template.service || DEFAULT_SERVICE; defaults.account = template.account || ''; defaults.currency = template.currency || DEFAULT_CURRENCY; templateName.value = template.name; previewData.value = null
+  if (!template) { if (sheetData.value) Object.assign(mapping, sheetData.value.mapping); extras.value = []; return }
+  applyMapping(template.mapping); applyExtras(template.extras); defaults.service = template.service || DEFAULT_SERVICE; defaults.account = template.account || ''; defaults.currency = template.currency || DEFAULT_CURRENCY; templateName.value = template.name; previewData.value = null
 }
 async function preview() { await run(async () => { previewData.value = await $fetch(api + 'files/' + doc.value.id + '/preview', { method: 'POST', headers: user.authHeader, body: body() }); result.value = null }) }
 async function runImport() {

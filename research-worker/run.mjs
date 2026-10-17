@@ -9,7 +9,8 @@ const config=await new Vault(directory).read();
 if(!config.enabled||!/^omft_[a-f0-9]{64}$/.test(config.token||'')||!config.cliPath||!config.inferenceDirectory)throw Error('Research worker is not configured');
 // The hosted chat worker gets the research Vault directory explicitly: its actions MCP child reads the token from this Vault, never a default.
 const chatWorker=new TeachingWorker({...config,documentEnabled:false,directory});
-const worker=new ResearchWorker(config,directory,{chatWorker});let settings;const reportStatus=async()=>worker.api('status',{settingsUrl:settings.url,ntaConfigured:!!config.ntaApplicationId});settings=await startResearchSettings(directory,config,()=>reportStatus().catch(()=>{}));await reportStatus();let stopped=false;
+// intakeResearch:true tells OMF this worker claims intake (購入受付) lookups; an older worker reports none and the intake page says so.
+const worker=new ResearchWorker(config,directory,{chatWorker});let settings;const reportStatus=async()=>worker.api('status',{settingsUrl:settings.url,ntaConfigured:!!config.ntaApplicationId,intakeResearch:true});settings=await startResearchSettings(directory,config,()=>reportStatus().catch(()=>{}));await reportStatus();let stopped=false;
 process.on('SIGINT',()=>stopped=true);process.on('SIGTERM',()=>stopped=true);
 do{try{await worker.cycle()}catch{console.error('Research worker connection unavailable')}if(process.argv.includes('--once'))break;if(!stopped)await new Promise(r=>setTimeout(r,3000))}while(!stopped);
 settings.close();
