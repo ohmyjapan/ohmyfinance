@@ -11,7 +11,8 @@
 // mismatch + 17 recovery + 18 owner scope + 19 MANDATORY hidden real Chrome + 20 MANDATORY real worker cycle on the claude CLI;
 // NOT RUN and red when .output/server/index.mjs is missing) · 3 node --test of the sibling unit test · 4 the plan's seven
 // mutants, each reintroduced into an isolated copy of the built output and required to flip its named leg-2 assertion
-// (mutant runs set OMF_TEST_INTAKE_MUTANT=1 so legs 19-20 run once, never per mutant) · 5 static checks of the worker files.
+// (mutant runs set OMF_TEST_INTAKE_MUTANT=1 so legs 19-20 run once, never per mutant) · 5 static checks of the worker files
+// · 6 deterministic ResearchTools behavior tests with the two intake changes separately reverted in memory.
 // Leg 20 needs OMF_TEST_RESEARCH_CLI (claude CLI path), OMF_TEST_CLAUDE_CONFIG_DIR (a subscription CLI login; worker.mjs:34
 // passes no API key) and OMF_TEST_RESEARCH_PAGE (a public https seller page printing a T number); missing → RED, never NOT RUN.
 // No production database. Synthetic owners finance-a/finance-b@example.invalid only.
@@ -187,6 +188,17 @@ export default {
       assert.match(tools, /mode\s*!==\s*['"]intake['"]/, 'tools.mjs skips the artifact upload for intake');
       assert.match(runner, /intakeResearch\s*:\s*true/, 'run.mjs reports intakeResearch:true');
       return 'intake/claim third, intake/ prefix in worker.mjs and tools.mjs, artifact skip, run.mjs status flag';
+    });
+
+    // Review F2: these revert the two tools.mjs changes in memory and must fail their actual behavior assertions.
+    await leg('6 research tools mutations', async () => {
+      const results = [];
+      for (const [mutant, assertion] of [['intake-route','intake-tools:progress-route'],['intake-artifact','intake-tools:no-artifact-upload']]) {
+        const r = await run(['--test','scripts/finance-intake.test.mjs'], {...env,OMF_TEST_INTAKE_TOOLS_MUTANT:mutant},180000);
+        if (r.code === 0 || !(r.stdout+r.stderr).includes(assertion)) throw new Error(`tools mutant ${mutant} did not fail ${assertion}: ${(r.stdout+r.stderr).slice(-1000)}`);
+        results.push(mutant+':flipped');
+      }
+      return results.join(' ');
     });
 
     const databaseCoverage = integration && integration.code === 0 ? { executed: true, ownedProcess: true } : { executed: false, ownedProcess: false };

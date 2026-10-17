@@ -55,7 +55,8 @@ and, when non-blank, `values.invoiceNumber` with a history line `kind: research`
 written: no Supplier, no FinanceResearch row, no draft, no ledger entry.
 
 States: idle → queued → working → ready | failed → confirmed; `failure` says why a row failed: `research_failed` (the worker gave
-up), `not_claimed` (nobody claimed it within 10 minutes), `worker_lost` (a lease a full lease past its expiry with no re-claim).
+up), `not_claimed` (queued for 10 minutes with no connected intake-capable worker), `worker_lost` (a lease a full lease past its expiry with no re-claim).
+Queued work remains claimable while a capable worker is connected but busy on earlier jobs.
 Recovery happens at read time (page read or re-queue), by compare-and-set, with no new watcher: a late worker result meets 409, a
 late claim finds nothing, and the page offers 「もう一度調べる」 (history keeps every attempt, up to 20).
 
@@ -86,3 +87,8 @@ path), `OMF_TEST_CLAUDE_CONFIG_DIR` (a subscription CLI login; the worker passes
 https seller page printing a T number). `OMF_TEST_INTAKE_MUTANT=1` skips both (the fixture's mutant runs).
 
 Through the hub: `node scripts/zoomer-verify.mjs --run-fixture omf-intake.mjs --cwd <tree>` (never run the fixture directly).
+
+The intake unit tests also exercise `ResearchTools.document()` with a stubbed extractor and `api('progress')` with captured
+fetch calls, without a model or network request. The fixture reverts each reviewed tools change in memory and requires its
+behavior assertion to fail. HTTP checks include a connected busy worker versus disconnected expiry, non-HTTPS URLs, the
+research-history and active-job limits, and extra-column names that conflict with fixed fields.

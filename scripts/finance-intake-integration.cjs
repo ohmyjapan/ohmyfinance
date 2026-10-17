@@ -148,6 +148,7 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
  assert.equal((await req('files/'+doc8.id+'/preview',{...plan8,extras:[{name:'',column:'8'}]})).status,400,'intake:extras-bad-name');
  assert.equal((await req('files/'+doc8.id+'/preview',{...plan8,extras:[{name:'x',column:'99'}]})).status,400,'intake:extras-bad-column');
  assert.equal((await req('files/'+doc8.id+'/preview',{...plan8,extras:[{name:'a',column:'8'},{name:'a',column:'7'}]})).status,400,'intake:extras-duplicate');
+ assert.equal((await req('files/'+doc8.id+'/preview',{...plan8,extras:[{name:'amount',column:'8'}]})).status,400,'intake:extras-fixed-field-name');
  assert.equal((await req('records/'+r21.id,{revision:patchedBlank.data.revision,values:{},extra:{'':'x'}},'PATCH')).status,400,'intake:patch-extra-bad');
  const createdX=await req('records',{values:{description:'with extra'},extra:{'担当者':'田中'}});assert.equal(createdX.status,200,'intake:create-extra');assert.equal(createdX.data.extra['担当者'],'田中','intake:create-extra-value');
  const putX=await req('templates',{name:'八項目',service:'DEJAPAN',account:'main',currency:'JPY',headers:HEAD8,mapping:sh8.mapping,extras:[{name:'担当者',column:'8'},{name:'備考2',column:'1'}]},'PUT');assert.equal(putX.status,200,'intake:template-put-extras '+JSON.stringify(putX.data));assert.equal(putX.data.template.extras.length,2,'intake:template-put-extras-count');
@@ -176,6 +177,8 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
  assert.equal((await statusNew()).status,200,'intake-research:status-new');
  view=(await rget(rec.id)).data;assert.equal(view.settings.intakeResearch,true,'intake-research:settings-new');assert.equal(view.settings.ntaConfigured,false,'intake-research:settings-nta');
  assert.equal((await rqueue(noUrl,0)).status,400,'intake-research:queue-no-url');
+ const httpRecord=await req('records',{values:{description:'Non-HTTPS research URL',merchantUrl:'http://shop.example.invalid/company'}});assert.equal(httpRecord.status,200,'intake-research:http-record');
+ const nonHttps=await rqueue(httpRecord.data,0);assert.equal(nonHttps.status,400,'intake-research:queue-non-https');assert.match(JSON.stringify(nonHttps.data),/URLを確認/,'intake-research:queue-non-https-text');
  assert.equal((await rqueue({id:rec.id,revision:rec.revision+1},0)).status,409,'intake-research:queue-stale-record');
  assert.equal((await rqueue(rec,0,'',token,'nope')).status,400,'intake-research:queue-bad-request');
  assert.equal((await rqueue(rec,0,'x'.repeat(2001))).status,400,'intake-research:queue-long-instruction');
@@ -264,11 +267,15 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
  await researchCollection.updateOne({_id:r3id},{$set:{'events.0.at':new Date(Date.now()-9*60000)}});
  view=(await rget(rec3.id)).data;assert.equal(view.research.state,'queued','intake-research:nine-minutes-still-queued');
  await researchCollection.updateOne({_id:r3id},{$set:{'events.0.at':new Date(Date.now()-11*60000)}});
+ await db.collection('financechatagents').updateOne({_id:agentId},{$set:{lastSeenAt:new Date(Date.now()-120000)}});
  const settledByQueue=await rqueue(rec3,view.research.revision);assert.equal(settledByQueue.status,409,'intake-research:queue-settles-stuck');assert.match(JSON.stringify(settledByQueue.data),/再読込/,'intake-research:queue-settles-stuck-text');
  view=(await rget(rec3.id)).data;assert.equal(view.research.state,'failed','intake-research:expired-not-claimed');assert.equal(view.research.failure,'not_claimed','intake-research:expired-not-claimed-flag');assert.equal(view.research.events.at(-1).stage,'expired','intake-research:expired-event');assert.equal(view.research.revision,q3.data.research.revision+1,'intake-research:expired-revision');
  assert.equal((await wcall('intake/claim')).data.job,null,'intake-research:expired-queued-not-claimable');
  const q3b=await rqueue(rec3,view.research.revision);assert.equal(q3b.status,200,'intake-research:requeue-after-expiry '+JSON.stringify(q3b.data));assert.equal(q3b.data.research.state,'queued','intake-research:requeued-after-expiry');assert.equal(q3b.data.research.history.length,1,'intake-research:expiry-history');assert.equal(q3b.data.research.history[0].failure,'not_claimed','intake-research:expiry-history-failure');assert.equal(q3b.data.research.failure,'','intake-research:requeue-after-expiry-clears');
+ await researchCollection.updateOne({_id:r3id},{$set:{'events.0.at':new Date(Date.now()-11*60000)}});
+ view=(await rget(rec3.id)).data;assert.equal(view.connected,true,'intake-research:busy-worker-connected');assert.equal(view.research.state,'queued','intake-research:busy-worker-keeps-queue');assert.equal(view.research.failure,'','intake-research:busy-worker-no-failure');
  let job3=(await wcall('intake/claim')).data.job;assert.ok(job3,'intake-research:claim-three');
+ assert.equal(job3.id,String(r3id),'intake-research:busy-worker-queue-claimable');
  await researchCollection.updateOne({_id:r3id},{$set:{leaseUntil:new Date(Date.now()-60000)}});
  view=(await rget(rec3.id)).data;assert.equal(view.research.state,'working','intake-research:expired-lease-not-yet-lost');
  const reclaimed=(await wcall('intake/claim')).data.job;assert.ok(reclaimed,'intake-research:release-once');assert.equal(reclaimed.id,job3.id,'intake-research:release-same-job');assert.notEqual(reclaimed.lease,job3.lease,'intake-research:release-new-lease');
@@ -279,7 +286,7 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
  assert.equal((await wcall('intake/'+job3.id+'/result',{lease:reclaimed.lease,sources:[...job3.sources,webSource('s1',pageText)],report})).status,409,'intake-research:late-result');
  assert.equal((await wcall('intake/claim')).data.job,null,'intake-research:expired-not-claimable');
  const q3c=await rqueue(rec3,view.research.revision);assert.equal(q3c.status,200,'intake-research:requeue-after-lost '+JSON.stringify(q3c.data));assert.equal(q3c.data.research.state,'queued','intake-research:requeued-after-lost');assert.equal(q3c.data.research.history.length,2,'intake-research:lost-history');assert.equal(q3c.data.research.history[1].failure,'worker_lost','intake-research:lost-history-failure');
- pass('recovery: a queued lookup nobody claims fails as not_claimed after 10 minutes, an expired lease is re-leased once, a lease a full lease past expiry fails as worker_lost, late results and claims are refused and a re-run queues again');
+ pass('recovery: a queued lookup expires after ten minutes only when no capable worker is connected, a connected busy worker keeps the queue claimable, an expired lease is re-leased once, a lost worker fails, late results are refused and a re-run queues again');
 
  // 18 owner scope and untouched collections
  assert.equal((await rget(rec.id,other)).status,404,'intake-research:owner-scope-get');
@@ -298,6 +305,20 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
  assert.equal(await db.collection('suppliers').countDocuments(),researchBefore.suppliers,'intake-research:suppliers-untouched');
  assert.deepEqual(await ledger(),ledgerBefore,'intake-research:ledger-untouched');
  pass('research rows are owner-scoped on read, queue, confirm and worker claim; statement research, suppliers and the ledger never move');
+
+ // Review F3: exercise the history and active-job limits using only this fixture's owned rows.
+ const pending3=(await wcall('intake/claim')).data.job;assert.equal(pending3.id,String(r3id),'intake-research:limits-drain-pending');
+ assert.equal((await wcall('intake/'+pending3.id+'/result',{lease:pending3.lease,failed:true})).status,200,'intake-research:limits-drain-result');
+ const beforeHistory=await researchCollection.findOne({_id:r3id});
+ await researchCollection.updateOne({_id:r3id},{$set:{history:Array.from({length:20},()=>({at:new Date(),failure:'research_failed'}))}});
+ view=(await rget(rec3.id)).data;const historyLimit=await rqueue(rec3,view.research.revision);assert.equal(historyLimit.status,409,'intake-research:history-limit');assert.match(JSON.stringify(historyLimit.data),/調査履歴は上限/,'intake-research:history-limit-text');
+ await researchCollection.updateOne({_id:r3id},{$set:{history:beforeHistory.history}});
+ for(const recordId of [rec.id,rec2.id,rec3.id]){const current=(await get('records/'+recordId)).data,currentResearch=(await rget(recordId)).data;assert.equal((await rqueue(current,currentResearch.research.revision)).status,200,'intake-research:active-limit-queue-three');}
+ const fourth=await req('records',{values:{description:'Fourth concurrent lookup',merchantUrl:'https://four.example.invalid/company'}});assert.equal(fourth.status,200,'intake-research:active-limit-fourth-record');
+ const activeLimit=await rqueue(fourth.data,0);assert.equal(activeLimit.status,409,'intake-research:active-limit');assert.match(JSON.stringify(activeLimit.data),/進行中の調査が完了/,'intake-research:active-limit-text');assert.equal((await rget(fourth.data.id)).data.research,null,'intake-research:active-limit-no-row');
+ for(let i=0;i<3;i++){const pending=(await wcall('intake/claim')).data.job;assert.ok(pending,'intake-research:limits-cleanup-claim');assert.equal((await wcall('intake/'+pending.id+'/result',{lease:pending.lease,failed:true})).status,200,'intake-research:limits-cleanup-result');}
+ assert.equal(await researchCollection.countDocuments({state:{$in:['queued','working']}}),0,'intake-research:limits-cleanup-complete');assert.deepEqual(await ledger(),ledgerBefore,'intake-research:limits-ledger-untouched');
+ pass('history limit and three-active limit return their own 409 messages, rejected fourth lookup creates no research row, and the owned queue is drained');
 
  if(process.env.OMF_TEST_INTAKE_MUTANT){console.log('mutant run: the hidden-Chrome and real-worker legs run once in the main run, not per mutant');return;}
 
@@ -351,8 +372,8 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
    await page.goto(origin+'/intake/'+uiRec0.id,{waitUntil:'networkidle2'});await waitFor(()=>!!document.querySelector('[data-research-connection]'));
    assert.equal(await page.evaluate(()=>document.querySelector('[data-research-connection]').textContent.trim()),'ワーカーの更新が必要です','intake-ui:update-needed');
    assert.equal((await statusNew()).status,200,'intake-ui:status-new');
-   // leg 17 left record 3's lookup queued; the worker claims the oldest queued row first, so drain it before the UI record's lookup
-   const leftover=(await wcall('intake/claim')).data.job;assert.equal(leftover?.id,String(r3id),'intake-ui:drain-leftover');assert.equal((await wcall('intake/'+leftover.id+'/result',{lease:leftover.lease,failed:true})).status,200,'intake-ui:drain-leftover-result');
+   // The review limit checks drained their three jobs; the UI's next lookup must have no earlier queued job.
+   assert.equal((await wcall('intake/claim')).data.job,null,'intake-ui:queue-empty-before-ui');
    const uiQueued=await rqueue(uiRec0,0);assert.equal(uiQueued.status,200,'intake-ui:queue '+JSON.stringify(uiQueued.data));
    await page.reload({waitUntil:'networkidle2'});await waitFor(()=>document.querySelector('[data-research-state]')?.textContent.includes('順番待ち'));
    assert.equal(await page.evaluate(()=>!!document.querySelector('[data-research-stage]')),true,'intake-ui:pending-text');

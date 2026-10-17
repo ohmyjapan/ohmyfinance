@@ -2,6 +2,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalize, planImport, applyPlan, mappedRows, guessMapping, FIELDS, MONEY } from '../shared/finance-intake.mjs';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+
+// The normal tests import the actual worker module. The two explicit mutant runs load the same bytes with one
+// reviewed change reverted; absolute imports preserve the original dependencies without touching source files.
+async function researchToolsClass() {
+  const moduleUrl = new URL('../research-worker/tools.mjs', import.meta.url);
+  const mutant = process.env.OMF_TEST_INTAKE_TOOLS_MUTANT;
+  if (!mutant) return (await import(moduleUrl.href)).ResearchTools;
+  const changes = {
+    'intake-route': ["this.job.mode==='intake'?'intake/':''", "''"],
+    'intake-artifact': ["&&this.job.mode!=='intake'", '']
+  };
+  assert.ok(changes[mutant], 'known intake tools mutant');
+  let source = await readFile(moduleUrl, 'utf8');
+  const [before, after] = changes[mutant];
+  assert.equal(source.split(before).length - 1, 1, 'mutant anchors exactly once');
+  source = source.replace(before, after)
+    .replace(/from\s+(['"])(\.{1,2}\/[^'"]+)\1/g, (_, quote, specifier) => 'from '+JSON.stringify(new URL(specifier,moduleUrl).href))
+    .replaceAll('import.meta.url', JSON.stringify(moduleUrl.href));
+  return (await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))).ResearchTools;
+}
 
 const proof = (row = 2, hash = 'a') => ({ hash, fileName: 'daily.xlsx', documentId: hash, sheet: 'Sheet1', row, raw: [] });
 const row = (values, provenance) => ({ values: normalize(values), provenance });
@@ -84,4 +107,31 @@ test('extra columns ride the same present/keep-blank rule and are labelled extra
   assert.equal(changed.rows[0].record.extra['担当者'], '田中');
   assert.deepEqual(changed.rows[0].changes, [{ field: 'extra:担当者', before: '山田', after: '田中' }]);
   assert.equal(records[0].extra['担当者'], '山田', 'the stored record is not mutated');
+});
+
+test('intake research tools preserve extracted PDF evidence without requesting an artifact upload', async t => {
+  const ResearchTools = await researchToolsClass(), directory = await mkdtemp(path.join(os.tmpdir(),'omf-intake-tools-'));
+  const calls = [], bytes = Buffer.from('%PDF-1.4\nfictional fixture'), config = {baseUrl:'https://omf.example.invalid',token:'fictional-worker-token'};
+  t.mock.method(globalThis,'fetch',async (url,options) => {calls.push({url,options});return Response.json({success:true});});
+  let extracts = 0;
+  const tools = new ResearchTools(config,{id:'fictional-intake',mode:'intake',lease:'fictional-lease',sources:[]},directory,{extract:async (received,mime,input) => {
+    extracts++;assert.equal(received,config);assert.equal(mime.mimeType,'application/pdf');assert.deepEqual(input,bytes);
+    return {pages:[{page:1,text:'Fictional company T1234567890123'}],records:[]};
+  }});
+  try {
+    const source = await tools.document(bytes,'application/pdf','company.pdf','https://merchant.example.invalid/company.pdf');
+    assert.equal(extracts,1);assert.equal(source.kind,'document');assert.match(source.text,/Fictional company T1234567890123/);
+    assert.deepEqual(JSON.parse(await readFile(path.join(directory,'evidence.json'),'utf8')).sources,[source]);
+    assert.equal(calls.length,0,'intake-tools:no-artifact-upload');
+  } finally { await rm(directory,{recursive:true,force:true}); }
+});
+
+test('intake research tools send progress to the intake route with the lease', async t => {
+  const ResearchTools = await researchToolsClass(), calls = [];
+  t.mock.method(globalThis,'fetch',async (url,options) => {calls.push({url,options});return Response.json({success:true});});
+  const tools = new ResearchTools({baseUrl:'https://omf.example.invalid',token:'fictional-worker-token'},{id:'fictional-intake',mode:'intake',lease:'fictional-lease',sources:[]},os.tmpdir());
+  assert.deepEqual(await tools.api('progress',{stage:'document'}),{success:true});assert.equal(calls.length,1);
+  assert.equal(calls[0].url,'https://omf.example.invalid/api/finance-research/worker/intake/fictional-intake/progress','intake-tools:progress-route');
+  assert.equal(calls[0].options.method,'POST');assert.equal(calls[0].options.headers.Authorization,'Bearer fictional-worker-token');
+  assert.deepEqual(JSON.parse(calls[0].options.body),{stage:'document',lease:'fictional-lease'});
 });

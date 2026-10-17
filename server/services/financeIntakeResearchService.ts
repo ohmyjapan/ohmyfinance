@@ -40,7 +40,7 @@ function verifiedOf(r:any){
 const expired=(at:any)=>!!at&&new Date(at).getTime()<=Date.now()-LEASE_MS
 async function settleStuck(r:any){
  if(!r)return r
- const failure=r.state==='queued'&&expired(r.events?.[0]?.at)?'not_claimed':r.state==='working'&&expired(r.leaseUntil)?'worker_lost':''
+ const failure=r.state==='queued'&&expired(r.events?.[0]?.at)&&!await Agent.exists({...connectedFilter(r.ownerId),'researchStatus.intakeResearch':true})?'not_claimed':r.state==='working'&&expired(r.leaseUntil)?'worker_lost':''
  if(!failure)return r
  await Research.updateOne({_id:r._id,state:r.state,revision:r.revision},{$set:{state:'failed',failure},$unset:{lease:'',leaseUntil:'',agentId:''},$push:{events:{at:new Date(),stage:'expired'}},$inc:{revision:1}})
  return Research.findById(r._id).lean()
