@@ -1,5 +1,5 @@
 // Matching proposes evidence; only the owner's confirmation creates an allocation. Portable browser/Node module.
-export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日','date']],['description','摘要',['摘要','取引内容','内容','description','merchant']],['amount','金額（出金＋・入金−）',['金額','amount']],['outflow','出金',['出金','出金額','お支払金額','withdrawal','debit']],['inflow','入金',['入金','入金額','お預り金額','deposit','credit']],['balance','残高',['残高','差引残高','balance']],['reference','メモ・参照番号',['メモ','参照番号','reference','memo']],['transactionId','銀行の取引ID（任意）',['取引番号','明細番号','取引id','transactionid','transaction_id']],['currency','通貨',['通貨','currency']],['direction','入出金区分',['入出金区分','区分','direction']]];
+export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日','date']],['description','摘要',['摘要','取引内容','内容','description','merchant']],['amount','金額',['金額','amount']],['outflow','出金',['出金','出金額','お支払金額','withdrawal','debit']],['inflow','入金',['入金','入金額','お預り金額','deposit','credit']],['balance','残高',['残高','差引残高','balance']],['reference','メモ・参照番号',['メモ','参照番号','reference','memo']],['transactionId','銀行の取引ID（任意）',['取引番号','明細番号','取引id','transactionid','transaction_id']],['currency','通貨',['通貨','currency']],['direction','入出金区分',['入出金区分','区分','direction']]];
 export const round=n=>Math.round((n+Number.EPSILON)*100)/100;
 const text=v=>String(v??'').normalize('NFKC').trim(),norm=v=>text(v).toLowerCase().replace(/\s+/g,' ');
 export function money(v){if(v===null||v===undefined||text(v)==='')return null;const s=text(v).replace(/[¥￥,$\s]/g,'');if(!/^-?\d+(?:\.\d{1,2})?$/.test(s)||!Number.isFinite(Number(s))||Math.abs(Number(s))>1e12)throw Error('金額を確認してください。');return Number(s);}
@@ -7,11 +7,12 @@ const sha=async s=>Array.from(new Uint8Array(await globalThis.crypto.subtle.dige
 function dateOf(v){const s=text(v).replace(/年|\//g,'-').replace(/月/g,'-').replace(/日/g,'');const m=/^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);if(!m)throw Error('取引日を確認してください。');const d=m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');if(!Number.isFinite(Date.parse(d))||new Date(d).toISOString().slice(0,10)!==d)throw Error('取引日を確認してください。');return d;}
 export function guessBankMapping(headers){return Object.fromEntries(BANK_FIELDS.map(([k,,names])=>{const i=headers.findIndex(h=>names.some(n=>norm(n)===norm(h)));return[k,i<0?'':String(i)];}));}
 export async function bankRowKey(row,source){if(text(row.transactionId))return 'id:'+text(row.transactionId);if(!/^[a-f0-9]{64}$/.test(source?.hash)||typeof source.sheet!=='string'||!Number.isSafeInteger(source.row)||source.row<1)throw Error('元ファイルの行を確認できません。');return 'file:' + source.hash + ':' + encodeURIComponent(source.sheet) + ':' + source.row;}
-export async function normalizeBankRow(values,source){
+export const BANK_AMOUNT_SIGNS=[['outflow-positive','出金がプラス・入金がマイナス'],['outflow-negative','出金がマイナス・入金がプラス']];
+export async function normalizeBankRow(values,source,options={}){
  const out=money(values.outflow),incoming=money(values.inflow),signed=money(values.amount);let amount=signed;
  if(out!==null||incoming!==null){if((out??0)<0||(incoming??0)<0||out&&incoming)throw Error('出金・入金の列を確認してください。');amount=round((out??0)-(incoming??0));}
  if(amount===null)throw Error('金額の列を割り当ててください。');
- if(signed!==null&&out===null&&incoming===null&&/^(入金|in|credit)$/i.test(text(values.direction)))amount=-Math.abs(amount);
+ if(signed!==null&&out===null&&incoming===null){const direction=text(values.direction);amount=/^(入金|in|credit)$/i.test(direction)?-Math.abs(signed):/^(出金|out|debit)$/i.test(direction)?Math.abs(signed):signed*(options.amountSign==='outflow-negative'?-1:1);}
  const r={date:dateOf(values.date),description:text(values.description),reference:text(values.reference),transactionId:text(values.transactionId),currency:text(values.currency||'JPY').toUpperCase(),amount,direction:amount<0?'in':'out',balance:money(values.balance)};
  if(r.description.length>2000||r.reference.length>1000||r.transactionId.length>300||!r.description||!/^[A-Z]{3}$/.test(r.currency))throw Error('摘要・通貨・取引IDを確認してください。');
  r.fingerprint=await sha(JSON.stringify([r.date,r.direction,String(r.amount),r.description.replace(/\s+/g,' '),r.reference]));r.key=await bankRowKey(r,source);r.idKind=r.transactionId?'bank-id':'file-row';return r;

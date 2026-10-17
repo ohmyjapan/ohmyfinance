@@ -14,9 +14,16 @@ Release and reconfirm keep the allocation ID, original snapshot and history. Cha
 ## Bank files
 
 Add a named account and currency, upload Excel/CSV, choose sheet/header row, assign columns, preview and confirm. Templates
-save the mapping. UTF-8 and Shift_JIS text are decoded by the existing intake reader. Ten fields include transaction date,
+save the mapping and amount-sign convention. UTF-8 and Shift_JIS text are decoded by the existing intake reader. Ten fields include transaction date,
 description, signed amount or separate outflow/inflow, balance, memo/reference, genuine bank transaction ID, currency and
-direction. Outflow is positive; inflow is negative. Separate outflow/inflow columns take precedence over signed amount.
+direction. Stored outflow is positive; inflow is negative. For a single amount column, choose whether withdrawals are
+positive (`amountSign: 'outflow-positive'`, the default for existing callers/templates) or negative (`'outflow-negative'`).
+A mapped 入金/in/credit or 出金/out/debit direction overrides the chosen sign convention. Separate positive outflow/inflow
+columns take precedence over the single amount column. Preview labels each row 入金/出金 with its absolute amount; changing
+the convention invalidates the preview. Templates restore the choice; another file/sheet starts from the default.
+Unsupported amountSign values are rejected by a new validation guard on the owner import/template endpoints. No bank
+convention is inferred. Reimporting the same source with another convention preserves identity and allocations, updates
+amount and direction with revision/history, and marks existing allocations as source-changed for review.
 The raw original is retained by SHA256 under `OMF_DATA_DIR/bank-statements/<ownerId>/<hash>`; source sheet and physical row
 positions survive blank rows. File size/row limits are the existing 10MB/5000-row limits. No bank format or portal connector
 is claimed beyond successful column mapping of the supplied file.

@@ -32,6 +32,19 @@ test('only transaction-ID headers are guessed as IDs; generic memo remains text'
  const m=guessBankMapping(['取引日','摘要','出金','入金','残高','メモ','取引番号']);assert.equal(m.transactionId,'6');assert.equal(m.reference,'5');assert.equal(BANK_FIELDS.length,10);
  assert.equal(guessBankMapping(['Date','Memo','Amount']).transactionId,'');
 });
+test('signed bank amounts follow the chosen convention and explicit directions take precedence',async()=>{
+ const source={hash:'c'.repeat(64),sheet:'Sheet1',row:2},values={date:'2026-08-10',description:'Fictional signed bank entry',amount:'-1500'};
+ const declared=await normalizeBankRow({...values,direction:'out'},source);
+ assert.equal(declared.amount,1500,'bank-sign:explicit-out');assert.equal(declared.direction,'out');
+ const negative=await normalizeBankRow(values,source,{amountSign:'outflow-negative'});
+ assert.equal(negative.amount,1500,'bank-sign:negative-withdrawal');assert.equal(negative.direction,'out');
+ assert.equal((await normalizeBankRow({...values,amount:'2500'},source,{amountSign:'outflow-negative'})).amount,-2500,'bank-sign:positive-deposit');
+ assert.equal((await normalizeBankRow(values,source)).amount,-1500,'bank-sign:legacy-default');
+ for(const direction of ['out','debit','出金'])for(const amount of ['1500','-1500'])assert.equal((await normalizeBankRow({...values,direction,amount},source,{amountSign:'outflow-negative'})).amount,1500);
+ for(const direction of ['in','credit','入金'])for(const amount of ['1500','-1500'])assert.equal((await normalizeBankRow({...values,direction,amount},source,{amountSign:'outflow-negative'})).amount,-1500);
+ const separate=await normalizeBankRow({...values,amount:'',outflow:'1500',inflow:''},source,{amountSign:'outflow-negative'});assert.equal(separate.amount,1500,'bank-sign:separate-columns-unchanged');
+ assert.equal(negative.key,(await normalizeBankRow(values,source)).key,'bank-sign:source-identity');assert.notEqual(negative.fingerprint,(await normalizeBankRow(values,source)).fingerprint);
+});
 test('cross-file overlap, reorder, filtered export and changed text give review candidates only',async()=>{
  const row=async(hash,n,description='SHOP')=>normalizeBankRow({date:'2026-08-10',amount:2000,description},{hash:hash.repeat(64),sheet:'Sheet1',row:n});
  const old=[await row('a',2),await row('a',3)],fresh=[await row('b',2),await row('b',3,'SHOP corrected')];

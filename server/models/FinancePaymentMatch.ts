@@ -6,7 +6,7 @@ const statement=new Schema({ownerId:{type:oid,required:true},hash:{type:String,r
 statement.index({ownerId:1,hash:1},{unique:true})
 const row=new Schema({ownerId:{type:oid,required:true},bankAccountId:{type:oid,required:true},key:{type:String,required:true},idKind:String,fingerprint:String,occurrence:Number,date:String,direction:String,amount:Number,currency:String,description:String,reference:String,transactionId:String,identicalCount:Number,provenance:{type:[mixed],default:[]},state:{type:String,default:'active'},supersedes:oid,supersededBy:oid,revision:{type:Number,default:1},history:{type:[mixed],default:[]}},options)
 row.index({ownerId:1,bankAccountId:1,key:1},{unique:true})
-const template=new Schema({ownerId:{type:oid,required:true},name:{type:String,required:true},headers:[String],mapping:mixed,revision:{type:Number,default:0}},options)
+const template=new Schema({ownerId:{type:oid,required:true},name:{type:String,required:true},headers:[String],mapping:mixed,amountSign:{type:String,enum:['outflow-positive','outflow-negative'],default:'outflow-positive'},revision:{type:Number,default:0}},options)
 template.index({ownerId:1,name:1},{unique:true})
 const anchor=new Schema({ownerId:{type:oid,required:true},paymentKey:{type:String,required:true},aliases:{type:[String],default:[]},kind:String,source:mixed,date:String,amount:Number,currency:String,description:String,revision:{type:Number,default:0},allocations:{type:[mixed],default:[]}},options)
 anchor.index({ownerId:1,paymentKey:1},{unique:true})

@@ -1,9 +1,11 @@
 export const BANK_FIELDS: [string,string,string[]][];
+export type BankAmountSign='outflow-positive'|'outflow-negative';
+export const BANK_AMOUNT_SIGNS: [BankAmountSign,string][];
 export function round(n:number):number;
 export function money(value:any):number|null;
 export function guessBankMapping(headers:string[]):Record<string,string>;
 export function bankRowKey(row:any,source:any):Promise<string>;
-export function normalizeBankRow(values:any,source:any):Promise<any>;
+export function normalizeBankRow(values:any,source:any,options?:{amountSign?:BankAmountSign}):Promise<any>;
 export function paymentCandidates(payment:any,records:any[]):any[];
 export function settlementCandidates(bank:any,cardRows:any[],batches:any[],bills:any[]):any[];
 export function residuals(payment:any):{allocated:number;remaining:number;state:string};
