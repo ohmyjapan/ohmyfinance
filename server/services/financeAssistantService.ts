@@ -6,6 +6,7 @@ import {learningOverview,learningDetail} from './financeLearningService'
 import {ready,fail,id,ownedImport,reviewMapping} from './financeService'
 import {assistantPages,validateAssistantReply} from '../../shared/finance-assistant.mjs'
 import {actionTools,reconcileActions,actionReceipts,conversationReceipts,runAction} from './financeActionService'
+import {readRecord as readIntakeRecord,readSheet as readIntakeSheet} from './financeIntakeService'
 async function init(){await ready();await Conversation.init()}
 const visible=(c:any)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null
 const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({chatLastSeenAt:-1}).lean()
@@ -20,6 +21,11 @@ async function pageContext(ownerId:string,input:any){
  context.facts.instructions=overview.policies.filter((p:any)=>p.status==='active').slice(0,30).map((p:any)=>({title:p.title,reason:p.reason,scope:p.accountName||'指定された口座範囲',decision:p.decision,effectiveFrom:p.effectiveFrom||''}))
  context.facts.customers=overview.customers.map((c:any)=>({id:String(c._id),name:c.name}))
  context.facts.accounts=await FinancialAccount.find({ownerId,active:true}).select('name primaryCard').lean()
+ if(input.page==='intake'){
+  context.capabilities=['Read owned purchase intake, uploaded sheets, import history/templates and company/T-number research using the supplied named tools','Intake writes and matching allocation actions are not available in this tranche; do not claim to save them','Distinguish confirmed saved history from a hypothesis; distinguish published T numbers from native NTA verified:true']
+  if(input.recordId){const r:any=await readIntakeRecord(ownerId,id(input.recordId));context.facts.intakeRecord={id:r.id,revision:r.revision,values:r.values,extra:r.extra,archived:r.archived,identityReview:r.identityReview,history:r.history.slice(-12),historyLimit:12,provenance:r.provenance}}
+  if(input.documentId)context.facts.intakeSheet=await readIntakeSheet(ownerId,id(input.documentId),input.sheet,input.headerRow)
+ }
  if(input.patternId){if(input.page!=='learning')fail(400,'Choose a learning pattern');const detail:any=await learningDetail(ownerId,id(input.patternId),{});context.facts.pattern={...detail.pattern,audit:undefined};context.facts.sourceExamples=detail.items.slice(0,8).map((r:any)=>({sheet:r.sheet,row:r.row,date:r.date,merchant:r.parsed.merchant,customer:r.parsed.customer,amount:r.parsed.amount}));context.facts.sourceExampleLimit=8}
  if(input.importId){if(input.page!=='mapping')fail(400,'Choose a statement');const batch=await ownedImport(ownerId,id(input.importId));context.facts.statement={id:String(batch._id),period:batch.period,rows:batch.rows.length,expenses:batch.rows.filter((r:any)=>r.kind==='expense').length}}
  if(input.page==='mapping'||input.page==='connections'){context.facts.imports=await FinanceImport.find({ownerId}).select('accountId period createdAt').sort({createdAt:-1}).limit(10).lean();context.facts.importLimit=10}
@@ -35,6 +41,8 @@ async function pageContext(ownerId:string,input:any){
   context.facts.mappingPreparation={scope:input.importId?'selected_statement':'latest_import_per_account',importListTruncated:!input.importId&&imports.length>100,statements,meaning:'Draft preparation only. Missing invoice numbers need verification, not an automatic exemption or legal rejection. Blank consumption-tax percentage is unknown, not zero. Counts include already posted/excluded rows where indicated by states; nothing is posted by this review.'}
  }
  context.facts.pageGuide={dashboard:'Overview page. No live balance totals are included in this context.',transactions:'Saved ledger transactions. Mapping is the statement review stage before posting. No transaction rows or totals are included in this context.',mapping:'Review imported card statements, distinguish classification decisions from accounting input, and show invoice registration number and consumption-tax percentage gaps. Use mappingPreparation for the current batch scope. Source category registration adds literal source labels; it does not determine expense accounts or tax rates. Choose a row to discuss and confirm purpose/customer/product changes.',draft:'A purchase draft can be discussed using the current-purchase button. General conversation is separate from its saved values.',learning:'Source workbook history, classification candidates and confirmed instructions. A means user-confirmed classification, B means consistent historical evidence. Scores are not tax accuracy probabilities. Blank customer does not by itself mean company expense.',connections:'Configured card accounts and downloaded statements. Credentials and OTP details are not included.',settings:'Application settings. The assistant cannot change these settings.',reports:'Reports page. No report numbers are included in this context.',other:'Only the supplied general context is available.'}[input.page as keyof typeof assistantPages]
+ if(input.page==='intake')context.facts.pageGuide='購入受付の保存済み内容・履歴・元ファイル・会社と登録番号の調査を、所有者に限定して確認できます。履歴の根拠と推測を区別してください。この段階のintakeツールは参照と取込プレビューのみです。受付の保存、取込実行、調査の依頼・確定はまだ操作できません。'
+ if(input.page==='intake-payments')context.facts.pageGuide='支払い照合の画面です。配分や銀行明細はこの会話の資料に含まれていません。必要な受付はintakeの参照ツールで確認できますが、配分の確定・解除や銀行ファイルの取込はまだ操作できません。'
  return context
 }
 export async function sendAssistant(ownerId:string,body:any){
@@ -51,7 +59,7 @@ export async function sendAssistant(ownerId:string,body:any){
  c=await withReceipts(c)
  context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[]}))
  // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
- const target=context.facts.statement?{importId:String(context.facts.statement.id)}:null
+ const target=context.facts.intakeRecord?{recordId:context.facts.intakeRecord.id}:context.facts.intakeSheet?{documentId:context.facts.intakeSheet.document.id,sheet:context.facts.intakeSheet.sheet,headerRow:context.facts.intakeSheet.headerRow}:context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
  const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:body.requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null,...(target?{target}:{})}}})
  if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId)

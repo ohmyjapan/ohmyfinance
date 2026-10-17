@@ -89,13 +89,19 @@
 import { Upload, Loader2 } from 'lucide-vue-next'
 import { FIELDS, FIELD_NAMES, DEFAULT_SERVICE, DEFAULT_CURRENCY } from '~/shared/finance-intake.mjs'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
 const emit = defineEmits<{ (e: 'imported', batch: any): void; (e: 'close'): void }>()
 const user = useUserStore(), api = '/api/finance-intake/'
+const assistant = useAssistantStore(), route = useRoute(), intakePath = route.path
 const busy = ref(false), error = ref(''), doc = ref<any>(null), sheet = ref(''), headerRow = ref(1), templates = ref<any[]>([]), templateId = ref(''), templateName = ref('')
 const sheetData = ref<any>(null), mapping = reactive<Record<string, string>>(Object.fromEntries(FIELDS.map(f => [f[0], '']))), defaults = reactive({ service: DEFAULT_SERVICE, account: '', currency: DEFAULT_CURRENCY })
 // Owner-named extra columns beside the fixed fields: { name, column }; sent only when both are filled.
 const extras = ref<{ name: string; column: string }[]>([])
 const previewData = ref<any>(null), result = ref<any>(null)
+watch([() => doc.value?.id, sheet, headerRow], () => {
+  if (doc.value) assistant.pageSelection = { path: intakePath, documentId: doc.value.id, sheet: sheet.value, headerRow: headerRow.value, label: doc.value.name }
+})
+onBeforeUnmount(() => { if (assistant.pageSelection?.path === intakePath && assistant.pageSelection?.documentId === doc.value?.id) assistant.pageSelection = null })
 const sizeOf = (n: number) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B'
 const operationLabel = (op: string) => op === 'new' ? '新規' : op === 'update' ? '追加・更新' : '変更なし'
 const labelOf = (field: string) => field.startsWith('extra:') ? field.slice(6) : (FIELD_NAMES as Record<string, string>)[field] || field

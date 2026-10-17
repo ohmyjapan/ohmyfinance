@@ -28,7 +28,7 @@ const user=useUserStore(),assistant=useAssistantStore(),route=useRoute(),{isLock
 const panel=ref<HTMLElement|null>(null),activated=ref(false),loadedDraft=ref<any>(null),error=ref('')
 const page=computed(()=>assistantPage(route.path)),pageName=computed(()=>assistantPages[page.value])
 const selection=computed(()=>assistant.pageSelection?.path===route.path?assistant.pageSelection:null)
-const context=computed(()=>({page:page.value,...(selection.value?.patternId?{patternId:selection.value.patternId}:{}),...(selection.value?.importId?{importId:selection.value.importId}:{})}))
+ const context=computed(()=>({page:page.value,...(selection.value?.patternId?{patternId:selection.value.patternId}:{}),...(selection.value?.importId?{importId:selection.value.importId}:{}),...(/^\/intake\/[a-f0-9]{24}$/i.test(route.path)?{recordId:String(route.params.id)}:{}),...(page.value==='intake'&&selection.value?.documentId?{documentId:selection.value.documentId,sheet:selection.value.sheet,headerRow:selection.value.headerRow}:{})}))
 const currentDraftTarget=computed(()=>new RegExp('^/mapping-draft/[a-f0-9]{24}/[0-9]+$','i').test(route.path)?{kind:'draft',importId:String(route.params.importId),line:Number(route.params.line)}:null)
 const targetPath=computed(()=>assistant.target.kind==='draft'?'/mapping-draft/'+assistant.target.importId+'/'+assistant.target.line:'')
 const pageDraft=computed(()=>assistant.draftPage?.path===targetPath.value?assistant.draftPage:null)
