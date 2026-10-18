@@ -1,18 +1,24 @@
 // server/api/receipts/index.ts
-import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
+import { defineEventHandler, getQuery, readBody, getMethod, createError, setHeader } from 'h3'
 import { getReceipts, createReceipt, getReceiptStats } from '../../services/receiptService'
 import { requireAuth } from '../../middleware/auth'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
   const method = getMethod(event)
 
   if (method === 'GET') {
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
+    try {
     const query = getQuery(event)
 
     // Check if stats are requested
     if (query.stats === 'true') {
-      const stats = await getReceiptStats()
+      const stats = await getReceiptStats(organizationId)
       return { stats }
     }
 
@@ -34,11 +40,14 @@ export default defineEventHandler(async (event) => {
       }
     })
 
-    const receipts = await getReceipts(filters)
+    const receipts = await getReceipts(filters, organizationId)
 
     return {
       receipts,
       total: receipts.length
+    }
+    } catch {
+      throw createError({ statusCode: 500, statusMessage: 'Failed to read company receipts' })
     }
   }
 

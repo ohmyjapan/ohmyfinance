@@ -2,13 +2,18 @@
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
 import { getReceipts } from '../../services/receiptService'
 import { requireAuth } from '../../middleware/auth'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * GET /api/receipts/export
  * Export receipts to CSV, JSON format
  */
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
+  await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
   try {
     const query = getQuery(event)
     const format = String(query.format || 'csv').toLowerCase()
@@ -23,7 +28,7 @@ export default defineEventHandler(async (event) => {
     if (query.merchant) filters.merchant = query.merchant
 
     // Fetch receipts from MongoDB
-    const receipts = await getReceipts(filters)
+    const receipts = await getReceipts(filters, organizationId)
 
     // Define fields and headers for export (OMF Japanese style)
     const fields = [
@@ -88,10 +93,10 @@ export default defineEventHandler(async (event) => {
     return JSON.stringify(exportData)
 
   } catch (error: any) {
-    console.error('Receipt export error:', error)
+    console.error('Company receipt export failed')
     throw createError({
       statusCode: 500,
-      statusMessage: error.message || 'Failed to export receipts'
+      statusMessage: 'Failed to export company receipts'
     })
   }
 })

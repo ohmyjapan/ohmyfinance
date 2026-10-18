@@ -1,4 +1,5 @@
 // server/services/receiptService.ts
+import mongoose from 'mongoose'
 import Receipt from '../models/Receipt'
 import Transaction from '../models/Transaction'
 import type { ITransaction } from '../models/Transaction'
@@ -19,10 +20,10 @@ interface ReceiptFilters {
 /**
  * Get all receipts with optional filtering
  */
-export async function getReceipts(filters: ReceiptFilters = {}) {
+export async function getReceipts(filters: ReceiptFilters, organizationId: mongoose.Types.ObjectId) {
   await ensureConnection()
   try {
-    const query: any = {}
+    const query: any = { organizationId }
 
     if (filters.status) {
       query.status = filters.status
@@ -71,7 +72,7 @@ export async function getReceipts(filters: ReceiptFilters = {}) {
 
     return receipts
   } catch (error) {
-    console.error('Failed to get receipts:', error)
+    console.error('Failed to get company receipts')
     throw error
   }
 }
@@ -493,10 +494,11 @@ export async function unmatchReceipt(receiptId: string) {
 /**
  * Get receipt statistics
  */
-export async function getReceiptStats() {
+export async function getReceiptStats(organizationId: mongoose.Types.ObjectId) {
   await ensureConnection()
   try {
     const stats = await Receipt.aggregate([
+      { $match: { organizationId } },
       {
         $facet: {
           total: [{ $count: 'count' }],
@@ -526,7 +528,7 @@ export async function getReceiptStats() {
       matchRate: Math.round(matchRate * 100) / 100
     }
   } catch (error) {
-    console.error('Failed to get receipt stats:', error)
+    console.error('Failed to get company receipt statistics')
     throw error
   }
 }
