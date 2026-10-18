@@ -80,6 +80,33 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   await db.collection('financelearningrows').insertMany(Array.from({length:56},(_,i)=>({...historical(i+100),date:'2026-06-01'})));job=await ask();before=await snapshot();r=await act(job);assert.equal(r.status,200);h=r.data.result;assert.equal(h.learning.historyTotal,61);assert.equal(h.learning.history.length,50);assert.equal(h.learning.historyTruncated,true);assert.equal(h.learning.rulesTruncated,false);assert.equal(await snapshot(),before);assert.equal(await db.collection('financeactionoperations').countDocuments(),0,'history:zero-mutation-journal');
   await db.collection('financelearninglibraries').updateOne({ownerId:owner},{$set:{datasetId:oldDataset}});r=await act(job);assert.equal(r.status,200);assert.equal(r.data.result.learning.historyTotal,0,'history:current-library');assert.equal(r.data.result.learning.historyAvailable,false);assert.equal(r.data.result.learning.dataset.title,'Old dataset');assert.equal((await done(job)).status,200);
   pass('bounded source evidence declares truncation, library changes are fresh, and reads create no mutation receipts');
+  // Same native enqueue/claim/result path in both chat modes; no model or policy mutation.
+  const {interpreterInput}=await import(pathToFileURL(path.join(__dirname,'../teaching-worker/interpreter.mjs')));
+  const beforeTiming=await snapshot();
+  for(const mode of ['workspace','purchase']){
+   const route=mode==='workspace'?'/api/finance-chat/workspace':chatBase,claim=mode==='workspace'?'workspace-claim':'claim',collection=db.collection(mode==='workspace'?'financeassistants':'financechats');
+   const enqueue=async text=>{const v=await ok(route,{token}),currentDraft=mode==='purchase'?await ok(dpath,{token}):null;await ok(route,{method:'POST',token,body:{requestId:crypto.randomUUID(),chatRevision:v.conversation?.revision||0,text,...(currentDraft?{revision:currentDraft.revision,key:currentDraft.key,sourceHash:currentDraft.sourceHash}:{context:{page:'mapping',importId:a.id}})}});const j=(await worker(claim)).data.job;assert.equal(j.text,text);return j;};
+   const successText='Timing '+mode+' saved reply',success=await enqueue(successText);
+   // Make the independently known stored submission time distinct without a wall-clock sleep.
+   await collection.updateOne({_id:new ObjectId(success.id)},{$set:{'turns.$[t].at':new Date('2026-07-01T00:00:00.000Z')}},{arrayFilters:[{'t.text':successText}]});
+   assert.equal((await done(success)).status,200);
+   const storedSuccess=(await collection.findOne({_id:new ObjectId(success.id)})).turns.find(t=>t.text===successText);
+   const failedText='Timing '+mode+' failed reply',failed=await enqueue(failedText);
+   assert.equal((await worker((mode==='workspace'?'workspace/':'')+failed.id+'/result',{lease:failed.lease,failed:true})).status,200);
+   const failedStored=(await collection.findOne({_id:new ObjectId(failed.id)})).turns.find(t=>t.text===failedText);assert.ok(failedStored.answeredAt&&!failedStored.proposal);
+   const legacyText='Timing '+mode+' legacy reply';await collection.updateOne({_id:new ObjectId(failed.id)},{$push:{turns:{id:crypto.randomUUID(),text:legacyText,proposal:{kind:'unclear',summary:'Legacy reply without recorded times',patch:{},quotes:{}}}}});
+   const next=await enqueue('Timing '+mode+' inspect chronology'),messages=next.context.messages;
+   const prior=messages.find(t=>t.text===successText),noReply=messages.find(t=>t.text===failedText),legacy=messages.find(t=>t.text===legacyText);
+   assert.ok(prior&&noReply&&legacy,'timing:'+mode+':actual-history');
+   assert.equal(prior.submittedAt,new Date(storedSuccess.at).toISOString(),'timing:'+mode+':submitted-source');
+   assert.equal(prior.replyRecordedAt,new Date(storedSuccess.answeredAt).toISOString(),'timing:'+mode+':reply-source');
+   assert.equal(noReply.response,'');assert.equal(noReply.replyRecordedAt,null,'timing:'+mode+':failed-no-reply-time');
+   assert.equal(legacy.submittedAt,null,'timing:'+mode+':legacy-submitted-unknown');assert.equal(legacy.replyRecordedAt,null,'timing:'+mode+':legacy-reply-unknown');
+   assert.deepEqual(interpreterInput(next).conversation,messages,'timing:'+mode+':real-interpreter-input');
+   assert.equal((await done(next)).status,200);
+  }
+  assert.equal(await snapshot(),beforeTiming,'timing:no-business-write');assert.equal(await db.collection('financeactionoperations').countDocuments(),0,'timing:no-action-journal');
+  console.log('workspace and purchase native conversation timing verified');
   console.log(checks+' Navi history API groups passed');
  }finally{if(client)await client.close();if(child){child.kill();await Promise.race([new Promise(r=>child.once('exit',r)),pause(5000)]);}if(mongo)await mongo.stop();if(directory&&directory.startsWith(path.join(os.tmpdir(),'omf-navi-history-')))await fsp.rm(directory,{recursive:true,force:true});}
 }

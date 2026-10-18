@@ -72,7 +72,8 @@ export async function sendAssistant(ownerId:string,body:any){
  const agent:any=await available(ownerId);if(!agent)fail(409,'AIに接続できません。少し待って再試行してください。')
  const context=await pageContext(ownerId,body.context)
  c=await withReceipts(c)
- context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[]}))
+ // Stored server times let the accountant compare a prior reply with later rule audit events; legacy gaps remain unknown.
+ context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null}))
  // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
  const target=context.facts.intakeRecord?{recordId:context.facts.intakeRecord.id}:context.facts.intakeSheet?{documentId:context.facts.intakeSheet.document.id,sheet:context.facts.intakeSheet.sheet,headerRow:context.facts.intakeSheet.headerRow}:context.facts.paymentSelection?.kind==='card'?{importId:context.facts.paymentSelection.importId,line:context.facts.paymentSelection.line}:context.facts.paymentSelection?.kind==='bank'?{paymentKind:'bank'}:context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}

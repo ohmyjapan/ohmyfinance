@@ -136,7 +136,7 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  const references=await storedReferences(ownerId,importId,line,c,d,body.references)
  c=await withReceipts(c)
  const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),research:await chatResearchContext(ownerId,importId,line,d),
-  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[]}))}
+  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null}))}
  const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),...(references.length?{references}:{})}}},{new:true}).lean()
  if(!updated)fail(409,'会話が更新されました。再読込してください。')
  return getChat(ownerId,importId,line)

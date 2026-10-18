@@ -12,6 +12,10 @@ Rules declare applicability to the selected account, merchant and date. Applicab
 
 Applied revision and source-read revision remain distinct because these reads are not an atomic snapshot. Saved status events can show that a previously deferred rule became active; a conflict in fresh evidence does not establish that an earlier answer was wrong. Missing or truncated status events do not establish a complete previous policy state or who changed it. Native learning decisions remain unchanged by this provenance read.
 
+Prior messages supplied to Navi in both workspace and purchase chat include `submittedAt` from the stored turn's `at` and `replyRecordedAt` from its existing `answeredAt` when a saved reply exists. Server Date values serialize as UTC ISO timestamps. A failed result without a saved proposal has no reply time; legacy missing times stay `null`. These fields provide recorded chronology alongside the policy audit, not complete historical policy snapshots, evidence-read times or proof of when the user saw a reply. No timestamp is inferred from the current clock, date of purchase, status revision or a different turn. The original turn, reply and action-receipt storage are unchanged.
+
+This context is assembled on a new message. Already queued jobs and retries retain their original frozen context; this change does not reconstruct missing timestamps in older queued contexts or refresh their target/permission intent.
+
 Examples are limited to 50 rows and 50 rules; corrections to the latest 20. Totals and truncation are declared. The native answer still uses the complete evidence. Prior classifications support a hypothesis; they do not establish the actual item, motive, consumption tax or invoice registration. An empty or unavailable history is not a personal/company decision. Non-expense rows return `applicable: false`. No draft, learning, approval or ledger writes occur.
 
 This is purchase-specific retrieval, not full learning-library search or all-feature Navi completion. It does not grant bank access or repair legacy company permissions. Model reasoning and deployment verification are separate from the native API fixture.
