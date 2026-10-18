@@ -28,6 +28,44 @@ The raw original is retained by SHA256 under `OMF_DATA_DIR/bank-statements/<owne
 positions survive blank rows. File size/row limits are the existing 10MB/5000-row limits. No bank format or portal connector
 is claimed beyond successful column mapping of the supplied file.
 
+## Web-bank collection (two channels, one account)
+
+A bank account can also be connected to a web bank: `PUT bank/accounts/:id/connection` takes a provider from
+`BANK_PROVIDERS`, an owned template, the transaction-id confirmation when the template maps one, and an optional account
+label. `POST bank/accounts/:id/sync` queues one job (`financebankjobs`) for a connected PC that was allowed the account
+(`PUT bank/collectors/:id {bankAccountIds}`); without one it answers 409 `PC未接続`. The job freezes the interpretation at
+queue time — template id and revision, headers, mapping, amount sign, transaction-id confirmation, parser version, currency,
+provider, account label — as `snapshot` with its sha256 `snapshotHash`. Later template edits change only jobs queued after them.
+
+Job kinds: `retrieve` only for a provider whose `support` is `verified`. Every provider shipped so far is `contract-pending`,
+so `sync` queues an `observe` job and says so (`取得手順が未確認のため観察取得（準備）になります`). Job states: `queued` →
+`running` (180 s lease renewed by heartbeats) → `verification_required` only while the person signs in → `complete` | `failed`.
+An expired lease is re-claimed by any allowed PC and continues the SAME job and snapshot; it no longer blocks a new request.
+
+The PC asks `bank/claim` only after no card job was claimed; an OMF without the bank routes answers 404 = no bank job. A
+`retrieve` job opens the bank in its own ephemeral Chrome profile, waits for the person to sign in (the only human step),
+opens the statements, selects the period, checks the shown account label against the connection, writes `attempt.json`,
+clicks the export once and keeps the CSV only if the download began on the bank's hosts; a crash after the download recovers
+the file from the bound attempt and recorded download without a second export. An `observe` job records the page contract
+while the person navigates (pathnames, titles, control texts, input ids and types, select sizes, download events — never a
+typed value, credential, cookie or row) and keeps one CSV the person exports from the bank's hosts. Manifests live under
+`outbox/bank/<bankAccountId>/<jobId>` and carry the job's `jobId` and `snapshotHash`; they go to `bank/upload`, are
+acknowledged only after OMF answered, and an unacknowledged one is drained on the next claim under ITS OWN job and snapshot.
+
+Capture states on the statement (`financebankstatements.capture`): `imported` — new keys created, unchanged keys gain a
+provenance entry — or `needs_review` with a reason: a header row that no longer matches the snapshot, a row that does not
+normalize (`<row>行目: …`), or `interpretation-differs` when a keyed row already exists with other values; that row is never
+updated by the collector. Identical bytes return the first capture unchanged. A wrong `snapshotHash` is 400. The owner's
+explicit reimport from the importer's retained-file picker (`GET bank/files`) stays the only reinterpretation: revision+1,
+`source-updated` history, allocations preserved and shown as source-changed for reconfirmation. Row provenance entries carry
+`channel` (`upload` | `collector` | `collector-observe`), `jobId` and `snapshotHash`; the payment view shows them.
+
+Limits: no bank is verified; no bank credential is stored or typed; no schedule; the observe stage is preparatory evidence
+for writing a bank adapter, not retrieval. The staged downloader package carries `collector/bank.mjs`, `collector/banks/*.mjs`
+and `shared/finance-payment-match.mjs`. The shared-guard coverage of the changed collector boundaries (`api()`/`upload()`/tick
+dispatch, device bank scope, holds) is tabulated in `output/plan/omf-bank-collection-amended-20261018/6-build-post-reset.md`
+(P2 coverage table).
+
 A genuine bank transaction ID must be deliberately mapped and confirmed. Its identity is scoped to owner/account.
 Without it the identity is file hash + sheet + original row, including two identical-looking rows in one file. Identical
 bytes reimport without duplication. Different files remain distinct even if fingerprints match. A filtered/reordered

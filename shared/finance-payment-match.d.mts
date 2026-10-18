@@ -1,4 +1,6 @@
 export const BANK_FIELDS: [string,string,string[]][];
+export type BankProviderSupport='contract-pending'|'verified';
+export const BANK_PROVIDERS: [string,string,BankProviderSupport][];
 export type BankAmountSign='outflow-positive'|'outflow-negative';
 export const BANK_AMOUNT_SIGNS: [BankAmountSign,string][];
 export function round(n:number):number;

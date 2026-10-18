@@ -1,5 +1,9 @@
 // Matching proposes evidence; only the owner's confirmation creates an allocation. Portable browser/Node module.
 export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日','date']],['description','摘要',['摘要','取引内容','内容','description','merchant']],['amount','金額',['金額','amount']],['outflow','出金',['出金','出金額','お支払金額','withdrawal','debit']],['inflow','入金',['入金','入金額','お預り金額','deposit','credit']],['balance','残高',['残高','差引残高','balance']],['reference','メモ・参照番号',['メモ','参照番号','reference','memo']],['transactionId','銀行の取引ID（任意）',['取引番号','明細番号','取引id','transactionid','transaction_id']],['currency','通貨',['通貨','currency']],['direction','入出金区分',['入出金区分','区分','direction']]];
+// Web banks a bank account can be connected to: [key, label, support]. `support` stays 'contract-pending' until a release ships
+// the recorded portal contract and adapter for that bank; only a 'verified' provider runs automatic retrieval, the others run
+// the preparatory observe stage (plan omf-bank-collection-amended-20261018 S7). No provider is verified by this build.
+export const BANK_PROVIDERS=[['rakuten','楽天銀行','contract-pending'],['paypay','PayPay銀行','contract-pending'],['resona','りそな銀行','contract-pending']];
 export const round=n=>Math.round((n+Number.EPSILON)*100)/100;
 const text=v=>String(v??'').normalize('NFKC').trim(),norm=v=>text(v).toLowerCase().replace(/\s+/g,' ');
 export function money(v){if(v===null||v===undefined||text(v)==='')return null;const s=text(v).replace(/[¥￥,$\s]/g,'');if(!/^-?\d+(?:\.\d{1,2})?$/.test(s)||!Number.isFinite(Number(s))||Math.abs(Number(s))>1e12)throw Error('金額を確認してください。');return Number(s);}

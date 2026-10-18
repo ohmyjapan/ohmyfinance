@@ -1,7 +1,8 @@
 <template>
   <div class="space-y-6">
-    <header class="flex flex-wrap items-start justify-between gap-4"><div><h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">支払い照合</h1><p class="mt-2 text-sm text-gray-600 dark:text-gray-400">明細から購入・会社・T番号の根拠へ。候補を確認して、支払いを配分します。</p></div><button class="btn btn-primary" data-bank-import-open @click="importing=!importing">銀行のExcel・CSVを取込</button></header>
-    <BankStatementImporter v-if="importing" @imported="load" @close="importing=false" />
+    <header class="flex flex-wrap items-start justify-between gap-4"><div><h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">支払い照合</h1><p class="mt-2 text-sm text-gray-600 dark:text-gray-400">明細から購入・会社・T番号の根拠へ。候補を確認して、支払いを配分します。</p></div><div class="flex flex-wrap gap-2"><button class="btn btn-primary" data-bank-import-open @click="importing=!importing">銀行のExcel・CSVを取込</button><button class="btn btn-secondary" data-bank-connections-open @click="connections=!connections">銀行口座の接続・自動取得</button></div></header>
+    <BankStatementImporter v-if="importing" :file-id="importFileId" @imported="load" @close="importing=false" />
+    <BankConnections v-if="connections" @map="openFile" @changed="load" @close="connections=false" />
     <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-300">{{ error }}</p>
     <section class="card flex flex-wrap gap-3 p-4"><label class="text-sm">口座<select v-model="filters.account" class="input max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white mt-1" data-payment-account @change="load"><option value="">すべて</option><option v-for="a in data.accounts" :key="a.id" :value="a.id">{{ a.name }}</option></select></label><label class="text-sm">状態<select v-model="filters.state" class="input max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white mt-1" @change="load"><option value="all">すべて</option><option value="unmatched">未照合</option><option value="partial">一部配分</option><option value="matched">照合済み</option><option value="review">要確認</option></select></label><label class="text-sm">開始<input v-model="filters.from" class="input max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white mt-1" type="date" @change="load"></label><label class="text-sm">終了<input v-model="filters.to" class="input max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white mt-1" type="date" @change="load"></label><button class="btn btn-secondary self-end" :disabled="busy" @click="load">更新</button></section>
     <section class="card divide-y divide-gray-100 dark:divide-gray-700" data-payment-list>
@@ -16,11 +17,14 @@
 </template>
 <script setup lang="ts">
 import BankStatementImporter from '~/components/intake/BankStatementImporter.vue'
+import BankConnections from '~/components/intake/BankConnections.vue'
 import IntakePaymentMatches from '~/components/intake/IntakePaymentMatches.vue'
 import { useUserStore } from '~/stores/user'
 definePageMeta({middleware:'auth'})
 useHead({title:'支払い照合 | OhMyFinance'})
-const user=useUserStore(),data=ref<any>({payments:[],accounts:[]}),selected=ref<any>(null),importing=ref(false),busy=ref(false),error=ref(''),filters=reactive({account:'',state:'all',from:'',to:''})
+const user=useUserStore(),data=ref<any>({payments:[],accounts:[]}),selected=ref<any>(null),importing=ref(false),connections=ref(false),importFileId=ref(''),busy=ref(false),error=ref(''),filters=reactive({account:'',state:'all',from:'',to:''})
+// A capture the owner wants to map (needs_review, or any retained file) opens the importer on that file: the picker lane.
+function openFile(id:string){importFileId.value=id;importing.value=true}
 const detailHost=ref<HTMLElement|null>(null)
 function selectPayment(p:any){selected.value=p}
 async function scrollDetails(){await nextTick();detailHost.value?.focus({preventScroll:true});detailHost.value?.scrollIntoView({block:'start'})}

@@ -2,6 +2,7 @@ import { defineEventHandler, getHeader, getQuery, setHeader } from 'h3'
 import { financeUser, fail } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
 import * as bank from '../../services/financeBankStatementService'
+import * as collection from '../../services/financeBankCollectionService'
 import * as matches from '../../services/financePaymentMatchService'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
@@ -21,7 +22,16 @@ export default defineEventHandler(async event=>{
   if(parts[0]==='records'&&parts.length===2&&method==='GET')return matches.recordPaymentsView(ownerId,parts[1])
   if(parts[0]==='bank'){
    if(parts[1]==='accounts'&&parts.length===2){if(method==='GET')return bank.listBankAccounts(ownerId);if(method==='POST')return bank.createBankAccount(ownerId,await json())}
+   // S4 (plan omf-bank-collection-amended-20261018): the owner's web-bank connection, request, jobs and captures of one account; the retained files; a PC's bank scope.
+   if(parts[1]==='accounts'&&parts.length===4){
+    if(parts[3]==='connection'&&method==='PUT')return collection.saveBankConnection(ownerId,parts[2],await json())
+    if(parts[3]==='sync'&&method==='POST')return collection.queueBankSync(ownerId,parts[2])
+    if(parts[3]==='jobs'&&method==='GET')return collection.listBankJobs(ownerId,parts[2])
+    if(parts[3]==='captures'&&method==='GET')return collection.listBankCaptures(ownerId,parts[2])
+   }
+   if(parts[1]==='collectors'&&parts.length===3&&method==='PUT')return collection.setCollectorBankScope(ownerId,parts[2],await json())
    if(parts[1]==='files'){
+    if(parts.length===2&&method==='GET')return bank.listBankFiles(ownerId)
     if(parts.length===2&&method==='POST')return bank.uploadBankFile(ownerId,q('name'),await boundedBody(event,10*1024*1024),String(getHeader(event,'content-type')||'').split(';')[0].trim().toLowerCase())
     if(parts.length===4){if(parts[3]==='sheet'&&method==='GET')return bank.readBankSheet(ownerId,parts[2],q('sheet'),q('headerRow'));if(parts[3]==='preview'&&method==='POST')return bank.previewBankImport(ownerId,parts[2],await json());if(parts[3]==='import'&&method==='POST')return bank.importBankFile(ownerId,parts[2],await json())}
    }

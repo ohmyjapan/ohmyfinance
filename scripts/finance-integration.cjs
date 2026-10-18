@@ -62,6 +62,7 @@ async function main(){
   if(process.env.OMF_TEST_ACCOUNTING_ONLY){await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token, other, origin, pass, root, csv, row, pause });console.log(`${checks} targeted finance accounting checks passed`);return;}
   if(process.env.OMF_TEST_INTAKE_ONLY){await require('./finance-intake-integration.cjs')({db,call,token,other,deviceToken,origin,pass,root,pause});console.log(checks+' targeted intake checks passed');return;}
   if(process.env.OMF_TEST_PAYMENTS_ONLY){await require('./finance-payment-match-integration.cjs')({db,call,request,upload,token,other,deviceToken,origin,pass,root,csv,row,pause,directory});console.log(checks+' targeted payment matching checks passed');return;}
+  if(process.env.OMF_TEST_BANK_COLLECTION_ONLY){await require('./finance-bank-collection-integration.cjs')({db,call,request,upload,token,other,deviceToken,origin,pass,root,csv,row,pause,directory});console.log(checks+' targeted bank collection checks passed');return;}
   assert.equal((await upload(csv([row({4:'99999'})]))).status,400);
   const first=await upload(bytes);assert.equal(first.status,200,JSON.stringify(first));const batchId=first.data.id;
   const repeated=await upload(bytes);assert.equal(repeated.data.id,batchId);assert.equal(repeated.data.duplicateFile,true);assert.equal(await db.collection('financeimports').countDocuments(),1);

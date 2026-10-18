@@ -1,0 +1,48 @@
+<template>
+  <section class="card min-w-0 text-gray-800 dark:text-gray-100 space-y-5 p-4 md:p-6" data-bank-connections>
+    <header class="flex flex-wrap justify-between gap-2"><h2 class="font-semibold">銀行口座の接続・自動取得</h2><button class="text-sm text-gray-500" @click="emit('close')">閉じる</button></header>
+    <p class="text-sm leading-relaxed text-gray-500">接続したPCのChromeで銀行サイトを開き、サインインだけを手動で行います。取得手順が確認済みの銀行は入出金明細のCSVを自動で取得します。未確認の銀行は「観察取得（準備）」として画面の手順を記録し、CSVが出力された場合のみ取り込みます。列の割り当てと符号は予約時に固定され、あとでテンプレートを変えても過去の取得分は変わりません。</p>
+    <p v-if="error" role="alert" class="break-words text-sm text-red-600 dark:text-red-300">{{ error }}</p>
+    <p v-if="!accounts.length" class="text-sm text-gray-500">銀行口座がありません。先に「銀行のExcel・CSVを取込」で口座を追加してください。</p>
+    <article v-for="a in accounts" :key="a.id" class="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-gray-700" :data-bank-connection="a.id">
+      <h3 class="font-medium">{{ a.name }}（{{ a.currency }}）</h3>
+      <p class="break-words text-sm" data-bank-connection-state>{{ connectionText(a) }}</p>
+      <div class="grid min-w-0 gap-3 md:grid-cols-3">
+        <label class="min-w-0 text-sm">銀行<select v-model="forms[a.id].provider" data-bank-provider class="input mt-1 w-full max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white"><option value="">選択してください</option><option v-for="[key,label,support] in BANK_PROVIDERS" :key="key" :value="key">{{ label }}（{{ supportName(support) }}）</option></select></label>
+        <label class="min-w-0 text-sm">テンプレート（列の割り当て）<select v-model="forms[a.id].templateId" data-bank-connection-template class="input mt-1 w-full max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white"><option value="">選択してください</option><option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option></select></label>
+        <label class="min-w-0 text-sm">口座の表示名（任意・一致確認用）<input v-model="forms[a.id].accountLabel" data-bank-account-label type="text" maxlength="100" placeholder="普通 1234567 ○○商事" class="input mt-1 w-full max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white"></label>
+      </div>
+      <label v-if="mapsTransactionId(forms[a.id].templateId)" class="flex items-start gap-2 text-sm"><input v-model="forms[a.id].transactionIdConfirmed" data-bank-id-confirm class="mt-1" type="checkbox">このテンプレートの取引ID列は銀行が発行した一意の取引IDです（摘要・メモではありません）。</label>
+      <div class="flex flex-wrap gap-2"><button class="btn btn-secondary" :disabled="busy || !forms[a.id].provider || !forms[a.id].templateId" data-bank-connect-save @click="saveConnection(a)">接続を保存</button><button class="btn btn-primary" :disabled="busy || !a.connection" data-bank-sync @click="sync(a)">{{ syncLabel(a) }}</button></div>
+      <p v-if="messages[a.id]" class="text-sm text-green-700 dark:text-green-300" role="status" data-bank-sync-message>{{ messages[a.id] }}</p>
+      <div class="space-y-1"><p class="text-sm font-medium">取得を許可するPC</p><p v-if="!collectors.length" class="text-xs text-gray-500">接続済みのPCがありません。カード連携の手順でPCを接続してください。</p><label v-for="c in collectors" :key="c._id" class="flex items-center gap-2 text-sm"><input type="checkbox" :data-bank-device="c._id" :checked="(c.bankAccountIds || []).map(String).includes(a.id)" :disabled="busy" @change="toggleDevice(c, a.id, $event)">{{ c.name }}</label></div>
+      <div class="space-y-1"><p class="text-sm font-medium">取得の記録</p><p v-if="!(jobs[a.id] || []).length" class="text-xs text-gray-500">まだ取得はありません。</p><p v-for="j in jobs[a.id] || []" :key="j.jobId" class="break-words text-xs" :data-bank-job="j.jobId">{{ kindName(j.kind) }} · {{ stateName(j.state) }} · {{ when(j.requestedAt) }} · 取得時の設定 {{ (j.snapshotHash || '').slice(0, 8) }}<span v-if="j.lastMessage"> · {{ j.lastMessage }}</span><span v-if="j.hasObservation"> · 観察記録あり</span></p></div>
+      <div class="space-y-1"><p class="text-sm font-medium">受信した明細</p><p v-if="!(captures[a.id] || []).length" class="text-xs text-gray-500">まだありません。</p><div v-for="c in captures[a.id] || []" :key="c.id" class="flex flex-wrap items-center gap-2 text-xs" :data-bank-capture="c.id"><span class="min-w-0 flex-1 break-words">{{ c.name }} · {{ captureState(c.state) }}<span v-if="c.rows"> · 新規 {{ c.rows.new }} 既存 {{ c.rows.existing }} 差異 {{ c.rows.differs }}</span><span v-if="c.reason"> · {{ c.reason }}</span></span><button class="text-primary-main dark:text-primary-light" data-bank-capture-map @click="emit('map', c.id)">取込で割り当て</button></div></div>
+    </article>
+  </section>
+</template>
+<script setup lang="ts">
+import { BANK_PROVIDERS } from '~/shared/finance-payment-match.mjs'
+import { useUserStore } from '~/stores/user'
+const emit=defineEmits<{(e:'map',fileId:string):void;(e:'close'):void;(e:'changed'):void}>(),user=useUserStore(),api='/api/finance-payments/bank/'
+const accounts=ref<any[]>([]),templates=ref<any[]>([]),collectors=ref<any[]>([]),jobs=reactive<Record<string,any[]>>({}),captures=reactive<Record<string,any[]>>({}),forms=reactive<Record<string,any>>({}),messages=reactive<Record<string,string>>({}),busy=ref(false),error=ref('')
+const supportName=(s:string)=>s==='verified'?'取得手順 確認済み':'取得手順 未確認'
+const providerOf=(key:string)=>BANK_PROVIDERS.find(p=>p[0]===key)
+const connectionText=(a:any)=>{const c=a.connection;if(!c?.provider)return '未接続';const p=providerOf(c.provider);return `${p?.[1]||c.provider} · ${supportName(p?.[2]||'contract-pending')} · テンプレート ${templates.value.find(t=>t.id===c.templateId)?.name||c.templateId}${c.accountLabel?' · '+c.accountLabel:''}`}
+const syncLabel=(a:any)=>providerOf(a.connection?.provider)?.[2]==='verified'?'取得':'観察取得（準備）'
+const kindName=(k:string)=>k==='retrieve'?'自動取得':'観察取得'
+const stateName=(s:string)=>({queued:'予約',running:'実行中',verification_required:'サインイン待ち',complete:'完了',failed:'失敗'} as Record<string,string>)[s]||s
+const captureState=(s:string)=>({received:'受信',imported:'取込済み',needs_review:'要確認'} as Record<string,string>)[s]||s
+const when=(v:any)=>v?String(v).slice(0,16).replace('T',' '):''
+const mapsTransactionId=(templateId:string)=>{const t=templates.value.find(t=>t.id===templateId);return !!t&&t.mapping?.transactionId!==undefined&&t.mapping.transactionId!==''}
+async function run(fn:()=>Promise<void>){busy.value=true;error.value='';try{await fn()}catch(e:any){error.value=e.data?.data?.message||e.data?.statusMessage||e.message}finally{busy.value=false}}
+async function loadJobs(id:string){const [j,c]:any[]=await Promise.all([$fetch(api+'accounts/'+id+'/jobs',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/captures',{headers:user.authHeader})]);jobs[id]=j.jobs;captures[id]=c.captures}
+// The per-account form state exists before the account renders (the template reads forms[a.id]); jobs and captures follow.
+async function load(){const [a,t,c]:any[]=await Promise.all([$fetch(api+'accounts',{headers:user.authHeader}),$fetch(api+'templates',{headers:user.authHeader}),$fetch('/api/finance/collectors',{headers:user.authHeader})]);templates.value=t.templates;collectors.value=(c.collectors||[]).filter((x:any)=>!x.revokedAt)
+ for(const acc of a.accounts)forms[acc.id]??={provider:acc.connection?.provider||'',templateId:acc.connection?.templateId||'',accountLabel:acc.connection?.accountLabel||'',transactionIdConfirmed:!!acc.connection?.transactionIdConfirmed}
+ accounts.value=a.accounts;await Promise.all(a.accounts.map((acc:any)=>loadJobs(acc.id)))}
+async function saveConnection(a:any){await run(async()=>{const f=forms[a.id];await $fetch(api+'accounts/'+a.id+'/connection',{method:'PUT',headers:user.authHeader,body:{provider:f.provider,templateId:f.templateId,accountLabel:f.accountLabel,transactionIdConfirmed:f.transactionIdConfirmed}});messages[a.id]='接続を保存しました。';await load();emit('changed')})}
+async function sync(a:any){await run(async()=>{const r:any=await $fetch(api+'accounts/'+a.id+'/sync',{method:'POST',headers:user.authHeader,body:{}});messages[a.id]=r.message;await loadJobs(a.id);emit('changed')})}
+async function toggleDevice(c:any,accountId:string,event:Event){const checked=(event.target as HTMLInputElement).checked;await run(async()=>{const ids=new Set<string>((c.bankAccountIds||[]).map(String));if(checked)ids.add(accountId);else ids.delete(accountId);await $fetch(api+'collectors/'+c._id,{method:'PUT',headers:user.authHeader,body:{bankAccountIds:[...ids]}});await load()})}
+onMounted(()=>run(load))
+</script>

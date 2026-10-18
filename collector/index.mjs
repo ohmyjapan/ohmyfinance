@@ -8,6 +8,7 @@ import { randomBytes,randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf, keyName, sealEnvelope, openEnvelope, samePublicKey, replaceVaultFile, DIALOG_TIMEOUT_MS, openCapsule } from './vault.mjs';
 import { collectStatement, collectAplusStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
+import { collectBankStatement, observeBankPortal } from './bank.mjs';
 import { BillingMailbox } from './mail.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
@@ -197,9 +198,10 @@ export function validateOrigin(value) {
   return u.origin;
 }
 // A Buffer body is sent as-is with the caller's content type (text/csv unless told otherwise); JSON bodies are unchanged.
-async function api(config,route,body,query,live,{contentType}={}) {
+// `base` selects the OMF route family: the card collector routes by default; the bank routes live under BANK_BASE.
+async function api(config,route,body,query,live,{contentType,base='/api/finance/collector/'}={}) {
   if(live)assertSession(live);
-  const url=new URL('/api/finance/collector/'+route,config.baseUrl);if(query)url.search=new URLSearchParams(query).toString();
+  const url=new URL(base+route,config.baseUrl);if(query)url.search=new URLSearchParams(query).toString();
   const csv=Buffer.isBuffer(body);
   const response=await fetch(url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':csv?(contentType||'text/csv'):'application/json'},...(body===undefined?{}:{body:csv?body:JSON.stringify(body)}),redirect:'error',signal:live?AbortSignal.any([live.abort.signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)});
   const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.statusMessage || 'OMF connection failed'),{status:response.status});return data;
@@ -223,12 +225,66 @@ export function uploadQuery(m,account) {
   return query;
 }
 // Sends the exact retained bytes with the manifest-derived content type; the acknowledgement is written only after OMF answered.
-export async function upload(config,account,item,live) {
+// `route`/`query`/`base` default to the card upload (unchanged for Amex/Aplus); bank artifacts pass bank/upload under BANK_BASE
+// with bankUploadQuery (the manifest's own jobId and snapshotHash).
+export async function upload(config,account,item,live,{route='upload',query=null,base=undefined}={}) {
   const m=item.manifest;
   if(!/^[a-f\d-]{36}$/.test(m.filename))throw new Error('Invalid outbox filename');
   const bytes=await readFile(path.join(item.directory,m.filename));if(digest(bytes)!==m.sha256)throw new Error('Outbox file integrity check failed');
-  const result=await api(config,'upload',bytes,uploadQuery(m,account),live,{contentType:m.sourceFormat==='json'?'application/json':'text/csv'});
+  const result=await api(config,route,bytes,query||uploadQuery(m,account),live,{contentType:m.sourceFormat==='json'?'application/json':'text/csv',base});
   await replaceVaultFile(path.join(item.directory,'manifest.json'),JSON.stringify({...m,acknowledgedAt:new Date().toISOString(),importId:result.id},null,2));return result;
+}
+// ── Bank jobs (plan omf-bank-collection-amended-20261018 A5) ─────────────────────────────────────────────────────────────────
+export const BANK_BASE='/api/finance-payments/collector/';
+// Retained bank manifests of one account, bound to the owner and OMF origin that produced them. Each carries ITS OWN jobId and
+// snapshotHash — the interpretation it was taken under — never the current job's.
+export async function pendingBank(account,config,root=directory) {
+  const base=path.join(root,'outbox','bank',String(account._id));let folders=[];try{folders=await readdir(base,{withFileTypes:true});}catch(e){if(e.code!=='ENOENT')throw e;}
+  const result=[];
+  for(const folder of folders.filter(f=>f.isDirectory())){const dir=path.join(base,folder.name);try{const m=JSON.parse(await readFile(path.join(dir,'manifest.json'),'utf8'));if(!m.acknowledgedAt && m.bankAccountId===String(account._id) && m.ownerId===String(account.ownerId) && m.origin===config.baseUrl && typeof m.jobId==='string' && typeof m.snapshotHash==='string')result.push({directory:dir,manifest:m});}catch(e){if(e.code!=='ENOENT')throw e;}}
+  return result;
+}
+// The upload query of a retained bank artifact: the job and snapshot it was taken under, its kind, channel, source host and capture time.
+export function bankUploadQuery(m) {
+  const query={jobId:m.jobId,snapshotHash:m.snapshotHash,kind:m.kind==='observation'?'observation':'statement'};
+  if(m.channel)query.channel=m.channel;if(m.sourceHost)query.sourceHost=m.sourceHost;if(m.downloadedAt)query.capturedAt=m.downloadedAt;if(typeof m.suggestedFilename==='string'&&m.suggestedFilename)query.name=m.suggestedFilename;
+  return query;
+}
+// Card jobs keep priority: bank/claim is asked only when no card account was claimed. An OMF without the bank routes answers
+// 404, which means "no bank job" (plan C3); every other failure propagates as before.
+export async function claimWork(config,live) {
+  const {account,covered}=await api(config,'claim',{},undefined,live);
+  if(account)return {account,covered,bank:null};
+  let bank=null;
+  try{bank=await api(config,'bank/claim',{},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
+  return {account:null,covered,bank:bank?.job?bank:null};
+}
+// One claimed bank job: drain the retained manifests (each under its own job and snapshot), then retrieve through the adapter
+// (kind retrieve) or observe the portal (kind observe), retain and send every artifact, acknowledge each only after OMF
+// answered, then complete. No secret is opened: the person signs in on the bank page. `deps` are the fixture's seams.
+export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now}={}) {
+  const {job,account}=bank;
+  const sendItem=item=>send(config,account,item,live,{route:'bank/upload',base:BANK_BASE,query:bankUploadQuery(item.manifest)});
+  let drained=0;
+  for(const item of await listPending(account,config,root)){await status('running','保存済みの明細を送信中');await sendItem(item);drained++;}
+  const bound={bankAccountId:String(account._id),ownerId:String(account.ownerId),origin:config.baseUrl,jobId:job.jobId,snapshotHash:job.snapshotHash,provider:job.provider};
+  const result=job.kind==='retrieve'?await collect(bound,job,root,status,{batch,onLaunch,signal,now}):await observe(bound,job,root,status,{batch,onLaunch,signal,now});
+  const items=[...(result.items||[])];
+  if(result.observation){
+    const dir=path.join(root,'outbox','bank',bound.bankAccountId,job.jobId+'-observation');await mkdir(dir,{recursive:true});
+    const filename=randomUUID(),bytes=Buffer.from(JSON.stringify(result.observation)+'\n');
+    await writeFile(path.join(dir,filename),bytes,{flag:'wx',mode:0o600});
+    const manifest={...bound,kind:'observation',sourceFormat:'json',sha256:digest(bytes),filename,bytes:bytes.length,downloadedAt:new Date(now()).toISOString()};
+    const file=path.join(dir,'manifest.json'),temporary=file+'.'+randomUUID()+'.tmp';
+    try{await writeFile(temporary,JSON.stringify(manifest,null,2),{flag:'wx',mode:0o600});await link(temporary,file);}finally{await unlink(temporary).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+    items.push({directory:dir,manifest});
+  }
+  for(const item of items){await status('running',item.manifest.kind==='observation'?'観察記録を送信中':'明細を送信中');await sendItem(item);}
+  if(result.failed){await status('failed',result.failed);return {drained,items:items.length,observation:!!result.observation,failed:result.failed,message:result.failed};}
+  const statements=items.filter(i=>i.manifest.kind!=='observation').length;
+  const message=job.kind==='observe'?`観察記録を保存${statements?`・明細 ${statements}件を保存`:''}`:statements?`明細 ${statements}件を保存`:'新しい明細はありません';
+  await status('complete',message);
+  return {drained,items:items.length,observation:!!result.observation,failed:null,message};
 }
 // The sealed entry a claimed account's bank login lives in: its own `<provider>-<id>` entry; else, for Aplus, the single
 // legacy `aplus` service entry when exactly one Aplus account is in scope (it can only be that one); else none → manual sign-in.
@@ -328,13 +384,24 @@ async function tickWork() {
   if(session && Date.now()>session.until){await endSession('the batch expired');return;}
   if(running)return;
   const live=liveSession();if(!live)return;   // locked: no claim, no status post, no secret
-  running=true;let config,account,covered,heartbeat;
+  running=true;let config,account,covered,bank,heartbeat;
   try {
     config=await metadata();if(config.paused || !config.token || !config.baseUrl)return;
-    ({account,covered}=await api(config,'claim',{},undefined,live));
+    ({account,covered,bank}=await claimWork(config,live));
     assertSession(live);
-    if(!account){ if(live.ran&&live.mode==='manual'){running=false;await endSession('batch complete');} return; }
+    if(!account&&!bank){ if(live.ran&&live.mode==='manual'){running=false;await endSession('batch complete');} return; }
     activeAction=true;
+    if(bank) {
+      // A claimed bank job (plan omf-bank-collection-amended-20261018 A5): status and the heartbeat go to the bank routes; no
+      // secret is opened — the person signs in on the bank page inside the owned Chrome.
+      let currentState='running',currentMessage='取得を開始',heartbeatFailure;
+      const bankStatus=async(state,text)=>{assertSession(live);if(heartbeatFailure)throw heartbeatFailure;currentState=state;currentMessage=text;message=`${bank.account.name}: ${text}`;await api(config,'bank/status',{jobId:bank.job.jobId,state,message:text},undefined,live,{base:BANK_BASE});};
+      heartbeat=setInterval(()=>{api(config,'bank/status',{jobId:bank.job.jobId,state:currentState,message:currentMessage},undefined,live,{base:BANK_BASE}).catch(e=>{heartbeatFailure=e;});},45000);
+      await runBankJob(bank,config,live,{status:bankStatus,onLaunch:ownBrowser(live),batch:live.id,signal:live.abort.signal});
+      assertSession(live);live.ran=true;
+      clearInterval(heartbeat);
+      return;
+    }
     const aplusJob=(account.provider||'amex')==='aplus';
     let currentState='running',currentMessage=aplusJob?'明細の取得を開始':'Connecting to Amex',heartbeatFailure;
     const status=async(state,text)=>{assertSession(live);if(heartbeatFailure)throw heartbeatFailure;currentState=state;currentMessage=text;message=`${account.name}: ${text}`;await api(config,'status',{accountId:account._id,jobId:account.jobId,state,message:text},undefined,live);};
@@ -380,8 +447,10 @@ async function tickWork() {
   } catch(error) {
     // Do not log browser errors, URLs, mail bodies, credentials, or response objects.
     if([401,403].includes(error.status)){reconnectNeeded=true;await endSession('PC disconnected or account access changed');message='Reconnect this PC through OMF to continue automatic syncing.';return;}
-    message=account ? `${account.name}: ${error.message}` : (error.code==='legacy' ? error.message : 'OMF connection unavailable. Check the saved address and collector token.');
+    const label=account?account.name:bank?.account?.name;
+    message=label ? `${label}: ${error.message}` : (error.code==='legacy' ? error.message : 'OMF connection unavailable. Check the saved address and collector token.');
     if(account && config)await api(config,'status',{accountId:account._id,jobId:account.jobId,state:'failed',message:'Open the downloader setup screen on the connected PC for details'},undefined,live).catch(()=>{});
+    else if(bank && config)await api(config,'bank/status',{jobId:bank.job.jobId,state:'failed',message:'Open the downloader setup screen on the connected PC for details'},undefined,live,{base:BANK_BASE}).catch(()=>{});
   } finally {clearInterval(heartbeat);running=false;activeAction=false;}
 }
 // Each legacy entry is saved and reopened through OMF before rewriting the old DPAPI blob without bank/mail
