@@ -14,6 +14,7 @@
     <p v-else-if="!error" class="p-5 text-xs text-gray-500">購入内容を読み込んでいます…</p>
    </template>
   </aside>
+  <SupportReport :key="user.user?.id" />
  </section>
 </template>
 <script setup lang="ts">
@@ -24,6 +25,7 @@ import {useActivityTracker} from '~/composables/useActivityTracker'
 import {assistantPage,assistantPages} from '~/shared/finance-assistant.mjs'
 import PurchaseChat from './PurchaseChat.vue'
 import AssistantConversation from './AssistantConversation.vue'
+import SupportReport from './SupportReport.vue'
 const user=useUserStore(),assistant=useAssistantStore(),route=useRoute(),{isLocked}=useActivityTracker()
 const panel=ref<HTMLElement|null>(null),activated=ref(false),loadedDraft=ref<any>(null),error=ref('')
 const page=computed(()=>assistantPage(route.path)),pageName=computed(()=>assistantPages[page.value])
