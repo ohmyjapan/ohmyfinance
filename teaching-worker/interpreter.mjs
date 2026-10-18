@@ -56,6 +56,7 @@ export async function interpretChat(config,job){
    const done=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(error):resolve(value)};
    // Tool turns take longer than a plain reply; the server-side journal keeps any mutation that completes even if this child is killed.
    const timer=setTimeout(()=>{child.kill();done(Error('Teaching interpretation timed out'))},tooled?240000:90000);
+   child.stdout.setEncoding('utf8');
    child.stdout.on('data',chunk=>{output+=chunk;if(output.length>200000){child.kill();done(Error('Teaching response too large'))}});
    child.stderr.resume();child.stdin.on('error',()=>{});child.once('error',()=>done(Error('Teaching interpreter unavailable')));child.once('close',code=>done(code===0?null:Error('Teaching interpreter failed'),output));child.stdin.end(JSON.stringify(input));
   });
