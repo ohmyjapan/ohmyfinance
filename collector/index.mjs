@@ -246,7 +246,7 @@ export async function pendingBank(account,config,root=directory) {
 }
 // The upload query of a retained bank artifact: the job and snapshot it was taken under, its kind, channel, source host and capture time.
 export function bankUploadQuery(m) {
-  const query={jobId:m.jobId,snapshotHash:m.snapshotHash,kind:m.kind==='observation'?'observation':'statement'};
+  const query={jobId:m.jobId,snapshotHash:m.snapshotHash,kind:m.kind==='observation'?'observation':'statement',labelChecked:String(m.labelChecked===true)};
   if(m.channel)query.channel=m.channel;if(m.sourceHost)query.sourceHost=m.sourceHost;if(m.downloadedAt)query.capturedAt=m.downloadedAt;if(typeof m.suggestedFilename==='string'&&m.suggestedFilename)query.name=m.suggestedFilename;
   return query;
 }

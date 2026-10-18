@@ -126,3 +126,7 @@ MongoDB, mandatory hidden Chrome, ten deliberate defects and the released intake
 which checks actually ran; this document is not a passing-test receipt. The old real research-worker test still requires
 an active configured subscription. A zero-row real-case export is REPLAY NOT RUN. Real customer exports, live NTA and
 production performance require separate evidence. Independent review and deployment require separate owner orders.
+
+### Account-label check record
+
+Captured files retain `labelChecked`: true only when a retrieve manifest records the comparison and the frozen job has a nonblank account label. Blank labels, observation files and older manifests without this record show **口座照合 未確認** in the received-files list and importer picker. A matched label shows **口座照合 確認済み**. Recovery preserves the result written before the export; re-delivery keeps the first capture record. This is the collector's account-label comparison, not bank registration or T-number verification. No new rejection or import hold is added; the owner can review and map an unchecked file.

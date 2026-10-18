@@ -78,7 +78,7 @@ async function completedAttempt(jobDir, bound, adapter, manifestOf, { now, wait,
   if (!hostAllowed(download.host, adapter.hosts)) return null;
   const filename = await awaitDownload({ jobDir, request: async () => {}, state: async () => ({ kind: 'recovering' }), timeoutMs: Math.max(2000, pollMs * 2), extensionMs: 0, now, wait, pollMs, label: adapter.label });
   const bytes = await readFile(path.join(jobDir, filename));
-  const manifest = manifestOf(filename, bytes, { suggestedFilename: download.suggestedFilename || null, sourceHost: download.host, period: marker.period ?? null, recovered: true });
+  const manifest = manifestOf(filename, bytes, { suggestedFilename: download.suggestedFilename || null, sourceHost: download.host, period: marker.period ?? null, labelChecked: marker.labelChecked === true, recovered: true });
   await writeManifest(jobDir, manifest);
   return { directory: jobDir, manifest };
 }
@@ -109,8 +109,9 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   await status('running', '対象期間を選択');
   await ui.selectPeriod(job?.snapshot?.coverage ?? null);
   const snapshot = verifyBankSnapshot(await ui.snapshot(), job?.snapshot);
+  const labelChecked = Boolean(String(job?.snapshot?.accountLabel ?? '').trim());
   await mkdir(jobDir, { recursive: true });
-  await writeFile(marker, JSON.stringify({ ...bound, period: snapshot?.period ?? null, requestedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 });
+  await writeFile(marker, JSON.stringify({ ...bound, period: snapshot?.period ?? null, labelChecked, requestedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 });
   const session = ui.downloadSession ? await ui.downloadSession(jobDir) : null;
   let began = null;
   session?.on('Browser.downloadWillBegin', event => {
@@ -130,7 +131,7 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   const host = began?.host ?? null;
   if (!hostAllowed(host, adapter.hosts)) { await unlink(path.join(jobDir, filename)).catch(() => {}); throw new Error('ダウンロード元が銀行サイトではありません'); } // guard:download-host
   const bytes = await readFile(path.join(jobDir, filename));
-  const manifest = manifestOf(filename, bytes, { suggestedFilename: began?.suggestedFilename || null, sourceHost: host, period: snapshot?.period ?? null });
+  const manifest = manifestOf(filename, bytes, { suggestedFilename: began?.suggestedFilename || null, sourceHost: host, period: snapshot?.period ?? null, labelChecked });
   await writeManifest(jobDir, manifest);
   await status('running', '明細を保存');
   return { items: [{ directory: jobDir, manifest }], failed: null };

@@ -14,7 +14,7 @@ const providerOf=(key:any)=>BANK_PROVIDERS.find(([k])=>k===key)||null
 // GUARD g1 (mirrored from finance/[...path].ts:19): a device acts only on the bank accounts its owner allowed it.
 const scopeOf=(device:any)=>({ownerId:device.ownerId,bankAccountId:{$in:device.bankAccountIds||[]}})
 const jobView=(j:any)=>({id:sid(j._id),jobId:j.jobId,kind:j.kind,state:j.state,requestedAt:j.requestedAt||null,collectorId:j.collectorId?sid(j.collectorId):null,leaseUntil:j.leaseUntil||null,lastAttemptAt:j.lastAttemptAt||null,lastMessage:j.lastMessage||'',snapshot:j.snapshot,snapshotHash:j.snapshotHash,statementIds:(j.statementIds||[]).map(sid),completedAt:j.completedAt||null,hasObservation:!!j.observation})
-const captureView=(s:any)=>({id:sid(s._id),name:s.name,size:s.size,hash:s.hash,receivedAt:s.capture?.receivedAt||null,state:s.capture?.state,reason:s.capture?.reason||null,rows:s.capture?.rows||null,snapshotHash:s.capture?.snapshotHash,jobId:s.capture?.jobId,kind:s.capture?.kind,channel:s.capture?.channel,sourceHost:s.capture?.sourceHost||null})
+const captureView=(s:any)=>({id:sid(s._id),name:s.name,size:s.size,hash:s.hash,receivedAt:s.capture?.receivedAt||null,state:s.capture?.state,reason:s.capture?.reason||null,rows:s.capture?.rows||null,snapshotHash:s.capture?.snapshotHash,jobId:s.capture?.jobId,kind:s.capture?.kind,channel:s.capture?.channel,labelChecked:s.capture?.labelChecked===true,sourceHost:s.capture?.sourceHost||null})
 // GUARD g2: provider known, template owned, the transaction-id column confirmed by the owner when the template maps one.
 export async function connectionInput(ownerId:string,body:any){
  if(!body||typeof body!=='object'||Array.isArray(body))fail(400,'接続の内容を確認してください。')
