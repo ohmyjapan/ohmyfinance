@@ -41,6 +41,7 @@ try{await mongoose.connect(process.env.MONGO_URI);assert.equal(mongoose.connecti
   const money=v=>{try{return M.money(v)}catch{return null}};const abs=Math.abs(row.amount);
   const outflow=column(v=>money(v)===abs&&row.direction==='out'),inflow=column(v=>money(v)===abs&&row.direction==='in'),signed=column(v=>Math.abs(money(v)??NaN)===abs);
   if(row.direction==='out'&&outflow!==null&&inflow===null&&raw.some((v,i)=>i!==Number(outflow)&&text(v)==='')){mapping.outflow=outflow;}
+  else if(row.direction==='in'&&inflow!==null&&outflow===null&&raw.some((v,i)=>i!==Number(inflow)&&text(v)==='')){mapping.inflow=inflow;}
   else if(signed!==null)mapping.amount=signed;else return null;
   if(row.provenance?.[0]?.balance!=null){const b=column(v=>money(v)===row.provenance[0].balance);if(b!==null)mapping.balance=b}
   return mapping}
@@ -53,7 +54,14 @@ try{await mongoose.connect(process.env.MONGO_URI);assert.equal(mongoose.connecti
     const result=await bank.acceptBankCapture({...job,ownerId,snapshot:statement.capture.snapshot,snapshotHash:statement.capture.snapshotHash},account,bytes,{snapshotHash:statement.capture.snapshotHash,kind:'statement',name:statement.name,sourceHost:statement.capture.sourceHost,capturedAt:statement.capture.capturedAt,mimeType:statement.mimeType||'text/csv',channel:statement.capture.kind==='observe'?'collector-observe':'collector'});
     outcome.newOutcome='capture '+result.state+(result.reason?' ('+String(result.reason).slice(0,80)+')':'');produced=await models.BankRow.find({ownerId,bankAccountId:account._id}).lean();
     outcome.same=result.state===statement.capture.state&&JSON.stringify(expected.map(r=>[r.key,r.fingerprint,r.amount,r.direction]).sort())===JSON.stringify(produced.filter(r=>r.provenance.some(s=>s.hash===statement.hash)).map(r=>[r.key,r.fingerprint,r.amount,r.direction]).sort());outcome.label=outcome.same?'capture replayed under its stored snapshot: same state and rows':'UNEXPLAINED: capture state or rows differ';}
-   else{const first=expected[0];const mapping=first?recoverMapping(first.provenance[0].raw,first):null;if(!mapping){outcome.newOutcome='mapping not recoverable';outcome.label='UNEXPLAINED: owner-upload mapping could not be recovered from provenance';}
+   else{const first=expected[0];const mapping=first?recoverMapping(first.provenance[0].raw,first):null;
+    // A split-column CSV needs both directions even when its first row contains only one.
+    if(mapping&&(mapping.outflow!==undefined||mapping.inflow!==undefined))for(const field of ['outflow','inflow'])if(mapping[field]===undefined){
+     const sample=expected.find(row=>row.direction===(field==='outflow'?'out':'in'));
+     const recovered=sample?recoverMapping(sample.provenance[0].raw,sample):null;
+     if(recovered?.[field]!==undefined)mapping[field]=recovered[field];
+    }
+    if(!mapping){outcome.newOutcome='mapping not recoverable';outcome.label='UNEXPLAINED: owner-upload mapping could not be recovered from provenance';}
     else{const up=await bank.uploadBankFile(ownerId,statement.name||'replay.csv',bytes,statement.mimeType||'text/csv');const sheet=await bank.readBankSheet(ownerId,up.document.id,first.provenance[0].sheet,first.provenance[0].row-1-(first.provenance[0].row-2));
      const body={sheet:first.provenance[0].sheet,headerRow:sheet.headerRow,bankAccountId:sid(account._id),mapping:Object.fromEntries(Object.keys(sheet.mapping).map(k=>[k,mapping[k]??''])),amountSign:first.provenance[0].amountSign||'outflow-positive',transactionIdConfirmed:true,confirm:true};
      const result=await bank.importBankFile(ownerId,up.document.id,body);produced=result.rows;outcome.newOutcome='owner import, '+produced.length+' rows';
