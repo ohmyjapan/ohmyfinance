@@ -1,6 +1,6 @@
 // server/api/transactions/index.ts
 import { defineEventHandler, getQuery, readBody, getMethod, createError, setHeader } from 'h3'
-import { getTransactions, createTransaction, getTransactionStats } from '../../services/transactionService'
+import { getTransactions, createCompanyTransaction, getTransactionStats } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
 import { ensureConnection } from '../../config/database'
 import { calendarCompany } from '../../utils/calendarAccess'
@@ -58,6 +58,8 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'POST') {
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
     const body = await readBody(event)
 
     // Validate required fields (OMF style)
@@ -77,14 +79,21 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const transaction = await createTransaction({
+    try {
+    const transaction = await createCompanyTransaction({
       ...body,
       date: new Date(body.date),
       type: body.type || '支出',
       status: body.status || 'pending'
-    })
+    }, organizationId)
 
     return transaction
+    } catch (error: any) {
+      throw createError({
+        statusCode: error?.statusCode === 400 ? 400 : 500,
+        statusMessage: error?.statusCode === 400 ? 'Invalid transaction data' : 'Failed to create company transaction'
+      })
+    }
   }
 
   throw createError({

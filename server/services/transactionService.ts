@@ -142,7 +142,17 @@ export async function getTransactionById(id: string, organizationId: mongoose.Ty
 /**
  * Create a new transaction (OMF style)
  */
+// Legacy imports remain unassigned until their company provenance is explicitly established.
 export async function createTransaction(data: Partial<ITransaction>) {
+  return saveTransaction(data)
+}
+
+// Only trusted server callers supply this company; never read it from a transaction payload.
+export async function createCompanyTransaction(data: Partial<ITransaction>, organizationId: mongoose.Types.ObjectId) {
+  return saveTransaction(data, organizationId)
+}
+
+async function saveTransaction(data: Partial<ITransaction>, organizationId?: mongoose.Types.ObjectId) {
   await ensureConnection()
   try {
     if (data.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting is assigned through the reviewed import.' })
@@ -169,11 +179,13 @@ export async function createTransaction(data: Partial<ITransaction>) {
     }
 
     const transaction = new Transaction(data)
+    if (organizationId) transaction.set('organizationId', organizationId, { strict: false })
     await transaction.save()
 
     return transaction.toObject()
   } catch (error) {
-    console.error('Failed to create transaction:', error)
+    if (organizationId) console.error('Company transaction creation failed')
+    else console.error('Failed to create transaction:', error)
     throw error
   }
 }
