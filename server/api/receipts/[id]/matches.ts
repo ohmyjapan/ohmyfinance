@@ -1,38 +1,41 @@
 // server/api/receipts/[id]/matches.ts
-import { defineEventHandler, createError } from 'h3'
-import { findMatchesForReceipt, getReceiptById } from '../../../services/receiptService'
+import { defineEventHandler, createError, setHeader } from 'h3'
+import mongoose from 'mongoose'
+import { findCompanyMatchesForReceipt } from '../../../services/receiptService'
 import { requireAuth } from '../../../middleware/auth'
+import { ensureConnection } from '../../../config/database'
+import { calendarCompany } from '../../../utils/calendarAccess'
 
 /**
  * GET /api/receipts/:id/matches
  * Find potential transaction matches for a receipt
  */
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
+  await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
   const id = event.context.params?.id
 
-  if (!id) {
+  if (!id || !mongoose.isValidObjectId(id)) {
     throw createError({
       statusCode: 400,
-      statusMessage: 'Receipt ID is required'
+      statusMessage: 'Valid receipt ID is required'
     })
   }
 
   try {
-    // Verify receipt exists
-    const receipt = await getReceiptById(id)
-    if (!receipt) {
+    const matches = await findCompanyMatchesForReceipt(id, organizationId)
+    if (!matches) {
       throw createError({
         statusCode: 404,
-        statusMessage: `Receipt ${id} not found`
+        statusMessage: 'Receipt not found'
       })
     }
 
-    // Find potential matches
-    const matches = await findMatchesForReceipt(id)
-
     return {
       success: true,
+      scope: 'selected_company',
       receiptId: id,
       matches,
       totalMatches: matches.length,
@@ -41,10 +44,10 @@ export default defineEventHandler(async (event) => {
   } catch (error: any) {
     if (error.statusCode) throw error
 
-    console.error(`Error finding matches for receipt ${id}:`, error)
+    console.error('Company receipt candidate lookup failed')
     throw createError({
       statusCode: 500,
-      statusMessage: error.message || 'Failed to find matches'
+      statusMessage: 'Failed to find company receipt candidates'
     })
   }
 })

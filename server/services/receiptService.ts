@@ -278,9 +278,26 @@ export async function findMatchesForReceipt(receiptId: string) {
     if (!receipt) {
       throw new Error(`Receipt ${receiptId} not found`)
     }
+    return await receiptMatchCandidates(receipt, {})
+  } catch (error) {
+    console.error(`Failed to find matches for receipt ${receiptId}:`, error)
+    throw error
+  }
+}
 
+// Only this entry supplies company-authorized candidates to the native read API.
+// A persisted assignment is required; never infer ownership from the purchase details.
+export async function findCompanyMatchesForReceipt(receiptId: string, organizationId: mongoose.Types.ObjectId) {
+  await ensureConnection()
+  const receipt = await Receipt.findOne({ _id: receiptId, organizationId }).lean()
+  if (!receipt) return null
+  return await receiptMatchCandidates(receipt, { organizationId })
+}
+
+async function receiptMatchCandidates(receipt: any, transactionScope: Record<string, unknown>) {
     // Build match query based on receipt data
     const matchQuery: any = {
+      ...transactionScope,
       receipt: null // Only match transactions without receipts
     }
 
@@ -332,10 +349,6 @@ export async function findMatchesForReceipt(receiptId: string) {
     return matches
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 10)
-  } catch (error) {
-    console.error(`Failed to find matches for receipt ${receiptId}:`, error)
-    throw error
-  }
 }
 
 /**
