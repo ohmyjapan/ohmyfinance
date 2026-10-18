@@ -12,6 +12,8 @@ The turn freezes the selection. Clicking a different row while an answer is runn
 
 These are limits of Navi's tools. The signed-in matching page already supports bank CSV upload, column mapping, preview/import and manual allocation confirmation/release. Payment-page context tells Navi which operations exist in the UI so it does not describe an unavailable AI action as a missing product feature.
 
+The matching page does not retrieve a live bank balance. The original-file preview displays uploaded cells; a balance is visible there only if the source actually contains it, and it describes that source row/date. A selected bank row supplies no bank amount, balance, source contents or balance date to Navi. Neither the page selection nor a card remainder establishes the current bank balance or a cash shortfall.
+
 ## Meaning of the evidence
 
 Candidates are suggestions, including equal-amount ambiguities. A saved allocation is the owner's earlier link, not independent proof of purchase identity. The tool returns the native history, changed-record flags and stored invoice research evidence; it does not perform a live National Tax Agency check. `confirmed` and `verified` retain the native service's distinct meanings.
