@@ -25,7 +25,7 @@ export async function purchaseHistory(ownerId: string, target: { importId: strin
       ...native, applicability: { accountId: target.accountId, merchant, purchaseDate: source.purchaseDate },
       sourceEvidence: policy ? {
         available: true, currentRevision: policy.revision, matchesAppliedRevision: policy.revision === rule.revision, status: policy.status, effectiveFrom: policy.effectiveFrom || '',
-        scope: { kind: policy.accountIds.length ? 'specific_accounts' : 'all_owner_accounts', selectedAccountId: target.accountId, otherAccountIdsReturned: false },
+        scope: { kind: policy.accountIds.length ? 'specific_accounts' : 'all_owner_accounts', selectedAccountId: target.accountId, selectedAccountOnly: policy.accountIds.length === 1, otherAccountIdsReturned: false },
         statusHistory: audit.slice(-10).map((entry: any) => ({ at: entry.at, status: entry.status, revision: entry.revision, source: entry.source })),
         statusHistoryTotal: audit.length, statusHistoryTruncated: audit.length > 10,
         historyMeaning: 'Recorded status-change events only, not complete past policy snapshots. Missing events do not prove unchanged status or explain who changed a rule.'
@@ -39,6 +39,12 @@ export async function purchaseHistory(ownerId: string, target: { importId: strin
       historyAvailable: evidence?.history !== null && evidence?.history !== undefined,
       history: history.slice(0, 50), historyTotal: history.length, historyTruncated: history.length > 50,
       rules: rules.slice(0, 50).map(withSource), rulesTotal: rules.length, rulesTruncated: rules.length > 50,
+      ruleConflict: evidence?.answer?.conflict ? {
+        state: 'unresolved', selectedPurchase: { accountId: target.accountId, merchant, purchaseDate: source.purchaseDate },
+        selectedRuleCount: rules.length, selectedRuleIds: rules.slice(0, 50).map((rule: any) => rule.id), selectedRulesTruncated: rules.length > 50,
+        winnerRuleId: null, resolution: 'no_native_winner', reason: evidence.answer.reason,
+        meaning: 'These selected rules already apply to this purchase under their account, merchant and effective-date conditions, but their purpose/customer decisions disagree. Native selection has not chosen a winner. Shared applicability is present; it is not a lack of conditions. A newer status revision or a majority of historical examples does not resolve this native conflict.'
+      } : null,
       // Preserve the answer computed on ALL native evidence, even when the examples are bounded.
       answer: evidence?.answer ? { ...evidence.answer, ...(evidence.answer.rules ? { rules: evidence.answer.rules.slice(0, 50).map(withSource) } : {}) } : null
     },
