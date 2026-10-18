@@ -14,6 +14,7 @@ import { researchView, applyResearch, startChatResearch, chatRequestId } from '.
 import { applyChatProposal } from './financeChatService'
 import { intakeActions, intakeActionArgs, isIntakeMutation, intakeActionOutcome, unresolvedIntakeAction } from './financeIntakeActionService'
 import { paymentActions, paymentActionArgs } from './financePaymentActionService'
+import { purchaseHistory } from './financeHistoryActionService'
 import { canonicalJson, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { fields as draftFields, learnedFields, validateValues } from '../../shared/finance-draft.mjs'
 
@@ -39,6 +40,8 @@ const draftSummary = (d: any) => ({ importId: d.importId, line: d.line, revision
 const bounded = (rows: any[], max: number) => rows.slice(0, max)
 
 export const actionCatalogue: Definition[] = [
+  { name: 'get_purchase_history', effect: 'read', modes: ['workspace', 'purchase'], targeted: true, needsLine: true, description: 'Investigate why one purchase was classified: prior eligible workbook rows for the same account/merchant strictly before this purchase, applicable confirmed rules with saved reasons, and this draft\'s saved corrections/revisions and accounting reason. Source workbook/sheet/row pointers, totals and truncation are explicit. Uses native learning logic; historical patterns are evidence, not proof of motive/items/tax. Saves nothing. Workspace: name the statement line; purchase chat: omit the target.', inputSchema: schema(targetProps),
+    async run(scope, _args, target) { return purchaseHistory(scope.ownerId, target as { importId: string, line: number, accountId: string }) } },
   { name: 'list_accounts', effect: 'read', modes: ['workspace', 'purchase'], targeted: false, needsLine: false, description: 'List the card accounts this conversation may act on (name, provider, primary card).', inputSchema: schema({}),
     async run(scope) { const accounts: any[] = await FinancialAccount.find({ ownerId: scope.ownerId, _id: { $in: scope.agent.accountIds }, active: true }).select('name provider primaryCard').sort({ name: 1 }).lean(); return { accounts: accounts.map(a => ({ id: String(a._id), name: a.name, provider: a.provider || 'amex', primaryCard: a.primaryCard || '' })) } } },
   { name: 'list_imports', effect: 'read', modes: ['workspace', 'purchase'], targeted: false, needsLine: false, description: 'List recent statements (imports) of the accounts this conversation may act on; optionally one account.', inputSchema: schema({ accountId: objectId }),
