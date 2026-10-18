@@ -4,6 +4,7 @@ import { ensureConnection } from '../../config/database'
 import Invoice from '../../models/Invoice'
 import Transaction from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -11,10 +12,11 @@ export default defineEventHandler(async (event) => {
   const method = event.method
 
   if (method === 'GET') {
+    const { organizationId } = await calendarCompany(event)
     const query = getQuery(event)
     const { status, page = '1', limit = '20' } = query
 
-    const filter: any = {}
+    const filter: any = { organizationId }
     if (status) filter.status = status
 
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string)

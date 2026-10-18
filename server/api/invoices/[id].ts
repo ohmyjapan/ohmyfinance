@@ -3,6 +3,7 @@ import { defineEventHandler, readBody, createError, setHeader } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Invoice from '../../models/Invoice'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -15,7 +16,8 @@ export default defineEventHandler(async (event) => {
   const method = event.method
 
   if (method === 'GET') {
-    const invoice = await Invoice.findById(id).lean()
+    const { organizationId } = await calendarCompany(event)
+    const invoice = await Invoice.findOne({ _id: id, organizationId }).lean()
     if (!invoice) {
       throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
     }
