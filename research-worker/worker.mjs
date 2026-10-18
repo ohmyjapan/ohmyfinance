@@ -17,7 +17,7 @@ const invoke=(cli,args,options,payload,timeoutMs)=>new Promise((resolve,reject)=
     const child=spawn(cli,args,{...options,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});let output='',done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timeout);e?reject(e):resolve(v)};
     const timeout=setTimeout(()=>{child.kill();finish(Error('Research timed out'))},timeoutMs);
-    child.stdout.on('data',b=>{output+=b;if(output.length>2000000){child.kill();finish(Error('Research output too large'))}});
+    child.stdout.setEncoding('utf8');child.stdout.on('data',b=>{output+=b;if(output.length>2000000){child.kill();finish(Error('Research output too large'))}});
     child.stderr.resume();child.stdin.on('error',()=>{});child.once('error',()=>finish(Error('Research interpreter unavailable')));child.once('close',code=>finish(code===0?null:Error('Research interpreter failed'),output));child.stdin.end(JSON.stringify(payload));
 });
 
