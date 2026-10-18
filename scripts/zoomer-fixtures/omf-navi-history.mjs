@@ -18,7 +18,9 @@ export default {name:'omf-navi-history',covers:existsSync(path.join(root,'.outpu
   ['declare-unrestricted-policy','financeActionService.mjs','kind: policy.accountIds.length ? "specific_accounts" : "all_owner_accounts"','kind: "all_owner_accounts"','history:rule-scope-source'],
   ['drop-policy-status-audit','financeActionService.mjs','statusHistory: audit.slice(-10).map','statusHistory: [].map','history:native-rule-status-audit'],
   ['hide-native-rule-conflict','financeActionService.mjs','ruleConflict: evidence?.answer?.conflict ? {','ruleConflict: false ? {','history:conflict-conditions-priority'],
-  ['claim-single-account-scope','financeActionService.mjs','selectedAccountOnly: policy.accountIds.length === 1','selectedAccountOnly: true','history:not-single-account-scope']
+  ['claim-single-account-scope','financeActionService.mjs','selectedAccountOnly: declaredAccountCount === 1','selectedAccountOnly: true','history:not-single-account-scope'],
+  ['describe-multi-as-single','financeActionService.mjs','This policy applies to the selected account and additional specified accounts. Other account identifiers are omitted.','This policy applies only to the selected account.','history:multi-account-meaning'],
+  ['count-duplicate-account-ids','financeActionService.mjs','new Set((policy?.accountIds || []).map(String)).size','(policy?.accountIds || []).length','history:duplicate-account-id-scope']
  ]){
   const base=path.resolve(root,'.zoomer','history-mutants'),dir=path.resolve(base,randomUUID());
   if(!dir.startsWith(base+path.sep))throw Error('Unsafe owned mutant directory');await mkdir(dir,{recursive:true});

@@ -21,11 +21,15 @@ export async function purchaseHistory(ownerId: string, target: { importId: strin
   const withSource = (rule: any) => {
     // `cards` is a legacy display-label field, not the declared account restriction; empty labels cannot prove global scope.
     const { cards: _labels, ...native } = rule, policy = byId.get(rule.id), audit = policy?.audit || []
+    const declaredAccountCount = new Set((policy?.accountIds || []).map(String)).size
     return {
       ...native, applicability: { accountId: target.accountId, merchant, purchaseDate: source.purchaseDate },
       sourceEvidence: policy ? {
         available: true, currentRevision: policy.revision, matchesAppliedRevision: policy.revision === rule.revision, status: policy.status, effectiveFrom: policy.effectiveFrom || '',
-        scope: { kind: policy.accountIds.length ? 'specific_accounts' : 'all_owner_accounts', selectedAccountId: target.accountId, selectedAccountOnly: policy.accountIds.length === 1, otherAccountIdsReturned: false },
+        scope: {
+          kind: policy.accountIds.length ? 'specific_accounts' : 'all_owner_accounts', selectedAccountId: target.accountId, selectedAccountOnly: declaredAccountCount === 1, otherAccountIdsReturned: false,
+          meaning: declaredAccountCount === 0 ? 'This policy applies to every account owned by this user.' : declaredAccountCount === 1 ? 'This policy applies only to the selected account.' : 'This policy applies to the selected account and additional specified accounts. Other account identifiers are omitted.'
+        },
         statusHistory: audit.slice(-10).map((entry: any) => ({ at: entry.at, status: entry.status, revision: entry.revision, source: entry.source })),
         statusHistoryTotal: audit.length, statusHistoryTruncated: audit.length > 10,
         historyMeaning: 'Recorded status-change events only, not complete past policy snapshots. Missing events do not prove unchanged status or explain who changed a rule.'
