@@ -18,7 +18,8 @@ async function pageContext(ownerId:string,input:any){
  const context:any={mode:'workspace',page:input.page,pageName:assistantPages[input.page],currency:'JPY',capabilities:['Explain supplied evidence and page purpose','For purchase changes select a statement and confirm its proposal','Never change ledger or settings from general conversation'],facts:{}}
  if(input.page==='intake-payments'){
   // Selection is an owned pointer only. Financial rows/evidence are fetched through the claimed agent's live card scope.
-  context.capabilities=['Read assigned card payment matches and intake payment evidence with the supplied named tools','Bank payments and unassigned cards are unavailable in these tools; totals are partial and are not bank balances','No allocation, correction, bank import or ledger write tool is available']
+  context.capabilities=['Read assigned card payment matches and intake payment evidence with the supplied named tools','Bank payments and unassigned cards are unavailable in these tools; totals are partial and are not bank balances','Navi has no payment-allocation, bank-row correction or bank CSV import tool. These are Navi tool limits, not missing page features. Ledger posting is a separate named action requiring an explicit current user instruction and its native checks.']
+  context.facts.pageFeatures=['The signed-in payment-matching page already supports bank CSV upload, column mapping, preview and import.','The page already supports manual allocation confirmation, release and review.','These are available UI workflows; Navi cannot perform them through its present tools. Explain this distinction when describing capability limits.']
   if(input.paymentKind==='card'){
    const importId=id(input.paymentImportId)
    if(!Number.isSafeInteger(input.paymentLine)||input.paymentLine<2)fail(404,'明細が見つかりません。')
@@ -26,7 +27,7 @@ async function pageContext(ownerId:string,input:any){
    context.facts.paymentSelection={kind:'card',importId,line:input.paymentLine}
   }else if(input.paymentKind==='bank')context.facts.paymentSelection={kind:'bank',available:false}
   else if(input.paymentKind!==undefined)fail(400,'Invalid payment selection')
-  context.facts.pageGuide='支払い照合の画面です。接続担当に許可されたカードの配分・候補・履歴・会社とT番号の根拠を、参照ツールで確認できます。金額が一致するだけでは購入を断定しません。範囲外のカードと銀行の支払いを含まない集計なので、未払い総額や銀行残高として説明しないでください。銀行が選択中なら以前のカードを対象にせず、銀行参照の接続が未対応であると説明します。配分の確定・解除や銀行ファイルの取込はまだ操作できません。'
+  context.facts.pageGuide='支払い照合の画面です。接続担当に許可されたカードの配分・候補・履歴・会社とT番号の根拠を、参照ツールで確認できます。金額が一致するだけでは購入を断定しません。範囲外のカードと銀行の支払いを含まない集計なので、未払い総額や銀行残高として説明しないでください。銀行が選択中なら以前のカードを対象にせず、Naviには銀行参照ツールがまだないと説明します。この制限はAIチャットの操作範囲です。画面には銀行CSVの取込・列マッピング・プレビューと、手動での配分の確定・解除・確認が既にあります。Naviが代行できないことを、画面自体にその機能がない、または未実装であると説明しないでください。'
   return context
  }
  const overview=await learningOverview(ownerId)

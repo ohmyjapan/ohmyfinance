@@ -10,6 +10,8 @@ Navi can read the matching state of its connector's assigned card accounts. On *
 
 The turn freezes the selection. Clicking a different row while an answer is running does not move that answer to the new row. Sending a new message with a bank row selected clears the previous card target and tells Navi that bank reads are unavailable. Owned card rows whose original import was removed remain selectable if the native matching service retained their allocation anchor.
 
+These are limits of Navi's tools. The signed-in matching page already supports bank CSV upload, column mapping, preview/import and manual allocation confirmation/release. Payment-page context tells Navi which operations exist in the UI so it does not describe an unavailable AI action as a missing product feature.
+
 ## Meaning of the evidence
 
 Candidates are suggestions, including equal-amount ambiguities. A saved allocation is the owner's earlier link, not independent proof of purchase identity. The tool returns the native history, changed-record flags and stored invoice research evidence; it does not perform a live National Tax Agency check. `confirmed` and `verified` retain the native service's distinct meanings.
@@ -40,4 +42,4 @@ node C:/Users/Junsan2/Documents/ohmycode/scripts/zoomer-verify.mjs --run-fixture
 
 The fixture requires three non-skipped units, seven owned application/Chrome groups, native matching API regression, and three deliberately reintroduced defects caught by their named assertions: disabled card scope, leaked bank account names and leaked orphan anchors. Missing build, setup failure or a syntactically broken mutant cannot count as a pass. Each mutant materializes its own output copy and ephemeral database; business records are synthetic, browser profiles are temporary, and no business messages are sent. Read calls are checked against unchanged business collections and no new mutation journal entries.
 
-The browser worker response is synthetic; it proves the UI/worker contract, not model reasoning. Historical model inputs, fresh model conversations about these new tools, production observation, live NTA checks, actual customer/bank files and a final deployed replay remain untested in this increment. Existing intake model evidence belongs to its previously tested source and scenarios. No accuracy percentage or complete shared-guard reliability audit is claimed.
+The browser worker response is synthetic; it proves the UI/worker contract, not model reasoning. Separate native-model dialogues and their source-linked semantic assessments are retained in the review handoff; they are not model coverage from this fixture. Historical model sampling, production observation, live NTA checks, actual customer/bank files and a final deployed replay remain untested in this increment. Existing intake model evidence belongs to its previously tested source and scenarios. No accuracy percentage or complete shared-guard reliability audit is claimed.
