@@ -1,6 +1,13 @@
 // server/services/transactionService.ts
 import Transaction from '../models/Transaction'
 import { createError } from 'h3'
+import type mongoose from 'mongoose'
+import Customer from '../models/Customer'
+import Supplier from '../models/Supplier'
+import AccountCategory from '../models/AccountCategory'
+import TaxCategory from '../models/TaxCategory'
+import TransactionCategory from '../models/TransactionCategory'
+import DataSource from '../models/DataSource'
 import type { ITransaction } from '../models/Transaction'
 import { ensureConnection } from '../config/database'
 
@@ -23,10 +30,10 @@ interface TransactionFilters {
 /**
  * Get all transactions with optional filtering (OMF style)
  */
-export async function getTransactions(filters: TransactionFilters = {}) {
+export async function getTransactions(filters: TransactionFilters, organizationId: mongoose.Types.ObjectId) {
   await ensureConnection()
   try {
-    const query: any = {}
+    const query: any = { organizationId }
 
     // Build query based on filters
     if (filters.status) {
@@ -93,19 +100,19 @@ export async function getTransactions(filters: TransactionFilters = {}) {
     }
 
     const transactions = await Transaction.find(query)
-      .populate('customerId', 'name email')
-      .populate('supplierId', 'name')
-      .populate('accountCategoryId', 'name')
-      .populate('subAccountCategoryId', 'name cardNumber cardProvider')
-      .populate('taxCategoryId', 'name rate')
-      .populate('transactionCategoryId', 'name')
-      .populate('sourceId', 'name type')
+      .populate({ path: 'customerId', select: 'name email', match: { organizationId }, model: Customer })
+      .populate({ path: 'supplierId', select: 'name', match: { organizationId }, model: Supplier })
+      .populate({ path: 'accountCategoryId', select: 'name', match: { organizationId }, model: AccountCategory })
+      .populate({ path: 'subAccountCategoryId', select: 'name cardNumber cardProvider', match: { organizationId }, model: AccountCategory })
+      .populate({ path: 'taxCategoryId', select: 'name rate', match: { organizationId }, model: TaxCategory })
+      .populate({ path: 'transactionCategoryId', select: 'name', match: { organizationId }, model: TransactionCategory })
+      .populate({ path: 'sourceId', select: 'name type', match: { organizationId }, model: DataSource })
       .sort({ date: -1, createdAt: -1 })
       .lean()
 
     return transactions
   } catch (error) {
-    console.error('Failed to get transactions:', error)
+    console.error('Company transaction list read failed')
     throw error
   }
 }
@@ -113,21 +120,21 @@ export async function getTransactions(filters: TransactionFilters = {}) {
 /**
  * Get a transaction by ID
  */
-export async function getTransactionById(id: string) {
+export async function getTransactionById(id: string, organizationId: mongoose.Types.ObjectId) {
   await ensureConnection()
   try {
-    const transaction = await Transaction.findById(id)
-      .populate('customerId', 'name email phone')
-      .populate('supplierId', 'name companyInfo address email phone')
-      .populate('accountCategoryId', 'name code')
-      .populate('subAccountCategoryId', 'name cardNumber cardProvider')
-      .populate('taxCategoryId', 'name rate')
-      .populate('transactionCategoryId', 'name')
-      .populate('sourceId', 'name type')
+    const transaction = await Transaction.findOne({ _id: id, organizationId })
+      .populate({ path: 'customerId', select: 'name email phone', match: { organizationId }, model: Customer })
+      .populate({ path: 'supplierId', select: 'name companyInfo address email phone', match: { organizationId }, model: Supplier })
+      .populate({ path: 'accountCategoryId', select: 'name code', match: { organizationId }, model: AccountCategory })
+      .populate({ path: 'subAccountCategoryId', select: 'name cardNumber cardProvider', match: { organizationId }, model: AccountCategory })
+      .populate({ path: 'taxCategoryId', select: 'name rate', match: { organizationId }, model: TaxCategory })
+      .populate({ path: 'transactionCategoryId', select: 'name', match: { organizationId }, model: TransactionCategory })
+      .populate({ path: 'sourceId', select: 'name type', match: { organizationId }, model: DataSource })
       .lean()
     return transaction
   } catch (error) {
-    console.error(`Failed to get transaction ${id}:`, error)
+    console.error('Company transaction detail read failed')
     throw error
   }
 }
@@ -353,16 +360,18 @@ export async function linkReceiptToTransaction(transactionId: string, receiptPat
 /**
  * Get transaction statistics (OMF style with income/expense)
  */
-export async function getTransactionStats() {
+export async function getTransactionStats(organizationId: mongoose.Types.ObjectId) {
   await ensureConnection()
   try {
-    const totalCount = await Transaction.countDocuments()
+    const totalCount = await Transaction.countDocuments({ organizationId })
     const totalAmount = await Transaction.aggregate([
+      { $match: { organizationId } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ])
 
     // Stats by status
     const statusStats = await Transaction.aggregate([
+      { $match: { organizationId } },
       {
         $group: {
           _id: '$status',
@@ -374,6 +383,7 @@ export async function getTransactionStats() {
 
     // Stats by type (income/expense)
     const typeStats = await Transaction.aggregate([
+      { $match: { organizationId } },
       {
         $group: {
           _id: '$type',
@@ -384,7 +394,7 @@ export async function getTransactionStats() {
     ])
 
     // Receipt stats
-    const withReceipt = await Transaction.countDocuments({ hasReceipt: true })
+    const withReceipt = await Transaction.countDocuments({ organizationId, hasReceipt: true })
 
     const statusMap = statusStats.reduce((acc: any, item: any) => {
       acc[item._id] = { count: item.count, amount: item.amount }
@@ -412,7 +422,7 @@ export async function getTransactionStats() {
       expense: typeMap['支出'] || { count: 0, amount: 0 }
     }
   } catch (error) {
-    console.error('Failed to get transaction stats:', error)
+    console.error('Company transaction statistics read failed')
     throw error
   }
 }

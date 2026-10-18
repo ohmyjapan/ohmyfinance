@@ -1,19 +1,25 @@
 // server/api/transactions/index.ts
-import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
+import { defineEventHandler, getQuery, readBody, getMethod, createError, setHeader } from 'h3'
 import { getTransactions, createTransaction, getTransactionStats } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
   const method = getMethod(event)
 
   if (method === 'GET') {
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
+    try {
     // Get query parameters for filtering
     const query = getQuery(event)
 
     // Check if stats are requested
     if (query.stats === 'true') {
-      const stats = await getTransactionStats()
+      const stats = await getTransactionStats(organizationId)
       return { stats }
     }
 
@@ -40,11 +46,14 @@ export default defineEventHandler(async (event) => {
       }
     })
 
-    const transactions = await getTransactions(filters)
+    const transactions = await getTransactions(filters, organizationId)
 
     return {
       transactions,
       total: transactions.length
+    }
+    } catch {
+      throw createError({ statusCode: 500, statusMessage: 'Failed to read company transactions' })
     }
   }
 

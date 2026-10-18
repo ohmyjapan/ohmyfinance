@@ -1,9 +1,13 @@
 // server/api/transactions/[id].ts
-import { defineEventHandler, readBody, getMethod, createError } from 'h3'
+import { defineEventHandler, readBody, getMethod, createError, setHeader } from 'h3'
 import { getTransactionById, updateTransaction, deleteTransaction } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
+import { isValidObjectId } from 'mongoose'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
   const method = getMethod(event)
   const id = event.context.params?.id
@@ -17,16 +21,16 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'GET') {
-    const transaction = await getTransactionById(id)
-
-    if (!transaction) {
-      throw createError({
-        statusCode: 404,
-        statusMessage: 'Not Found',
-        message: `Transaction ${id} not found`
-      })
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
+    if (!isValidObjectId(id)) throw createError({ statusCode: 400, statusMessage: 'Invalid transaction ID' })
+    let transaction
+    try {
+      transaction = await getTransactionById(id, organizationId)
+    } catch {
+      throw createError({ statusCode: 500, statusMessage: 'Failed to read company transaction' })
     }
-
+    if (!transaction) throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
     return transaction
   }
 

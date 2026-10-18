@@ -2,13 +2,18 @@
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
 import { getTransactions } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * GET /api/transactions/export
  * Export transactions to CSV, JSON, or Excel format
  */
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
+  await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
   try {
     // Get query parameters
     const query = getQuery(event)
@@ -31,7 +36,7 @@ export default defineEventHandler(async (event) => {
     if (query.hasReceipt !== undefined) filters.hasReceipt = query.hasReceipt === 'true'
 
     // Fetch transactions from MongoDB
-    const transactions = await getTransactions(filters)
+    const transactions = await getTransactions(filters, organizationId)
 
     // Define fields and headers for export (OMF Japanese accounting style)
     const fields = [
@@ -132,12 +137,8 @@ export default defineEventHandler(async (event) => {
     setHeader(event, 'Content-Type', 'application/json')
     return JSON.stringify(exportData)
 
-  } catch (error: any) {
-    console.error('Export error:', error)
-    throw createError({
-      statusCode: 500,
-      statusMessage: error.message || 'Failed to export transactions'
-    })
+  } catch {
+    throw createError({ statusCode: 500, statusMessage: 'Failed to export company transactions' })
   }
 })
 
