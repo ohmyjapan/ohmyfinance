@@ -37,7 +37,7 @@
       />
       <StatCard
         :title="t('recurring.monthlyEstimate')"
-        :value="formatCurrency(stats.activeMonthlyAmount)"
+        :value="monthlyEstimateText"
         icon="DollarSign"
         color="primary"
       />
@@ -138,7 +138,8 @@
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ payment.customer?.name }}</div>
             </td>
             <td class="px-6 py-4 text-sm font-mono font-bold text-gray-900 dark:text-white">
-              {{ formatCurrency(payment.amount) }}
+              {{ formatCurrency(payment.amount, payment.currency) }}
+              <div class="text-xs font-sans font-normal text-gray-500 dark:text-gray-400">{{ typeLabel(payment.transactionType) }}</div>
             </td>
             <td class="px-6 py-4">
               <span class="bg-primary-main/10 dark:bg-primary-main/20 text-primary-main dark:text-primary-light rounded-lg px-2.5 py-1 text-xs font-medium capitalize">
@@ -234,6 +235,23 @@
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactions.type') }} *</label>
+              <select v-model="form.transactionType" required class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors">
+                <option value="" disabled>{{ t('common.select') }}</option>
+                <option value="支出">{{ t('transactions.expense') }}</option>
+                <option value="入金">{{ t('transactions.income') }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactions.currency') }} *</label>
+              <select v-model="form.currency" required class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors">
+                <option value="" disabled>{{ t('common.select') }}</option>
+                <option v-for="code in currencyChoices" :key="code" :value="code">{{ code }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('recurring.startDate') }} *</label>
               <input v-model="form.startDate" type="date" required class="w-full border border-gray-200 dark:border-white/10 dark:bg-white/5 dark:text-white rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-main/30 focus:border-primary-main transition-colors" />
             </div>
@@ -258,6 +276,7 @@
             <input v-model="form.autoGenerate" type="checkbox" id="autoGenerate" class="rounded border-gray-300 dark:border-white/20 text-primary-main focus:ring-primary-main/30" />
             <label for="autoGenerate" class="text-sm text-gray-700 dark:text-gray-300">{{ t('recurring.autoGenerate') }}</label>
           </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ text('forecastHint') }}</p>
           <div class="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-white/10">
             <button
               type="button"
@@ -281,7 +300,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import {
   Plus, RefreshCw, Play, Pencil, Trash2, PauseCircle, PlayCircle,
   Search, Loader2, CreditCard, X
@@ -295,8 +314,33 @@ const isLoading = ref(false)
 const isSaving = ref(false)
 const isProcessing = ref(false)
 const payments = ref<any[]>([])
-const stats = ref({ active: 0, paused: 0, activeMonthlyAmount: 0 })
-const upcoming = ref({ count: 0, payments: [] })
+const stats = ref<any>({ active: 0, paused: 0, activeMonthlyAmount: null, monthlyEstimates: [] })
+const upcoming = ref<any>({ count: 0, payments: [] })
+const baseCurrencies = ['JPY', 'USD', 'EUR', 'KRW', 'CNY', 'GBP']
+const currencyChoices = computed(() => !form.currency || baseCurrencies.includes(form.currency) ? baseCurrencies : [form.currency, ...baseCurrencies])
+
+const pageText: Record<string, Record<string, string>> = {
+  ja: {
+    forecastHint: '生成されるのは「予定（未払い）」の取引です。支払い済み・入金済みの記録ではありません。',
+    saved: '予定（未払い）の取引を {date} 分として保存しました。',
+    existing: '{date} 分の予定はすでに保存されています。',
+    estimateMixed: '通貨別'
+  },
+  ko: {
+    forecastHint: '생성되는 것은 「예정(미지급)」 거래입니다. 지급·입금 완료 기록이 아닙니다.',
+    saved: '{date} 회차의 예정(미지급) 거래를 저장했습니다.',
+    existing: '{date} 회차의 예정은 이미 저장되어 있습니다.',
+    estimateMixed: '통화별'
+  }
+}
+const text = (key: string, values: Record<string, string> = {}) => (pageText[locale.value] || pageText.ja)[key].replace(/[{](\w+)[}]/g, (_: string, name: string) => values[name] ?? '')
+const typeLabel = (type?: string) => type === '支出' ? t('transactions.expense') : type === '入金' ? t('transactions.income') : t('common.unknown')
+// Each saved currency/type keeps its own estimate; amounts in different currencies are never added together.
+const monthlyEstimateText = computed(() => {
+  const groups = stats.value.monthlyEstimates || []
+  if (!groups.length) return formatCurrency(0, 'JPY')
+  return groups.map((g: any) => `${formatCurrency(g.amount, g.currency)}${g.transactionType === '入金' ? ' (' + t('transactions.income') + ')' : ''}`).join(' / ')
+})
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const editingId = ref<string | null>(null)
@@ -311,6 +355,8 @@ const form = reactive({
   name: '',
   description: '',
   amount: 0,
+  transactionType: '支出',
+  currency: 'JPY',
   frequency: 'monthly',
   startDate: new Date().toISOString().split('T')[0],
   endDate: '',
@@ -361,9 +407,11 @@ const savePayment = async () => {
       name: form.name,
       description: form.description,
       amount: form.amount,
+      transactionType: form.transactionType,
+      currency: form.currency,
       frequency: form.frequency,
       startDate: form.startDate,
-      endDate: form.endDate || undefined,
+      endDate: form.endDate || (showEditModal.value ? null : undefined),
       customer: { name: form.customerName },
       category: form.category,
       notes: form.notes,
@@ -392,6 +440,8 @@ const editPayment = (payment: any) => {
   form.name = payment.name
   form.description = payment.description || ''
   form.amount = payment.amount
+  form.transactionType = payment.transactionType || ''
+  form.currency = payment.currency || ''
   form.frequency = payment.frequency
   form.startDate = payment.startDate?.split('T')[0] || ''
   form.endDate = payment.endDate?.split('T')[0] || ''
@@ -427,9 +477,10 @@ const togglePause = async (payment: any) => {
 
 const generateNow = async (payment: any) => {
   try {
-    await $fetch(`/api/recurring/${payment.id}`, { method: 'POST', headers: userStore.authHeader })
-    alert('Transaction generated successfully')
+    const result: any = await $fetch(`/api/recurring/${payment.id}`, { method: 'POST', body: { expectedNextDueDate: payment.nextDueDate }, headers: userStore.authHeader })
+    alert(text(result.existing ? 'existing' : 'saved', { date: result.cycle }))
     await loadPayments()
+    await loadUpcoming()
   } catch (error: any) {
     console.error('Failed to generate:', error)
     alert(error.data?.statusMessage || 'Failed to generate transaction')
@@ -456,27 +507,31 @@ const closeModal = () => {
   showEditModal.value = false
   editingId.value = null
   Object.assign(form, {
-    name: '', description: '', amount: 0, frequency: 'monthly',
+    name: '', description: '', amount: 0, transactionType: '支出', currency: 'JPY', frequency: 'monthly',
     startDate: new Date().toISOString().split('T')[0], endDate: '',
     customerName: '', category: '', notes: '', autoGenerate: true
   })
 }
 
-const formatCurrency = (amount: number) => {
-  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
-  return new Intl.NumberFormat(currencyLocale, { style: 'currency', currency }).format(amount)
+// The saved currency decides the symbol; the UI language only decides number formatting.
+const formatCurrency = (amount: number, currency?: string) => {
+  const numberLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  if (!currency || !/^[A-Z]{3}$/.test(currency)) return `${new Intl.NumberFormat(numberLocale).format(amount)} (${t('common.unknown')})`
+  return new Intl.NumberFormat(numberLocale, { style: 'currency', currency }).format(amount)
 }
 
+// Due dates are calendar days stored as UTC midnight; show and compare the day itself.
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '-'
   const dateLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  return new Date(dateStr).toLocaleDateString(dateLocale)
+  return new Date(dateStr).toLocaleDateString(dateLocale, { timeZone: 'UTC' })
 }
 
 const isOverdue = (dateStr: string) => {
   if (!dateStr) return false
-  return new Date(dateStr) < new Date()
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return String(dateStr).slice(0, 10) < today
 }
 
 const getStatusBadgeClass = (status: string) => {

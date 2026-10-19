@@ -1,19 +1,31 @@
 // server/api/recurring/index.ts
-import { defineEventHandler, getQuery, readBody, createError } from 'h3'
+import { defineEventHandler, getQuery, readBody, createError, setHeader } from 'h3'
 import {
   getRecurringPayments,
   createRecurringPayment,
   getRecurringPaymentStats
 } from '../../services/recurringPaymentService'
 import { requireAuth } from '../../middleware/auth'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
- * GET /api/recurring - List all recurring payments
- * POST /api/recurring - Create new recurring payment
+ * GET /api/recurring - List the selected company's recurring payments
+ * POST /api/recurring - Create a recurring payment in the selected company
+ * The company is the token's selected company with a fresh active membership, never the request body.
  */
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
   const method = event.method
+  if (method !== 'GET' && method !== 'POST') {
+    throw createError({
+      statusCode: 405,
+      statusMessage: 'Method not allowed'
+    })
+  }
+  await ensureConnection()
+  const { auth: recurringActor, organizationId: recurringCompany } = await calendarCompany(event)
 
   // GET - List recurring payments
   if (method === 'GET') {
@@ -22,85 +34,35 @@ export default defineEventHandler(async (event) => {
 
       // Check if stats are requested
       if (query.stats === 'true') {
-        const stats = await getRecurringPaymentStats()
+        const stats = await getRecurringPaymentStats(recurringCompany)
         return { success: true, ...stats }
       }
 
-      const filters: Record<string, any> = {}
-      if (query.status) filters.status = query.status
-      if (query.frequency) filters.frequency = query.frequency
-      if (query.search) filters.search = query.search
-
-      const payments = await getRecurringPayments(filters)
-      return payments
+      return await getRecurringPayments(recurringCompany, { status: query.status, frequency: query.frequency, search: query.search })
     } catch (error: any) {
-      console.error('Error fetching recurring payments:', error)
+      if (error?.statusCode && error.statusCode < 500) throw error
+      console.error('Company recurring payment read failed')
       throw createError({
         statusCode: 500,
-        statusMessage: error.message || 'Failed to fetch recurring payments'
+        statusMessage: 'Failed to fetch recurring payments'
       })
     }
   }
 
-  // POST - Create recurring payment
-  if (method === 'POST') {
-    try {
-      const body = await readBody(event)
-
-      // Validate required fields
-      if (!body.name || !body.amount || !body.frequency || !body.startDate || !body.customer?.name) {
-        throw createError({
-          statusCode: 400,
-          statusMessage: 'Missing required fields: name, amount, frequency, startDate, customer.name'
-        })
-      }
-
-      // Validate frequency
-      const validFrequencies = ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly']
-      if (!validFrequencies.includes(body.frequency)) {
-        throw createError({
-          statusCode: 400,
-          statusMessage: `Invalid frequency. Must be one of: ${validFrequencies.join(', ')}`
-        })
-      }
-
-      const payment = await createRecurringPayment({
-        name: body.name,
-        description: body.description,
-        amount: parseFloat(body.amount),
-        currency: body.currency || 'JPY',
-        frequency: body.frequency,
-        dayOfMonth: body.dayOfMonth,
-        dayOfWeek: body.dayOfWeek,
-        startDate: new Date(body.startDate),
-        endDate: body.endDate ? new Date(body.endDate) : undefined,
-        nextDueDate: body.nextDueDate ? new Date(body.nextDueDate) : new Date(body.startDate),
-        source: body.source || 'manual',
-        customer: body.customer,
-        category: body.category,
-        tags: body.tags,
-        notes: body.notes,
-        autoGenerate: body.autoGenerate !== false,
-        metadata: body.metadata
-      })
-
-      return {
-        success: true,
-        message: 'Recurring payment created',
-        payment
-      }
-    } catch (error: any) {
-      if (error.statusCode) throw error
-      console.error('Error creating recurring payment:', error)
-      throw createError({
-        statusCode: 500,
-        statusMessage: error.message || 'Failed to create recurring payment'
-      })
+  // POST - Create recurring payment (required: name, amount, currency, transactionType, frequency, startDate, customer.name)
+  try {
+    const payment = await createRecurringPayment(recurringCompany, recurringActor.userId, await readBody(event))
+    return {
+      success: true,
+      message: 'Recurring payment created',
+      payment
     }
+  } catch (error: any) {
+    if (error?.statusCode && error.statusCode < 500) throw error
+    console.error('Company recurring payment creation failed')
+    throw createError({
+      statusCode: 500,
+      statusMessage: 'Failed to create recurring payment'
+    })
   }
-
-  throw createError({
-    statusCode: 405,
-    statusMessage: 'Method not allowed'
-  })
 })

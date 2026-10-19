@@ -1,101 +1,30 @@
 // server/api/budgets/index.ts
-import { defineEventHandler, readBody, getQuery, createError } from 'h3'
+// Company budgets: the company is the token's selected company with a fresh active membership (calendarCompany), never
+// the request body. Reads and writes go through the shared native companyBudgetService.
+import { defineEventHandler, readBody, getQuery, createError, setHeader } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Budget from '../../models/Budget'
-import Transaction from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
+import { listCompanyBudgets, createCompanyBudget } from '../../services/companyBudgetService'
 
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
-  await ensureConnection()
   const method = event.method
+  if (method !== 'GET' && method !== 'POST') throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
+  await ensureConnection()
+  const { auth: budgetActor, organizationId: budgetCompany } = await calendarCompany(event)
 
-  if (method === 'GET') {
-    const query = getQuery(event)
-    const { active, period } = query
-
-    const filter: any = {}
-    if (active === 'true') filter.isActive = true
-    if (period) filter.period = period
-
-    const budgets = await Budget.find(filter).sort({ createdAt: -1 }).lean()
-
-    // Calculate spending for each budget
-    const budgetsWithSpending = await Promise.all(budgets.map(async (budget: any) => {
-      const { startDate, endDate, period } = budget
-
-      // Calculate period dates
-      let periodStart = new Date(startDate)
-      let periodEnd = endDate ? new Date(endDate) : new Date()
-
-      const now = new Date()
-      if (period === 'monthly') {
-        periodStart = new Date(now.getFullYear(), now.getMonth(), 1)
-        periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-      } else if (period === 'quarterly') {
-        const quarter = Math.floor(now.getMonth() / 3)
-        periodStart = new Date(now.getFullYear(), quarter * 3, 1)
-        periodEnd = new Date(now.getFullYear(), (quarter + 1) * 3, 0)
-      } else if (period === 'yearly') {
-        periodStart = new Date(now.getFullYear(), 0, 1)
-        periodEnd = new Date(now.getFullYear(), 11, 31)
-      }
-
-      // Build transaction query
-      const txQuery: any = {
-        date: { $gte: periodStart, $lte: periodEnd }
-      }
-      if (budget.category) {
-        txQuery.$or = [
-          { category: budget.category },
-          { 'metadata.category': budget.category }
-        ]
-      }
-
-      const transactions = await Transaction.find(txQuery).lean()
-      const spent = transactions.reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0)
-      const percentage = budget.amount > 0 ? Math.round((spent / budget.amount) * 100) : 0
-      const remaining = budget.amount - spent
-      const isOverBudget = spent > budget.amount
-      const isNearLimit = percentage >= budget.alertThreshold && !isOverBudget
-
-      return {
-        ...budget,
-        id: budget._id,
-        spent,
-        remaining,
-        percentage,
-        isOverBudget,
-        isNearLimit,
-        periodStart,
-        periodEnd,
-        transactionCount: transactions.length
-      }
-    }))
-
-    return { budgets: budgetsWithSpending }
-  }
-
-  if (method === 'POST') {
-    const body = await readBody(event)
-
-    if (!body.name || !body.amount) {
-      throw createError({ statusCode: 400, statusMessage: 'Name and amount are required' })
+  try {
+    if (method === 'GET') {
+      const query = getQuery(event)
+      return { budgets: await listCompanyBudgets(budgetCompany, { active: query.active, period: query.period }) }
     }
-
-    const budget = await Budget.create({
-      name: body.name,
-      category: body.category,
-      amount: body.amount,
-      period: body.period || 'monthly',
-      startDate: body.startDate || new Date(),
-      endDate: body.endDate,
-      alertThreshold: body.alertThreshold || 80,
-      isActive: body.isActive !== false
-    })
-
+    const budget = await createCompanyBudget(budgetCompany, budgetActor.userId, await readBody(event))
     return { budget, message: 'Budget created successfully' }
+  } catch (error: any) {
+    if (error?.statusCode && error.statusCode < 500) throw error
+    console.error('Company budget request failed')
+    throw createError({ statusCode: 500, statusMessage: method === 'GET' ? 'Failed to read company budgets' : 'Failed to create company budget' })
   }
-
-  throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
 })

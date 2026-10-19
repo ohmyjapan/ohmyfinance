@@ -1,5 +1,5 @@
 // server/api/recurring/[id].ts
-import { defineEventHandler, readBody, createError } from 'h3'
+import { defineEventHandler, readBody, createError, setHeader } from 'h3'
 import {
   getRecurringPaymentById,
   updateRecurringPayment,
@@ -7,14 +7,17 @@ import {
   generateTransaction
 } from '../../services/recurringPaymentService'
 import { requireAuth } from '../../middleware/auth'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
- * GET /api/recurring/:id - Get a recurring payment
- * PUT /api/recurring/:id - Update a recurring payment
- * DELETE /api/recurring/:id - Delete a recurring payment
- * POST /api/recurring/:id - Generate transaction manually
+ * GET /api/recurring/:id - Get a recurring payment of the selected company
+ * PUT /api/recurring/:id - Partially update it (whitelisted fields)
+ * DELETE /api/recurring/:id - Delete it
+ * POST /api/recurring/:id - Save the pending forecast for body.expectedNextDueDate (the nextDueDate the caller read)
  */
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
   const id = event.context.params?.id
   const method = event.method
@@ -25,11 +28,19 @@ export default defineEventHandler(async (event) => {
       statusMessage: 'Recurring payment ID is required'
     })
   }
+  if (!['GET', 'PUT', 'PATCH', 'DELETE', 'POST'].includes(method)) {
+    throw createError({
+      statusCode: 405,
+      statusMessage: 'Method not allowed'
+    })
+  }
+  await ensureConnection()
+  const { organizationId: recurringItemCompany } = await calendarCompany(event)
 
-  // GET - Get single recurring payment
-  if (method === 'GET') {
-    try {
-      const payment = await getRecurringPaymentById(id)
+  try {
+    // GET - Get single recurring payment
+    if (method === 'GET') {
+      const payment = await getRecurringPaymentById(recurringItemCompany, id)
       if (!payment) {
         throw createError({
           statusCode: 404,
@@ -37,80 +48,42 @@ export default defineEventHandler(async (event) => {
         })
       }
       return payment
-    } catch (error: any) {
-      if (error.statusCode) throw error
-      console.error(`Error fetching recurring payment ${id}:`, error)
-      throw createError({
-        statusCode: 500,
-        statusMessage: error.message || 'Failed to fetch recurring payment'
-      })
     }
-  }
 
-  // PUT - Update recurring payment
-  if (method === 'PUT' || method === 'PATCH') {
-    try {
-      const body = await readBody(event)
-
-      // Parse dates if provided
-      if (body.startDate) body.startDate = new Date(body.startDate)
-      if (body.endDate) body.endDate = new Date(body.endDate)
-      if (body.nextDueDate) body.nextDueDate = new Date(body.nextDueDate)
-
-      const payment = await updateRecurringPayment(id, body)
+    // PUT - Update recurring payment
+    if (method === 'PUT' || method === 'PATCH') {
+      const payment = await updateRecurringPayment(recurringItemCompany, id, await readBody(event))
       return {
         success: true,
         message: 'Recurring payment updated',
         payment
       }
-    } catch (error: any) {
-      if (error.statusCode) throw error
-      console.error(`Error updating recurring payment ${id}:`, error)
-      throw createError({
-        statusCode: error.message?.includes('not found') ? 404 : 500,
-        statusMessage: error.message || 'Failed to update recurring payment'
-      })
     }
-  }
 
-  // DELETE - Delete recurring payment
-  if (method === 'DELETE') {
-    try {
-      const payment = await deleteRecurringPayment(id)
+    // DELETE - Delete recurring payment
+    if (method === 'DELETE') {
+      const payment = await deleteRecurringPayment(recurringItemCompany, id)
       return {
         success: true,
         message: 'Recurring payment deleted',
         payment
       }
-    } catch (error: any) {
-      console.error(`Error deleting recurring payment ${id}:`, error)
-      throw createError({
-        statusCode: error.message?.includes('not found') ? 404 : 500,
-        statusMessage: error.message || 'Failed to delete recurring payment'
-      })
     }
-  }
 
-  // POST - Generate transaction from this recurring payment
-  if (method === 'POST') {
-    try {
-      const result = await generateTransaction(id)
-      return {
-        success: true,
-        message: 'Transaction generated successfully',
-        ...result
-      }
-    } catch (error: any) {
-      console.error(`Error generating transaction for ${id}:`, error)
-      throw createError({
-        statusCode: error.message?.includes('not found') ? 404 : 400,
-        statusMessage: error.message || 'Failed to generate transaction'
-      })
+    // POST - Save the pending forecast for exactly the cycle the caller read
+    const body = await readBody(event)
+    const result = await generateTransaction(recurringItemCompany, id, { expectedNextDueDate: body?.expectedNextDueDate })
+    return {
+      success: true,
+      message: result.existing ? 'Forecast already saved for this cycle' : 'Pending forecast saved',
+      ...result
     }
+  } catch (error: any) {
+    if (error?.statusCode && error.statusCode < 500) throw error
+    console.error('Company recurring payment request failed')
+    throw createError({
+      statusCode: 500,
+      statusMessage: method === 'POST' ? 'Failed to generate transaction' : 'Failed to process recurring payment'
+    })
   }
-
-  throw createError({
-    statusCode: 405,
-    statusMessage: 'Method not allowed'
-  })
 })

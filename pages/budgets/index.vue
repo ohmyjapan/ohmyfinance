@@ -18,21 +18,24 @@
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
       <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.totalBudgeted') }}</div>
-        <div class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(stats.totalBudget) }}</div>
+        <div v-for="group in stats" :key="'b' + group.currency" class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(group.budget, group.currency) }}</div>
+        <div v-if="!stats.length" class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">-</div>
       </div>
       <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.totalSpent') }}</div>
-        <div class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(stats.totalSpent) }}</div>
+        <div v-for="group in stats" :key="'s' + group.currency" class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(group.spent, group.currency) }}</div>
+        <div v-if="!stats.length" class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">-</div>
       </div>
       <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.remaining') }}</div>
-        <div class="text-2xl font-bold font-mono" :class="stats.remaining >= 0 ? 'text-green-600' : 'text-red-600'">
-          {{ formatCurrency(stats.remaining) }}
+        <div v-for="group in stats" :key="'r' + group.currency" class="text-2xl font-bold font-mono" :class="group.budget - group.spent >= 0 ? 'text-green-600' : 'text-red-600'">
+          {{ formatCurrency(group.budget - group.spent, group.currency) }}
         </div>
+        <div v-if="!stats.length" class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">-</div>
       </div>
       <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('budgets.overBudget') }}</div>
-        <div class="text-2xl font-bold font-mono text-red-600">{{ stats.overBudgetCount }}</div>
+        <div class="text-2xl font-bold font-mono text-red-600">{{ overBudgetCount }}</div>
       </div>
     </div>
 
@@ -58,13 +61,14 @@
                 <h3 class="font-medium text-gray-900 dark:text-gray-100">{{ budget.name }}</h3>
                 <p class="text-sm text-gray-500 dark:text-gray-400">
                   {{ budget.category || t('budgets.allCategories') }} · {{ budget.period }}
+                  <span v-if="budget.spending?.range"> · {{ budget.spending.range.start }} – {{ budget.spending.range.end }} ({{ budget.spending.timezone }})</span>
                 </p>
               </div>
             </div>
             <div class="flex items-center space-x-4">
               <div class="text-right">
                 <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  {{ formatCurrency(budget.spent) }} / {{ formatCurrency(budget.amount) }}
+                  {{ formatCurrency(budget.spent, budget.currency) }} / {{ formatCurrency(budget.amount, budget.currency) }}
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                   {{ budget.transactionCount }} {{ t('nav.transactions') }}
@@ -88,7 +92,7 @@
                 {{ budget.percentage }}% {{ t('budgets.used') }}
               </span>
               <span class="text-gray-500 dark:text-gray-400">
-                {{ formatCurrency(budget.remaining) }} {{ t('budgets.remaining') }}
+                {{ formatCurrency(budget.remaining, budget.currency) }} {{ t('budgets.remaining') }}
               </span>
             </div>
             <div class="w-full bg-gray-200 dark:bg-slate-600 rounded-full h-2">
@@ -103,12 +107,17 @@
           <!-- Alert -->
           <div v-if="budget.isOverBudget" class="mt-2 flex items-center text-red-600 text-sm">
             <AlertTriangle class="h-4 w-4 mr-1" />
-            {{ t('budgets.overBudgetBy', { amount: formatCurrency(Math.abs(budget.remaining)) }) }}
+            {{ t('budgets.overBudgetBy', { amount: formatCurrency(Math.abs(budget.remaining), budget.currency) }) }}
           </div>
           <div v-else-if="budget.isNearLimit" class="mt-2 flex items-center text-yellow-600 text-sm">
             <AlertTriangle class="h-4 w-4 mr-1" />
             {{ t('budgets.approachingLimit') }}
           </div>
+
+          <!-- Evidence limits: what the completed-expense total does not include -->
+          <ul v-if="evidenceNotes(budget).length" class="mt-2 space-y-0.5 text-xs text-amber-700 dark:text-amber-400">
+            <li v-for="line in evidenceNotes(budget)" :key="line">{{ line }}</li>
+          </ul>
         </div>
       </div>
     </div>
@@ -153,6 +162,17 @@
                   min="0"
                   class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
               />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('transactions.currency') }}</label>
+              <select
+                  v-model="form.currency"
+                  required
+                  class="w-full border border-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 rounded-xl px-3 py-2"
+              >
+                <option v-for="code in currencyChoices" :key="code" :value="code">{{ code }}</option>
+              </select>
             </div>
 
             <div>
@@ -227,22 +247,65 @@ const form = reactive({
   name: '',
   category: '',
   amount: 0,
+  currency: 'JPY',
   period: 'monthly',
   alertThreshold: 80,
   isActive: true
 })
 
+const baseCurrencies = ['JPY', 'USD', 'EUR', 'KRW', 'CNY', 'GBP']
+const currencyChoices = computed(() => !form.currency || baseCurrencies.includes(form.currency) ? baseCurrencies : [form.currency, ...baseCurrencies])
+
+// Totals are kept per saved budget currency; different currencies are never added together.
 const stats = computed(() => {
-  const totalBudget = budgets.value.reduce((sum, b) => sum + b.amount, 0)
-  const totalSpent = budgets.value.reduce((sum, b) => sum + b.spent, 0)
-  const overBudgetCount = budgets.value.filter(b => b.isOverBudget).length
-  return {
-    totalBudget,
-    totalSpent,
-    remaining: totalBudget - totalSpent,
-    overBudgetCount
+  const groups = new Map<string, { currency: string, budget: number, spent: number }>()
+  for (const b of budgets.value) {
+    const currency = b.currency || ''
+    const group = groups.get(currency) || { currency, budget: 0, spent: 0 }
+    group.budget += Number(b.amount) || 0
+    group.spent += Number(b.spent) || 0
+    groups.set(currency, group)
   }
+  return [...groups.values()]
 })
+const overBudgetCount = computed(() => budgets.value.filter(b => b.isOverBudget).length)
+
+const notesText: Record<string, Record<string, string>> = {
+  ja: {
+    basis: '完了済みの支出のみを集計しています（予定・未確定は含みません）。',
+    pending: '予定（未払い）{count}件 {amount} は含まれていません。',
+    other: '別通貨の支出 {list} は含まれていません。',
+    unknown: '通貨が不明な支出 {count}件は含まれていません（0円ではありません）。',
+    unclassified: 'カテゴリ未設定の支出 {count}件は含まれていません。',
+    negative: '返金・マイナス {count}件 {amount} を差し引いています。',
+    outside: 'この期間は予算の開始日・終了日の範囲外です。',
+    category: 'カテゴリは取引の保存済みカテゴリ文字列との完全一致で判定しています。'
+  },
+  ko: {
+    basis: '완료된 지출만 집계합니다 (예정·미확정 제외).',
+    pending: '예정(미지급) {count}건 {amount}은 포함되지 않습니다.',
+    other: '다른 통화 지출 {list}은 포함되지 않습니다.',
+    unknown: '통화를 알 수 없는 지출 {count}건은 포함되지 않습니다 (0이 아닙니다).',
+    unclassified: '카테고리가 없는 지출 {count}건은 포함되지 않습니다.',
+    negative: '환불·마이너스 {count}건 {amount}을 차감했습니다.',
+    outside: '이 기간은 예산 시작일·종료일 범위 밖입니다.',
+    category: '카테고리는 거래에 저장된 카테고리 문자열과의 완전 일치로 판단합니다.'
+  }
+}
+const note = (key: string, values: Record<string, string | number> = {}) => (notesText[locale.value] || notesText.ja)[key].replace(/[{](\w+)[}]/g, (_: string, name: string) => String(values[name] ?? ''))
+const evidenceNotes = (budget: any) => {
+  const s = budget.spending
+  if (!s) return []
+  const notes = [note('basis')]
+  if (s.outsideBudgetDates) notes.push(note('outside'))
+  if (s.categoryMatch === 'category_text') notes.push(note('category'))
+  if (s.pendingForecast?.count) notes.push(note('pending', { count: s.pendingForecast.count, amount: formatCurrency(s.pendingForecast.amount, budget.currency) }))
+  if (s.otherCurrencies?.length) notes.push(note('other', { list: s.otherCurrencies.map((g: any) => `${formatCurrency(g.amount, g.currency)} (${g.count})`).join(', ') }))
+  if (s.unknownCurrency?.count) notes.push(note('unknown', { count: s.unknownCurrency.count }))
+  if (s.unclassified?.count) notes.push(note('unclassified', { count: s.unclassified.count }))
+  if (s.negative?.count) notes.push(note('negative', { count: s.negative.count, amount: formatCurrency(s.negative.amount, budget.currency) }))
+  return notes
+}
 
 const loadBudgets = async () => {
   isLoading.value = true
@@ -262,6 +325,7 @@ const openModal = (budget?: any) => {
     form.name = budget.name
     form.category = budget.category || ''
     form.amount = budget.amount
+    form.currency = budget.currency || ''
     form.period = budget.period
     form.alertThreshold = budget.alertThreshold
     form.isActive = budget.isActive
@@ -270,6 +334,7 @@ const openModal = (budget?: any) => {
     form.name = ''
     form.category = ''
     form.amount = 0
+    form.currency = 'JPY'
     form.period = 'monthly'
     form.alertThreshold = 80
     form.isActive = true
@@ -309,10 +374,11 @@ const deleteBudget = async (id: string) => {
   }
 }
 
-const formatCurrency = (value: number) => {
-  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
-  return new Intl.NumberFormat(currencyLocale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(value)
+// The saved currency decides the symbol; the UI language only decides number formatting.
+const formatCurrency = (value: number, currency?: string) => {
+  const numberLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
+  if (!currency || !/^[A-Z]{3}$/.test(currency)) return `${new Intl.NumberFormat(numberLocale).format(value)} (${t('common.unknown')})`
+  return new Intl.NumberFormat(numberLocale, { style: 'currency', currency }).format(value)
 }
 
 const getBudgetColor = (budget: any) => {

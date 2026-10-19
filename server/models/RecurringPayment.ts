@@ -2,10 +2,15 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IRecurringPayment extends Document {
+  // Company and creator are set only by trusted server code (strict:false), never declared as schema paths, so a legacy
+  // backup restore or a request body cannot assign ownership; unassigned legacy rows stay invisible to company routes.
+  organizationId?: mongoose.Types.ObjectId
+  createdBy?: mongoose.Types.ObjectId
   name: string
   description?: string
   amount: number
   currency: string
+  transactionType?: '支出' | '入金' // explicit; rows without it are never inferred
   frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly'
   dayOfMonth?: number  // For monthly/quarterly/yearly
   dayOfWeek?: number   // For weekly/biweekly (0-6, Sunday-Saturday)
@@ -26,6 +31,7 @@ export interface IRecurringPayment extends Document {
   autoGenerate: boolean  // Whether to auto-create transactions
   generatedTransactionIds?: mongoose.Types.ObjectId[]
   metadata?: Record<string, any>
+  naviOperation?: Record<string, unknown> // internal durable marker; only trusted server operations set it
   createdAt: Date
   updatedAt: Date
 }
@@ -45,6 +51,10 @@ const RecurringPaymentSchema = new Schema<IRecurringPayment>({
   currency: {
     type: String,
     default: 'JPY'
+  },
+  transactionType: {
+    type: String,
+    enum: ['支出', '入金']
   },
   frequency: {
     type: String,
@@ -99,7 +109,8 @@ const RecurringPaymentSchema = new Schema<IRecurringPayment>({
   metadata: {
     type: Map,
     of: Schema.Types.Mixed
-  }
+  },
+  naviOperation: Schema.Types.Mixed
 }, {
   timestamps: true,
   toJSON: {
@@ -116,6 +127,8 @@ const RecurringPaymentSchema = new Schema<IRecurringPayment>({
 // Indexes
 RecurringPaymentSchema.index({ status: 1, nextDueDate: 1 })
 RecurringPaymentSchema.index({ 'customer.name': 1 })
+RecurringPaymentSchema.index({ organizationId: 1, status: 1, nextDueDate: 1 })
+RecurringPaymentSchema.index({ organizationId: 1, createdAt: -1 })
 
 export default mongoose.models.RecurringPayment ||
   mongoose.model<IRecurringPayment>('RecurringPayment', RecurringPaymentSchema)

@@ -1,54 +1,39 @@
 // server/api/budgets/[id].ts
-import { defineEventHandler, readBody, createError } from 'h3'
+// One company budget: read/update/delete only inside the token's selected company with a fresh active membership.
+import { defineEventHandler, readBody, createError, setHeader } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Budget from '../../models/Budget'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
+import { getCompanyBudget, updateCompanyBudget, deleteCompanyBudget } from '../../services/companyBudgetService'
 
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'Cache-Control', 'no-store')
   requireAuth(event)
   const id = event.context.params?.id
   if (!id) {
     throw createError({ statusCode: 400, statusMessage: 'Budget ID required' })
   }
+  const method = event.method
+  if (!['GET', 'PUT', 'DELETE'].includes(method)) throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
 
   await ensureConnection()
-  const method = event.method
+  const { organizationId: budgetItemCompany } = await calendarCompany(event)
 
-  if (method === 'GET') {
-    const budget = await Budget.findById(id).lean()
-    if (!budget) {
-      throw createError({ statusCode: 404, statusMessage: 'Budget not found' })
+  try {
+    if (method === 'GET') {
+      const budget = await getCompanyBudget(budgetItemCompany, id)
+      if (!budget) throw createError({ statusCode: 404, statusMessage: 'Budget not found' })
+      return { budget }
     }
-    return { budget: { ...budget, id: budget._id } }
-  }
-
-  if (method === 'PUT') {
-    const body = await readBody(event)
-    const budget = await Budget.findByIdAndUpdate(id, {
-      name: body.name,
-      category: body.category,
-      amount: body.amount,
-      period: body.period,
-      startDate: body.startDate,
-      endDate: body.endDate,
-      alertThreshold: body.alertThreshold,
-      isActive: body.isActive
-    }, { new: true }).lean()
-
-    if (!budget) {
-      throw createError({ statusCode: 404, statusMessage: 'Budget not found' })
+    if (method === 'PUT') {
+      const budget = await updateCompanyBudget(budgetItemCompany, id, await readBody(event))
+      return { budget, message: 'Budget updated' }
     }
-
-    return { budget: { ...budget, id: budget._id }, message: 'Budget updated' }
-  }
-
-  if (method === 'DELETE') {
-    const result = await Budget.findByIdAndDelete(id)
-    if (!result) {
-      throw createError({ statusCode: 404, statusMessage: 'Budget not found' })
-    }
+    await deleteCompanyBudget(budgetItemCompany, id)
     return { message: 'Budget deleted' }
+  } catch (error: any) {
+    if (error?.statusCode && error.statusCode < 500) throw error
+    console.error('Company budget item request failed')
+    throw createError({ statusCode: 500, statusMessage: 'Failed to process company budget' })
   }
-
-  throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
 })
