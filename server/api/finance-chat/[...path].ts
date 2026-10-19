@@ -10,14 +10,14 @@ import { selectedPostingCompany } from '../../services/financeNaviPostingService
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  const parts=(event.path.split('?')[0].split('/api/finance-chat/')[1]||'').split('/').filter(Boolean)
- const body=async(optional=false)=>{try{const raw=(await boundedBody(event,14000)).toString('utf8');return JSON.parse(raw||(optional?'{}':''))}catch(e:any){if(e.statusCode)throw e;fail(400,'Invalid conversation JSON')}}
+ const body=async(optional=false,maxBytes=14000)=>{try{const raw=(await boundedBody(event,maxBytes)).toString('utf8');return JSON.parse(raw||(optional?'{}':''))}catch(e:any){if(e.statusCode)throw e;fail(400,'Invalid conversation JSON')}}
  try{
   if(parts[0]==='worker'){
    const agent=await chatAgent(event)
    if(event.method==='POST'&&parts.length===2&&parts[1]==='heartbeat'){await chatHeartbeat(agent,await body(true));return {success:true}}
    // The workspace claim carries the worker's actual public-research capability report; none reported clears the stored one.
    if(event.method==='POST'&&parts.length===2&&parts[1]==='workspace-claim'){const b=await body(true);await chatHeartbeat(agent,{capabilities:b?.capabilities===undefined?null:b.capabilities});return await claimAssistant(agent)}
-   if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='result')return await finishAssistant(agent,parts[2],await body())
+   if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='result')return await finishAssistant(agent,parts[2],await body(false,64000))
    // Named, lease-bound Navi actions on the claimed conversation (workspace or purchase); the body carries lease, slot, name, args.
    const actionBody=async()=>{try{return JSON.parse((await boundedBody(event,64000)).toString('utf8'))}catch(e:any){if(e.statusCode)throw e;fail(400,'Invalid action JSON')}}
    if(event.method==='POST'&&parts.length===4&&parts[1]==='workspace'&&parts[3]==='actions')return await actionAssistant(agent,parts[2],await actionBody())
