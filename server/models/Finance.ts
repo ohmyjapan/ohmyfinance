@@ -73,6 +73,7 @@ const entry = new Schema({
   occurrence: Number, coverage: { type: String, required: true },
   importId: { type: oid, required: true }, line: Number,
   transactionId: { type: oid, required: true }, state: { type: String, default: 'reserved' },
+  postingOrganizationId: { type: oid }, // server-captured ledger company; unrelated to calendar bills
   draftSnapshot: Schema.Types.Mixed,
   row: { type: Schema.Types.Mixed, required: true }, linkedExisting: { type: Boolean, default: false }
 }, common)

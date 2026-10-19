@@ -1,8 +1,9 @@
 import { readMerchantLink, saveMerchantLink } from '../../services/financeSupplierService'
 import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
+import { calendarCompany } from '../../utils/calendarAccess'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, autoSyncInput, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, originalFile } from '../../services/financeService'
+import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, autoSyncInput, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
 import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
 
 // A JSON artifact of the collector (notice, mail receipt): bounded by csvBody, parsed once, never echoed back.
@@ -168,6 +169,10 @@ export default defineEventHandler(async event => {
       if (parts[2] === 'calendar' && parts.length === 3 && method === 'GET') return await importCalendarReview(ownerId, parts[1])
       if (parts[2] === 'calendar' && parts.length === 3 && method === 'PUT') return await linkImport(ownerId, parts[1], await readBody(event))
       if (parts[2] === 'mapping' && parts.length === 3 && method === 'GET') return await reviewMapping(ownerId, parts[1])
+      if (parts[2] === 'company-commit' && parts.length === 3 && method === 'POST') {
+        const { organizationId } = await calendarCompany(event)
+        return await commitCompanyImport(ownerId, parts[1], await readBody(event), organizationId)
+      }
       if (parts[2] === 'commit' && parts.length === 3 && method === 'POST') return await commitImport(ownerId, parts[1], await readBody(event))
       if (parts[2] === 'file' && parts.length === 3 && method === 'GET') {
         const batch = await ownedImport(ownerId, parts[1])

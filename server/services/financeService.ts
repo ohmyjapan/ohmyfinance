@@ -16,6 +16,7 @@ import { aplusPeriod } from '../../shared/aplus.mjs'
 import { isPending, isFinalStatement } from '../../shared/finance-pending.mjs'
 
 import { FinanceDraft } from '../models/FinanceDraft'
+import { verifyPostingCompany, claimPostingCompany, insertCompanyPosting } from './financeCompanyPostingService'
 import { reconcileBill, importEvidence, importCalendarEligible, RETRY_IMPORT_STATES } from './financeBillService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { buildSourceReferences, sourceReferenceGroups, sourceReferenceAt, verifySourceReferences, activeImportRows } from '../../shared/finance-import-overlap.mjs'
@@ -255,22 +256,22 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
   } finally { await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: lease }, { $unset: { commitLease: '', commitLeaseUntil: '' } }) }
 }
 
-async function candidates(account: any, rows: CardRow[]) {
+async function candidates(account: any, rows: CardRow[], organizationId?: mongoose.Types.ObjectId) {
   const dates = [...new Set(rows.flatMap(row => [row.purchaseDate, row.processingDate]).filter((date): date is string => typeof date === 'string'))]
   const cards = account.cardIdentifiers.map((v: string) => v.slice(-4))
   const sorted = dates.sort()
   if (!sorted.length) return []
-  const records: any[] = await Transaction.find({ date: { $gte: new Date(Date.parse(sorted[0]) - 9*3600000), $lt: new Date(Date.parse(sorted.at(-1)!) + 86400000) }, amount: { $in: rows.map(r => Math.abs(r.amount)) }, 'metadata.financeEntryId': { $exists: false }, $or: [{ cardNumber: { $in: [...cards, ...account.cardIdentifiers] } }, { cardNumber: { $exists: false } }, { cardNumber: '' }, { cardNumber: null }] }).select('_id date amount notes productName cardNumber type').limit(10001).lean()
+  const records: any[] = await Transaction.find({ ...(organizationId ? { organizationId } : {}), date: { $gte: new Date(Date.parse(sorted[0]) - 9*3600000), $lt: new Date(Date.parse(sorted.at(-1)!) + 86400000) }, amount: { $in: rows.map(r => Math.abs(r.amount)) }, 'metadata.financeEntryId': { $exists: false }, $or: [{ cardNumber: { $in: [...cards, ...account.cardIdentifiers] } }, { cardNumber: { $exists: false } }, { cardNumber: '' }, { cardNumber: null }] }).select('_id date amount notes productName cardNumber type').limit(10001).lean()
   if (records.length > 10000) fail(409, 'Too many historical matches; split the import period')
   return records
 }
-export async function reviewImport(ownerId: string, importId: string) {
+export async function reviewImport(ownerId: string, importId: string, organizationId?: mongoose.Types.ObjectId) {
   const batch = await ownedImport(ownerId, importId)
   const account = await ownedAccount(ownerId, batch.accountId.toString())
   const rows: CardRow[] = batch.rows
   const references = await importSourceReferences(batch)
   const settlements = await pendingSettlements(batch)
-  const [entries, legacy] = await Promise.all([FinanceEntry.find({ accountId: account._id, $or: [{ fingerprint: { $in: rows.map(r => r.fingerprint) } }, { 'row.purchaseDate': { $in: rows.map(r => r.purchaseDate) }, 'row.amount': { $in: rows.map(r => r.amount) } }] }).limit(20001).lean(), candidates(account, rows)])
+  const [entries, legacy] = await Promise.all([FinanceEntry.find({ accountId: account._id, $or: [{ fingerprint: { $in: rows.map(r => r.fingerprint) } }, { 'row.purchaseDate': { $in: rows.map(r => r.purchaseDate) }, 'row.amount': { $in: rows.map(r => r.amount) } }] }).limit(20001).lean(), candidates(account, rows, organizationId)])
   if (entries.length > 20000) fail(409, 'Too many source matches; split the import period')
   const byKey = new Map(entries.map((entry: any) => [entry.key, entry]))
   const view = rows.map(row => {
@@ -302,6 +303,14 @@ export async function reviewMapping(ownerId: string, importId: string) {
 }
 
 export async function commitImport(ownerId: string, importId: string, body: any) {
+  return commitScopedImport(ownerId, importId, body)
+}
+
+export async function commitCompanyImport(ownerId: string, importId: string, body: any, organizationId: mongoose.Types.ObjectId) {
+  return commitScopedImport(ownerId, importId, body, organizationId)
+}
+
+async function commitScopedImport(ownerId: string, importId: string, body: any, organizationId?: mongoose.Types.ObjectId) {
   if (!Array.isArray(body?.decisions) || !body.decisions.length || body.decisions.length > 5000) fail(400, 'Select rows to review')
   const initial = await ownedImport(ownerId, importId)
   // External client/category labels are preview data, not ledger ObjectIds.
@@ -311,7 +320,8 @@ export async function commitImport(ownerId: string, importId: string, body: any)
   if (!locked) fail(409, 'Another import is being reviewed; retry shortly')
   let posted = 0, linked = 0, skipped = 0
   try {
-    const view = await reviewImport(ownerId, importId)
+    await verifyPostingCompany(ownerId, initial, organizationId)
+    const view = await reviewImport(ownerId, importId, organizationId)
     const rows = new Map(view.rows.map(r => [r.line, r]))
     const seen = new Set<number>()
     const snapshots = new Map<number, any>()
@@ -339,6 +349,7 @@ export async function commitImport(ownerId: string, importId: string, body: any)
         } else if (locked.provider === 'aplus' || locked.accounting || await FinanceDraft.exists({ ownerId, importId: initial._id, line: row.line })) fail(409, 'Review and approve the saved draft before posting')
       }
     }
+    if (organizationId && body.decisions.some((decision: any) => decision.action !== 'skip' && !['posted', 'duplicate'].includes(rows.get(decision.line)!.state))) await claimPostingCompany(ownerId, initial, organizationId)
     for (const decision of body.decisions) {
       const row = rows.get(decision.line)!
       if (decision.action !== 'skip') assertEditableImportRow(initial, row.line)
@@ -355,16 +366,17 @@ export async function commitImport(ownerId: string, importId: string, body: any)
         if (!selected || row.state !== 'legacy_review') fail(400, 'Choose an exact historical candidate')
         transactionId = new mongoose.Types.ObjectId(id(decision.transactionId))
       }
-      const entry: any = await FinanceEntry.findOneAndUpdate({ accountId: initial.accountId, key }, { $setOnInsert: { ownerId, fingerprint: row.fingerprint, occurrence: row.occurrence, coverage: initial.period.key, importId: initial._id, line: row.line, transactionId, row, draftSnapshot: snapshots.get(row.line), linkedExisting: decision.action === 'link', state: 'reserved' } }, { upsert: true, new: true })
+      const entry: any = await FinanceEntry.findOneAndUpdate({ accountId: initial.accountId, key }, { $setOnInsert: { ownerId, fingerprint: row.fingerprint, occurrence: row.occurrence, coverage: initial.period.key, importId: initial._id, line: row.line, transactionId, row, ...(organizationId ? { postingOrganizationId: organizationId } : {}), draftSnapshot: snapshots.get(row.line), linkedExisting: decision.action === 'link', state: 'reserved' } }, { upsert: true, new: true })
       if (entry.importId.toString() !== initial._id.toString()) fail(409, 'Source row was claimed by another import; refresh the review')
+      if (organizationId ? String(entry.postingOrganizationId) !== String(organizationId) : !!entry.postingOrganizationId) fail(409, 'Posting company or reservation ownership needs review')
       if (entry.state === 'posted') { skipped++; continue }
       if (entry.linkedExisting !== (decision.action === 'link') || (entry.linkedExisting && entry.transactionId.toString() !== decision.transactionId)) fail(409, 'Resume the previously selected action for this row')
       if (entry.linkedExisting) {
         // A link records evidence without rewriting the user's existing accounting data.
-        if (!await Transaction.exists({ _id: entry.transactionId })) fail(409, 'Historical transaction no longer exists')
+        if (!await Transaction.exists({ _id: entry.transactionId, ...(organizationId ? { organizationId } : {}) })) fail(409, 'Historical transaction no longer exists')
         linked++
       } else {
-        await Transaction.updateOne({ _id: entry.transactionId }, { $setOnInsert: {
+        const payload = {
           referenceNumber: `${(view.account.provider || 'amex').toUpperCase()}-${entry._id}`, date: new Date(row.purchaseDate), status: 'completed',
           accountCategoryId: body.accountCategoryId || undefined,
           hasReceipt: false, notes: row.description, items: [], attachments: [], tags: ['imported', view.account.provider || 'amex'],
@@ -373,7 +385,9 @@ export async function commitImport(ownerId: string, importId: string, body: any)
           amount: row.amount, type: '支出', paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
           metadata: { ...(row.settlement?.source ? { finalizedSource: row.settlement.source } : {}), financeEntryId: entry._id.toString(), financialAccountId: initial.accountId.toString(), importBatchId: initial._id.toString(), importSource: view.account.provider || 'amex', originalCardIdentifier: row.cardIdentifier, processingDate: row.processingDate, currency: row.currency, foreignAmount: row.foreignAmount, exchangeRate: row.exchangeRate, ...(entry.draftSnapshot ? { financeDraftId: entry.draftSnapshot.draftId, financeDraftRevision: entry.draftSnapshot.revision, mappingPurpose: entry.draftSnapshot.purpose, mappingEvidence: entry.draftSnapshot.evidence, financeDocuments: entry.draftSnapshot.documents } : {}) },
           timeline: [{ type: 'imported', title: view.account.provider === 'aplus' ? 'Aplus取込' : 'Amex取込', timestamp: new Date(), description: `${view.account.name} / ${initial.period.start} - ${initial.period.end}` }]
-        } }, { upsert: true, runValidators: true })
+        }
+        if (organizationId) await insertCompanyPosting(entry, payload, organizationId)
+        else await Transaction.updateOne({ _id: entry.transactionId }, { $setOnInsert: payload }, { upsert: true, runValidators: true })
         posted++
       }
       await FinanceEntry.updateOne({ _id: entry._id }, { $set: { state: 'posted' } })
