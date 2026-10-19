@@ -162,3 +162,9 @@ production performance require separate evidence. Independent review and deploym
 ### Account-label check record
 
 Captured files retain `labelChecked`: true only when a retrieve manifest records the comparison and the frozen job has a nonblank account label. Blank labels, observation files and older manifests without this record show **口座照合 未確認** in the received-files list and importer picker. A matched label shows **口座照合 確認済み**. Recovery preserves the result written before the export; re-delivery keeps the first capture record. This is the collector's account-label comparison, not bank registration or T-number verification. No new rejection or import hold is added; the owner can review and map an unchecked file.
+
+### Observation document identity and unavailable action capture
+
+Actions retain a local document identity and a value-free snapshot taken at event time, including actions before the next polling record and before export/closure. The identity is not uploaded; the existing page-record fields are normalized in Node. No typed values are added. New records include `eventChannel:true/false`. If channel setup fails, useful page records are retained with `false`; the job and observation view show 「操作の記録なし（画面の記録は保存済み）」. Legacy/unrecognized channel values are stored as `null`, without a new rejection.
+
+This correction does not verify a real bank portal or waive historical replay. Provider contracts remain pending.

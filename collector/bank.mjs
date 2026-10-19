@@ -151,8 +151,11 @@ const observeBindingName = () => 'o' + randomBytes(8).toString('hex').slice(0, 1
 // Installed on every new document before the start page is opened: capture-phase listeners that hand Node the clicked
 // control's tag/text/id and the edited field's id/type through the session binding at event time — never a value, never
 // the DOM. A document without the binding (the channel failed) drops the call silently; the pages are still recorded.
-const LISTENERS = name => {
-  const send = payload => { try { window[name](JSON.stringify(payload)); } catch { /* no binding in this document */ } };
+const LISTENERS = (name, read) => {
+  const documentId = String(performance.timeOrigin) + ':' + Math.random().toString(36).slice(2);
+  const pageState = () => ({ documentId, snapshot: read() });
+  window[name + 'Snapshot'] = pageState;
+  const send = payload => { try { window[name](JSON.stringify({ ...payload, pageState: pageState() })); } catch { /* no binding in this document */ } };
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target.closest('button, a, [role="button"], input[type="submit"]') : null;
     if (!target) return;
@@ -185,16 +188,23 @@ function attachEvent(target, event) {
   if (target.typedInto.some(t => t.id === fields.id && t.type === fields.type)) return;
   if (target.typedInto.length < 100) target.typedInto.push(fields); else target.eventsDropped++;
 }
+// The event envelope carries the same value-free page read as the poll. Normalize it again in Node: the page can call
+// the binding itself, and neither unknown keys nor input values belong in the saved record. Document ids stay local.
+const pageSnapshot = value => {
+  const str = (v, max) => String(v ?? '').slice(0, max), list = (v, max) => Array.isArray(v) ? v.slice(0, max) : [];
+  return { pathname: str(value?.pathname, 300), title: str(value?.title, 200), visibleControls: list(value?.visibleControls, 60).map(v => str(v, 40)),
+    inputs: list(value?.inputs, 100).map(v => ({ id: str(v?.id, 100), type: str(v?.type, 30) })), selects: list(value?.selects, 100).map(v => Number.isSafeInteger(v) ? v : 0) };
+};
 /**
  * The preparatory observe stage of an unverified bank: the start page (the frozen variant's, through the adapter) is opened,
  * the person is asked to navigate (and to export the CSV when the portal offers it), and the collector records one entry per
  * page change until the tab is closed, the session is cancelled or the deadline passes — plus, on each entry, the person's
  * clicks and edited fields as value-free metadata received at event time through a CDP binding (Runtime.enable, then
- * Runtime.addBinding on the page's own session; listeners installed on every new document). Events wait in `pending` and are
- * attached, in arrival order and bounded, to the record that was current when they arrived: before each poll reads the page
- * (so a click that navigates stays on its source page), after a record is created, and once more when the loop ends (so the
- * last interval before the export or the close survives). The change key and its exit never see them, so an unchanged page
- * keeps them. One completed download from the bank's hosts is retained as a statement manifest (channel collector-observe)
+ * Runtime.addBinding on the page's own session; listeners installed on every new document). Each event carries its source
+ * document identity and a value-free snapshot taken before the target handler runs. Flushing can therefore create the new
+ * document's record even when a person acts and closes it before the next poll. The same read drives polling; event data
+ * never enters the fingerprint. A failed channel leaves useful page-only records explicitly marked eventChannel:false.
+ * One completed download from the bank's hosts is retained as a statement manifest (channel collector-observe)
  * under the job's frozen snapshot. Returns { observation, items, downloads, closed }.
  */
 export async function observeFromPage(page, browser, adapter, bound, job, root, status, { ui = null, now = Date.now, wait = pause, pollMs = 1000, timeoutMs = 900000, signal = null } = {}) {
@@ -204,27 +214,36 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
   const stamp = () => new Date(now()).toISOString(), jobDir = path.join(bankOutbox(root, bound.bankAccountId), bound.jobId + '-observe');
   await mkdir(jobDir, { recursive: true });
   const records = [], downloads = [], pending = []; let last = null, closed = false;
-  const flush = () => { const target = records.at(-1); if (!target) return; for (const event of pending.splice(0)) attachEvent(target, event); };
-  const fresh = snap => ({ at: stamp(), ...snap, downloadEvents: [], clicks: [], typedInto: [], eventsDropped: 0 });
+  const name = observeBindingName(); let eventChannel = false;
+  const fresh = snap => ({ at: stamp(), ...snap, downloadEvents: [], clicks: [], typedInto: [], eventsDropped: 0, eventChannel });
+  const remember = state => {
+    const snap = pageSnapshot(state?.snapshot);
+    const key = JSON.stringify([String(state?.documentId ?? '').slice(0, 100), snap.pathname, snap.title, snap.visibleControls, snap.inputs, snap.selects]);
+    if (key === last) return records.at(-1);
+    last = key; if (records.length < 200) records.push(fresh(snap));
+    return records.at(-1);
+  };
+  const flush = () => { for (const { event, pageState } of pending.splice(0)) { const target = pageState ? remember(pageState) : records.at(-1); target && attachEvent(target, event); } };
   const record = async () => {
     flush();
-    let snap; try { snap = await page.evaluate(RECORD); } catch { return; }
-    const key = JSON.stringify([snap.pathname, snap.title, snap.visibleControls, snap.inputs, snap.selects]);
-    if (key === last) return;
-    last = key; if (records.length < 200) records.push(fresh(snap));
+    let state; try { state = await page.evaluate(name => window[name + 'Snapshot']?.(), name) || { snapshot: await page.evaluate(RECORD) }; } catch { return; }
+    flush(); remember(state);
     flush();
   };
   // The event channel. Its failure (a rejected addBinding) leaves the pages recorded without clicks — visible, never a rejection.
   let cdp = null;
   try {
-    const name = observeBindingName(); cdp = await page.createCDPSession();
+    cdp = await page.createCDPSession();
     await cdp.send('Runtime.enable'); // Runtime.bindingCalled is a Runtime-domain event: without this the binding delivers nothing (local protocol check 2026-10-19)
     await cdp.send('Runtime.addBinding', { name });
-    cdp.on('Runtime.bindingCalled', event => { if (event.name !== name) return; const input = eventInput(event.payload); if (input) pending.push({ at: stamp(), ...input }); });
-    await page.evaluateOnNewDocument(LISTENERS, name);
-  } catch { /* no event channel: pages only */ }
+    cdp.on('Runtime.bindingCalled', event => { if (event.name !== name) return; const input = eventInput(event.payload); if (input) { const body = JSON.parse(event.payload); pending.push({ event: { at: stamp(), ...input }, pageState: body?.pageState ?? null }); } });
+    // Both serialized functions and the name are generated here; no portal text is evaluated as code.
+    await page.evaluateOnNewDocument('(' + LISTENERS.toString() + ')(' + JSON.stringify(name) + ',' + RECORD.toString() + ')');
+    eventChannel = true;
+  } catch { /* page-only recording remains available and is marked eventChannel:false */ }
   const session = ui.downloadSession ? await ui.downloadSession(jobDir) : null;
   session?.on('Browser.downloadWillBegin', event => {
+    flush();
     const entry = { guid: event.guid, host: hostOf(event.url), suggestedFilename: String(event.suggestedFilename || '').slice(0, 200), bytes: null, completed: false };
     downloads.push(entry); records.at(-1)?.downloadEvents.push({ host: entry.host, suggestedFilename: entry.suggestedFilename, bytes: null });
   });

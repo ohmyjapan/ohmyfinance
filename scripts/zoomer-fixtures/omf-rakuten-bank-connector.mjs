@@ -109,7 +109,7 @@ async function walkRelativeImports(file, seen = new Set()) {
   return seen;
 }
 async function files(dir) { const out = []; for (const e of await readdir(dir, { withFileTypes: true })) { const f = path.join(dir, e.name); if (e.isDirectory()) out.push(...await files(f)); else if (e.name.endsWith('.mjs')) out.push(f); } return out; }
-const RECORD_KEYS = ['at', 'clicks', 'downloadEvents', 'eventsDropped', 'inputs', 'pathname', 'selects', 'title', 'typedInto', 'visibleControls'];
+const RECORD_KEYS = ['at', 'clicks', 'downloadEvents', 'eventChannel', 'eventsDropped', 'inputs', 'pathname', 'selects', 'title', 'typedInto', 'visibleControls'];
 const pick = c => ({ login: c?.login ?? null, authenticated: c?.authenticated ?? null, statements: c?.statements ?? null, period: c?.period ?? null, export: c?.export ?? null });
 
 // ── The built app on an owned ephemeral MongoDB (the bootstrap of scripts/finance-integration.cjs:19-41) ──
@@ -133,7 +133,7 @@ async function bootApp(outputRoot, mongo, dbName, directory) {
 }
 // The HTTP scenario of E5 on one app: variant stored/frozen/tolerated, observation whitelist, owner-scoped read. Returns what
 // the mutant check needs (the stored first page) and the ids the Chrome leg reuses.
-async function httpScenario(app, assert) {
+async function httpScenario(app, assert, failedObservation) {
   const api = '/api/finance-payments/', capi = '/api/finance-payments/collector/';
   const req = (r, b, m = 'POST', t = app.token) => app.call(api + r, { method: m, token: t, body: b }), get = (r, t = app.token) => app.call(api + r, { token: t });
   const ok = (r, label) => { assert.equal(r.status, 200, label + ' ' + JSON.stringify(r.data).slice(0, 600)); return r.data; };
@@ -155,20 +155,23 @@ async function httpScenario(app, assert) {
   assert.equal(claimed.job?.jobId, job.jobId); assert.equal(claimed.job.snapshot.variant, 'plus', 'rakuten:variant-frozen (claimed)');
   const at = '2026-10-19T00:00:00.000Z', many = (n, make) => Array.from({ length: n }, (_, i) => make(i));
   const observation = [
-    { at, pathname: ONE_PATH, title: '楽天銀行 ビジネス', visibleControls: ['ログイン'], inputs: [{ id: 'password', type: 'password', value: 'LEAKED-INPUT' }], selects: [], downloadEvents: [], cookies: 'LEAKED-COOKIE',
+    { ...failedObservation?.[0], eventChannel: false, at, pathname: ONE_PATH, title: '楽天銀行 ビジネス', visibleControls: ['ログイン'], inputs: [{ id: 'password', type: 'password', value: 'LEAKED-INPUT' }], selects: [], downloadEvents: [], cookies: 'LEAKED-COOKIE',
       clicks: [{ at, tag: 'BUTTON', text: 'ログイン', id: 'login', value: 'LEAKED-CLICK', nested: { value: 'LEAKED-NESTED' } }], typedInto: [{ at, id: 'password', type: 'password', value: 'LEAKED-TYPED' }], eventsDropped: 2 },
-    { at, pathname: TWO_PATH, title: '入出金明細', visibleControls: ['CSV出力'], inputs: [], selects: [], downloadEvents: [{ host: HOST, suggestedFilename: 'meisai.csv', bytes: 10 }],
+    { eventChannel: true, at, pathname: TWO_PATH, title: '入出金明細', visibleControls: ['CSV出力'], inputs: [], selects: [], downloadEvents: [{ host: HOST, suggestedFilename: 'meisai.csv', bytes: 10 }],
       clicks: many(70, i => ({ at, tag: 'A', text: 'c' + i, id: 'c' + i })), typedInto: many(120, i => ({ at, id: 'f' + i, type: 'text' })), eventsDropped: 'x' }
   ];
   const stored = ok(await app.call(capi + 'bank/upload?' + new URLSearchParams({ jobId: job.jobId, snapshotHash: job.snapshotHash, kind: 'observation' }), { method: 'POST', token: app.deviceToken, body: JSON.stringify(observation), type: 'application/json' }), 'observation upload');
   assert.equal(stored.stored, true); assert.equal(stored.pages, 2);
   const read = ok(await get('bank/accounts/' + accountA + '/jobs/' + job.jobId + '/observation'), 'observation read');
   assert.equal(read.jobId, job.jobId); assert.equal(read.kind, 'observe'); assert.ok(Array.isArray(read.observation) && read.observation.length === 2, 'rakuten:observation-read');
+  assert.equal(read.observation[0].eventChannel, false, 'rakuten:channel-failure-read');
+  assert.equal(read.observation[1].eventChannel, true, 'rakuten:channel-success-read');
   assert.equal((await get('bank/accounts/' + accountA + '/jobs/' + job.jobId + '/observation', app.other)).status, 404, 'rakuten:observation-owner-scoped');
   assert.equal((await get('bank/accounts/' + accountB + '/jobs/' + job.jobId + '/observation')).status, 404, 'rakuten:observation-owner-scoped (other account)');
   assert.equal((await get('bank/accounts/' + accountA + '/jobs/' + randomUUID() + '/observation')).status, 404, 'rakuten:observation-owner-scoped (unknown job)');
   assert.equal((await get('bank/accounts/' + accountA + '/jobs/' + job.jobId)).status, 404, 'unchanged routing: no 5-part job route');
-  assert.equal(ok(await get('bank/accounts/' + accountA + '/jobs'), 'jobs').jobs.find(j => j.jobId === job.jobId).hasObservation, true);
+  const listed = ok(await get('bank/accounts/' + accountA + '/jobs'), 'jobs').jobs.find(j => j.jobId === job.jobId);
+  assert.equal(listed.hasObservation, true); assert.equal(listed.eventChannel, false, 'rakuten:channel-failure-job');
   ok(await app.call(capi + 'bank/status', { method: 'POST', token: app.deviceToken, body: { jobId: job.jobId, state: 'complete', message: '観察記録を保存' } }), 'status complete');
   return { accountA, accountB, job, template, stored: read.observation[0], second: read.observation[1] };
 }
@@ -179,7 +182,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
   const assert = (await import('node:assert/strict')).default;
   const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-rakuten-fixture-'));
   process.env.OMF_COLLECTOR_DIR = path.join(temp, 'collector-dir');
-  let mongo = null, app = null, executed = false;
+  let mongo = null, app = null, executed = false, failedObservation = null;
   try {
     const browserModule = await import(u('collector/browser.mjs')).catch(e => e), interaction = await import(u('collector/interaction.mjs')).catch(e => e);
     const bankModule = await import(u('collector/bank.mjs')).catch(e => e), rakutenModule = await import(u('collector/banks/rakuten.mjs')).catch(e => e), contractModule = await import(u('collector/banks/contract.mjs')).catch(e => e);
@@ -248,7 +251,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
         bindingName = pattern ? await page.evaluate(p => Object.getOwnPropertyNames(window).find(k => new RegExp(p).test(k) && typeof window[k] === 'function') || null, pattern) : null;
         await page.type('#userid', 'secret-user-id'); await page.type('#password', 'Secret-Pass-9981');
         // E3d: a page script calls the binding with whatever it likes — a value, a list of clicks, a kind-less object, not JSON
-        if (bindingName) hostile = await page.evaluate(name => { const out = []; for (const payload of [JSON.stringify({ kind: 'click', tag: 'HOSTILE', text: 'x', id: 'y', value: 'LEAKED-VALUE', clicks: [{ tag: 'z' }] }), JSON.stringify({ value: 'LEAKED-VALUE-2', clicks: [1, 2, 3] }), 'not json', JSON.stringify({ kind: 'input', id: 'smuggle', type: 'text', value: 'LEAKED-VALUE-3' })]) { try { window[name](payload); out.push('sent'); } catch { out.push('threw'); } } return out; }, bindingName);
+        if (bindingName) hostile = await page.evaluate(name => { const state = window[name + 'Snapshot']?.(), pageState = state ? { ...state, unknown: 'LEAKED-ENVELOPE', snapshot: { ...state.snapshot, unknown: 'LEAKED-SNAPSHOT', inputs: state.snapshot.inputs.map(i => ({ ...i, value: 'LEAKED-FIELD' })) } } : undefined; const out = []; for (const payload of [JSON.stringify({ kind: 'click', tag: 'HOSTILE', text: 'x', id: 'y', value: 'LEAKED-VALUE', clicks: [{ tag: 'z' }], pageState }), JSON.stringify({ value: 'LEAKED-VALUE-2', clicks: [1, 2, 3] }), 'not json', JSON.stringify({ kind: 'input', id: 'smuggle', type: 'text', value: 'LEAKED-VALUE-3' })]) { try { window[name](payload); out.push('sent'); } catch { out.push('threw'); } } return out; }, bindingName);
         await pause(300); await page.click('#login'); await poll(() => page.evaluate(() => document.body.dataset.state === 'authenticated'), 5000, 50);
         await pause(400); await Promise.all([page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }), page.click('#statements')]);
         await pause(400); await page.click('#from', { clickCount: 3 }); await page.type('#from', '2026/09/01'); await page.click('#to', { clickCount: 3 }); await page.type('#to', '2026/09/30');
@@ -311,6 +314,46 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
       await noOwnedChrome(); assert.equal(await exists(r.profile), false);
       return 'the click before the close is on the last record';
     });
+    // F1: no settling polls between the navigation and the next action. The custom wait holds the ordinary poll boundary.
+    const rapidFlow = async (bankMod, batch) => {
+      const bm = need(browserModule, 'collector/browser.mjs'), dir = path.join(temp, batch); await mkdir(dir, { recursive: true });
+      const job = jobOf('observe'), l = await launched(bm, dir, batch), page = await l.browser.newPage(); let waits = 0, elapsed = null;
+      const ui = { ...rakuten().ui(page, l.browser), open: () => page.goto(MENU_URL, { waitUntil: 'load' }) };
+      try {
+        const result = await bankMod.observeFromPage(page, l.browser, rakuten(), boundOf(job), job, dir, async () => {}, { ui, pollMs: 1000, timeoutMs: 15000, wait: async () => {
+          if (++waits === 1) { const start = Date.now(); await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('#statements')]); await page.type('#from', 'x'); await page.click('#csv'); elapsed = Date.now() - start; await pause(150); }
+          else await page.close();
+        } });
+        return { result, elapsed };
+      } finally { await bm.closeOwnedBrowsers(); }
+    };
+    const rapidChecks = r => {
+      assert.ok(r.elapsed < 1000, 'fixture rapid actions must precede the ordinary poll');
+      const source = r.result.observation.find(p => p.pathname === ONE_PATH), destination = r.result.observation.find(p => p.pathname === TWO_PATH);
+      assert.ok(source?.clicks.some(c => c.id === 'statements'), 'rakuten:rapid-document source click');
+      assert.ok(destination?.clicks.some(c => c.id === 'csv'), 'rakuten:rapid-document destination click');
+      assert.ok(destination.typedInto.some(t => t.id === 'from'), 'rakuten:rapid-document destination input');
+      assert.ok(!source.clicks.some(c => c.id === 'csv'), 'rakuten:rapid-document no wrong-page click');
+      assert.ok(destination.downloadEvents.some(d => d.host === HOST), 'rakuten:rapid-document download on destination');
+    };
+    await leg('F1 rapid navigation: source click, new-page input/export and download remain on their actual document before the next poll; MC9 restores poll-only attribution', async () => {
+      const bank = need(bankModule, 'collector/bank.mjs'), r = await rapidFlow(bank, 'f1'); rapidChecks(r);
+      const mutant = await mutantModule('collector/bank.mjs', [[/pageState: body\?\.pageState \?\? null/, 'pageState: null']]);
+      try { const mod = await mutant.load(); let error = null; try { rapidChecks(await rapidFlow(mod, 'mc9')); } catch (e) { error = e; } assert.match(String(error?.message), /rakuten:rapid-document/, 'MC9 must flip document attribution'); }
+      finally { await mutant.dispose(); }
+      return `actions in ${r.elapsed}ms; correct source/destination/input/download; MC9 caught`;
+    });
+    await leg('F2 failed event-channel installation keeps the page record with a durable false marker', async () => {
+      const bank = need(bankModule, 'collector/bank.mjs'), bm = need(browserModule, 'collector/browser.mjs'), dir = path.join(temp, 'f2'); await mkdir(dir, { recursive: true });
+      const job = jobOf('observe'), l = await launched(bm, dir, 'f2'), page = await l.browser.newPage();
+      page.createCDPSession = async () => { throw new Error('fixture event-channel installation failed'); };
+      try {
+        const r = await bank.observeFromPage(page, l.browser, rakuten(), boundOf(job), job, dir, async () => {}, { ui: rakuten().ui(page, l.browser, job.snapshot), pollMs: 100, wait: () => page.close(), timeoutMs: 10000 });
+        failedObservation = r.observation; assert.equal(r.closed, true); assert.equal(r.observation.length, 1, 'rakuten:channel-failure-pages-kept');
+        assert.equal(r.observation[0].eventChannel, false, 'rakuten:channel-failure-visible'); assert.ok(r.observation[0].inputs.some(i => i.type === 'password'));
+        return 'page and visible field metadata retained; eventChannel false; normal closure';
+      } finally { await bm.closeOwnedBrowsers(); }
+    });
     // ── E4: the frozen variant picks the start page ──
     await leg('E4 variant start: plus → the Plus login link, standard → the standard login link, none/unknown → the business page', async () => {
       const bm = need(browserModule, 'collector/browser.mjs'), adapter = rakuten(), dir = path.join(temp, 'e4'); await mkdir(dir, { recursive: true });
@@ -330,7 +373,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
       const { MongoMemoryServer } = requireRoot('mongodb-memory-server'); const binary = path.join(root, 'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe');
       mongo = await MongoMemoryServer.create({ binary: existsSync(binary) ? { systemBinary: binary, version: '8.2.1' } : undefined });
       app = await bootApp(root, mongo, 'rakuten_connector_fixture', path.join(temp, 'data')); executed = true;
-      http = await httpScenario(app, assert);
+      http = await httpScenario(app, assert, failedObservation);
       const stored = http.stored, text = JSON.stringify([http.stored, http.second]);
       assert.deepEqual(Object.keys(stored).sort(), RECORD_KEYS, 'rakuten:observation-whitelist (record keys)'); assert.deepEqual(stored.clicks.map(c => Object.keys(c).sort()), [['at', 'id', 'tag', 'text']], 'rakuten:observation-whitelist (click keys)'); assert.deepEqual(stored.typedInto.map(t => Object.keys(t).sort()), [['at', 'id', 'type']], 'rakuten:observation-whitelist (typedInto keys)');
       assert.deepEqual(stored.inputs, [{ id: 'password', type: 'password' }], 'rakuten:observation-whitelist (input value dropped)'); assert.ok(!text.includes('LEAKED'), 'rakuten:observation-whitelist (no value stored)'); assert.equal(stored.eventsDropped, 2, 'rakuten:observation-whitelist (eventsDropped kept)');
@@ -354,8 +397,10 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
         await wait(id => /標準ログイン/.test(document.querySelector('[data-bank-connection="' + id + '"] [data-bank-connection-state]')?.textContent || ''), http.accountA);
         assert.equal((await app.call('/api/finance-payments/bank/accounts', { token: app.token })).data.accounts.find(a => a.id === http.accountA).connection.variant, 'standard', 'rakuten:chrome-variant-saved');
         const jobLine = card(http.accountA) + '[data-bank-job="' + http.job.jobId + '"]'; await wait(sel => !!document.querySelector(sel), jobLine);
+        assert.match(await page.$eval(jobLine, e => e.textContent), /操作の記録なし/, 'rakuten:channel-failure-job-view');
         assert.match(await page.$eval(jobLine, e => e.textContent), /観察記録あり/, 'rakuten:chrome-observation-listed'); await page.click(jobLine + ' [data-bank-observation-open]'); await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-observation]'), http.accountA);
         const view = await page.$eval(card(http.accountA) + '[data-bank-observation]', e => e.textContent); assert.ok(view.includes(ONE_PATH) && view.includes(TWO_PATH) && view.includes('ログイン') && view.includes('meisai.csv'), 'rakuten:chrome-observation-view ' + view.slice(0, 200)); assert.ok(!view.includes('LEAKED'), 'rakuten:chrome-observation-view (no value)');
+        assert.ok(view.includes('操作の記録なし'), 'rakuten:channel-failure-observation-view');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'rakuten:chrome-no-overflow (observation open) ' + JSON.stringify(await overflowing()));
         if (process.env.OMF_TEST_PAYMENT_SCREENSHOTS) { await mkdir(process.env.OMF_TEST_PAYMENT_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.OMF_TEST_PAYMENT_SCREENSHOTS, 'rakuten-connection-mobile.png'), fullPage: true }); }
         await page.setViewport({ width: 1440, height: 1000 }); await pause(300); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'rakuten:chrome-desktop-no-overflow');
@@ -391,7 +436,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
       { const m = await mutantModule('collector/bank.mjs', [[/id: String\(target\.id \|\| target\.name \|\| ''\)\.slice\(0, 100\), type: String\(target\.type \|\| 'text'\)/, "id: String(target.value || target.id || '').slice(0, 100), type: String(target.type || 'text')"]]); try { const mod = await m.load();
         await flips('MC2', async () => observationChecks(await observeFlow(mod, 'mc2'), contract), /rakuten:no-typed-value/); } finally { await m.dispose(); } }
       // MC5: events are no longer attached on arrival but drained when record() creates a record (the original R3 design)
-      { const m = await mutantModule('collector/bank.mjs', [[/const records = \[\], downloads = \[\], pending = \[\];/, 'const records = [], downloads = [], pending = [], drained = [];'], [/if \(input\) pending\.push\(\{ at: stamp\(\), \.\.\.input \}\);/, 'if (input) drained.push({ at: stamp(), ...input });'], [/if \(records\.length < 200\) records\.push\(fresh\(snap\)\);/, 'if (records.length < 200) { records.push(fresh(snap)); for (const event of drained.splice(0)) attachEvent(records.at(-1), event); }']]); try { const mod = await m.load();
+      { const m = await mutantModule('collector/bank.mjs', [[/const flush = \(\) => \{ for \(const \{ event, pageState \} of pending\.splice\(0\)\) \{ const target = pageState \? remember\(pageState\) : records\.at\(-1\); target && attachEvent\(target, event\); \} \};/, 'const flush = () => {};'], [/last = key; if \(records\.length < 200\) records\.push\(fresh\(snap\)\);/, 'last = key; if (records.length < 200) records.push(fresh(snap)); for (const { event } of pending.splice(0)) attachEvent(records.at(-1), event);']]); try { const mod = await m.load();
         await flips('MC5', async () => observationChecks(await observeFlow(mod, 'mc5'), contract), /rakuten:same-dom-events-retained|rakuten:events-survive-navigation/); } finally { await m.dispose(); } }
       // MC6: the final flush at the end of the loop is removed → the click before the close is lost
       { const m = await mutantModule('collector/bank.mjs', [[/\} finally \{ flush\(\); await cdp\?\.detach\(\)/, '} finally { await cdp?.detach()']]); try { const mod = await m.load();
