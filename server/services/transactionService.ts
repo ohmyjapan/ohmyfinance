@@ -1,7 +1,7 @@
 // server/services/transactionService.ts
 import Transaction from '../models/Transaction'
 import { createError } from 'h3'
-import type mongoose from 'mongoose'
+import mongoose from 'mongoose'
 import Customer from '../models/Customer'
 import Supplier from '../models/Supplier'
 import AccountCategory from '../models/AccountCategory'
@@ -30,7 +30,7 @@ interface TransactionFilters {
 /**
  * Get all transactions with optional filtering (OMF style)
  */
-export async function getTransactions(filters: TransactionFilters, organizationId: mongoose.Types.ObjectId) {
+export async function getTransactions(filters: TransactionFilters, organizationId: mongoose.Types.ObjectId, window?: { skip: number, limit: number }) {
   await ensureConnection()
   try {
     const query: any = { organizationId }
@@ -99,7 +99,7 @@ export async function getTransactions(filters: TransactionFilters, organizationI
       ]
     }
 
-    const transactions = await Transaction.find(query)
+    const request = Transaction.find(query)
       .populate({ path: 'customerId', select: 'name email', model: Customer })
       .populate({ path: 'supplierId', select: 'name', model: Supplier })
       .populate({ path: 'accountCategoryId', select: 'name', model: AccountCategory })
@@ -108,8 +108,8 @@ export async function getTransactions(filters: TransactionFilters, organizationI
       .populate({ path: 'transactionCategoryId', select: 'name', model: TransactionCategory })
       .populate({ path: 'sourceId', select: 'name type', model: DataSource })
       .sort({ date: -1, createdAt: -1 })
-      .lean()
-
+    if (window) request.sort({ date: -1, createdAt: -1, _id: -1 }).skip(window.skip).limit(window.limit)
+    const transactions = await request.lean()
     return transactions
   } catch (error) {
     console.error('Company transaction list read failed')
@@ -178,7 +178,8 @@ async function saveTransaction(data: Partial<ITransaction>, organizationId?: mon
       data.hasReceipt = false
     }
 
-    const transaction = new Transaction(data)
+    const { naviOperation: _nativeMarker, ...values } = data as any
+    const transaction = new Transaction(values)
     if (organizationId) transaction.set('organizationId', organizationId, { strict: false })
     await transaction.save()
 
@@ -193,63 +194,44 @@ async function saveTransaction(data: Partial<ITransaction>, organizationId?: mon
 /**
  * Update a transaction
  */
-export async function updateTransaction(id: string, data: Partial<ITransaction>) {
+export const transactionReferenceModels: Record<string, any> = { customerId: Customer, supplierId: Supplier, accountCategoryId: AccountCategory, subAccountCategoryId: AccountCategory, taxCategoryId: TaxCategory, transactionCategoryId: TransactionCategory, sourceId: DataSource }
+export const transactionUpdateFields = ['referenceNumber','date','amount','type','status',...Object.keys(transactionReferenceModels),'taxRate','companyInfo','invoiceNumber','receiptNumber','trackingNumber','paymentMethod','cardNumber','productName','productPrice','janCode','hasReceipt','items','notes','tags']
+export type TransactionOperation = { operationId: string, payloadHash: string, expectedUpdatedAt: string }
+export async function updateTransaction(id: string, data: Partial<ITransaction>, organizationId: mongoose.Types.ObjectId, operation?: TransactionOperation) {
   await ensureConnection()
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw createError({ statusCode: 400, statusMessage: 'Invalid transaction fields' })
+  if (Object.keys(data).some(k => k.startsWith('$') || k.includes('.')) || data.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting cannot be replaced by a transaction edit.' })
+  const scope: any = { _id: id, organizationId }
+  const current: any = await Transaction.findOne(scope).lean()
+  if (!current) throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
+  const updateData: any = Object.fromEntries(transactionUpdateFields.filter(k => (data as any)[k] !== undefined).map(k => [k, (data as any)[k]]))
+  if (current.cardAccounting) for (const key of ['amount', 'type', 'paymentMethod', 'cardNumber']) if (updateData[key] !== undefined && updateData[key] !== current[key]) throw createError({ statusCode: 409, message: 'Imported card source values cannot be changed.' })
+  for (const [key, model] of Object.entries(transactionReferenceModels)) if (updateData[key] !== undefined) {
+    if (updateData[key] === '' || updateData[key] === null) updateData[key] = null
+    else if (!mongoose.isValidObjectId(updateData[key]) || !await model.exists({ _id: updateData[key] })) throw createError({ statusCode: 400, statusMessage: 'Choose an existing transaction reference' })
+  }
+  if (updateData.taxRate !== undefined && (!Number.isFinite(Number(updateData.taxRate)) || Number(updateData.taxRate) < 0 || Number(updateData.taxRate) > 100)) throw createError({ statusCode: 400, statusMessage: 'Invalid transaction tax rate' })
+  const expected = operation ? operation.expectedUpdatedAt : current.updatedAt?.toISOString() || ''
+  if (expected && (!Number.isFinite(Date.parse(expected)) || new Date(expected).toISOString() !== expected)) throw createError({ statusCode: 400, statusMessage: 'Read the current transaction before editing' })
+  scope.updatedAt = expected ? new Date(expected) : null
+  if (operation) updateData.naviOperation = { operationId: operation.operationId, payloadHash: operation.payloadHash, appliedAt: new Date(), requestedFields: Object.keys(updateData), values: { ...updateData } }
+  const updateTimeline = { type: 'updated', title: '取引更新', timestamp: new Date(), description: '取引詳細が更新されました' }
   try {
-    // Don't allow changing certain fields
-    const { _id, createdAt, ...updateData } = data as any
-
-    if (Object.keys(updateData).some(k => k.startsWith('$') || k.includes('.')) || updateData.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting cannot be replaced by a transaction edit.' })
-    const current: any = await Transaction.findById(id).select('cardAccounting amount type paymentMethod cardNumber metadata').lean()
-    if (current?.cardAccounting) {
-      for (const key of ['amount', 'type', 'paymentMethod', 'cardNumber']) if (updateData[key] !== undefined && updateData[key] !== current[key]) throw createError({ statusCode: 409, message: 'Imported card source values cannot be changed.' })
-      if (updateData.metadata !== undefined) updateData.metadata = { ...updateData.metadata, ...current.metadata }
-    }
-    // Add timeline event for update
-    const updateTimeline = {
-      type: 'updated',
-      title: '取引更新',
-      timestamp: new Date(),
-      description: '取引詳細が更新されました'
-    }
-
-    const transaction = await Transaction.findByIdAndUpdate(
-      id,
-      {
-        ...updateData,
-        $push: { timeline: { $each: [updateTimeline], $position: 0 } }
-      },
-      { new: true, runValidators: true }
-    ).lean()
-
-    if (!transaction) {
-      throw new Error(`Transaction ${id} not found`)
-    }
-
+    const transaction = await Transaction.findOneAndUpdate(scope, { $set: updateData, $push: { timeline: { $each: [updateTimeline], $position: 0 } } }, { new: true, runValidators: true }).lean()
+    if (!transaction) throw createError({ statusCode: 409, statusMessage: 'Transaction changed; read it again' })
     return transaction
-  } catch (error) {
-    console.error(`Failed to update transaction ${id}:`, error)
+  } catch (error: any) {
+    if (error?.name === 'ValidationError' || error?.name === 'CastError') throw createError({ statusCode: 400, statusMessage: 'Invalid transaction fields' })
     throw error
   }
 }
 
-/**
- * Delete a transaction
- */
-export async function deleteTransaction(id: string) {
+/** Delete only the selected company record; no guessed legacy assignment. */
+export async function deleteTransaction(id: string, organizationId: mongoose.Types.ObjectId) {
   await ensureConnection()
-  try {
-    const transaction = await Transaction.findByIdAndDelete(id).lean()
-
-    if (!transaction) {
-      throw new Error(`Transaction ${id} not found`)
-    }
-
-    return transaction
-  } catch (error) {
-    console.error(`Failed to delete transaction ${id}:`, error)
-    throw error
-  }
+  const transaction = await Transaction.findOneAndDelete({ _id: id, organizationId }).lean()
+  if (!transaction) throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
+  return transaction
 }
 
 /**

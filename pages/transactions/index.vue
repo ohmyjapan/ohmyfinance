@@ -395,6 +395,9 @@
 </template>
 
 <script setup lang="ts">
+import { useAssistantStore } from '~/stores/assistant'
+import { useUserStore } from '~/stores/user'
+import { tokenClaims } from '~/utils/auth-session'
 import { ref, computed, onMounted } from 'vue'
 import { useTransactions } from '~/composables/useTransactions'
 import {
@@ -415,6 +418,7 @@ import {
 } from 'lucide-vue-next'
 
 const { t } = useI18n()
+const navi = useAssistantStore(), user = useUserStore()
 
 // Use the transactions composable
 const {
@@ -432,6 +436,11 @@ const {
   formatDate,
   formatCurrency
 } = useTransactions()
+
+watch(() => navi.companyTransactionSavedSequence, () => {
+  const saved = navi.companyTransactionSaved, scope = tokenClaims(user.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId) fetchTransactions()
+})
 
 // Local state
 const showAdvancedFilters = ref(false)
@@ -600,6 +609,7 @@ const handleEditTransaction = async (formData: any) => {
   try {
     const response = await $fetch(`/api/transactions/${editingTransaction.value.id}`, {
       method: 'PUT',
+      headers: user.authHeader,
       body: formData
     })
     if (response) {

@@ -390,12 +390,15 @@ import {
   Upload, Receipt
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
+import { tokenClaims } from '~/utils/auth-session'
 import DocumentList from '~/components/finance/DocumentList.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const navi = useAssistantStore()
 const getAuthHeaders = () => userStore.authHeader
 
 const transactionId = computed(() => route.params.id as string)
@@ -409,7 +412,9 @@ onMounted(async () => {
   await fetchTransaction()
 })
 
+let detailTicket = 0
 const fetchTransaction = async () => {
+  const ticket = ++detailTicket, scope = tokenClaims(userStore.token), selectedId = transactionId.value
   isLoading.value = true
   error.value = null
 
@@ -417,6 +422,8 @@ const fetchTransaction = async () => {
     const response = await $fetch<any>(`/api/transactions/${transactionId.value}`, {
       headers: getAuthHeaders()
     })
+    const current = tokenClaims(userStore.token)
+    if (ticket !== detailTicket || transactionId.value !== selectedId || scope?.userId !== current?.userId || scope?.organizationId !== current?.organizationId) return
     transaction.value = {
       ...response,
       id: response.id || response._id,
@@ -428,9 +435,15 @@ const fetchTransaction = async () => {
     error.value = err.message || t('transactionDetail.loadFailed')
     console.error(err)
   } finally {
-    isLoading.value = false
+    if (ticket === detailTicket) isLoading.value = false
   }
 }
+
+watch(() => navi.companyTransactionSavedSequence, () => {
+  const saved = navi.companyTransactionSaved, scope = tokenClaims(userStore.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.transactionId === transactionId.value) fetchTransaction()
+})
+onBeforeUnmount(() => { detailTicket++ })
 
 const formatDate = (dateString: string) => {
   if (!dateString) return '-'

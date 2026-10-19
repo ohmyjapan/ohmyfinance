@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { useUserStore } from '~/stores/user'
+import { tokenClaims } from '~/utils/auth-session'
 import type {
     Transaction,
     TransactionStatus,
@@ -24,15 +25,20 @@ export function useTransactions() {
     const searchQuery = ref<string>('')
 
     // Fetch all transactions
+    let listTicket = 0
     const fetchTransactions = async () => {
+        const ticket = ++listTicket
         isLoading.value = true
         error.value = null
         userStore.initAuth()
+        const scope = tokenClaims(userStore.token)
 
         try {
             const response = await $fetch<any>('/api/transactions', {
                 headers: userStore.authHeader
             })
+            const current = tokenClaims(userStore.token)
+            if (ticket !== listTicket || scope?.userId !== current?.userId || scope?.organizationId !== current?.organizationId) return
             const data = response.transactions || response
             transactions.value = (Array.isArray(data) ? data : []).map(t => ({
                 ...t,
@@ -47,7 +53,7 @@ export function useTransactions() {
             error.value = err.message || 'Failed to fetch transactions'
             console.error('Error fetching transactions:', err)
         } finally {
-            isLoading.value = false
+            if (ticket === listTicket) isLoading.value = false
         }
     }
 

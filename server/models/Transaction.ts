@@ -65,6 +65,7 @@ export interface ITransaction extends Document<mongoose.Types.ObjectId> {
   attachments?: IAttachment[]
   notes?: string
   tags?: string[]
+  naviOperation?: any
   cardAccounting?: Record<string, any>
   metadata?: Record<string, any>
   createdAt: Date
@@ -140,6 +141,7 @@ const TransactionSchema = new Schema<ITransaction>({
   attachments: [AttachmentSchema],
   notes: String,
   tags: [String],
+  naviOperation: Schema.Types.Mixed,
   cardAccounting: Schema.Types.Mixed,
   metadata: Schema.Types.Mixed
 }, {

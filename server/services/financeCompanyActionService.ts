@@ -1,3 +1,5 @@
+import Transaction from '../models/Transaction'
+import { updateTransaction, transactionUpdateFields } from './transactionService'
 import Invoice from '../models/Invoice'
 import { updateCompanyInvoice } from './companyInvoiceWriteService'
 import { createHash } from 'node:crypto'
@@ -9,7 +11,7 @@ import { updateCompanyCalendarEntry, calendarUpdateFields } from './companyPayme
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
 const actionIdentity = (c: any) => ({ _id: c._id, ownerId: c.ownerId, organizationId: c.organizationId })
-export const companyActionReceipt = (a: any) => ({ operationId: a.operationId, name: a.name, turnId: a.turnId, slot: a.slot, target: a.name === 'update_company_invoice' ? { invoiceId: a.invoiceId } : { paymentId: a.paymentId }, state: a.state === 'claimed' ? 'working' : a.state, requestedFields: a.requestedFields || [], nativeResourceIds: a.nativeResourceIds || null, acceptedRevision: null, completedAt: a.completedAt || null, recoveryOwner: a.recoveryOwner || null, safeError: a.safeError || null })
+export const companyActionReceipt = (a: any) => ({ operationId: a.operationId, name: a.name, turnId: a.turnId, slot: a.slot, target: a.name === 'update_company_transaction' ? { transactionId: a.transactionId } : a.name === 'update_company_invoice' ? { invoiceId: a.invoiceId } : { paymentId: a.paymentId }, state: a.state === 'claimed' ? 'working' : a.state, requestedFields: a.requestedFields || [], nativeResourceIds: a.nativeResourceIds || null, acceptedRevision: null, completedAt: a.completedAt || null, recoveryOwner: a.recoveryOwner || null, safeError: a.safeError || null })
 async function settle(c: any, turnId: string, op: any, values: any) {
   const changes = Object.fromEntries(Object.entries(values).map(([key, value]) => ['turns.$[turn].actions.$[action].' + key, value]))
   await Conversation.updateOne(actionIdentity(c), { $set: changes }, { arrayFilters: [{ 'turn.id': turnId }, { 'action.operationId': op.operationId, 'action.state': 'claimed' }] })
@@ -20,10 +22,10 @@ export async function reconcileCompanyActions(c: any) {
   if (!c) return c
   for (const turn of c.turns || []) for (const op of turn.actions || []) {
     if (op.state !== 'claimed') continue
-    const payment: any = op.name === 'update_company_invoice' ? await Invoice.findOne({ _id: op.invoiceId, organizationId: c.organizationId }).select('naviOperation').lean() : await Payment.findOne({ _id: op.paymentId, organizationId: c.organizationId }).select('naviOperation').lean()
+    const payment: any = op.name === 'update_company_transaction' ? await Transaction.findOne({ _id: op.transactionId, organizationId: c.organizationId }).select('naviOperation').lean() : op.name === 'update_company_invoice' ? await Invoice.findOne({ _id: op.invoiceId, organizationId: c.organizationId }).select('naviOperation').lean() : await Payment.findOne({ _id: op.paymentId, organizationId: c.organizationId }).select('naviOperation').lean()
     const marker = payment?.naviOperation
     if (marker?.operationId === op.operationId && marker.payloadHash === op.payloadHash) {
-      await settle(c, turn.id, op, { state: 'done', requestedFields: marker.requestedFields, nativeResourceIds: op.name === 'update_company_invoice' ? { invoiceId: String(op.invoiceId) } : { paymentId: String(op.paymentId) }, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })
+      await settle(c, turn.id, op, { state: 'done', requestedFields: marker.requestedFields, nativeResourceIds: op.name === 'update_company_transaction' ? { transactionId: String(op.transactionId) } : op.name === 'update_company_invoice' ? { invoiceId: String(op.invoiceId) } : { paymentId: String(op.paymentId) }, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })
     } else if (new Date(op.leaseUntil).getTime() < Date.now() - 20000 && !(c.state === 'working' && c.lease === op.lease && new Date(c.leaseUntil).getTime() > Date.now())) {
       await settle(c, turn.id, op, { state: 'unresolved', recoveryOwner: 'user', safeError: '保存結果を確認できません。同じ操作は自動で繰り返していません。' })
     }
@@ -35,20 +37,22 @@ export async function companyActionReceipts(c: any, turnId: string, operationId?
   return (fresh?.turns.find((t: any) => t.id === turnId)?.actions || []).filter((a: any) => !operationId || a.operationId === operationId).map(companyActionReceipt)
 }
 const response = (op: any, result?: any) => ({ name: op.name, effect: 'write', receipt: companyActionReceipt(op), ...(result ? { result } : {}) })
-export async function updateCompanyCalendarAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) { return updateCompanyAction(c, body, args, verifyJob, false) }
-export async function updateCompanyInvoiceAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) { return updateCompanyAction(c, body, args, verifyJob, true) }
-async function updateCompanyAction(c: any, body: any, args: any, verifyJob: () => Promise<any>, invoice: boolean) {
+export async function updateCompanyCalendarAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) { return updateCompanyAction(c, body, args, verifyJob, 'calendar') }
+export async function updateCompanyInvoiceAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) { return updateCompanyAction(c, body, args, verifyJob, 'invoice') }
+export async function updateCompanyTransactionAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) { return updateCompanyAction(c, body, args, verifyJob, 'transaction') }
+async function updateCompanyAction(c: any, body: any, args: any, verifyJob: () => Promise<any>, kind: string) {
+  const invoice = kind === 'invoice', transaction = kind === 'transaction'
   if (!Number.isSafeInteger(body.slot) || body.slot < 1 || body.slot > 500) fail(400, 'Invalid action slot')
-  const allowed = invoice ? ['status','issueDate','dueDate','paidDate','taxRate','currency','notes','terms'] : calendarUpdateFields.filter(k => k !== 'bankTransfer')
+  const allowed = transaction ? transactionUpdateFields.filter(k => !['items','tags','hasReceipt','sourceId'].includes(k)) : invoice ? ['status','issueDate','dueDate','paidDate','taxRate','currency','notes','terms'] : calendarUpdateFields.filter(k => k !== 'bankTransfer')
   const requestedFields = Object.keys(args).filter(k => allowed.includes(k))
   if (!requestedFields.length) fail(400, 'Name at least one field to change')
-  const name = invoice ? 'update_company_invoice' : 'update_company_calendar_entry', resourceId = invoice ? args.invoiceId : args.paymentId, resourceIds = invoice ? { invoiceId: resourceId } : { paymentId: resourceId }, payloadHash = sha(canonicalJson({ name, args })), turnId = c.currentId
+  const name = transaction ? 'update_company_transaction' : invoice ? 'update_company_invoice' : 'update_company_calendar_entry', resourceId = transaction ? args.transactionId : invoice ? args.invoiceId : args.paymentId, resourceIds = transaction ? { transactionId: resourceId } : invoice ? { invoiceId: resourceId } : { paymentId: resourceId }, payloadHash = sha(canonicalJson({ name, args })), turnId = c.currentId
   let fresh: any = await reconcileCompanyActions(c), turn = fresh.turns.find((t: any) => t.id === turnId)
   const atSlot = turn.actions?.find((a: any) => a.slot === body.slot)
   if (atSlot && atSlot.payloadHash !== payloadHash) fail(409, 'Action slot has another meaning')
   const existing = atSlot || turn.actions?.find((a: any) => a.name === name && a.payloadHash === payloadHash)
   if (existing) return response(existing)
-  const op: any = { operationId: sha([String(c.ownerId), String(c.organizationId), String(c._id), turnId, body.slot].join(':')).slice(0, 32), name, turnId, slot: body.slot, payloadHash, ...(invoice ? { invoiceId: resourceId } : { paymentId: resourceId }), requestedFields, state: 'claimed', lease: body.lease, leaseUntil: c.leaseUntil, claimedAt: new Date() }
+  const op: any = { operationId: sha([String(c.ownerId), String(c.organizationId), String(c._id), turnId, body.slot].join(':')).slice(0, 32), name, turnId, slot: body.slot, payloadHash, ...(transaction ? { transactionId: resourceId } : invoice ? { invoiceId: resourceId } : { paymentId: resourceId }), requestedFields, state: 'claimed', lease: body.lease, leaseUntil: c.leaseUntil, claimedAt: new Date() }
   // Claim both the slot and this exact intent atomically in the same frozen company conversation.
   const claimed = await Conversation.updateOne({ ...actionIdentity(c), state: 'working', currentId: turnId, lease: body.lease, leaseUntil: { $gt: new Date() }, turns: { $elemMatch: { id: turnId, actions: { $not: { $elemMatch: { $or: [{ slot: body.slot }, { name, payloadHash }] } } } } } }, { $push: { 'turns.$[turn].actions': op } }, { arrayFilters: [{ 'turn.id': turnId }] })
   if (!claimed.matchedCount) {
@@ -61,12 +65,12 @@ async function updateCompanyAction(c: any, body: any, args: any, verifyJob: () =
   try {
     await verifyJob()
     const operation = { operationId: op.operationId, payloadHash, expectedUpdatedAt: args.expectedUpdatedAt }
-    const payment: any = invoice ? await updateCompanyInvoice(c.organizationId, args.invoiceId, args, operation) : await updateCompanyCalendarEntry(c.organizationId, args.paymentId, args, operation)
+    const payment: any = transaction ? await updateTransaction(args.transactionId, args, c.organizationId, operation) : invoice ? await updateCompanyInvoice(c.organizationId, args.invoiceId, args, operation) : await updateCompanyCalendarEntry(c.organizationId, args.paymentId, args, operation)
     await settle(c, turnId, op, { state: 'done', nativeResourceIds: resourceIds, completedAt: new Date(), recoveryOwner: null, safeError: null })
     await verifyJob()
     return response({ ...op, state: 'done', nativeResourceIds: resourceIds, completedAt: payment.naviOperation.appliedAt }, { ...resourceIds, values: payment.naviOperation.values, updatedAt: payment.updatedAt, settlement: 'saved_status_only' })
   } catch (error: any) {
-    const payment: any = invoice ? await Invoice.findOne({ _id: args.invoiceId, organizationId: c.organizationId }).select('naviOperation').lean() : await Payment.findOne({ _id: args.paymentId, organizationId: c.organizationId }).select('naviOperation').lean()
+    const payment: any = transaction ? await Transaction.findOne({ _id: args.transactionId, organizationId: c.organizationId }).select('naviOperation').lean() : invoice ? await Invoice.findOne({ _id: args.invoiceId, organizationId: c.organizationId }).select('naviOperation').lean() : await Payment.findOne({ _id: args.paymentId, organizationId: c.organizationId }).select('naviOperation').lean()
     const marker = payment?.naviOperation
     if (marker?.operationId === op.operationId && marker.payloadHash === payloadHash) {
       await settle(c, turnId, op, { state: 'done', nativeResourceIds: resourceIds, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })

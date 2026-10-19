@@ -35,10 +35,13 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'PATCH' || method === 'PUT') {
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
+    if (!isValidObjectId(id)) throw createError({ statusCode: 400, statusMessage: 'Invalid transaction ID' })
     const body = await readBody(event)
 
     try {
-      const transaction = await updateTransaction(id, body)
+      const transaction = await updateTransaction(id, body, organizationId)
       return transaction
     } catch (error: any) {
       if (error.message?.includes('not found')) {
@@ -53,8 +56,11 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'DELETE') {
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
+    if (!isValidObjectId(id)) throw createError({ statusCode: 400, statusMessage: 'Invalid transaction ID' })
     try {
-      const transaction = await deleteTransaction(id)
+      const transaction = await deleteTransaction(id, organizationId)
       return { success: true, deleted: transaction }
     } catch (error: any) {
       if (error.message?.includes('not found')) {
