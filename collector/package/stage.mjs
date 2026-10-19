@@ -21,7 +21,7 @@ const execute = promisify(execFile);
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const ALLOWLIST = [
   // bank, banks/* and shared/finance-payment-match.mjs: the web-bank module, its adapters, the contract page engine (banks/contract, plan omf-rakuten-bank-connector-amended-20261019 R8) and the provider table (plan omf-bank-collection-amended-20261018 A7).
-  ...['browser','index','interaction','login','mail','run','statement','vault','yayoi','omf-authorization','aplus','aplus-verification','sms-source','bank','banks/rakuten','banks/paypay','banks/resona','banks/contract'].map(name=>({from:`collector/${name}.mjs`})),
+  ...['browser','index','interaction','login','mail','run','statement','vault','yayoi','omf-authorization','aplus','aplus-verification','sms-source','bank','banks/rakuten','banks/paypay','banks/resona','banks/ikeda','banks/contract'].map(name=>({from:`collector/${name}.mjs`})),
   ...['browser-process','key-broker','private-acl','vault'].map(name=>({from:`collector/windows/${name}.ps1`})),
   { from: 'collector/setup.html' }, { from: 'collector/setup.js' }, { from: 'collector/package.json' }, { from: 'collector/package-lock.json' },
   { from: 'shared/amex.mjs' }, { from: 'shared/aplus.mjs' }, { from: 'shared/finance-pending.mjs' }, { from: 'shared/billing-mail.mjs' }, { from: 'shared/finance-payment-match.mjs' }

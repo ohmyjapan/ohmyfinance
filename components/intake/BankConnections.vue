@@ -13,6 +13,7 @@
         <label class="min-w-0 text-sm">口座の表示名（任意・一致確認用）<input v-model="forms[a.id].accountLabel" data-bank-account-label type="text" maxlength="100" placeholder="普通 1234567 ○○商事" class="input mt-1 w-full max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white"></label>
         <label v-if="BANK_LOGIN_VARIANTS[forms[a.id].provider]" class="min-w-0 text-sm">ログイン方式<select v-model="forms[a.id].variant" data-bank-variant class="input mt-1 w-full max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white"><option value="">選択してください</option><option v-for="[key,label] in BANK_LOGIN_VARIANTS[forms[a.id].provider]" :key="key" :value="key">{{ label }}</option></select></label>
       </div>
+      <p v-if="BANK_SOFTWARE[forms[a.id].provider]" data-bank-software class="text-xs leading-relaxed text-gray-500">{{ BANK_SOFTWARE[forms[a.id].provider] }}</p>
       <label v-if="mapsTransactionId(forms[a.id].templateId)" class="flex items-start gap-2 text-sm"><input v-model="forms[a.id].transactionIdConfirmed" data-bank-id-confirm class="mt-1" type="checkbox">このテンプレートの取引ID列は銀行が発行した一意の取引IDです（摘要・メモではありません）。</label>
       <div class="flex flex-wrap gap-2"><button class="btn btn-secondary" :disabled="busy || !forms[a.id].provider || !forms[a.id].templateId" data-bank-connect-save @click="saveConnection(a)">接続を保存</button><button class="btn btn-primary" :disabled="busy || !a.connection" data-bank-sync @click="sync(a)">{{ syncLabel(a) }}</button></div>
       <p v-if="messages[a.id]" class="text-sm text-green-700 dark:text-green-300" role="status" data-bank-sync-message>{{ messages[a.id] }}</p>
@@ -23,7 +24,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS } from '~/shared/finance-payment-match.mjs'
+import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_SOFTWARE } from '~/shared/finance-payment-match.mjs'
 import { useUserStore } from '~/stores/user'
 const emit=defineEmits<{(e:'map',fileId:string):void;(e:'close'):void;(e:'changed'):void}>(),user=useUserStore(),api='/api/finance-payments/bank/'
 const accounts=ref<any[]>([]),templates=ref<any[]>([]),collectors=ref<any[]>([]),jobs=reactive<Record<string,any[]>>({}),captures=reactive<Record<string,any[]>>({}),forms=reactive<Record<string,any>>({}),messages=reactive<Record<string,string>>({}),observations=reactive<Record<string,any[]>>({}),busy=ref(false),error=ref('')

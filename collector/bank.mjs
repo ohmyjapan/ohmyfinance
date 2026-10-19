@@ -18,8 +18,9 @@ import { BANK_PROVIDERS } from '../shared/finance-payment-match.mjs';
 import rakuten from './banks/rakuten.mjs';
 import paypay from './banks/paypay.mjs';
 import resona from './banks/resona.mjs';
+import ikeda from './banks/ikeda.mjs';
 
-export const ADAPTERS = Object.freeze({ rakuten, paypay, resona });
+export const ADAPTERS = Object.freeze({ rakuten, paypay, resona, ikeda });
 export const adapterFor = provider => ADAPTERS[provider] || null;
 export const providerLabel = provider => BANK_PROVIDERS.find(([key]) => key === provider)?.[1] || String(provider ?? '');
 const GUID = /^[a-f\d-]{36}$/;

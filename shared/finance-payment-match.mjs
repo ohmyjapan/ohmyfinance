@@ -3,11 +3,16 @@ export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日',
 // Web banks a bank account can be connected to: [key, label, support]. `support` stays 'contract-pending' until a release ships
 // the recorded portal contract and adapter for that bank; only a 'verified' provider runs automatic retrieval, the others run
 // the preparatory observe stage (plan omf-bank-collection-amended-20261018 S7). No provider is verified by this build.
-export const BANK_PROVIDERS=[['rakuten','楽天銀行','contract-pending'],['paypay','PayPay銀行','contract-pending'],['resona','りそな銀行','contract-pending']];
+export const BANK_PROVIDERS=[['rakuten','楽天銀行','contract-pending'],['paypay','PayPay銀行','contract-pending'],['resona','りそな銀行','contract-pending'],['ikeda','池田泉州銀行','contract-pending']];
 // The login variants a provider offers (plan omf-rakuten-bank-connector-amended-20261019 R6): [key, label] per provider; a
 // provider absent here has none. The connection stores the chosen key (else null), the job snapshot freezes it, and the
 // adapter's `starts[variant]` is the matching official login link.
-export const BANK_LOGIN_VARIANTS={rakuten:[['standard','標準ログイン（法人ビジネス口座）'],['plus','口座管理プラス']]};
+export const BANK_LOGIN_VARIANTS={rakuten:[['standard','標準ログイン（法人ビジネス口座）'],['plus','口座管理プラス']],resona:[['direct','ビジネスダイレクトへ直接ログイン'],['idlink','ID連携ログイン（りそなグループID）']],ikeda:[['portal','池田泉州ビジネスゲート（法人ポータル）からログイン'],['direct','インターネットEBに直接ログイン']]};
+// What the person must have in place for a bank whose login runs on installed software (plan omf-bank-software-compatibility-20261019
+// S1): one note per such provider, shown under the connection selects. It explains the bank's 電子証明書発行アプリ and the issuing-Windows-
+// user rule; it promises nothing about the certificate picker under the collector's launch and nothing about required or installed
+// protections (PhishWall and the like) — those are checked in the actual connection environment (the observe run). A provider absent here has no note.
+export const BANK_SOFTWARE={resona:'りそなビジネスダイレクトの電子証明書ログインは、りそな銀行の電子証明書発行アプリで発行し、このPCにサインインしているのと同じWindowsユーザーの証明書ストアに入っている電子証明書を使い、ログイン時の証明書の選択は本人がChromeの画面で行います。証明書の選択画面が表示されるか、および必要なセキュリティソフトや拡張機能の要否は、実際の接続環境（観察取得）で確認してください。',ikeda:'池田泉州銀行の電子証明書ログインは、同行の電子証明書発行アプリで電子証明書を発行したときと同じWindowsユーザーでこのPCにサインインしている必要があり、ログイン時の証明書の選択は本人がChromeの画面で行います。証明書の選択画面が表示されるか、およびPhishWallなどのセキュリティソフトや拡張機能の要否は、実際の接続環境（観察取得）で確認してください。'};
 export const round=n=>Math.round((n+Number.EPSILON)*100)/100;
 const text=v=>String(v??'').normalize('NFKC').trim(),norm=v=>text(v).toLowerCase().replace(/\s+/g,' ');
 export function money(v){if(v===null||v===undefined||text(v)==='')return null;const s=text(v).replace(/[¥￥,$\s]/g,'');if(!/^-?\d+(?:\.\d{1,2})?$/.test(s)||!Number.isFinite(Number(s))||Math.abs(Number(s))>1e12)throw Error('金額を確認してください。');return Number(s);}

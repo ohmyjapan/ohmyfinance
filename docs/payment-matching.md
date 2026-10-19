@@ -98,6 +98,62 @@ entry to `verified`, the fixture replays the recorded path on a fake page, revie
 `contract: null` and `sync` queues observe jobs. No bank is verified by this change; no real bank page, login variant or
 CSV schema has been observed yet.
 
+### りそな銀行 / 池田泉州銀行 — banks whose login runs on installed software (preparation)
+
+Both banks run NTT DATA AnserBizSOL corporate banking. `BANK_PROVIDERS` gains `ikeda` 池田泉州銀行 (`contract-pending`, like every
+provider: `sync` queues observe jobs only; `collector/banks/ikeda.mjs` keeps `contract: null`). `BANK_LOGIN_VARIANTS` gains both
+banks' official entries, recorded 2026-10-19 by public GET with nothing submitted:
+
+- りそな銀行 (`collector/banks/resona.mjs`, now the rakuten shape): `direct` ビジネスダイレクトへ直接ログイン →
+  `https://www.b-direct.resonabank.co.jp/0010c/rblgi01/I1RBLGI01-S01.do`; `idlink` ID連携ログイン（りそなグループID） →
+  `https://wb.resona-gr.co.jp/webservice/WSOI0101E100M.do?BK=0010&lin=b_direct` (the two links of the chooser
+  `https://www.resonabank.co.jp/hojin/hojin_web/login.html`); `loginHosts` `www.b-direct.resonabank.co.jp`,
+  `www.cc.b-direct.resonabank.co.jp` (the host the 電子証明書ログイン form posts to), `wb.resona-gr.co.jp`; `hosts` `resonabank.co.jp`,
+  `resona-gr.co.jp` (widened so a CSV reached through the ID連携 path is retained — a tolerance, no new refusal). りそなWebサービス is
+  a different product and not a variant.
+- 池田泉州銀行 (`collector/banks/ikeda.mjs`): `start` `https://www.sihd-bk.jp/corporation/internetbanking/`; `portal`
+  池田泉州ビジネスゲート（法人ポータル）からログイン → `https://www.0161.houjinportal.anser.ne.jp/`; `direct` インターネットEBに直接ログイン →
+  `https://www.bizsol.anser.ne.jp/0161c/rblgi01/I1RBLGI01-S01.do` (the page offering 電子証明書ログイン and ID・パスワード);
+  `loginHosts` `www.0161.houjinportal.anser.ne.jp`, `www.bizsol.anser.ne.jp`, `www.cc0161.bizsol.anser.ne.jp`; `hosts` `sihd-bk.jp`,
+  `bizsol.anser.ne.jp`, `0161.houjinportal.anser.ne.jp` — not the personal-IB `parasol.anser.ne.jp` and not bare `anser.ne.jp`. An
+  unknown or missing variant opens `start`, the public page, and the person navigates.
+
+The "software installed on the browser" is each bank's 電子証明書発行アプリ, a Windows application that issues the client certificate
+into the Windows user's certificate store; the `cc` login hosts request that certificate at the TLS handshake (the planner's
+2026-10-19 TLS check saw "Acceptable client certificate CA names" on `www.cc0161.bizsol.anser.ne.jp` and
+`www.cc.b-direct.resonabank.co.jp`, none on the ordinary hosts). 池田泉州銀行's FAQ requires the certificate login to run under the
+same Windows user that issued the certificate (「電子証明書発行時のユーザアカウントでログインし直してください」), so the PC running the
+collector must be signed in as that user. `BANK_SOFTWARE` (shown under the connection selects as `[data-bank-software]`) says this for
+both banks and asks the owner to check, in the actual connection environment, whether the certificate picker appears and which
+security software or extensions the contract needs; it promises neither.
+
+Facts and sources (read 2026-10-19): りそな — ビジネスダイレクト offers ID/password and certificate login and recommends the certificate;
+issuance and renewal on Chrome/Edge use the bank-provided application; the certificate is bound to the PC holding it
+(`https://www.resonabank.co.jp/hojin/b_direct/security/syoumei_app.html`,
+`https://www.resonabank.co.jp/hojin/b_direct/security/certificate.html`,
+`https://www.resona-gr.co.jp/resonagr/b_direct/system_requirements.html` 動作環境). 池田泉州 — certificate issuance on Windows
+Chrome/Edge uses the issuance application and the login needs the issuing Windows user
+(`https://www.sihd-bk.jp/corporation/internetbanking/qa/10/`); the security page lists PhishWall Premium as an offered download and a
+one-time password token (トランザクション認証トークン or ソフトトークン) as 「必須」 for インターネットEB
+(`https://www.sihd-bk.jp/corporation/internetbanking/security/`; 動作環境 `https://www.sihd-bk.jp/corporation/internetbanking/requirements/`);
+where PhishWall is used, its vendor requires both the installed client and its browser extension
+(`https://www.securebrain.co.jp/products/phishwall/install_fc.html`). A read-only uninstall-entry search on the owner's PC found
+池田泉州銀行電子証明書発行アプリ 19.0.0.1 (NTT DATA); it proves neither certificate issuance nor the absence of PhishWall or any other
+protection — the owner's actual login mode, installed components and contract requirements are unknown.
+
+Limits of this preparation: the shared launcher is unchanged — the collector's owned, ephemeral Chrome keeps `--disable-extensions`
+(`collector/browser.mjs` `LAUNCH_ARGS`, pinned by `cloud-probe/test/probe.test.mjs` and `collector/test/browser-boundary.test.mjs`;
+the Amex, Aplus, Yayoi and bank launches are identical). Whether that Chrome presents the Windows-store certificate at the `cc`
+hosts, which protections the owner's contract requires or has installed, and where each portal's CSV download originates are
+unverified until the owner's own observe run on each bank; an OTP prompt is never automated. If that run shows a required
+extension or protection that the launch blocks, the change to the shared launcher is its own scoped design with the shared-browser
+audit — bank protections are preserved, never disabled. No blanket extension exemption is granted and no claim is made about the
+production bank population (unknown; zero historical bank cases tested; historical replay F3 open). Both providers stay
+`contract-pending`. A wrong start link or host list shows in the observation: the person lands on the public page, or a download
+from an unlisted host is recorded as `ダウンロード: host/filename` but not retained — inspect the observation and keep the original
+bank file while diagnosing. Data written: `connection.provider = 'ikeda'`, `connection.variant` ∈ {`direct`, `idlink`, `portal`}
+and the job snapshot's copy; no new field or collection.
+
 A genuine bank transaction ID must be deliberately mapped and confirmed. Its identity is scoped to owner/account.
 Without it the identity is file hash + sheet + original row, including two identical-looking rows in one file. Identical
 bytes reimport without duplication. Different files remain distinct even if fingerprints match. A filtered/reordered
