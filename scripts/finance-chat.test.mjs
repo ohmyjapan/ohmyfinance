@@ -55,4 +55,9 @@ test('the interpreter exposes tools through the owned MCP server only and keeps 
  const workspace=interpreterInput({context:{mode:'workspace',pageName:'p',facts:{},capabilities:[],messages:[]},text:'t',tools:[{name:'get_draft'}],target:{importId:'i'}});assert.deepEqual(workspace.selectedStatement,{importId:'i'});assert.equal(Object.hasOwn(workspace,'research'),false);
  assert.equal(systemFor({}),chatSystem);assert.ok(chatSystem.includes('You have no tools or access beyond the supplied context.'));
  const withTools=systemFor({tools:[{name:'get_draft'}]});assert.ok(!withTools.includes('You have no tools'));assert.ok(!withTools.includes('never claim chat can apply them'));assert.ok(withTools.includes('omf_actions'));assert.ok(withTools.includes('post_selected_approved_rows only when the user explicitly orders the ledger posting'));assert.ok(withTools.startsWith(chatSystem.slice(0,80)),'the accountant role is kept');
+ const company=systemFor({companyScoped:true,mode:'workspace',tools:[{name:'list_company_invoices'}]});
+ assert.ok(company.startsWith(chatSystem.slice(0,80)));assert.ok(company.includes("each record's saved currency"),'company-ui:saved-currency');
+ assert.ok(!company.includes('Amounts are Japanese yen'));assert.ok(!company.includes('post_selected_approved_rows'));assert.ok(company.includes('list_company_calendar_entries'));
+ assert.ok(company.includes('not fresh NTA verification'));assert.ok(company.includes('not a bank settlement check'));assert.ok(company.includes('no bank balance, financial writes'));
+ assert.ok(withTools.includes('Amounts are Japanese yen (JPY)'));assert.equal(systemFor({companyScoped:true}),chatSystem);
 });

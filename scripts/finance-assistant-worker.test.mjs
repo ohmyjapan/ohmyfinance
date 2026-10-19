@@ -6,6 +6,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 
+test('company workspace passes its supplied catalogue through the existing worker and returns on its own lease',async()=>{
+ const tools=['list_company_invoices','get_company_invoice','list_company_calendar_entries','get_company_calendar_entry'].map(name=>({name}));
+ const job={id:'company-job',mode:'workspace',companyScoped:true,lease:'frozen-lease',tools,context:{scope:{actorId:'actor',organizationId:'company-A'}}},calls=[];
+ const worker=new TeachingWorker({baseUrl:'http://127.0.0.1:8080',token:'synthetic'},{request:async(url,options)=>{const route=url.split('/worker/')[1];calls.push(route);if(route==='workspace-claim')return {ok:true,json:async()=>({job})};assert.equal(route,'workspace/company-job/result');assert.equal(JSON.parse(options.body).lease,job.lease);return {ok:true,json:async()=>({success:true})}},interpret:async(config,claimed)=>{assert.deepEqual(claimed.tools,tools);assert.equal(claimed.companyScoped,true);assert.equal(claimed.context.scope.organizationId,'company-A');assert.equal(claimed.actionEndpoint,'http://127.0.0.1:8080/api/finance-chat/worker/workspace/company-job/actions');return {kind:'unclear',summary:'Synthetic read answer',patch:{},quotes:{}}},log:()=>{}});
+ assert.equal(await worker.cycle(),true);assert.deepEqual(calls,['workspace-claim','workspace/company-job/result']);
+});
+
 for(const mode of ['purchase','workspace'])for(const fails of [false,true])test(`long ${mode} chat renews only its own lease and stops after ${fails?'failure':'success'}`,async t=>{
  t.mock.timers.enable({apis:['setInterval']});
  let release,entered;const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>entered=resolve),beats=[],results=[];

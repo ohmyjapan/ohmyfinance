@@ -10,7 +10,7 @@ Company prompt history comes only from that company conversation, with stored su
 
 New guards: authenticated selected membership; owner/company conversation/history key; request text/selection identity; frozen turn/context identity; live member/job/lease checks; strict read catalogue/arguments; foreign and suppressed record scope. They require independent review. `companyMembership` extracts the existing calendar predicate unchanged for frozen worker use; the broader shared-boundary audit is still required. Native invoice/payment non-GET suffixes are LF-byte-identical to the base, with proof in the hub report. Existing invoice/calendar defect fixtures point to the moved shared query, retaining their original assertions.
 
-This slice is API/worker functionality. The current UI is not wired to the new conversation route, company-switch response invalidation is not implemented, and Navi card posting stays legacy until company posting/draft/reference ownership is deliberately connected. Invoice/calendar mutations, bank settlement/Slack, memory/migration, viewer write policy, full operator/database/key/runtime custody, fresh native-model reasoning/historical/production observation and deployed replay remain open. A claimed API read or synthetic worker reply is not a real Opus evaluation or a production reliability rate.
+Invoice and calendar pages now use the explicit company conversation in the existing accordion. Company identity comes from the active access token; the server independently authorizes membership. Other pages and purchase chats retain their separate legacy conversations. Navi card posting stays legacy until company posting/draft/reference ownership is deliberately connected. Invoice/calendar mutations, bank settlement/Slack, memory/migration, viewer write policy, full operator/database/key/runtime custody, fresh native-model reasoning/historical/production observation and deployed replay remain open. A claimed API read or synthetic worker reply is not a real Opus evaluation or a production reliability rate.
 
 Affected shared boundary callers:
 - `server/utils/calendarAccess.ts`
@@ -30,3 +30,13 @@ Affected shared boundary callers:
 - `server/api/finance/[...path].ts`
 - `server/api/invoices/[id].ts`
 - `server/api/invoices/[id]/pdf.ts`
+
+
+Company UI continuation (self-mapped FOLD):
+- Panel maps invoices/calendar to actor/company-keyed conversations and remounts on scope change. Native auth switch -> new profile -> matching actor/company validation -> session adoption -> full page reload refreshes records beneath the accordion too. OMJ customer codes are not companies.
+- No company selection means no fallback to personal chat. Drafts and pending request id/text/selection stay in memory per scope. Delayed responses cannot update a different actor/company component. Server-accepted pending messages are acknowledged by actual id/text; retries preserve original intent and retain any newly edited buffer. Full page reload clears unsent buffers. No financial text is added to browser storage; existing open/target UI preferences remain.
+- Native401/403 clears the displayed company conversation and disables sending until authorized loading succeeds. New UI guards require independent review. Backend authority and financial writes remain unchanged.
+- Installed Chrome exercises the production build with native authentication and owned synthetic DB. Delayed/lost responses wrap real authorized native requests, not mock records. No model/provider/business sends.
+- TeachingWorker/MCP use the supplied catalogue without transport edits. Company interpreter keeps the Japanese accountant role and claude-opus-5-5/high, names the four read tools, preserves saved currencies and distinguishes saved status/printed T from external proof. Legacy JPY prompts are unchanged. Prompt assertions/mocked interpreter transport do not establish real native-model reasoning quality.
+
+All-feature actions/teaching, scoped posting/mutations, legacy migration, historical/production shared-guard reliability, infrastructure/operator key/runtime custody, independent review and final deployed replay remain open.
