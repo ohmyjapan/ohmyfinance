@@ -23,7 +23,11 @@ export default defineEventHandler(async (event) => {
     // If authenticated, get user and organization data
     let user = null
     let organization = null
-    let organizationId = auth?.organizationId
+    // Use the same fresh company result for the profile and every financial query. A stale token must retain only
+    // the existing limited dashboard, with no company profile or financial records.
+    let calendarOrganizationId = null
+    try { calendarOrganizationId = (await calendarCompany(event)).organizationId } catch { calendarOrganizationId = null }
+    const organizationId = calendarOrganizationId
 
     if (auth.userId) {
       user = await User.findById(auth.userId).lean()
@@ -33,22 +37,13 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    // Build query filter based on organization
-    // Note: Currently Transaction model doesn't have organizationId
-    // So we fetch all data. When multi-tenancy is added, filter by organizationId
-    const transactionFilter: Record<string, any> = {}
-    const receiptFilter: Record<string, any> = {}
+    // The selected company's records only; an absent or revoked company produces empty financial results.
+    const transactionFilter: Record<string, any> = { organizationId: calendarOrganizationId || { $in: [] } }
+    const receiptFilter: Record<string, any> = { organizationId: calendarOrganizationId || { $in: [] } }
     const paymentFilter: Record<string, any> = { suppressedAt: { $exists: false } }
-
-    // If organization exists and Receipt has organizationId, filter by it
-    if (organizationId) {
-      receiptFilter.organizationId = organizationId
-    }
 
     // Payments are company-scoped (plan omf-calendar-gmail-build-20261015 §2 S4, P1): the count is the selected
     // company's, only for a current member of it; no company or a lapsed membership counts nothing.
-    let calendarOrganizationId = null
-    try { calendarOrganizationId = (await calendarCompany(event)).organizationId } catch { calendarOrganizationId = null }
     paymentFilter.organizationId = calendarOrganizationId || { $in: [] } // guard:company-count
 
     // Get transaction stats
