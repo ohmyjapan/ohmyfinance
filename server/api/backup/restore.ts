@@ -113,7 +113,7 @@ export default defineEventHandler(async (event) => {
     for (const key of Object.keys(prepared) as SectionKey[]) {
       for (const { doc, item } of prepared[key]) {
         try {
-          if (options.skipDuplicates && !clear.has(key)) {
+          if ((options.skipDuplicates || options.clearExisting) && !clear.has(key)) {
             const keys = duplicateKeys[key](doc, item)
             if (keys.length && await models[key].exists({ organizationId, $or: keys })) { skip(results[key], 'duplicate'); continue }
           }

@@ -153,6 +153,20 @@ async function main(){
    assert.ok((await listA()).some(t=>t.productName==='MIXED_VALID_TX'),'restore:mixed-valid-added');assert.equal(await guarded(),guardedMixed,'restore:foreign-preserved');assert.ok(!/MIXED_BAD_PRIVATE/.test(mixed.raw),'restore:safe-result');
    const mixedRetry=await restoreOk(tokenA,backup({transactions:[tx({organizationId:String(A),referenceNumber:'MIXED-VALID-1',productName:'MIXED_VALID_TX'}),tx({organizationId:String(A),referenceNumber:'MIXED-BAD-1',amount:'MIXED_BAD_PRIVATE'})]}),{clearExisting:true});
    assert.equal(mixedRetry.data.results.transactions.cleared,0,'restore:mixed-invalid-no-clear');assert.equal(mixedRetry.data.results.transactions.reasons.duplicate,1,'restore:mixed-valid-added');assert.equal(await transactions.countDocuments({productName:'MIXED_VALID_TX'}),1,'restore:mixed-valid-added');
+   // A requested replacement that was held is not an ordinary additive opt-out: keep existing copies, for all three collections.
+   const beforeHeld=await scopeA(),guardedHeld=await guarded();
+   const heldFile=backup({transactions:[tx({organizationId:String(A),referenceNumber:'RESTORE-A-1',productName:'RESTORED_A_TX'}),tx({organizationId:String(A),amount:'HELD_BAD_PRIVATE'})],recurringPayments:[rec({organizationId:String(A),name:'RESTORED_A_RECURRING'}),rec({organizationId:String(A),name:'HELD_BAD_RECURRING',amount:'HELD_BAD_PRIVATE'})],receipts:[rcpt({organizationId:String(A),filename:'restored-a.pdf',originalFilename:'RESTORED_A_RECEIPT.pdf'}),rcpt({organizationId:String(A),filename:'held-bad.pdf',size:'HELD_BAD_PRIVATE'})]});
+   for(let attempt=0;attempt<2;attempt++){
+    const held=await restoreOk(tokenA,heldFile,{clearExisting:true,skipDuplicates:false});
+    assert.deepEqual(await scopeA(),beforeHeld,'restore:held-clear-no-duplicate');
+    for(const key of['transactions','recurringPayments','receipts']){const r=held.data.results[key];assert.equal(r.cleared,0,'restore:held-clear-no-duplicate');assert.equal(r.clearSkipped,'selected_company_rows_invalid','restore:held-clear-reason');assert.equal(r.restored,0,'restore:held-clear-no-duplicate');assert.equal(r.failed,0,'restore:held-clear-no-duplicate');assert.deepEqual(r.reasons,{invalid:1,duplicate:1},'restore:held-clear-duplicate-reason')}
+    assert.equal(await guarded(),guardedHeld,'restore:foreign-preserved');assert.ok(!held.raw.includes('HELD_BAD_PRIVATE'),'restore:safe-result');
+   }
+   // An explicitly additive restore still respects the user's normal duplicate opt-out.
+   const allowed=backup({transactions:[tx({organizationId:String(A),referenceNumber:'OPTOUT-ALLOWED',productName:'OPTOUT_ALLOWED'})]});
+   for(let i=0;i<2;i++)assert.equal((await restoreOk(tokenA,allowed,{clearExisting:false,skipDuplicates:false})).data.results.transactions.restored,1,'restore:additive-optout-allowed');
+   assert.equal(await transactions.countDocuments({referenceNumber:'OPTOUT-ALLOWED'}),2,'restore:additive-optout-allowed');
+   pass('held replacement skips existing company copies in all three collections even when duplicate skipping is off, retry keeps the same counts and reasons; an ordinary additive restore still permits explicit duplicate opt-out');
    const beforeClear=await scopeA(),guardedClear=await guarded();assert.ok(beforeClear.tx>1&&beforeClear.rec>0&&beforeClear.rcpt>0);
    const clearFile=backup({transactions:[tx({organizationId:String(A),referenceNumber:'CLEAR-A-1',productName:'CLEAR_A_TX'}),tx({organizationId:String(B),referenceNumber:'CLEAR-B-1',productName:'CLEAR_FOREIGN_PRIVATE'}),tx({referenceNumber:'CLEAR-U-1',productName:'CLEAR_HELD_PRIVATE'})],recurringPayments:[rec({organizationId:String(B),name:'CLEAR_FOREIGN_RECURRING_PRIVATE'}),rec({name:'CLEAR_HELD_RECURRING_PRIVATE'})],mappingTemplates:[{name:'CLEAR_TEMPLATE_PRIVATE',sourceType:'custom',mappings:[]}]});
    const cleared=await restoreOk(tokenA,clearFile,{clearExisting:true});const afterClear=await scopeA();

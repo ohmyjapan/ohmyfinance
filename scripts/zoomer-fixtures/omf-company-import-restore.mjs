@@ -23,6 +23,7 @@ const DEFECTS=[
  ['restore-global-clear','.collection.deleteMany({ organizationId })','.collection.deleteMany({})','restore:clear-scoped'],
  ['restore-clear-without-company-rows','if (prepared[key].length > 0 || section.length === 0 && provesCompanySnapshot(backupData, organizationId)) clear.add(key);','if (true) clear.add(key);','restore:no-eligible-no-clear'],
  ['restore-clear-despite-invalid-rows','if (result.reasons.invalid) result.clearSkipped = "selected_company_rows_invalid";\n        else if (','if (','restore:mixed-invalid-no-clear'],
+ ['restore-duplicate-on-held-clear','if ((options.skipDuplicates || options.clearExisting) && !clear.has(key)) {','if (options.skipDuplicates && !clear.has(key)) {','restore:held-clear-no-duplicate'],
  ['restore-global-duplicate','await models[key].exists({ organizationId, $or: keys })','await models[key].exists({ $or: keys })','restore:company-duplicate'],
  ['restore-raw-row-error-log','} catch {\n          console.error("Company backup restore: one row could not be saved");','} catch (rowError) {\n          console.error("Company backup restore: one row could not be saved", rowError);','restore:safe-log'],
  ['restore-echo-parse-error','} catch {\n      backupData = null;\n    }','} catch (parseError) {\n      throw createError({ statusCode: 400, statusMessage: String(parseError.message) });\n    }','restore:safe-error'],
