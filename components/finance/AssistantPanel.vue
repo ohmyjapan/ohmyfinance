@@ -1,6 +1,6 @@
 <template>
  <section v-if="user.isAuthenticated && !isLocked" data-assistant-accordion class="mb-6 min-w-0 overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/10 dark:bg-slate-900">
-  <h2><button type="button" data-assistant-toggle class="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-gray-50 focus-visible:outline-primary-main dark:hover:bg-white/5 sm:px-5" aria-controls="omf-assistant" :aria-expanded="assistant.open" @click="assistant.open ? close() : summon()"><span class="rounded-xl bg-primary-main/10 p-2 text-primary-main"><MessageCircle class="h-4 w-4" /></span><span class="min-w-0 flex-1"><span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">OMFに相談</span><span class="mt-0.5 block text-xs font-normal text-gray-500">画面を見ながら、判断や購入内容を相談できます</span></span><ChevronDown class="h-4 w-4 shrink-0 text-gray-400 transition-transform" :class="assistant.open ? 'rotate-180' : ''" aria-hidden="true" /></button></h2>
+  <h2><button type="button" data-assistant-toggle class="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-gray-50 focus-visible:outline-primary-main dark:hover:bg-white/5 sm:px-5" aria-controls="omf-assistant" :aria-expanded="assistant.open" @click="assistant.open ? close() : summon()"><NaviAvatar /><span class="min-w-0 flex-1"><span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">OMF Navi に相談</span><span class="mt-0.5 block text-xs font-normal text-gray-500">画面を見ながら、判断や購入内容を相談できます</span></span><ChevronDown class="h-4 w-4 shrink-0 text-gray-400 transition-transform" :class="assistant.open ? 'rotate-180' : ''" aria-hidden="true" /></button></h2>
   <aside v-show="assistant.open" id="omf-assistant" ref="panel" aria-label="OMFアシスタント" class="assistant-panel flex min-h-0 min-w-0 flex-col border-t border-gray-100 dark:border-white/10" :class="{'assistant-panel-company':scope.company}" @keydown="keyboard">
    <div class="shrink-0 border-b border-gray-100 bg-gray-50/70 px-5 py-3 dark:border-white/10 dark:bg-white/5">
     <div class="flex items-center justify-between gap-2"><div class="flex flex-wrap items-center gap-2"><button class="rounded-lg px-2.5 py-1.5 text-xs" :class="workspaceView?'bg-primary-main/10 font-medium text-primary-main':'text-gray-500 hover:bg-gray-100'" data-assistant-general @click="assistant.select({kind:'workspace'})">画面について相談</button><button v-if="currentDraftTarget" class="rounded-lg px-2.5 py-1.5 text-xs text-primary-main hover:bg-primary-main/10" data-assistant-current @click="selectCurrent">この購入について</button></div><button type="button" data-assistant-close class="shrink-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10" aria-label="アシスタントを折りたたむ" @click="close"><X class="h-4 w-4" /></button></div>
@@ -19,7 +19,8 @@
  </section>
 </template>
 <script setup lang="ts">
-import {MessageCircle,ChevronDown,X} from 'lucide-vue-next'
+import {ChevronDown,X} from 'lucide-vue-next'
+import NaviAvatar from './NaviAvatar.vue'
 import {useUserStore} from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
 import {useActivityTracker} from '~/composables/useActivityTracker'

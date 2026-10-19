@@ -1,7 +1,7 @@
 <template>
  <section :class="panel ? 'flex min-h-0 flex-1 flex-col' : 'card mb-6 overflow-hidden'" aria-label="OMFと相談">
   <header v-if="!panel" class="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6">
-   <div class="flex items-center gap-3"><span class="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-main/10 text-primary-main"><MessageCircle class="h-4 w-4" /></span><div><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">OMFと相談</h2><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">購入の説明も、判断の修正も、ここから。</p></div></div>
+   <div class="flex items-center gap-3"><NaviAvatar /><div><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">OMF Navi に相談</h2><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">購入の説明も、判断の修正も、ここから。</p></div></div>
    <NuxtLink to="/learning" class="shrink-0 py-1 text-xs text-primary-main">学習ノート ↗</NuxtLink>
   </header>
   <div ref="transcript" :class="panel ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5' : 'max-h-[520px] space-y-5 overflow-y-auto px-4 py-5 sm:px-6'" role="log" aria-live="polite">
@@ -9,7 +9,7 @@
    <article v-for="turn in turns" :key="turn.id" :data-chat-turn="turn.id" class="space-y-3">
     <div class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
     <ul v-if="turn.actions?.length" data-chat-actions class="mr-2 space-y-1 text-xs"><li v-for="a in turn.actions" :key="a.operationId" :data-chat-action-state="a.state" class="flex items-start gap-2" :class="a.state==='failed' || a.state==='unresolved' ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'"><Loader2 v-if="a.state==='working'" class="mt-0.5 h-3 w-3 shrink-0 animate-spin text-primary-main" /><span>{{ actionLabel(a) }}</span></li></ul>
-    <div v-if="turn.proposal" class="mr-2"><p class="mb-1 text-[11px] font-semibold text-primary-main">OMF</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ turn.proposal.summary }}</p>
+    <div v-if="turn.proposal" class="mr-2"><p class="mb-2 flex items-center gap-2 text-[11px] font-semibold text-primary-main"><NaviAvatar size="sm" /><span>OMF Navi</span></p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ turn.proposal.summary }}</p>
      <p v-if="turn.research" data-chat-research :data-chat-research-status="turn.id===conversation?.currentId ? '' : undefined" class="mt-2 text-xs" :class="turn.research.requestId ? 'text-gray-500' : turn.research.unavailable ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'">{{ researchStatus(turn) }}</p>
      <div v-if="turn.proposal.kind==='proposal'" class="mt-3 rounded-xl border border-gray-200 p-3 dark:border-white/10">
       <p class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ turn.confirmedAt ? '確認した内容' : '反映する内容の提案' }}</p>
@@ -24,7 +24,7 @@
     </div>
    </article>
    <article v-if="researchView?.research?.report" ref="researchReply" data-chat-research-result class="space-y-3">
-    <p class="text-[11px] font-semibold text-primary-main">OMF · {{ korean ? '조사 결과' : '調査結果' }}</p>
+    <p class="flex items-center gap-2 text-[11px] font-semibold text-primary-main"><NaviAvatar size="sm" /><span>OMF Navi · {{ korean ? '조사 결과' : '調査結果' }}</span></p>
     <p v-if="researchView.research.state==='applied'" data-chat-research-record class="text-xs leading-relaxed text-gray-500">{{ korean ? '선택한 후보를 이전에 반영한 조사 기록이에요. 현재 입력값은 거래의 하단 항목에서 확인할 수 있어요.' : '選択した候補を反映した際の調査記録です。現在の入力値は取引の項目で確認できます。' }}</p>
     <p v-else-if="researchView.stale" data-chat-research-stale class="rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ korean ? '조사 후 거래 내용이 바뀌었어요. 아래는 이전 조사 기록이며, 현재 거래에 적용할 후보는 다시 확인해야 해요.' : '調査後に下書きが変わりました。以下は以前の調査記録です。現在の候補は再確認が必要です。' }}</p>
     <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ researchView.research.report.summary }}</p>
@@ -50,7 +50,8 @@
 </template>
 <script setup lang="ts">
 import PurchaseResearch from '~/components/finance/PurchaseResearch.vue'
-import { MessageCircle, Loader2, Send } from 'lucide-vue-next'
+import { Loader2, Send } from 'lucide-vue-next'
+import NaviAvatar from './NaviAvatar.vue'
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
 import { purchaseQuestions } from '~/shared/finance-answers.mjs'
