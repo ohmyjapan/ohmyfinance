@@ -6,19 +6,28 @@ import {FinancialAccount,FinanceImport} from '../models/Finance'
 import {learningOverview,learningDetail} from './financeLearningService'
 import {ready,fail,id,ownedImport,reviewMapping} from './financeService'
 import {assistantPages,validateAssistantReply} from '../../shared/finance-assistant.mjs'
-import {actionTools,reconcileActions,actionReceipts,conversationReceipts,runAction} from './financeActionService'
+import {actionTools,teachingTools,reconcileActions,actionReceipts,conversationReceipts,runAction} from './financeActionService'
+import {startNewOwnerConversation,listOwnerConversationArchives,getOwnerConversationArchive,archiveDiscussion,ownerTurnLimits} from './financeOwnerConversationService'
+import {companyClaim,companyContextLost,maskTurns} from './financeOwnerCompanyKnowledgeService'
 import {readRecord as readIntakeRecord,readSheet as readIntakeSheet} from './financeIntakeService'
 import {paymentView as readOwnedPayment} from './financePaymentMatchService'
 import {postingCompanyView,type PostingCompany} from './financeNaviPostingService'
 async function init(){await ready();await Conversation.init()}
-const visible=(c:any)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null
+// A turn that used one company's teachings is shown only while that same company is the checked selection (masked otherwise).
+const visible=(c:any,postingCompany:PostingCompany|null=null)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,segment:c.segment||0,turnLimit:ownerTurnLimits.workspace,turns:maskTurns(c.turns,postingCompany?.organizationId||null)}:null
 const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({chatLastSeenAt:-1}).lean()
 const withReceipts=(c:any)=>conversationReceipts('workspace',c)
 // postingCompany: the token-selected company checked by the route for this request (display only; a turn keeps the one frozen at its send).
-export async function getAssistant(ownerId:string,postingCompany:PostingCompany|null=null){await init();return {conversation:visible(await withReceipts(await Conversation.findOne({ownerId}).lean())),connected:!!await available(ownerId),postingCompany:postingCompanyView(postingCompany)}}
-async function pageContext(ownerId:string,input:any){
+export async function getAssistant(ownerId:string,postingCompany:PostingCompany|null=null){await init();return {conversation:visible(await withReceipts(await Conversation.findOne({ownerId}).lean()),postingCompany),connected:!!await available(ownerId),postingCompany:postingCompanyView(postingCompany)}}
+// Explicit new chat and archived history of the owner workspace conversation (owner-scoped; see financeOwnerConversationService).
+export async function newAssistant(ownerId:string,body:any,postingCompany:PostingCompany|null=null){await init();await startNewOwnerConversation('workspace',{ownerId},body);return getAssistant(ownerId,postingCompany)}
+export async function assistantHistory(ownerId:string,query:any,postingCompany:PostingCompany|null=null){await init();return listOwnerConversationArchives('workspace',{ownerId},postingCompany?.organizationId||null,query)}
+export async function assistantArchive(ownerId:string,archiveId:string,postingCompany:PostingCompany|null=null){await init();return getOwnerConversationArchive('workspace',{ownerId},postingCompany?.organizationId||null,archiveId)}
+async function pageContext(ownerId:string,input:any,postingCompany:PostingCompany|null=null){
  if(!input||!Object.hasOwn(assistantPages,input.page))fail(400,'Invalid assistant page')
  const context:any={mode:'workspace',page:input.page,pageName:assistantPages[input.page],currency:'JPY',capabilities:['Explain supplied evidence and page purpose','For purchase changes select a statement and confirm its proposal','Never change ledger or settings from general conversation'],facts:{}}
+ // An archived conversation the owner explicitly chose to discuss: a bounded server copy (never a body), masked for the current company.
+ if(input.archiveId!==undefined)context.facts.discussedArchive=await archiveDiscussion(ownerId,id(input.archiveId),postingCompany?.organizationId||null)
  if(input.page==='intake-payments'){
   // Selection is an owned pointer only. Financial rows/evidence are fetched through the claimed agent's live card scope.
   context.capabilities=['Read assigned card payment matches and intake payment evidence with the supplied named tools','Bank payments and unassigned cards are unavailable in these tools; totals are partial and are not bank balances','Navi has no payment-allocation, bank-row correction or bank CSV import tool. These are Navi tool limits, not missing page features. Ledger posting is a separate named action requiring an explicit current user instruction and its native checks.']
@@ -71,15 +80,16 @@ export async function sendAssistant(ownerId:string,body:any,postingCompany:Posti
  if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getAssistant(ownerId,postingCompany)}
  if(c&&['queued','working'].includes(c.state))fail(409,'前の回答をお待ちください。')
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')
- if((c?.turns.length||0)>=200)fail(409,'会話が200件に達しました。管理者に確認してください。')
+ if((c?.turns.length||0)>=ownerTurnLimits.workspace)fail(409,'この会話は200件に達しました。「新しい会話」で続けてください。これまでの会話と保存の記録は「履歴」に残ります。')
  const agent:any=await available(ownerId);if(!agent)fail(409,'AIに接続できません。少し待って再試行してください。')
- const context=await pageContext(ownerId,body.context)
+ const context=await pageContext(ownerId,body.context,postingCompany)
  // Ledger posting destination only: the checked token company frozen with this turn (null = none selected; every other action stays available).
  context.facts.postingCompany=postingCompanyView(postingCompany)
  context.facts.postingCompanyMeaning=postingCompany?'Ledger posting (post_selected_approved_rows) in this turn goes to this company only. Discussion, draft saves, memories and approval do not depend on it.':'No company is selected for ledger posting. Discussion, draft saves, memories and approval remain available; ledger posting is refused until the owner selects a company and sends a new instruction.'
  c=await withReceipts(c)
  // Stored server times let the accountant compare a prior reply with later rule audit events; legacy gaps remain unknown.
- context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null}))
+ // Each earlier message names its turn: the claim withholds a turn that used another company's teachings (financeOwnerCompanyKnowledgeService).
+ context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({turnId:t.id,text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null}))
  // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
  const target=context.facts.intakeRecord?{recordId:context.facts.intakeRecord.id}:context.facts.intakeSheet?{documentId:context.facts.intakeSheet.document.id,sheet:context.facts.intakeSheet.sheet,headerRow:context.facts.intakeSheet.headerRow}:context.facts.paymentSelection?.kind==='card'?{importId:context.facts.paymentSelection.importId,line:context.facts.paymentSelection.line}:context.facts.paymentSelection?.kind==='bank'?{paymentKind:'bank'}:context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
@@ -101,7 +111,10 @@ export async function claimAssistant(agent:any){
  // A reclaim reconciles the previous attempt's claimed operations before the model runs again; the job carries their receipts,
  // the next free slot, the frozen statement selection and the named tools it may call.
  const {receipts,nextSlot}=await reconcileActions('workspace',String(c._id),turn.id)
- return {job:{id:String(c._id),mode:'workspace',lease,text:turn.text,context:c.context,tools:actionTools('workspace'),actions:receipts,nextSlot,target:turn.target||null}}
+ // Same-company teachings and tools only with the turn's frozen company, a workspace worker and a membership read now; earlier
+ // messages of another company's (or no company's) context are withheld from this job.
+ const bridge:any=await companyClaim(Conversation,c,turn,agent,lease)
+ return {job:{id:String(c._id),mode:'workspace',lease,text:turn.text,context:{...c.context,messages:bridge.messages},tools:[...actionTools('workspace'),...(bridge.authority?teachingTools('workspace'):[])],actions:receipts,nextSlot,target:turn.target||null,...(bridge.authority?{teachingCompany:{name:bridge.authority.name},knowledge:bridge.knowledge,knowledgeActiveTotal:bridge.knowledgeActiveTotal}:{})}}
 }
 export async function finishAssistant(agent:any,chatId:string,body:any){
  if(!agent.workspaceEnabled)fail(403,'Workspace conversation access required')
@@ -110,6 +123,8 @@ export async function finishAssistant(agent:any,chatId:string,body:any){
  const filter={_id:id(chatId),ownerId:agent.ownerId,agentId:agent._id,state:'working',lease:body.lease,leaseUntil:{$gt:new Date()}}
  const c:any=await Conversation.findOne(filter).lean();if(!c)fail(409,'Conversation job changed')
  let proposal:any;if(body.failed!==true){try{proposal=validateAssistantReply(body.proposal)}catch{fail(400,'A general conversation cannot edit a purchase')}}
+ // A turn that used a company's teachings keeps no reply when that company can no longer be confirmed now (it settles as failed).
+ if(proposal&&await companyContextLost(agent,c.ownerId,c.turns.find((t:any)=>t.id===c.currentId)))proposal=undefined
  // Only this turn's fields are set (never the whole array from this read); the receipts come from the journal, so a failed final
  // response keeps every completed action.
  const receipts=await actionReceipts('workspace',chatId,c.currentId)

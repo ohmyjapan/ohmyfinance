@@ -3,7 +3,10 @@ const oid=Schema.Types.ObjectId, mixed=Schema.Types.Mixed
 const chat=new Schema({
  ownerId:{type:oid,required:true},accountId:{type:oid,required:true},importId:{type:oid,required:true},line:{type:Number,required:true},
  revision:{type:Number,default:0},state:{type:String,default:'idle'},currentId:String,
- turns:{type:[mixed],default:[]},context:mixed,agentId:oid,lease:String,leaseUntil:Date,attempts:{type:Number,default:0}
+ turns:{type:[mixed],default:[]},context:mixed,agentId:oid,lease:String,leaseUntil:Date,attempts:{type:Number,default:0},
+ // Explicit new chat of this purchase's conversation (financeOwnerConversationService): current segment and last accepted reset request.
+ // The owner/import/line identity stays unique; archived segments live in FinanceOwnerConversationArchive.
+ segment:{type:Number,default:0},lastReset:mixed
 },{timestamps:true})
 chat.index({ownerId:1,importId:1,line:1},{unique:true})
 chat.index({ownerId:1,accountId:1,state:1,updatedAt:1})

@@ -10,7 +10,7 @@
         <span class="min-w-0 flex-1"><span class="block text-xs text-gray-500">{{ p.accountName }} · {{ p.date || '日付未記載' }}<span v-if="p.sourceKind==='repayment'"> · カード返済</span></span><span class="mt-1 block break-words font-medium">{{ p.description }}</span></span><span class="text-right text-sm"><span class="block">{{ cash(p.amount,p.currency) }}</span><span class="text-xs text-gray-500">{{ stateName(p.state) }} · 未配分 {{ cash(p.remaining,p.currency) }}</span></span>
       </button>
     </section>
-    <div v-if="selected" ref="detailHost" tabindex="-1" class="scroll-mt-24 space-y-3 focus:outline-none"><button class="text-sm text-primary-main dark:text-primary-light" @click="selected=null">詳細を閉じる</button><IntakePaymentMatches :key="selected.paymentKey" side="payment" :endpoint="selected.endpoint" @changed="load" @ready="scrollDetails" /></div>
+    <div v-if="selected" ref="detailHost" tabindex="-1" class="scroll-mt-24 space-y-3 focus:outline-none"><button class="text-sm text-primary-main dark:text-primary-light" @click="selected=null">詳細を閉じる</button><IntakePaymentMatches :key="selected.paymentKey+':'+detailVersion" side="payment" :endpoint="selected.endpoint" @changed="load" @ready="scrollDetails" /></div>
     <p class="text-xs leading-relaxed text-gray-500">カードの個別購入と銀行からのカード返済を分けて管理します。照合結果から仕訳・振込・カレンダーの支払状況は変更されません。</p>
   </div>
 </template>
@@ -31,5 +31,9 @@ async function scrollDetails(){await nextTick();detailHost.value?.focus({prevent
 const cash=(n:number,c:string)=>Number(n).toLocaleString('ja-JP')+' '+c
 const stateName=(v:string)=>({unmatched:'未照合',partial:'一部配分',matched:'照合済み',review:'要確認'} as Record<string,string>)[v]||v
 async function load(){busy.value=true;error.value='';try{data.value=await $fetch('/api/finance-payments/payments',{headers:user.authHeader,query:filters})}catch(e:any){error.value=e.data?.data?.message||e.message}finally{busy.value=false}}
+// A Navi allocation receipt (assigned card) reloads the list; the open detail is refetched only when it is that same charge. The
+// source-file view and the current-balance distinction of the page are unchanged.
+const detailVersion=ref(0)
+watch(()=>assistant.ownerNativeSequence,async()=>{const r=assistant.ownerNative;if(!r||r.kind!=='allocation'||String(r.actorId)!==String(user.user?.id||''))return;await load();if(selected.value?.kind==='card'&&String(selected.value.importId)===String(r.importId)&&Number(selected.value.line)===Number(r.line))detailVersion.value++})
 onMounted(load)
 </script>

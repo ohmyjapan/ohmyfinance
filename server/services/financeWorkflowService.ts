@@ -28,15 +28,20 @@ function period(body: any) { if (!validDate(body?.from) || !validDate(body?.thro
 function visible(row: any) { return { id: String(row._id), accountId: String(row.accountId), importId: String(row.importId), line: row.line, revision: row.revision, payment: row.payment, purchaseId: row.purchaseId ? String(row.purchaseId) : null, steps: row.steps, summary: workflowSummary(row.steps), lastAssessedAt: row.lastAssessedAt, events: row.events.slice(-40) } }
 function visibleConfig(c: any) { return c ? { revision: c.revision, enabled: c.enabled, accountIds: c.accountIds.map(String), workerId: c.workerId ? String(c.workerId) : null, from: c.from, through: c.through, firstRunAt: c.firstRunAt, workerSeenAt: c.workerSeenAt, workerCapabilities: c.workerCapabilities } : null }
 
-export async function workflowView(ownerId: string, query: any = {}) {
+// Optional trusted read scope for an owner Navi action: the worker's assigned card accounts. Rows are filtered by it in the query itself
+// (before any count is derived) and the owner's global settings, nightly runs and workers are not returned. Normal callers omit it.
+export type WorkflowReadScope = { accountIds: string[] }
+export async function workflowView(ownerId: string, query: any = {}, readScope?: WorkflowReadScope) {
   await init()
-  const config: any = await Config.findOne({ ownerId }).lean()
   const filter: any = { ownerId }
+  if (readScope) filter.accountId = { $in: readScope.accountIds.map((a: any) => id(a)) }
   if (query.importId) filter.importId = id(query.importId)
   if (query.line !== undefined) { const line = Number(query.line); if (!Number.isSafeInteger(line) || line < 2) fail(400, 'Invalid line'); filter.line = line }
   if (query.from || query.through) { const p = period(query); filter['payment.date'] = { $gte: p.from, $lte: p.through } }
   const rows: any[] = await Workflow.find(filter).sort({ 'payment.date': -1, _id: 1 }).limit(3001).lean()
   if (rows.length > 3000) fail(409, '期間を絞り込んでください。')
+  if (readScope) { const scoped: any[] = await FinancialAccount.find({ ownerId, _id: { $in: readScope.accountIds.map((a: any) => id(a)) }, active: true }).select('name').lean(); return { rows: rows.map(visible), accounts: scoped.map(a => ({ id: String(a._id), name: a.name })), scope: { kind: 'assigned_card_accounts', accountIds: scoped.map(a => String(a._id)), globalSettingsIncluded: false } } }
+  const config: any = await Config.findOne({ ownerId }).lean()
   const runs: any[] = await Run.find({ ownerId }).sort({ day: -1 }).limit(10).select('day status startedAt completedAt summary sourceStatus').lean()
   const accounts: any[] = await FinancialAccount.find({ ownerId, active: true }).select('name').lean()
   const workers: any[] = await FinanceChatAgent.find({ ownerId, enabled: true, researchEnabled: true, revokedAt: null }).select('accountIds lastSeenAt').lean()
@@ -179,17 +184,20 @@ export async function syncWorkflowRecords(ownerId: string, body: any) {
   })
 }
 
-export async function reviewWorkflow(ownerId: string, workflowId: string, body: any) {
+// options (owner Navi action only): readScope limits the row to the worker's assigned card accounts in the read AND the revision write;
+// operation records the journal operation (and the revision it produces) on the same event, so a lost reply is reconciled from the row.
+export async function reviewWorkflow(ownerId: string, workflowId: string, body: any, options: { readScope?: WorkflowReadScope, operation?: { operationId: string } | null } = {}) {
   await init()
   if (!body || Object.keys(body).some(k => !['revision', 'step', 'action', 'until', 'reason'].includes(k)) || !Number.isSafeInteger(body.revision) || typeof body.step !== 'string' || !/^[a-z][a-z0-9_]{0,80}$/.test(body.step)) fail(400, 'Invalid workflow review')
-  const row: any = await Workflow.findOne({ _id: id(workflowId), ownerId }).lean()
+  const scoped: any = options.readScope ? { accountId: { $in: options.readScope.accountIds.map((a: any) => id(a)) } } : {}
+  const row: any = await Workflow.findOne({ _id: id(workflowId), ownerId, ...scoped }).lean()
   if (!row) fail(404, '照合が見つかりません。')
   if (row.revision !== body.revision || !row.steps[body.step]) fail(409, '照合が更新されました。再読込してください。')
   if (row.events.length >= 2000) fail(409, '照合履歴が上限に達しています。')
   let next
   try { next = reviewWorkflowStep(row.steps[body.step], body) } catch (e: any) { fail(400, e.message) }
   const steps = { ...row.steps, [body.step]: next }
-  const r = await Workflow.updateOne({ _id: row._id, ownerId, revision: body.revision }, { $set: { steps, summary: workflowSummary(steps) }, $inc: { revision: 1 }, $push: { events: { id: randomUUID(), at: new Date(), action: body.action, step: body.step, reason: body.reason, before: row.steps[body.step], after: next } } })
+  const r = await Workflow.updateOne({ _id: row._id, ownerId, revision: body.revision, ...scoped }, { $set: { steps, summary: workflowSummary(steps) }, $inc: { revision: 1 }, $push: { events: { id: randomUUID(), at: new Date(), action: body.action, step: body.step, reason: body.reason, before: row.steps[body.step], after: next, ...(options.operation ? { operation: { operationId: options.operation.operationId, revision: body.revision + 1 } } : {}) } } })
   if (!r.matchedCount) fail(409, '照合が更新されました。再読込してください。')
   return visible(await Workflow.findById(row._id).lean())
 }

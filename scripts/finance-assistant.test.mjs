@@ -15,12 +15,18 @@ test('transaction, invoice and calendar pages use explicit company conversations
  assert.equal(scope('actor','A','mapping').key,scope('actor','B','dashboard').key);
  assert.equal(scope('actor','A','mapping').company,false);
 });
-test('company conversations get the longer catalogue-aware reply; general replies keep the original limit',async()=>{
+test('company conversations get the longer catalogue-aware reply; the owner workspace reply is 4000 characters with one fixed page link',async()=>{
  const {validateCompanyAssistantReply,assistantFeature}=await import('../shared/finance-assistant.mjs');
  const long={kind:'unclear',summary:'説'.repeat(3000),patch:{},quotes:{}};
- assert.equal(validateCompanyAssistantReply(long).summary.length,3000);assert.throws(()=>validateAssistantReply(long),'general-reply:limit-kept');
+ // Deliberate change (plan omf-navi-owner-continuation-20261020): the owner workspace explanation limit is 4000, as in the company reply.
+ assert.equal(validateCompanyAssistantReply(long).summary.length,3000);assert.equal(validateAssistantReply(long).summary.length,3000,'general-reply:explanation-4000');
+ assert.throws(()=>validateAssistantReply({...long,summary:'x'.repeat(4001)}),'general-reply:limit-4000');
  assert.equal(validateAssistantReply({kind:'unclear',summary:'x'.repeat(800),patch:{},quotes:{}}).summary.length,800);
- assert.equal(Object.hasOwn(validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{},navigation:{feature:'invoices'}}),'navigation'),false,'general-reply:no-navigation');
+ // Deliberate change: a fixed catalogue page link is kept; a record id, an unsupported feature, a URL or an extra key is refused.
+ assert.deepEqual(validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{},navigation:{feature:'connections'}}).navigation,{feature:'connections'},'general-reply:page-link');
+ assert.equal(Object.hasOwn(validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{}}),'navigation'),false,'general-reply:no-link-invented');
+ for(const navigation of[{feature:'transactions',transactionId:'a'.repeat(24)},{feature:'authentication'},{feature:'https://evil.example'},{feature:'connections',query:'x'},'connections'])assert.throws(()=>validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{},navigation}),'general-reply:link-refused '+JSON.stringify(navigation));
+ assert.throws(()=>validateAssistantReply({kind:'proposal',summary:'s',patch:{purpose:'company'},quotes:{purpose:'s'},navigation:{feature:'connections'}}),'general-reply:still-no-purchase-change');
  assert.equal(assistantFeature('/calendar').disposition,'navi_tool');assert.equal(assistantFeature('/budgets').disposition,'page_handoff');assert.equal(assistantFeature('/login'),null);
 });
 test('company replies may carry bounded source citations; general replies never do',async()=>{

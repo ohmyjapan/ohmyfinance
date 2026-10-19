@@ -32,10 +32,12 @@ async function referenceNames(rows: any[]) {
 }
 const suggestedView = (suggested: any, names: any) => Object.fromEntries(knowledgeReferenceFields.map(k => [k.replace(/Id$/, ''), suggested?.[k] ? { id: String(suggested[k]), name: names[k + ':' + String(suggested[k])] ?? '' } : null]))
 const conditionsView = (c: any) => ({ merchant: c?.merchant || '', cardLast4: c?.cardLast4 || '', effectiveFrom: c?.effectiveFrom ? new Date(c.effectiveFrom).toISOString().slice(0, 10) : '' })
-const sourceView = (s: any) => s ? { actorId: String(s.actorId), conversationId: String(s.conversationId), segment: s.segment ?? 0, turnId: s.turnId, quote: s.quote, at: s.at, transactionId: s.transactionId || null } : null
+// conversationKind: where the member taught it — the company conversation (rows written before the owner/purchase bridge carry none and
+// keep that meaning) or an owner workspace/purchase chat under the selected company (financeOwnerCompanyKnowledgeService).
+const sourceView = (s: any) => s ? { actorId: String(s.actorId), conversationKind: s.conversationKind || 'company', conversationId: String(s.conversationId), segment: s.segment ?? 0, turnId: s.turnId, quote: s.quote, at: s.at, transactionId: s.transactionId || null } : null
 export function knowledgeView(row: any, names: any = {}) {
   return { id: String(row._id), status: row.status, revision: row.revision, instruction: row.instruction, conditions: conditionsView(row.conditions), suggested: suggestedView(row.suggested, names), source: sourceView(row.source), createdBy: String(row.createdBy), createdAt: row.createdAt, updatedAt: row.updatedAt,
-    history: (row.history || []).map((h: any) => ({ revision: h.revision, status: h.status, instruction: h.instruction, conditions: conditionsView(h.conditions), suggested: suggestedView(h.suggested, names), changedAt: h.changedAt, changedBy: h.changedBy ? String(h.changedBy) : null, replacedBy: h.replacedBy ? { turnId: h.replacedBy.turnId, segment: h.replacedBy.segment ?? 0, quote: h.replacedBy.quote || '', at: h.replacedBy.at, kind: h.replacedBy.kind } : null })),
+    history: (row.history || []).map((h: any) => ({ revision: h.revision, status: h.status, instruction: h.instruction, conditions: conditionsView(h.conditions), suggested: suggestedView(h.suggested, names), changedAt: h.changedAt, changedBy: h.changedBy ? String(h.changedBy) : null, replacedBy: h.replacedBy ? { turnId: h.replacedBy.turnId, conversationKind: h.replacedBy.conversationKind || 'company', segment: h.replacedBy.segment ?? 0, quote: h.replacedBy.quote || '', at: h.replacedBy.at, kind: h.replacedBy.kind } : null })),
     meaning: 'company_teaching_evidence_not_an_automatic_ledger_rule' }
 }
 async function views(rows: any[]) { const names = await referenceNames(rows); return rows.map(r => knowledgeView(r, names)) }
@@ -112,7 +114,8 @@ const snapshot = (row: any) => ({ revision: row.revision, status: row.status, in
 export async function applyCompanyKnowledgeWrite(c: any, op: any, args: any, checked: any) {
   await init()
   const turn = c.turns.find((t: any) => t.id === c.currentId), at = new Date(), organizationId = c.organizationId
-  const provenance = { actorId: c.ownerId, conversationId: c._id, segment: c.segment || 0, turnId: turn.id, at }
+  // c.conversationKind is set only by the owner/purchase bridge (workspace | purchase); the company conversation writes none, as before.
+  const provenance = { actorId: c.ownerId, ...(c.conversationKind ? { conversationKind: c.conversationKind } : {}), conversationId: c._id, segment: c.segment || 0, turnId: turn.id, at }
   if (op.name === 'remember_company_knowledge') {
     const conditions = Object.fromEntries(Object.entries(checked.conditions).filter(([, v]) => v !== '' && v !== undefined)), suggested = Object.fromEntries(Object.entries(checked.suggested).filter(([, v]) => v))
     try {
@@ -130,7 +133,7 @@ export async function applyCompanyKnowledgeWrite(c: any, op: any, args: any, che
       for (const [k, v] of Object.entries(checked.conditions)) { if (v === '' ) unset['conditions.' + k] = ''; else set['conditions.' + k] = v }
       for (const [k, v] of Object.entries(checked.suggested)) { if (v === null) unset['suggested.' + k] = ''; else set['suggested.' + k] = v }
     }
-    const replacedBy = { kind: op.name === 'set_company_knowledge_status' ? 'status:' + args.status : 'correction', turnId: turn.id, segment: c.segment || 0, conversationId: c._id, quote: checked.values.instruction || '', at, actorId: c.ownerId, operationId: op.operationId }
+    const replacedBy = { kind: op.name === 'set_company_knowledge_status' ? 'status:' + args.status : 'correction', turnId: turn.id, ...(c.conversationKind ? { conversationKind: c.conversationKind } : {}), segment: c.segment || 0, conversationId: c._id, quote: checked.values.instruction || '', at, actorId: c.ownerId, operationId: op.operationId }
     // $and pins the snapshotted revision too, so the audit entry is exactly the content this write replaces.
     const changed = await Knowledge.updateOne({ ...revisionScope(organizationId, op.knowledgeId, args.expectedRevision), $and: [{ revision: current.revision }], 'operations.operationId': { $ne: op.operationId } }, { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}), $inc: { revision: 1 }, $push: { history: { ...snapshot(current), changedAt: at, changedBy: c.ownerId, replacedBy }, operations: { $each: [marker(op, op.name === 'set_company_knowledge_status' ? 'status' : 'correct')], $slice: -100 } } })
     if (!changed.matchedCount) {

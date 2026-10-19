@@ -17,7 +17,9 @@ import { validateChatProposal, reusableClassification } from '../../shared/finan
 import { consultationEvidence } from '../../shared/finance-consultation.mjs'
 import { validateProposalReference, sameProposalReference, chatProposalReference, chatProposalContent, proposalHash, researchProposalReference, researchReportContent, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { startChatResearch, chatResearchContext } from './financeResearchService'
-import { actionTools, reconcileActions, actionReceipts, conversationReceipts, runAction } from './financeActionService'
+import { actionTools, teachingTools, reconcileActions, actionReceipts, conversationReceipts, runAction } from './financeActionService'
+import { startNewOwnerConversation, listOwnerConversationArchives, getOwnerConversationArchive, ownerTurnLimits } from './financeOwnerConversationService'
+import { companyClaim, companyContextLost, maskTurns } from './financeOwnerCompanyKnowledgeService'
 import { postingCompanyView, type PostingCompany } from './financeNaviPostingService'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 const fingerprint=(v:any)=>hash(JSON.stringify(v))
@@ -26,7 +28,8 @@ async function init(){await ready();await Promise.all([Chat.init(),Agent.init()]
 const identity=(ownerId:string,importId:string,line:number)=>({ownerId,importId:id(importId),line})
 function bound(d:any,b:any){if(b?.revision!==d.revision||b?.key!==d.key||b?.sourceHash!==d.sourceHash)fail(409,'下書きが変わりました。再読込してから続けてください。')}
 function editable(d:any){if(d.locked||d.source.kind!=='expense')fail(409,'この明細の購入内容は変更できません。')}
-function visible(c:any){return c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null}
+// A turn that used one company's teachings is shown only while that same company is the checked selection (masked otherwise).
+function visible(c:any,postingCompany:PostingCompany|null=null){return c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,segment:c.segment||0,turnLimit:ownerTurnLimits.purchase,turns:maskTurns(c.turns,postingCompany?.organizationId||null)}:null}
 // Only this turn's completed draft writes authorize its accepted revision. Memory revisions are a separate counter.
 function draftActionRevision(c:any,actions:any[]):number|null{
  const revisions=actions.filter((a:any)=>a.turnId===c.currentId&&a.state==='done'&&['save_draft_fields','apply_referenced_proposal','approve_draft'].includes(a.name)&&a.target?.importId===String(c.importId)&&a.target?.line===c.line&&Number.isSafeInteger(a.acceptedRevision)&&a.acceptedRevision>0).map((a:any)=>a.acceptedRevision)
@@ -125,7 +128,7 @@ export async function getChat(ownerId:string,importId:string,line:number,posting
  c=await withReceipts(c)
  // A draft revision this conversation's own completed action produced is not a stale view of the draft.
  const produced=!!c&&draftActionRevision(c,c.turns.find((t:any)=>t.id===c.currentId)?.actions||[])===d.revision
- return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'&&!produced,postingCompany:postingCompanyView(postingCompany)}
+ return {conversation:visible(c,postingCompany),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'&&!produced,postingCompany:postingCompanyView(postingCompany)}
 }
 export async function sendChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){
  await init()
@@ -137,14 +140,15 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  bound(d,body);editable(d)
  if(!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}))fail(409,'AIに接続できません。少し待って再試行してください。')
  if(c&&pending.includes(c.state))fail(409,'前のメッセージの処理が終わるまでお待ちください。')
- if((c?.turns.length||0)>=100)fail(409,'この会話は100件に達しました。下書きから直接編集してください。')
+ if((c?.turns.length||0)>=ownerTurnLimits.purchase)fail(409,'この会話は100件に達しました。「新しい会話」で続けてください。これまでの会話と提案は「履歴」に残ります（下書きから直接編集することもできます）。')
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')
  if(await Chat.countDocuments({ownerId,state:{$in:['queued','working']}})>=3)fail(409,'他の会話への回答を待ってから送信してください。')
  if(!c){try{c=(await Chat.create({...scope,accountId:d.source.account.id})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
  const references=await storedReferences(ownerId,importId,line,c,d,body.references)
  c=await withReceipts(c)
  const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),research:await chatResearchContext(ownerId,importId,line,d),
-  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null})),
+  // Each earlier message names its turn: the claim withholds a turn that used another company's teachings.
+  messages:c.turns.slice(-8).map((t:any)=>({turnId:t.id,text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null})),
   // Ledger posting destination only, frozen with this turn (null = none selected; the conversation, saves and approval stay available).
   postingCompany:postingCompanyView(postingCompany)}
  const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),...(references.length?{references}:{}),...(postingCompany?{postingCompany}:{})}}},{new:true}).lean()
@@ -169,7 +173,10 @@ export async function claimChat(agent:any){
  // A reclaim reconciles the previous attempt's claimed operations from their domain markers before the model runs again, and the
  // job carries their receipts, the next free slot, the stored references and the named tools it may call.
  const {receipts,nextSlot}=await reconcileActions('purchase',String(c._id),turn.id)
- return {job:{id:String(c._id),lease,text:turn.text,context:c.context,tools:actionTools('purchase'),actions:receipts,nextSlot,references:turn.references||[]}}
+ // Same-company teachings and tools only with the turn's frozen company, a workspace-capable worker and a membership read now; a
+ // card-only worker keeps this original purchase chat with no company data, and earlier messages of another company's context are withheld.
+ const bridge:any=await companyClaim(Chat,c,turn,agent,lease,[c.context?.source?.description])
+ return {job:{id:String(c._id),lease,text:turn.text,context:{...c.context,messages:bridge.messages},tools:[...actionTools('purchase'),...(bridge.authority?teachingTools('purchase'):[])],actions:receipts,nextSlot,references:turn.references||[],...(bridge.authority?{teachingCompany:{name:bridge.authority.name},knowledge:bridge.knowledge,knowledgeActiveTotal:bridge.knowledgeActiveTotal}:{})}}
 }
 export async function finishChat(agent:any,chatId:string,body:any){
  if(typeof body?.lease!=='string')fail(400,'Missing lease')
@@ -178,6 +185,8 @@ export async function finishChat(agent:any,chatId:string,body:any){
  const index=c.turns.findIndex((t:any)=>t.id===c.currentId),turn=c.turns[index]
  let proposal:any
  if(body.failed!==true){try{proposal=validateChatProposal(body.proposal,c.context,turn.text)}catch{fail(400,'Invalid teaching proposal')}}
+ // A turn that used a company's teachings keeps no reply when that company can no longer be confirmed now (it settles as failed).
+ if(proposal&&await companyContextLost(agent,c.ownerId,turn))proposal=undefined
  const actions=await actionReceipts('purchase',chatId,turn.id)
  // An explanation requests research against this turn's accepted save, or the original context when it saved nothing. The original
  // key/source binding remains; a later owner edit is still refused by the research service. A proposal defers research
@@ -195,6 +204,11 @@ export async function finishChat(agent:any,chatId:string,body:any){
  const result=await Chat.updateOne(filter,{$set:set,$unset:{lease:'',leaseUntil:''},$inc:{revision:1}},{arrayFilters:[{'turn.id':turn.id}]})
  if(!result.matchedCount)fail(409,'Teaching job changed');return {success:true}
 }
+// Explicit new chat and archived history of one purchase conversation: the purchase must be the owner's (readDraft refuses otherwise);
+// only the chat resets, the draft, research, memories and ledger stay; an archived proposal can never be applied or confirmed.
+export async function newChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){await init();await readDraft(ownerId,importId,line);await startNewOwnerConversation('purchase',identity(ownerId,importId,line),body);return getChat(ownerId,importId,line,postingCompany)}
+export async function chatHistory(ownerId:string,importId:string,line:number,query:any,postingCompany:PostingCompany|null=null){await init();await readDraft(ownerId,importId,line);return listOwnerConversationArchives('purchase',identity(ownerId,importId,line),postingCompany?.organizationId||null,query)}
+export async function chatArchive(ownerId:string,importId:string,line:number,archiveId:string,postingCompany:PostingCompany|null=null){await init();await readDraft(ownerId,importId,line);return getOwnerConversationArchive('purchase',identity(ownerId,importId,line),postingCompany?.organizationId||null,archiveId)}
 // A named Navi action on this worker's claimed conversation (lease-bound; see financeActionService).
 export async function actionChat(agent:any,chatId:string,body:any){await init();return runAction(agent,'purchase',chatId,body)}
 // Shared acceptance of a displayed chat proposal: the one draft save (the chat-review marker makes a retry find its own write) and

@@ -17,6 +17,10 @@ const account = new Schema({
   // Automatic Aplus collection (plan omf-auto-sync-build-20261014 §2 A1): on/off per account, the JST hour after which one
   // job per day is queued, and the JST day (YYYY-MM-DD) last queued by the schedule.
   autoSync: { enabled: { type: Boolean, default: false }, hour: { type: Number, min: 0, max: 23, default: 9 }, lastQueuedDay: String },
+  // Internal markers of an owner Navi action, written in the SAME atomic write as the job enqueue / schedule change it records
+  // (operationId of the journal row, and the queued jobId or saved values), so a lost reply is reconciled, never repeated. Never
+  // supplied by a request; the native buttons leave them untouched.
+  jobOperation: Schema.Types.Mixed, autoSyncOperation: Schema.Types.Mixed,
   // Payment-calendar binding (plan omf-calendar-gmail-build-20261015 §2 S8): the company new bills land in, when it was
   // bound and the company bound before it (an older cycle delivered after a change is offered to both for review).
   organizationId: { type: oid, index: true }, organizationBoundAt: Date, previousOrganizationId: oid,

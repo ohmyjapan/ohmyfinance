@@ -1,3 +1,6 @@
 import mongoose,{Schema} from 'mongoose'
-const schema=new Schema({ownerId:{type:Schema.Types.ObjectId,required:true,unique:true},agentId:Schema.Types.ObjectId,revision:{type:Number,default:0},state:{type:String,default:'idle'},currentId:String,turns:{type:[Schema.Types.Mixed],default:[]},context:Schema.Types.Mixed,lease:String,leaseUntil:Date,attempts:{type:Number,default:0}},{timestamps:true})
+const schema=new Schema({ownerId:{type:Schema.Types.ObjectId,required:true,unique:true},agentId:Schema.Types.ObjectId,revision:{type:Number,default:0},state:{type:String,default:'idle'},currentId:String,turns:{type:[Schema.Types.Mixed],default:[]},context:Schema.Types.Mixed,lease:String,leaseUntil:Date,attempts:{type:Number,default:0},
+ // Explicit new chat (financeOwnerConversationService): the current segment number (archived segments live in
+ // FinanceOwnerConversationArchive) and the last accepted reset request, so a lost reset reply is recognised. The owner identity stays unique.
+ segment:{type:Number,default:0},lastReset:Schema.Types.Mixed},{timestamps:true})
 export const FinanceAssistant:mongoose.Model<mongoose.InferSchemaType<typeof schema>>=(mongoose.models.FinanceAssistant as any)||mongoose.model('FinanceAssistant',schema)

@@ -50,6 +50,7 @@
 
 <script setup lang="ts">
 import {useUserStore} from '~/stores/user'
+import {useAssistantStore} from '~/stores/assistant'
 import {WORKFLOW_REASONS} from '~/shared/finance-workflow.mjs'
 import WorkflowStages from '~/components/finance/WorkflowStages.vue'
 import WorkflowInvestigation from '~/components/finance/WorkflowInvestigation.vue'
@@ -76,6 +77,9 @@ async function saveSettings(){await action(async()=>{data.value=await request('s
 async function refreshEvidence(){await action(async()=>{const result:any=await request('refresh',{method:'POST',body:{from:settings.from,through:settings.through,accountIds:settings.accountIds}});data.value=await request('status',{query:{from:settings.from,through:settings.through}});message.value=result.assessed+'件の保存資料を確認しました。失敗回数は変更していません。'})}
 function startReview(row:any,key:string,kind:string){reviewKey.value=row.id+':'+key;Object.assign(review,{action:kind,reason:'',until:''})}
 async function saveReview(row:any,key:string){await action(async()=>{const updated:any=await request(row.id+'/review',{method:'POST',body:{revision:row.revision,step:key,...review}});const index=data.value.rows.findIndex((r:any)=>r.id===row.id);data.value.rows[index]=updated;reviewKey.value='';message.value='確認内容を保存しました。'})}
+// A Navi review receipt refetches that row only (the settings form keeps its unsaved values); stages complete only from evidence.
+const assistant=useAssistantStore()
+watch(()=>assistant.ownerNativeSequence,async()=>{const r=assistant.ownerNative;if(!r||r.kind!=='workflow-review'||!data.value||String(r.actorId)!==String(user.user?.id||''))return;try{const fresh:any=await request('status',{query:{...(route.query.importId?{importId:route.query.importId}:{}),...(route.query.line?{line:route.query.line}:{})}});const row=fresh.rows.find((x:any)=>x.id===r.workflowId),index=data.value.rows.findIndex((x:any)=>x.id===r.workflowId);if(row&&index>=0){data.value.rows[index]=row;message.value='Navi が照合の確認を保存しました。'}}catch{}})
 onMounted(load)
 </script>
 <style scoped>

@@ -16,6 +16,8 @@ import { applyChatProposal } from './financeChatService'
 import { intakeActions, intakeActionArgs, isIntakeMutation, intakeActionOutcome, unresolvedIntakeAction } from './financeIntakeActionService'
 import { paymentActions, paymentActionArgs } from './financePaymentActionService'
 import { purchaseHistory } from './financeHistoryActionService'
+import { ownerActions, ownerActionOutcome, ownerActionNames } from './financeOwnerActionService'
+import { companyTeachingDefinitions, teachingCompany, tagCompanyTurn, teachingClaim, teachingOutcome, assertTeachingAuthority } from './financeOwnerCompanyKnowledgeService'
 import { canonicalJson, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { fields as draftFields, learnedFields, validateValues } from '../../shared/finance-draft.mjs'
 
@@ -27,10 +29,12 @@ import { fields as draftFields, learnedFields, validateValues } from '../../shar
 // (see journaled): one effect per slot, a stable operationId across an HTTP retry or a worker reclaim, the domain marker as the
 // truth when a crash leaves the journal behind, never a blind repeat.
 type Mode = 'workspace' | 'purchase'
-type Scope = { agent: any, kind: Mode, ownerId: string, conversationId: string, turnId: string, conversation: any, turn: any }
+// teaching: the company authority checked for a company-teaching tool (frozen turn company + workspace worker + fresh membership);
+// toolNames: the catalogue this job carries (for the realm-aware feature guide).
+type Scope = { agent: any, kind: Mode, ownerId: string, conversationId: string, turnId: string, conversation: any, turn: any, teaching?: any, toolNames?: string[] }
 type Target = { importId: string, line?: number, accountId: string } | null
 type Outcome = { state?: 'done' | 'unresolved', outcome?: string, receipt: { requestedFields: string[], acceptedRevision: number | null, nativeResourceIds: any }, recoveryOwner?: string | null, result?: any }
-type Definition = { name: string, effect: 'read' | 'write' | 'queue', modes: Mode[], targeted: boolean, needsLine: boolean, description: string, inputSchema: any, run: (scope: Scope, args: any, target: Target, operation: DraftOperation | null) => Promise<any> }
+type Definition = { name: string, effect: 'read' | 'write' | 'queue', modes: Mode[], targeted: boolean, needsLine: boolean, teaching?: boolean, description: string, inputSchema: any, run: (scope: Scope, args: any, target: Target, operation: DraftOperation | null) => Promise<any> }
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 const objectId = { type: 'string', pattern: '^[a-f0-9]{24}$' }
 const targetProps = { importId: { ...objectId, description: 'Statement (import) id. In a purchase conversation omit it: the conversation purchase is the target.' }, line: { type: 'integer', minimum: 2, description: 'Statement line of the purchase. In a purchase conversation omit it.' } }
@@ -143,6 +147,9 @@ export const actionCatalogue: Definition[] = [
       return { outcome: 'queued', receipt: { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: target!.importId, line: target!.line, requestId: started.requestId, researchId: started.researchId } }, result: { requestId: started.requestId, researchId: started.researchId, state: started.state, finished: false } }
     } }
   , ...intakeActions, ...paymentActions
+  // Named owner adapters over native services (assigned cards only) and the same-company teaching tools, which are offered only to a
+  // job whose turn carries a checked company authority (see financeOwnerCompanyKnowledgeService).
+  , ...ownerActions, ...companyTeachingDefinitions
 ]
 const provenance = (scope: Scope) => ({ conversationKind: scope.kind, conversationId: scope.conversationId, turnId: scope.turnId, text: String(scope.turn?.text || '').slice(0, 500), summary: '' })
 const acceptedRevision = (saved: any, operation: DraftOperation) => (saved.history || []).find((h: any) => h.operation && h.operation.operationId === operation.operationId)?.revision ?? saved.revision
@@ -153,7 +160,9 @@ function pickReference(references: any[] | undefined, kind?: string) {
   return candidates[0]
 }
 // The catalogue the MCP server lists to the model: name, description and input schema only.
-export function actionTools(mode: Mode) { return actionCatalogue.filter(d => d.modes.includes(mode)).map(d => ({ name: d.name, description: d.description, inputSchema: d.inputSchema })) }
+export function actionTools(mode: Mode) { return actionCatalogue.filter(d => d.modes.includes(mode) && !d.teaching).map(d => ({ name: d.name, description: d.description, inputSchema: d.inputSchema })) }
+// The company-teaching tools, added to a job only when its turn has the checked company authority at claim.
+export function teachingTools(mode: Mode) { return actionCatalogue.filter(d => d.modes.includes(mode) && d.teaching).map(d => ({ name: d.name, description: d.description, inputSchema: d.inputSchema })) }
 
 // Minimal JSON-schema check of the model's arguments (types, enum, pattern, bounds, required, no unknown keys).
 function validateArgs(definition: Definition, args: any) {
@@ -198,6 +207,13 @@ export async function runAction(agent: any, kind: Mode, conversationId: string, 
   if (!conversation) fail(409, 'Conversation job changed')
   const turn = conversation.turns.find((t: any) => t.id === conversation.currentId)
   const scope: Scope = { agent, kind, ownerId: String(agent.ownerId), conversationId: String(conversation._id), turnId: conversation.currentId, conversation, turn }
+  // A company-teaching tool needs the turn's frozen company, a workspace-capable worker and a membership read fresh now; the turn is
+  // tagged before any company data is read or written (its later views stay inside that company).
+  if (definition.teaching) {
+    scope.teaching = assertTeachingAuthority(await teachingCompany(agent, scope.ownerId, turn?.postingCompany))
+    if (!await tagCompanyTurn(kind === 'purchase' ? Chat : Conversation, conversation._id, body.lease, turn.id, scope.teaching)) fail(409, 'Conversation job changed')
+  }
+  if (definition.name === 'list_navi_features') scope.toolNames = [...actionTools(kind), ...(await teachingCompany(agent, scope.ownerId, turn?.postingCompany) ? teachingTools(kind) : [])].map(t => t.name)
   args = intakeActionArgs(definition.name, args, turn?.target)
   args = paymentActionArgs(definition.name, args, turn?.target)
   const target = await resolveTarget(scope, definition, args)
@@ -218,7 +234,7 @@ async function journaled(scope: Scope, definition: Definition, body: any, args: 
   const now = new Date()
   // A ledger posting carries its turn's frozen company and requested lines from the claim on; recovery verifies against them.
   const posting = definition.name === 'post_selected_approved_rows' ? { postingCompany: frozenPostingCompany(scope.turn?.postingCompany, scope.ownerId), postingLines: [...new Set(args.lines as number[])] } : {}
-  const claimed: any = await Operation.findOneAndUpdate(identity, { $setOnInsert: { operationId, name: definition.name, payloadHash, args, ...(isIntakeMutation(definition.name) ? { intakeArgs: args } : {}), ...posting, target, state: 'claimed', agentId: scope.agent._id, lease: body.lease, leaseUntil: scope.conversation.leaseUntil, claimedAt: now, attempts: 1 } }, { upsert: true, new: true, includeResultMetadata: true })
+  const claimed: any = await Operation.findOneAndUpdate(identity, { $setOnInsert: { operationId, name: definition.name, payloadHash, args, ...(isIntakeMutation(definition.name) ? { intakeArgs: args } : {}), ...posting, ...teachingClaim(definition.name, operationId, args, scope.teaching), ...(ownerActionNames.includes(definition.name) || definition.teaching ? { nativeArgs: args } : {}), target, state: 'claimed', agentId: scope.agent._id, lease: body.lease, leaseUntil: scope.conversation.leaseUntil, claimedAt: now, attempts: 1 } }, { upsert: true, new: true, includeResultMetadata: true })
   const op = claimed.value, inserted = !claimed.lastErrorObject?.updatedExisting
   if (!inserted) {
     if (op.payloadHash !== payloadHash) fail(409, '同じ操作番号が別の内容で再利用されました。新しい番号で指示してください。')
@@ -338,6 +354,14 @@ async function reconcileOne(ownerId: string, op: any) {
     if (rows.every(r => r.outcome === 'posted')) return settle('done', { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: target.importId, organizationId: String(organizationId), rows } }, null, null)
     return unresolvedPost('帳簿への登録が途中で止まっているか、登録先の会社を確認できません。明細の状態を確認してください。', rows, String(organizationId))
   }
+  // A company-teaching write: fresh membership of its frozen company first, then only that teaching row's marker decides.
+  if (op.companyKnowledge && op.knowledgeId) {
+    const outcome = await teachingOutcome(ownerId, op)
+    return settle(outcome.state, outcome.receipt, outcome.recoveryOwner, outcome.safeError)
+  }
+  // An owner native action: the marker its native write carries decides; none means it never happened.
+  const owner = await ownerActionOutcome(ownerId, op)
+  if (owner) return owner.found ? settle('done', owner.receipt, null, null) : interrupted(owner.receipt?.requestedFields || [])
   if (op.name === 'start_purchase_research') {
     const requestId = chatRequestId(String(op.conversationId), op.turnId), research: any = await Research.findOne({ ownerId, importId: id(target.importId), line: target.line, requestId }).select('_id state').lean()
     return research ? settle('done', { outcome: 'queued', requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: target.importId, line: target.line, requestId, researchId: String(research._id) } }, null, null) : interrupted()

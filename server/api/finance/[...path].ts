@@ -3,7 +3,7 @@ import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { calendarCompany } from '../../utils/calendarAccess'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, autoSyncInput, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
+import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
 import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
 
 // A JSON artifact of the collector (notice, mail receipt): bounded by csvBody, parsed once, never echoed back.
@@ -71,10 +71,8 @@ export default defineEventHandler(async event => {
       }
       if (parts[2] === 'auto-sync' && parts.length === 3 && method === 'PUT') {
         if (account.provider !== 'aplus') fail(400, 'Aplus account required')
-        const autoSync = autoSyncInput(await readBody(event))
-        // Dotted paths: the schedule's own lastQueuedDay is kept.
-        await FinancialAccount.updateOne({ _id: account._id, ownerId }, { $set: { 'autoSync.enabled': autoSync.enabled, 'autoSync.hour': autoSync.hour } })
-        return { autoSync }
+        // The shared native setting write (dotted paths: the schedule's own lastQueuedDay is kept); same input rule and response.
+        return await saveAutoSync(ownerId, account, await readBody(event))
       }
       // The payment-calendar company of this account (GUARD: current membership of the chosen company). Existing bills stay
       // in the company they were created in; unfinished notice and statement work is re-run under the new binding.

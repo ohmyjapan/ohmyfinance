@@ -65,6 +65,40 @@ export function naviFeatureForPath(path){
 }
 // The only way a route leaves this module: a fixed catalogue path, or its record path with a 24-hex company record id.
 export function naviFeatureRoute(id,recordId){const x=naviFeature(id);if(!naviFeatureNavigable(x))return null;if(recordId===undefined||recordId===null||recordId==='')return x.route;if(!x.recordRoute||typeof recordId!=='string'||!/^[a-f0-9]{24}$/i.test(recordId))return null;return x.recordRoute.replace(':transactionId',recordId)}
+// Owner realm (the legacy owner workspace and purchase chats): which catalogue features the owner's named tools serve. A feature is a
+// navi_tool here only for tools the current job actually carries (the intersection), so a narrower job never advertises a tool it
+// lacks; company-conversation features (transactions/invoices/calendar) are pages from this realm, and unsupported stays unsupported.
+const ownerRealmTools=Object.freeze({
+ mapping:['get_mapping','get_draft','save_draft_fields','approve_draft','post_selected_approved_rows','get_purchase_history','get_registered_choices','get_research','start_purchase_research','remember_accounting_fields','remember_customer_purpose'],
+ 'mapping-drafts':['get_draft','save_draft_fields','apply_referenced_proposal','approve_draft','get_research','start_purchase_research'],
+ learning:['set_memory_status'],
+ connections:['get_card_sync_status','queue_card_sync','set_card_auto_sync'],
+ intake:['list_intake_records','get_intake_record','create_intake_record','patch_intake_record','set_intake_archived','read_intake_sheet','preview_intake_import','apply_intake_import','list_intake_batches','list_intake_templates','save_intake_template','get_intake_research','start_intake_research','confirm_intake_research'],
+ 'intake-payments':['list_card_payment_matches','get_card_payment_match','get_record_payment_matches','confirm_card_allocation','release_card_allocation','reconfirm_card_allocation'],
+ 'purchase-workflow':['get_workflow_status','review_workflow_step']
+});
+const ownerRealmReasons=Object.freeze({
+ connections:'割り当てられたカードの取得状況の確認、明細取得の予約、Aplus の自動取得の時刻設定ができます。予約は取得の完了ではありません。認証情報・コレクターの接続は画面で本人が行います。',
+ 'intake-payments':'割り当てられたカードの支払いと受付の配分を確認し、明示された指示で配分の確定・解除・再確認ができます。銀行明細の取込と銀行の配分は画面で行います。',
+ 'purchase-workflow':'割り当てられたカードの照合状況を確認し、明示された指示で要確認の工程を再確認に戻す・後で確認にできます。購入の承認・書類の作成は画面と処理ワーカーの結果です。'
+});
+export function naviRealmFeatures(realm,available,query){
+ const have=new Set(Array.isArray(available)?available:[]),features=findNaviFeatures(query);
+ if(realm!=='owner')return features.map(x=>({...x,tools:(x.tools||[]).filter(n=>have.has(n))}));
+ return features.map(x=>{
+  if(x.disposition==='unsupported')return {...x,tools:[]};
+  const tools=(ownerRealmTools[x.id]||[]).filter(n=>have.has(n));
+  if(tools.length)return {...x,disposition:'navi_tool',tools,reason:ownerRealmReasons[x.id]||x.reason};
+  return {...x,disposition:'page_handoff',tools:[],reason:x.disposition==='navi_tool'?'この会社の記録は、その画面の会社の会話で Navi が扱います。この会話からは画面を案内します。':x.reason};
+ });
+}
+// Owner reply link: one fixed catalogue page only (never a record id, a query or another company).
+export function validateOwnerNavigation(n){
+ if(n===undefined||n===null)return null;
+ if(typeof n!=='object'||Array.isArray(n)||Object.keys(n).some(k=>k!=='feature'))throw Error('Invalid navigation');
+ const feature=naviFeature(n.feature);if(!naviFeatureNavigable(feature))throw Error('Navigation must name a catalogue feature with a page');
+ return {feature:feature.id};
+}
 // Company reply: an explanation (unclear/defer) with no field patch, up to 4000 characters, at most one catalogue pointer and
 // at most eight source citations (source id, literal quote, claim). Citations are only a shape here: the server resolves each one
 // against the captured sources of the same owner/company conversation and stores their actual URL/date/kind itself.

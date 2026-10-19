@@ -137,9 +137,10 @@
 
 <script setup lang="ts">
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
 import { billingMailSchedule } from '~/shared/billing-mail.mjs'
 definePageMeta({ middleware: 'auth' })
-const user = useUserStore()
+const user = useUserStore(), assistant = useAssistantStore()
 const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), notices = ref<any[]>([]), selected = ref<any>(null), selectedCalendar = ref<any>(null)
 const fiscalInputs = reactive<Record<string, { start: string; end: string }>>({})
 const autoSyncInputs = reactive<Record<string, { enabled: boolean; hour: number }>>({})
@@ -172,6 +173,13 @@ async function refresh() {
   const lists = await Promise.all(a.accounts.filter((x: any) => x.provider === 'aplus').map(async (x: any) => ((await api('notices', { query: { accountId: x._id } })).notices || []).map((n: any) => ({ ...n, accountId: x._id }))))
   notices.value = lists.flat()
 }
+// A Navi receipt for an owned card (queued statement download or saved automatic schedule) refetches the actual account state; the
+// schedule form of that account takes the saved values. A queued job is shown as queued until the collector reports it.
+watch(() => assistant.ownerNativeSequence, async () => {
+  const r = assistant.ownerNative
+  if (!r || !['card-sync', 'auto-sync'].includes(r.kind) || String(r.actorId) !== String(user.user?.id || '')) return
+  await run(async () => { await refresh(); const account = accounts.value.find(a => String(a._id) === String(r.accountId)); if (r.kind === 'auto-sync' && account?.provider === 'aplus') autoSyncInputs[account._id] = { enabled: !!account.autoSync?.enabled, hour: account.autoSync?.hour ?? 9 }; message.value = r.kind === 'card-sync' ? 'Navi が明細の取得を予約しました（まだ取得は完了していません）' : 'Navi が自動取得の設定を保存しました' })
+})
 async function saveFiscalPeriod(id: string) { await api(`accounts/${id}/fiscal-period`, { method: 'PUT', body: fiscalInputs[id] }); await refresh(); message.value = '自動取得の会計期間を保存しました' }
 async function saveAutoSync(id: string) { await api(`accounts/${id}/auto-sync`, { method: 'PUT', body: autoSyncInputs[id] }); await refresh(); message.value = '自動取得の設定を保存しました' }
 async function saveCalendar(id: string) { const result = await api(`accounts/${id}/calendar`, { method: 'PUT', body: { organizationId: calendarInputs[id] || null } }); await refresh(); message.value = !result.changed ? '会社の設定は変わっていません' : !calendarInputs[id] ? '会社の設定を解除しました' : result.existingBillsKept ? `会社を変更しました。既存の請求 ${result.existingBillsKept} 件は元の会社に残ります` : '会社を設定しました' }

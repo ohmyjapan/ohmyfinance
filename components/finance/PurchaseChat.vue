@@ -4,10 +4,29 @@
    <div class="flex items-center gap-3"><NaviAvatar /><div><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">OMF Navi に相談</h2><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">購入の説明も、判断の修正も、ここから。</p></div></div>
    <NuxtLink to="/learning" class="shrink-0 py-1 text-xs text-primary-main">学習ノート ↗</NuxtLink>
   </header>
-  <div ref="transcript" :class="panel ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5' : 'max-h-[520px] space-y-5 overflow-y-auto px-4 py-5 sm:px-6'" role="log" aria-live="polite">
+  <div v-if="data" data-chat-controls class="flex shrink-0 items-center gap-1 px-4 pt-3 text-xs sm:px-6" :class="panel?'px-5 sm:px-5':''">
+   <p class="min-w-0 flex-1 truncate text-gray-500">この購入の会話</p>
+   <button type="button" data-chat-view="chat" class="shrink-0 rounded-lg px-2 py-1" :class="view==='chat'?'bg-primary-main/10 font-medium text-primary-main':'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10'" @click="view='chat'">会話</button>
+   <button type="button" data-chat-history-toggle class="shrink-0 rounded-lg px-2 py-1" :class="view==='history'?'bg-primary-main/10 font-medium text-primary-main':'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10'" @click="openHistory">履歴</button>
+   <button type="button" data-chat-new-chat class="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-gray-600 hover:border-primary-main disabled:opacity-50 dark:border-white/10 dark:text-gray-300" :disabled="busy||waiting||!turns.length" :title="waiting?'回答の作成中は新しい会話を始められません':'今の会話を履歴に残して新しく始めます（下書きは変わりません）'" @click="newChat">新しい会話</button>
+  </div>
+  <div v-if="view==='history'" data-chat-history :class="panel ? 'min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm' : 'max-h-[520px] overflow-y-auto px-4 py-4 text-sm sm:px-6'">
+   <template v-if="archive">
+    <button type="button" class="mb-3 text-xs text-primary-main underline" @click="archive=null">← 履歴の一覧</button>
+    <p class="mb-3 text-[11px] text-gray-500">{{ formatDate(archive.firstAt) }} – {{ formatDate(archive.lastAt) }} · {{ archive.turnCount }}件（読み取り専用。以前の提案は記録で、ここから反映はできません）</p>
+    <article v-for="turn in archive.turns" :key="turn.id" data-chat-archived-turn class="mb-4 space-y-2"><p v-if="turn.withheld" class="text-xs text-gray-500">{{ withheldText }}</p><p v-else class="whitespace-pre-wrap break-words rounded-2xl bg-gray-100 px-3 py-2 text-gray-800 dark:bg-white/10 dark:text-gray-100">{{ turn.text }}</p><ul v-if="turn.actions?.length" class="space-y-1 text-xs"><li v-for="a in turn.actions" :key="a.operationId" :class="a.state==='failed'||a.state==='unresolved'?'text-amber-700 dark:text-amber-400':'text-gray-500'">{{ actionLabel(a) }}</li></ul><p v-if="turn.proposal" class="whitespace-pre-wrap break-words text-gray-700 dark:text-gray-200">{{ turn.proposal.summary }}</p><dl v-if="turn.proposal?.kind==='proposal'" data-chat-archived-proposal class="rounded-xl border border-gray-200 p-2 text-xs dark:border-white/10"><div v-for="(value,key) in turn.proposal.patch" :key="key"><dt class="text-gray-500">{{ labels[key] }}</dt><dd class="break-words">{{ display(key,value) }}</dd></div><p class="mt-1 text-gray-500">{{ turn.confirmedAt ? '当時、下書きに反映済み' : '以前の提案（反映していません）' }}</p></dl></article>
+   </template>
+   <template v-else>
+    <p v-if="!archives.length" class="text-xs text-gray-500">{{ historyLoaded ? 'まだ保存された過去の会話はありません。「新しい会話」を始めると、今の会話がここに残ります。' : '履歴を読み込んでいます…' }}</p>
+    <button v-for="a in archives" :key="a.id" type="button" data-chat-archive-item class="mb-2 block w-full rounded-xl border border-gray-200 px-3 py-2 text-left hover:border-primary-main dark:border-white/10" @click="openArchive(a.id)"><span class="block text-[11px] text-gray-500">{{ formatDate(a.firstAt) }} – {{ formatDate(a.lastAt) }} · {{ a.turnCount }}件</span><span class="block truncate text-xs text-gray-700 dark:text-gray-200">{{ a.preview }}</span></button>
+    <button v-if="historyMore" type="button" class="text-xs text-primary-main underline" @click="loadHistory(historyPage+1)">さらに表示</button>
+   </template>
+  </div>
+  <div v-show="view==='chat'" ref="transcript" :class="panel ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5' : 'max-h-[520px] space-y-5 overflow-y-auto px-4 py-5 sm:px-6'" role="log" aria-live="polite">
    <div v-if="!turns.length" class="text-sm leading-relaxed text-gray-600 dark:text-gray-300"><p>{{ opening }}</p><p class="mt-2 text-xs text-gray-500 dark:text-gray-400">한국어・日本語で説明できます。会話はこの明細に保存されます。</p></div>
    <article v-for="turn in turns" :key="turn.id" :data-chat-turn="turn.id" class="space-y-3">
-    <div class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
+    <p v-if="turn.withheld" data-chat-withheld class="text-xs text-gray-500">{{ withheldText }}</p>
+    <div v-else class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
     <ul v-if="turn.actions?.length" data-chat-actions class="mr-2 space-y-1 text-xs"><li v-for="a in turn.actions" :key="a.operationId" :data-chat-action-state="a.state" class="flex items-start gap-2" :class="a.state==='failed' || a.state==='unresolved' ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'"><Loader2 v-if="a.state==='working'" class="mt-0.5 h-3 w-3 shrink-0 animate-spin text-primary-main" /><span>{{ actionLabel(a) }}</span></li></ul>
     <div v-if="turn.proposal" class="mr-2"><p class="mb-2 flex items-center gap-2 text-[11px] font-semibold text-primary-main"><NaviAvatar size="sm" /><span>OMF Navi</span></p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ turn.proposal.summary }}</p>
      <p v-if="turn.research" data-chat-research :data-chat-research-status="turn.id===conversation?.currentId ? '' : undefined" class="mt-2 text-xs" :class="turn.research.requestId ? 'text-gray-500' : turn.research.unavailable ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'">{{ researchStatus(turn) }}</p>
@@ -37,9 +56,10 @@
    <p v-else-if="researchView?.research && ['queued','working','failed'].includes(researchView.research.state)" data-chat-research-progress role="status" class="flex items-start gap-2 text-xs leading-relaxed text-gray-500"><Loader2 v-if="researchView.research.state!=='failed'" class="h-3.5 w-3.5 shrink-0 animate-spin text-primary-main" />{{ researchProgress }}</p>
    <details v-if="panel" data-chat-research-details class="text-xs" :open="!researchView?.research?.report && !!current?.research?.requestId"><summary class="cursor-pointer py-2 font-medium text-primary-main">{{ korean ? '조사 근거와 후보 반영' : '調査の根拠・候補の反映' }}</summary><PurchaseResearch :draft="draft" :disabled="dirty || busy || draft.locked" :active="active" :research-request="current?.research?.requestId || ''" @updated="value => researchView=value" @changed="value => emit('saved',value)" /></details>
    <p v-if="waiting" role="status" class="flex items-center gap-2 text-xs text-gray-500"><Loader2 class="h-3.5 w-3.5 shrink-0 animate-spin text-primary-main" />{{ conversation?.state==='confirming'?'下書きへの反映を確認しています…':!data?.connected?'メッセージは保存済みです。AIへの接続が戻ると続けます。':conversation?.state==='queued'?'メッセージは保存済みです。AIの受付を待っています…':'元の明細と過去の判断を確認しています…' }}</p>
+   <p v-if="turns.length>=(conversation?.turnLimit||100)" data-chat-turn-limit class="text-xs text-amber-700 dark:text-amber-400">この会話は{{ conversation?.turnLimit||100 }}件に達しました。「新しい会話」で続けてください。これまでの会話と提案は「履歴」に残ります。</p>
    <div v-if="conversation?.state==='failed'" class="text-xs text-amber-700 dark:text-amber-400"><p>回答を取得できませんでした。メッセージは保存されています。</p><button type="button" class="mt-2 text-primary-main underline" :disabled="busy || unavailable" @click="retry">もう一度回答を取得</button></div>
   </div>
-  <form class="shrink-0 border-t border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6" @submit.prevent="send">
+  <form v-show="view==='chat'" class="shrink-0 border-t border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6" @submit.prevent="send">
    <p v-if="error" role="alert" class="mb-3 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
    <p v-if="data?.stale" class="mb-3 text-xs leading-relaxed text-amber-700 dark:text-amber-400">下書きや判断の根拠が更新されています。最新の内容で新しいメッセージを送信してください。</p>
    <p v-if="data" data-chat-posting-company :data-chat-posting-company-id="data.postingCompany?.organizationId || ''" class="mb-3 break-words text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ data.postingCompany ? '帳簿への登録先：'+data.postingCompany.name+'（送信時の会社。帳簿への登録の指示だけに使います）' : '帳簿への登録先の会社が選択されていません。相談・下書きの保存・承認はこのまま続けられます。帳簿に登録するときは会社を選択してから指示してください。' }}</p>
@@ -54,6 +74,7 @@ import PurchaseResearch from '~/components/finance/PurchaseResearch.vue'
 import { Loader2, Send } from 'lucide-vue-next'
 import NaviAvatar from './NaviAvatar.vue'
 import { useUserStore } from '~/stores/user'
+import { tokenClaims } from '~/utils/auth-session'
 import { useAssistantStore } from '~/stores/assistant'
 import { purchaseQuestions } from '~/shared/finance-answers.mjs'
 import { reusableClassification } from '~/shared/finance-chat.mjs'
@@ -109,7 +130,17 @@ const message=(e:any)=>e.data?.data?.message||'会話を取得できませんで
 // the current (not stale, not applied) research report. The server validates and stores exactly these; a later change is refused, never
 // substituted.
 const displayedReferences=()=>{const refs:any[]=[];const turn=current.value;if(turn?.proposal?.kind==='proposal'&&!turn.confirmedAt&&turn.reference)refs.push(turn.reference);const r=researchView.value?.research;if(r?.report&&r.reference&&!researchView.value?.stale&&r.state!=='applied')refs.push(r.reference);return refs}
-const actionNames:Record<string,string>={save_draft_fields:'下書きを保存',apply_referenced_proposal:'提案を下書きに反映',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼'}
+// History and new chat of this purchase's conversation: component memory only (nothing financial in browser storage). A new chat resets
+// the conversation, never the draft; an archived proposal is shown as a record and cannot be confirmed or referenced.
+const view=ref<'chat'|'history'>('chat'),archives=ref<any[]>([]),archive=ref<any>(null),historyLoaded=ref(false),historyPage=ref(1),historyMore=ref(false)
+const withheldText='別の会社（または会社未選択）の会社の記憶を使ったやりとりのため、ここでは表示しません。その会社を選択すると表示されます。'
+const formatDate=(v:any)=>v?new Date(v).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):''
+let resetRequest=''
+async function loadHistory(page=1){const org=selectedOrg();try{const r:any=await $fetch(endpoint.value+'/history',{headers:user.authHeader,query:{page}});if(disposed||org!==selectedOrg())return;archives.value=page===1?r.archives:[...archives.value,...r.archives];historyPage.value=r.page;historyMore.value=r.hasMore;historyLoaded.value=true}catch(e){if(!disposed)error.value=message(e)}}
+function openHistory(){view.value='history';archive.value=null;loadHistory(1)}
+async function openArchive(id:string){const org=selectedOrg();try{const r:any=await $fetch(endpoint.value+'/history/'+id,{headers:user.authHeader});if(!disposed&&org===selectedOrg()&&view.value==='history')archive.value=r.archive}catch(e){if(!disposed)error.value=message(e)}}
+async function newChat(){if(busy.value||waiting.value||!conversation.value)return;if(!resetRequest)resetRequest=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');await act(async()=>{try{data.value=await $fetch(endpoint.value+'/new',{method:'POST',headers:user.authHeader,body:{chatRevision:conversation.value.revision,requestId:resetRequest}});resetRequest='';view.value='chat';archive.value=null;archives.value=[];historyLoaded.value=false;request=null}catch(e:any){if(e?.statusCode||e?.status)resetRequest='';throw e}})}
+const actionNames:Record<string,string>={remember_company_knowledge:'会社の記憶を保存',correct_company_knowledge:'会社の記憶を訂正',set_company_knowledge_status:'会社の記憶の適用を変更',save_draft_fields:'下書きを保存',apply_referenced_proposal:'提案を下書きに反映',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼'}
 const actionStates:Record<string,string>={done:'完了',queued:'受付済み',working:'処理中…',failed:'できませんでした',unresolved:'結果の確認が必要です'}
 const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.state]||a.state)+(a.acceptedRevision?'（下書き改訂 '+a.acceptedRevision+'）':'')+(a.requestedFields?.length&&a.state==='done'?' · '+a.requestedFields.map((f:string)=>fieldLabels[f]||labels[f]||f).join('・'):'')+(a.safeError?' · '+a.safeError:'')
 const fieldLabels:Record<string,string>=Object.fromEntries(researchFields.map(f=>[f.key,f.label]))
@@ -118,7 +149,10 @@ const refreshed=new Set<string>()
 async function refreshAfterActions(){for(const turn of turns.value)for(const a of turn.actions||[]){if(a.state!=='done'||refreshed.has(a.operationId)||!['save_draft_fields','apply_referenced_proposal','approve_draft'].includes(a.name))continue;refreshed.add(a.operationId);if(a.acceptedRevision&&a.acceptedRevision<=props.draft.revision)continue;try{const d:any=await $fetch('/api/finance/imports/'+props.draft.importId+'/drafts/'+props.draft.line,{headers:user.authHeader});if(!disposed)emit('saved',d)}catch{}}}
 let loadTicket=0
 let timer:ReturnType<typeof setTimeout>|undefined,disposed=false,request:{id:string,text:string,references:any[]}|null=null
-async function load(){const ticket=++loadTicket;try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadTicket){data.value=result;await refreshAfterActions()}}catch(e){if(!disposed&&ticket===loadTicket)error.value=message(e)}}
+// The view depends on the selected company (posting destination and company-teaching masking): a response requested under one
+// selection is dropped when the selection changed before it arrived.
+const selectedOrg=()=>String(tokenClaims(user.token)?.organizationId||'')
+async function load(){const ticket=++loadTicket,org=selectedOrg();try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadTicket&&org===selectedOrg()){data.value=result;await refreshAfterActions()}}catch(e){if(!disposed&&ticket===loadTicket)error.value=message(e)}}
 function schedule(){timer=setTimeout(async()=>{if(disposed)return;if(props.active&&!busy.value)await load();if(!disposed)schedule()},4000)}
 async function act(action:()=>Promise<void>){busy.value=true;loadTicket++;error.value='';try{await action();await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})}catch(e){error.value=message(e)}finally{busy.value=false}}
 async function send(){if(!text.value.trim()||unavailable.value||waiting.value||busy.value)return;await act(async()=>{if(!request||request.text!==text.value.trim())request={id:Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join(''),text:text.value.trim(),references:displayedReferences()};data.value=await $fetch(endpoint.value,{method:'POST',headers:user.authHeader,body:{...bind(),text:request.text,requestId:request.id,references:request.references}});text.value='';request=null;remember.value=false})}
@@ -126,6 +160,7 @@ async function confirm(){await act(async()=>{const result:any=await $fetch(endpo
 async function retry(){await act(async()=>{data.value=await $fetch(endpoint.value+'/retry',{method:'POST',headers:user.authHeader,body:bind()})})}
 onMounted(async()=>{await load();if(!disposed)schedule()});onBeforeUnmount(()=>{disposed=true;loadTicket++;clearTimeout(timer)})
 watch(()=>props.active,value=>{if(value)load()})
+watch(()=>tokenClaims(user.token)?.organizationId,()=>{if(disposed)return;loadTicket++;archive.value=null;archives.value=[];historyLoaded.value=false;if(view.value==='history')loadHistory(1);load()})
 watch(()=>props.draft.revision,()=>{remember.value=false;load()})
 watch(()=>current.value?.answeredAt,async()=>{await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})})
 watch(()=>researchView.value?.research?.report?[researchView.value.research.id,researchView.value.research.revision,!!researchView.value.stale].join(':'):'',async value=>{if(!value||!props.active)return;await nextTick();const target=researchReply.value,log=transcript.value;if(target&&log)log.scrollTo({top:log.scrollTop+target.getBoundingClientRect().top-log.getBoundingClientRect().top,behavior:'smooth'})})

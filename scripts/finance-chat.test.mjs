@@ -62,12 +62,18 @@ test('the interpreter exposes tools through the owned MCP server only and keeps 
  assert.ok(withTools.includes('Amounts are Japanese yen (JPY)'));assert.equal(systemFor({companyScoped:true}),chatSystem);
  for(const name of['remember_company_knowledge','correct_company_knowledge','set_company_knowledge_status','search_company_knowledge','find_company_transaction_patterns','list_navi_features'])assert.ok(company.includes(name),'company-dialogue:'+name);
  assert.ok(company.includes('never substitute a generic 未払金'));assert.ok(company.includes('never that no receipt exists'));assert.ok(company.includes('copied verbatim from the current message'));assert.ok(!withTools.includes('remember_company_knowledge'),'purchase prompt unchanged');
+ // Owner realm: each addition only when the job carries it; the original tool contract stays and no tool is named that the job lacks.
+ const ownerWs=systemFor({mode:'workspace',tools:[{name:'get_draft'},{name:'list_navi_features'},{name:'queue_card_sync'}]});assert.ok(ownerWs.includes('at most 4000 characters')&&ownerWs.includes('list_navi_features')&&ownerWs.includes('queue_card_sync'),'owner-realm:workspace-additions');assert.ok(ownerWs.includes('post_selected_approved_rows only when the user explicitly orders the ledger posting'));assert.ok(!ownerWs.includes('remember_company_knowledge'),'owner-realm:no-teaching-without-authority');
+ const ownerTeaching=systemFor({mode:'workspace',tools:[{name:'get_draft'},{name:'remember_company_knowledge'}],teachingCompany:{name:'Synthetic A'}});assert.ok(ownerTeaching.includes('remember_company_knowledge')&&ownerTeaching.includes('"Synthetic A"'),'owner-realm:teaching-with-authority');
+ assert.ok(!withTools.includes('queue_card_sync')&&!withTools.includes('at most 4000 characters'),'owner-realm:purchase-prompt-unchanged');
 });
 test('company replies use the company validator, schema and recalled teachings; purchase and general rules are unchanged',async()=>{
  const {interpreterInput,schemaFor,chatSchema}=await import('../teaching-worker/interpreter.mjs');
  const long={kind:'unclear',summary:'説明'.repeat(1000),patch:{},quotes:{}};
  assert.equal(validateChatProposal(long,{mode:'workspace',companyScoped:true},'t').summary.length,2000);
- assert.throws(()=>validateChatProposal(long,{mode:'workspace'},'t'),'general workspace keeps its limit');
+ // Deliberate change (plan omf-navi-owner-continuation-20261020): the general owner workspace explanation is up to 4000 characters.
+ assert.equal(validateChatProposal(long,{mode:'workspace'},'t').summary.length,2000,'general workspace explanation 4000');assert.throws(()=>validateChatProposal({...long,summary:'x'.repeat(4001)},{mode:'workspace'},'t'),'general workspace limit 4000');
+ assert.deepEqual(validateChatProposal({...long,summary:'s',navigation:{feature:'connections'}},{mode:'workspace'},'t').navigation,{feature:'connections'});assert.throws(()=>validateChatProposal({...long,summary:'s',navigation:{feature:'transactions',transactionId:'a'.repeat(24)}},{mode:'workspace'},'t'),'no record link outside the company conversation');
  assert.deepEqual(validateChatProposal({...long,summary:'s',navigation:{feature:'calendar'}},{mode:'workspace',companyScoped:true},'t').navigation,{feature:'calendar'});
  assert.throws(()=>validateChatProposal({...long,summary:'s',navigation:{feature:'https://evil.example'}},{mode:'workspace',companyScoped:true},'t'));
  assert.throws(()=>validateChatProposal({kind:'proposal',summary:'s',patch:{purpose:'company'},quotes:{purpose:'t'}},{mode:'workspace',companyScoped:true},'t'));
@@ -75,10 +81,14 @@ test('company replies use the company validator, schema and recalled teachings; 
  const companyJob={companyScoped:true,mode:'workspace',tools:[{name:'list_company_invoices'}]};
  assert.equal(schemaFor(companyJob).properties.summary.maxLength,4000);assert.ok(schemaFor(companyJob).properties.navigation.properties.feature.enum.includes('invoices'));assert.ok(!schemaFor(companyJob).properties.navigation.properties.feature.enum.includes('authentication'));
  assert.equal(schemaFor({tools:[{name:'get_draft'}]}),chatSchema);assert.equal(schemaFor({}),chatSchema);assert.equal(chatSchema.properties.summary.maxLength,800);
+ const owner=schemaFor({mode:'workspace',tools:[{name:'get_draft'}]});assert.equal(owner.properties.summary.maxLength,4000,'owner-realm:schema-4000');assert.deepEqual(owner.properties.kind.enum,['unclear','defer']);assert.deepEqual(Object.keys(owner.properties.navigation.properties),['feature'],'owner-realm:no-record-link');assert.ok(owner.properties.navigation.properties.feature.enum.includes('connections')&&!owner.properties.navigation.properties.feature.enum.includes('authentication'));
  const knowledge=[{id:'k',instruction:'SYNTH',source:{turnId:'t'}}];
  const input=interpreterInput({...companyJob,context:{mode:'workspace',pageName:'Invoices',facts:{},capabilities:[],messages:[]},text:'t',knowledge,knowledgeActiveTotal:3});
  assert.deepEqual(input.companyTeachings,knowledge);assert.equal(input.companyTeachingsActiveTotal,3);
  const general=interpreterInput({mode:'workspace',tools:[{name:'get_draft'}],knowledge,context:{mode:'workspace',pageName:'p',facts:{},capabilities:[],messages:[]},text:'t'});assert.equal(Object.hasOwn(general,'companyTeachings'),false,'no teachings outside company jobs');
+ // Owner/purchase jobs: teachings only with the server-checked company authority (teachingCompany), never from a bare knowledge array.
+ const bridged=interpreterInput({mode:'workspace',tools:[{name:'get_draft'}],knowledge,knowledgeActiveTotal:2,teachingCompany:{name:'Synthetic A'},context:{mode:'workspace',pageName:'p',facts:{},capabilities:[],messages:[]},text:'t'});assert.deepEqual(bridged.companyTeachings,knowledge,'owner-realm:bridged-teachings');assert.equal(bridged.teachingCompany,'Synthetic A');
+ const purchaseContext={source:{description:'Synthetic shop',purchaseDate:'2026-08-05',amount:1980,account:{name:'Synthetic Amex'}},values:{purpose:'unresolved',customerId:'',productName:''},mapping:null,study:{},customers:[],messages:[]};const purchaseBridged=interpreterInput({tools:[{name:'get_draft'}],knowledge,teachingCompany:{name:'Synthetic A'},context:purchaseContext,text:'t'});assert.deepEqual(purchaseBridged.companyTeachings,knowledge);assert.equal(Object.hasOwn(interpreterInput({tools:[{name:'get_draft'}],knowledge,context:purchaseContext,text:'t'}),'companyTeachings'),false,'owner-realm:no-authority-no-teachings');
 });
 test('public research and inspected records are company-only: prompt, schema and input name them; purchase and general prompts are unchanged',async()=>{
  const {systemFor,schemaFor,interpreterInput,chatSystem,chatSchema}=await import('../teaching-worker/interpreter.mjs');

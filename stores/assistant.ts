@@ -1,7 +1,13 @@
 import {defineStore} from 'pinia'
 import {assistantTarget} from '~/shared/finance-assistant.mjs'
 export const useAssistantStore=defineStore('assistant',{
- state:()=>({open:false,owner:'',target:{kind:'workspace'} as any,draftPage:null as any,pageSelection:null as any,buffers:{} as Record<string,string>,pending:{} as Record<string,any>,saved:null as any,savedSequence:0,intakeSaved:null as any,intakeSavedSequence:0,companyInvoiceSaved:null as any,companyInvoiceSavedSequence:0,companyTransactionSaved:null as any,companyTransactionSavedSequence:0,companyKnowledgeSaved:null as any,companyKnowledgeSequence:0}),
+ state:()=>({open:false,owner:'',target:{kind:'workspace'} as any,draftPage:null as any,pageSelection:null as any,buffers:{} as Record<string,string>,pending:{} as Record<string,any>,saved:null as any,savedSequence:0,intakeSaved:null as any,intakeSavedSequence:0,companyInvoiceSaved:null as any,companyInvoiceSavedSequence:0,companyTransactionSaved:null as any,companyTransactionSavedSequence:0,companyKnowledgeSaved:null as any,companyKnowledgeSequence:0,
+  // Owner workspace: the server-checked ledger posting company of the current conversation scope (never the cached organization list).
+  workspacePosting:null as null|{scopeKey:string,company:any},
+  // A done/queued owner native Navi receipt (ids only); the open native page of the same owner refetches that record from the server.
+  ownerNative:null as any,ownerNativeSequence:0,
+  // The archived owner conversation the user explicitly chose to discuss (ids and dates only, memory only, never browser storage).
+  discussion:null as null|{scopeKey:string,archiveId:string,label:string}}),
  actions:{
   identify(owner:string){if(owner===this.owner)return;this.$reset();this.owner=owner;if(!owner||typeof window==='undefined')return;try{const saved=JSON.parse(sessionStorage.getItem('omf-assistant:'+owner)||'null');if(saved){this.target=assistantTarget(saved.target);this.open=saved.open===true}}catch{}},
   persist(){if(this.owner&&typeof window!=='undefined')try{sessionStorage.setItem('omf-assistant:'+this.owner,JSON.stringify({open:this.open,target:this.target}))}catch{}},
@@ -13,6 +19,8 @@ export const useAssistantStore=defineStore('assistant',{
   receiveCompanyInvoice(receipt:any){this.companyInvoiceSaved=receipt;this.companyInvoiceSavedSequence++},
   // A done company teaching receipt (ids only, no teaching text); open teaching lists of the same company reload from the server.
   receiveCompanyKnowledge(receipt:any){this.companyKnowledgeSaved=receipt;this.companyKnowledgeSequence++},
-  receiveIntake(receipts:any[]){this.intakeSaved={sequence:++this.intakeSavedSequence,receipts}}
+  receiveIntake(receipts:any[]){this.intakeSaved={sequence:++this.intakeSavedSequence,receipts}},
+  receiveOwnerNative(receipt:any){this.ownerNative=receipt;this.ownerNativeSequence++},
+  postingFor(scopeKey:string,company:any){this.workspacePosting={scopeKey,company:company||null}}
  }
 })

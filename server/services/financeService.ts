@@ -122,12 +122,23 @@ export function autoSyncInput(body: any): { enabled: boolean; hour: number } {
   if (!body || typeof body !== 'object' || typeof body.enabled !== 'boolean' || !Number.isInteger(body.hour) || body.hour < 0 || body.hour > 23) fail(400, '自動取得の時刻は0〜23で指定してください')
   return { enabled: body.enabled, hour: body.hour }
 }
-// The manual 確定明細を取得 enqueue, moved verbatim from the route: same collector check, filter, $set/$unset and 409s.
-export async function queueSync(ownerId: string, account: any) {
+// The manual 確定明細を取得 enqueue, moved verbatim from the route: same collector check, filter, $set/$unset and 409s. An owner Navi
+// action passes its trusted internal journal operation: its id and the queued jobId are recorded in the SAME atomic enqueue
+// (jobOperation), so a lost reply is reconciled from the account, never re-queued blindly. The page button and the bill notice pass none.
+export async function queueSync(ownerId: string, account: any, operation?: { operationId: string } | null) {
   if (!await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null })) fail(409, 'Pair a collector for this account first')
-  const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: new Date(), lastMessage: 'Waiting for collector' }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
+  const jobId = randomUUID(), requestedAt = new Date()
+  const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId, jobState: 'queued', jobRequestedAt: requestedAt, lastMessage: 'Waiting for collector', ...(operation ? { jobOperation: { operationId: operation.operationId, jobId, at: requestedAt } } : {}) }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
   if (!updated) fail(409, 'A synchronization is already queued or running')
   return updated
+}
+// The automatic-collection setting write, shared by the native settings route and the owner Navi action: Aplus only, the same input
+// rule, dotted paths so the schedule's own lastQueuedDay is kept. An owner Navi action's operation is recorded in the same write.
+export async function saveAutoSync(ownerId: string, account: any, body: any, operation?: { operationId: string } | null) {
+  if (account.provider !== 'aplus') fail(400, 'Aplus account required')
+  const input = autoSyncInput(body)
+  await FinancialAccount.updateOne({ _id: account._id, ownerId }, { $set: { 'autoSync.enabled': input.enabled, 'autoSync.hour': input.hour, ...(operation ? { autoSyncOperation: { operationId: operation.operationId, enabled: input.enabled, hour: input.hour, at: new Date() } } : {}) } })
+  return { autoSync: input }
 }
 // The scheduled enqueue: ONE atomic write whose filter carries every eligibility predicate at write time — the account is
 // still an active Aplus account with 自動取得 on, its hour has passed, it was not queued today, no job is queued or running,

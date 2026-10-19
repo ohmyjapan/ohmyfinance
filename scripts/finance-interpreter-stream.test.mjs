@@ -173,3 +173,15 @@ test('a research job has a longer bound and is still killed and cleaned up at it
   assert.deepEqual(await readdir(path.join(directory, 'jobs')), [], 'research-cli:timeout-cleanup');
  } finally { t.mock.timers.reset(); if (s.child && !s.child.killed) s.child.kill(); }
 });
+// Owner realm (plan omf-navi-owner-continuation-20261020): the actual child receives the owner workspace schema (4000 characters, one
+// fixed page link) and a prompt naming only the tools the job carries; the purchase/plain contracts above are unchanged.
+test('owner workspace tool job keeps a 4000-character reply and one page link through the actual child', async () => {
+ const job = { ...workspace, mode: 'workspace', tools: [{ name: 'get_draft' }, { name: 'list_navi_features' }], actionEndpoint: 'http://127.0.0.1/synthetic', lease: 'synthetic-only' };
+ const result = await invoke(JSON.stringify({ is_error: false, structured_output: { ...reply('説'.repeat(4000)), navigation: { feature: 'connections' } } }), { job });
+ assert.equal(result.summary.length, 4000, 'owner-realm:child-4000'); assert.deepEqual(result.navigation, { feature: 'connections' }, 'owner-realm:child-link');
+ const schemaArg = JSON.parse(scenario.args[scenario.args.indexOf('--json-schema') + 1]); assert.equal(schemaArg.properties.summary.maxLength, 4000);
+ const prompt = scenario.args[scenario.args.indexOf('--system-prompt') + 1]; assert.ok(prompt.includes('list_navi_features') && !prompt.includes('remember_company_knowledge') && !prompt.includes('queue_card_sync'), 'owner-realm:prompt-names-only-carried-tools');
+ await invoke(JSON.stringify({ is_error: false, structured_output: reply('x'.repeat(4001)) }), { job, error: /cannot change a purchase/ });
+ await invoke(JSON.stringify({ is_error: false, structured_output: { ...reply('s'), navigation: { feature: 'transactions', transactionId: 'a'.repeat(24) } } }), { job, error: /Invalid navigation/ });
+ assert.deepEqual(await readdir(path.join(directory, 'jobs')), [], 'owner-realm:cleanup');
+});

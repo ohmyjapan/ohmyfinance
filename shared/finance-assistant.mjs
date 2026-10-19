@@ -6,6 +6,9 @@ export function assistantTarget(value){return value?.kind==='draft'&&/^[a-f0-9]{
 // Company conversations (transactions/invoices/calendar) use the catalogue-aware company reply validator; the general and
 // purchase replies below keep their original rules. assistantFeature names the current page's catalogue entry, for UI only.
 export {validateCompanyAssistantReply} from './finance-navi-features.mjs';
-import {naviFeatureForPath} from './finance-navi-features.mjs';
+import {naviFeatureForPath,validateOwnerNavigation} from './finance-navi-features.mjs';
 export function assistantFeature(path){return naviFeatureForPath(path)}
-export function validateAssistantReply(input){if(!input||!['unclear','defer'].includes(input.kind)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>800||!input.patch||Object.keys(input.patch).length||!input.quotes||Object.keys(input.quotes).length)throw Error('A general conversation cannot change a purchase');return {kind:input.kind,summary:input.summary.trim(),patch:{},quotes:{}}}
+// The owner workspace reply: an explanation (never a purchase change) of at most 4000 characters, optionally with one fixed catalogue
+// page link the user may click (no record id, query or company change; never followed automatically). A purchase reply keeps its rules.
+export const ownerReplyLimit=4000;
+export function validateAssistantReply(input){if(!input||!['unclear','defer'].includes(input.kind)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>ownerReplyLimit||!input.patch||Object.keys(input.patch).length||!input.quotes||Object.keys(input.quotes).length)throw Error('A general conversation cannot change a purchase');const navigation=validateOwnerNavigation(input.navigation);return {kind:input.kind,summary:input.summary.trim(),patch:{},quotes:{},...(navigation?{navigation}:{})}}
