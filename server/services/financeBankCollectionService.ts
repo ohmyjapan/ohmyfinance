@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { ready, id, fail } from './financeService'
 import { FinanceCollector } from '../models/Finance'
 import { BankAccount, BankStatement, BankTemplate, BankJob, initializePaymentMatching } from '../models/FinancePaymentMatch'
-import { BANK_PROVIDERS } from '../../shared/finance-payment-match.mjs'
+import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS } from '../../shared/finance-payment-match.mjs'
 import { ownedBankAccount, acceptBankCapture } from './financeBankStatementService'
 // Web-bank collection jobs (plan omf-bank-collection-amended-20261018 A4): the owner's connection and request, the collector's
 // claim/status/upload under its bank scope, and the interpretation frozen on each job at queue time.
@@ -16,18 +16,22 @@ const scopeOf=(device:any)=>({ownerId:device.ownerId,bankAccountId:{$in:device.b
 const jobView=(j:any)=>({id:sid(j._id),jobId:j.jobId,kind:j.kind,state:j.state,requestedAt:j.requestedAt||null,collectorId:j.collectorId?sid(j.collectorId):null,leaseUntil:j.leaseUntil||null,lastAttemptAt:j.lastAttemptAt||null,lastMessage:j.lastMessage||'',snapshot:j.snapshot,snapshotHash:j.snapshotHash,statementIds:(j.statementIds||[]).map(sid),completedAt:j.completedAt||null,hasObservation:!!j.observation})
 const captureView=(s:any)=>({id:sid(s._id),name:s.name,size:s.size,hash:s.hash,receivedAt:s.capture?.receivedAt||null,state:s.capture?.state,reason:s.capture?.reason||null,rows:s.capture?.rows||null,snapshotHash:s.capture?.snapshotHash,jobId:s.capture?.jobId,kind:s.capture?.kind,channel:s.capture?.channel,labelChecked:s.capture?.labelChecked===true,sourceHost:s.capture?.sourceHost||null})
 // GUARD g2: provider known, template owned, the transaction-id column confirmed by the owner when the template maps one.
+// The login variant (plan omf-rakuten-bank-connector-amended-20261019 R4) is kept only when the provider lists it in
+// BANK_LOGIN_VARIANTS; anything else is stored as null — a tolerance, never a 400.
 export async function connectionInput(ownerId:string,body:any){
  if(!body||typeof body!=='object'||Array.isArray(body))fail(400,'接続の内容を確認してください。')
  const provider=providerOf(body.provider);if(!provider)fail(400,'銀行を確認してください。')
  const template:any=await BankTemplate.findOne({_id:id(body.templateId),ownerId}).lean();if(!template)fail(400,'テンプレートを確認してください。')
  if(text(template.mapping?.transactionId)!==''&&body.transactionIdConfirmed!==true)fail(400,'銀行が発行した取引IDの列であることを確認してください。')
  const accountLabel=text(body.accountLabel);if(accountLabel.length>100||/[\x00-\x1f]/.test(accountLabel))fail(400,'口座の表示名を確認してください。')
- return{provider:provider![0],templateId:sid(template._id),transactionIdConfirmed:body.transactionIdConfirmed===true,accountLabel:accountLabel||null,connectedAt:new Date()}
+ const variants:[string,string][]=BANK_LOGIN_VARIANTS[provider![0]]||[],variant=variants.some(([key])=>key===body.variant)?String(body.variant):null
+ return{provider:provider![0],templateId:sid(template._id),transactionIdConfirmed:body.transactionIdConfirmed===true,accountLabel:accountLabel||null,variant,connectedAt:new Date()}
 }
 export async function saveBankConnection(ownerId:string,accountId:string,body:any){await init();const account=await ownedBankAccount(ownerId,accountId),connection=await connectionInput(ownerId,body);await BankAccount.updateOne({_id:account._id,ownerId},{$set:{connection}});return{account:view(await BankAccount.findOne({_id:account._id,ownerId}).lean())}}
 // The interpretation frozen on a job: the connection's template at its current revision, the confirmation, the parser version,
-// the account currency, the provider and label. The hash is over this exact JSON, so the same settings give the same hash.
-function snapshotOf(connection:any,template:any,account:any){const snapshot={templateId:sid(template._id),templateRevision:Number(template.revision||0),headers:[...(template.headers||[])],mapping:{...(template.mapping||{})},amountSign:template.amountSign||'outflow-positive',transactionIdConfirmed:connection.transactionIdConfirmed===true,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,coverage:null};return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
+// the account currency, the provider, label and login variant (null when none). The hash is over this exact JSON, so the same
+// settings give the same hash; the variant key gives a new hash only to jobs queued after it was added.
+function snapshotOf(connection:any,template:any,account:any){const snapshot={templateId:sid(template._id),templateRevision:Number(template.revision||0),headers:[...(template.headers||[])],mapping:{...(template.mapping||{})},amountSign:template.amountSign||'outflow-positive',transactionIdConfirmed:connection.transactionIdConfirmed===true,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:null};return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
 // GUARD g3 (mirrored from financeService.ts:125-129): an unrevoked PC allowed this account, and no job queued or running on a
 // live lease; a running job whose lease expired no longer blocks (it stays claimable and continues under its own snapshot).
 // GUARD g7 (tolerance): an unverified provider gets an observe job and a message, never a refusal.
@@ -65,12 +69,14 @@ export async function bankJobStatus(device:any,body:any){
  if(!job)fail(409,'Job is no longer assigned to this collector')
  return{success:true}
 }
-// Only the recorded page contract: whitelisted keys, bounded sizes; a typed value, a credential or an unknown key never reaches the database.
+// Only the recorded page contract: whitelisted keys, bounded sizes; a typed value, a credential or an unknown key never reaches the
+// database. The person's operations (plan omf-rakuten-bank-connector-amended-20261019 R4) pass as clicks[{at,tag,text,id}] ≤60,
+// typedInto[{at,id,type}] ≤100 and the integer eventsDropped (else 0) — the same bounds the collector applies; every other key is dropped.
 function observationInput(bytes:Buffer){
  let body:any;try{body=JSON.parse(bytes.toString('utf8'))}catch{fail(400,'Invalid observation JSON')}
  if(!Array.isArray(body)||body.length>500)fail(400,'観察記録を確認してください。')
  const str=(v:any,max:number)=>String(v??'').slice(0,max),arr=(v:any,max:number)=>Array.isArray(v)?v.slice(0,max):[]
- return body.map((p:any)=>({at:str(p?.at,40),pathname:str(p?.pathname,300),title:str(p?.title,200),visibleControls:arr(p?.visibleControls,60).map((t:any)=>str(t,40)),inputs:arr(p?.inputs,100).map((i:any)=>({id:str(i?.id,100),type:str(i?.type,30)})),selects:arr(p?.selects,100).map((n:any)=>Number.isSafeInteger(n)?n:0),downloadEvents:arr(p?.downloadEvents,20).map((d:any)=>({host:str(d?.host,200),suggestedFilename:str(d?.suggestedFilename,200),bytes:Number.isSafeInteger(d?.bytes)?d.bytes:null}))}))
+ return body.map((p:any)=>({at:str(p?.at,40),pathname:str(p?.pathname,300),title:str(p?.title,200),visibleControls:arr(p?.visibleControls,60).map((t:any)=>str(t,40)),inputs:arr(p?.inputs,100).map((i:any)=>({id:str(i?.id,100),type:str(i?.type,30)})),selects:arr(p?.selects,100).map((n:any)=>Number.isSafeInteger(n)?n:0),downloadEvents:arr(p?.downloadEvents,20).map((d:any)=>({host:str(d?.host,200),suggestedFilename:str(d?.suggestedFilename,200),bytes:Number.isSafeInteger(d?.bytes)?d.bytes:null})),clicks:arr(p?.clicks,60).map((c:any)=>({at:str(c?.at,40),tag:str(c?.tag,20),text:str(c?.text,40),id:str(c?.id,100)})),typedInto:arr(p?.typedInto,100).map((t:any)=>({at:str(t?.at,40),id:str(t?.id,100),type:str(t?.type,30)})),eventsDropped:Number.isSafeInteger(p?.eventsDropped)?p.eventsDropped:0}))
 }
 // Upload under a job of the device's scope in ANY state (a lost acknowledgement or an older retained manifest may arrive after
 // the lease): an observation record is stored on the job; statement bytes go to acceptBankCapture with the job's snapshot.
@@ -86,4 +92,7 @@ export async function acceptBankJobUpload(device:any,query:any,bytes:Buffer,mime
 }
 export async function storeObservation(device:any,query:any,bytes:Buffer){return acceptBankJobUpload(device,{...query,kind:'observation'},bytes,'application/json')}
 export async function listBankJobs(ownerId:string,accountId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const jobs:any[]=await BankJob.find({ownerId,bankAccountId:account._id}).sort({requestedAt:-1,_id:-1}).limit(50).lean();const statements:any[]=await BankStatement.find({ownerId,'capture.jobId':{$in:jobs.map(j=>j.jobId)}}).lean();return{jobs:jobs.map(j=>({...jobView(j),captures:statements.filter(s=>s.capture?.jobId===j.jobId).map(captureView)}))}}
+// The stored observation of one owned job, read-only (plan omf-rakuten-bank-connector-amended-20261019 R4): the sanctioned
+// input for writing a bank's contract. Another owner's account or an unknown job is 404; nothing is written.
+export async function getBankObservation(ownerId:string,accountId:string,jobId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const job:any=await BankJob.findOne({ownerId,bankAccountId:account._id,jobId:sid(jobId)}).lean();if(!job)fail(404,'取得の記録が見つかりません。');return{jobId:job.jobId,kind:job.kind,state:job.state,requestedAt:job.requestedAt||null,snapshotHash:job.snapshotHash,observation:Array.isArray(job.observation)?job.observation:null}}
 export async function listBankCaptures(ownerId:string,accountId:string){await init();const account=await ownedBankAccount(ownerId,accountId);return{captures:(await BankStatement.find({ownerId,'capture.bankAccountId':sid(account._id)}).sort({'capture.receivedAt':-1,_id:-1}).limit(200).lean()).map((s:any)=>({...captureView(s),capture:s.capture}))}}

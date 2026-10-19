@@ -1,18 +1,14 @@
-// collector/banks/rakuten.mjs — 楽天銀行 adapter stub (plan omf-bank-collection-amended-20261018 A6). support 'contract-pending':
-// no selector, credential, portal entitlement or verified flow is claimed. `start` is the official business-banking page that
-// answered 200 on 2026-10-18; `hosts` bound the download-host guard once a contract is recorded. The routine methods throw
-// contract-pending, so queueBankSync issues observe jobs only (the preparatory stage records the contract draft).
-const pending = async () => { throw Object.assign(new Error('contract-pending: 楽天銀行の取得手順は未確認です'), { code: 'contract-pending' }); };
+// collector/banks/rakuten.mjs — 楽天銀行 adapter (plan omf-rakuten-bank-connector-amended-20261019 R2). support stays
+// 'contract-pending' with `contract: null`: no selector, credential, portal entitlement or verified flow is claimed, the
+// routine steps reject contract-pending (./contract.mjs) and queueBankSync issues observe jobs only. `start` is the official
+// business-banking page that answered 200 on 2026-10-18; `starts` are the two official login links recorded in FACTS.md on
+// 2026-10-19 (標準 / 口座管理プラス; no login submitted), chosen by the job's frozen `variant`; `loginHosts` is the host they
+// resolve to; `hosts` bound the download-host guard. The page engine runs the routine steps once a recorded contract ships here.
+import { contractUi } from './contract.mjs';
 export default {
   provider: 'rakuten', label: '楽天銀行', support: 'contract-pending', contract: null,
   start: 'https://www.rakuten-bank.co.jp/business/', hosts: ['rakuten-bank.co.jp'],
-  ui(page) {
-    return {
-      async open() { await page.goto('https://www.rakuten-bank.co.jp/business/', { waitUntil: 'domcontentloaded', timeout: 60000 }); },
-      async state() { return { kind: 'unknown' }; },
-      async show() { await page.bringToFront(); },
-      login: pending, openStatements: pending, selectPeriod: pending, snapshot: pending, exportCsv: pending,
-      async downloadSession(jobDir) { const session = await page.browser().target().createCDPSession(); await session.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: jobDir, eventsEnabled: true }); return { on: (event, handler) => session.on(event, handler), async close() { await session.send('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: false }).catch(() => {}); await session.detach().catch(() => {}); } }; }
-    };
-  }
+  starts: { standard: 'https://fes.rakuten-bank.co.jp/MS/main/RbS?COMMAND=START&CurrentPageID=SWITCH_PAGE', plus: 'https://fes.rakuten-bank.co.jp/MS/main/RbS?COMMAND=LOGIN&CurrentPageID=START_ACCOUNT_PLUS' },
+  loginHosts: ['fes.rakuten-bank.co.jp'],
+  ui(page, browser, snapshot = null) { return contractUi(page, browser, this, snapshot); }
 };

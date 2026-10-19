@@ -66,6 +66,38 @@ and `shared/finance-payment-match.mjs`. The shared-guard coverage of the changed
 dispatch, device bank scope, holds) is tabulated in `output/plan/omf-bank-collection-amended-20261018/6-build-post-reset.md`
 (P2 coverage table).
 
+### Login variant, recorded operations and the observation read (楽天銀行 preparation)
+
+`PUT bank/accounts/:id/connection` also takes `variant`: a key of `BANK_LOGIN_VARIANTS[provider]` (楽天銀行: `standard`
+標準ログイン（法人ビジネス口座）, `plus` 口座管理プラス). Any other value, or a provider without variants, is stored as `null` —
+never a 400. The job snapshot freezes it (`snapshot.variant`, inside the hash: only jobs queued after this change carry the
+new hash) and the adapter opens `starts[variant]`, the official login link of that variant, or its `start` page when there
+is none.
+
+The observe stage also records what the person does, as value-free metadata on each page record: `clicks[]` (`at`, `tag`,
+`text` ≤40, `id` ≤100 of a clicked button / link / role=button / submit input; ≤60 per record) and `typedInto[]` (`at`,
+`id` ≤100, `type` ≤30 of an edited field; one entry per field, ≤100 per record), with `eventsDropped` counting what exceeded
+a bound. The events reach the collector at event time through a CDP binding on the page's own session (`Runtime.enable`,
+then `Runtime.addBinding` under a random name; capture-phase listeners installed on every new document) — never through the
+page snapshot — and are attached in arrival order to the record that was current when they arrived, so a click on an
+unchanged page is kept, a click that navigates stays on its source page, and a click in the last interval before the export
+or the tab close survives. The listeners never read a field's value; the collector keeps only the keys above
+(`eventInput`); `bank/upload?kind=observation` drops anything else again (`observationInput`). If the binding cannot be
+installed the pages are still recorded, without clicks. Enabling the Runtime domain on the observation session changes the
+browser instrumentation from the library default; its compatibility with a real bank page is unverified until the first
+owner-authorized observe run.
+
+`GET bank/accounts/:id/jobs/:jobId/observation` returns the stored observation of an owned job (read-only; 404 for another
+owner or an unknown job); the connection panel shows it under 観察記録を見る. It is the sanctioned input for writing a bank's
+contract: `collector/banks/contract.mjs` `draftContract(observation)` turns it into the contract shape (login hosts and
+inputs, authenticated control, statements path, period inputs, export control) that `validateContract` checks before any
+page is touched and `contractUi` runs — open the variant's start page, wait for the person to sign in, click the recorded
+path, read the portal's default period, check the account label, click the export once. Promotion of a bank is a reviewed
+code release, never automatic: a person reads the draft, writes `contract` into the adapter, flips its `BANK_PROVIDERS`
+entry to `verified`, the fixture replays the recorded path on a fake page, review, release. Until then every adapter keeps
+`contract: null` and `sync` queues observe jobs. No bank is verified by this change; no real bank page, login variant or
+CSV schema has been observed yet.
+
 A genuine bank transaction ID must be deliberately mapped and confirmed. Its identity is scoped to owner/account.
 Without it the identity is file hash + sheet + original row, including two identical-looking rows in one file. Identical
 bytes reimport without duplication. Different files remain distinct even if fingerprints match. A filtered/reordered

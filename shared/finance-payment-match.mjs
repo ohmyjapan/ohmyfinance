@@ -4,6 +4,10 @@ export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日',
 // the recorded portal contract and adapter for that bank; only a 'verified' provider runs automatic retrieval, the others run
 // the preparatory observe stage (plan omf-bank-collection-amended-20261018 S7). No provider is verified by this build.
 export const BANK_PROVIDERS=[['rakuten','楽天銀行','contract-pending'],['paypay','PayPay銀行','contract-pending'],['resona','りそな銀行','contract-pending']];
+// The login variants a provider offers (plan omf-rakuten-bank-connector-amended-20261019 R6): [key, label] per provider; a
+// provider absent here has none. The connection stores the chosen key (else null), the job snapshot freezes it, and the
+// adapter's `starts[variant]` is the matching official login link.
+export const BANK_LOGIN_VARIANTS={rakuten:[['standard','標準ログイン（法人ビジネス口座）'],['plus','口座管理プラス']]};
 export const round=n=>Math.round((n+Number.EPSILON)*100)/100;
 const text=v=>String(v??'').normalize('NFKC').trim(),norm=v=>text(v).toLowerCase().replace(/\s+/g,' ');
 export function money(v){if(v===null||v===undefined||text(v)==='')return null;const s=text(v).replace(/[¥￥,$\s]/g,'');if(!/^-?\d+(?:\.\d{1,2})?$/.test(s)||!Number.isFinite(Number(s))||Math.abs(Number(s))>1e12)throw Error('金額を確認してください。');return Number(s);}

@@ -29,6 +29,8 @@ export default defineEventHandler(async event=>{
     if(parts[3]==='jobs'&&method==='GET')return collection.listBankJobs(ownerId,parts[2])
     if(parts[3]==='captures'&&method==='GET')return collection.listBankCaptures(ownerId,parts[2])
    }
+   // R5 (plan omf-rakuten-bank-connector-amended-20261019): the stored observation of one job, read-only and owner-scoped — the input for writing a bank's contract.
+   if(parts[1]==='accounts'&&parts.length===6&&parts[3]==='jobs'&&parts[5]==='observation'&&method==='GET')return collection.getBankObservation(ownerId,parts[2],parts[4])
    if(parts[1]==='collectors'&&parts.length===3&&method==='PUT')return collection.setCollectorBankScope(ownerId,parts[2],await json())
    if(parts[1]==='files'){
     if(parts.length===2&&method==='GET')return bank.listBankFiles(ownerId)

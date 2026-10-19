@@ -9,7 +9,7 @@
 // navigates, and keeps one CSV the person exports from the bank's hosts. Imports only packaged files and node built-ins apart
 // from ./browser.mjs, loaded lazily by the two launchers (so the staged copy loads without an install, like aplus.mjs).
 // Lines marked `// guard:<name>` are single predicates the fixture removes in turn from a mutant copy.
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { access, link, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { awaitDownload } from './aplus.mjs';
@@ -95,7 +95,7 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   if (!adapter) throw new Error('A bank adapter is required');
   if (adapter.support !== 'verified') throw coded('contract-pending', `${adapter.label}の取得手順は未確認です。観察取得で手順を記録してください`);
   if (!/^[a-f\d]{24}$/.test(String(bound?.bankAccountId ?? '')) || typeof bound?.jobId !== 'string' || !bound.jobId || typeof bound?.snapshotHash !== 'string' || !bound.snapshotHash) throw new Error('A claimed bank job is required');
-  ui ||= adapter.ui(page, browser);
+  ui ||= adapter.ui(page, browser, job?.snapshot ?? null);
   const stamp = () => new Date(now()).toISOString(), jobDir = path.join(bankOutbox(root, bound.bankAccountId), bound.jobId), marker = path.join(jobDir, 'attempt.json');
   const manifestOf = (filename, bytes, extra) => ({ ...bound, kind: 'statement', channel: 'collector', sourceFormat: 'csv', sha256: sha256(bytes), filename, bytes: bytes.length, downloadedAt: stamp(), ...extra });
   if (await exists(marker)) {
@@ -145,25 +145,84 @@ const RECORD = () => ({
   inputs: [...document.querySelectorAll('input, textarea')].filter(e => e.getClientRects().length).slice(0, 100).map(e => ({ id: String(e.id || e.name || '').slice(0, 100), type: String(e.type || 'text').slice(0, 30) })),
   selects: [...document.querySelectorAll('select')].slice(0, 100).map(s => s.options.length)
 });
+/** The page-side name of the observation binding: random per session (as rebrowser's own context probe is), a plain identifier. */
+export const OBSERVE_BINDING = /^o[0-9a-f]{15}$/;
+const observeBindingName = () => 'o' + randomBytes(8).toString('hex').slice(0, 15);
+// Installed on every new document before the start page is opened: capture-phase listeners that hand Node the clicked
+// control's tag/text/id and the edited field's id/type through the session binding at event time — never a value, never
+// the DOM. A document without the binding (the channel failed) drops the call silently; the pages are still recorded.
+const LISTENERS = name => {
+  const send = payload => { try { window[name](JSON.stringify(payload)); } catch { /* no binding in this document */ } };
+  document.addEventListener('click', event => {
+    const target = event.target instanceof Element ? event.target.closest('button, a, [role="button"], input[type="submit"]') : null;
+    if (!target) return;
+    send({ kind: 'click', tag: target.tagName, text: (target.innerText || (target.type === 'submit' ? target.value : '') || target.getAttribute('aria-label') || '').trim().slice(0, 40), id: String(target.id || target.name || '').slice(0, 100) });
+  }, true);
+  document.addEventListener('input', event => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
+    send({ kind: 'input', id: String(target.id || target.name || '').slice(0, 100), type: String(target.type || 'text').slice(0, 30) });
+  }, true);
+};
 /**
- * The preparatory observe stage of an unverified bank: the start page is opened, the person is asked to navigate (and to export
- * the CSV when the portal offers it), and the collector records one entry per page change until the tab is closed, the
- * session is cancelled or the deadline passes. One completed download from the bank's hosts is retained as a statement
- * manifest (channel collector-observe) under the job's frozen snapshot. Returns { observation, items, downloads, closed }.
+ * The Node-side whitelist of one binding call: a page script can call the binding with anything, so only a click's
+ * tag/text/id or an input's id/type pass, bounded (tag ≤20, text ≤40, id ≤100, type ≤30); any other key (a value, a list,
+ * a nested object) and any other shape is dropped. Returns null for a call that carries no recordable event.
+ */
+export function eventInput(payload) {
+  let body; try { body = JSON.parse(String(payload)); } catch { return null; }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const str = (value, max) => String(value ?? '').slice(0, max);
+  if (body.kind === 'click') return { kind: 'click', tag: str(body.tag, 20), text: str(body.text, 40), id: str(body.id, 100) };
+  if (body.kind === 'input') return { kind: 'input', id: str(body.id, 100), type: str(body.type, 30) };
+  return null;
+}
+// One event onto one record, bounded: clicks ≤60 per record; typedInto ≤100 per record with one entry per field (id+type,
+// the first `at` kept); an overflowing event is counted in eventsDropped, never stored. The fields are what eventInput let through.
+function attachEvent(target, event) {
+  const { kind, ...fields } = event;
+  if (kind === 'click') { if (target.clicks.length < 60) target.clicks.push(fields); else target.eventsDropped++; return; }
+  if (target.typedInto.some(t => t.id === fields.id && t.type === fields.type)) return;
+  if (target.typedInto.length < 100) target.typedInto.push(fields); else target.eventsDropped++;
+}
+/**
+ * The preparatory observe stage of an unverified bank: the start page (the frozen variant's, through the adapter) is opened,
+ * the person is asked to navigate (and to export the CSV when the portal offers it), and the collector records one entry per
+ * page change until the tab is closed, the session is cancelled or the deadline passes — plus, on each entry, the person's
+ * clicks and edited fields as value-free metadata received at event time through a CDP binding (Runtime.enable, then
+ * Runtime.addBinding on the page's own session; listeners installed on every new document). Events wait in `pending` and are
+ * attached, in arrival order and bounded, to the record that was current when they arrived: before each poll reads the page
+ * (so a click that navigates stays on its source page), after a record is created, and once more when the loop ends (so the
+ * last interval before the export or the close survives). The change key and its exit never see them, so an unchanged page
+ * keeps them. One completed download from the bank's hosts is retained as a statement manifest (channel collector-observe)
+ * under the job's frozen snapshot. Returns { observation, items, downloads, closed }.
  */
 export async function observeFromPage(page, browser, adapter, bound, job, root, status, { ui = null, now = Date.now, wait = pause, pollMs = 1000, timeoutMs = 900000, signal = null } = {}) {
   if (!adapter) throw new Error('A bank adapter is required');
   if (!/^[a-f\d]{24}$/.test(String(bound?.bankAccountId ?? '')) || typeof bound?.jobId !== 'string' || !bound.jobId) throw new Error('A claimed bank job is required');
-  ui ||= adapter.ui(page, browser);
+  ui ||= adapter.ui(page, browser, job?.snapshot ?? null);
   const stamp = () => new Date(now()).toISOString(), jobDir = path.join(bankOutbox(root, bound.bankAccountId), bound.jobId + '-observe');
   await mkdir(jobDir, { recursive: true });
-  const records = [], downloads = []; let last = null, closed = false;
+  const records = [], downloads = [], pending = []; let last = null, closed = false;
+  const flush = () => { const target = records.at(-1); if (!target) return; for (const event of pending.splice(0)) attachEvent(target, event); };
+  const fresh = snap => ({ at: stamp(), ...snap, downloadEvents: [], clicks: [], typedInto: [], eventsDropped: 0 });
   const record = async () => {
+    flush();
     let snap; try { snap = await page.evaluate(RECORD); } catch { return; }
     const key = JSON.stringify([snap.pathname, snap.title, snap.visibleControls, snap.inputs, snap.selects]);
     if (key === last) return;
-    last = key; if (records.length < 200) records.push({ at: stamp(), ...snap, downloadEvents: [] });
+    last = key; if (records.length < 200) records.push(fresh(snap));
+    flush();
   };
+  // The event channel. Its failure (a rejected addBinding) leaves the pages recorded without clicks — visible, never a rejection.
+  let cdp = null;
+  try {
+    const name = observeBindingName(); cdp = await page.createCDPSession();
+    await cdp.send('Runtime.enable'); // Runtime.bindingCalled is a Runtime-domain event: without this the binding delivers nothing (local protocol check 2026-10-19)
+    await cdp.send('Runtime.addBinding', { name });
+    cdp.on('Runtime.bindingCalled', event => { if (event.name !== name) return; const input = eventInput(event.payload); if (input) pending.push({ at: stamp(), ...input }); });
+    await page.evaluateOnNewDocument(LISTENERS, name);
+  } catch { /* no event channel: pages only */ }
   const session = ui.downloadSession ? await ui.downloadSession(jobDir) : null;
   session?.on('Browser.downloadWillBegin', event => {
     const entry = { guid: event.guid, host: hostOf(event.url), suggestedFilename: String(event.suggestedFilename || '').slice(0, 200), bytes: null, completed: false };
@@ -181,7 +240,7 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
     try { await ui.show(); } catch { /* the person may already have closed the tab: the recording so far stands */ }
     const deadline = now() + timeoutMs;
     while (!closed && now() < deadline) { signal?.throwIfAborted(); await record(); await wait(pollMs); }
-  } finally { await session?.close?.(); }
+  } finally { flush(); await cdp?.detach().catch(() => {}); await session?.close?.(); }
   let items = [];
   const completed = downloads.filter(d => d.completed && GUID.test(d.guid));
   if (completed.length === 1 && hostAllowed(completed[0].host, adapter.hosts) && await exists(path.join(jobDir, completed[0].guid))) {
