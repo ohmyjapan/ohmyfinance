@@ -6,6 +6,7 @@ import { financeUser,fail,id } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
 import { FinanceChatAgent } from '../../models/FinanceChat'
 import { chatAgent,chatHeartbeat,createChatAgent,getChat,sendChat,retryChat,claimChat,finishChat,confirmChat,actionChat } from '../../services/financeChatService'
+import { selectedPostingCompany } from '../../services/financeNaviPostingService'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  const parts=(event.path.split('?')[0].split('/api/finance-chat/')[1]||'').split('/').filter(Boolean)
@@ -36,8 +37,11 @@ export default defineEventHandler(async event=>{
    if(parts.length===2&&parts[1]==='knowledge'&&event.method==='GET'){const q=getQuery(event);return await companyKnowledgeInspection(ownerId,organizationId,{status:typeof q.status==='string'?q.status:undefined,page:typeof q.page==='string'?q.page:undefined,query:typeof q.query==='string'?q.query:undefined})}
    fail(404,'Company conversation endpoint not found')
   }
-  if(parts[0]==='workspace'&&parts.length===1){if(event.method==='GET')return await getAssistant(ownerId);if(event.method==='POST')return await sendAssistant(ownerId,await body())}
-  if(parts[0]==='workspace'&&parts.length===2&&parts[1]==='retry'&&event.method==='POST')return await retryAssistant(ownerId,await body())
+  // Owner workspace and purchase chats: the token-selected company, checked now (current active membership), is the ledger posting
+  // destination only. None, a stale or a foreign selection is null and every other conversation action stays available; a body never names it.
+  const posting=()=>selectedPostingCompany(ownerId,event.context.auth?.organizationId)
+  if(parts[0]==='workspace'&&parts.length===1){if(event.method==='GET')return await getAssistant(ownerId,await posting());if(event.method==='POST')return await sendAssistant(ownerId,await body(),await posting())}
+  if(parts[0]==='workspace'&&parts.length===2&&parts[1]==='retry'&&event.method==='POST')return await retryAssistant(ownerId,await body(),await posting())
   if(parts[0]==='agents'&&parts.length===1&&event.method==='POST')return await createChatAgent(ownerId,await body())
   if(parts[0]==='agents'&&parts.length===2&&event.method==='DELETE'){
    const r=await FinanceChatAgent.updateOne({_id:id(parts[1]),ownerId},{$set:{enabled:false,revokedAt:new Date()}})
@@ -45,10 +49,10 @@ export default defineEventHandler(async event=>{
   }
   if(parts[0]==='imports'&&parts[2]==='drafts'&&(parts.length===4||parts.length===5)){
    const line=Number(parts[3]);if(!Number.isSafeInteger(line))fail(400,'Invalid line')
-   if(parts.length===4&&event.method==='GET')return await getChat(ownerId,parts[1],line)
-   if(parts.length===4&&event.method==='POST')return await sendChat(ownerId,parts[1],line,await body())
-   if(parts.length===5&&event.method==='POST'&&parts[4]==='confirm')return await confirmChat(ownerId,parts[1],line,await body())
-   if(parts.length===5&&event.method==='POST'&&parts[4]==='retry')return await retryChat(ownerId,parts[1],line,await body())
+   if(parts.length===4&&event.method==='GET')return await getChat(ownerId,parts[1],line,await posting())
+   if(parts.length===4&&event.method==='POST')return await sendChat(ownerId,parts[1],line,await body(),await posting())
+   if(parts.length===5&&event.method==='POST'&&parts[4]==='confirm')return await confirmChat(ownerId,parts[1],line,await body(),await posting())
+   if(parts.length===5&&event.method==='POST'&&parts[4]==='retry')return await retryChat(ownerId,parts[1],line,await body(),await posting())
   }
   fail(404,'Conversation endpoint not found')
  }catch(e:any){if(e.statusCode)throw e;console.error('[Finance chat] request failed',e.name||'Error');fail(500,'Conversation request failed')}

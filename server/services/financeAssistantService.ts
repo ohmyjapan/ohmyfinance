@@ -9,11 +9,13 @@ import {assistantPages,validateAssistantReply} from '../../shared/finance-assist
 import {actionTools,reconcileActions,actionReceipts,conversationReceipts,runAction} from './financeActionService'
 import {readRecord as readIntakeRecord,readSheet as readIntakeSheet} from './financeIntakeService'
 import {paymentView as readOwnedPayment} from './financePaymentMatchService'
+import {postingCompanyView,type PostingCompany} from './financeNaviPostingService'
 async function init(){await ready();await Conversation.init()}
 const visible=(c:any)=>c?{id:String(c._id),revision:c.revision,state:c.state,currentId:c.currentId,turns:c.turns}:null
 const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:null,workspaceEnabled:true,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}).sort({chatLastSeenAt:-1}).lean()
 const withReceipts=(c:any)=>conversationReceipts('workspace',c)
-export async function getAssistant(ownerId:string){await init();return {conversation:visible(await withReceipts(await Conversation.findOne({ownerId}).lean())),connected:!!await available(ownerId)}}
+// postingCompany: the token-selected company checked by the route for this request (display only; a turn keeps the one frozen at its send).
+export async function getAssistant(ownerId:string,postingCompany:PostingCompany|null=null){await init();return {conversation:visible(await withReceipts(await Conversation.findOne({ownerId}).lean())),connected:!!await available(ownerId),postingCompany:postingCompanyView(postingCompany)}}
 async function pageContext(ownerId:string,input:any){
  if(!input||!Object.hasOwn(assistantPages,input.page))fail(400,'Invalid assistant page')
  const context:any={mode:'workspace',page:input.page,pageName:assistantPages[input.page],currency:'JPY',capabilities:['Explain supplied evidence and page purpose','For purchase changes select a statement and confirm its proposal','Never change ledger or settings from general conversation'],facts:{}}
@@ -61,31 +63,34 @@ async function pageContext(ownerId:string,input:any){
  if(input.page==='intake')context.facts.pageGuide='所有者の受付・履歴・原本・会社と登録番号の調査を確認できます。日本の経理担当者として根拠と推測を区別し、韓国語または日本語で自然に説明してください。保存の指示には対応するツールを実行し、保存済みと提案を区別してください。編集・アーカイブ・調査は最新の受付と調査を読み、取得した改訂を使います。取込前にプレビューし、会社とT番号の保存前に根拠を提示して利用者の指示を確認します。調査の受付は完了ではなく、保存は国税庁確認ではありません。一部保存・結果不明は自動で繰り返さず状態を調べます。'
  return context
 }
-export async function sendAssistant(ownerId:string,body:any){
+export async function sendAssistant(ownerId:string,body:any,postingCompany:PostingCompany|null=null){
  await init()
  if(typeof body?.text!=='string'||!body.text.trim()||body.text.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text)||!/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId||''))fail(400,'メッセージを入力してください（2000文字以内）。')
  let c:any=await Conversation.findOne({ownerId}).lean()
  const previous=c?.turns.find((t:any)=>t.id===body.requestId)
- if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getAssistant(ownerId)}
+ if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getAssistant(ownerId,postingCompany)}
  if(c&&['queued','working'].includes(c.state))fail(409,'前の回答をお待ちください。')
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')
  if((c?.turns.length||0)>=200)fail(409,'会話が200件に達しました。管理者に確認してください。')
  const agent:any=await available(ownerId);if(!agent)fail(409,'AIに接続できません。少し待って再試行してください。')
  const context=await pageContext(ownerId,body.context)
+ // Ledger posting destination only: the checked token company frozen with this turn (null = none selected; every other action stays available).
+ context.facts.postingCompany=postingCompanyView(postingCompany)
+ context.facts.postingCompanyMeaning=postingCompany?'Ledger posting (post_selected_approved_rows) in this turn goes to this company only. Discussion, draft saves, memories and approval do not depend on it.':'No company is selected for ledger posting. Discussion, draft saves, memories and approval remain available; ledger posting is refused until the owner selects a company and sends a new instruction.'
  c=await withReceipts(c)
  // Stored server times let the accountant compare a prior reply with later rule audit events; legacy gaps remain unknown.
  context.messages=(c?.turns||[]).slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',page:t.pageName,selection:t.selection||null,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null}))
  // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
  const target=context.facts.intakeRecord?{recordId:context.facts.intakeRecord.id}:context.facts.intakeSheet?{documentId:context.facts.intakeSheet.document.id,sheet:context.facts.intakeSheet.sheet,headerRow:context.facts.intakeSheet.headerRow}:context.facts.paymentSelection?.kind==='card'?{importId:context.facts.paymentSelection.importId,line:context.facts.paymentSelection.line}:context.facts.paymentSelection?.kind==='bank'?{paymentKind:'bank'}:context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
- const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:body.requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null,...(target?{target}:{})}}})
- if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId)
+ const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:body.requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null,...(postingCompany?{postingCompany}:{}),...(target?{target}:{})}}})
+ if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId,postingCompany)
 }
-export async function retryAssistant(ownerId:string,body:any){
+export async function retryAssistant(ownerId:string,body:any,postingCompany:PostingCompany|null=null){
  await init();const agent:any=await available(ownerId);if(!agent)fail(409,'AIに接続できません。')
  if(!Number.isSafeInteger(body?.chatRevision))fail(400,'Invalid conversation revision')
  const r=await Conversation.updateOne({ownerId,state:'failed',revision:body.chatRevision},{$set:{state:'queued',agentId:agent._id,attempts:0},$inc:{revision:1}})
- if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId)
+ if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId,postingCompany)
 }
 export async function claimAssistant(agent:any){
  if(!agent.workspaceEnabled)return {job:null};await Conversation.init()

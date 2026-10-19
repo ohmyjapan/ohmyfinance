@@ -42,6 +42,7 @@
   <form class="shrink-0 border-t border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6" @submit.prevent="send">
    <p v-if="error" role="alert" class="mb-3 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
    <p v-if="data?.stale" class="mb-3 text-xs leading-relaxed text-amber-700 dark:text-amber-400">下書きや判断の根拠が更新されています。最新の内容で新しいメッセージを送信してください。</p>
+   <p v-if="data" data-chat-posting-company :data-chat-posting-company-id="data.postingCompany?.organizationId || ''" class="mb-3 break-words text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ data.postingCompany ? '帳簿への登録先：'+data.postingCompany.name+'（送信時の会社。帳簿への登録の指示だけに使います）' : '帳簿への登録先の会社が選択されていません。相談・下書きの保存・承認はこのまま続けられます。帳簿に登録するときは会社を選択してから指示してください。' }}</p>
    <label for="purchase-chat-message" class="sr-only">購入内容を説明する</label>
    <textarea id="purchase-chat-message" v-model="text" rows="2" maxlength="2000" class="chat-input" placeholder="例：OMJ10が頼んだコートです。今回は…" :disabled="unavailable || waiting || busy" @keydown.ctrl.enter.prevent="send" />
    <div class="mt-3 flex items-center justify-between gap-3"><p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ dirty?'先に下書きの変更を保存してください。':draft.locked?'登録済みの明細です。':!data?'接続を確認しています…':!data.connected?'このカードのAIに接続できません。会話は保存されています。':'提案を確認すると下書きに反映します。' }}</p><button type="submit" data-chat-send class="btn btn-primary shrink-0 text-xs" :disabled="!text.trim() || unavailable || waiting || busy"><Send class="mr-1.5 h-3.5 w-3.5" />送信</button></div>

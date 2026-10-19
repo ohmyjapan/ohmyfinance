@@ -7,6 +7,7 @@
     <p v-if="workspaceView" data-assistant-context class="mt-2 break-words text-xs text-gray-600 dark:text-gray-300">{{ pageName }}<span v-if="selection?.label"> · {{ selection.label }}</span><span v-if="scope.company&&feature" data-assistant-feature :data-assistant-feature-disposition="feature.disposition" :title="feature.reason" class="text-gray-400"> · {{ feature.disposition==='navi_tool' ? 'Navi で確認・保存できます' : 'この画面で操作します' }}</span></p>
     <div v-else data-assistant-context class="mt-2 text-xs"><p class="break-words font-medium text-gray-800 dark:text-gray-100">{{ draft?.source.description || '明細を確認中…' }}</p><p v-if="draft" class="mt-1 text-gray-500">{{ draft.source.account.name }} · {{ draft.source.purchaseDate }} · ¥{{ Number(draft.source.amount).toLocaleString('ja-JP') }}</p><NuxtLink v-if="draft" :to="targetPath" class="mt-2 inline-block text-primary-main">この下書きを開く ↗</NuxtLink><p v-if="route.path!==targetPath" class="mt-2 leading-relaxed text-gray-500">{{ pageName }}に移動しました。相談対象はこの購入のままです。</p></div>
     <CompanyAssistantScope v-if="scope.company" :organization-id="scope.organizationId" />
+    <p v-else-if="workspaceView" data-assistant-posting-company :data-assistant-posting-company-id="postingCompany?.id ? String(postingCompany.id) : ''" class="mt-2 break-words text-[11px] leading-relaxed text-gray-500">{{ postingCompany ? '帳簿への登録先：'+postingCompany.name+'（送信時に選択中の会社。帳簿への登録の指示だけに使います）' : '帳簿への登録先の会社が選択されていません。相談・下書きの保存・承認はこのまま続けられます。帳簿への登録には会社の選択が必要です。' }}</p>
    </div>
    <p v-if="error" role="alert" class="p-5 text-sm text-red-600">{{ error }}<button class="ml-2 underline" @click="loadDraft">再読込</button></p>
    <template v-if="activated">
@@ -34,6 +35,9 @@ const user=useUserStore(),assistant=useAssistantStore(),route=useRoute(),{isLock
 const panel=ref<HTMLElement|null>(null),activated=ref(false),loadedDraft=ref<any>(null),error=ref('')
 const scope=computed(()=>{const claims=tokenClaims(user.token);return assistantConversationScope(claims?.userId,claims?.organizationId,assistantPage(route.path))})
 const workspaceView=computed(()=>scope.value.company||assistant.target.kind==='workspace')
+// Owner workspace: the token-selected company is only the ledger posting destination (the server checks membership again at send and
+// write). The purchase chat shows the server-checked one itself.
+const postingCompany=computed(()=>scope.value.organizationId?(user.organizations||[]).find((o:any)=>String(o.id)===scope.value.organizationId)||null:null)
 const page=computed(()=>assistantPage(route.path)),pageName=computed(()=>assistantPages[page.value])
 // What Navi can truthfully do on this page (catalogue entry). Company conversations stay on the pages whose records Navi has tools for;
 // other pages keep the separate owner/purchase conversations.

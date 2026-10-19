@@ -17,6 +17,7 @@ import { consultationEvidence } from '../../shared/finance-consultation.mjs'
 import { validateProposalReference, sameProposalReference, chatProposalReference, chatProposalContent, proposalHash, researchProposalReference, researchReportContent, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { startChatResearch, chatResearchContext } from './financeResearchService'
 import { actionTools, reconcileActions, actionReceipts, conversationReceipts, runAction } from './financeActionService'
+import { postingCompanyView, type PostingCompany } from './financeNaviPostingService'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 const fingerprint=(v:any)=>hash(JSON.stringify(v))
 const pending=['queued','working','confirming']
@@ -92,7 +93,8 @@ export async function createChatAgent(ownerId:string,body:any){
  const token='omft_'+randomBytes(32).toString('hex'),agent=await Agent.create({ownerId,accountIds,tokenHash:hash(token),workspaceEnabled:body.workspaceEnabled===true,documentEnabled:body.documentEnabled===true,researchEnabled:body.researchEnabled===true})
  return {id:String(agent._id),token}
 }
-export async function getChat(ownerId:string,importId:string,line:number){
+// postingCompany: the token-selected company checked by the route for this request (display only; a turn keeps the one frozen at its send).
+export async function getChat(ownerId:string,importId:string,line:number,postingCompany:PostingCompany|null=null){
  await init();const d=await readDraft(ownerId,importId,line);let c:any=await Chat.findOne(identity(ownerId,importId,line)).lean()
  if(c?.state==='confirming'&&c.leaseUntil<=new Date()){
   const saved:any=await FinanceDraft.findOne({ownerId,importId,line}).select('history').lean()
@@ -118,15 +120,15 @@ export async function getChat(ownerId:string,importId:string,line:number){
  c=await withReceipts(c)
  // A draft revision this conversation's own completed action produced is not a stale view of the draft.
  const produced=!!c&&draftActionRevision(c,c.turns.find((t:any)=>t.id===c.currentId)?.actions||[])===d.revision
- return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'&&!produced}
+ return {conversation:visible(c),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'&&!produced,postingCompany:postingCompanyView(postingCompany)}
 }
-export async function sendChat(ownerId:string,importId:string,line:number,body:any){
+export async function sendChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){
  await init()
  if(typeof body?.text!=='string'||!body.text.trim()||body.text.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text)||!/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId||''))fail(400,'メッセージを入力してください（2000文字以内）。')
  const scope=identity(ownerId,importId,line),{draft:d,study,customers}=await reviewContext(ownerId,importId,line)
  let c:any=await Chat.findOne(scope).lean()
  const previous=c?.turns.find((t:any)=>t.id===body.requestId)
- if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getChat(ownerId,importId,line)}
+ if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getChat(ownerId,importId,line,postingCompany)}
  bound(d,body);editable(d)
  if(!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}))fail(409,'AIに接続できません。少し待って再試行してください。')
  if(c&&pending.includes(c.state))fail(409,'前のメッセージの処理が終わるまでお待ちください。')
@@ -137,19 +139,21 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
  const references=await storedReferences(ownerId,importId,line,c,d,body.references)
  c=await withReceipts(c)
  const context={revision:d.revision,key:d.key,sourceHash:d.sourceHash,fingerprint:fingerprint(d.values),values:d.values,source:d.source,study,customers,mapping:consultationEvidence(d),research:await chatResearchContext(ownerId,importId,line,d),
-  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null}))}
- const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),...(references.length?{references}:{})}}},{new:true}).lean()
+  messages:c.turns.slice(-8).map((t:any)=>({text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null})),
+  // Ledger posting destination only, frozen with this turn (null = none selected; the conversation, saves and approval stay available).
+  postingCompany:postingCompanyView(postingCompany)}
+ const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),...(references.length?{references}:{}),...(postingCompany?{postingCompany}:{})}}},{new:true}).lean()
  if(!updated)fail(409,'会話が更新されました。再読込してください。')
- return getChat(ownerId,importId,line)
+ return getChat(ownerId,importId,line,postingCompany)
 }
-export async function retryChat(ownerId:string,importId:string,line:number,body:any){
+export async function retryChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){
  await init();const d=await readDraft(ownerId,importId,line);bound(d,body);editable(d)
  const c:any=await Chat.findOne(identity(ownerId,importId,line)).lean()
  // A draft revision this turn's own completed action produced is not a foreign change: the retry reconciles those receipts first.
  const produced=!!c&&draftActionRevision(c,await actionReceipts('purchase',String(c._id),c.currentId))===d.revision
  if(!c||c.state!=='failed'||body.chatRevision!==c.revision||(c.context.fingerprint!==fingerprint(d.values)&&!produced))fail(409,'新しいメッセージとして送信してください。')
  await Chat.updateOne({_id:c._id,revision:c.revision,state:'failed'},{$set:{state:'queued',attempts:0},$inc:{revision:1}})
- return getChat(ownerId,importId,line)
+ return getChat(ownerId,importId,line,postingCompany)
 }
 export async function claimChat(agent:any){
  const scope={ownerId:agent.ownerId,accountId:{$in:agent.accountIds}}
@@ -200,7 +204,7 @@ async function settleAcceptedTurn(ownerId:string,importId:string,line:number,c:a
  const unset:any={...(finalState?{lease:'',leaseUntil:''}:{}),...(started&&!('unavailable' in started)?{'turns.$[turn].research.unavailable':''}:{})}
  await Chat.updateOne({_id:c._id,...(finalState?{currentId:turn.id}:{})},{$set:{...(finalState?{state:finalState}:{}),'turns.$[turn].confirmedAt':new Date(),'turns.$[turn].remembered':remember,...(started?researchMarker(started):{})},...(Object.keys(unset).length?{$unset:unset}:{}),$inc:{revision:1}},{arrayFilters:[started?researchFilter(turn.id,started):{'turn.id':turn.id}]})
 }
-export async function confirmChat(ownerId:string,importId:string,line:number,body:any){
+export async function confirmChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){
  await init();if(typeof body?.remember!=='boolean')fail(400,'記憶の範囲を確認してください。')
  const c:any=await Chat.findOne(identity(ownerId,importId,line)).lean()
  if(!c||body.turnId!==c.currentId)fail(409,'最新の提案を確認してください。')
@@ -222,7 +226,7 @@ export async function confirmChat(ownerId:string,importId:string,line:number,bod
   catch(e){await Chat.updateOne({_id:c._id,lease},{$set:{state:'ready'},$unset:{lease:'',leaseUntil:''}});throw e}
  }
  await settleAcceptedTurn(ownerId,importId,line,c,turn,accepted,body.remember,'confirmed')
- return {...await getChat(ownerId,importId,line),draft:await readDraft(ownerId,importId,line)}
+ return {...await getChat(ownerId,importId,line,postingCompany),draft:await readDraft(ownerId,importId,line)}
 }
 // The explicit later command ("register it like that"): applies the STORED reference of an earlier displayed proposal turn, not the
 // current turn and not model-supplied values. The draft must still be the one the proposal was displayed against; a changed draft,

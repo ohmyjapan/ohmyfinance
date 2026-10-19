@@ -7,7 +7,8 @@ import { FinanceDraft } from '../models/FinanceDraft'
 import { FinanceDecisionMemory } from '../models/FinanceDecisionMemory'
 import { FinanceResearch as Research } from '../models/FinanceResearch'
 import { FinancialAccount, FinanceImport, FinanceEntry } from '../models/Finance'
-import { fail, id, ownedImport, reviewMapping, commitImport } from './financeService'
+import { fail, id, ownedImport, reviewMapping, commitCompanyImport } from './financeService'
+import { frozenPostingCompany, frozenCompanyId, currentPostingCompany, postingBinding, postedUnder, verifiedPostingRows, NO_POSTING_COMPANY, OTHER_POSTING_COMPANY, NOT_POSTING_MEMBER, unverifiedPostingRow } from './financeNaviPostingService'
 import { readDraft, saveDraft, draftReferences, rememberDraftFields, type DraftOperation } from './financeDraftService'
 import { saveMemoryStatus } from './financeLearningService'
 import { researchView, applyResearch, startChatResearch, chatRequestId } from './financeResearchService'
@@ -106,24 +107,33 @@ export const actionCatalogue: Definition[] = [
       const saved = await saveDraft(scope.ownerId, target!.importId, target!.line!, approvalBody, undefined, undefined, undefined, operation!)
       return { receipt: { requestedFields: [], acceptedRevision: acceptedRevision(saved, operation!), nativeResourceIds: { importId: target!.importId, line: target!.line } }, result: { revision: saved.revision, approvedAt: saved.approvedAt, missing: saved.missing } }
     } },
-  { name: 'post_selected_approved_rows', effect: 'write', modes: ['workspace', 'purchase'], targeted: true, needsLine: false, description: 'Post the named approved rows of one statement to the ledger through the existing posting path, each at its approved draft revision. Explicit ledger-post command only. Rows already posted are reported as existing; an interrupted post resumes without a duplicate.', inputSchema: schema({ importId: targetProps.importId, lines: { type: 'array', items: { type: 'integer', minimum: 2 }, minItems: 1, maxItems: 200 } }, ['lines']),
+  { name: 'post_selected_approved_rows', effect: 'write', modes: ['workspace', 'purchase'], targeted: true, needsLine: false, description: 'Post the named approved rows of one statement to the ledger of the company that was selected when the owner sent this message (postingCompany in the context), through the native company posting path, each at its approved draft revision. Explicit ledger-post command only. Without a selected company it is refused: say that a company must be selected for ledger posting; discussion, saving, remembering and approving do not need one. A statement already recorded for another company, or a row whose company cannot be verified, is refused and never reported as posted. Rows already posted to this company are reported as existing; an interrupted post resumes without a duplicate.', inputSchema: schema({ importId: targetProps.importId, lines: { type: 'array', items: { type: 'integer', minimum: 2 }, minItems: 1, maxItems: 200 } }, ['lines']),
     async run(scope, args, target) {
       const lines: number[] = [...new Set(args.lines as number[])]; if (lines.length !== args.lines.length) fail(400, '同じ行を重複して指定できません。')
+      // The company frozen on this turn at send, rechecked as a current active membership now; never the current UI selection.
+      const frozen = frozenPostingCompany(scope.turn?.postingCompany, scope.ownerId); if (!frozen) fail(409, NO_POSTING_COMPANY)
+      const organizationId = await currentPostingCompany(scope.ownerId, frozen!); if (!organizationId.equals(frozenCompanyId(frozen!))) fail(403, NOT_POSTING_MEMBER)
       const batch = await ownedImport(scope.ownerId, target!.importId)
+      const binding = await postingBinding(scope.ownerId, batch, organizationId); if (binding === 'other') fail(409, OTHER_POSTING_COMPANY)
       const before: any[] = await FinanceEntry.find({ ownerId: scope.ownerId, importId: batch._id, line: { $in: lines } }).lean()
       const rows: any[] = [], decisions: any[] = []
       for (const line of lines) {
         const entry = before.find(e => e.line === line)
-        if (entry?.state === 'posted') { rows.push({ line, outcome: 'existing', entryId: String(entry._id), transactionId: String(entry.transactionId) }); continue }
+        if (entry && String(entry.postingOrganizationId || '') !== String(organizationId)) fail(409, unverifiedPostingRow(line))
+        if (entry?.state === 'posted') {
+          if (binding !== 'same' || !await postedUnder(entry, organizationId)) fail(409, unverifiedPostingRow(line))
+          rows.push({ line, outcome: 'existing', entryId: String(entry._id), transactionId: String(entry.transactionId) }); continue
+        }
         const draft: any = await FinanceDraft.findOne({ ownerId: scope.ownerId, importId: batch._id, line }).select('revision approvedAt').lean()
         if (!draft?.approvedAt) fail(409, `${line}行目は承認済みの下書きがありません。先に内容を確認して承認してください。`)
         decisions.push({ line, action: 'import', draftRevision: draft.revision }); rows.push({ line, outcome: entry?.state === 'reserved' ? 'resumed' : 'posted', draftRevision: draft.revision })
       }
-      if (decisions.length) await commitImport(scope.ownerId, String(batch._id), { decisions })
-      const after: any[] = await FinanceEntry.find({ ownerId: scope.ownerId, importId: batch._id, line: { $in: lines } }).lean()
-      for (const row of rows) { if (row.outcome === 'existing') continue; const entry = after.find(e => e.line === row.line); if (entry?.state === 'posted') { row.entryId = String(entry._id); row.transactionId = String(entry.transactionId) } else row.outcome = 'unresolved' }
+      if (decisions.length) await commitCompanyImport(scope.ownerId, String(batch._id), { decisions }, organizationId)
+      // Posted only when binding, reservation and ledger transaction all name this company.
+      const after = await verifiedPostingRows(scope.ownerId, batch, organizationId, rows.filter(r => r.outcome !== 'existing').map(r => r.line))
+      for (const row of rows) { if (row.outcome === 'existing') continue; const v = after.rows.find(x => x.line === row.line); if (v?.verified) { row.entryId = String(v.entry._id); row.transactionId = String(v.entry.transactionId) } else row.outcome = 'unresolved' }
       const unresolved = rows.some(r => r.outcome === 'unresolved')
-      return { state: unresolved ? 'unresolved' : 'done', recoveryOwner: unresolved ? 'user' : null, receipt: { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: String(batch._id), rows } }, result: { rows } }
+      return { state: unresolved ? 'unresolved' : 'done', recoveryOwner: unresolved ? 'user' : null, receipt: { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: String(batch._id), organizationId: String(organizationId), rows } }, result: { rows, postingCompany: frozen!.name } }
     } },
   { name: 'start_purchase_research', effect: 'queue', modes: ['workspace', 'purchase'], targeted: true, needsLine: true, description: 'Start OMF\'s own research of one purchase (company identity, registration number, accounting candidates, tax percentage) with one instruction sentence. The receipt says queued; findings appear later as a new research reference and are proposals, never saved values.', inputSchema: schema({ ...targetProps, instruction: { type: 'string', minLength: 1, maxLength: 2000 } }, ['instruction']),
     async run(scope, args, target) {
@@ -206,7 +216,9 @@ async function journaled(scope: Scope, definition: Definition, body: any, args: 
   const identity = { ownerId: scope.agent.ownerId, conversationKind: scope.kind, conversationId: scope.conversation._id, turnId: scope.turnId, slot: body.slot }
   const operationId = sha([scope.ownerId, scope.kind, scope.conversationId, scope.turnId, body.slot].join(':')).slice(0, 32)
   const now = new Date()
-  const claimed: any = await Operation.findOneAndUpdate(identity, { $setOnInsert: { operationId, name: definition.name, payloadHash, args, ...(isIntakeMutation(definition.name) ? { intakeArgs: args } : {}), target, state: 'claimed', agentId: scope.agent._id, lease: body.lease, leaseUntil: scope.conversation.leaseUntil, claimedAt: now, attempts: 1 } }, { upsert: true, new: true, includeResultMetadata: true })
+  // A ledger posting carries its turn's frozen company and requested lines from the claim on; recovery verifies against them.
+  const posting = definition.name === 'post_selected_approved_rows' ? { postingCompany: frozenPostingCompany(scope.turn?.postingCompany, scope.ownerId), postingLines: [...new Set(args.lines as number[])] } : {}
+  const claimed: any = await Operation.findOneAndUpdate(identity, { $setOnInsert: { operationId, name: definition.name, payloadHash, args, ...(isIntakeMutation(definition.name) ? { intakeArgs: args } : {}), ...posting, target, state: 'claimed', agentId: scope.agent._id, lease: body.lease, leaseUntil: scope.conversation.leaseUntil, claimedAt: now, attempts: 1 } }, { upsert: true, new: true, includeResultMetadata: true })
   const op = claimed.value, inserted = !claimed.lastErrorObject?.updatedExisting
   if (!inserted) {
     if (op.payloadHash !== payloadHash) fail(409, '同じ操作番号が別の内容で再利用されました。新しい番号で指示してください。')
@@ -309,11 +321,22 @@ async function reconcileOne(ownerId: string, op: any) {
     return recorded ? settle('done', { requestedFields: ['status'], acceptedRevision: recorded.revision, nativeResourceIds: { memoryId: args.memoryId } }, null, null) : interrupted(['status'])
   }
   if (op.name === 'post_selected_approved_rows') {
-    const entries: any[] = await FinanceEntry.find({ ownerId, importId: id(target.importId), line: { $in: args.lines || [] } }).lean()
-    const rows = (args.lines || []).map((line: number) => { const e = entries.find(x => x.line === line); return { line, outcome: e?.state === 'posted' ? 'posted' : e ? 'unresolved' : 'not_started', ...(e ? { entryId: String(e._id), transactionId: String(e.transactionId) } : {}), attributed: false } })
-    if (rows.every((r: any) => r.outcome === 'not_started')) return interrupted()
-    const unresolved = rows.some((r: any) => r.outcome !== 'posted')
-    return settle(unresolved ? 'unresolved' : 'done', { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: target.importId, rows } }, unresolved ? 'user' : null, unresolved ? '帳簿への登録が途中で止まっています。明細の状態を確認してください。' : null)
+    // The lines and company frozen on the operation at its claim decide; a row is posted only when verified under that company with a
+    // current membership. An operation without that record (claimed before it existed) or a changed ledger stays with the owner.
+    const lines: number[] = Array.isArray(op.postingLines) && op.postingLines.length ? op.postingLines : Array.isArray(args.lines) ? args.lines : []
+    const unresolvedPost = (safeError: string, rows?: any[], organizationId?: string) => settle('unresolved', { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: target.importId, ...(organizationId ? { organizationId } : {}), ...(rows ? { rows } : {}) } }, 'user', safeError)
+    if (!lines.length) return unresolvedPost('この操作の登録対象の行を確認できません。自動で繰り返さず、明細の状態を確認してください。')
+    if (!await FinanceEntry.exists({ ownerId, importId: id(target.importId), line: { $in: lines } })) return interrupted()
+    const frozen = frozenPostingCompany(op.postingCompany, ownerId)
+    if (!frozen) return unresolvedPost('この操作には登録先の会社の記録がありません。自動で引き継がず、明細の状態を確認してください。')
+    let organizationId: any
+    try { organizationId = await currentPostingCompany(ownerId, frozen) } catch (error: any) { if (error?.statusCode === 403) return unresolvedPost(NOT_POSTING_MEMBER); throw error }
+    const batch: any = await FinanceImport.findOne({ _id: id(target.importId), ownerId }).lean()
+    if (!batch) return unresolvedPost('明細を確認できません。帳簿の状態を確認してください。')
+    const verified = await verifiedPostingRows(ownerId, batch, organizationId, lines)
+    const rows = verified.rows.map(v => v.verified ? { line: v.line, outcome: 'posted', entryId: String(v.entry._id), transactionId: String(v.entry.transactionId), attributed: false } : { line: v.line, outcome: v.entry ? 'unresolved' : 'not_started', attributed: false })
+    if (rows.every(r => r.outcome === 'posted')) return settle('done', { requestedFields: [], acceptedRevision: null, nativeResourceIds: { importId: target.importId, organizationId: String(organizationId), rows } }, null, null)
+    return unresolvedPost('帳簿への登録が途中で止まっているか、登録先の会社を確認できません。明細の状態を確認してください。', rows, String(organizationId))
   }
   if (op.name === 'start_purchase_research') {
     const requestId = chatRequestId(String(op.conversationId), op.turnId), research: any = await Research.findOne({ ownerId, importId: id(target.importId), line: target.line, requestId }).select('_id state').lean()

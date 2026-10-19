@@ -188,11 +188,14 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  assert.equal((await act(j.job,3,'get_draft',{})).status,409,'a finished job has no lease');
  pass('N5 research references are immutable server identities: a changed, foreign, edited or rebound report is never applied, and a retry after success recovers the original receipt');
 
- // N6 (legs 9, 10 and the workspace lane): explicit approve and post through the existing commitImport; interrupted posts resume
- // without a duplicate transaction or draft revision; an already posted row is reported as existing.
+ // N6 (legs 9, 10 and the workspace lane): explicit approve and post through the native company posting path to the company the
+ // owner's token selected when sending (a current member); interrupted posts resume without a duplicate transaction or draft revision;
+ // an already posted row is reported as existing.
+ const naviCompany=new ObjectId();await db.collection('organizations').insertOne({_id:naviCompany,name:'Navi posting test company',slug:'navi-actions-posting',isActive:true,members:[{userId:owner,role:'owner',joinedAt:new Date()}]});
+ const companyToken=(await ok('/api/auth/switch-organization',{method:'POST',token,body:{organizationId:String(naviCompany)}})).tokens.accessToken;
  const wsEndpoint='/api/finance-chat/workspace';let ws=await ok(wsEndpoint,{token});
- const wsSend=async(text,context)=>{ws=await ok(wsEndpoint,{token});const requestId=crypto.randomUUID();const r=await call(wsEndpoint,{method:'POST',token,body:{text,requestId,chatRevision:ws.conversation?.revision||0,context}});assert.equal(r.status,200,JSON.stringify(r.data).slice(0,300));const claimed=(await worker('workspace-claim')).data.job;assert.ok(claimed,'workspace claim');return {requestId,job:claimed}};
- const k=await wsSend('この明細の8行目を会社経費で承認して帳簿に登録して',{page:'mapping',importId});
+ const wsSend=async(text,context,auth=token)=>{ws=await ok(wsEndpoint,{token:auth});const requestId=crypto.randomUUID();const r=await call(wsEndpoint,{method:'POST',token:auth,body:{text,requestId,chatRevision:ws.conversation?.revision||0,context}});assert.equal(r.status,200,JSON.stringify(r.data).slice(0,300));const claimed=(await worker('workspace-claim')).data.job;assert.ok(claimed,'workspace claim');return {requestId,job:claimed}};
+ const k=await wsSend('この明細の8行目を会社経費で承認して帳簿に登録して',{page:'mapping',importId},companyToken);
  assert.ok(Array.isArray(k.job.tools)&&k.job.tools.some(t=>t.name==='post_selected_approved_rows'),'navi:workspace-job-carries-tools');
  assert.equal((await act(k.job,1,'list_accounts',{},k.job.lease,)).status,200);
  const accounts=await acted(k.job,1,'list_accounts',{});assert.deepEqual(accounts.result.accounts.map(a=>a.id),[String(account._id)],'navi:accounts-scoped-to-agent');
@@ -205,14 +208,15 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  const ledgerBeforePost=await ledger();
  const posted=await acted(k.job,6,'post_selected_approved_rows',{importId,lines:[8]});assert.equal(posted.receipt.state,'done','navi:post-done');assert.deepEqual(posted.receipt.nativeResourceIds.rows.map(r=>[r.line,r.outcome]),[[8,'posted']]);
  assert.deepEqual(await ledger(),{tx:ledgerBeforePost.tx+1,entries:ledgerBeforePost.entries+1},'navi:post-one-transaction');
+ assert.equal(String((await db.collection('transactions').findOne({_id:new ObjectId(posted.receipt.nativeResourceIds.rows[0].transactionId)})).organizationId),String(naviCompany),'navi:post-selected-company');
  const postedAgain=await acted(k.job,6,'post_selected_approved_rows',{importId,lines:[8]});assert.equal(postedAgain.receipt.operationId,posted.receipt.operationId);assert.deepEqual(await ledger(),{tx:ledgerBeforePost.tx+1,entries:ledgerBeforePost.entries+1},'navi:post-retry-no-duplicate');
  const existing=await acted(k.job,7,'post_selected_approved_rows',{importId,lines:[8]});assert.deepEqual(existing.receipt.nativeResourceIds.rows.map(r=>[r.line,r.outcome]),[[8,'existing']],'navi:existing-reported-as-existing');
  assert.deepEqual(await ledger(),{tx:ledgerBeforePost.tx+1,entries:ledgerBeforePost.entries+1});assert.equal((await getDraft(8)).revision,2);
  // Interrupted post on line 3: reserved entry and its transaction already exist (crash before the posted marker); the post resumes.
  assert.equal((await acted(k.job,8,'save_draft_fields',{importId,line:3,fields:{transactionCategoryId:C,taxCategoryId:T,taxRate:10}})).receipt.acceptedRevision,1);
  assert.equal((await acted(k.job,9,'approve_draft',{importId,line:3})).receipt.acceptedRevision,2);
- const row3=batch.rows.find(r=>r.line===3),reserved={_id:new ObjectId(),ownerId:owner,accountId:account._id,key:row3.key,fingerprint:row3.fingerprint,occurrence:row3.occurrence,coverage:batch.period.key,importId:oid,line:3,transactionId:new ObjectId(),state:'reserved',row:row3,linkedExisting:false,draftSnapshot:{revision:2}};
- await db.collection('financeentries').insertOne(reserved);await db.collection('transactions').insertOne({_id:reserved.transactionId,date:new Date(row3.purchaseDate),amount:2310,type:'支出',status:'completed',metadata:{financeEntryId:reserved._id.toHexString()}});
+ const row3=batch.rows.find(r=>r.line===3),reserved={_id:new ObjectId(),ownerId:owner,accountId:account._id,key:row3.key,fingerprint:row3.fingerprint,occurrence:row3.occurrence,coverage:batch.period.key,importId:oid,line:3,transactionId:new ObjectId(),state:'reserved',row:row3,linkedExisting:false,draftSnapshot:{revision:2},postingOrganizationId:naviCompany};
+ await db.collection('financeentries').insertOne(reserved);await db.collection('transactions').insertOne({_id:reserved.transactionId,organizationId:naviCompany,date:new Date(row3.purchaseDate),amount:2310,type:'支出',status:'completed',metadata:{financeEntryId:reserved._id.toHexString()}});
  const ledgerBeforeResume=await ledger();
  const resumed=await acted(k.job,10,'post_selected_approved_rows',{importId,lines:[3]});assert.equal(resumed.receipt.state,'done');assert.deepEqual(resumed.receipt.nativeResourceIds.rows.map(r=>[r.line,r.outcome]),[[3,'resumed']],'navi:interrupted-post-resumed');
  assert.deepEqual(await ledger(),ledgerBeforeResume,'navi:resume-no-duplicate-transaction');assert.equal((await db.collection('financeentries').findOne({_id:reserved._id})).state,'posted');assert.equal((await getDraft(3)).revision,2,'navi:resume-no-draft-revision');
