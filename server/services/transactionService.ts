@@ -100,13 +100,13 @@ export async function getTransactions(filters: TransactionFilters, organizationI
     }
 
     const transactions = await Transaction.find(query)
-      .populate({ path: 'customerId', select: 'name email', match: { organizationId }, model: Customer })
-      .populate({ path: 'supplierId', select: 'name', match: { organizationId }, model: Supplier })
-      .populate({ path: 'accountCategoryId', select: 'name', match: { organizationId }, model: AccountCategory })
-      .populate({ path: 'subAccountCategoryId', select: 'name cardNumber cardProvider', match: { organizationId }, model: AccountCategory })
-      .populate({ path: 'taxCategoryId', select: 'name rate', match: { organizationId }, model: TaxCategory })
-      .populate({ path: 'transactionCategoryId', select: 'name', match: { organizationId }, model: TransactionCategory })
-      .populate({ path: 'sourceId', select: 'name type', match: { organizationId }, model: DataSource })
+      .populate({ path: 'customerId', select: 'name email', model: Customer })
+      .populate({ path: 'supplierId', select: 'name', model: Supplier })
+      .populate({ path: 'accountCategoryId', select: 'name', model: AccountCategory })
+      .populate({ path: 'subAccountCategoryId', select: 'name cardNumber cardProvider', model: AccountCategory })
+      .populate({ path: 'taxCategoryId', select: 'name rate', model: TaxCategory })
+      .populate({ path: 'transactionCategoryId', select: 'name', model: TransactionCategory })
+      .populate({ path: 'sourceId', select: 'name type', model: DataSource })
       .sort({ date: -1, createdAt: -1 })
       .lean()
 
@@ -124,13 +124,13 @@ export async function getTransactionById(id: string, organizationId: mongoose.Ty
   await ensureConnection()
   try {
     const transaction = await Transaction.findOne({ _id: id, organizationId })
-      .populate({ path: 'customerId', select: 'name email phone', match: { organizationId }, model: Customer })
-      .populate({ path: 'supplierId', select: 'name companyInfo address email phone', match: { organizationId }, model: Supplier })
-      .populate({ path: 'accountCategoryId', select: 'name code', match: { organizationId }, model: AccountCategory })
-      .populate({ path: 'subAccountCategoryId', select: 'name cardNumber cardProvider', match: { organizationId }, model: AccountCategory })
-      .populate({ path: 'taxCategoryId', select: 'name rate', match: { organizationId }, model: TaxCategory })
-      .populate({ path: 'transactionCategoryId', select: 'name', match: { organizationId }, model: TransactionCategory })
-      .populate({ path: 'sourceId', select: 'name type', match: { organizationId }, model: DataSource })
+      .populate({ path: 'customerId', select: 'name email phone', model: Customer })
+      .populate({ path: 'supplierId', select: 'name companyInfo address email phone', model: Supplier })
+      .populate({ path: 'accountCategoryId', select: 'name code', model: AccountCategory })
+      .populate({ path: 'subAccountCategoryId', select: 'name cardNumber cardProvider', model: AccountCategory })
+      .populate({ path: 'taxCategoryId', select: 'name rate', model: TaxCategory })
+      .populate({ path: 'transactionCategoryId', select: 'name', model: TransactionCategory })
+      .populate({ path: 'sourceId', select: 'name type', model: DataSource })
       .lean()
     return transaction
   } catch (error) {

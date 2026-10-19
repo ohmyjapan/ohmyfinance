@@ -7,7 +7,7 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 export const timeoutMs=900000;
 export default{name:'omf-transaction-access',covers:['server/services/transactionService.ts','server/api/transactions/index.ts','server/api/transactions/[id].ts','server/api/transactions/stats.ts','server/api/transactions/export.ts','scripts/finance-transaction-access-integration.cjs','scripts/zoomer-fixtures/omf-transaction-access.mjs'],async run(){
  const run=(app,extra={})=>new Promise(resolve=>execFile(process.execPath,[path.join(root,'scripts/finance-transaction-access-integration.cjs')],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:'',MONGODB_URI:'',NUXT_MONGO_URI:'',OMF_TRANSACTION_APP_ROOT:app,...extra},timeout:180000,maxBuffer:2*1024*1024},(e,stdout,stderr)=>resolve({code:e?e.code??1:0,text:stdout+stderr})));
- const app=process.env.OMF_TRANSACTION_APP_ROOT||root,result=await run(app),mutants=[];let control,pass=result.code===0&&result.text.includes('7 Transaction access groups passed');
+ const app=process.env.OMF_TRANSACTION_APP_ROOT||root,result=await run(app),mutants=[];let control,copiedControl,pass=result.code===0&&result.text.includes('7 Transaction access groups passed');
  if(pass){
   const base=path.resolve(root,'.zoomer','transaction-mutants'),directory=path.resolve(base,randomUUID());if(!directory.startsWith(base+path.sep))throw Error('Unsafe owned mutant directory');await mkdir(directory,{recursive:true});
   try{
@@ -17,12 +17,14 @@ export default{name:'omf-transaction-access',covers:['server/services/transactio
    const replace=(source,anchor,value)=>{if(source.split(anchor).length!==2)throw Error('Expected one compiled anchor '+anchor);return source.replace(anchor,value)};
    const reset=()=>Promise.all(Object.entries(files).map(([key,file])=>writeFile(file,original[key])));
    const test=async(name,changes,assertion,extra={})=>{try{for(const[key,source]of Object.entries(changes))await writeFile(files[key],source);const r=await run(directory,extra),detected=r.code!==0&&r.text.includes('AssertionError')&&r.text.includes(assertion);mutants.push({name,detected,...r});if(!detected)pass=false}finally{await reset()}};
+   copiedControl=await run(directory);if(copiedControl.code!==0||!copiedControl.text.includes('7 Transaction access groups passed'))throw Error('Unchanged compiled positive must pass');
    await test('global-list',{service:replace(original.service,'const query = { organizationId };','const query = {};')},'transaction:list-total');
    await test('global-detail',{service:replace(original.service,'Transaction.findOne({ _id: id, organizationId })','Transaction.findById(id)')},'transaction:detail-scope');
    await test('global-stats-amounts',{service:original.service.replaceAll('      { $match: { organizationId } },','')},'transaction:stats-scope');
    await test('global-stats-count',{service:replace(original.service,'Transaction.countDocuments({ organizationId })','Transaction.countDocuments()')},'transaction:stats-scope');
    await test('global-receipt-count',{service:replace(original.service,'Transaction.countDocuments({ organizationId, hasReceipt: true })','Transaction.countDocuments({ hasReceipt: true })')},'transaction:receipt-rate');
-   await test('global-populated-references',{service:original.service.replaceAll('match: { organizationId }, ','')},'transaction:private-content');
+   const impossibleMatch=original.service.replaceAll(', model: ', ', match: { organizationId }, model: ');if(impossibleMatch.split(', match: { organizationId }, model: ').length!==15)throw Error('Expected14 real compiled populate paths');
+   await test('hide-native-shared-references',{service:impossibleMatch},'transaction:native-reference-shape');
    const trust='(event.context.auth.organizationId ? { organizationId: (await import("mongoose")).default.Types.ObjectId.createFromHexString(event.context.auth.organizationId) } : await calendarCompany(event))';
    const getCompany='if (method === "GET") {\n    await ensureConnection();\n    const { organizationId } = await calendarCompany(event);';
    for(const key of['index','detail','stats','export'])await test('trust-stale-membership-'+key,{[key]:key==='index'?replace(original[key],getCompany,getCompany.replace('await calendarCompany(event)',trust)):replace(original[key],'await calendarCompany(event)',trust)},'transaction:current-membership');
@@ -34,5 +36,5 @@ export default{name:'omf-transaction-access',covers:['server/services/transactio
   }catch(error){pass=false;mutants.push({setupError:String(error.message),detected:false})}
   finally{await rm(directory,{recursive:true,force:true})}
  }
- return{pass:pass&&mutants.length===13,databaseCoverage:{executed:result.code===0,ownedProcess:result.code===0},message:JSON.stringify({result,control,mutants,limits:'Seven synthetic company-read groups, one query-failure control and thirteen meaningful defects. No production/model/provider calls; no ownership migration, writer/UI/backup/key/runtime privacy or deployed verification claim.'})};
+ return{pass:pass&&mutants.length===13,databaseCoverage:{executed:result.code===0,ownedProcess:result.code===0},message:JSON.stringify({result,copiedControl,control,mutants,limits:'Seven native-shape synthetic company-read groups, one unchanged compiled positive, one query-failure control and thirteen meaningful defects. Reference APIs/model are global and have no company field; root company reads remain enforced. No production/model/provider calls; no ownership migration, writer/UI/backup/key/runtime privacy or deployed verification claim.'})};
 }};
