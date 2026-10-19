@@ -1,6 +1,12 @@
 // Synthetic statement data and isolated MongoDB only.
 const assert=require('node:assert/strict'),{ObjectId}=require('mongodb'),path=require('node:path'),fs=require('node:fs');
 module.exports=async function({db,call,request,token,other,pass,root,origin}){
+ // Source uploads remain owner-scoped; all posting/read requests below use a real selected-company token.
+ const ownerToken=token,owner=await db.collection('users').findOne({email:'finance-a@example.invalid'}),organizationId=new ObjectId(),otherCompanyId=new ObjectId(),now=new Date();assert.ok(owner);
+ await db.collection('organizations').insertMany([organizationId,otherCompanyId].map((id,i)=>({_id:id,name:'Synthetic accounting company '+i,slug:'accounting-'+String(id),isActive:true,members:[{userId:owner._id,role:'owner',joinedAt:now}]})));
+ const selected=await call('/api/auth/switch-organization',{token:ownerToken,method:'POST',body:{organizationId:String(organizationId)}});assert.equal(selected.status,200,JSON.stringify(selected));token=selected.data.tokens.accessToken;
+ const otherSelected=await call('/api/auth/switch-organization',{token:ownerToken,method:'POST',body:{organizationId:String(otherCompanyId)}});assert.equal(otherSelected.status,200);const otherCompanyToken=otherSelected.data.tokens.accessToken;
+ request=(route,body,method='POST')=>call('/api/finance/'+route,{token,body,method});
  const {HEADERS}=await import('../shared/aplus.mjs');
  const csv=rows=>Buffer.from('\uFEFF'+[HEADERS,...rows].map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n'));
  const purchase=(changes={})=>Object.assign(['≪****-****-****-1234≫','20260801','Synthetic Aplus purchase','1200','Ｓ','1','01','1200',''],changes);
@@ -10,9 +16,9 @@ module.exports=async function({db,call,request,token,other,pass,root,origin}){
  assert.equal((await request('accounts',{...input,primaryCard:'99999',cardIdentifiers:['99999']})).status,400);
  assert.equal((await request('accounts',{...input,provider:'unknown'})).status,400);
  assert.equal((await request('accounts/'+id,{provider:'amex',name:input.name,primaryCard:'12345',cardIdentifiers:['12345'],otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'},'PATCH')).status,400);
- assert.equal((await request('accounts/'+id+'/sync')).status,400);
- assert.equal((await request('collectors',{name:'Unsupported Aplus collector',accountIds:[id]})).status,400);
- pass('Aplus account identity is validated and cannot use an Amex collector or change provider');
+ assert.equal((await request('accounts/'+id+'/sync')).status,409); // No paired collector yet.
+ const paired=await request('collectors',{name:'Synthetic Aplus collector',accountIds:[id]});assert.equal(paired.status,200);assert.ok(paired.data.id);assert.equal((await request('collectors/'+paired.data.id,undefined,'DELETE')).status,200);assert.equal((await request('accounts/'+id+'/sync')).status,409);
+ pass('Aplus identity/provider is validated; collector pairing is supported and revoked pairing cannot queue synchronization');
  const rows=[purchase(),purchase(),purchase({0:'≪****-****-****-5678≫',1:'20260802',2:'Supplementary purchase',3:'200',7:'200'}),['','','年会費','500','','','','500',''],purchase({1:'20251002',2:'Separate refund',3:'-100',6:'',7:'',8:'返品 別途返金済み'}),purchase({1:'20251031',2:'Previous fiscal period',3:'50',7:'50'})],bytes=csv(rows);
  const metadata={kind:'statement',statementMonth:'2026-08',statementTotal:3150,refundTotal:100,fiscalStart:'2025-11-01',fiscalEnd:'2026-10-31'};
  const upload=(body=bytes,meta=metadata,auth=token)=>call('/api/finance/accounts/'+id+'/imports?'+new URLSearchParams(meta),{token:auth,method:'POST',body,raw:true});
@@ -37,26 +43,33 @@ module.exports=async function({db,call,request,token,other,pass,root,origin}){
  const route=line=>'imports/'+bid+'/drafts/'+line,get=async(line=2)=>{const r=await request(route(line),undefined,'GET');assert.equal(r.status,200,JSON.stringify(r));return r.data};
  const fee=await get(5);assert.equal(fee.source.purchaseDate,null);assert.equal(fee.source.paymentAmount,500);
  assert.equal((await request(route(5),{revision:0,key:fee.key,sourceHash:fee.sourceHash,confirm:true,remember:[],values:fee.values},'PUT')).status,400);
- assert.equal((await request('imports/'+bid+'/commit',{decisions:[{line:2,action:'import'}]})).status,409);
- assert.equal((await request('imports/'+bid+'/commit',{decisions:[{line:5,action:'import',draftRevision:0}]})).status,400);
+ assert.equal((await request('imports/'+bid+'/company-commit',{decisions:[{line:2,action:'import'}]})).status,409);
+ assert.equal((await request('imports/'+bid+'/company-commit',{decisions:[{line:5,action:'import',draftRevision:0}]})).status,400);
  let draft=await get();assert.equal(draft.values.date,'2026-08-01');assert.equal(draft.evidence.date.source,'aplus');assert.equal(draft.source.processingDate,null);
  const main=new ObjectId(),sub=new ObjectId(),expense=new ObjectId(),tax=new ObjectId(),category=new ObjectId();
- await db.collection('accountcategories').insertMany([{_id:main,name:'クレジットカード',type:'liability',isActive:true,parentId:null},{_id:sub,name:'Synthetic Aplus ledger',parentId:main,type:'liability',isActive:true},{_id:expense,name:'Synthetic Aplus expense',type:'expense',isActive:true,parentId:null,metadata:{accountingStandard:'yayoi'}}]);
- await db.collection('taxcategories').insertOne({_id:tax,name:'Synthetic Aplus zero rate',rate:0});await db.collection('transactioncategories').insertOne({_id:category,name:'Synthetic Aplus class'});
+ await db.collection('accountcategories').insertMany([{_id:main,name:'クレジットカード',type:'liability',isActive:true,parentId:null},{_id:sub,name:'Synthetic Aplus ledger',parentId:main,type:'liability',isActive:true},{_id:expense,name:'Synthetic Aplus expense',type:'expense',isActive:true,parentId:null,metadata:{accountingStandard:'yayoi'}}].map(doc=>({...doc,organizationId})));
+ await db.collection('taxcategories').insertOne({_id:tax,name:'Synthetic Aplus zero rate',rate:0,organizationId});await db.collection('transactioncategories').insertOne({_id:category,name:'Synthetic Aplus class',organizationId});
  const body=d=>({revision:d.revision,key:d.key,sourceHash:d.sourceHash,cardAccountingKey:d.cardAccounting.key,values:{...d.values,purpose:'company',customerId:'',accountCategoryId:String(expense),subAccountCategoryId:'',transactionCategoryId:String(category),taxCategoryId:String(tax),taxRate:0},remember:[],confirm:true});
  assert.equal((await request(route(2),body(draft),'PUT')).status,409);
  const profile={version:1,accountCategoryId:String(main),subAccountCategoryId:String(sub),accountName:'クレジットカード',subAccountName:'Synthetic Aplus ledger',source:{provider:'aplus',primaryCard:'1234',cardIdentifiers:['1234','5678']},verifiedAt:'2026-09-01T00:00:00.000Z',evidence:{kind:'yayoi-account-settings'}};
  await db.collection('financialaccounts').updateOne({_id:new ObjectId(id)},{$set:{accounting:profile}});
  draft=await get();result=await request(route(2),body(draft),'PUT');assert.equal(result.status,200,JSON.stringify(result));draft=result.data;
  await db.collection('financialaccounts').updateOne({_id:new ObjectId(id)},{$unset:{accounting:''}});
- assert.equal((await request('imports/'+bid+'/commit',{decisions:[{line:2,action:'import',draftRevision:draft.revision}]})).status,409);
+ assert.equal((await request('imports/'+bid+'/company-commit',{decisions:[{line:2,action:'import',draftRevision:draft.revision}]})).status,409);
  await db.collection('financialaccounts').updateOne({_id:new ObjectId(id)},{$set:{accounting:profile}});
- result=await request('imports/'+bid+'/commit',{decisions:[{line:2,action:'import',draftRevision:draft.revision}]});assert.equal(result.status,200,JSON.stringify(result));assert.equal(result.data.posted,1);
- const tx=await db.collection('transactions').findOne({'metadata.importBatchId':bid});assert.equal(tx.metadata.importSource,'aplus');assert.equal(tx.cardNumber,'1234');assert.equal(tx.metadata.processingDate,null);assert.equal(tx.date.toISOString().slice(0,10),'2026-08-01');assert.deepEqual(tx.tags,['imported','aplus']);assert.match(tx.referenceNumber,/^APLUS-/);assert.equal(tx.cardAccounting.subAccountCategoryId,String(sub));
- assert.equal((await request('imports/'+bid+'/commit',{decisions:[{line:2,action:'import',draftRevision:draft.revision}]})).status,200);
+ result=await request('imports/'+bid+'/company-commit',{decisions:[{line:2,action:'import',draftRevision:draft.revision}]});assert.equal(result.status,200,JSON.stringify(result));assert.equal(result.data.posted,1);
+ const tx=await db.collection('transactions').findOne({'metadata.importBatchId':bid});assert.equal(tx.metadata.importSource,'aplus');assert.equal(tx.cardNumber,'1234');assert.equal(tx.metadata.processingDate,null);assert.equal(tx.date.toISOString().slice(0,10),'2026-08-01');assert.deepEqual(tx.tags,['imported','aplus']);assert.match(tx.referenceNumber,/^APLUS-/);assert.equal(tx.cardAccounting.subAccountCategoryId,String(sub));assert.equal(String(tx.organizationId),String(organizationId),'company-aplus:transaction-company');const entry=await db.collection('financeentries').findOne({transactionId:tx._id});assert.equal(String(entry.postingOrganizationId),String(organizationId),'company-aplus:reservation-company');assert.equal(String((await db.collection('financeimportcompanies').findOne({importId:imported._id})).organizationId),String(organizationId),'company-aplus:intent-company');
+ assert.equal((await request('imports/'+bid+'/company-commit',{decisions:[{line:2,action:'import',draftRevision:draft.revision}]})).status,200);
  assert.equal(await db.collection('transactions').countDocuments(),before.transactions+1);
  assert.equal((await request('accounts/'+id,{...input,cardIdentifiers:['1234']},'PATCH')).status,409);
  pass('Aplus posting requires an approved draft and verified Yayoi account; retries preserve source date, provider and amount');
+ const tenTax=new ObjectId();await db.collection('taxcategories').insertOne({_id:tenTax,organizationId,name:'Synthetic Aplus ten percent',rate:10});
+ for(const line of[3,4]){const current=await get(line),confirmed=body(current);confirmed.values.taxRate=10;confirmed.values.taxCategoryId=String(tenTax);const saved=await request(route(line),confirmed,'PUT');assert.equal(saved.status,200,JSON.stringify(saved));const posted=await request('imports/'+bid+'/company-commit',{decisions:[{line,action:'import',draftRevision:saved.data.revision}]});assert.equal(posted.status,200,JSON.stringify(posted));assert.equal(posted.data.posted,1);assert.equal((await request('imports/'+bid+'/company-commit',{decisions:[{line,action:'import',draftRevision:saved.data.revision}]})).status,200);}
+ const all=await db.collection('transactions').find({'metadata.importBatchId':bid}).sort({amount:1,_id:1}).toArray();assert.deepEqual(all.map(t=>t.amount),[200,1200,1200],'company-aplus:distinct-occurrences');assert.equal(all.filter(t=>t.taxRate===10).length,2,'company-aplus:ten-percent');assert.equal(new Set(all.map(t=>String(t._id))).size,3);assert.ok(all.every(t=>String(t.organizationId)===String(organizationId)&&t.cardAccounting.subAccountCategoryId===String(sub)));assert.equal(all[0].cardNumber,'5678','company-aplus:supplementary-card');assert.equal(all[0].date.toISOString().slice(0,10),'2026-08-02');
+ const visible=await call('/api/transactions/'+String(all[0]._id),{token});assert.equal(visible.status,200);assert.equal(visible.data.accountCategoryId?.name,'Synthetic Aplus expense','company-aplus:purchase-reference');assert.equal(visible.data.taxCategoryId?.rate,10,'company-aplus:tax-reference');
+ const exported=await call('/api/transactions/export?format=json',{token});assert.equal(exported.status,200);const ownRows=exported.data.filter(r=>all.some(t=>r.id===String(t._id)));assert.equal(ownRows.length,3,'company-aplus:export-occurrences');assert.equal(ownRows.filter(r=>r.taxRate==='10%').length,2,'company-aplus:export-ten-percent');assert.equal(ownRows.filter(r=>r.taxRate==='0%').length,1);assert.ok(ownRows.every(r=>r.cardTaxCategory==='\u5bfe\u8c61\u5916'&&r.cardSubAccountCategory===profile.subAccountName),'company-aplus:export-card-snapshot');assert.equal((await call('/api/transactions/'+String(tx._id),{token:otherCompanyToken})).status,404);
+ pass('company Aplus preserves identical occurrences, supplementary date/card, zero and ten percent purchase tax and independent card tax in native detail/export');
+
  if(process.env.OMF_TEST_CHROME_PORT){
   const {createRequire}=require('node:module'),p=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core');
   const browser=await p.connect({browserURL:'http://127.0.0.1:'+Number(process.env.OMF_TEST_CHROME_PORT),defaultViewport:null});let page;
