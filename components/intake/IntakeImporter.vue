@@ -31,6 +31,13 @@
     </div>
 
     <div v-if="sheetData" class="mt-4" data-import-mapping>
+      <div v-if="templateNotice.length" role="status" class="mb-3 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-500/10 dark:text-amber-300" data-template-header-notice>
+        <p>テンプレートを保存したときの見出しと、このシートの見出しが異なります。列の割り当てと「取込内容を確認」の結果で、正しい列か確かめてください（取込は止めません）。</p>
+        <p v-for="(d, i) in templateNotice.slice(0, 10)" :key="i" class="break-words">{{ d }}</p><p v-if="templateNotice.length > 10">ほか {{ templateNotice.length - 10 }} 列</p>
+      </div>
+      <div v-if="cellNoteLines.length" class="mb-3 rounded-lg bg-gray-50 p-3 text-xs leading-relaxed text-gray-700 dark:bg-white/5 dark:text-gray-300" data-import-cell-notes>
+        <p v-for="(line, i) in cellNoteLines" :key="i" class="break-words">{{ line }}</p>
+      </div>
       <p class="text-xs text-gray-500 dark:text-gray-400">{{ sheetData.rowCount }} 行（見出しを除く）。各項目に使う列を選んでください。列がない項目は保存済みの値を保ちます。</p>
       <div class="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <label v-for="field in FIELDS" :key="field[0]" class="block text-sm font-medium text-gray-700 dark:text-gray-300">{{ field[1] }}
@@ -62,14 +69,15 @@
     </div>
 
     <div v-if="previewData" class="mt-6 border-t border-gray-200 pt-4 dark:border-white/10" data-import-preview-result>
-      <p class="text-sm text-gray-800 dark:text-gray-200">新規 <strong class="tabular-nums" data-count-new>{{ previewData.counts.new }}</strong> · 追加・更新 <strong class="tabular-nums" data-count-update>{{ previewData.counts.update }}</strong> · 変更なし <strong class="tabular-nums" data-count-unchanged>{{ previewData.counts.unchanged }}</strong><span v-if="previewData.counts.ambiguous"> · IDの対応を確認 <strong class="tabular-nums">{{ previewData.counts.ambiguous }}</strong></span></p>
+      <p class="text-sm text-gray-800 dark:text-gray-200">新規 <strong class="tabular-nums" data-count-new>{{ previewData.counts.new }}</strong> · 追加・更新 <strong class="tabular-nums" data-count-update>{{ previewData.counts.update }}</strong> · 変更なし <strong class="tabular-nums" data-count-unchanged>{{ previewData.counts.unchanged }}</strong><span v-if="previewData.counts.ambiguous"> · IDの対応を確認 <strong class="tabular-nums">{{ previewData.counts.ambiguous }}</strong></span><span v-if="previewData.counts.identityChanged"> · ID変更（同じファイル行） <strong class="tabular-nums">{{ previewData.counts.identityChanged }}</strong></span></p>
+      <div v-if="previewData.warnings?.length" class="mt-2 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-500/10 dark:text-amber-300" data-import-warnings><p v-for="(w, i) in previewData.warnings" :key="i" class="break-words">{{ warningText(w) }}</p></div>
       <div class="mt-3 max-h-80 overflow-auto">
         <table class="min-w-full text-left text-xs">
           <thead><tr class="text-gray-600 dark:text-gray-300"><th class="px-2 py-1">行</th><th class="px-2 py-1">結果</th><th class="px-2 py-1">注文ID</th><th class="px-2 py-1">内容</th><th class="px-2 py-1 text-right">金額</th><th class="px-2 py-1">変更</th></tr></thead>
           <tbody>
             <tr v-for="r in previewData.rows" :key="r.key" :data-operation="r.operation" class="border-t border-gray-200 text-gray-700 dark:border-white/10 dark:text-gray-300">
               <td class="px-2 py-1 tabular-nums">{{ r.row }}</td>
-              <td class="px-2 py-1">{{ operationLabel(r.operation) }}<span v-if="r.ambiguous || r.identityReview" class="ml-1 text-amber-700 dark:text-amber-400">（ID確認）</span></td>
+              <td class="px-2 py-1">{{ operationLabel(r.operation) }}<span v-if="r.ambiguous || r.identityReview" class="ml-1 text-amber-700 dark:text-amber-400">（ID確認）</span><span v-if="r.identityChanged" class="ml-1 text-amber-700 dark:text-amber-400" data-identity-changed>（同じファイル行の受付のIDを変更）</span><span v-if="r.provenanceConflict?.length" class="ml-1 text-amber-700 dark:text-amber-400" data-provenance-conflict>（同じファイル行の別の受付あり・統合しません）</span></td>
               <td class="px-2 py-1">{{ r.values.orderId }}</td><td class="px-2 py-1">{{ r.values.description }}</td><td class="px-2 py-1 text-right tabular-nums">{{ r.values.amount }}</td>
               <td class="px-2 py-1">{{ r.changes.map((c: any) => labelOf(c.field) + ': ' + (c.before || '（空）') + ' → ' + c.after).join('、') }}</td>
             </tr>
@@ -136,14 +144,35 @@ async function readSheetNow() {
   sheetData.value = data; previewData.value = null
   const template = templates.value.find(t => t.id === templateId.value)
   if (template) { applyMapping(template.mapping); applyExtras(template.extras) } else { Object.assign(mapping, data.mapping); applyExtras(extras.value) }
+  compareHeaders(template)
 }
 function readSheet() { if (doc.value) run(readSheetNow) }
 function applyMapping(source: Record<string, string>) { const limit = sheetData.value?.headers.length || 0; for (const [k] of FIELDS) mapping[k] = source[k] !== undefined && source[k] !== '' && Number(source[k]) < limit ? String(source[k]) : '' }
 function applyTemplate() {
   const template = templates.value.find(t => t.id === templateId.value)
+  compareHeaders(template)
   if (!template) { if (sheetData.value) Object.assign(mapping, sheetData.value.mapping); extras.value = []; return }
   applyMapping(template.mapping); applyExtras(template.extras); defaults.service = template.service || DEFAULT_SERVICE; defaults.account = template.account || ''; defaults.currency = template.currency || DEFAULT_CURRENCY; templateName.value = template.name; previewData.value = null
 }
+// F1 (plan omf-monthly-reconciliation-20261020): a saved template is applied by column position; when its stored headers differ from
+// this sheet's, say which columns differ. A notice only — the mapping stays editable and preview/import are not blocked.
+const templateNotice = ref<string[]>([])
+function compareHeaders(template: any) {
+  const norm = (v: any) => String(v ?? '').normalize('NFKC').trim(), saved: string[] = (template?.headers || []).map(norm), current: string[] = (sheetData.value?.headers || []).map(norm), diffs: string[] = []
+  if (template && saved.length) for (let i = 0; i < Math.max(saved.length, current.length); i++) if ((saved[i] || '') !== (current[i] || '')) diffs.push('列' + (i + 1) + '：保存時「' + (saved[i] || '（なし）') + '」→ このシート「' + (current[i] || '（なし）') + '」')
+  templateNotice.value = diffs
+}
+// F1: what the intake reader did with typed Excel cells, and what it cannot recover.
+const columnName = (c: number) => sheetData.value?.headers?.[c] || '列 ' + (c + 1)
+const cellNoteLines = computed(() => {
+  const n = sheetData.value?.cellNotes, out: string[] = []; if (!n) return out
+  if (n.numericColumns?.length) out.push('数値のセルがある列：' + n.numericColumns.map(columnName).join('、') + '。Excelの数値は15桁までしか保存されず、先頭の0も保存されません。注文番号などのIDは、元のファイルで文字列（テキスト）として保存したものを使ってください。書式で表示された0（例：00123）はそのまま読み取ります。')
+  if (n.impreciseCount) out.push('15桁を超える数値が ' + n.impreciseCount + ' 件あります（' + n.imprecise.slice(0, 3).map((x: any) => x.row + '行目・' + columnName(x.column) + '：' + x.shown).join('、') + '）。失われた桁は元のファイルにもないため、表示どおりに取り込み、推測で補いません。')
+  if (n.dateColumns?.length) out.push('日付のセルは yyyy-mm-dd（時刻があれば yyyy-mm-dd HH:MM）として読み取ります（1900年・1904年の日付方式に対応）：' + n.dateColumns.map(columnName).join('、'))
+  return out
+})
+const FIELD_LABELS = FIELD_NAMES as Record<string, string>
+const warningText = (w: any) => w.kind === 'numeric-id' ? (FIELD_LABELS[w.field] || w.field) + 'に数値のセルの列（' + columnName(w.column) + '）が割り当てられています。先頭の0や15桁を超える桁は元のファイルにありません。必要なら元のファイルを文字列で保存し直してください。' : w.kind === 'imprecise-number' ? columnName(w.column) + 'の15桁を超える数値（' + (w.rows || []).join('・') + '行目など、例：' + w.shown + '）は表示どおりに取り込みます。' : String(w.kind || '')
 async function preview() { await run(async () => { previewData.value = await $fetch(api + 'files/' + doc.value.id + '/preview', { method: 'POST', headers: user.authHeader, body: body() }); result.value = null }) }
 async function runImport() {
   await run(async () => {

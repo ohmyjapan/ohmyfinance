@@ -40,12 +40,23 @@ export function purchaseState(v) {
   if (['返金', 'refunded'].includes(v)) return 'refunded';
   return 'requested';
 }
+// Plan omf-monthly-reconciliation-20261020 F1: an unambiguous year-first date (yyyy/m/d, yyyy.m.d, yyyy年m月d日, yyyy-m-d) with an
+// optional trailing local time becomes yyyy-mm-dd when it names a real calendar day and time. Anything else — m/d/yy, a zoned
+// timestamp, an impossible day or time, an era date — stays exactly as written for review; nothing is guessed.
+function purchaseDateOf(s) {
+  const m = /^(\d{4})[\/.年-](\d{1,2})[\/.月-](\d{1,2})日?(?:[ T　]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?$/.exec(s);
+  if (!m) return s;
+  const day = m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  if (!Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) return s;
+  if (m[4] !== undefined && (Number(m[4]) > 23 || Number(m[5]) > 59 || Number(m[6] || 0) > 59)) return s;
+  return day;
+}
 export function normalize(v = {}) {
   const r = {};
   for (const [k] of FIELDS) r[k] = text(v[k]);
   r.service = r.service || DEFAULT_SERVICE; r.currency = r.currency || DEFAULT_CURRENCY;
   r.purchaseState = STATES.includes(r.purchaseState) ? r.purchaseState : purchaseState(r.purchaseState);
-  r.purchaseDate = r.purchaseDate.replace(/^(\d{4})[\/.年](\d{1,2})[\/.月](\d{1,2})日?$/, (_, y, m, d) => y + '-' + m.padStart(2, '0') + '-' + d.padStart(2, '0'));
+  r.purchaseDate = purchaseDateOf(r.purchaseDate);
   for (const k of MONEY) if (r[k]) { const n = Number(r[k].replace(/[¥￥,，\s]/g, '')); if (Number.isFinite(n)) r[k] = String(n); }
   return r;
 }
@@ -73,16 +84,42 @@ export function mappedRows(rows, mapping, defaults, proof, extras = []) {
 }
 // records: the stored records (id, key, values, extra, provenance, history, revision, identityReview, archived); incoming: rows
 // of { values, extra?, present?, provenance?, id? }. A blank incoming cell or an unmapped field keeps the stored value unless
-// options.clearBlank; the same rule keeps a stored extra. Neither records nor incoming are mutated.
+// options.clearBlank; the same rule keeps a stored extra. Neither records nor incoming are mutated. options.reading ({ mapping,
+// defaults } the incoming rows were mapped with) lets a re-read file row prove which record still carries its stored identity.
 export function planImport(records, incoming, options = {}) {
   const out = [], counts = new Map();
   for (const r of incoming) { const k = externalKey(r.values); if (k) counts.set(k, (counts.get(k) || 0) + 1); }
   const index = new Map(records.filter(r => !r.archived).map(r => [r.key, r]));
   const now = options.now || new Date().toISOString(), newId = options.id || uuid;
+  // F1 (plan omf-monthly-reconciliation-20261020): active records by the file rows they came from (hash + sheet + row). When a
+  // corrected reading of the SAME file gives a row a new identity — the cells stored for that file row differ from the current
+  // reading, with the same service and account — the one record that came from that row is updated (its id, allocations,
+  // provenance and history kept; the identity change is shown). Two or more such records, a record already matched in this plan,
+  // or another record holding the new identity are never merged: the row is flagged with the ids. The same reading under another
+  // mapping or default (a deliberate second import of the file) is not a re-reading and behaves as before.
+  // Fold (plan omf-monthly-reconciliation-fold-20261020, review omf-monthly-patch-opus55-20261020 F1): a re-read row re-keys only
+  // a record that still carries the identity its stored reading of that row produced — the external key of the stored raw cells
+  // under the current reading (options.reading: the import's mapping and defaults), or that row's file-row key (an ambiguous
+  // legacy row) — and only when the current reading gives another key. Any other record of that row (an ID corrected by hand,
+  // a record already repaired from another file, or no reading given) is never re-keyed: the row takes the provenance-conflict
+  // exit above (its own record, identity review, the conflicting ids also kept in its history entry).
+  const byRow = new Map(), claimed = new Set();
+  for (const r of records) if (!r.archived) for (const s of r.provenance || []) { const k = sourceKey(s); if (k && !(byRow.get(k) || []).includes(r)) byRow.set(k, [...(byRow.get(k) || []), r]); }
+  const reread = (r, row, v) => { const s = (r.provenance || []).find(x => sourceKey(x) === sourceKey(row.provenance)); return !!s && JSON.stringify((s.raw || []).map(text)) !== JSON.stringify((row.provenance.raw || []).map(text)) && (r.values?.service || '') === v.service && (r.values?.account || '') === v.account; };
+  const reading = options.reading, storedIdentity = s => reading?.mapping ? externalKey(mappedRows([s.raw || []], reading.mapping, reading.defaults || {}, { ...s, firstRow: s.row })[0].values) : '';
+  const ownedByRow = (r, fileRow, key) => (r.provenance || []).some(s => sourceKey(s) === fileRow && r.key !== key && (r.key === fileRow || (!!storedIdentity(s) && r.key === storedIdentity(s))));
   for (const row of incoming) {
     const v = normalize(row.values), ref = externalKey(v), ambiguous = !!ref && counts.get(ref) > 1;
-    const id = row.id || newId(), key = (!ambiguous && ref) || sourceKey(row.provenance) || manualKey(id), old = index.get(key);
-    const next = old ? structuredClone(old) : { id, key, values: v, extra: Object.fromEntries(Object.entries(row.extra || {}).filter(([, value]) => text(value) !== '').map(([name, value]) => [name, text(value)])), createdAt: now, updatedAt: now, revision: 0, history: [], provenance: [], identityReview: ambiguous || (!ref && !!row.provenance), archived: false };
+    const id = row.id || newId(), key = (!ambiguous && ref) || sourceKey(row.provenance) || manualKey(id);
+    let old = index.get(key);
+    const fileRow = sourceKey(row.provenance), bound = fileRow ? (byRow.get(fileRow) || []).filter(r => (!old || r.id !== old.id) && reread(r, row, v)) : [];
+    const rebind = !old && bound.length === 1 && !claimed.has(bound[0].id) && ownedByRow(bound[0], fileRow, key);
+    let identityChanged = null, provenanceConflict = [];
+    if (rebind) { old = bound[0]; identityChanged = { before: old.key, after: key, by: 'file-row' }; index.delete(old.key); } else provenanceConflict = bound.map(r => r.id);
+    if (old) claimed.add(old.id);
+    const next = old ? structuredClone(old) : { id, key, values: v, extra: Object.fromEntries(Object.entries(row.extra || {}).filter(([, value]) => text(value) !== '').map(([name, value]) => [name, text(value)])), createdAt: now, updatedAt: now, revision: 0, history: [], provenance: [], identityReview: ambiguous || (!ref && !!row.provenance) || provenanceConflict.length > 0, archived: false };
+    if (identityChanged) next.key = key;
+    if (old && provenanceConflict.length) next.identityReview = true;
     const before = old?.values || {}, changes = [];
     if (old) {
       for (const [k] of FIELDS) {
@@ -96,12 +133,12 @@ export function planImport(records, incoming, options = {}) {
     }
     const p = row.provenance, proofAdded = !!p && !next.provenance.some(s => sourceKey(s) === sourceKey(p));
     if (proofAdded) next.provenance.push(p);
-    const operation = !old ? 'new' : changes.length || proofAdded ? 'update' : 'unchanged';
-    if (operation !== 'unchanged') { next.revision++; next.updatedAt = now; next.history.push({ at: now, kind: operation, changes, source: p ? { fileName: p.fileName, sheet: p.sheet, row: p.row } : null }); }
-    out.push({ operation, record: next, changes, ambiguous, row: p?.row });
+    const operation = !old ? 'new' : changes.length || proofAdded || identityChanged || (provenanceConflict.length && !old.identityReview) ? 'update' : 'unchanged';
+    if (operation !== 'unchanged') { next.revision++; next.updatedAt = now; next.history.push({ at: now, kind: operation, changes, source: p ? { fileName: p.fileName, sheet: p.sheet, row: p.row } : null, ...(identityChanged ? { identity: identityChanged } : {}), ...(provenanceConflict.length ? { conflict: provenanceConflict } : {}) }); }
+    out.push({ operation, record: next, changes, ambiguous, row: p?.row, ...(identityChanged ? { identityChanged } : {}), ...(provenanceConflict.length ? { provenanceConflict } : {}) });
     index.set(key, next);
   }
-  return { rows: out, new: out.filter(r => r.operation === 'new').length, update: out.filter(r => r.operation === 'update').length, unchanged: out.filter(r => r.operation === 'unchanged').length, ambiguous: out.filter(r => r.ambiguous).length };
+  return { rows: out, new: out.filter(r => r.operation === 'new').length, update: out.filter(r => r.operation === 'update').length, unchanged: out.filter(r => r.operation === 'unchanged').length, ambiguous: out.filter(r => r.ambiguous).length, identityChanged: out.filter(r => r.identityChanged).length, provenanceConflicts: out.filter(r => r.provenanceConflict).length };
 }
 export function applyPlan(records, plan) {
   const index = new Map(records.map(r => [r.id, r]));

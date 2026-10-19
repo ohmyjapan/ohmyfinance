@@ -35,7 +35,10 @@ account.index({ ownerId: 1, provider: 1, cardIdentifiers: 1 }, { unique: true })
 const collector = new Schema({
   ownerId: { type: oid, required: true, index: true }, name: { type: String, required: true },
   tokenHash: { type: String, required: true, unique: true, select: false },
-  accountIds: [{ type: oid, required: true }], revokedAt: Date, lastSeenAt: Date
+  accountIds: [{ type: oid, required: true }], revokedAt: Date, lastSeenAt: Date,
+  // Bank accounts this PC may collect (plan omf-bank-collection-amended-20261018 S2): set only by PUT bank/collectors/:id;
+  // the card routes' device.accountIds and the connect/security services never read it.
+  bankAccountIds: { type: [oid], default: [] }
 }, common)
 
 const batch = new Schema({

@@ -69,9 +69,9 @@ export async function captureUnbilled(ui, { now = Date.now } = {}) {
  * (STATEMENT_CODE_VALIDITY_MS); the one matching code is claimed, then typed through `code` once. A failed read leaves the
  * person to type; a cancellation (`signal`) propagates — it is rechecked after every awaited read and claim, before
  * anything is typed, and never becomes a manual-fallback null. Expiry throws {code:'timeout'}; there is never a second
- * request here.
+ * request here. `label` names the site in the messages (default My APLUS; collector/bank.mjs passes the bank's label).
  */
-export async function awaitDownload({ jobDir, session = null, request, state, onVerification = null, code = null, codeSource = null, requestedAt = null, signal = null, codePollMs = 5000, timeoutMs = 300000, extensionMs = 300000, pollMs = 1000, now = Date.now, wait = pause }) {
+export async function awaitDownload({ jobDir, session = null, request, state, onVerification = null, code = null, codeSource = null, requestedAt = null, signal = null, codePollMs = 5000, timeoutMs = 300000, extensionMs = 300000, pollMs = 1000, now = Date.now, wait = pause, label = LABEL }) {
   let guid = null, completed = null, canceled = false, multiple = false;
   session?.on('Browser.downloadWillBegin', event => { if (guid) multiple = true; else guid = event.guid; });
   session?.on('Browser.downloadProgress', event => { if (!guid || event.guid !== guid) return; if (event.state === 'completed') completed = guid; if (event.state === 'canceled') canceled = true; });
@@ -82,11 +82,11 @@ export async function awaitDownload({ jobDir, session = null, request, state, on
   const sizes = new Map();
   for (;;) {
     signal?.throwIfAborted();
-    if (multiple) throw new Error('Multiple downloads started; check the My APLUS tab');
-    if (canceled) throw new Error('My APLUS canceled the CSV download');
+    if (multiple) throw new Error(`Multiple downloads started; check the ${label} tab`);
+    if (canceled) throw new Error(`${label} canceled the CSV download`);
     if (completed) return completed;
     const names = await readdir(jobDir), files = names.filter(name => GUID.test(name));
-    if (files.length > 1) throw new Error('Multiple downloads started; check the My APLUS tab');
+    if (files.length > 1) throw new Error(`Multiple downloads started; check the ${label} tab`);
     if (files.length === 1 && !names.includes(files[0] + '.crdownload')) {
       const size = (await stat(path.join(jobDir, files[0]))).size;
       if (size > 0 && sizes.get(files[0]) === size) return files[0];
@@ -105,7 +105,7 @@ export async function awaitDownload({ jobDir, session = null, request, state, on
         if (match) { await codeSource.claim(match.id); signal?.throwIfAborted(); await code(match.code); typed = true; }
       }
     }
-    if (now() >= deadline) throw Object.assign(new Error('My APLUS CSV download did not complete'), { code: 'timeout' });
+    if (now() >= deadline) throw Object.assign(new Error(`${label} CSV download did not complete`), { code: 'timeout' });
     await wait(pollMs);
   }
 }
