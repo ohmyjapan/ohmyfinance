@@ -40,7 +40,7 @@ async function post(name, args, slot) {
       if (attempt < 3) await new Promise(r => setTimeout(r, 400 * attempt));
     }
   }
-  return { ok: false, text: `${lastError} after 3 attempts on slot ${slot}; read get_action_status for this slot before anything else.` };
+  return { ok: false, text: `${lastError} after 3 attempts on slot ${slot}; read the supplied action-status tool for this slot before anything else.` };
 }
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of input) {

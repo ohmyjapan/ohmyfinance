@@ -1,3 +1,4 @@
+import { companyActionReceipt, companyActionReceipts, reconcileCompanyActions, updateCompanyCalendarAction } from './financeCompanyActionService'
 import { createHash, randomUUID } from 'node:crypto'
 import { FinanceCompanyAssistant as Conversation } from '../models/FinanceCompanyAssistant'
 import { FinanceChatAgent as Agent } from '../models/FinanceChat'
@@ -10,7 +11,7 @@ import { listCompanyInvoices, getCompanyInvoice, listCompanyCalendarEntries, get
 const init = async () => { await ready(); await Conversation.init() }
 const available = (ownerId: string) => Agent.findOne({ ownerId, enabled: true, revokedAt: null, workspaceEnabled: true, chatLastSeenAt: { $gt: new Date(Date.now() - 65000) } }).sort({ chatLastSeenAt: -1 }).lean()
 const scopeOf = (ownerId: any, organizationId: any) => ({ actorId: String(ownerId), organizationId: String(organizationId) })
-const visible = (c: any) => c ? { id: String(c._id), scope: scopeOf(c.ownerId, c.organizationId), revision: c.revision, state: c.state, currentId: c.currentId, turns: c.turns } : null
+const visible = (c: any) => c ? { id: String(c._id), scope: scopeOf(c.ownerId, c.organizationId), revision: c.revision, state: c.state, currentId: c.currentId, turns: c.turns.map((t: any) => ({ ...t, ...(t.actions ? { actions: t.actions.map(companyActionReceipt) } : {}) })) } : null
 const identity = (ownerId: string, organizationId: any) => ({ ownerId, organizationId })
 async function company(ownerId: string, organizationId: any) {
   const trusted = await companyMembership(ownerId, String(organizationId))
@@ -21,7 +22,7 @@ async function company(ownerId: string, organizationId: any) {
 export async function getCompanyAssistant(ownerId: string, organizationId: any) {
   await init(); const selected = await company(ownerId, organizationId)
   const c: any = await Conversation.findOne(identity(ownerId, organizationId)).lean()
-  return { company: selected, conversation: visible(c), connected: !!await available(ownerId) }
+  return { company: selected, conversation: visible(await reconcileCompanyActions(c)), connected: !!await available(ownerId) }
 }
 function selection(input: any) {
   if (!input || !['invoices', 'calendar'].includes(input.page)) fail(400, 'Choose invoices or calendar')
@@ -45,7 +46,7 @@ export async function sendCompanyAssistant(ownerId: string, organizationId: any,
   if (target.paymentId) await getCompanyCalendarEntry(organizationId, target.paymentId)
   const scope = scopeOf(ownerId, organizationId)
   const context = { mode: 'workspace', scope, page: target.page, pageName: target.page === 'invoices' ? 'Invoices' : 'Payment calendar', facts: { company: selectedCompany, selection: target },
-    capabilities: ['Act as a Japanese accountant and answer naturally in Korean or Japanese.', 'Read only this company invoice/calendar facts with the supplied tools. State sources and uncertainties.', 'INV document numbers and printed issuer T numbers have different meanings. Printed T is not fresh NTA verification.', 'Saved sent/paid status is not proof of email delivery, bank settlement or a current bank balance.', 'Invoice and calendar linkage is not established. No create/edit/send/post/settle/restore or legacy card/reference tools are available in this company conversation.'],
+    capabilities: ['Act as a Japanese accountant and answer naturally in Korean or Japanese.', 'Use this company invoice/calendar tools. Read before a requested edit, update only explicitly named calendar fields and verify its receipt. State sources and uncertainties.', 'INV document numbers and printed issuer T numbers have different meanings. Printed T is not fresh NTA verification.', 'Saved sent/paid status is not proof of email delivery, bank settlement or a current bank balance.', 'Invoice and calendar linkage is not established. Calendar edits save internal records only, never move money or change issuer due dates. Invoice edits, creation, send/post/restore and legacy card/reference tools remain unavailable.'],
     messages: (c?.turns || []).slice(-8).map((t: any) => ({ text: t.text, response: t.proposal?.summary || '', submittedAt: t.at || null, replyRecordedAt: t.answeredAt || null })) }
   if (!c) { try { c = (await Conversation.create({ ownerId, organizationId })).toObject() } catch (e: any) { if (e.code === 11000) fail(409, 'Conversation changed; reload'); throw e } }
   await companyMembership(ownerId, String(organizationId))
@@ -78,7 +79,8 @@ export async function claimCompanyAssistant(agent: any) {
   if (!c) return { job: null }
   try { await assertCompanyJob(agent, c) } catch (e) { await Conversation.updateOne({ _id: c._id, lease }, { $set: { state: 'failed' }, $inc: { revision: 1 }, $unset: { lease: '', leaseUntil: '' } }); throw e }
   const turn = c.turns.find((t: any) => t.id === c.currentId)
-  return { job: { id: String(c._id), mode: 'workspace', companyScoped: true, lease, text: turn.text, context: c.context, tools: companyTools, actions: [], nextSlot: 1, target: turn.target } }
+  const actions = await companyActionReceipts(c, c.currentId)
+  return { job: { id: String(c._id), mode: 'workspace', companyScoped: true, lease, text: turn.text, context: c.context, tools: companyTools, actions, nextSlot: actions.reduce((n: number, a: any) => Math.max(n, a.slot), 0) + 1, target: turn.target } }
 }
 const jobFilter = (agent: any, chatId: string, lease: string) => ({ _id: id(chatId), ownerId: agent.ownerId, agentId: agent._id, state: 'working', lease, leaseUntil: { $gt: new Date() } })
 export async function isCompanyAssistantJob(agent: any, chatId: string) { return !!await Conversation.exists({ _id: id(chatId), ownerId: agent.ownerId }) }
@@ -105,13 +107,15 @@ export async function finishCompanyAssistant(agent: any, chatId: string, body: a
 const objectId = { type: 'string', pattern: '^[a-fA-F0-9]{24}$' }, textFilter = { type: 'string', maxLength: 100 }
 const tool = (name: string, description: string, properties: any, required: string[] = []) => ({ name, description, inputSchema: { type: 'object', additionalProperties: false, properties, ...(required.length ? { required } : {}) } })
 const companyTools = [
+  tool('update_company_calendar_entry', 'Save only explicitly requested calendar fields after reading this company entry. Supply its exact updatedAt; empty string only when the read returned null. A saved paid/completed status is internal bookkeeping, not bank confirmation. Repeated exact intent in one turn returns its original receipt. No create/delete/send or money movement.', { paymentId: objectId, expectedUpdatedAt: { type: 'string', maxLength: 40 }, title: { type: 'string', minLength: 1, maxLength: 300 }, amount: { type: 'number' }, currency: { type: 'string', enum: ['JPY','USD','EUR','GBP','KRW','CNY'] }, dueDate: { type: 'string', format: 'date' }, type: { type: 'string', enum: ['expense','income'] }, status: { type: 'string', enum: ['pending','paid','overdue','cancelled','completed'] }, category: { type: 'string', minLength: 1, maxLength: 100 }, recurring: { type: 'boolean' }, recurringFrequency: { type: 'string', enum: ['weekly','monthly','quarterly','yearly'] }, notes: { type: 'string', maxLength: 2000 } }, ['paymentId','expectedUpdatedAt']),
+  tool('get_company_action_status', 'Read this turn company action receipts and reconcile a lost result from its native record marker. Unknown is not failure and must never be repeated automatically.', { operationId: { type: 'string', pattern: '^[a-f0-9]{32}$' } }),
   tool('list_company_invoices', 'Read this company saved invoices with actual currency, totals and pagination. Saved status is not bank settlement; INV is not a T number.', { status: textFilter, page: { type: 'integer', minimum: 1 }, limit: { type: 'integer', minimum: 1, maximum: 50 } }),
   tool('get_company_invoice', 'Read a saved company invoice by id, including printed issuer T and item details. No fresh NTA verification, email delivery or calendar link is implied.', { invoiceId: objectId }, ['invoiceId']),
   tool('list_company_calendar_entries', 'Read this company visible calendar entries, preserving sourced/adopted bill facts and currency. At most100 entries; suppressed bills stay hidden. Not live bank balances or verified settlement.', { type: textFilter, status: textFilter, category: textFilter, startDate: { type: 'string', format: 'date' }, endDate: { type: 'string', format: 'date' } }),
   tool('get_company_calendar_entry', 'Read one visible saved calendar entry and source/adoption facts. Saved paid status is not bank confirmation.', { paymentId: objectId }, ['paymentId'])
 ]
 const invoiceView = (v: any) => ({ id: String(v._id), invoiceNumber: v.invoiceNumber, status: v.status, issueDate: v.issueDate, dueDate: v.dueDate, paidDate: v.paidDate || null, from: { name: v.from?.name, taxId: v.from?.taxId || '' }, to: { name: v.to?.name }, subtotal: v.subtotal, taxRate: v.taxRate, taxAmount: v.taxAmount, total: v.total, currency: v.currency, items: (v.items || []).slice(0, 50), itemsTruncated: (v.items?.length || 0) > 50, updatedAt: v.updatedAt || null })
-const paymentView = (v: any) => ({ id: String(v._id), title: v.title, amount: v.amount, currency: v.currency, dueDate: v.dueDate, type: v.type, status: v.status, category: v.category, settledAt: v.settledAt || null, source: v.source ? { kind: v.source.kind, provider: v.source.provider, periodKey: v.source.periodKey, statementMonth: v.source.statementMonth, adopted: v.source.adopted === true, dueDateEvidence: v.source.dueDateEvidence, importId: v.source.importId ? String(v.source.importId) : null, noticeId: v.source.noticeId ? String(v.source.noticeId) : null } : null, updatedAt: v.updatedAt || null })
+const paymentView = (v: any) => ({ id: String(v._id), title: v.title, notes: String(v.notes || '').slice(0, 2000), notesTruncated: String(v.notes || '').length > 2000, amount: v.amount, currency: v.currency, dueDate: v.dueDate, type: v.type, status: v.status, category: v.category, settledAt: v.settledAt || null, source: v.source ? { kind: v.source.kind, provider: v.source.provider, periodKey: v.source.periodKey, statementMonth: v.source.statementMonth, adopted: v.source.adopted === true, dueDateEvidence: v.source.dueDateEvidence, importId: v.source.importId ? String(v.source.importId) : null, noticeId: v.source.noticeId ? String(v.source.noticeId) : null } : null, updatedAt: v.updatedAt || null })
 export async function actionCompanyAssistant(agent: any, chatId: string, body: any) {
   const c = await working(agent, chatId, body?.lease), organizationId = c.organizationId
   const definition = companyTools.find(t => t.name === body?.name), args = body?.args === undefined ? {} : body.args
@@ -120,8 +124,10 @@ export async function actionCompanyAssistant(agent: any, chatId: string, body: a
   if (Object.keys(args).some(k => !Object.hasOwn(schema.properties, k)) || (schema.required || []).some((k: string) => args[k] === undefined)) fail(400, 'Invalid company read arguments')
   for (const [key, value] of Object.entries(args)) {
     const rule = schema.properties[key]
-    if (rule.type === 'integer' ? !Number.isSafeInteger(value) || Number(value) < rule.minimum || (rule.maximum && Number(value) > rule.maximum) : typeof value !== 'string' || (rule.maxLength && value.length > rule.maxLength) || (rule.pattern && !new RegExp(rule.pattern).test(value)) || (rule.format === 'date' && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value))) fail(400, 'Invalid company read argument')
+    if (rule.type === 'number' ? typeof value !== 'number' || !Number.isFinite(value) : rule.type === 'boolean' ? typeof value !== 'boolean' : rule.type === 'integer' ? !Number.isSafeInteger(value) || Number(value) < rule.minimum || (rule.maximum && Number(value) > rule.maximum) : typeof value !== 'string' || (rule.minLength && value.length < rule.minLength) || (rule.maxLength && value.length > rule.maxLength) || (rule.enum && !rule.enum.includes(value)) || (rule.pattern && !new RegExp(rule.pattern).test(value)) || (rule.format === 'date' && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value))) fail(400, 'Invalid company read argument')
   }
+  if (body.name === 'update_company_calendar_entry') return updateCompanyCalendarAction(c, body, args, () => working(agent, chatId, body.lease))
+  if (body.name === 'get_company_action_status') { const receipts = await companyActionReceipts(c, c.currentId, args.operationId); await working(agent, chatId, body.lease); return { name: body.name, effect: 'read', result: { receipts, scope: scopeOf(c.ownerId, organizationId) } } }
   let result: any
   if (body.name === 'list_company_invoices') { const v = await listCompanyInvoices(organizationId, args); result = { invoices: v.invoices.map(invoiceView), pagination: v.pagination, truncated: v.pagination.page < v.pagination.totalPages } }
   if (body.name === 'get_company_invoice') result = { invoice: invoiceView((await getCompanyInvoice(organizationId, args.invoiceId)).invoice) }

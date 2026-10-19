@@ -17,6 +17,7 @@
 <script setup lang="ts">
 import {Loader2,Send} from 'lucide-vue-next'
 import NaviAvatar from './NaviAvatar.vue'
+import {useCalendarStore} from '~/stores/calendar'
 import {useUserStore} from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
 import {tokenClaims} from '~/utils/auth-session'
@@ -28,7 +29,7 @@ const turns=computed(()=>data.value?.conversation?.turns||[]),waiting=computed((
 const examples=scope.company?['この会社の請求書を確認して。','支払い予定と確認が必要な点を教えて。']: ['マッピングと取引一覧はどう違う？','AとBの判断にはどんな違いがある？','지금 선택한 규칙의 근거를 설명해 줘.']
 const endpoint=scope.company?'/api/finance-chat/company-workspace':'/api/finance-chat/workspace',message=(e:any)=>scope.company&&[401,403].includes(e.statusCode||e.status)?'会社へのアクセスを確認できません。所属と選択した会社を確認してください。':e.data?.data?.message||'会話を取得できませんでした。'
 function failed(e:any){error.value=message(e);if(scope.company&&[401,403].includes(e.statusCode||e.status))data.value=null}
-const actionNames:Record<string,string>={save_draft_fields:'下書きを保存',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼',create_intake_record:'受付を作成',patch_intake_record:'受付を保存',set_intake_archived:'受付のアーカイブを変更',apply_intake_import:'受付ファイルを取込',save_intake_template:'取込テンプレートを保存',start_intake_research:'会社・T番号の調査を依頼',confirm_intake_research:'調査結果を受付に保存'}
+const actionNames:Record<string,string>={update_company_calendar_entry:'支払い予定を保存',save_draft_fields:'下書きを保存',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼',create_intake_record:'受付を作成',patch_intake_record:'受付を保存',set_intake_archived:'受付のアーカイブを変更',apply_intake_import:'受付ファイルを取込',save_intake_template:'取込テンプレートを保存',start_intake_research:'会社・T番号の調査を依頼',confirm_intake_research:'調査結果を受付に保存'}
 const actionStates:Record<string,string>={done:'完了',queued:'受付済み',working:'処理中…',failed:'できませんでした',unresolved:'結果の確認が必要です'}
 const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.state]||a.state)+(a.target?.line?'（'+a.target.line+'行目'+(a.acceptedRevision?'・下書き改訂 '+a.acceptedRevision:'')+'）':a.acceptedRevision?'（改訂 '+a.acceptedRevision+'）':'')+(a.safeError?' · '+a.safeError:'')
 // A completed write names its purchase; that purchase is fetched fresh and handed to the store, which refreshes the draft page only if
@@ -36,6 +37,7 @@ const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.s
 const refreshed=new Set<string>()
 async function refreshAfterActions(){const intakeReceipts:any[]=[];for(const turn of turns.value)for(const a of turn.actions||[]){
  if(refreshed.has(a.operationId))continue
+ if(scope.company&&a.name==='update_company_calendar_entry'&&a.state==='done'&&a.nativeResourceIds?.paymentId){try{const payment:any=await $fetch('/api/payments/'+a.nativeResourceIds.paymentId,{headers:user.authHeader});if(current()){const calendar=useCalendarStore(),index=calendar.payments.findIndex(p=>p.id===payment.id);if(index>=0)calendar.payments[index]=payment;refreshed.add(a.operationId)}}catch{}continue}
  if(['done','queued','unresolved'].includes(a.state)&&/_intake_/.test(a.name)&&a.nativeResourceIds){intakeReceipts.push(a);refreshed.add(a.operationId);continue}
  if(a.state!=='done'||!a.target?.importId||!a.target?.line||!['save_draft_fields','approve_draft'].includes(a.name))continue
  try{const d:any=await $fetch('/api/finance/imports/'+a.target.importId+'/drafts/'+a.target.line,{headers:user.authHeader});if(current()){assistant.receive(d);refreshed.add(a.operationId)}}catch{}

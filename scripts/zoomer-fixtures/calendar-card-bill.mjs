@@ -375,9 +375,11 @@ try {
         const alt = await mount({ paymentsId: m.default }); assert.equal((await callAt(alt, '/api/payments/' + String(seeded.a._id), { token: t2A })).status, 200, 'mutant NOT detected: [id] still 403');
       });
     } finally { await addMember(A2, user2._id); }
-    await mutant('server/api/payments/[id].ts', [{ from: '_id: id, organizationId, suppressedAt', to: '_id: id, suppressedAt' }], async m => {
-      const alt = await mount({ paymentsId: m.default }); const r = await callAt(alt, '/api/payments/' + String(seeded.b._id), { method: 'PUT', token: t2A, body: { amount: 22 } }); assert.equal(r.status, 200, 'mutant NOT detected: cross-company PUT still 404');
-      await Payment.updateOne({ _id: seeded.b._id }, { $set: { amount: 20 } });
+    await mutant('server/services/companyPaymentWriteService.ts', [{ from: 'const scope: any = { _id: paymentId, organizationId, suppressedAt: { $exists: false } }', to: 'const scope: any = { _id: paymentId, suppressedAt: { $exists: false } }' }], async (_helper, copy) => {
+      await mutant('server/api/payments/[id].ts', [{ from: "'../../services/companyPaymentWriteService'", to: "'" + pathToFileURL(copy).href + "'" }], async m => {
+        const alt = await mount({ paymentsId: m.default }); const r = await callAt(alt, '/api/payments/' + String(seeded.b._id), { method: 'PUT', token: t2A, body: { amount: 22 } }); assert.equal(r.status, 200, 'mutant NOT detected: cross-company PUT still 404');
+        await Payment.updateOne({ _id: seeded.b._id }, { $set: { amount: 20 } });
+      });
     });
     return '4 mutants detected';
   });

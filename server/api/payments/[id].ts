@@ -1,3 +1,4 @@
+import { updateCompanyCalendarEntry } from '../../services/companyPaymentWriteService'
 import { getCompanyCalendarEntry } from '../../services/companyFinanceReadService'
 // server/api/payments/[id].ts
 import { defineEventHandler, readBody, createError, getRouterParam } from 'h3'
@@ -5,15 +6,6 @@ import { ensureConnection } from '../../config/database'
 import { Payment } from '../../models/Payment'
 import { requireAuth } from '../../middleware/auth'
 import { calendarCompany } from '../../utils/calendarAccess'
-
-// Parse date string to noon UTC to avoid timezone boundary issues
-const parseDateToNoonUTC = (dateString: string): Date => {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-    const [year, month, day] = dateString.split('-').map(Number)
-    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0))
-  }
-  return new Date(dateString)
-}
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -64,35 +56,7 @@ export default defineEventHandler(async (event) => {
     const body = await readBody(event)
 
     try {
-      const updateData: Record<string, any> = {}
-
-      // Only update provided fields
-      if (body.title !== undefined) updateData.title = body.title
-      if (body.amount !== undefined) updateData.amount = parseFloat(body.amount)
-      if (body.currency !== undefined) updateData.currency = body.currency
-      if (body.dueDate !== undefined) updateData.dueDate = parseDateToNoonUTC(body.dueDate)
-      if (body.type !== undefined) updateData.type = body.type
-      if (body.status !== undefined) updateData.status = body.status
-      if (body.category !== undefined) updateData.category = body.category
-      if (body.recurring !== undefined) updateData.recurring = body.recurring
-      if (body.recurringFrequency !== undefined) updateData.recurringFrequency = body.recurringFrequency
-      if (body.bankTransfer !== undefined) updateData.bankTransfer = body.bankTransfer
-      if (body.notes !== undefined) updateData.notes = body.notes
-
-      // Settlement: paid or completed stamps settledAt once ($min keeps the first instant); never cleared here.
-      const settled = updateData.status === 'paid' || updateData.status === 'completed'
-      const payment = await Payment.findOneAndUpdate(
-        scope,
-        { $set: updateData, ...(settled ? { $min: { settledAt: new Date() } } : {}) },
-        { new: true, runValidators: true }
-      )
-
-      if (!payment) {
-        throw createError({
-          statusCode: 404,
-          statusMessage: 'Payment not found'
-        })
-      }
+      const payment = await updateCompanyCalendarEntry(organizationId, id, body)
 
       return payment
     } catch (error: any) {

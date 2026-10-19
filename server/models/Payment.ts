@@ -44,6 +44,7 @@ export interface IPayment extends Document {
   notes?: string
   organizationId?: mongoose.Types.ObjectId
   source?: IPaymentSource
+  naviOperation?: any
   settledAt?: Date
   // A sourced bill the owner removed from the calendar keeps its row (B3): hidden from every calendar reader, never
   // recreated by a later notice or statement; only an explicit, freshly authorized action restores it.
@@ -137,6 +138,7 @@ const PaymentSchema = new Schema<IPayment>({
   source: {
     type: PaymentSourceSchema
   },
+  naviOperation: { type: Schema.Types.Mixed },
   settledAt: {
     type: Date
   },

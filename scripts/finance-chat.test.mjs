@@ -58,6 +58,6 @@ test('the interpreter exposes tools through the owned MCP server only and keeps 
  const company=systemFor({companyScoped:true,mode:'workspace',tools:[{name:'list_company_invoices'}]});
  assert.ok(company.startsWith(chatSystem.slice(0,80)));assert.ok(company.includes("each record's saved currency"),'company-ui:saved-currency');
  assert.ok(!company.includes('Amounts are Japanese yen'));assert.ok(!company.includes('post_selected_approved_rows'));assert.ok(company.includes('list_company_calendar_entries'));
- assert.ok(company.includes('not fresh NTA verification'));assert.ok(company.includes('not a bank settlement check'));assert.ok(company.includes('no bank balance, financial writes'));
+ assert.ok(company.includes('not fresh NTA verification'));assert.ok(company.includes('not a bank settlement check'));assert.ok(company.includes('no bank balance, money movement'));assert.ok(company.includes('update_company_calendar_entry'));assert.ok(company.includes('A question or hypothetical suggestion saves nothing'));assert.ok(company.includes('get_company_action_status'));
  assert.ok(withTools.includes('Amounts are Japanese yen (JPY)'));assert.equal(systemFor({companyScoped:true}),chatSystem);
 });

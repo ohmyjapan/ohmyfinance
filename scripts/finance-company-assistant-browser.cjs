@@ -1,7 +1,7 @@
 // Owned synthetic native application only. Installed Chrome, no model/provider or business sends.
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {createRequire}=require('node:module'),{existsSync}=require('node:fs');
-module.exports=async({root,origin,call,ok,worker,ownerToken,tokenA,tokenB,A,B,pause,pass,setMembership})=>{
+module.exports=async({root,origin,call,ok,worker,ownerToken,tokenA,tokenB,A,B,calendarAction,pause,pass,setMembership})=>{
  // Nested worktrees resolve the collector's installed dependencies from the parent checkout; no junction.
  let puppeteer;try{puppeteer=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core')}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;puppeteer=createRequire(path.resolve(root,'../collector/package.json'))('rebrowser-puppeteer-core')}
  const executablePath=[path.join(process.env.ProgramFiles||'C:/Program Files','Google/Chrome/Application/chrome.exe'),path.join(process.env['ProgramFiles(x86)']||'C:/Program Files (x86)','Google/Chrome/Application/chrome.exe'),path.join(process.env.LOCALAPPDATA||'','Google/Chrome/Application/chrome.exe')].find(existsSync);
@@ -58,6 +58,19 @@ module.exports=async({root,origin,call,ok,worker,ownerToken,tokenA,tokenB,A,B,pa
   // Exercise the actual visible selector, which adopts native tokens/profile and reloads all underlying page records.
   const nav=page.waitForNavigation({waitUntil:'networkidle2'});await page.select('[data-assistant-company]',B);await nav;await wait(()=>document.querySelector('[data-assistant-company-status]')?.textContent.includes('Synthetic company 1'),[],'selector-reload');assert.equal(await page.$eval('[data-assistant-company]',e=>e.value),B);assert.ok(!(await body()).includes('COMPANY_A_CHROME_REPLY'),'company-ui:selector-new-history');
   await page.setViewport({width:1365,height:960});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'company-ui:desktop-overflow');if(screenshots)await page.screenshot({path:path.join(screenshots,'company-navi-desktop.png')});
+  // A real company tool save refreshes the existing calendar store through its receipt, without page navigation.
+  const back=page.waitForNavigation({waitUntil:'networkidle2'});await page.select('[data-assistant-company]',A);await back;
+  await wait(paymentId=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar')?.payments.some(p=>p.id===paymentId),[calendarAction.paymentId],'calendar-store-loaded');
+  await worker('heartbeat');await wait(()=>document.querySelector('#assistant-message')?.disabled===false,[],'calendar-action-ready');
+  await page.$eval('#assistant-message',e=>{e.value='Change the selected calendar date as explicitly requested.';e.dispatchEvent(new Event('input',{bubbles:true}))});await page.evaluate(()=>document.querySelector('[data-assistant-send]').click());
+  await wait(()=>document.querySelector('[role=status]')?.textContent.includes('AI')||document.querySelector('#assistant-message')?.disabled,[],'calendar-action-sent');
+  await worker('heartbeat');const editJob=(await worker('workspace-claim')).data.job;assert.ok(editJob,'company-ui:calendar-edit-job');
+  const entry=await worker('workspace/'+editJob.id+'/actions',{lease:editJob.lease,name:'get_company_calendar_entry',args:{paymentId:calendarAction.paymentId}});assert.equal(entry.status,200);
+  const dueDate=new Date().toISOString().slice(0,8)+'20';const edit=await worker('workspace/'+editJob.id+'/actions',{lease:editJob.lease,name:'update_company_calendar_entry',slot:1,args:{paymentId:calendarAction.paymentId,expectedUpdatedAt:entry.data.result.entry.updatedAt||'',dueDate}});assert.equal(edit.status,200,'company-ui:actual-calendar-save');assert.equal(edit.data.receipt.state,'done');
+  assert.equal((await worker('workspace/'+editJob.id+'/result',{lease:editJob.lease,proposal:{kind:'unclear',summary:'Synthetic calendar due date saved and verified: '+dueDate,patch:{},quotes:{}}})).status,200);
+  await wait((paymentId,date)=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar')?.payments.find(p=>p.id===paymentId)?.dueDate===date+'T12:00:00.000Z',[calendarAction.paymentId,dueDate],'calendar-updated-from-receipt');
+  assert.ok(await page.$('[data-workspace-action-state="done"]'),'company-ui:visible-calendar-receipt');
+  if(screenshots)await page.screenshot({path:path.join(screenshots,'company-navi-calendar-save.png')});
   await page.evaluate(()=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.push('/'));await wait(()=>location.pathname==='/'&&document.querySelector('[data-assistant-accordion]')?.textContent.includes('PRIVATE_LEGACY_REPLY'),[],'legacy-page');assert.ok(!(await body()).includes('COMPANY_A_CHROME_REPLY'));
   assert.deepEqual(errors,[],'company-ui:console-errors');pass('real installed Chrome: separate company/legacy histories and buffers, delayed GET/POST discarded, accepted pending recovered without duplication, calendar route, native selector reload, mobile/desktop');
  }catch(e){if(page&&process.env.OMF_COMPANY_NAVI_SCREENSHOTS){await fs.mkdir(process.env.OMF_COMPANY_NAVI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.OMF_COMPANY_NAVI_SCREENSHOTS,'failure.png')}).catch(()=>{})}throw e}
