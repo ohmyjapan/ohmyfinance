@@ -247,7 +247,7 @@ try {
     }
     const ext = path.extname(file); const copy = path.join(path.dirname(source), path.basename(file, ext) + '.mutant-' + randomUUID().slice(0, 8) + ext);
     await writeFile(copy, text, { flag: 'wx' });
-    try { const module = await import(pathToFileURL(copy).href); return await fn(module); } finally { await unlink(copy).catch(() => {}); }
+    try { const module = await import(pathToFileURL(copy).href); return await fn(module, copy); } finally { await unlink(copy).catch(() => {}); }
   }
   const UNCHECKED = "async function calendarCompanyMutant(event: any) { const a: any = requireAuth(event); const m = await import('mongoose'); return { auth: a, organizationId: new m.default.Types.ObjectId(String(a.organizationId)) } }";
 
@@ -360,9 +360,11 @@ try {
     return 'A2 sees 1 (+1 posted), B2 sees 1, untagged hidden, 404/403 as planned';
   });
   await leg('D mutants: payments/index.ts without the company filter lists every row; index/[id] routes with the fresh check removed answer a removed member 200; [id].ts without the company scope edits B2\'s row — each DETECTED', async () => {
-    await mutant('server/api/payments/index.ts', [{ marker: 'company-filter' }], async m => {
-      const alt = await mount({ paymentsIndex: m.default }); const r = await callAt(alt, '/api/payments', { token: t2A }); assert.equal(r.status, 200);
-      assert.ok(r.data.length >= 3 && r.data.some(p => p.title === 'Synthetic B2 bill'), 'mutant NOT detected: the filter mutant still scoped');
+    await mutant('server/services/companyFinanceReadService.ts', [{ marker: 'company-filter' }], async (_service, copy) => {
+      await mutant('server/api/payments/index.ts', [{ from: "'../../services/companyFinanceReadService'", to: "'../../services/" + path.basename(copy, '.ts') + "'" }], async m => {
+        const alt = await mount({ paymentsIndex: m.default }); const r = await callAt(alt, '/api/payments', { token: t2A }); assert.equal(r.status, 200);
+        assert.ok(r.data.length >= 3 && r.data.some(p => p.title === 'Synthetic B2 bill'), 'mutant NOT detected: the filter mutant still scoped');
+      });
     });
     await removeMember(A2, user2._id);
     try {
@@ -1362,7 +1364,7 @@ try {
 // ── The parent fixture: pure legs here, harness children for everything that needs tsx or a database. ──────────────────
 export default {
   name: 'calendar-card-bill',
-  covers: ['server/models/Payment.ts', 'server/api/payments/index.ts', 'server/api/payments/[id].ts', 'server/api/dashboard/stats.ts', 'server/api/migrate-payment-dates.ts', 'types/calendar.ts', 'stores/calendar.ts', 'server/models/Finance.ts', 'shared/aplus.mjs', 'shared/billing-mail.mjs', 'collector/mail.mjs', 'collector/index.mjs', 'collector/aplus.mjs', 'server/api/finance/[...path].ts', 'server/services/financeService.ts', 'server/services/financeBillService.ts', 'server/utils/calendarAccess.ts', 'pages/connections.vue'],
+  covers: ['server/services/companyFinanceReadService.ts', 'server/models/Payment.ts', 'server/api/payments/index.ts', 'server/api/payments/[id].ts', 'server/api/dashboard/stats.ts', 'server/api/migrate-payment-dates.ts', 'types/calendar.ts', 'stores/calendar.ts', 'server/models/Finance.ts', 'shared/aplus.mjs', 'shared/billing-mail.mjs', 'collector/mail.mjs', 'collector/index.mjs', 'collector/aplus.mjs', 'server/api/finance/[...path].ts', 'server/services/financeService.ts', 'server/services/financeBillService.ts', 'server/utils/calendarAccess.ts', 'pages/connections.vue'],
   async run() {
     const started = Date.now();
     const legs = [];

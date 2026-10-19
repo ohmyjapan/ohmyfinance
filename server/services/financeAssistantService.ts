@@ -1,3 +1,4 @@
+import { claimCompanyAssistant, isCompanyAssistantJob, finishCompanyAssistant, actionCompanyAssistant } from './financeCompanyAssistantService'
 import {randomUUID} from 'node:crypto'
 import {FinanceAssistant as Conversation} from '../models/FinanceAssistant'
 import {FinanceChatAgent as Agent} from '../models/FinanceChat'
@@ -91,7 +92,7 @@ export async function claimAssistant(agent:any){
  const scope={ownerId:agent.ownerId,agentId:agent._id}
  await Conversation.updateMany({...scope,state:'working',leaseUntil:{$lte:new Date()},attempts:{$gte:2}},{$set:{state:'failed'},$inc:{revision:1},$unset:{lease:'',leaseUntil:''}})
  const lease=randomUUID(),c:any=await Conversation.findOneAndUpdate({...scope,$or:[{state:'queued'},{state:'working',leaseUntil:{$lte:new Date()},attempts:{$lt:2}}]},{$set:{state:'working',lease,leaseUntil:new Date(Date.now()+120000)},$inc:{attempts:1,revision:1}},{new:true}).lean()
- if(!c)return {job:null};const turn=c.turns.find((t:any)=>t.id===c.currentId)
+ if(!c)return claimCompanyAssistant(agent);const turn=c.turns.find((t:any)=>t.id===c.currentId)
  // A reclaim reconciles the previous attempt's claimed operations before the model runs again; the job carries their receipts,
  // the next free slot, the frozen statement selection and the named tools it may call.
  const {receipts,nextSlot}=await reconcileActions('workspace',String(c._id),turn.id)
@@ -100,6 +101,7 @@ export async function claimAssistant(agent:any){
 export async function finishAssistant(agent:any,chatId:string,body:any){
  if(!agent.workspaceEnabled)fail(403,'Workspace conversation access required')
  if(typeof body?.lease!=='string')fail(400,'Missing lease')
+ if(await isCompanyAssistantJob(agent,chatId))return finishCompanyAssistant(agent,chatId,body)
  const filter={_id:id(chatId),ownerId:agent.ownerId,agentId:agent._id,state:'working',lease:body.lease,leaseUntil:{$gt:new Date()}}
  const c:any=await Conversation.findOne(filter).lean();if(!c)fail(409,'Conversation job changed')
  let proposal:any;if(body.failed!==true){try{proposal=validateAssistantReply(body.proposal)}catch{fail(400,'A general conversation cannot edit a purchase')}}
@@ -110,4 +112,4 @@ export async function finishAssistant(agent:any,chatId:string,body:any){
  if(!r.matchedCount)fail(409,'Conversation job changed');return {success:true}
 }
 // A named Navi action on this worker's claimed workspace conversation (lease-bound; see financeActionService).
-export async function actionAssistant(agent:any,chatId:string,body:any){await init();if(!agent.workspaceEnabled)fail(403,'Workspace conversation access required');return runAction(agent,'workspace',chatId,body)}
+export async function actionAssistant(agent:any,chatId:string,body:any){await init();if(!agent.workspaceEnabled)fail(403,'Workspace conversation access required');if(await isCompanyAssistantJob(agent,chatId))return actionCompanyAssistant(agent,chatId,body);return runAction(agent,'workspace',chatId,body)}

@@ -1,3 +1,4 @@
+import { getCompanyInvoice } from '../../services/companyFinanceReadService'
 // server/api/invoices/[id].ts
 import { defineEventHandler, readBody, createError, setHeader } from 'h3'
 import { ensureConnection } from '../../config/database'
@@ -17,11 +18,7 @@ export default defineEventHandler(async (event) => {
 
   if (method === 'GET') {
     const { organizationId } = await calendarCompany(event)
-    const invoice = await Invoice.findOne({ _id: id, organizationId }).lean()
-    if (!invoice) {
-      throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
-    }
-    return { invoice: { ...invoice, id: invoice._id } }
+    return getCompanyInvoice(organizationId, id)
   }
 
   if (method === 'PUT') {

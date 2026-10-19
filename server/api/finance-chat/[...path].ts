@@ -1,3 +1,5 @@
+import { calendarCompany } from '../../utils/calendarAccess'
+import { getCompanyAssistant, sendCompanyAssistant, retryCompanyAssistant } from '../../services/financeCompanyAssistantService'
 import {getAssistant,sendAssistant,retryAssistant,claimAssistant,finishAssistant,actionAssistant} from '../../services/financeAssistantService'
 import { defineEventHandler, setHeader } from 'h3'
 import { financeUser,fail,id } from '../../services/financeService'
@@ -23,6 +25,12 @@ export default defineEventHandler(async event=>{
    fail(404,'Teaching worker endpoint not found')
   }
   const ownerId=await financeUser(event)
+  if(parts[0]==='company-workspace'){
+   const {organizationId}=await calendarCompany(event)
+   if(parts.length===1){if(event.method==='GET')return await getCompanyAssistant(ownerId,organizationId);if(event.method==='POST')return await sendCompanyAssistant(ownerId,organizationId,await body())}
+   if(parts.length===2&&parts[1]==='retry'&&event.method==='POST')return await retryCompanyAssistant(ownerId,organizationId,await body())
+   fail(404,'Company conversation endpoint not found')
+  }
   if(parts[0]==='workspace'&&parts.length===1){if(event.method==='GET')return await getAssistant(ownerId);if(event.method==='POST')return await sendAssistant(ownerId,await body())}
   if(parts[0]==='workspace'&&parts.length===2&&parts[1]==='retry'&&event.method==='POST')return await retryAssistant(ownerId,await body())
   if(parts[0]==='agents'&&parts.length===1&&event.method==='POST')return await createChatAgent(ownerId,await body())

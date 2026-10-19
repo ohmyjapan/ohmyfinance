@@ -1,3 +1,4 @@
+import { listCompanyInvoices } from '../../services/companyFinanceReadService'
 // server/api/invoices/index.ts
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
@@ -13,32 +14,7 @@ export default defineEventHandler(async (event) => {
 
   if (method === 'GET') {
     const { organizationId } = await calendarCompany(event)
-    const query = getQuery(event)
-    const { status, page = '1', limit = '20' } = query
-
-    const filter: any = { organizationId }
-    if (status) filter.status = status
-
-    const skip = (parseInt(page as string) - 1) * parseInt(limit as string)
-
-    const [invoices, total] = await Promise.all([
-      Invoice.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit as string))
-        .lean(),
-      Invoice.countDocuments(filter)
-    ])
-
-    return {
-      invoices: invoices.map((inv: any) => ({ ...inv, id: inv._id })),
-      pagination: {
-        page: parseInt(page as string),
-        limit: parseInt(limit as string),
-        total,
-        totalPages: Math.ceil(total / parseInt(limit as string))
-      }
-    }
+    return listCompanyInvoices(organizationId, getQuery(event))
   }
 
   if (method === 'POST') {

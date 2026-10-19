@@ -1,3 +1,4 @@
+import { getCompanyCalendarEntry } from '../../services/companyFinanceReadService'
 // server/api/payments/[id].ts
 import { defineEventHandler, readBody, createError, getRouterParam } from 'h3'
 import { ensureConnection } from '../../config/database'
@@ -45,14 +46,7 @@ export default defineEventHandler(async (event) => {
   // GET - Get single payment
   if (method === 'GET') {
     try {
-      const payment = await Payment.findOne(scope)
-
-      if (!payment) {
-        throw createError({
-          statusCode: 404,
-          statusMessage: 'Payment not found'
-        })
-      }
+      const payment = await getCompanyCalendarEntry(organizationId, id)
 
       return payment
     } catch (error: any) {

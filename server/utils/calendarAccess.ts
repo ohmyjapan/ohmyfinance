@@ -8,9 +8,12 @@ import { requireOrganization } from '../middleware/auth'
 
 export async function calendarCompany(event: H3Event) {
   const auth = requireOrganization(event)
-  const organizationId = String(auth.organizationId)
-  let member = mongoose.isValidObjectId(organizationId) && mongoose.isValidObjectId(auth.userId)
-  if (member) member = !!await Organization.exists({ _id: organizationId, 'members.userId': auth.userId, isActive: true }) // guard:fresh-membership
+  return { auth, organizationId: await companyMembership(auth.userId, String(auth.organizationId)) }
+}
+// The same fresh boundary also accepts the actor/company frozen by a server-owned Navi job.
+export async function companyMembership(userId: string, organizationId: string) {
+  let member = mongoose.isValidObjectId(organizationId) && mongoose.isValidObjectId(userId)
+  if (member) member = !!await Organization.exists({ _id: organizationId, 'members.userId': userId, isActive: true }) // guard:fresh-membership
   if (!member) throw createError({ statusCode: 403, statusMessage: 'Access denied to this organization' })
-  return { auth, organizationId: new mongoose.Types.ObjectId(organizationId) }
+  return new mongoose.Types.ObjectId(organizationId)
 }

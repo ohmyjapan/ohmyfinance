@@ -1,0 +1,29 @@
+import{execFile}from'node:child_process';
+import path from'node:path';
+import{fileURLToPath}from'node:url';
+import{cp,mkdir,readFile,writeFile,rm}from'node:fs/promises';
+import{randomUUID}from'node:crypto';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
+export const timeoutMs=900000;
+export default{name:'omf-company-assistant',covers:['server/utils/calendarAccess.ts','server/api/finance-chat/[...path].ts','server/services/financeAssistantService.ts','server/services/financeChatService.ts','server/api/invoices/index.ts','server/api/invoices/[id].ts','server/api/payments/index.ts','server/api/payments/[id].ts','server/models/FinanceCompanyAssistant.ts','server/services/companyFinanceReadService.ts','server/services/financeCompanyAssistantService.ts','scripts/finance-company-assistant-integration.cjs','scripts/zoomer-fixtures/omf-company-assistant.mjs'],async run(){
+ const run=app=>new Promise(resolve=>execFile(process.execPath,[path.join(root,'scripts/finance-company-assistant-integration.cjs')],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:'',MONGODB_URI:'',NUXT_MONGO_URI:'',OMF_COMPANY_NAVI_APP_ROOT:app},timeout:240000,maxBuffer:3*1024*1024},(e,stdout,stderr)=>resolve({code:e?e.code??1:0,text:stdout+stderr})));
+ const result=await run(root),controls=[],mutants=[];let pass=result.code===0&&result.text.includes('5 Company Navi groups passed');
+ if(pass){const base=path.resolve(root,'.zoomer','company-navi-mutants'),directory=path.resolve(base,randomUUID());if(!directory.startsWith(base+path.sep))throw Error('Unsafe owned test directory');await mkdir(directory,{recursive:true});
+  try{
+   await cp(path.join(root,'.output'),path.join(directory,'.output'),{recursive:true,dereference:true});const files={core:path.join(directory,'.output/server/chunks/_/nitro.mjs'),jobs:path.join(directory,'.output/server/chunks/_/financeActionService.mjs'),reads:path.join(directory,'.output/server/chunks/_/companyFinanceReadService.mjs')},original=Object.fromEntries(await Promise.all(Object.entries(files).map(async([key,file])=>[key,await readFile(file,'utf8')])));
+   const replace=(s,a,b)=>{if(s.split(a).length!==2)throw Error('Expected one actual compiled anchor '+a);return s.replace(a,b)};
+   const section=(s,a,b,fn)=>{const start=s.indexOf(a),end=s.indexOf(b,start+a.length);if(start<0||end<0)throw Error('Missing compiled function '+a);return s.slice(0,start)+fn(s.slice(start,end))+s.slice(end)};
+   const reset=()=>Promise.all(Object.entries(files).map(([key,file])=>writeFile(file,original[key])));
+   const copied=await run(directory),copiedPass=copied.code===0&&copied.text.includes('5 Company Navi groups passed');controls.push({name:'unchanged-packaged-copy',pass:copiedPass,...copied});if(!copiedPass)throw Error('Packaged positive must pass before defects');
+   const test=async(name,key,text,assertion)=>{try{await writeFile(files[key],text);const r=await run(directory),detected=r.code!==0&&r.text.includes('AssertionError')&&r.text.includes(assertion);mutants.push({name,assertion,detected,...r});if(!detected)pass=false}finally{await reset()}};
+   await test('trust-stale-company-membership','core',replace(original.core,'if (member) member = !!await Organization.exists({ _id: organizationId, "members.userId": userId, isActive: true });','if (member) member = true;'),'company-navi:live-membership');
+   await test('share-company-history','jobs',section(original.jobs,'async function getCompanyAssistant(', '\nfunction selection(',s=>replace(s,'FinanceCompanyAssistant.findOne(identity$1(ownerId, organizationId))','FinanceCompanyAssistant.findOne({ ownerId })')),'company-navi:separate-history');
+   await test('trust-model-body-company','jobs',replace(original.jobs,'const c = await working(agent, chatId, body?.lease), organizationId = c.organizationId;','const c = await working(agent, chatId, body?.lease), organizationId = new c.organizationId.constructor(body.organizationId);'),'company-navi:invoice-list-company');
+   await test('unscoped-invoice-read','reads',replace(original.reads,'const filter = { organizationId };','const filter = {};'),'company-navi:invoice-list-company');
+   await test('show-suppressed-bills','reads',replace(original.reads,'const filter = { suppressedAt: { $exists: false } };','const filter = {};'),'company-navi:calendar-suppression');
+   await test('accept-mutated-turn-scope','jobs',section(original.jobs,'async function assertCompanyJob(', '\nasync function retryCompanyAssistant(',s=>replace(s,'[turn.scope, c.context?.scope].some','[c.context?.scope].some')),'company-navi:stored-scope-integrity');
+   await test('finish-without-live-membership','jobs',section(original.jobs,'async function finishCompanyAssistant(', '\nconst objectId',s=>replace(s,'const c = await working(agent, chatId, body?.lease);','const c = await FinanceCompanyAssistant.findOne(jobFilter(agent, chatId, body.lease)).lean();')),'company-navi:revoked-result');
+  }catch(e){pass=false;mutants.push({setupError:String(e.message),detected:false})}finally{await rm(directory,{recursive:true,force:true})}
+ }
+ return{pass:pass&&controls.length===1&&mutants.length===7,databaseCoverage:{executed:result.code===0,ownedProcess:result.code===0},message:JSON.stringify({result,controls,mutants,limits:'Five native groups, one unchanged packaged control and seven meaningful defects; no model/provider/browser/production calls. UI/posting, historical/production shared-guard reliability and full operator/key/runtime privacy remain open.'})};
+}};

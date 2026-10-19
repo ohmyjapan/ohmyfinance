@@ -1,3 +1,4 @@
+import { listCompanyCalendarEntries } from '../../services/companyFinanceReadService'
 // server/api/payments/index.ts
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
@@ -41,35 +42,8 @@ export default defineEventHandler(async (event) => {
   if (method === 'GET') {
     const query = getQuery(event)
 
-    // Build filter
-    const filter: Record<string, any> = { suppressedAt: { $exists: false } }
-    filter.organizationId = organizationId // guard:company-filter
-
-    if (query.type) {
-      filter.type = query.type
-    }
-
-    if (query.status) {
-      filter.status = query.status
-    }
-
-    if (query.category) {
-      filter.category = query.category
-    }
-
-    // Date range filter
-    if (query.startDate || query.endDate) {
-      filter.dueDate = {}
-      if (query.startDate) {
-        filter.dueDate.$gte = parseDateToNoonUTC(query.startDate as string)
-      }
-      if (query.endDate) {
-        filter.dueDate.$lte = parseDateToNoonUTC(query.endDate as string)
-      }
-    }
-
     try {
-      const payments = await Payment.find(filter).sort({ dueDate: 1 })
+      const payments = await listCompanyCalendarEntries(organizationId, query)
       return payments
     } catch (error: any) {
       throw createError({

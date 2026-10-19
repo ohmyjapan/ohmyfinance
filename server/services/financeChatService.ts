@@ -1,3 +1,4 @@
+import { renewCompanyAssistant } from './financeCompanyAssistantService'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import type { Model } from 'mongoose'
 import { getHeader, type H3Event } from 'h3'
@@ -78,8 +79,8 @@ export async function chatHeartbeat(agent:any,body:any={}){
   const now=new Date(),leaseUntil=new Date(now.getTime()+120000),model:Model<any>=job.mode==='purchase'?Chat:Conversation
   const filter={_id:id(job.id),ownerId:agent.ownerId,agentId:agent._id,state:'working',lease:job.lease,leaseUntil:{$gt:now},...(job.mode==='purchase'?{accountId:{$in:agent.accountIds}}:{})}
   const renewed=await model.updateOne(filter,{$max:{leaseUntil}})
-  if(!renewed.matchedCount)fail(409,'Conversation job changed')
-  await Operation.updateMany({ownerId:agent.ownerId,agentId:agent._id,conversationKind:job.mode,conversationId:id(job.id),lease:job.lease,state:'claimed'},{$max:{leaseUntil}})
+  if(!renewed.matchedCount){if(job.mode!=='workspace')fail(409,'Conversation job changed');await renewCompanyAssistant(agent,job)}
+  else await Operation.updateMany({ownerId:agent.ownerId,agentId:agent._id,conversationKind:job.mode,conversationId:id(job.id),lease:job.lease,state:'claimed'},{$max:{leaseUntil}})
  }
  await Agent.updateOne({_id:agent._id,ownerId:agent.ownerId,enabled:true,revokedAt:null},{$set:{chatLastSeenAt:new Date()}})
 }

@@ -10,7 +10,7 @@ const run = app => new Promise(resolve => execFile(process.execPath, [path.join(
  (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, text: stdout + stderr })));
 export default {
  name: 'omf-invoice-access',
- covers: ['server/api/invoices/index.ts', 'server/api/invoices/[id].ts', 'server/api/invoices/[id]/pdf.ts', 'scripts/finance-invoice-access-integration.cjs', 'scripts/zoomer-fixtures/omf-invoice-access.mjs'],
+ covers: ['server/services/companyFinanceReadService.ts', 'server/api/invoices/index.ts', 'server/api/invoices/[id].ts', 'server/api/invoices/[id]/pdf.ts', 'scripts/finance-invoice-access-integration.cjs', 'scripts/zoomer-fixtures/omf-invoice-access.mjs'],
  async run() {
   const app = process.env.OMF_INVOICE_APP_ROOT || root, result = await run(app);
   const groups = Number(result.text.match(/(\d+) Invoice access HTTP groups passed/)?.[1] || 0), mutants = [];
@@ -24,17 +24,17 @@ export default {
     // Nitro numbers index chunks; discover the one actual invoice list rather than pinning index11.
     const api = path.join(directory, '.output/server/chunks/routes/api'), lists = [];
     for (const name of await readdir(api, { recursive: true })) if (name.endsWith('.mjs')) {
-     if ((await readFile(path.join(api, name), 'utf8')).includes('Invoice.countDocuments(filter)')) lists.push(name);
+     if ((await readFile(path.join(api, name), 'utf8')).includes('return listCompanyInvoices(organizationId, getQuery(event))')) lists.push(name);
     }
     if (lists.length !== 1) throw Error('Expected exactly one built invoice list route');
-    const routes = { list: lists[0], detail: 'invoices/_id_.mjs', preview: 'invoices/_id/pdf.mjs' };
+    const routes = { list: lists[0], detail: 'invoices/_id_.mjs', preview: 'invoices/_id/pdf.mjs', reads: '../../_/companyFinanceReadService.mjs' };
     const specs = [
-     ['unscoped-list', 'list', 'const filter = { organizationId };', 'const filter = {};', 'invoice:list-scope'],
-     ['unscoped-detail', 'detail', 'Invoice.findOne({ _id: id, organizationId })', 'Invoice.findById(id)', 'invoice:detail-scope'],
+     ['unscoped-list', 'reads', 'const filter = { organizationId };', 'const filter = {};', 'invoice:list-scope'],
+     ['unscoped-detail', 'reads', 'Invoice.findOne({ _id: invoiceId, organizationId })', 'Invoice.findById(invoiceId)', 'invoice:detail-scope'],
      ['unscoped-preview', 'preview', 'Invoice.findOne({ _id: id, organizationId })', 'Invoice.findById(id)', 'invoice:preview-scope'],
      // Keep missing-company rejection intact: the deliberate defect trusts an existing
      // token's selected company but fails to recheck its current membership.
-     ...Object.keys(routes).map(route => ['trust-token-' + route, route, 'await calendarCompany(event)',
+     ...['list', 'detail', 'preview'].map(route => ['trust-token-' + route, route, 'await calendarCompany(event)',
       '(event.context.auth.organizationId ? { organizationId: event.context.auth.organizationId } : await calendarCompany(event))', 'invoice:current-membership'])
     ];
     for (const [name, route, anchor, replacement, assertion] of specs) {
