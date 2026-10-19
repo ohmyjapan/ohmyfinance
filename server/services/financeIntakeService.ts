@@ -45,17 +45,48 @@ function filePath(ownerId: string, hash: string) {
 }
 function checkName(name: any) { if (typeof name !== 'string' || !name.trim() || name.length > 200 || /[\x00-\x1f\\/]/.test(name)) fail(400, 'ファイル名を確認してください。'); return name.trim() }
 function checkBytes(bytes: Buffer, mimeType: string) { if (!bytes.length || bytes.length > MAX_BYTES || !SIGNATURES[mimeType]?.(bytes)) fail(415, TYPE_MESSAGE) }
-export function readWorkbook(bytes: Buffer): XLSX.WorkBook {
+// F1 (plan omf-monthly-reconciliation-20261020): `{ intake: true }` is used only by the intake sheet reader (sheetOf below). Without
+// options — the bank statement upload, preview, import and collector capture — both functions behave exactly as released.
+export function readWorkbook(bytes: Buffer, options: { intake?: boolean } = {}): XLSX.WorkBook {
   try {
-    if (isXlsx(bytes) || isXls(bytes)) return XLSX.read(bytes, { type: 'buffer' })
+    if (isXlsx(bytes) || isXls(bytes)) return XLSX.read(bytes, options.intake === true ? { type: 'buffer', cellNF: true } : { type: 'buffer' })
     const decoded = decodeText(bytes); if (decoded === null) fail(415, TYPE_MESSAGE)
     return XLSX.read(decoded.replace(/^﻿/, ''), { type: 'string', raw: true })
   } catch (error: any) { if (error?.statusCode) throw error; return fail(415, 'Excel・CSVとして読み取れません。') }
 }
-export function sheetRows(workbook: XLSX.WorkBook, sheet: string): string[][] {
+export interface IntakeCellNote { row: number; column: number; kind: 'number' | 'date' | 'imprecise'; shown: string }
+export function sheetRows(workbook: XLSX.WorkBook, sheet: string, options: { intake?: boolean; notes?: IntakeCellNote[] } = {}): string[][] {
   const rows = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[sheet], { header: 1, raw: false, defval: '', blankrows: true })
   if (rows.length > MAX_ROWS + 1) fail(400, '行数は5000行までです。ファイルを分割してください。')
-  return rows.map(row => (Array.isArray(row) ? row : []).map(text))
+  const typed = options.intake === true
+  if (!typed) return rows.map(row => (Array.isArray(row) ? row : []).map(text))
+  return intakeRows(workbook, sheet, rows, options.notes)
+}
+// Intake reading of typed cells, at the same positions as the display rows above (rows[i][j] is the cell at the sheet range's
+// start + i / + j, blank rows kept). Text cells: unchanged. Date-formatted numbers: ISO yyyy-mm-dd (with HH:MM[:SS] when a time is
+// set), from the serial and the workbook's 1900/1904 date system. Integer numbers shown as General or scientific: the actual value
+// when it has at most 15 digits. Other formats (zero padding such as 00000, separators): the formatted text, unchanged. A number of
+// 16 or more digits keeps its display and is noted: Excel stores 15 significant digits, so its last digits are not in the file.
+const isDateFormat = (format: string) => !!XLSX.SSF.is_date(format) && /[yd]/i.test(format.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '').replace(/\\./g, ''))
+function isoDate(serial: number, date1904: boolean): string | null {
+  if (serial < 1) return null
+  const d = XLSX.SSF.parse_date_code(serial, { date1904 }), pad = (n: number) => String(n).padStart(2, '0')
+  if (!d || d.y < 1900 || d.y > 9999) return null
+  const day = d.y + '-' + pad(d.m) + '-' + pad(d.d)
+  if (!Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) return null
+  return d.H || d.M || d.S ? day + ' ' + pad(d.H) + ':' + pad(d.M) + (d.S ? ':' + pad(d.S) : '') : day
+}
+function intakeRows(workbook: XLSX.WorkBook, sheet: string, rows: any[][], notes?: IntakeCellNote[]): string[][] {
+  const ws: any = workbook.Sheets[sheet], range = XLSX.utils.decode_range(ws?.['!ref'] || 'A1'), date1904 = !!workbook.Workbook?.WBProps?.date1904
+  return rows.map((row, i) => (Array.isArray(row) ? row : []).map((value, j) => {
+    const shown = text(value), cell = ws?.[XLSX.utils.encode_cell({ r: range.s.r + i, c: range.s.c + j })]
+    if (!cell || cell.t !== 'n' || typeof cell.v !== 'number' || !Number.isFinite(cell.v)) return shown
+    const format = typeof cell.z === 'string' ? cell.z : 'General', note = (kind: IntakeCellNote['kind']) => notes?.push({ row: i + 1, column: j, kind, shown })
+    if (isDateFormat(format)) { const iso = isoDate(cell.v, date1904); if (iso) { note('date'); return iso } return shown }
+    if (Math.abs(cell.v) >= 1e15) { note('imprecise'); return shown }
+    note('number')
+    return Number.isInteger(cell.v) && (format === 'General' || /E[+-]/i.test(format) || /E[+-]\d/i.test(shown)) ? String(cell.v) : shown
+  }))
 }
 const documentView = (d: any) => ({ id: String(d._id), name: d.name, mimeType: d.mimeType, size: d.size, hash: d.hash, kind: d.kind, sheetNames: d.sheetNames || [], recordId: d.recordId ? String(d.recordId) : null, createdAt: d.createdAt, url: '/api/finance-intake/documents/' + d._id + '/file' })
 // Same bytes for the same owner = the same document and one file on disk (acceptImport's wx temp file + hard link).
@@ -176,18 +207,23 @@ export async function uploadFile(ownerId: string, name: any, bytes: Buffer, mime
 }
 async function sheetOf(ownerId: string, documentId: string, sheet: any, headerRow: any) {
   const doc = await ownedDocument(ownerId, documentId)
-  const workbook = readWorkbook(await readFile(filePath(ownerId, doc.hash)))
+  const workbook = readWorkbook(await readFile(filePath(ownerId, doc.hash)), { intake: true })
   const name = sheet ? String(sheet) : workbook.SheetNames[0]
   if (!workbook.SheetNames.includes(name)) fail(400, 'シートが見つかりません。')
   const header = headerRow === undefined || headerRow === '' ? 1 : Number(headerRow)
   if (!Number.isSafeInteger(header) || header < 1 || header > 100) fail(400, '見出し行を確認してください。')
-  const rows = sheetRows(workbook, name), headers = rows[header - 1] || [], data = rows.slice(header)
-  return { doc, workbook, sheet: name, headerRow: header, headers, data }
+  const notes: IntakeCellNote[] = [], rows = sheetRows(workbook, name, { intake: true, notes }), headers = rows[header - 1] || [], data = rows.slice(header)
+  // F1: what the owner must know about the data rows' cell types (non-blocking): numeric and date columns, and the numbers whose
+  // digits Excel did not keep (first 20, with the total).
+  const below = notes.filter(n => n.row > header), columns = (kinds: string[]) => [...new Set(below.filter(n => kinds.includes(n.kind)).map(n => n.column))].sort((a, b) => a - b)
+  const imprecise = below.filter(n => n.kind === 'imprecise')
+  const cellNotes = { numericColumns: columns(['number', 'imprecise']), dateColumns: columns(['date']), imprecise: imprecise.slice(0, 20).map(({ row, column, shown }) => ({ row, column, shown })), impreciseCount: imprecise.length }
+  return { doc, workbook, sheet: name, headerRow: header, headers, data, cellNotes }
 }
 export async function readSheet(ownerId: string, documentId: string, sheet: any, headerRow: any) {
   await init(); const s = await sheetOf(ownerId, documentId, sheet, headerRow)
   const filled = s.data.filter(r => r.some(Boolean))
-  return { document: documentView(s.doc), sheet: s.sheet, headerRow: s.headerRow, headers: s.headers, rows: filled.slice(0, 20), rowCount: filled.length, mapping: guessMapping(s.headers) }
+  return { document: documentView(s.doc), sheet: s.sheet, headerRow: s.headerRow, headers: s.headers, rows: filled.slice(0, 20), rowCount: filled.length, mapping: guessMapping(s.headers), cellNotes: s.cellNotes }
 }
 function mappingInput(input: any, headers: string[]): IntakeMapping {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, '列の割り当てを確認してください。')
@@ -222,12 +258,17 @@ async function planFor(ownerId: string, documentId: string, body: any) {
   const stored: any[] = await IntakeRecord.find({ ownerId }).limit(20001).lean()
   if (stored.length > 20000) fail(409, '受付が多すぎます。先にアーカイブしてください。')
   const plan = planImport(stored.map(shape), incoming, { id: () => new mongoose.Types.ObjectId().toHexString() })
-  return { ...s, mapping, defaults, extras, plan }
+  // F1: non-blocking warnings — identifier fields mapped to numeric cells (zeros and digits beyond 15 are not in the file), and
+  // numbers whose display is all the file keeps. Nothing is guessed or rejected.
+  const warnings: any[] = []
+  for (const field of ['orderId', 'itemId', 'externalOrderId', 'invoiceNumber', 'account'] as const) if (mapping[field] !== '' && s.cellNotes.numericColumns.includes(Number(mapping[field]))) warnings.push({ kind: 'numeric-id', field, column: Number(mapping[field]) })
+  for (const column of [...new Set(s.cellNotes.imprecise.map(n => n.column))]) warnings.push({ kind: 'imprecise-number', column, rows: s.cellNotes.imprecise.filter(n => n.column === column).map(n => n.row).slice(0, 5), shown: s.cellNotes.imprecise.find(n => n.column === column)?.shown || '' })
+  return { ...s, mapping, defaults, extras, plan, warnings }
 }
-const planCounts = (plan: any) => ({ new: plan.new, update: plan.update, unchanged: plan.unchanged, ambiguous: plan.ambiguous })
+const planCounts = (plan: any) => ({ new: plan.new, update: plan.update, unchanged: plan.unchanged, ambiguous: plan.ambiguous, identityChanged: plan.identityChanged || 0, provenanceConflicts: plan.provenanceConflicts || 0 })
 export async function previewImport(ownerId: string, documentId: string, body: any) {
   await init(); const p = await planFor(ownerId, documentId, body)
-  return { document: documentView(p.doc), sheet: p.sheet, headerRow: p.headerRow, headers: p.headers, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts: planCounts(p.plan), rows: p.plan.rows.map(r => ({ row: r.row, operation: r.operation, ambiguous: r.ambiguous, identityReview: r.record.identityReview, key: r.record.key, values: r.record.values, extra: r.record.extra || {}, changes: r.changes })) }
+  return { document: documentView(p.doc), sheet: p.sheet, headerRow: p.headerRow, headers: p.headers, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts: planCounts(p.plan), warnings: p.warnings, cellNotes: p.cellNotes, rows: p.plan.rows.map(r => ({ row: r.row, operation: r.operation, ambiguous: r.ambiguous, identityReview: r.record.identityReview, key: r.record.key, values: r.record.values, extra: r.record.extra || {}, changes: r.changes, identityChanged: r.identityChanged || null, provenanceConflict: r.provenanceConflict || [] })) }
 }
 // Inserts by the unique (ownerId, key) index or updates with the revision the plan read; a row another tab changed meanwhile
 // is a conflict (left alone; the next run shows it as unchanged or plans it again). No lease, no hold.
@@ -241,8 +282,12 @@ export async function applyImport(ownerId: string, documentId: string, body: any
       try { await IntakeRecord.create({ _id, ownerId, key: r.key, values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview, archived: false }); counts.new++; recordIds.push(_id) }
       catch (error: any) { if (error?.code !== 11000) throw error; counts.conflicts++ }
     } else if (row.operation === 'update') {
-      const result = await IntakeRecord.updateOne({ _id, ownerId, revision: r.revision - 1 }, { $set: { values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview } })
-      if (result.matchedCount) { counts.update++; recordIds.push(_id) } else counts.conflicts++
+      // F1: `key` is written too — unchanged for an ordinary update, the corrected identity for a same-file row rebind. A key another
+      // record took meanwhile (unique index) is a conflict like a revision change: left alone and planned again on the next run.
+      let result: any = null
+      try { result = await IntakeRecord.updateOne({ _id, ownerId, revision: r.revision - 1 }, { $set: { key: r.key, values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview } }) }
+      catch (error: any) { if (error?.code !== 11000) throw error }
+      if (result?.matchedCount) { counts.update++; recordIds.push(_id) } else counts.conflicts++
     } else { counts.unchanged++; recordIds.push(_id) }
   }
   const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts, recordIds })

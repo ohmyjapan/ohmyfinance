@@ -135,3 +135,63 @@ test('intake research tools send progress to the intake route with the lease', a
   assert.equal(calls[0].options.method,'POST');assert.equal(calls[0].options.headers.Authorization,'Bearer fictional-worker-token');
   assert.deepEqual(JSON.parse(calls[0].options.body),{stage:'document',lease:'fictional-lease'});
 });
+
+// Plan omf-monthly-reconciliation-20261020 F1: purchase-date normalization and same-file provenance reimport.
+test('F1 unambiguous year-first purchase dates with a trailing time normalize; ambiguous, zoned or invalid input is kept', () => {
+  const d = v => normalize({ purchaseDate: v }).purchaseDate;
+  assert.equal(d('2026/10/5 12:00'), '2026-10-05', 'monthly:f1-unit-datetime-slash');
+  assert.equal(d('2026/10/05 09:30:15'), '2026-10-05', 'monthly:f1-unit-datetime-seconds');
+  assert.equal(d('2026-10-05T12:00:00'), '2026-10-05', 'monthly:f1-unit-iso-datetime');
+  assert.equal(d('2026-10-5'), '2026-10-05', 'monthly:f1-unit-iso-single-digit');
+  assert.equal(d('2026-10-05 12:00'), '2026-10-05', 'monthly:f1-unit-iso-space-time');
+  for (const [input, out] of [['2026-10-05', '2026-10-05'], ['2026年10月3日', '2026-10-03'], ['2026.1.2', '2026-01-02'], ['2026/10/5', '2026-10-05']]) assert.equal(d(input), out, 'monthly:f1-unit-existing ' + input);
+  for (const kept of ['10/5/26', '5/10/2026', '2026-10-05T03:00:00Z', '2026-10-05T12:00:00+09:00', '2026/02/30', '2026/10/5 25:00', '令和8年10月5日', '']) assert.equal(d(kept), kept, 'monthly:f1-unit-kept ' + kept);
+  const ids = normalize({ orderId: '1.23457E+11', itemId: '00123', externalOrderId: '000777', amount: '1.5E+3' });
+  assert.deepEqual([ids.orderId, ids.itemId, ids.externalOrderId], ['1.23457E+11', '00123', '000777'], 'monthly:f1-unit-identifiers-not-guessed');
+});
+test('F1 a same-file reimport whose corrected reading changes the ID updates the one row it came from', () => {
+  const legacyProof = { hash: 'f'.repeat(64), fileName: 'legacy.xlsx', documentId: 'doc', sheet: 'Sheet1', row: 2, raw: ['1.23457E+11', 'Legacy row', '1500'] };
+  const values = id => ({ service: 'OWN', account: 'DEMO', orderId: id, description: 'Legacy row', amount: '1500' });
+  const legacy = applyPlan([], planImport([], [{ values: normalize(values('1.23457E+11')), provenance: legacyProof }], { id: () => 'legacy-id' }));
+  const reread = { ...legacyProof, raw: ['123456789012', 'Legacy row', '1500'] };
+  const corrected = planImport(legacy, [{ values: normalize(values('123456789012')), provenance: { ...legacyProof, raw: ['123456789012', 'Legacy row', '1500'] } }], { id: () => 'new-id' });
+  assert.deepEqual([corrected.new, corrected.update], [0, 1], 'monthly:f1-unit-rebind-update');
+  const row = corrected.rows[0];
+  assert.equal(row.record.id, 'legacy-id', 'monthly:f1-unit-rebind-same-id');
+  assert.equal(row.record.values.orderId, '123456789012');
+  assert.equal(row.record.key, JSON.stringify(['OWN', 'DEMO', '123456789012', '']), 'monthly:f1-unit-rebind-key');
+  assert.deepEqual(row.identityChanged, { before: legacy[0].key, after: row.record.key, by: 'file-row' }, 'monthly:f1-unit-identity-shown');
+  assert.equal(row.record.provenance.length, 1, 'monthly:f1-unit-provenance-not-duplicated');
+  assert.deepEqual(row.record.history.at(-1).changes.find(c => c.field === 'orderId'), { field: 'orderId', before: '1.23457E+11', after: '123456789012' }, 'monthly:f1-unit-history-change');
+  assert.equal(row.record.revision, legacy[0].revision + 1, 'monthly:f1-unit-revision');
+  assert.equal(applyPlan(legacy, corrected).length, 1, 'monthly:f1-unit-no-duplicate');
+  assert.equal(legacy[0].values.orderId, '1.23457E+11', 'the stored record is not mutated by planning');
+  // A different file never rebinds; a held key wins over the file row and the collision stays visible; two rows sharing one file row stay apart.
+  assert.equal(planImport(legacy, [{ values: normalize(values('123456789012')), provenance: { ...legacyProof, hash: 'e'.repeat(64) } }]).new, 1, 'monthly:f1-unit-other-file-new');
+  const held = applyPlan(legacy, planImport(legacy, [{ values: normalize(values('123456789012')) }], { id: () => 'manual-id' }));
+  const collision = planImport(held, [{ values: normalize(values('123456789012')), provenance: reread }]);
+  assert.equal(collision.rows[0].record.id, 'manual-id', 'monthly:f1-unit-collision-key-wins');
+  assert.deepEqual(collision.rows[0].provenanceConflict, ['legacy-id'], 'monthly:f1-unit-collision-visible');
+  assert.equal(collision.rows[0].record.identityReview, true, 'monthly:f1-unit-collision-review');
+  assert.equal(applyPlan(held, collision).find(r => r.id === 'legacy-id').values.orderId, '1.23457E+11', 'monthly:f1-unit-collision-no-merge');
+  const twice = [...legacy, { ...structuredClone(legacy[0]), id: 'twin-id', key: JSON.stringify(['OWN', 'DEMO', 'other', '']) }];
+  const ambiguous = planImport(twice, [{ values: normalize(values('123456789012')), provenance: reread }], { id: () => 'fresh-id' });
+  assert.deepEqual([ambiguous.new, ambiguous.rows[0].record.id, ambiguous.rows[0].record.identityReview], [1, 'fresh-id', true], 'monthly:f1-unit-ambiguous-provenance-new');
+  assert.deepEqual([...ambiguous.rows[0].provenanceConflict].sort(), ['legacy-id', 'twin-id'], 'monthly:f1-unit-ambiguous-visible');
+  const archived = planImport([{ ...legacy[0], archived: true }], [{ values: normalize(values('123456789012')), provenance: reread }], { id: () => 'after-archive' });
+  // A deliberate second import of the same file under another default is not a re-reading: new records, nothing flagged (as released).
+  const second = planImport(legacy, [{ values: normalize({ ...values('1.23457E+11'), service: 'UI-TEST' }), provenance: legacyProof }], { id: () => 'second-id' });
+  assert.deepEqual([second.new, second.rows[0].record.id, second.rows[0].record.identityReview, second.rows[0].provenanceConflict ?? null, second.rows[0].identityChanged ?? null], [1, 'second-id', false, null, null], 'monthly:f1-unit-same-reading-other-default-new');
+  const sameReading = planImport(legacy, [{ values: normalize(values('9999')), provenance: legacyProof }], { id: () => 'remapped-id' });
+  assert.deepEqual([sameReading.new, sameReading.rows[0].identityChanged ?? null], [1, null], 'monthly:f1-unit-same-reading-remap-new');
+  assert.equal(archived.rows[0].record.id, 'after-archive', 'monthly:f1-unit-archived-not-rebound');
+  // Text IDs with zero prefixes still match by key exactly, without the file-row fallback.
+  const text = applyPlan([], planImport([], [{ values: normalize(values('00123')), provenance: legacyProof }], { id: () => 'text-id' }));
+  const again = planImport(text, [{ values: normalize(values('00123')), provenance: legacyProof }]);
+  assert.deepEqual([again.unchanged, again.rows[0].record.id, again.rows[0].identityChanged ?? null], [1, 'text-id', null], 'monthly:f1-unit-text-id-exact');
+});
+test('F1 the importer template compiles', async () => {
+  const { createRequire } = await import('node:module'), req = createRequire(import.meta.url), { parse, compileTemplate } = req('@vue/compiler-sfc');
+  const name = 'components/intake/IntakeImporter.vue', source = await readFile(new URL('../' + name, import.meta.url), 'utf8'), p = parse(source, { filename: name });
+  assert.deepEqual(p.errors, []); assert.deepEqual(compileTemplate({ source: p.descriptor.template.content, filename: name, id: 'intake-test' }).errors, [], name);
+});

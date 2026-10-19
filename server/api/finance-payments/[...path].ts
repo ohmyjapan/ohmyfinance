@@ -19,6 +19,8 @@ export default defineEventHandler(async event=>{
     if(parts.length===offset+2&&method==='PUT')return matches.releaseAllocation(ownerId,kind,sourceId,line,parts[offset+1],await json())
    }
   }
+  // F2 (plan omf-monthly-reconciliation-20261020): the period's purchases with their payment state; records/:id below is unchanged.
+  if(parts[0]==='records'&&parts.length===1&&method==='GET')return matches.listPurchaseRecords(ownerId,{from:q('from'),to:q('to'),paymentState:q('paymentState'),purchaseState:q('purchaseState')})
   if(parts[0]==='records'&&parts.length===2&&method==='GET')return matches.recordPaymentsView(ownerId,parts[1])
   if(parts[0]==='bank'){
    if(parts[1]==='accounts'&&parts.length===2){if(method==='GET')return bank.listBankAccounts(ownerId);if(method==='POST')return bank.createBankAccount(ownerId,await json())}

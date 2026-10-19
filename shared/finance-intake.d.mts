@@ -6,11 +6,12 @@ export type IntakeExtra = Record<string, string>;
 export interface IntakeExtraColumn { name: string; column: string }
 export interface IntakeProvenance { hash: string; fileName: string; documentId: string; sheet: string; row: number; raw: string[] }
 export interface IntakeChange { field: IntakeField | string; before: string; after: string }
-export interface IntakeHistory { at: string; kind: string; changes: IntakeChange[]; source: { fileName: string; sheet: string; row: number } | null }
+export interface IntakeIdentityChange { before: string; after: string; by: 'file-row' }
+export interface IntakeHistory { at: string; kind: string; changes: IntakeChange[]; source: { fileName: string; sheet: string; row: number } | null; identity?: IntakeIdentityChange }
 export interface IntakeRecordShape { id: string; key: string; values: IntakeValues; extra: IntakeExtra; createdAt: string; updatedAt: string; revision: number; history: IntakeHistory[]; provenance: IntakeProvenance[]; identityReview: boolean; archived: boolean }
 export interface IntakeIncoming { id?: string; values: Partial<Record<IntakeField, any>>; extra?: IntakeExtra; present?: string[]; provenance?: IntakeProvenance }
-export interface IntakePlanRow { operation: 'new' | 'update' | 'unchanged'; record: IntakeRecordShape; changes: IntakeChange[]; ambiguous: boolean; row?: number }
-export interface IntakePlan { rows: IntakePlanRow[]; new: number; update: number; unchanged: number; ambiguous: number }
+export interface IntakePlanRow { operation: 'new' | 'update' | 'unchanged'; record: IntakeRecordShape; changes: IntakeChange[]; ambiguous: boolean; row?: number; identityChanged?: IntakeIdentityChange; provenanceConflict?: string[] }
+export interface IntakePlan { rows: IntakePlanRow[]; new: number; update: number; unchanged: number; ambiguous: number; identityChanged?: number; provenanceConflicts?: number }
 export const FIELDS: [IntakeField, string, string[]][];
 export const FIELD_NAMES: Record<IntakeField, string>;
 export const MONEY: IntakeField[];

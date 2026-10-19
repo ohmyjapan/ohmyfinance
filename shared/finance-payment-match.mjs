@@ -62,3 +62,37 @@ export function settlementCandidates(bank,cardRows,batches,bills){const result=[
   result.push({target:{kind:'card-statement',accountId,importId,sourceHash:batch.hash,periodKey:batch.period.key,statementMonth:batch.period.statementMonth,...(bill?{paymentId:String(bill._id||bill.id)}:{})},evidence,rank:evidence==='manual'?'manual':'strong',label:evidence==='manual'?'対象の請求期間を手動で指定':'請求額と一致',amount:bank.amount});
  }return result;
 }
+// Plan omf-monthly-reconciliation-20261020 F3: the state of a card repayment row (Amex 前回分口座振替金額) is derived from the
+// bank side, because the row never carries allocations of its own. `settled` is the same-currency total of the linked bank
+// `card-repayment` allocations that target this account and key, in the row's sign; `remaining` = amount − settled. The row's
+// own `allocated` (always 0) is not rewritten, so the allocation write path is unchanged. A row already in review (source
+// missing), an allocation in another currency, a changed or missing bank source and a settlement above the row amount are
+// `review`; released links count for nothing. The caller passes only the bank payments it can see (its read scope).
+export function repaymentSettlement(card,bankPayments){
+ const currency=card.currency||'JPY',links=[];
+ for(const x of bankPayments||[])for(const a of x.allocations||[])if(a.status==='linked'&&a.target?.kind==='card-repayment'&&a.target.accountId===card.accountId&&a.target.key===card.key)links.push({payment:x,allocation:a});
+ const same=links.filter(l=>(l.allocation.currency||'JPY')===currency),paid=round(same.reduce((n,l)=>n+Number(l.allocation.amount),0)),settled=round(card.amount<0?-paid:paid),remaining=round(card.amount-settled);
+ const flagged=same.length!==links.length||links.some(l=>l.payment.sourceMissing||l.allocation.sourceChanged||l.allocation.changed)||Math.abs(settled)>Math.abs(card.amount)+1e-6;
+ return{settled,remaining,state: card.state === 'review' || flagged ? 'review':paid===0?'unmatched':remaining===0?'matched':'partial'};
+}
+// Plan omf-monthly-reconciliation-20261020 F2: one period's purchases with their payment state, from the record totals the
+// matching context already derives. A valid purchase date outside from/to is left out; a blank or unparseable one is ALWAYS
+// listed as 日付未確定 (with the original text), never dropped. Each record appears once. Archived and cancelled records stay,
+// labelled. Amounts stay per record and currency, null stays null (an unknown total is never 0), and nothing is summed: the
+// counts are numbers of records per payment state. The payment-state and purchase-state filters are separate.
+export const PURCHASE_PAYMENT_STATES=['unknown','unpaid','partial','settled','overpaid'];
+export const PURCHASE_REVIEW_STATES=['requested','purchased','cancelled','refunded','archived'];
+export function purchaseDay(v){const s=text(v);return /^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s?s:null;}
+export function purchaseReview(records,query={}){
+ const from=purchaseDay(query.from),to=purchaseDay(query.to),wanted=v=>v&&v!=='all'?v:'',paymentState=wanted(query.paymentState),purchaseState=wanted(query.purchaseState),seen=new Set(),rows=[];
+ for(const r of records||[]){const id=rid(r);if(!id||seen.has(id))continue;seen.add(id);const v=vals(r),date=purchaseDay(v.purchaseDate);
+  if (date && (from && date < from || to && date > to)) continue;
+  const t=r.totals||{total:null,currency:v.currency||'JPY',paid:0,refunded:0,net:0,remaining:null,otherCurrency:[],state:'unknown'},state=t.state||'unknown';
+  if(paymentState&&state!==paymentState)continue;if(purchaseState&&(purchaseState==='archived'?!r.archived:v.purchaseState!==purchaseState))continue;
+  const otherCurrency=(t.otherCurrency||[]).length,identityReview=!!r.identityReview,paymentChanged=!!r.paymentChanged;
+  rows.push({id,key:r.key,revision:r.revision,values:v,archived:!!r.archived,purchaseDate:date,dateKnown:!!date,dateLabel:date||'日付未確定',rawDate:text(v.purchaseDate),purchaseState:v.purchaseState||'requested',paymentState:state,currency:t.currency||v.currency||'JPY',total: t.total, paid: t.paid, refunded: t.refunded, net: t.net, remaining: t.remaining,otherCurrency,identityReview,paymentChanged,review:state==='overpaid'||otherCurrency>0||identityReview||paymentChanged,evidence:r.evidence||null});
+ }
+ rows.sort((a,b)=>a.dateKnown!==b.dateKnown?(a.dateKnown?-1:1):String(a.purchaseDate||'').localeCompare(String(b.purchaseDate||''))||String(a.key||'').localeCompare(String(b.key||'')));
+ const counts=Object.fromEntries(PURCHASE_PAYMENT_STATES.map(s=>[s,0]));for(const r of rows)counts[r.paymentState]=(counts[r.paymentState]||0)+1;
+ return{rows,counts,undated:rows.filter(r=>!r.dateKnown).length};
+}

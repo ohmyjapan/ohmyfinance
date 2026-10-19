@@ -16,3 +16,8 @@ export function residuals(payment:any):{allocated:number;remaining:number;state:
 export function recordTotals(record:any,allocations:any[]):any;
 export function changedSince(snapshot:any,current:any):any[];
 export function correctionPairs(existing:any[],incoming:any[]):any[];
+export function repaymentSettlement(card:any,bankPayments:any[]):{settled:number;remaining:number;state:'unmatched'|'partial'|'matched'|'review'};
+export const PURCHASE_PAYMENT_STATES:string[];
+export const PURCHASE_REVIEW_STATES:string[];
+export function purchaseDay(value:any):string|null;
+export function purchaseReview(records:any[],query?:{from?:string;to?:string;paymentState?:string;purchaseState?:string}):{rows:any[];counts:Record<string,number>;undated:number};

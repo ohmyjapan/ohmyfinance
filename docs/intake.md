@@ -92,3 +92,69 @@ The intake unit tests also exercise `ResearchTools.document()` with a stubbed ex
 fetch calls, without a model or network request. The fixture reverts each reviewed tools change in memory and requires its
 behavior assertion to fail. HTTP checks include a connected busy worker versus disconnected expiry, non-HTTPS URLs, the
 research-history and active-job limits, and extra-column names that conflict with fixed fields.
+
+## Typed Excel cells, purchase dates and same-file reimport (plan omf-monthly-reconciliation-20261020 F1)
+
+The identifier sentence under Records holds for text cells and CSV/TSV, which are read as text. For XLSX/XLS **number** cells it
+is qualified as follows. Only the intake sheet reader (`sheetOf` → `readWorkbook(bytes, { intake: true })` and
+`sheetRows(workbook, sheet, { intake: true, notes })`) reads cell types; every position, blank row and original byte stays as before.
+
+- Text cells: unchanged, zero prefixes included (`00123`).
+- Integer number cells shown as General or in scientific notation: the actual value when it has at most 15 digits
+  (`123456789012`, not `1.23457E+11`). Other number formats keep their formatted text: an intentional zero-padding format
+  (`00000`) keeps `00123`, `#,##0` gives `12,800` (the money cleaning still applies).
+- Number cells of 16 or more digits: Excel keeps only 15 significant digits, so the last digits are not in the file. The display
+  text is kept (for example `1.23457E+15`), the cell is listed in `cellNotes.imprecise` and the preview warns
+  (`imprecise-number`). No digit or zero is guessed; keep such IDs as text in the source file. The original file is retained by
+  SHA-256 as before.
+- The leading zeros of a number cell are not in the file either. An identifier field (注文・取引ID, 商品・明細ID, 外部注文番号,
+  T番号, アカウント) mapped to a column with number cells gets the non-blocking preview warning `numeric-id`.
+- Date-formatted number cells become `yyyy-mm-dd` (with ` HH:MM[:SS]` when a time is set), from the serial and the workbook's
+  1900 or 1904 date system, in XLSX and XLS. A time-only format keeps its display.
+- 購入日 normalization (`normalize`, also on hand edits): an unambiguous year-first date — `yyyy/m/d`, `yyyy.m.d`,
+  `yyyy年m月d日`, `yyyy-m-d` — with an optional trailing local time becomes `yyyy-mm-dd` when it names a real day and time.
+  `m/d/yy`, zoned timestamps (`…Z`, `+09:00`), impossible days (`2026/02/30`) or times and era dates stay exactly as written
+  (the payments purchase view lists them as 日付未確定).
+
+`GET files/:id/sheet` adds `cellNotes { numericColumns, dateColumns, imprecise (first 20: row, column, shown), impreciseCount }`.
+`POST files/:id/preview` adds `warnings`, `cellNotes`, per row `identityChanged` and `provenanceConflict`, and the counts
+`identityChanged` and `provenanceConflicts`. The importer shows these as notices; nothing is rejected.
+
+The bank statement reader is not changed: `financeBankStatementService` (upload, preview, import and collector capture) calls
+`readWorkbook`/`sheetRows` without options and keeps the released display text (`1.23457E+11`, `10/5/26`), so the keys of
+existing bank rows do not move. The fixture reads the same workbook through the bank routes and requires the released text and
+transaction-ID key; a deliberately changed default is caught.
+
+Template headers: a saved template is still applied by column position. When its stored headers differ from the current
+sheet's (NFKC, trimmed, position by position) the importer shows which columns differ; the mapping stays editable and preview and
+import are not blocked. A template saved without headers is not compared.
+
+Same-file reimport: when a corrected reading of the same file gives a row a new identity — the cells stored for that file row
+(hash + sheet + row) differ from the current reading, with the same service and account — and exactly one active record came
+from that row, that record is updated instead of a new one being created — its id, allocations, provenance and history are kept, its key becomes the
+new identity, the history entry carries `identity { before, after, by: 'file-row' }` and the preview marks the row
+（同じファイル行の受付のIDを変更）. This is how a record imported under an E-notation ID is corrected by reimporting its original file.
+A second import of the same file with the same reading under another mapping or default (another service, a hand-corrected ID)
+is not a re-reading and behaves exactly as before. Never merged: two or more records on that file row, a record already matched by
+another row of the same import, or a new identity another record already holds — the row is flagged `provenanceConflict` (the
+record ids) and set to identity review. Archived records are not rebound. A key another record took meanwhile is counted as a
+conflict like a revision change. There is no database migration: earlier records are found only when their original file is
+imported again, and how many deployed records carry an E-notation ID is unknown (no production read was made).
+
+## Evidence origin and staleness after edits (plan omf-monthly-reconciliation-20261020 F4)
+
+`shared/finance-intake-evidence.mjs` decides where the shown 会社名 / T番号 come from: `research-confirmed` only while the stored
+values equal `research.confirmed` and the 店舗・商品URL equals the researched URL (`research.context.merchantUrl`); `file-manual`
+for stored values without that correspondence (imported, typed, or edited after confirmation); `candidate` for a value shown from
+an unconfirmed report; `none`. Changing a value back restores the correspondence.
+
+`GET records/:id/research` adds `research.context { merchantUrl, recordRevision }` and `attribution { origin, origins,
+sourcesCurrent, differs }`. `stale` is now also true for a **confirmed** research once the stored 会社名, T番号 or the URL differ
+from what was confirmed; the unconfirmed rule (record revision or URL changed since the lookup) is unchanged. The record page then
+says which values changed after saving, labels the citations 調査時の根拠（現在の値と異なる）, shows 保存後に変更あり instead of
+受付に保存済み and keeps 「もう一度調べる」. Nothing is hidden: report, citations and history stay. The research queue, worker
+claim/progress/result and confirm write are unchanged, and registry verification is still only the equality of the active NTA row
+with the number and legal name — a page citation is not a registry check.
+
+Verification: `node --test scripts/finance-intake.test.mjs scripts/finance-intake-evidence.test.mjs`; through the hub
+`node scripts/zoomer-verify.mjs --run-fixture omf-monthly-reconciliation.mjs --cwd <tree>` (never directly).

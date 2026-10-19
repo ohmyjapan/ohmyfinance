@@ -224,3 +224,37 @@ Captured files retain `labelChecked`: true only when a retrieve manifest records
 Actions retain a local document identity and a value-free snapshot taken at event time, including actions before the next polling record and before export/closure. The identity is not uploaded; the existing page-record fields are normalized in Node. No typed values are added. New records include `eventChannel:true/false`. If channel setup fails, useful page records are retained with `false`; the job and observation view show 「操作の記録なし（画面の記録は保存済み）」. Legacy/unrecognized channel values are stored as `null`, without a new rejection.
 
 This correction does not verify a real bank portal or waive historical replay. Provider contracts remain pending.
+
+## Monthly reconciliation reads (plan omf-monthly-reconciliation-20261020 F3, F2, F4)
+
+**Card repayment rows (F3).** An Amex repayment row (`sourceKind: repayment`, 前回分口座振替金額) carries no allocation of its
+own; its state in the list, the state filter and its detail now come from the linked bank `card-repayment` allocations that
+target the same card account and key (`repaymentSettlement`, derived in the matching context after every other state, from the
+bank payments that read holds). `settled` is their same-currency total in the row's sign and `remaining` = amount − settled:
+未照合 with none, 一部配分 for part, 照合済み for all. 要確認 keeps precedence: a row whose source is missing, a settlement in
+another currency, a changed or missing bank source, or settlements above the row amount. Released links count for nothing, so
+releasing them returns the row to 未照合. The row's own `allocated` stays 0 and the allocation write path, its authority and
+over-allocation checks are unchanged; purchase totals never include repayment settlements, so nothing is counted twice. A read
+scope that removes bank payments before this derivation (the peer's card-scoped Navi read, F8) derives from what it can see.
+
+**Purchases of a period (F2).** `GET /api/finance-payments/records?from=&to=&paymentState=&purchaseState=` (service
+`listPurchaseRecords`, owner-scoped, read-only) lists the owner's purchases with the record totals the context already derives:
+paid, refunded, net, remaining and the payment state 金額不明 (`unknown`, no total) / 未払い / 一部支払い / 支払済み / 過払い.
+A valid 購入日 outside from/to is left out; a blank or unparseable one is always listed as 日付未確定 with its original text. Each
+record appears once; archived and cancelled records stay, labelled; review facts (overpaid, another currency, identity review,
+an allocation whose purchase or bank source changed) are flagged. Amounts are per record and currency, an unknown total stays
+null (金額未確定), and nothing is summed — `counts` are numbers of records per payment state, `undated` the number of 日付未確定
+rows. The payment-state and purchase-state filters are separate; a malformed date or state is 400. `records/:recordId` is
+unchanged. `/intake/payments` shows this list under the 購入（期間内） tab with the same 開始/終了; the account filter applies to
+payment rows only, because a purchase without a payment has no account yet. Each row links to the purchase and its originals.
+No closing, posting, export, new collection or sidebar item.
+
+**Evidence labels (F4).** Purchase evidence in payment views carries `origin`, `origins`, `sourcesCurrent` and `differs`
+(docs/intake.md). The label distinguishes 調査結果を確認して保存 from 取込・手入力の値（調査で未確認） and 調査候補（未保存）, per
+field when they differ; when the research's citations no longer match the current URL or values they are kept and marked
+調査時の根拠（現在の値と異なる）. `confirmed` still means a number is stored; `verified` is still only the registry equality.
+
+Verification: `node --test scripts/finance-payment-match.test.mjs`; through the hub
+`node scripts/zoomer-verify.mjs --run-fixture omf-monthly-reconciliation.mjs --cwd <tree>`. Limits: synthetic data only; no real
+month, purchase-service file, bank statement, certificate login or NTA configuration has been exercised (F5, F6), historical
+replay is NOT RUN (F7) and the peer integration is not done (F8). No bank is verified by this change.
