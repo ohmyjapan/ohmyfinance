@@ -1,7 +1,7 @@
 import { calendarCompany } from '../../utils/calendarAccess'
-import { getCompanyAssistant, sendCompanyAssistant, retryCompanyAssistant } from '../../services/financeCompanyAssistantService'
+import { getCompanyAssistant, sendCompanyAssistant, retryCompanyAssistant, newCompanyConversation, companyConversationHistory, companyConversationArchive, companyKnowledgeInspection } from '../../services/financeCompanyAssistantService'
 import {getAssistant,sendAssistant,retryAssistant,claimAssistant,finishAssistant,actionAssistant} from '../../services/financeAssistantService'
-import { defineEventHandler, setHeader } from 'h3'
+import { defineEventHandler, setHeader, getQuery } from 'h3'
 import { financeUser,fail,id } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
 import { FinanceChatAgent } from '../../models/FinanceChat'
@@ -29,6 +29,11 @@ export default defineEventHandler(async event=>{
    const {organizationId}=await calendarCompany(event)
    if(parts.length===1){if(event.method==='GET')return await getCompanyAssistant(ownerId,organizationId);if(event.method==='POST')return await sendCompanyAssistant(ownerId,organizationId,await body())}
    if(parts.length===2&&parts[1]==='retry'&&event.method==='POST')return await retryCompanyAssistant(ownerId,organizationId,await body())
+   // Named company conversation continuations only: explicit new chat, archived history and teaching inspection (read-only).
+   if(parts.length===2&&parts[1]==='new'&&event.method==='POST')return await newCompanyConversation(ownerId,organizationId,await body())
+   if(parts.length===2&&parts[1]==='history'&&event.method==='GET'){const q=getQuery(event);return await companyConversationHistory(ownerId,organizationId,{page:typeof q.page==='string'?q.page:undefined})}
+   if(parts.length===3&&parts[1]==='history'&&event.method==='GET')return await companyConversationArchive(ownerId,organizationId,parts[2])
+   if(parts.length===2&&parts[1]==='knowledge'&&event.method==='GET'){const q=getQuery(event);return await companyKnowledgeInspection(ownerId,organizationId,{status:typeof q.status==='string'?q.status:undefined,page:typeof q.page==='string'?q.page:undefined,query:typeof q.query==='string'?q.query:undefined})}
    fail(404,'Company conversation endpoint not found')
   }
   if(parts[0]==='workspace'&&parts.length===1){if(event.method==='GET')return await getAssistant(ownerId);if(event.method==='POST')return await sendAssistant(ownerId,await body())}

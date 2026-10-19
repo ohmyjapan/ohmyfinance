@@ -50,3 +50,13 @@ Calendar action continuation: `update_company_calendar_entry` and `get_company_a
 Invoice continuation: update_company_invoice edits supported scalar fields through the native validated operation, persists the same frozen-turn receipt and atomic invoice marker, and refreshes the scoped invoice list without resetting an open edit form. The company catalogue now has7 tools. Native POST/PUT/DELETE company/reference ownership and field/totals validation are new customer-path guards requiring independent review. Original calendar semantics and shared membership predicate are preserved.
 
 Transaction continuation: company conversations include transaction pages/detail selection. Four transaction list/detail/history-choice/update tools expand the catalogue to11. Saved references use the shared native schema, with choice evidence limited to company-observed roots and no contact/path/internal metadata projection. Explicit edits share native operation/source protection, transaction marker recovery and current-company page refresh. No expense reposting or historical assignment; unused/global reference ownership and full reasoning/learning remain open. Details: [transaction actions](navi-transaction-actions.md). New native/job/UI guards require independent review.
+
+Dialogue/teaching continuation (phase A of the 2026-10-19 finish goal): the company catalogue is now 17 tools. The original 11 are unchanged. The new ones are:
+- `find_company_transaction_patterns`
+- `search_company_knowledge`
+- `remember_company_knowledge`
+- `correct_company_knowledge`
+- `set_company_knowledge_status`
+- `list_navi_features`
+
+Teaching writes reuse this journal and frozen job/membership checks. Their durable marker lives on the company-owned teaching row. Claimed jobs carry the frozen company's active related teachings, read fresh at claim. Native routes add `POST /company-workspace/new` (archive-backed new chat replacing the 200-turn dead end), `GET /history`, `GET /history/:id` and `GET /knowledge`, all behind fresh membership. Company replies use a catalogue-aware validator: up to 4000 characters, with an optional page link from the fixed feature catalogue, and a record link checked against the frozen company. Legacy owner/purchase conversations, validators and prompts are unchanged. Details, guards and limits: [dialogue and teaching](navi-dialogue-learning.md). The new guards require independent review. Browser research, other domain actions, privacy/audit, review and deployed proof remain open.

@@ -4,7 +4,7 @@
   <aside v-show="assistant.open" id="omf-assistant" ref="panel" aria-label="OMFアシスタント" class="assistant-panel flex min-h-0 min-w-0 flex-col border-t border-gray-100 dark:border-white/10" :class="{'assistant-panel-company':scope.company}" @keydown="keyboard">
    <div class="shrink-0 border-b border-gray-100 bg-gray-50/70 px-5 py-3 dark:border-white/10 dark:bg-white/5">
     <div class="flex items-center justify-between gap-2"><div class="flex flex-wrap items-center gap-2"><button class="rounded-lg px-2.5 py-1.5 text-xs" :class="workspaceView?'bg-primary-main/10 font-medium text-primary-main':'text-gray-500 hover:bg-gray-100'" data-assistant-general @click="assistant.select({kind:'workspace'})">画面について相談</button><button v-if="currentDraftTarget" class="rounded-lg px-2.5 py-1.5 text-xs text-primary-main hover:bg-primary-main/10" data-assistant-current @click="selectCurrent">この購入について</button></div><button type="button" data-assistant-close class="shrink-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10" aria-label="アシスタントを折りたたむ" @click="close"><X class="h-4 w-4" /></button></div>
-    <p v-if="workspaceView" data-assistant-context class="mt-2 break-words text-xs text-gray-600 dark:text-gray-300">{{ pageName }}<span v-if="selection?.label"> · {{ selection.label }}</span></p>
+    <p v-if="workspaceView" data-assistant-context class="mt-2 break-words text-xs text-gray-600 dark:text-gray-300">{{ pageName }}<span v-if="selection?.label"> · {{ selection.label }}</span><span v-if="scope.company&&feature" data-assistant-feature :data-assistant-feature-disposition="feature.disposition" :title="feature.reason" class="text-gray-400"> · {{ feature.disposition==='navi_tool' ? 'Navi で確認・保存できます' : 'この画面で操作します' }}</span></p>
     <div v-else data-assistant-context class="mt-2 text-xs"><p class="break-words font-medium text-gray-800 dark:text-gray-100">{{ draft?.source.description || '明細を確認中…' }}</p><p v-if="draft" class="mt-1 text-gray-500">{{ draft.source.account.name }} · {{ draft.source.purchaseDate }} · ¥{{ Number(draft.source.amount).toLocaleString('ja-JP') }}</p><NuxtLink v-if="draft" :to="targetPath" class="mt-2 inline-block text-primary-main">この下書きを開く ↗</NuxtLink><p v-if="route.path!==targetPath" class="mt-2 leading-relaxed text-gray-500">{{ pageName }}に移動しました。相談対象はこの購入のままです。</p></div>
     <CompanyAssistantScope v-if="scope.company" :organization-id="scope.organizationId" />
    </div>
@@ -24,7 +24,7 @@ import NaviAvatar from './NaviAvatar.vue'
 import {useUserStore} from '~/stores/user'
 import {useAssistantStore} from '~/stores/assistant'
 import {useActivityTracker} from '~/composables/useActivityTracker'
-import {assistantPage,assistantPages,assistantConversationScope} from '~/shared/finance-assistant.mjs'
+import {assistantPage,assistantPages,assistantConversationScope,assistantFeature} from '~/shared/finance-assistant.mjs'
 import PurchaseChat from './PurchaseChat.vue'
 import AssistantConversation from './AssistantConversation.vue'
 import SupportReport from './SupportReport.vue'
@@ -35,6 +35,9 @@ const panel=ref<HTMLElement|null>(null),activated=ref(false),loadedDraft=ref<any
 const scope=computed(()=>{const claims=tokenClaims(user.token);return assistantConversationScope(claims?.userId,claims?.organizationId,assistantPage(route.path))})
 const workspaceView=computed(()=>scope.value.company||assistant.target.kind==='workspace')
 const page=computed(()=>assistantPage(route.path)),pageName=computed(()=>assistantPages[page.value])
+// What Navi can truthfully do on this page (catalogue entry). Company conversations stay on the pages whose records Navi has tools for;
+// other pages keep the separate owner/purchase conversations.
+const feature=computed(()=>assistantFeature(route.path))
 const selection=computed(()=>assistant.pageSelection?.path===route.path?assistant.pageSelection:null)
  const context=computed(()=>({page:page.value,...(/^\/transactions\/[a-f0-9]{24}$/i.test(route.path)?{transactionId:String(route.params.id)}:{}),...(selection.value?.patternId?{patternId:selection.value.patternId}:{}),...(selection.value?.importId?{importId:selection.value.importId}:{}),...(/^\/intake\/[a-f0-9]{24}$/i.test(route.path)?{recordId:String(route.params.id)}:{}),...(page.value==='intake'&&selection.value?.documentId?{documentId:selection.value.documentId,sheet:selection.value.sheet,headerRow:selection.value.headerRow}:{}),...(page.value==='intake-payments'&&selection.value?.paymentKind?{paymentKind:selection.value.paymentKind,...(selection.value.paymentKind==='card'?{paymentImportId:selection.value.paymentImportId,paymentLine:selection.value.paymentLine}:{})}:{})}))
 const currentDraftTarget=computed(()=>new RegExp('^/mapping-draft/[a-f0-9]{24}/[0-9]+$','i').test(route.path)?{kind:'draft',importId:String(route.params.importId),line:Number(route.params.line)}:null)

@@ -1,7 +1,9 @@
-import {validateAssistantReply} from './finance-assistant.mjs';
+import {validateAssistantReply,validateCompanyAssistantReply} from './finance-assistant.mjs';
 import { validateReplyProposal } from './finance-review.mjs';
 export function validateChatProposal(input, context, text) {
- if(context.mode==='workspace')return validateAssistantReply(input);
+ // Only a server-built company context (companyScoped) gets the longer, navigation-capable company reply; the general workspace
+ // and purchase rules are unchanged.
+ if(context.mode==='workspace')return context.companyScoped===true?validateCompanyAssistantReply(input):validateAssistantReply(input);
  const result=validateReplyProposal(input,context.customers,text);
  if(result.patch.customerId && !result.patch.purpose) { result.patch.purpose='customer'; result.quotes.purpose=result.quotes.customerId; }
  const values={...context.values,...result.patch};

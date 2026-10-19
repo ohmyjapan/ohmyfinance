@@ -15,3 +15,11 @@ test('transaction, invoice and calendar pages use explicit company conversations
  assert.equal(scope('actor','A','mapping').key,scope('actor','B','dashboard').key);
  assert.equal(scope('actor','A','mapping').company,false);
 });
+test('company conversations get the longer catalogue-aware reply; general replies keep the original limit',async()=>{
+ const {validateCompanyAssistantReply,assistantFeature}=await import('../shared/finance-assistant.mjs');
+ const long={kind:'unclear',summary:'説'.repeat(3000),patch:{},quotes:{}};
+ assert.equal(validateCompanyAssistantReply(long).summary.length,3000);assert.throws(()=>validateAssistantReply(long),'general-reply:limit-kept');
+ assert.equal(validateAssistantReply({kind:'unclear',summary:'x'.repeat(800),patch:{},quotes:{}}).summary.length,800);
+ assert.equal(Object.hasOwn(validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{},navigation:{feature:'invoices'}}),'navigation'),false,'general-reply:no-navigation');
+ assert.equal(assistantFeature('/calendar').disposition,'navi_tool');assert.equal(assistantFeature('/budgets').disposition,'page_handoff');assert.equal(assistantFeature('/login'),null);
+});

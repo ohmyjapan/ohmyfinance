@@ -8,10 +8,15 @@ import { Payment } from '../models/Payment'
 import { fail } from './financeService'
 import { canonicalJson } from '../../shared/finance-action-proposal.mjs'
 import { updateCompanyCalendarEntry, calendarUpdateFields } from './companyPaymentWriteService'
+import { applyCompanyKnowledgeWrite, checkCompanyKnowledgeWrite, companyKnowledgeMarker, companyKnowledgeResult } from './companyKnowledgeService'
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
 const actionIdentity = (c: any) => ({ _id: c._id, ownerId: c.ownerId, organizationId: c.organizationId })
-export const companyActionReceipt = (a: any) => ({ operationId: a.operationId, name: a.name, turnId: a.turnId, slot: a.slot, target: a.name === 'update_company_transaction' ? { transactionId: a.transactionId } : a.name === 'update_company_invoice' ? { invoiceId: a.invoiceId } : { paymentId: a.paymentId }, state: a.state === 'claimed' ? 'working' : a.state, requestedFields: a.requestedFields || [], nativeResourceIds: a.nativeResourceIds || null, acceptedRevision: null, completedAt: a.completedAt || null, recoveryOwner: a.recoveryOwner || null, safeError: a.safeError || null })
+// Company teaching writes share this journal: same slot/intent claim, durable marker on the written row, no blind repeat.
+export const companyKnowledgeActions = ['remember_company_knowledge', 'correct_company_knowledge', 'set_company_knowledge_status']
+const knowledgeAction = (name: string) => companyKnowledgeActions.includes(name)
+export const companyActionReceipt = (a: any) => ({ operationId: a.operationId, name: a.name, turnId: a.turnId, slot: a.slot, target: a.name === 'update_company_transaction' ? { transactionId: a.transactionId } : a.name === 'update_company_invoice' ? { invoiceId: a.invoiceId } : knowledgeAction(a.name) ? { knowledgeId: a.knowledgeId } : { paymentId: a.paymentId }, state: a.state === 'claimed' ? 'working' : a.state, requestedFields: a.requestedFields || [], nativeResourceIds: a.nativeResourceIds || null, acceptedRevision: null, completedAt: a.completedAt || null, recoveryOwner: a.recoveryOwner || null, safeError: a.safeError || null })
+async function knowledgeMarker(c: any, op: any) { const m = await companyKnowledgeMarker(c.organizationId, op.knowledgeId, op.operationId); return m ? { operationId: m.operationId, payloadHash: m.payloadHash, requestedFields: op.requestedFields, appliedAt: m.at } : null }
 async function settle(c: any, turnId: string, op: any, values: any) {
   const changes = Object.fromEntries(Object.entries(values).map(([key, value]) => ['turns.$[turn].actions.$[action].' + key, value]))
   await Conversation.updateOne(actionIdentity(c), { $set: changes }, { arrayFilters: [{ 'turn.id': turnId }, { 'action.operationId': op.operationId, 'action.state': 'claimed' }] })
@@ -22,10 +27,11 @@ export async function reconcileCompanyActions(c: any) {
   if (!c) return c
   for (const turn of c.turns || []) for (const op of turn.actions || []) {
     if (op.state !== 'claimed') continue
-    const payment: any = op.name === 'update_company_transaction' ? await Transaction.findOne({ _id: op.transactionId, organizationId: c.organizationId }).select('naviOperation').lean() : op.name === 'update_company_invoice' ? await Invoice.findOne({ _id: op.invoiceId, organizationId: c.organizationId }).select('naviOperation').lean() : await Payment.findOne({ _id: op.paymentId, organizationId: c.organizationId }).select('naviOperation').lean()
-    const marker = payment?.naviOperation
+    const knowledge = knowledgeAction(op.name)
+    const payment: any = knowledge ? null : op.name === 'update_company_transaction' ? await Transaction.findOne({ _id: op.transactionId, organizationId: c.organizationId }).select('naviOperation').lean() : op.name === 'update_company_invoice' ? await Invoice.findOne({ _id: op.invoiceId, organizationId: c.organizationId }).select('naviOperation').lean() : await Payment.findOne({ _id: op.paymentId, organizationId: c.organizationId }).select('naviOperation').lean()
+    const marker = knowledge ? await knowledgeMarker(c, op) : payment?.naviOperation
     if (marker?.operationId === op.operationId && marker.payloadHash === op.payloadHash) {
-      await settle(c, turn.id, op, { state: 'done', requestedFields: marker.requestedFields, nativeResourceIds: op.name === 'update_company_transaction' ? { transactionId: String(op.transactionId) } : op.name === 'update_company_invoice' ? { invoiceId: String(op.invoiceId) } : { paymentId: String(op.paymentId) }, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })
+      await settle(c, turn.id, op, { state: 'done', requestedFields: marker.requestedFields, nativeResourceIds: op.name === 'update_company_transaction' ? { transactionId: String(op.transactionId) } : op.name === 'update_company_invoice' ? { invoiceId: String(op.invoiceId) } : knowledge ? { knowledgeId: String(op.knowledgeId) } : { paymentId: String(op.paymentId) }, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })
     } else if (new Date(op.leaseUntil).getTime() < Date.now() - 20000 && !(c.state === 'working' && c.lease === op.lease && new Date(c.leaseUntil).getTime() > Date.now())) {
       await settle(c, turn.id, op, { state: 'unresolved', recoveryOwner: 'user', safeError: '保存結果を確認できません。同じ操作は自動で繰り返していません。' })
     }
@@ -79,6 +85,50 @@ async function updateCompanyAction(c: any, body: any, args: any, verifyJob: () =
     }
     const state = error?.statusCode || error?.name === 'ValidationError' ? 'failed' : 'unresolved'
     await settle(c, turnId, op, { state, completedAt: state === 'failed' ? new Date() : null, recoveryOwner: state === 'failed' ? 'model' : 'user', safeError: state === 'failed' ? '変更は保存されませんでした。対象と現在の値を確認してください。' : '保存結果を確認できません。同じ操作は自動で繰り返していません。' })
+    throw error
+  }
+}
+// Explicit company teaching (remember / correct / pause-resume). Arguments are checked before any claim (exact user quote,
+// observed references, company record), so a refused call leaves no receipt. A claimed operation is executed once; its marker on
+// the knowledge row proves completion even if this reply is lost. Never touches transactions, invoices, payments or the ledger.
+export async function companyKnowledgeAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) {
+  if (!Number.isSafeInteger(body.slot) || body.slot < 1 || body.slot > 500) fail(400, 'Invalid action slot')
+  const name = body.name, payloadHash = sha(canonicalJson({ name, args })), turnId = c.currentId
+  const requestedFields = Object.keys(args).filter(k => !['knowledgeId', 'expectedRevision'].includes(k))
+  let fresh: any = await reconcileCompanyActions(c), turn = fresh.turns.find((t: any) => t.id === turnId)
+  const atSlot = turn.actions?.find((a: any) => a.slot === body.slot)
+  if (atSlot && atSlot.payloadHash !== payloadHash) fail(409, 'Action slot has another meaning')
+  const existing = atSlot || turn.actions?.find((a: any) => a.name === name && a.payloadHash === payloadHash)
+  if (existing) return response(existing)
+  const checked = await checkCompanyKnowledgeWrite(c, name, args)
+  const operationId = sha([String(c.ownerId), String(c.organizationId), String(c._id), turnId, body.slot].join(':')).slice(0, 32)
+  const knowledgeId = name === 'remember_company_knowledge' ? operationId.slice(0, 24) : args.knowledgeId
+  const op: any = { operationId, name, turnId, slot: body.slot, payloadHash, knowledgeId, requestedFields, state: 'claimed', lease: body.lease, leaseUntil: c.leaseUntil, claimedAt: new Date() }
+  const claimed = await Conversation.updateOne({ ...actionIdentity(c), state: 'working', currentId: turnId, lease: body.lease, leaseUntil: { $gt: new Date() }, turns: { $elemMatch: { id: turnId, actions: { $not: { $elemMatch: { $or: [{ slot: body.slot }, { name, payloadHash }] } } } } } }, { $push: { 'turns.$[turn].actions': op } }, { arrayFilters: [{ 'turn.id': turnId }] })
+  if (!claimed.matchedCount) {
+    fresh = await Conversation.findOne(actionIdentity(c)).lean(); turn = fresh?.turns.find((t: any) => t.id === turnId)
+    const duplicate = turn?.actions?.find((a: any) => a.slot === body.slot || (a.name === name && a.payloadHash === payloadHash))
+    if (!duplicate) fail(409, 'Company conversation job changed')
+    if (duplicate.payloadHash !== payloadHash) fail(409, 'Action slot has another meaning')
+    return response(duplicate)
+  }
+  const resourceIds = { knowledgeId }
+  try {
+    await verifyJob()
+    const row = await applyCompanyKnowledgeWrite(c, op, args, checked)
+    const marker = row.operations.find((m: any) => m.operationId === operationId)
+    await settle(c, turnId, op, { state: 'done', nativeResourceIds: resourceIds, completedAt: marker.at, recoveryOwner: null, safeError: null })
+    await verifyJob()
+    return response({ ...op, state: 'done', nativeResourceIds: resourceIds, completedAt: marker.at }, { knowledge: await companyKnowledgeResult(row), ledgerChanged: false })
+  } catch (error: any) {
+    const marker = await knowledgeMarker(c, op)
+    if (marker?.operationId === operationId && marker.payloadHash === payloadHash) {
+      await settle(c, turnId, op, { state: 'done', nativeResourceIds: resourceIds, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })
+      await verifyJob()
+      return response({ ...op, state: 'done', nativeResourceIds: resourceIds, completedAt: marker.appliedAt })
+    }
+    const state = error?.statusCode || error?.name === 'ValidationError' ? 'failed' : 'unresolved'
+    await settle(c, turnId, op, { state, completedAt: state === 'failed' ? new Date() : null, recoveryOwner: state === 'failed' ? 'model' : 'user', safeError: state === 'failed' ? '記憶は保存されませんでした。最新の内容を読み直してください。' : '記憶の保存結果を確認できません。同じ操作は自動で繰り返していません。' })
     throw error
   }
 }

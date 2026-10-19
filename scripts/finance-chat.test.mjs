@@ -60,4 +60,23 @@ test('the interpreter exposes tools through the owned MCP server only and keeps 
  assert.ok(!company.includes('Amounts are Japanese yen'));assert.ok(!company.includes('post_selected_approved_rows'));assert.ok(company.includes('list_company_calendar_entries'));
  assert.ok(company.includes('not fresh NTA verification'));assert.ok(company.includes('not a bank settlement check'));assert.ok(company.includes('no bank balance, money movement'));assert.ok(company.includes('update_company_calendar_entry'));assert.ok(company.includes('update_company_invoice'));assert.ok(company.includes('update_company_transaction'));assert.ok(company.includes('list_company_transaction_choices'));assert.ok(company.includes('A question or hypothetical suggestion saves nothing'));assert.ok(company.includes('get_company_action_status'));
  assert.ok(withTools.includes('Amounts are Japanese yen (JPY)'));assert.equal(systemFor({companyScoped:true}),chatSystem);
+ for(const name of['remember_company_knowledge','correct_company_knowledge','set_company_knowledge_status','search_company_knowledge','find_company_transaction_patterns','list_navi_features'])assert.ok(company.includes(name),'company-dialogue:'+name);
+ assert.ok(company.includes('never substitute a generic 未払金'));assert.ok(company.includes('never that no receipt exists'));assert.ok(company.includes('copied verbatim from the current message'));assert.ok(!withTools.includes('remember_company_knowledge'),'purchase prompt unchanged');
+});
+test('company replies use the company validator, schema and recalled teachings; purchase and general rules are unchanged',async()=>{
+ const {interpreterInput,schemaFor,chatSchema}=await import('../teaching-worker/interpreter.mjs');
+ const long={kind:'unclear',summary:'説明'.repeat(1000),patch:{},quotes:{}};
+ assert.equal(validateChatProposal(long,{mode:'workspace',companyScoped:true},'t').summary.length,2000);
+ assert.throws(()=>validateChatProposal(long,{mode:'workspace'},'t'),'general workspace keeps its limit');
+ assert.deepEqual(validateChatProposal({...long,summary:'s',navigation:{feature:'calendar'}},{mode:'workspace',companyScoped:true},'t').navigation,{feature:'calendar'});
+ assert.throws(()=>validateChatProposal({...long,summary:'s',navigation:{feature:'https://evil.example'}},{mode:'workspace',companyScoped:true},'t'));
+ assert.throws(()=>validateChatProposal({kind:'proposal',summary:'s',patch:{purpose:'company'},quotes:{purpose:'t'}},{mode:'workspace',companyScoped:true},'t'));
+ assert.throws(()=>validateChatProposal({kind:'proposal',summary:'...',patch:{purpose:'customer'},quotes:{purpose:'customer'}},context,'customer'),'purchase rules unchanged');
+ const companyJob={companyScoped:true,mode:'workspace',tools:[{name:'list_company_invoices'}]};
+ assert.equal(schemaFor(companyJob).properties.summary.maxLength,4000);assert.ok(schemaFor(companyJob).properties.navigation.properties.feature.enum.includes('invoices'));assert.ok(!schemaFor(companyJob).properties.navigation.properties.feature.enum.includes('authentication'));
+ assert.equal(schemaFor({tools:[{name:'get_draft'}]}),chatSchema);assert.equal(schemaFor({}),chatSchema);assert.equal(chatSchema.properties.summary.maxLength,800);
+ const knowledge=[{id:'k',instruction:'SYNTH',source:{turnId:'t'}}];
+ const input=interpreterInput({...companyJob,context:{mode:'workspace',pageName:'Invoices',facts:{},capabilities:[],messages:[]},text:'t',knowledge,knowledgeActiveTotal:3});
+ assert.deepEqual(input.companyTeachings,knowledge);assert.equal(input.companyTeachingsActiveTotal,3);
+ const general=interpreterInput({mode:'workspace',tools:[{name:'get_draft'}],knowledge,context:{mode:'workspace',pageName:'p',facts:{},capabilities:[],messages:[]},text:'t'});assert.equal(Object.hasOwn(general,'companyTeachings'),false,'no teachings outside company jobs');
 });

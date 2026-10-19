@@ -25,3 +25,29 @@ export async function companyTransactionChoices(organizationId: mongoose.Types.O
   }
   return { choices, source: 'references_observed_in_company_transactions', recordsScanned: Math.min(rows.length,500), truncated: rows.length > 500, truncatedFields, limit: 500, newUnusedReferences: 'not_in_this_history_view' }
 }
+// The merchant text is matched literally (the shared list search is a regular expression).
+const literalPattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const classificationFields = ['accountCategoryId','subAccountCategoryId','taxCategoryId','transactionCategoryId','customerId','supplierId']
+// Pattern evidence for one merchant in this company's saved history: how it was classified, how often, dated examples of every
+// classification (consistent and conflicting), the exact protected card credit account names and what the receipt flag means.
+// Historical classification is evidence, not a legal or tax determination; a missing receipt flag only means OMF has none recorded.
+export async function companyTransactionPatterns(organizationId: mongoose.Types.ObjectId, args: any) {
+  const limit = 500, exampleLimit = args.exampleLimit || 5
+  const rows: any[] = await getTransactions({ search: literalPattern(args.merchant), ...(args.dateFrom ? { dateFrom: args.dateFrom } : {}), ...(args.dateTo ? { dateTo: args.dateTo } : {}) }, organizationId, { skip: 0, limit: limit + 1 })
+  const scanned = rows.slice(0, limit).filter(row => !args.cardLast4 || String(row.cardNumber || '').slice(-4) === args.cardLast4)
+  const groups = new Map<string, any>(), credit = new Map<string, any>(), receipts = { savedFlagTrue: 0, notRecordedInOMF: 0 }
+  for (const row of scanned) {
+    const classification: any = Object.fromEntries(classificationFields.map(k => [k.replace(/Id$/, ''), reference(row[k])]))
+    const key = classificationFields.map(k => String(row[k]?._id || '')).join('|')
+    const group = groups.get(key) || { classification, count: 0, firstDate: null, lastDate: null, examples: [] }
+    group.count++; const date = row.date ? new Date(row.date) : null
+    if (date && (!group.firstDate || date < group.firstDate)) group.firstDate = date
+    if (date && (!group.lastDate || date > group.lastDate)) group.lastDate = date
+    if (group.examples.length < exampleLimit) group.examples.push({ id: String(row._id), date: row.date, amount: row.amount, currency: row.currency || null, productName: row.productName || '', companyInfo: row.companyInfo || '', cardLast4: String(row.cardNumber || '').slice(-4), receiptFlag: row.hasReceipt === true ? 'saved_flag_true' : 'not_recorded_in_OMF' })
+    groups.set(key, group)
+    if (row.hasReceipt === true) receipts.savedFlagTrue++; else receipts.notRecordedInOMF++
+    if (row.cardAccounting) { const ck = JSON.stringify([row.cardAccounting.accountName || '', row.cardAccounting.subAccountName || '']), c = credit.get(ck) || { accountName: row.cardAccounting.accountName || '', subAccountName: row.cardAccounting.subAccountName || '', count: 0 }; c.count++; credit.set(ck, c) }
+  }
+  const ordered = [...groups.values()].sort((a, b) => b.count - a.count || (b.lastDate?.getTime() || 0) - (a.lastDate?.getTime() || 0))
+  return { merchant: args.merchant, matchedFields: 'referenceNumber, productName, invoiceNumber, receiptNumber, companyInfo, notes (literal, case-insensitive)', matched: scanned.length, groups: ordered, consistent: ordered.length === 1, conflicting: ordered.length > 1, cardCreditAccounts: [...credit.values()].sort((a, b) => b.count - a.count), receipts: { ...receipts, meaning: 'not_recorded_in_OMF means OMF has no saved receipt flag; it is not proof that no receipt exists' }, evidence: 'historical_classification_not_legal_or_tax_truth', scanned: Math.min(rows.length, limit), truncated: rows.length > limit, limit, exampleLimit }
+}
