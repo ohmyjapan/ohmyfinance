@@ -257,7 +257,8 @@ async function planFor(ownerId: string, documentId: string, body: any) {
   const incoming = mappedRows(s.data, mapping, defaults, { hash: s.doc.hash, fileName: s.doc.name, documentId: String(s.doc._id), sheet: s.sheet, firstRow: s.headerRow + 1 }, extras).filter(r => r.provenance.raw.some(Boolean))
   const stored: any[] = await IntakeRecord.find({ ownerId }).limit(20001).lean()
   if (stored.length > 20000) fail(409, '受付が多すぎます。先にアーカイブしてください。')
-  const plan = planImport(stored.map(shape), incoming, { id: () => new mongoose.Types.ObjectId().toHexString() })
+  // F1 fold: the reading the rows were mapped with, so a re-read file row re-keys only the record that still carries its stored identity.
+  const plan = planImport(stored.map(shape), incoming, { id: () => new mongoose.Types.ObjectId().toHexString(), reading: { mapping, defaults } })
   // F1: non-blocking warnings — identifier fields mapped to numeric cells (zeros and digits beyond 15 are not in the file), and
   // numbers whose display is all the file keeps. Nothing is guessed or rejected.
   const warnings: any[] = []

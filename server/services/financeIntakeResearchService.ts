@@ -52,14 +52,17 @@ function visible(r:any){
 }
 // F4 (plan omf-monthly-reconciliation-20261020): a confirmed research is stale once the record's 会社名, T番号 or URL no longer equal
 // what was confirmed for the researched URL (changing them back restores it); an unconfirmed one keeps the revision/URL rule.
+// Fold: confirmedResearchCurrent also requires its registry check, if any, to be as of the record's current 購入日.
 const stale=(r:any,record:any)=>!!r?.context&&(r.state === 'confirmed' ? !confirmedResearchCurrent(record.values, r) : (r.context.recordRevision!==record.revision||r.context.merchantUrl!==(record.values?.merchantUrl||'')))
 export async function researchView(ownerId:string,recordId:string){
  await init();const record=await ownedRecord(ownerId,recordId)
  const r:any=await settleStuck(await Research.findOne({ownerId,recordId:record._id}).lean())
  const connected=!!await Agent.exists(connectedFilter(ownerId))
  const agent:any=await Agent.findOne({ownerId,researchEnabled:true,enabled:true,revokedAt:null}).sort({lastSeenAt:-1}).select('researchStatus').lean()
- const attributed=r?intakeEvidence(record.values,r):null
- return {research:visible(r),connected,settings:agent?.researchStatus||null,stale:stale(r,record),attribution:attributed?{origin:attributed.origin,origins:attributed.origins,sourcesCurrent:attributed.sourcesCurrent,differs:attributed.differs}:null}
+ const attributed=r?intakeEvidence(record.values,r):null,view=visible(r)
+ // F4 fold: a registry check made as of another purchase date is not shown as verified for the current one (registry.asOf kept).
+ if(view&&attributed?.registryBasis&&!attributed.registryBasis.current)view.verified=false
+ return {research:view,connected,settings:agent?.researchStatus||null,stale:stale(r,record),attribution:attributed?{origin:attributed.origin,origins:attributed.origins,sourcesCurrent:attributed.sourcesCurrent,differs:attributed.differs,registryBasis:attributed.registryBasis}:null}
 }
 export async function queueResearch(ownerId:string,recordId:string,body:any){
  await init();const record=await ownedRecord(ownerId,recordId);revisionOf(body,record)

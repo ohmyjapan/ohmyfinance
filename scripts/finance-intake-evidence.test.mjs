@@ -50,6 +50,41 @@ test('F4 file or hand values, ready candidates and no evidence are labelled by o
   assert.equal(intakeEvidence(values(), { ...confirmed(), context: undefined }).sourcesCurrent, false, 'monthly:f4-unit-no-context-historical');
   for (const e of [file, candidate, stored, mixed]) assert.equal('verified' in e, false, 'monthly:f4-unit-no-registry-claim');
 });
+// Fold of review omf-monthly-patch-opus55-20261020 F4 (probes E1/E2).
+test('F4 fold E2: a queued, working, failed or no-supplier research has no supported values and so no difference', async () => {
+  const { intakeEvidence } = await helpers();
+  const bare = state => ({ state, context: { merchantUrl: URL1, recordRevision: 1 }, report: null, sources: [], registry: null, confirmed: null });
+  const noSupplier = { ...ready(), report: { summary: 'not found', supplier: null } };
+  for (const [name, research] of [['queued', bare('queued')], ['working', bare('working')], ['failed', { ...bare('failed'), failure: 'research_failed' }], ['no-supplier', noSupplier]]) {
+    for (const v of [{ merchantUrl: URL1 }, { merchantUrl: URL1 + '-moved', purchaseDate: '2026-10-05' }, values()]) {
+      const e = intakeEvidence(v, research);
+      assert.deepEqual(e.differs, [], 'monthly:f4-unit-no-evidence-no-differs ' + name);
+      assert.equal(e.registryBasis ?? null, null, 'monthly:f4-unit-no-evidence-no-basis ' + name);
+    }
+  }
+});
+test('F4 fold E1: a date-only change keeps the value origin but invalidates the registry check made for another purchase date', async () => {
+  const { intakeEvidence, confirmedResearchCurrent } = await helpers();
+  const registry = { number: NUMBER, legalName: NAME, active: true, asOf: '2026-10-20', registeredFrom: '2026-10-15', disposalDate: '', expireDate: '' };
+  const checked = confirmed({ registry });
+  const moved = intakeEvidence(values({ purchaseDate: '2026-10-05' }), checked);
+  assert.deepEqual([moved.origin, moved.origins.supplierName, moved.origins.invoiceNumber], ['research-confirmed', 'research-confirmed', 'research-confirmed'], 'monthly:f4-unit-date-origin-kept');
+  assert.deepEqual(moved.differs, ['purchaseDate'], 'monthly:f4-unit-date-differs');
+  assert.equal(confirmedResearchCurrent(values({ purchaseDate: '2026-10-05' }), checked), false, 'monthly:f4-unit-date-stale');
+  assert.deepEqual([moved.sourcesCurrent, moved.registryBasis], [false, { asOf: '2026-10-20', purchaseDate: '2026-10-05', current: false }], 'monthly:f4-unit-date-basis-mismatch');
+  for (const day of ['2026-10-20', '', '10/5/26']) {
+    const e = intakeEvidence(values({ purchaseDate: day }), checked);
+    assert.deepEqual([e.origin, e.differs, e.sourcesCurrent, confirmedResearchCurrent(values({ purchaseDate: day }), checked)], ['research-confirmed', [], true, true], 'monthly:f4-unit-date-basis-current ' + JSON.stringify(day));
+    assert.deepEqual(e.registryBasis, { asOf: '2026-10-20', purchaseDate: day === '2026-10-20' ? day : '', current: true }, 'monthly:f4-unit-date-basis-shown ' + JSON.stringify(day));
+  }
+  assert.equal(confirmedResearchCurrent(values({ purchaseDate: '2026-10-20' }), checked), true, 'monthly:f4-unit-date-restored');
+  const both = intakeEvidence(values({ purchaseDate: '2026-10-05', invoiceNumber: 'T9999999999999' }), checked);
+  assert.deepEqual([both.origin, both.differs], ['file-manual', ['invoiceNumber', 'purchaseDate']], 'monthly:f4-unit-date-and-number');
+  const readyChecked = intakeEvidence({ merchantUrl: URL1, purchaseDate: '2026-10-05' }, ready({ registry }));
+  assert.deepEqual([readyChecked.origin, readyChecked.differs], ['candidate', ['purchaseDate']], 'monthly:f4-unit-date-ready-candidate');
+  const unchecked = intakeEvidence(values({ purchaseDate: '2026-10-05' }), confirmed());
+  assert.deepEqual([unchecked.origin, unchecked.differs, unchecked.registryBasis, confirmedResearchCurrent(values({ purchaseDate: '2026-10-05' }), confirmed())], ['research-confirmed', [], null, true], 'monthly:f4-unit-no-registry-no-basis');
+});
 test('F4 the record page and payment evidence templates compile', async () => {
   const { createRequire } = await import('node:module'), req = createRequire(import.meta.url), { parse, compileTemplate } = req('@vue/compiler-sfc');
   for (const name of ['pages/intake/[id].vue', 'components/intake/IntakePaymentMatches.vue']) {

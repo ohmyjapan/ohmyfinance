@@ -8,6 +8,9 @@
 // scripts/finance-monthly-reconciliation-integration.cjs on its own MongoMemoryServer and built app with hidden real Chrome,
 // reported per group F3/F2/F4/F1 and CHROME · M each group's deliberately reintroduced defects, applied to an isolated copy of
 // the built output and required to fail their named harness assertion (run only for a group whose integration leg is green).
+// Fold (plan omf-monthly-reconciliation-fold-20261020, review omf-monthly-patch-opus55-20261020 F1/F4): the same legs carry the
+// negative cases P1/P2c/P3 (a re-read file row never re-keys a hand-corrected or already-repaired record) and E1/E2 (registry
+// basis date vs current purchase date; no changed-after-research label without supported values), plus two mutants below.
 // `covers` is decided at load: the built-app files are listed only when .output/server/index.mjs exists. Synthetic owners
 // monthly-a/b@example.invalid only; no bank, mail, Slack, model, production database or shared harness is touched.
 import { execFile } from 'node:child_process';
@@ -36,6 +39,8 @@ export const MUTANTS = [
   { group: 'F4', name: 'origin-ignores-url', anchor: /const\s+urlCurrent\s*=\s*!!research\?\.context\s*&&/g, replacement: 'const urlCurrent = true || ', expect: /monthly:f4-(?:stale-after-url-edit|historical-sources)/ },
   { group: 'F1', name: 'intake-reading-dropped', anchor: /readWorkbook\(\s*await\s+readFile\(\s*filePath\(\s*ownerId\s*,\s*doc\.hash\s*\)\s*\)\s*,\s*\{\s*intake\s*:\s*true\s*\}\s*\)/g, replacement: 'readWorkbook(await readFile(filePath(ownerId, doc.hash)))', expect: /monthly:f1-(?:numeric-id|date-iso)/ },
   { group: 'F1', name: 'provenance-rebind-dropped', anchor: /const\s+rebind\s*=\s*!old\s*&&/g, replacement: 'const rebind = false &&', expect: /monthly:f1-legacy-preview/ },
+  { group: 'F4', name: 'registry-date-check-removed', anchor: /current\s*:\s*!dated\s*\|\|\s*dated\s*===\s*asOf/g, replacement: 'current: true', expect: /monthly:f4-date-basis-stale/ },
+  { group: 'F1', name: 'identity-predicate-removed', anchor: /const\s+ownedByRow\s*=\s*\(\s*r\s*,\s*fileRow\s*,\s*key\s*\)\s*=>/g, replacement: 'const ownedByRow = (r, fileRow, key) => true ||', expect: /monthly:f1-manual-id-kept/ },
   { group: 'F1', name: 'bank-reader-default-changed', anchor: /const\s+typed\s*=\s*options\.intake\s*===\s*true\s*;/g, replacement: 'const typed = true;', expect: /monthly:f1-bank-(?:control|key-unchanged)/ }
 ];
 

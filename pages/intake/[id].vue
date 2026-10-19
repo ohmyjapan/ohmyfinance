@@ -81,7 +81,7 @@
             </dl>
             <p class="mt-3 text-xs" :class="research.verified ? 'text-green-700 dark:text-green-400' : 'text-amber-700 dark:text-amber-400'" data-research-registry>{{ registryText }}</p>
             <p v-if="research.registry && !research.verified" class="mt-1 text-xs text-gray-500">国税庁の名義：{{ research.registry.legalName }}（{{ research.registry.number }}）</p>
-            <p v-if="researchData.stale && research.report.supplier.citations?.length" class="mt-3 text-xs font-medium text-amber-700 dark:text-amber-400" data-research-historical>調査時の根拠（現在の値と異なる）</p>
+            <p v-if="researchData.attribution?.differs?.length && research.report.supplier.citations?.length" class="mt-3 text-xs font-medium text-amber-700 dark:text-amber-400" data-research-historical>調査時の根拠（現在の値と異なる）</p>
             <div v-for="c in research.report.supplier.citations" :key="c.sourceId + c.quote" class="mt-3 border-l-2 border-gray-200 pl-3 dark:border-white/10" data-research-citation>
               <p class="text-xs text-gray-400">{{ sourceOf(c.sourceId)?.title }}<a v-if="sourceOf(c.sourceId)?.url" :href="sourceOf(c.sourceId).url" target="_blank" rel="noopener noreferrer" class="ml-1 text-primary-main underline">↗</a></p>
               <p class="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-300">{{ c.quote }}</p>
@@ -192,11 +192,12 @@ const research = computed(() => researchData.value?.research || null)
 const researchPending = computed(() => ['queued', 'working'].includes(research.value?.state))
 const researchStateLabel = computed(() => ({ queued: '順番待ち', working: '調査中', ready: '確認できます', confirmed: '保存済み', failed: '再実行できます' } as Record<string, string>)[research.value?.state] || '')
 const researchStageLabel = computed(() => ({ web: '公開情報を確認しています。', mail: '購入メールを照合しています。', document: '書類を読んでいます。', registry: '登録情報を照合しています。' } as Record<string, string>)[research.value?.events?.at(-1)?.stage] || '根拠を集めて整理しています。')
-const registryText = computed(() => { const r = research.value; if (!r?.registry) return '国税庁API照合: 未照合（接続設定なし）'; return r.verified ? '国税庁API照合: 登録あり（基準日 ' + r.registry.asOf + '）' : '国税庁API照合: 照合不一致' })
+// F4 fold: every registry line names its 基準日; a check made as of another date than the current 購入日 is not a verification of it.
+const registryText = computed(() => { const r = research.value, b = researchData.value?.attribution?.registryBasis; if (!r?.registry) return '国税庁API照合: 未照合（接続設定なし）'; if (b && !b.current) return '国税庁API照合: 基準日 ' + r.registry.asOf + ' の照合です。現在の購入日 ' + b.purchaseDate + ' では未確認です。'; return r.verified ? '国税庁API照合: 登録あり（基準日 ' + r.registry.asOf + '）' : '国税庁API照合: 照合不一致（基準日 ' + r.registry.asOf + '）' })
 const failureText = (failure: string) => ({ not_claimed: '調査担当が10分以内に受け付けませんでした。再実行できます。', worker_lost: '調査担当との接続が途中で切れました。再実行できます。' } as Record<string, string>)[failure] || '会社・登録番号を特定できませんでした。'
 const sourceOf = (id: string) => research.value?.sources?.find((s: any) => s.id === id)
 // F4 (plan omf-monthly-reconciliation-20261020): which of URL / 会社名 / T番号 differ from what the confirmed research supported.
-const changedText = computed(() => { const names: Record<string, string> = { merchantUrl: 'URL', supplierName: '会社名', invoiceNumber: 'T番号' }; const d = (researchData.value?.attribution?.differs || []).map((f: string) => names[f] || f); return d.length ? d.join('・') : 'URL・会社名・T番号' })
+const changedText = computed(() => { const names: Record<string, string> = { merchantUrl: 'URL', supplierName: '会社名', invoiceNumber: 'T番号', purchaseDate: '購入日' }; const d = (researchData.value?.attribution?.differs || []).map((f: string) => names[f] || f); return d.length ? d.join('・') : 'URL・会社名・T番号' })
 const requestId = () => { const h = Array.from(crypto.getRandomValues(new Uint8Array(16)), v => v.toString(16).padStart(2, '0')).join(''); return [h.slice(0, 8), h.slice(8, 12), h.slice(12, 16), h.slice(16, 20), h.slice(20)].join('-') }
 let researchSequence = 0, disposed = false
 async function loadResearch() {

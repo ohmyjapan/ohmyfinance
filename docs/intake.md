@@ -131,13 +131,18 @@ import are not blocked. A template saved without headers is not compared.
 
 Same-file reimport: when a corrected reading of the same file gives a row a new identity — the cells stored for that file row
 (hash + sheet + row) differ from the current reading, with the same service and account — and exactly one active record came
-from that row, that record is updated instead of a new one being created — its id, allocations, provenance and history are kept, its key becomes the
+from that row **and still carries the identity its stored reading produced** (fold of review omf-monthly-patch-opus55-20261020
+F1: its key equals the external key of the stored cells under the current mapping and defaults, or that row's file-row key for
+an ambiguous legacy row, and the current reading gives another key), that record is updated instead of a new one being created — its id, allocations, provenance and history are kept, its key becomes the
 new identity, the history entry carries `identity { before, after, by: 'file-row' }` and the preview marks the row
 （同じファイル行の受付のIDを変更）. This is how a record imported under an E-notation ID is corrected by reimporting its original file.
-A second import of the same file with the same reading under another mapping or default (another service, a hand-corrected ID)
-is not a re-reading and behaves exactly as before. Never merged: two or more records on that file row, a record already matched by
+A second import of the same file with the same reading under another mapping or default (another service) is not a re-reading
+and behaves exactly as before. A record whose identity no longer is its stored reading's — an order ID corrected by hand (even
+when only another cell such as a date reads differently now), or a record already repaired from another file the released reader
+had merged into it — is never re-keyed by a reimport: the row takes the conflict exit below and becomes its own record with
+identity review, the hand-corrected or repaired record unchanged. Repeating the import is stable. Never merged: two or more records on that file row, a record already matched by
 another row of the same import, or a new identity another record already holds — the row is flagged `provenanceConflict` (the
-record ids) and set to identity review. Archived records are not rebound. A key another record took meanwhile is counted as a
+record ids, also kept as `conflict` in the history entry the import writes) and set to identity review. Archived records are not rebound. A key another record took meanwhile is counted as a
 conflict like a revision change. There is no database migration: earlier records are found only when their original file is
 imported again, and how many deployed records carry an E-notation ID is unknown (no production read was made).
 
@@ -155,6 +160,16 @@ says which values changed after saving, labels the citations 調査時の根拠�
 受付に保存済み and keeps 「もう一度調べる」. Nothing is hidden: report, citations and history stay. The research queue, worker
 claim/progress/result and confirm write are unchanged, and registry verification is still only the equality of the active NTA row
 with the number and legal name — a page citation is not a registry check.
+
+**Registry basis date (fold of review omf-monthly-patch-opus55-20261020 F4).** The NTA registry check is made as of one day:
+`registry.asOf`, the research-time 購入日, or the research day for an undated record. `attribution.registryBasis { asOf,
+purchaseDate, current }` names it; it is current only while the record is undated (or its date unreadable) or its valid 購入日
+equals that day. When the 購入日 later moves (a hand edit, or a typed reimport that now reads a legacy date), `purchaseDate` is
+in `differs`, a confirmed research is stale and keeps 「もう一度調べる」, `research.verified` in the owner read is false and the
+record page says 基準日 X の照合です。現在の購入日 Y では未確認です。 — while unchanged 会社名/T番号 keep their origin
+`research-confirmed` (value origin and registry date validity are separate). Restoring the date restores the correspondence.
+No research, worker, NTA call or confirm write changed; nothing is re-checked automatically. A research that found no supported
+values (queued, working, failed, no supplier) has no differences, so no 調査時の根拠 / 調査後に変更あり label appears for it.
 
 Verification: `node --test scripts/finance-intake.test.mjs scripts/finance-intake-evidence.test.mjs`; through the hub
 `node scripts/zoomer-verify.mjs --run-fixture omf-monthly-reconciliation.mjs --cwd <tree>` (never directly).

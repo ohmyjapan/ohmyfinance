@@ -84,7 +84,8 @@ export function mappedRows(rows, mapping, defaults, proof, extras = []) {
 }
 // records: the stored records (id, key, values, extra, provenance, history, revision, identityReview, archived); incoming: rows
 // of { values, extra?, present?, provenance?, id? }. A blank incoming cell or an unmapped field keeps the stored value unless
-// options.clearBlank; the same rule keeps a stored extra. Neither records nor incoming are mutated.
+// options.clearBlank; the same rule keeps a stored extra. Neither records nor incoming are mutated. options.reading ({ mapping,
+// defaults } the incoming rows were mapped with) lets a re-read file row prove which record still carries its stored identity.
 export function planImport(records, incoming, options = {}) {
   const out = [], counts = new Map();
   for (const r of incoming) { const k = externalKey(r.values); if (k) counts.set(k, (counts.get(k) || 0) + 1); }
@@ -96,15 +97,23 @@ export function planImport(records, incoming, options = {}) {
   // provenance and history kept; the identity change is shown). Two or more such records, a record already matched in this plan,
   // or another record holding the new identity are never merged: the row is flagged with the ids. The same reading under another
   // mapping or default (a deliberate second import of the file) is not a re-reading and behaves as before.
+  // Fold (plan omf-monthly-reconciliation-fold-20261020, review omf-monthly-patch-opus55-20261020 F1): a re-read row re-keys only
+  // a record that still carries the identity its stored reading of that row produced — the external key of the stored raw cells
+  // under the current reading (options.reading: the import's mapping and defaults), or that row's file-row key (an ambiguous
+  // legacy row) — and only when the current reading gives another key. Any other record of that row (an ID corrected by hand,
+  // a record already repaired from another file, or no reading given) is never re-keyed: the row takes the provenance-conflict
+  // exit above (its own record, identity review, the conflicting ids also kept in its history entry).
   const byRow = new Map(), claimed = new Set();
   for (const r of records) if (!r.archived) for (const s of r.provenance || []) { const k = sourceKey(s); if (k && !(byRow.get(k) || []).includes(r)) byRow.set(k, [...(byRow.get(k) || []), r]); }
   const reread = (r, row, v) => { const s = (r.provenance || []).find(x => sourceKey(x) === sourceKey(row.provenance)); return !!s && JSON.stringify((s.raw || []).map(text)) !== JSON.stringify((row.provenance.raw || []).map(text)) && (r.values?.service || '') === v.service && (r.values?.account || '') === v.account; };
+  const reading = options.reading, storedIdentity = s => reading?.mapping ? externalKey(mappedRows([s.raw || []], reading.mapping, reading.defaults || {}, { ...s, firstRow: s.row })[0].values) : '';
+  const ownedByRow = (r, fileRow, key) => (r.provenance || []).some(s => sourceKey(s) === fileRow && r.key !== key && (r.key === fileRow || (!!storedIdentity(s) && r.key === storedIdentity(s))));
   for (const row of incoming) {
     const v = normalize(row.values), ref = externalKey(v), ambiguous = !!ref && counts.get(ref) > 1;
     const id = row.id || newId(), key = (!ambiguous && ref) || sourceKey(row.provenance) || manualKey(id);
     let old = index.get(key);
     const fileRow = sourceKey(row.provenance), bound = fileRow ? (byRow.get(fileRow) || []).filter(r => (!old || r.id !== old.id) && reread(r, row, v)) : [];
-    const rebind = !old && bound.length === 1 && !claimed.has(bound[0].id);
+    const rebind = !old && bound.length === 1 && !claimed.has(bound[0].id) && ownedByRow(bound[0], fileRow, key);
     let identityChanged = null, provenanceConflict = [];
     if (rebind) { old = bound[0]; identityChanged = { before: old.key, after: key, by: 'file-row' }; index.delete(old.key); } else provenanceConflict = bound.map(r => r.id);
     if (old) claimed.add(old.id);
@@ -125,7 +134,7 @@ export function planImport(records, incoming, options = {}) {
     const p = row.provenance, proofAdded = !!p && !next.provenance.some(s => sourceKey(s) === sourceKey(p));
     if (proofAdded) next.provenance.push(p);
     const operation = !old ? 'new' : changes.length || proofAdded || identityChanged || (provenanceConflict.length && !old.identityReview) ? 'update' : 'unchanged';
-    if (operation !== 'unchanged') { next.revision++; next.updatedAt = now; next.history.push({ at: now, kind: operation, changes, source: p ? { fileName: p.fileName, sheet: p.sheet, row: p.row } : null, ...(identityChanged ? { identity: identityChanged } : {}) }); }
+    if (operation !== 'unchanged') { next.revision++; next.updatedAt = now; next.history.push({ at: now, kind: operation, changes, source: p ? { fileName: p.fileName, sheet: p.sheet, row: p.row } : null, ...(identityChanged ? { identity: identityChanged } : {}), ...(provenanceConflict.length ? { conflict: provenanceConflict } : {}) }); }
     out.push({ operation, record: next, changes, ambiguous, row: p?.row, ...(identityChanged ? { identityChanged } : {}), ...(provenanceConflict.length ? { provenanceConflict } : {}) });
     index.set(key, next);
   }

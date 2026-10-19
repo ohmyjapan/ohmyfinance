@@ -204,14 +204,14 @@ async function main() {
       const NAME = 'Synthetic Evidence 株式会社', NUMBER = 'T1234567890123', URL1 = 'https://evidence.example.invalid/items/1';
       const pageText = NAME + ' ' + NUMBER + ' 特定商取引法に基づく表記';
       const web = (id, text) => ({ id, kind: 'web', title: 'Synthetic Evidence 会社概要', url: 'https://evidence.example.invalid/company', text, hash: sha(text), capturedAt: new Date().toISOString() });
-      const registry = (id, number, name) => { const t = JSON.stringify({ count: '1', announcement: [{ registratedNumber: number, name, registrationDate: '2023-10-01', disposalDate: '', expireDate: '', address: 'Synthetic address' }] }); return { id, kind: 'registry', title: '国税庁 登録番号・基準日照合', url: 'https://web-api.invoice-kohyo.nta.go.jp/1/valid', text: t, hash: sha(t), capturedAt: new Date().toISOString() }; };
+      const registry = (id, number, name, registeredFrom = '2023-10-01') => { const t = JSON.stringify({ count: '1', announcement: [{ registratedNumber: number, name, registrationDate: registeredFrom, disposalDate: '', expireDate: '', address: 'Synthetic address' }] }); return { id, kind: 'registry', title: '国税庁 登録番号・基準日照合', url: 'https://web-api.invoice-kohyo.nta.go.jp/1/valid', text: t, hash: sha(t), capturedAt: new Date().toISOString() }; };
       const report = { summary: '会社名と登録番号を確認しました。', question: '', findings: [], supplier: { shopName: 'Synthetic Evidence', legalName: NAME, invoiceNumber: NUMBER, citations: [{ sourceId: 's1', quote: pageText }] } };
-      async function research(record, registryNumber) {
+      async function research(record, registryNumber, registeredFrom) {
         ok(await worker(), 'SETUP:worker-status');
         const queued = ok(await intake('records/' + record.id + '/research', { method: 'POST', body: { revision: record.revision, researchRevision: 0, requestId: uuid(), instruction: '' } }), 'monthly:f4-queue');
         assert.equal(queued.research.state, 'queued', 'monthly:f4-queue');
         const job = ok(await wcall('intake/claim'), 'monthly:f4-claim').job; assert.ok(job, 'monthly:f4-claim');
-        ok(await wcall('intake/' + job.id + '/result', { lease: job.lease, sources: [...job.sources, web('s1', pageText), registry('s2', registryNumber, NAME)], report, registry: { sourceId: 's2', number: registryNumber, date: job.context.source.purchaseDate } }), 'monthly:f4-result');
+        ok(await wcall('intake/' + job.id + '/result', { lease: job.lease, sources: [...job.sources, web('s1', pageText), registry('s2', registryNumber, NAME, registeredFrom)], report, registry: { sourceId: 's2', number: registryNumber, date: job.context.source.purchaseDate } }), 'monthly:f4-result');
       }
       const researchView = async record => ok(await intake('records/' + record.id + '/research'), 'monthly:f4-research-view');
       const evidence = async record => ok(await pay('records/' + record.id), 'monthly:f4-payment-record').record.evidence;
@@ -256,10 +256,47 @@ async function main() {
       rv = await researchView(r3); e = await evidence(r3);
       assert.deepEqual([rv.research.verified, e.origin, e.verified], [false, 'candidate', false], 'monthly:f4-registry-mismatch-unverified');
       pass('a registry number mismatch stays unverified as a candidate');
+      // Fold of review omf-monthly-patch-opus55-20261020 F4. E1: a registry check is as of one purchase date (registry.asOf); the
+      // registrant here is registered from 2026-11-05 and checked as of 2026-11-09. E2: research with no supported values (queued,
+      // failed) carries no difference, so no changed-after-research label. Setup first (E2 rows stay queued/failed for Chrome).
+      const URL4 = 'https://evidence.example.invalid/items/4';
+      let r4 = await createRecord({ orderId: 'F4-0004', description: 'F4 date basis item', merchant: 'Synthetic Evidence', merchantUrl: URL4, purchaseDate: '2026-11-09', amount: '400' });
+      await research(r4, NUMBER, '2026-11-05');
+      rv = await researchView(r4);
+      const confirmed4 = ok(await intake('records/' + r4.id + '/research/confirm', { method: 'POST', body: { revision: r4.revision, researchRevision: rv.research.revision, confirm: true } }), 'monthly:f4-date-confirm');
+      e = await evidence(r4);
+      assert.deepEqual([confirmed4.stale, e.origin, e.verified, e.research?.registry?.asOf], [false, 'research-confirmed', true, '2026-11-09'], 'monthly:f4-date-confirmed');
+      const r6 = await createRecord({ orderId: 'F4-0006', description: 'F4 failed research item', merchant: 'Synthetic Evidence', merchantUrl: 'https://evidence.example.invalid/items/6', purchaseDate: '2026-11-07', amount: '500' });
+      ok(await worker(), 'SETUP:worker-status');
+      ok(await intake('records/' + r6.id + '/research', { method: 'POST', body: { revision: r6.revision, researchRevision: 0, requestId: uuid(), instruction: '' } }), 'monthly:f4-queue-failed');
+      const job6 = ok(await wcall('intake/claim'), 'monthly:f4-claim-failed').job;
+      assert.equal(job6?.context?.recordId, r6.id, 'SETUP:failed-job');
+      ok(await wcall('intake/' + job6.id + '/result', { lease: job6.lease, failed: true }), 'monthly:f4-failed-result');
+      const r5 = await createRecord({ orderId: 'F4-0005', description: 'F4 queued research item', merchant: 'Synthetic Evidence', merchantUrl: 'https://evidence.example.invalid/items/5', purchaseDate: '2026-11-06', amount: '300' });
+      ok(await worker(), 'SETUP:worker-status');
+      ok(await intake('records/' + r5.id + '/research', { method: 'POST', body: { revision: r5.revision, researchRevision: 0, requestId: uuid(), instruction: '' } }), 'monthly:f4-queue-left');
+      assert.deepEqual([(await researchView(r5)).research.state, (await researchView(r6)).research.state], ['queued', 'failed'], 'monthly:f4-no-evidence-states');
+      for (const r of [r5, r6]) { const x = await evidence(r); assert.deepEqual([x.differs, x.verified, x.research?.report ?? null], [[], false, null], 'monthly:f4-no-evidence-no-differs ' + r.values.orderId); }
+      pass('queued and failed research hold no supported values: no differences and no verification');
       const bank = await bankAccount('F4 bank');
-      await bankImport(bank, csv(BANK_HEAD, [['2026/11/02', 'F4-0001 Synthetic Evidence', '1200', '', '', '']]), 'f4-bank.csv');
+      await bankImport(bank, csv(BANK_HEAD, [['2026/11/02', 'F4-0001 Synthetic Evidence', '1200', '', '', ''], ['2026/11/09', 'F4 EVIDENCE SET', '1200', '', '', '']]), 'f4-bank.csv');
       await allocateRecord(await findPayment('F4-0001 Synthetic Evidence'), r1, 1200);
-      ui.f4 = { r1, fileRecord };
+      for (const [r, amount] of [[r4, 400], [r5, 300], [r6, 500]]) await allocateRecord(await findPayment('F4 EVIDENCE SET'), r, amount);
+      ui.f4 = { r1, fileRecord, r4, r5, r6 };
+      // E1: only the purchase date moves (to before the registration date); the value origin stays, the check is not current.
+      r4 = await patch(r4, { purchaseDate: '2026-11-03' });
+      rv = await researchView(r4);
+      assert.equal(rv.stale, true, 'monthly:f4-date-basis-stale ' + JSON.stringify(rv.attribution));
+      e = await evidence(r4);
+      assert.deepEqual([e.origin, e.verified, e.differs, e.registryBasis], ['research-confirmed', false, ['purchaseDate'], { asOf: '2026-11-09', purchaseDate: '2026-11-03', current: false }], 'monthly:f4-date-unverified');
+      assert.deepEqual([rv.attribution?.origin, rv.attribution?.differs, rv.research.verified, rv.research.registry?.asOf, rv.research.history?.length ?? 0], ['research-confirmed', ['purchaseDate'], false, '2026-11-09', 0], 'monthly:f4-date-research-view');
+      pass('a date-only change after confirmation: research stale, payment evidence not verified, the value origin and the 2026-11-09 basis kept');
+      r4 = await patch(r4, { purchaseDate: '2026-11-09' });
+      rv = await researchView(r4); e = await evidence(r4);
+      assert.deepEqual([rv.stale, e.origin, e.verified, e.differs, e.registryBasis?.current], [false, 'research-confirmed', true, [], true], 'monthly:f4-date-restored');
+      pass('restoring the purchase date restores the registry correspondence');
+      r4 = await patch(r4, { purchaseDate: '2026-11-03' });
+      ui.f4.r4 = r4;
     });
 
     // ── F1 — typed spreadsheet cells, bank reader control, template drift, same-file reimport ─────────────────────────
@@ -330,9 +367,9 @@ async function main() {
       // Same-file legacy reimport: the record the released reader wrote for this file row is updated, not duplicated.
       const legacyBook = (id, description, amount) => { const ws = { A1: { t: 's', v: '注文番号' }, B1: { t: 's', v: '商品名' }, C1: { t: 's', v: '購入金額' }, A2: { t: 'n', v: id }, B2: { t: 's', v: description }, C2: { t: 'n', v: amount }, '!ref': 'A1:C2' }; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Sheet1'); return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }); };
       const legacyMapping = { orderId: '0', description: '1', amount: '2' };
-      async function seedLegacy(buf, name) {
+      async function seedLegacy(buf, name, seedMapping = legacyMapping) {
         const doc = await upload(buf, name), rows = defaultRows(buf), ownerDoc = await db.collection('financeintakedocuments').findOne({ _id: new ObjectId(doc.id) });
-        const incoming = M.mappedRows(rows.slice(1), legacyMapping, defaults, { hash: doc.hash, fileName: doc.name, documentId: doc.id, sheet: 'Sheet1', firstRow: 2 }, []).filter(r => r.provenance.raw.some(Boolean));
+        const incoming = M.mappedRows(rows.slice(1), seedMapping, defaults, { hash: doc.hash, fileName: doc.name, documentId: doc.id, sheet: 'Sheet1', firstRow: 2 }, []).filter(r => r.provenance.raw.some(Boolean));
         const planned = M.planImport([], incoming, { id: () => new ObjectId().toHexString() }), r = planned.rows[0].record;
         await db.collection('financeintakerecords').insertOne({ _id: new ObjectId(r.id), ownerId: ownerDoc.ownerId, key: r.key, values: r.values, extra: r.extra || {}, provenance: r.provenance, history: r.history, revision: r.revision, identityReview: r.identityReview, archived: false, createdAt: new Date(), updatedAt: new Date() });
         return { doc, id: r.id, key: r.key, values: r.values };
@@ -364,6 +401,54 @@ async function main() {
       assert.deepEqual([untouched.values.orderId, untouched.revision, held.identityReview], ['2.23457E+11', 1, true], 'monthly:f1-collision-no-merge');
       pass('when the corrected ID is already held by another record the rows are not merged and the collision is flagged for review');
       ui.f1 = { reorderedPath, originalPath };
+      // Fold of review omf-monthly-patch-opus55-20261020 F1 (probes P1/P2c/P3): a re-read file row re-keys a record only while the
+      // record still carries the identity its stored reading produced; any other record of that row is never re-keyed — the row
+      // becomes its own record flagged with the provenance conflict (ids kept in its history).
+      const recordOf = id => db.collection('financeintakerecords').findOne({ _id: new ObjectId(id) });
+      const handEdit = async (id, orderId) => { const r = ok(await intake('records/' + id), 'record'); return ok(await intake('records/' + id, { method: 'PATCH', body: { revision: r.revision, values: { orderId } } }), 'monthly:f1-hand-edit'); };
+      const previewOf = async (doc, body, tag) => ok(await intake('files/' + doc.id + '/preview', { method: 'POST', body }), tag);
+      // P1: a string order ID and an m/d/yy date cell; the released reader stored '10/5/26', the intake reader now gives 2026-10-05.
+      const p1Mapping = { orderId: '0', purchaseDate: '1', description: '2', amount: '3' }, p1Plan = { sheet: 'Sheet1', headerRow: 1, mapping: p1Mapping, defaults };
+      const p1Book = (() => { const ws = { A1: { t: 's', v: '注文番号' }, B1: { t: 's', v: '購入日' }, C1: { t: 's', v: '商品名' }, D1: { t: 's', v: '購入金額' }, A2: { t: 's', v: 'P1-FILE-001' }, B2: { t: 'n', v: 46300, z: 'm/d/yy' }, C2: { t: 's', v: 'P1 hand corrected row' }, D2: { t: 'n', v: 1000 }, '!ref': 'A1:D2' }; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Sheet1'); return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }); })();
+      const p1 = await seedLegacy(p1Book, 'p1-date.xlsx', p1Mapping);
+      assert.deepEqual([p1.values.orderId, p1.values.purchaseDate], ['P1-FILE-001', '10/5/26'], 'SETUP:p1-seed');
+      await handEdit(p1.id, 'P1-MANUAL-999');
+      const p1Preview = await previewOf(p1.doc, p1Plan, 'monthly:f1-p1-preview'), p1Row = p1Preview.rows[0];
+      assert.equal(p1Row.identityChanged, null, 'monthly:f1-manual-id-kept ' + JSON.stringify({ op: p1Row.operation, identityChanged: p1Row.identityChanged, orderId: p1Row.values.orderId }));
+      assert.deepEqual([p1Preview.counts.new, p1Preview.counts.update, p1Row.operation, p1Row.values.orderId, p1Row.values.purchaseDate, p1Row.identityReview, p1Row.provenanceConflict], [1, 0, 'new', 'P1-FILE-001', '2026-10-05', true, [p1.id]], 'monthly:f1-manual-id-flagged');
+      ok(await intake('files/' + p1.doc.id + '/import', { method: 'POST', body: p1Plan }), 'monthly:f1-p1-import');
+      const p1After = await recordOf(p1.id), p1New = await db.collection('financeintakerecords').findOne({ 'values.orderId': 'P1-FILE-001' });
+      assert.deepEqual([p1After.values.orderId, p1After.key, p1After.revision, p1After.values.purchaseDate], ['P1-MANUAL-999', JSON.stringify(['OWN', 'DEMO', 'P1-MANUAL-999', '']), 2, '10/5/26'], 'monthly:f1-manual-id-kept-import');
+      assert.deepEqual([p1New?.identityReview, p1New?.history?.at(-1)?.conflict], [true, [p1.id]], 'monthly:f1-manual-conflict-recorded');
+      pass('P1: a hand-corrected order ID is kept when only the date cell of its file row reads differently; the row becomes a flagged record');
+      // P2c: the legacy record repaired above, then its ID corrected by hand, then the same file again.
+      await handEdit(legacy.id, 'LEGACY-MANUAL-1');
+      const p2Preview = await previewOf(legacy.doc, legacyPlan, 'monthly:f1-p2c-preview'), p2Row = p2Preview.rows[0];
+      assert.equal(p2Row.identityChanged, null, 'monthly:f1-repaired-then-manual-kept ' + JSON.stringify({ op: p2Row.operation, identityChanged: p2Row.identityChanged }));
+      assert.deepEqual([p2Preview.counts.new, p2Row.identityReview, p2Row.provenanceConflict], [1, true, [legacy.id]], 'monthly:f1-repaired-then-manual-flagged');
+      ok(await intake('files/' + legacy.doc.id + '/import', { method: 'POST', body: legacyPlan }), 'monthly:f1-p2c-import');
+      assert.equal((await recordOf(legacy.id)).values.orderId, 'LEGACY-MANUAL-1', 'monthly:f1-repaired-then-manual-import');
+      pass('P2c: after a valid E-notation repair, a later hand-corrected ID survives the next reimport of the same file');
+      // P3: two distinct 12-digit IDs that both displayed 3.23457E+11 — the released import merged file G into file F's record.
+      const fBook = legacyBook(323456789012, 'P3 file F row', 100), gBook = legacyBook(323456999999, 'P3 file G row', 200);
+      const fDoc = await upload(fBook, 'p3-f.xlsx'), gDoc = await upload(gBook, 'p3-g.xlsx'), ownerDoc = await db.collection('financeintakedocuments').findOne({ _id: new ObjectId(fDoc.id) });
+      let seeded = [];
+      for (const [doc, buf] of [[fDoc, fBook], [gDoc, gBook]]) seeded = M.applyPlan(seeded, M.planImport(seeded, M.mappedRows(defaultRows(buf).slice(1), legacyMapping, defaults, { hash: doc.hash, fileName: doc.name, documentId: doc.id, sheet: 'Sheet1', firstRow: 2 }, []), { id: () => new ObjectId().toHexString() }));
+      const m = seeded[0];
+      assert.deepEqual([seeded.length, m.values.orderId, m.values.description, m.provenance.length], [1, '3.23457E+11', 'P3 file G row', 2], 'SETUP:p3-merged-seed');
+      await db.collection('financeintakerecords').insertOne({ _id: new ObjectId(m.id), ownerId: ownerDoc.ownerId, key: m.key, values: m.values, extra: m.extra || {}, provenance: m.provenance, history: m.history, revision: m.revision, identityReview: m.identityReview, archived: false, createdAt: new Date(), updatedAt: new Date() });
+      const fPreview = await previewOf(fDoc, legacyPlan, 'monthly:f1-p3-f-preview');
+      assert.deepEqual([fPreview.counts.update, fPreview.rows[0].values.orderId, !!fPreview.rows[0].identityChanged], [1, '323456789012', true], 'monthly:f1-merged-first-repaired');
+      ok(await intake('files/' + fDoc.id + '/import', { method: 'POST', body: legacyPlan }), 'monthly:f1-p3-f-import');
+      const repairedRevision = (await recordOf(m.id)).revision;
+      const gPreview = await previewOf(gDoc, legacyPlan, 'monthly:f1-p3-g-preview'), gRow = gPreview.rows[0];
+      assert.equal(gRow.identityChanged, null, 'monthly:f1-merged-second-file-flagged ' + JSON.stringify({ op: gRow.operation, identityChanged: gRow.identityChanged }));
+      assert.deepEqual([gPreview.counts.new, gRow.values.orderId, gRow.identityReview, gRow.provenanceConflict], [1, '323456999999', true, [m.id]], 'monthly:f1-merged-second-new');
+      ok(await intake('files/' + gDoc.id + '/import', { method: 'POST', body: legacyPlan }), 'monthly:f1-p3-g-import');
+      const firstAfter = await recordOf(m.id), gRecord = await db.collection('financeintakerecords').findOne({ 'values.orderId': '323456999999' });
+      assert.deepEqual([firstAfter.values.orderId, firstAfter.values.description, firstAfter.revision, gRecord?.values.description, gRecord?.identityReview], ['323456789012', 'P3 file F row', repairedRevision, 'P3 file G row', true], 'monthly:f1-merged-first-unchanged');
+      for (const doc of [fDoc, gDoc]) { const again = await previewOf(doc, legacyPlan, 'monthly:f1-p3-repeat'); assert.deepEqual([again.counts.unchanged, again.counts.identityChanged], [1, 0], 'monthly:f1-merged-stable ' + doc.name); }
+      pass('P3: a record the released reader merged across two files is repaired by the first file; the second becomes its own flagged record and repeats are stable');
     });
 
     // ── hidden real Chrome (skipped in mutant runs) ──────────────────────────────────────────────────────────────────────
@@ -432,6 +517,32 @@ async function main() {
           assert.ok((await page.$eval('[data-evidence-historical]', e => e.textContent)).includes('調査時の根拠（現在の値と異なる）'), 'monthly:f4-chrome-payment-historical');
           assert.equal(await overflow(), false, 'monthly:f4-chrome-payment-no-overflow'); await shot('payment-evidence-390');
           pass('hidden real Chrome: stale research notice, historical citations, re-research lane and the payment evidence origin label');
+          // Fold E2/E1: one bank row allocated to the queued (r5), failed (r6) and date-moved (r4) purchases.
+          const { r1, r4, r5, r6 } = ui.f4, set = (await payments()).find(p => p.description === 'F4 EVIDENCE SET'), setView = await view(set);
+          const allocationOf = id => setView.allocations.find(a => a.record?.id === id)?.id, ids = [r4, r5, r6].map(r => allocationOf(r.id));
+          assert.ok(ids.every(Boolean), 'SETUP:f4-evidence-set-allocations');
+          await page.goto(origin + '/intake/payments', { waitUntil: 'networkidle2' }); await wait(() => !!document.querySelector('[data-payment-list]'));
+          await page.evaluate(k => document.querySelector('[data-payment-key="' + k + '"]').click(), set.paymentKey);
+          await wait(list => list.every(id => !!document.querySelector('[data-allocation="' + id + '"] [data-evidence-origin]')), ids, 'monthly:f4-chrome-evidence-set');
+          for (const r of [r5, r6]) assert.equal(await page.evaluate(id => !!document.querySelector('[data-allocation="' + id + '"] [data-evidence-historical]'), allocationOf(r.id)), false, 'monthly:f4-chrome-no-false-historical ' + r.values.orderId);
+          const dated = await page.evaluate(id => ({ origin: document.querySelector('[data-allocation="' + id + '"] [data-evidence-origin]')?.textContent || '', historical: document.querySelector('[data-allocation="' + id + '"] [data-evidence-historical]')?.textContent || '' }), allocationOf(r4.id));
+          assert.ok(dated.origin.includes('調査結果を確認して保存') && dated.origin.includes('基準日 2026-11-09') && dated.origin.includes('2026-11-03') && !dated.origin.includes('国税庁照合済み') && dated.historical.includes('購入日'), 'monthly:f4-chrome-date-basis-label ' + JSON.stringify(dated));
+          assert.equal(await overflow(), false, 'monthly:f4-chrome-evidence-set-no-overflow'); await shot('evidence-basis-390');
+          await setInput('[data-payment-from]', '2026-11-01'); await setInput('[data-payment-to]', '2026-11-30');
+          await page.click('[data-review-tab="purchases"]');
+          await wait(list => list.every(id => !!document.querySelector('[data-purchase-record="' + id + '"]')), [r1.id, r4.id, r5.id, r6.id], 'monthly:f4-chrome-month-rows');
+          const rowText = id => page.$eval('[data-purchase-record="' + id + '"]', el => el.textContent);
+          for (const r of [r5, r6]) assert.equal((await rowText(r.id)).includes('調査後に変更あり'), false, 'monthly:f4-chrome-month-no-false-change ' + r.values.orderId);
+          const r4Row = await rowText(r4.id);
+          assert.ok(r4Row.includes('調査後に変更あり') && r4Row.includes('購入日') && r4Row.includes('基準日 2026-11-09'), 'monthly:f4-chrome-month-date-basis ' + r4Row.slice(0, 300));
+          assert.ok((await rowText(r1.id)).includes('調査後に変更あり'), 'monthly:f4-chrome-month-change-control');
+          assert.equal(await overflow(), false, 'monthly:f4-chrome-month-no-overflow'); await shot('purchase-evidence-390');
+          await page.goto(origin + '/intake/' + r4.id, { waitUntil: 'networkidle2' }); await wait(() => !!document.querySelector('[data-research-stale]') && !!document.querySelector('[data-research-registry]'), null, 'monthly:f4-chrome-date-stale');
+          const research4 = await page.evaluate(() => ({ stale: document.querySelector('[data-research-stale]').textContent, registry: document.querySelector('[data-research-registry]').textContent }));
+          assert.ok(research4.stale.includes('購入日') && research4.registry.includes('基準日 2026-11-09') && research4.registry.includes('2026-11-03') && !research4.registry.includes('登録あり'), 'monthly:f4-chrome-research-date-basis ' + JSON.stringify(research4));
+          await wait(() => { const b = document.querySelector('[data-research-start]'); return b && !b.disabled && b.textContent.includes('もう一度調べる'); }, null, 'monthly:f4-chrome-date-reresearch');
+          assert.equal(await overflow(), false, 'monthly:f4-chrome-date-no-overflow'); await shot('research-date-basis-390');
+          pass('hidden real Chrome: no changed-after-research label for queued/failed research (payment evidence and month list); the moved purchase date shows its 基準日, is not 照合済み, and offers re-research');
         });
         if (ui.f1) await group('F1', async pass => {
           for (const [file, notice] of [[ui.f1.originalPath, false], [ui.f1.reorderedPath, true]]) {

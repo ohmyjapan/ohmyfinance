@@ -253,6 +253,12 @@ No closing, posting, export, new collection or sidebar item.
 (docs/intake.md). The label distinguishes 調査結果を確認して保存 from 取込・手入力の値（調査で未確認） and 調査候補（未保存）, per
 field when they differ; when the research's citations no longer match the current URL or values they are kept and marked
 調査時の根拠（現在の値と異なる）. `confirmed` still means a number is stored; `verified` is still only the registry equality.
+Fold (review omf-monthly-patch-opus55-20261020 F4): that label and the month list's 調査後に変更あり appear only when `differs` is
+not empty — a queued, failed or no-supplier research supports no values and shows neither. Evidence also carries
+`registryBasis { asOf, purchaseDate, current }` (docs/intake.md); every registry label names its 基準日, and when the purchase
+date no longer equals it `verified` is false, `differs` holds `purchaseDate` and the label reads 国税庁照合は基準日 X のもの
+（現在の購入日 Y では未確認）, so a number registered after the new purchase date is never shown as verified for it. The value
+origin stays as it was; the record page's 「もう一度調べる」 is the lane to a current check.
 
 Verification: `node --test scripts/finance-payment-match.test.mjs`; through the hub
 `node scripts/zoomer-verify.mjs --run-fixture omf-monthly-reconciliation.mjs --cwd <tree>`. Limits: synthetic data only; no real
