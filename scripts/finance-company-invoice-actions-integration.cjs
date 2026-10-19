@@ -32,7 +32,8 @@ module.exports=async({db,ObjectId,ok,call,worker,ownerToken,tokenA,tokenB,A,B,ow
  assert.equal((await act('update_company_invoice',{...args,notes:'Other meaning'},1)).status,409);
  assert.equal((await act('update_company_invoice',{...args,invoiceId:String(invoiceB)},3)).status,404,'invoice-action:agent-foreign-write');
  assert.equal((await act('update_company_invoice',{...args,invoiceId:String(unknownInvoice)},4)).status,404);
- for(const invalid of [{bankDetails:'Forbidden'},{organizationId:String(B)},{taxRate:'0'},{dueDate:'2026-02-30'},{items:[]}])assert.equal((await act('update_company_invoice',{...args,...invalid},5)).status,400);
+ // Deliberate 2026-10-20: parties, items, bank text and the own-company link are supported edit fields now; malformed shapes are still refused.
+ for(const invalid of [{bankDetails:{text:'Forbidden'}},{organizationId:String(B)},{taxRate:'0'},{dueDate:'2026-02-30'},{items:[]},{items:[{description:'x',unitPrice:'1'}]},{from:{name:'x',organizationId:String(B)}},{to:{}},{transactionId:'not-an-id'}])assert.equal((await act('update_company_invoice',{...args,...invalid},5)).status,400);
  await ok('/api/invoices/'+invoiceA,tokenA,'PUT',{notes:'Newer native invoice edit'});
  assert.equal((await act('update_company_invoice',{invoiceId:String(invoiceA),expectedUpdatedAt:saved.updatedAt,notes:'Old overwrite'},6)).status,409,'invoice-action:stale-invoice');
  const cid=new ObjectId(job.id);await chats.updateOne({_id:cid},{$set:{'turns.$[turn].actions.$[action].state':'claimed'}},{arrayFilters:[{'turn.id':requestId},{'action.operationId':op.operationId}]});
@@ -45,6 +46,13 @@ module.exports=async({db,ObjectId,ok,call,worker,ownerToken,tokenA,tokenB,A,B,ow
  assert.equal((await act('update_company_invoice',args,8,old)).status,409);
  assert.equal((await act('update_company_invoice',args,job.nextSlot,job)).data.receipt.operationId,op.operationId);
  assert.equal((await read()).invoice.notes,'Newer native invoice edit');
+ // Full supported fields through the same native operation: replaced items recalculate totals, parties keep only their schema fields,
+ // the link must be this company's transaction, and the receipt never echoes bank text or party contacts.
+ const fullOwnTx=(await db.collection('transactions').findOne({organizationId:A}))._id,fullForeignTx=(await db.collection('transactions').findOne({organizationId:B}))._id,current=(await read()).invoice;
+ const full=await act('update_company_invoice',{invoiceId:String(invoiceA),expectedUpdatedAt:current.updatedAt,items:[{description:'Full A',quantity:2,unitPrice:300},{description:'Full B',quantity:1,unitPrice:100,amount:100}],to:{name:'FULL_CLIENT',email:'PRIVATE_FULL_EMAIL@example.invalid'},bankDetails:'PRIVATE_FULL_BANK',transactionId:String(fullOwnTx)},job.nextSlot+1,job);assert.equal(full.status,200,'invoice-action:full-fields '+full.raw.slice(0,200));assert.ok(!full.raw.includes('PRIVATE_FULL_BANK')&&!full.raw.includes('PRIVATE_FULL_EMAIL'),'invoice-action:private-result');
+ const fullSaved=(await read()).invoice;assert.equal(fullSaved.subtotal,700,'invoice-action:full-fields');assert.equal(fullSaved.total,700+Math.round(700*fullSaved.taxRate/100));assert.equal(fullSaved.to.name,'FULL_CLIENT');assert.equal(fullSaved.bankDetails,'PRIVATE_FULL_BANK');assert.equal(fullSaved.transactionId,String(fullOwnTx));assert.equal(fullSaved.organizationId,String(A));
+ assert.equal((await act('update_company_invoice',{invoiceId:String(invoiceA),expectedUpdatedAt:fullSaved.updatedAt,transactionId:String(fullForeignTx)},job.nextSlot+2,job)).status,404,'invoice-action:foreign-link');
+ assert.equal((await act('update_company_invoice',{invoiceId:String(invoiceA),expectedUpdatedAt:fullSaved.updatedAt,transactionId:''},job.nextSlot+3,job)).status,200);assert.equal((await read()).invoice.transactionId,null,'invoice-action:clear-link');
  await worker('workspace/'+job.id+'/result',{lease:job.lease,proposal:{kind:'unclear',summary:'Synthetic invoice saved and verified.',patch:{},quotes:{}}});
  assert.equal(await foreign(),foreignBefore,'invoice-action:foreign-immutable');assert.equal((await call('/api/invoices/'+invoiceA,tokenB)).status,404);
  pass('company invoice edit/native CRUD: trusted scope, reference ownership, zero/rate totals, validation, concurrency/retry, stale/readback, marker/unknown recovery and revoked/old leases');

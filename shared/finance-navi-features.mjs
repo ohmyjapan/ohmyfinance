@@ -6,10 +6,11 @@
 // company; a record route only takes a server-checked company record id.
 import {validateCompanyCitations} from './finance-company-public-research.mjs';
 const f=(id,group,label,labelKo,route,disposition,reason,source,extra={})=>Object.freeze({id,group,label,labelKo,route,disposition,reason,source,...extra});
-const transactionTools=['list_company_transactions','get_company_transaction','list_company_transaction_choices','update_company_transaction','find_company_transaction_patterns'];
+const transactionTools=['list_company_transactions','get_company_transaction','list_company_transaction_choices','update_company_transaction','create_company_transaction','delete_company_transaction','find_company_transaction_patterns'];
+const summaryTools=['get_company_finance_summary','get_company_profile'];
 export const naviFeatures=Object.freeze([
- f('dashboard','dashboard','ダッシュボード','대시보드','/','page_handoff','選択中の会社の集計・最近の取引を表示します。Navi は集計値を読み取る道具を持たないため、数値は画面で確認してください。','pages/index.vue'),
- f('transactions','transactions','取引一覧','거래 목록','/transactions','navi_tool','会社の取引を読み取り、明示された会計項目・メモを保存し、同じ店の過去の分類を比較できます。転記・削除・証憑確認はできません。','pages/transactions/index.vue',{tools:transactionTools,recordRoute:'/transactions/:transactionId',recordSource:'pages/transactions/[id].vue'}),
+ f('dashboard','dashboard','ダッシュボード','대시보드','/','navi_tool','選択中の会社の集計・最近の取引を表示します。Navi は保存済みの記録を通貨・種類・状態ごとに分けた期間集計と会社情報を読み取れます。画面の合計とは計算が異なることがあり、銀行残高ではありません。','pages/index.vue',{tools:summaryTools}),
+ f('transactions','transactions','取引一覧','거래 목록','/transactions','navi_tool','会社の取引を読み取り、明示された指示で手入力の取引を作成・編集・削除し、同じ店の過去の分類を比較できます。カード取込・帳簿転記の行は削除しません。転記・証憑確認はできません。','pages/transactions/index.vue',{tools:transactionTools,recordRoute:'/transactions/:transactionId',recordSource:'pages/transactions/[id].vue'}),
  f('transaction-import','transactions','取引のインポート','거래 가져오기','/transactions/import','page_handoff','ファイルからの取引取込は画面で行います。Navi は取込を実行しません。','pages/transactions/import.vue'),
  f('transaction-upload','transactions','データのアップロード','데이터 업로드','/transactions/upload','page_handoff','明細ファイルのアップロードは画面で行います。','pages/transactions/upload.vue'),
  f('duplicates','transactions','重複の確認','중복 확인','/transactions/duplicates','page_handoff','重複候補の確認と整理は画面で行います。Navi は削除しません。','pages/transactions/duplicates.vue'),
@@ -22,23 +23,23 @@ export const naviFeatures=Object.freeze([
  f('collector-approval','connections','コレクターの承認','수집기 승인',null,'unsupported','承認メールのリンクから開く専用画面です。Navi はリンクを作りません。','pages/collector-approval.vue',{sensitive:true}),
  f('intake','intake','購入受付','구매 접수','/intake','page_handoff','購入受付の作成・取込はその画面の Navi 会話か画面操作で行います。この会社会話からは編集できません。','pages/intake/index.vue',{recordSource:'pages/intake/[id].vue'}),
  f('intake-payments','intake','支払い照合','지불 대조','/intake/payments','page_handoff','受付と支払いの照合は画面で行います。','pages/intake/payments.vue'),
- f('invoices','invoices','請求書','청구서','/invoices','navi_tool','会社の請求書を読み取り、明示された日付・状態・税率・メモなどを保存できます。作成・送信・削除はできません。','pages/invoices/index.vue',{tools:['list_company_invoices','get_company_invoice','update_company_invoice']}),
- f('calendar','calendar','支払いカレンダー','지불 캘린더','/calendar','navi_tool','会社の支払い予定を読み取り、明示された項目を保存できます。送金・作成・削除はできません。','pages/calendar/index.vue',{tools:['list_company_calendar_entries','get_company_calendar_entry','update_company_calendar_entry']}),
- f('receipts','receipts','領収書管理','영수증 관리','/receipts','page_handoff','領収書の確認・紐付け・CSV出力は画面で行います。Navi は書類の中身を確認しません。','pages/receipts/index.vue'),
+ f('invoices','invoices','請求書','청구서','/invoices','navi_tool','会社の請求書を読み取り、明示された指示で作成・編集（取引先・明細・振込先・税率・日付など）・削除できます。送信・メール配信はしません。印刷用プレビューは画面で開き、ブラウザの印刷から PDF に保存します。','pages/invoices/index.vue',{tools:['list_company_invoices','get_company_invoice','update_company_invoice','create_company_invoice','delete_company_invoice']}),
+ f('calendar','calendar','支払いカレンダー','지불 캘린더','/calendar','navi_tool','会社の支払い予定を読み取り、明示された指示で予定を追加・編集・削除できます。カード会社の請求は削除せず非表示にします。送金・銀行への指示はできません。','pages/calendar/index.vue',{tools:['list_company_calendar_entries','get_company_calendar_entry','update_company_calendar_entry','create_company_calendar_entry','delete_company_calendar_entry']}),
+ f('receipts','receipts','領収書管理','영수증 관리','/receipts','navi_tool','Navi は保存済みの領収書の店名・日付・金額・税・読み取った明細と紐付けを読み取れます。読み取り結果は検証済みの購入ではありません。アップロード・OCR・紐付け・削除・CSV出力は画面で行います。','pages/receipts/index.vue',{tools:['list_company_receipts','get_company_receipt']}),
  f('receipt-upload','receipts','領収書のアップロード','영수증 업로드','/receipts/upload','page_handoff','領収書ファイルのアップロードは画面で行います。','pages/receipts/upload.vue'),
  f('vendors','parties','取引先','거래처','/vendors','page_handoff','取引先の登録・編集は画面で行います。','pages/vendors/index.vue'),
  f('settings','settings','一般設定','일반 설정','/settings','page_handoff','顧客・仕入先・カテゴリなどのマスタ設定は画面で行います。Navi は設定を変更しません。','pages/settings/index.vue'),
- f('organization-settings','settings','組織設定','조직 설정','/settings/organization','page_handoff','メンバーと権限の管理は画面で行います。Navi は権限を変えません。','pages/settings/organization.vue',{sensitive:true}),
+ f('organization-settings','settings','組織設定','조직 설정','/settings/organization','page_handoff','メンバーと権限の管理は画面で行います。Navi は会社名・住所・登録番号・通貨・期首月・タイムゾーンを読むだけで、メンバーや権限は読まず変えません。','pages/settings/organization.vue',{sensitive:true}),
  f('organization-switch','settings','会社の作成・参加','회사 생성·참여',null,'unsupported','会社の作成・参加・切替は本人が設定画面で行います。Navi は別の会社へ移動しません。','pages/settings/organization/new.vue, pages/settings/organization/join.vue',{sensitive:true}),
  f('security','settings','セキュリティ','보안','/settings/security','page_handoff','パスワード・二段階認証などは本人が画面で設定します。Navi は認証情報を扱いません。','pages/settings/security.vue',{sensitive:true}),
  f('api-settings','settings','API 設定','API 설정','/settings/api','page_handoff','API キーと連携の設定は本人が画面で行います。Navi はキーを読みません。','pages/settings/api.vue',{sensitive:true}),
  f('templates','settings','取込テンプレート','가져오기 템플릿','/templates','page_handoff','取込テンプレートの管理は画面で行います。','pages/templates/index.vue'),
  f('profile','settings','プロフィール','프로필','/profile','page_handoff','本人のプロフィールは画面で編集します。','pages/profile/index.vue'),
- f('budgets','budgets','予算','예산','/budgets','page_handoff','予算の設定と確認は画面で行います。Navi は予算を読み取る道具を持ちません。','pages/budgets/index.vue'),
- f('recurring','budgets','定期支払い','정기 지불','/recurring','page_handoff','定期支払いの管理は画面で行います。','pages/recurring/index.vue'),
- f('analytics','reports','分析','분석','/analytics','page_handoff','分析グラフは画面で確認します。','pages/analytics/index.vue'),
- f('reports','reports','レポート','리포트','/reports','page_handoff','レポートは画面で作成・確認します。Navi はレポートの数値を読み取りません。','pages/reports/index.vue'),
- f('tax-report','reports','税務レポート','세무 리포트','/reports/tax','page_handoff','税務レポートは画面で確認します。税務判断の確定ではありません。','pages/reports/tax.vue'),
+ f('budgets','budgets','予算','예산','/budgets','navi_tool','会社の予算と今期の支出（予算の通貨の完了済み経費）を読み取り、明示された指示で作成・編集・削除できます。','pages/budgets/index.vue',{tools:['list_company_budgets','get_company_budget','create_company_budget','update_company_budget','delete_company_budget']}),
+ f('recurring','budgets','定期支払い','정기 지불','/recurring','navi_tool','会社の定期支払いを読み取り、明示された指示で作成・編集・削除し、読み取った回の未確定の予定取引を作成できます。予定は支払いの証明ではありません。','pages/recurring/index.vue',{tools:['list_company_recurring_payments','get_company_recurring_payment','create_company_recurring_payment','update_company_recurring_payment','delete_company_recurring_payment','generate_company_recurring_forecast']}),
+ f('analytics','reports','分析','분석','/analytics','navi_tool','分析グラフは画面で確認します。Navi は通貨ごとに分けた期間集計を自分で読み取ります（画面のグラフは通貨を区別しません）。','pages/analytics/index.vue',{tools:summaryTools}),
+ f('reports','reports','レポート','리포트','/reports','navi_tool','レポートは画面で作成・確認します。Navi は通貨・種類・状態ごとに分けた期間集計を読み取り、画面の合計値をそのまま助言には使いません。','pages/reports/index.vue',{tools:summaryTools}),
+ f('tax-report','reports','税務レポート','세무 리포트','/reports/tax','page_handoff','税務レポートは保存済みの記帳の一覧で、控除可否などの税務判断ではありません。Navi は期間集計の事実を説明できますが、税務の判断は根拠と前提を示した提案にとどめます。','pages/reports/tax.vue'),
  f('purchase-workflow','purchase','購入・輸出の照合','구매·수출 대조','/purchase-workflow','page_handoff','購入・輸出の照合は画面で行います。','pages/purchase-workflow.vue'),
  f('shipments','purchase','配送追跡','배송 추적','/shipments','page_handoff','配送の追跡と詳細は画面で確認します。','pages/shipments.vue',{recordSource:'pages/shipment/[id].vue'}),
  f('research-evaluation','purchase','AI調査の評価','AI 조사 평가','/research-evaluation','page_handoff','AI 調査結果の評価は画面で行います。','pages/research-evaluation.vue'),

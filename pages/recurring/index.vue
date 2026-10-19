@@ -306,9 +306,12 @@ import {
   Search, Loader2, CreditCard, X
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
+import { tokenClaims } from '~/utils/auth-session'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
+const assistant = useAssistantStore()
 
 const isLoading = ref(false)
 const isSaving = ref(false)
@@ -545,6 +548,11 @@ const getStatusBadgeClass = (status: string) => {
 }
 
 watch(filters, () => loadPayments(), { deep: true })
+// A Navi recurring-payment change or generated forecast of this same actor and company reloads the list, statistics and upcoming.
+watch(() => assistant.companyResourceSequence, () => {
+  const saved = assistant.companyResource, scope = tokenClaims(userStore.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('recurring')) { loadPayments(); loadStats(); loadUpcoming() }
+})
 
 onMounted(() => {
   loadPayments()

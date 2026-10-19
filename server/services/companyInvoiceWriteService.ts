@@ -9,6 +9,7 @@ const invalid = (message: string): never => { throw createError({ statusCode: 40
 async function fields(organizationId: mongoose.Types.ObjectId, body: any, previous: any = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) invalid('Invalid invoice fields')
   const values: any = Object.fromEntries(invoiceUpdateFields.filter(k => body[k] !== undefined).map(k => [k, body[k]]))
+  if (values.transactionId === '') values.transactionId = null
   if (values.transactionId != null && (!mongoose.isValidObjectId(values.transactionId) || !await Transaction.exists({ _id: values.transactionId, organizationId }))) throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
   for (const key of ['issueDate','dueDate','paidDate']) if (values[key] != null) { const date = new Date(values[key]); if (!Number.isFinite(date.getTime())) invalid('Invalid invoice date'); values[key] = date }
   if (body.items !== undefined || body.taxRate !== undefined) {
@@ -45,11 +46,25 @@ export async function updateCompanyInvoice(organizationId: mongoose.Types.Object
   if (!invoice) throw createError({ statusCode: 409, statusMessage: 'Invoice changed; read it again' })
   return invoice
 }
-export async function createCompanyInvoice(organizationId: mongoose.Types.ObjectId, actorId: string, body: any) {
+// A trusted server operation (company Navi) may fix the new invoice id and its durable marker in this same original insert.
+export type InvoiceCreateOperation = { id: mongoose.Types.ObjectId, naviOperation: Record<string, unknown> }
+export async function createCompanyInvoice(organizationId: mongoose.Types.ObjectId, actorId: string, body: any, operation?: InvoiceCreateOperation) {
   const values = await fields(organizationId, { ...body, items: body?.items ?? [], taxRate: body?.taxRate ?? 10 })
   const count = await Invoice.countDocuments({ organizationId })
-  const invoice = await Invoice.create({ ...values, organizationId, createdBy: actorId, invoiceNumber: values.invoiceNumber || `INV-${new Date().getFullYear()}-${String(count + 1).padStart(5,'0')}`, status: values.status || 'draft', issueDate: values.issueDate || new Date(), dueDate: values.dueDate || new Date(Date.now()+30*24*60*60*1000), currency: values.currency || 'JPY' })
+  const invoice = await Invoice.create({ ...values, organizationId, createdBy: actorId, invoiceNumber: values.invoiceNumber || `INV-${new Date().getFullYear()}-${String(count + 1).padStart(5,'0')}`, status: values.status || 'draft', issueDate: values.issueDate || new Date(), dueDate: values.dueDate || new Date(Date.now()+30*24*60*60*1000), currency: values.currency || 'JPY', ...(operation ? { _id: operation.id, naviOperation: operation.naviOperation } : {}) })
   return invoice.toObject()
+}
+// Native page and company Navi delete through this one operation; a trusted operation also requires its read snapshot.
+export async function deleteCompanyInvoice(organizationId: mongoose.Types.ObjectId, invoiceId: string, operation?: { expectedUpdatedAt: string }) {
+  if (!mongoose.isValidObjectId(invoiceId)) throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
+  const target: any = { _id: invoiceId, organizationId }
+  if (operation) target.updatedAt = new Date(operation.expectedUpdatedAt)
+  const deleted = await Invoice.findOneAndDelete(target).lean()
+  if (!deleted) {
+    if (operation && await Invoice.exists({ _id: invoiceId, organizationId })) throw createError({ statusCode: 409, statusMessage: 'Invoice changed; read it again' })
+    throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
+  }
+  return deleted
 }
 export function invoiceWriteError(error: any): never {
   if (error?.name === 'ValidationError' || error?.name === 'CastError') invalid('Invalid invoice fields')

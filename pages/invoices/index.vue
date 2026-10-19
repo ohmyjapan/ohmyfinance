@@ -21,6 +21,8 @@
       </div>
     </div>
 
+    <p v-if="printError" role="alert" data-invoice-print-error class="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-900/10 dark:text-red-300">{{ printError }}</p>
+
     <!-- Stat Cards -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
       <StatCard
@@ -121,8 +123,9 @@
               <div class="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                 <button
                   @click="viewPdf(invoice.id)"
+                  :data-invoice-print="invoice.id"
                   class="p-2 rounded-lg text-gray-400 hover:text-primary-main hover:bg-primary-main/10 transition-colors touch-manipulation"
-                  :title="t('common.view')"
+                  title="印刷用プレビュー（ブラウザの印刷から PDF に保存できます。送信はしません）"
                 >
                   <Eye class="h-4 w-4" />
                 </button>
@@ -353,8 +356,25 @@ const deleteInvoice = async (id: string) => {
   }
 }
 
-const viewPdf = (id: string) => {
-  window.open(`/api/invoices/${id}/pdf`, '_blank')
+// Print preview: an authenticated native request (bearer header, never a token in the URL) for the current actor and company; the
+// escaped HTML opens from an owned blob URL that is revoked afterwards. A refused or stale request opens nothing.
+const printError = ref('')
+const viewPdf = async (id: string) => {
+  printError.value = ''
+  const scope = tokenClaims(userStore.token)
+  const preview = window.open('', '_blank')
+  try {
+    const response = await fetch(`/api/invoices/${encodeURIComponent(id)}/pdf`, { headers: { ...getAuthHeaders() }, cache: 'no-store' })
+    const current = tokenClaims(userStore.token)
+    if (!response.ok || scope?.userId !== current?.userId || scope?.organizationId !== current?.organizationId) throw new Error(String(response.status))
+    const url = URL.createObjectURL(new Blob([await response.text()], { type: 'text/html' }))
+    if (!preview || preview.closed) { URL.revokeObjectURL(url); printError.value = 'ポップアップがブロックされました。許可してからもう一度開いてください。'; return }
+    preview.location.href = url
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch {
+    if (preview && !preview.closed) preview.close()
+    printError.value = 'この請求書の印刷用プレビューを開けませんでした。選択中の会社と所属を確認してください。'
+  }
 }
 
 const formatCurrency = (value: number) => {
@@ -382,6 +402,11 @@ const getStatusClass = (status: string) => {
 watch(() => assistant.companyInvoiceSavedSequence, () => {
   const saved = assistant.companyInvoiceSaved, current = tokenClaims(userStore.token)
   if (saved && current?.userId === saved.actorId && current?.organizationId === saved.organizationId) loadInvoices()
+})
+// Navi created or deleted an invoice of this same actor and company.
+watch(() => assistant.companyResourceSequence, () => {
+  const saved = assistant.companyResource, scope = tokenClaims(userStore.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('invoice') && saved.effect !== 'update') loadInvoices()
 })
 onBeforeUnmount(() => { loadTicket++ })
 onMounted(() => loadInvoices())

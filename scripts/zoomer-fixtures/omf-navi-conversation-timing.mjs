@@ -7,7 +7,10 @@ async function chunks(dir){const files=[];for(const e of await readdir(dir,{with
 export default {name:'omf-navi-conversation-timing',covers:['server/services/financeAssistantService.ts','server/services/financeChatService.ts','scripts/finance-navi-history-integration.cjs','scripts/zoomer-fixtures/omf-navi-conversation-timing.mjs'],async run(){
  const baseline=await run();let pass=baseline.code===0&&baseline.text.includes('workspace and purchase native conversation timing verified');const mutants=[];
  if(pass)for(const [name,anchor,replacement,assertion] of [
-  ['omit-submission-time',/submittedAt: t\.at \|\| null,/g,'','timing:workspace:submitted-source'],
+  // Retargeted 2026-10-20: the company conversation projection (financeCompanyAssistantService, B/C1 phase) also writes
+  // "submittedAt: t.at || null," and is not this fixture's subject. The anchor names the actual owner-workspace and purchase
+  // projections (the ones followed by the reply-time rule), so the same defect still removes exactly those two submission times.
+  ['omit-submission-time',/submittedAt: t\.at \|\| null, (?=replyRecordedAt: t\.proposal\?\.summary)/g,'','timing:workspace:submitted-source'],
   ['omit-reply-time',/replyRecordedAt: t\.proposal\?\.summary \? t\.answeredAt \|\| null : null/g,'replyRecordedAt: null','timing:workspace:reply-source'],
   ['failed-result-is-reply',/replyRecordedAt: t\.proposal\?\.summary \? t\.answeredAt \|\| null : null/g,'replyRecordedAt: t.answeredAt || null','timing:workspace:failed-no-reply-time']
  ]){

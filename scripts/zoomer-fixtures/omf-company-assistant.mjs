@@ -21,7 +21,8 @@ export default{name:'omf-company-assistant',covers:['server/services/companyTran
    await test('private-transaction-metadata','jobs',replace(original.jobs,'const transactionNaviView = (v) => ({ id: String(v._id),','const transactionNaviView = (v) => ({ metadata: v.metadata, id: String(v._id),'),'transaction-action:private-projection');
    await test('private-reference-email','jobs',replace(original.jobs,'name: value.name || "",','email: value.email, name: value.name || "",'),'transaction-action:minimal-choices');
    await test('unscoped-transaction-update','transactions',replace(original.transactions,'const scope = { _id: id, organizationId };','const scope = { _id: id };'),'transaction-action:native-foreign-update');
-   await test('unscoped-transaction-delete','transactions',replace(original.transactions,'Transaction.findOneAndDelete({ _id: id, organizationId })','Transaction.findByIdAndDelete(id)'),'transaction-action:native-foreign-delete');
+   // 2026-10-20: native and Navi deletion share one snapshot-aware operation; the defect still drops the company from that delete.
+   await test('unscoped-transaction-delete','transactions',replace(original.transactions,'const removal = { _id: id, organizationId };','const removal = { _id: id };'),'transaction-action:native-foreign-delete');
    await test('ignore-transaction-snapshot','transactions',replace(original.transactions,'scope.updatedAt = expected ? new Date(expected) : null;','/* removed transaction snapshot */'),'transaction-action:stale-snapshot');
    await test('corrupt-transaction-marker','transactions',replace(original.transactions,'payloadHash: operation.payloadHash','payloadHash: "BROKEN"'),'transaction-action:recover-marker');
    await test('allow-card-source-edit','transactions',replace(original.transactions,'if (current.cardAccounting) {','if (false) {'),'transaction-action:card-source-immutable');
@@ -29,7 +30,8 @@ export default{name:'omf-company-assistant',covers:['server/services/companyTran
    await test('unscoped-invoice-link','invoiceWrites',replace(original.invoiceWrites,'Transaction.exists({ _id: values.transactionId, organizationId })','Transaction.exists({ _id: values.transactionId })'),'invoice-action:foreign-link');
    await test('truthy-invoice-zero-rate','invoiceWrites',replace(original.invoiceWrites,'body.taxRate ?? previous.taxRate ?? 10','body.taxRate || previous.taxRate || 10'),'invoice-action:zero-is-zero');
    await test('trust-invoice-body-fields','invoiceWrites',replace(original.invoiceWrites,'Object.fromEntries(invoiceUpdateFields.filter((k) => body[k] !== void 0).map((k) => [k, body[k]]))','({ ...body })'),'invoice-action:native-field-ownership');
-   await test('unscoped-invoice-delete','invoiceRoute',replace(original.invoiceRoute,'Invoice.findOneAndDelete({ _id: id, organizationId })','Invoice.findByIdAndDelete(id)'),'invoice-action:native-foreign-delete');
+   // 2026-10-20: the native invoice route now deletes through the shared company invoice operation (moved target, same defect).
+   await test('unscoped-invoice-delete','invoiceWrites',replace(original.invoiceWrites,'const target = { _id: invoiceId, organizationId };','const target = { _id: invoiceId };'),'invoice-action:native-foreign-delete');
    await test('unscoped-invoice-write','invoiceWrites',replace(original.invoiceWrites,'const scope = { _id: invoiceId, organizationId };','const scope = { _id: invoiceId };'),'invoice-action:native-foreign-update');
    await test('ignore-invoice-snapshot','invoiceWrites',replace(original.invoiceWrites,'scope.updatedAt = expected ? new Date(expected) : null;','/* removed invoice snapshot */'),'invoice-action:stale-invoice');
    await test('corrupt-invoice-marker','invoiceWrites',replace(original.invoiceWrites,'payloadHash: operation.payloadHash','payloadHash: "BROKEN"'),'invoice-action:recover-marker');

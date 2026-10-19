@@ -1,9 +1,8 @@
-import { updateCompanyInvoice, invoiceWriteError } from '../../services/companyInvoiceWriteService'
+import { updateCompanyInvoice, deleteCompanyInvoice, invoiceWriteError } from '../../services/companyInvoiceWriteService'
 import { getCompanyInvoice } from '../../services/companyFinanceReadService'
 // server/api/invoices/[id].ts
 import { defineEventHandler, readBody, createError, setHeader } from 'h3'
 import { ensureConnection } from '../../config/database'
-import Invoice from '../../models/Invoice'
 import { requireAuth } from '../../middleware/auth'
 import { calendarCompany } from '../../utils/calendarAccess'
 
@@ -33,8 +32,7 @@ export default defineEventHandler(async (event) => {
 
   if (method === 'DELETE') {
     const { organizationId } = await calendarCompany(event)
-    const result = await Invoice.findOneAndDelete({ _id: id, organizationId })
-    if (!result) throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
+    await deleteCompanyInvoice(organizationId, id)
     return { message: 'Invoice deleted' }
   }
 

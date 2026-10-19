@@ -28,7 +28,7 @@
             <div class="flex items-center gap-4">
               <div class="text-right">
                 <p class="text-sm text-primary-light">{{ t('dashboard.totalTransactions') }}</p>
-                <p class="text-3xl font-bold font-mono">{{ dashboardData?.stats?.total?.count || 0 }}</p>
+                <p :data-dashboard-total="dashboardData?.stats?.total?.count ?? ''" class="text-3xl font-bold font-mono">{{ dashboardData?.stats?.total?.count || 0 }}</p>
               </div>
               <div class="w-px h-12 bg-white/30"></div>
               <div class="text-right">
@@ -253,10 +253,13 @@ import {
   Loader2
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
+import { tokenClaims } from '~/utils/auth-session'
 
 const { t } = useI18n()
 const router = useRouter()
 const userStore = useUserStore()
+const assistant = useAssistantStore()
 
 // State
 const isLoading = ref(true)
@@ -265,26 +268,33 @@ const dashboardData = ref<any>(null)
 // Computed
 const recentTransactions = computed(() => dashboardData.value?.recentTransactions || [])
 
-// Fetch data on mount
-onMounted(async () => {
-  isLoading.value = true
-
-  // Ensure auth is initialized from localStorage before making API calls
-  userStore.initAuth()
-
+// Fetch data on mount; a later reload (after a saved Navi company action) keeps the page and the open conversation in place.
+let statsTicket = 0
+const loadDashboard = async (quiet = false) => {
+  const ticket = ++statsTicket, scope = tokenClaims(userStore.token)
+  if (!quiet) isLoading.value = true
   try {
     const data = await $fetch<any>('/api/dashboard/stats', {
       headers: userStore.authHeader
     }).catch(() => null)
-
-    if (data) {
+    const current = tokenClaims(userStore.token)
+    if (data && ticket === statsTicket && scope?.userId === current?.userId && scope?.organizationId === current?.organizationId) {
       dashboardData.value = data
     }
   } catch (error) {
     console.error('Failed to load dashboard data:', error)
   } finally {
-    isLoading.value = false
+    if (ticket === statsTicket) isLoading.value = false
   }
+}
+onMounted(async () => {
+  // Ensure auth is initialized from localStorage before making API calls
+  userStore.initAuth()
+  await loadDashboard()
+})
+watch(() => assistant.companyResourceSequence, () => {
+  const saved = assistant.companyResource, scope = tokenClaims(userStore.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.some((k: string) => ['transaction', 'invoice', 'payment', 'budget', 'recurring'].includes(k))) loadDashboard(true)
 })
 
 // Navigate to transaction detail

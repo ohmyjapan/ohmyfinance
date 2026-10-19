@@ -146,10 +146,19 @@
 import { ref, computed, onMounted } from 'vue'
 import { Plus, AlertTriangle, Home, Zap, FileText, DollarSign, CreditCard } from 'lucide-vue-next'
 import { useCalendarStore } from '~/stores/calendar'
+import { useAssistantStore } from '~/stores/assistant'
+import { useUserStore } from '~/stores/user'
+import { tokenClaims } from '~/utils/auth-session'
 import type { Payment, PaymentFormData } from '~/types/calendar'
 
 const { t, locale } = useI18n()
 const calendarStore = useCalendarStore()
+const assistant = useAssistantStore(), userStore = useUserStore()
+// Navi added or removed a calendar entry of this same actor and company: reload the calendar (issuer bills it suppressed stay hidden).
+watch(() => assistant.companyResourceSequence, () => {
+  const saved = assistant.companyResource, scope = tokenClaims(userStore.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('payment') && saved.effect !== 'update') calendarStore.fetchPayments()
+})
 
 // Format date to YYYY-MM-DD in local timezone (JST)
 const formatLocalDate = (date: Date): string => {

@@ -14,7 +14,13 @@ test('every real page file has a source-mapped disposition with a reason', async
  for (const f of naviFeatures) { assert.ok(['navi_tool', 'page_handoff', 'unsupported'].includes(f.disposition)); assert.ok(f.reason.length > 10, f.id); for (const s of f.source.split(',').map(x => x.trim())) assert.ok(existsSync(path.join(root, s)), 'navi-features:source-exists ' + s); }
  assert.equal(new Set(naviFeatures.map(f => f.id)).size, naviFeatures.length);
  for (const group of ['dashboard', 'transactions', 'mapping', 'learning', 'connections', 'intake', 'invoices', 'calendar', 'receipts', 'parties', 'settings', 'budgets', 'reports', 'purchase', 'audit', 'admin']) assert.ok(naviFeatures.some(f => f.group === group), 'navi-features:group ' + group);
- assert.deepEqual(naviFeatures.filter(f => f.disposition === 'navi_tool').map(f => f.id).sort(), ['calendar', 'invoices', 'transactions']);
+ // Deliberate 2026-10-20 (business adapters): dashboard/reports/analytics read the grouped summary, receipts are read-only, budgets and
+ // recurring have native adapters. A page label alone never makes a feature a Navi tool: every listed tool exists in the catalogue.
+ assert.deepEqual(naviFeatures.filter(f => f.disposition === 'navi_tool').map(f => f.id).sort(), ['analytics', 'budgets', 'calendar', 'dashboard', 'invoices', 'receipts', 'recurring', 'reports', 'transactions']);
+ const { companyBusinessTools } = await import('../shared/finance-navi-business.mjs');
+ const known = new Set([...companyBusinessTools.map(t => t.name), 'list_company_transactions', 'get_company_transaction', 'list_company_transaction_choices', 'update_company_transaction', 'find_company_transaction_patterns', 'list_company_invoices', 'get_company_invoice', 'update_company_invoice', 'list_company_calendar_entries', 'get_company_calendar_entry', 'update_company_calendar_entry']);
+ for (const f of naviFeatures) { assert.equal(f.disposition === 'navi_tool', !!f.tools?.length, 'navi-features:tools-match-disposition ' + f.id); for (const t of f.tools || []) assert.ok(known.has(t), 'navi-features:real-tool ' + t); }
+ for (const id of ['tax-report', 'connections', 'organization-settings', 'security', 'api-settings', 'mapping', 'intake']) assert.notEqual(naviFeature(id).disposition, 'navi_tool', 'navi-features:handoff-kept ' + id);
 });
 
 test('routes are fixed local pages that exist; record routes accept only a company record id', () => {

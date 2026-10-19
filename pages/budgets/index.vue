@@ -234,9 +234,12 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { Plus, Wallet, Edit, Trash2, AlertTriangle } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
+import { tokenClaims } from '~/utils/auth-session'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
+const assistant = useAssistantStore()
 
 const isLoading = ref(false)
 const showModal = ref(false)
@@ -307,10 +310,14 @@ const evidenceNotes = (budget: any) => {
   return notes
 }
 
+let loadTicket = 0
 const loadBudgets = async () => {
+  const ticket = ++loadTicket, scope = tokenClaims(userStore.token)
   isLoading.value = true
   try {
     const data = await $fetch('/api/budgets?active=true', { headers: userStore.authHeader })
+    const current = tokenClaims(userStore.token)
+    if (ticket !== loadTicket || scope?.userId !== current?.userId || scope?.organizationId !== current?.organizationId) return
     budgets.value = data.budgets
   } catch (error) {
     console.error('Failed to load budgets:', error)
@@ -393,5 +400,10 @@ const getProgressColor = (budget: any) => {
   return 'bg-green-500'
 }
 
+// A Navi budget change of this same actor and company reloads the list (currency, period and warnings come from the server).
+watch(() => assistant.companyResourceSequence, () => {
+  const saved = assistant.companyResource, scope = tokenClaims(userStore.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('budget')) loadBudgets()
+})
 onMounted(() => loadBudgets())
 </script>

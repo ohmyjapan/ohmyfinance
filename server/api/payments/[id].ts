@@ -1,9 +1,8 @@
-import { updateCompanyCalendarEntry } from '../../services/companyPaymentWriteService'
+import { updateCompanyCalendarEntry, deleteCompanyCalendarEntry } from '../../services/companyPaymentWriteService'
 import { getCompanyCalendarEntry } from '../../services/companyFinanceReadService'
 // server/api/payments/[id].ts
 import { defineEventHandler, readBody, createError, getRouterParam } from 'h3'
 import { ensureConnection } from '../../config/database'
-import { Payment } from '../../models/Payment'
 import { requireAuth } from '../../middleware/auth'
 import { calendarCompany } from '../../utils/calendarAccess'
 
@@ -33,7 +32,6 @@ export default defineEventHandler(async (event) => {
   // Scoped to the selected company, checked against its current membership (GUARD, plan omf-calendar-gmail-build-20261015
   // §2 S3/S16); another company's payment and a bill the owner removed from the calendar are 404 here.
   const { auth, organizationId } = await calendarCompany(event)
-  const scope = { _id: id, organizationId, suppressedAt: { $exists: false } }
 
   // GET - Get single payment
   if (method === 'GET') {
@@ -74,22 +72,8 @@ export default defineEventHandler(async (event) => {
   // recreate it; only an explicit, freshly authorized restore brings it back. Manual payments are deleted as before.
   if (method === 'DELETE') {
     try {
-      const payment = await Payment.findOne(scope)
-
-      if (!payment) {
-        throw createError({
-          statusCode: 404,
-          statusMessage: 'Payment not found'
-        })
-      }
-
-      if (payment.source?.kind === 'card-statement') {
-        await Payment.updateOne({ _id: payment._id, organizationId, suppressedAt: { $exists: false } }, { $set: { suppressedAt: new Date(), suppressedBy: auth.userId } })
-        return { success: true, suppressed: true, message: 'Payment removed from the calendar; the issuer cannot recreate it' }
-      }
-
-      await Payment.deleteOne({ _id: payment._id, organizationId })
-
+      const removed = await deleteCompanyCalendarEntry(organizationId, id, auth.userId)
+      if (removed.suppressed) return { success: true, suppressed: true, message: 'Payment removed from the calendar; the issuer cannot recreate it' }
       return { success: true, message: 'Payment deleted successfully' }
     } catch (error: any) {
       if (error.statusCode === 404) throw error

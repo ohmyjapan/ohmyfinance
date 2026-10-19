@@ -5,6 +5,7 @@ import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * GET /api/reports
@@ -12,8 +13,11 @@ import { requireAuth } from '../../middleware/auth'
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
+  await ensureConnection()
+  // Every root read and aggregate is bound to the freshly checked selected company; no company or a lapsed membership is 403.
+  const { organizationId } = await calendarCompany(event)
+  const reportScope = { organizationId };
   try {
-    await ensureConnection()
 
     const query = getQuery(event)
     const reportType = String(query.type || 'monthly') // monthly, yearly, custom
@@ -42,7 +46,7 @@ export default defineEventHandler(async (event) => {
 
     // Get transaction summary
     const transactionSummary = await Transaction.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: { ...reportScope, date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
           _id: null,
@@ -57,7 +61,7 @@ export default defineEventHandler(async (event) => {
 
     // Get breakdown by status
     const byStatus = await Transaction.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: { ...reportScope, date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
           _id: '$status',
@@ -70,7 +74,7 @@ export default defineEventHandler(async (event) => {
 
     // Get breakdown by source
     const bySource = await Transaction.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: { ...reportScope, date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
           _id: '$source',
@@ -83,7 +87,7 @@ export default defineEventHandler(async (event) => {
 
     // Get daily breakdown
     const dailyBreakdown = await Transaction.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: { ...reportScope, date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
@@ -96,7 +100,7 @@ export default defineEventHandler(async (event) => {
 
     // Get top customers
     const topCustomers = await Transaction.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: { ...reportScope, date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
           _id: '$customer.name',
@@ -110,7 +114,7 @@ export default defineEventHandler(async (event) => {
 
     // Get receipt stats
     const receiptStats = await Receipt.aggregate([
-      { $match: { uploadDate: { $gte: startDate, $lte: endDate } } },
+      { $match: { ...reportScope, uploadDate: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
           _id: '$status',
@@ -122,6 +126,7 @@ export default defineEventHandler(async (event) => {
 
     // Get recurring payments active during period
     const recurringActive = await RecurringPayment.countDocuments({
+      ...reportScope,
       status: 'active',
       startDate: { $lte: endDate },
       $or: [
@@ -134,6 +139,7 @@ export default defineEventHandler(async (event) => {
     const recurringMonthlyEstimate = await RecurringPayment.aggregate([
       {
         $match: {
+          ...reportScope,
           status: 'active',
           startDate: { $lte: endDate },
           $or: [

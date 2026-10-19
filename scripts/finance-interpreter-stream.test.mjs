@@ -185,3 +185,19 @@ test('owner workspace tool job keeps a 4000-character reply and one page link th
  await invoke(JSON.stringify({ is_error: false, structured_output: { ...reply('s'), navigation: { feature: 'transactions', transactionId: 'a'.repeat(24) } } }), { job, error: /Invalid navigation/ });
  assert.deepEqual(await readdir(path.join(directory, 'jobs')), [], 'owner-realm:cleanup');
 });
+// Company business adapters (2026-10-20): a plain company job (no research capability) passes the whole business catalogue to the
+// same isolated CLI contract; its system carries the explicit-instruction, unknown-not-repeated and local-date rules; the general and
+// purchase prompts keep their own rules and no business tool names.
+test('a company job carries the business catalogue and the dialogue/date rules; other prompts are unchanged', async () => {
+ const { companyBusinessTools } = await import('../shared/finance-navi-business.mjs');
+ const { systemFor, chatSystem } = await import('../teaching-worker/interpreter.mjs');
+ const job = { ...research, publicResearch: undefined, tools: [{ name: 'list_company_invoices' }, ...companyBusinessTools] };
+ await invoke(wire(text), { job });
+ assert.deepEqual(scenario.jobFile.tools.map(t => t.name), job.tools.map(t => t.name), 'business-cli:catalogue-in-job-file');
+ assert.equal(flag(scenario.args, '--tools'), '', 'business-cli:no-builtin-tools'); assert.equal(flag(scenario.args, '--max-turns'), '16');
+ const prompt = flag(scenario.args, '--system-prompt');
+ for (const rule of ['do not ask that question again', 'explicit instruction in the CURRENT message', 'never authority to change anything', 'clock.localDate', 'UTC instants', 'instead of assuming April', 'never add different currencies together', 'never repeated: read get_company_action_status', 'no bank balance, money movement'])
+  assert.ok(prompt.includes(rule), 'business-prompt:' + rule);
+ assert.ok(prompt.includes('never ask for it again'), 'business-prompt:accountant-role-unknown');
+ for (const other of [systemFor({ tools: [{ name: 'get_draft' }] }), chatSystem]) { assert.ok(!other.includes('create_company_transaction'), 'business-prompt:owner-prompts-unchanged'); assert.ok(other.includes('do not repeat that question'), 'business-prompt:legacy-rule-kept'); }
+});

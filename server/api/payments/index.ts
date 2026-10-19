@@ -1,23 +1,10 @@
 import { listCompanyCalendarEntries } from '../../services/companyFinanceReadService'
+import { createCompanyCalendarEntry } from '../../services/companyPaymentWriteService'
 // server/api/payments/index.ts
 import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
-import { Payment } from '../../models/Payment'
 import { requireAuth } from '../../middleware/auth'
 import { calendarCompany } from '../../utils/calendarAccess'
-
-// Parse date string to noon UTC to avoid timezone boundary issues
-// Input: "2026-01-26" -> Output: Date object representing 2026-01-26 12:00:00 UTC
-// Using noon UTC ensures the date part remains the same in any timezone (UTC-12 to UTC+14)
-const parseDateToNoonUTC = (dateString: string): Date => {
-  // If it's just a date string (YYYY-MM-DD), parse as noon UTC
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-    const [year, month, day] = dateString.split('-').map(Number)
-    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0))
-  }
-  // If it already has time component, parse as-is
-  return new Date(dateString)
-}
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -54,36 +41,14 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // POST - Create new payment
+  // POST - Create new payment (dates are kept at noon UTC so the calendar day is the same in every timezone). The shared operation
+  // is the one company Navi uses; the body never supplies the company, id or marker.
   if (method === 'POST') {
     const body = await readBody(event)
-
-    if (!body.title || !body.amount || !body.dueDate || !body.type || !body.category) {
-      throw createError({
-        statusCode: 400,
-        statusMessage: 'Missing required fields: title, amount, dueDate, type, category'
-      })
-    }
-
     try {
-      const payment = new Payment({
-        title: body.title,
-        amount: parseFloat(body.amount),
-        currency: body.currency || 'JPY',
-        dueDate: parseDateToNoonUTC(body.dueDate),
-        type: body.type,
-        status: body.status || 'pending',
-        category: body.category,
-        recurring: body.recurring || false,
-        recurringFrequency: body.recurringFrequency,
-        bankTransfer: body.bankTransfer,
-        notes: body.notes,
-        organizationId
-      })
-
-      await payment.save()
-      return payment
+      return await createCompanyCalendarEntry(organizationId, body)
     } catch (error: any) {
+      if (error.statusCode === 400) throw error
       throw createError({
         statusCode: 500,
         statusMessage: 'Failed to create payment',

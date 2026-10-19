@@ -25,6 +25,9 @@ export async function companyTransactionChoices(organizationId: mongoose.Types.O
   }
   return { choices, source: 'references_observed_in_company_transactions', recordsScanned: Math.min(rows.length,500), truncated: rows.length > 500, truncatedFields, limit: 500, newUnusedReferences: 'not_in_this_history_view' }
 }
+// Pattern examples use the same whitelisted currency source as the transaction view (saved value, else the card statement's), never
+// the whole metadata object; a missing one stays unknown.
+const exampleCurrency = (row: any) => ({ currency: row.currency || row.metadata?.currency || null, currencyEvidence: row.currency ? 'saved' : row.metadata?.currency ? 'saved_card_source' : 'not_recorded' })
 // The merchant text is matched literally (the shared list search is a regular expression).
 const literalPattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const classificationFields = ['accountCategoryId','subAccountCategoryId','taxCategoryId','transactionCategoryId','customerId','supplierId']
@@ -43,7 +46,7 @@ export async function companyTransactionPatterns(organizationId: mongoose.Types.
     group.count++; const date = row.date ? new Date(row.date) : null
     if (date && (!group.firstDate || date < group.firstDate)) group.firstDate = date
     if (date && (!group.lastDate || date > group.lastDate)) group.lastDate = date
-    if (group.examples.length < exampleLimit) group.examples.push({ id: String(row._id), date: row.date, amount: row.amount, currency: row.currency || null, productName: row.productName || '', companyInfo: row.companyInfo || '', cardLast4: String(row.cardNumber || '').slice(-4), receiptFlag: row.hasReceipt === true ? 'saved_flag_true' : 'not_recorded_in_OMF' })
+    if (group.examples.length < exampleLimit) group.examples.push({ id: String(row._id), date: row.date, amount: row.amount, ...exampleCurrency(row), productName: row.productName || '', companyInfo: row.companyInfo || '', cardLast4: String(row.cardNumber || '').slice(-4), receiptFlag: row.hasReceipt === true ? 'saved_flag_true' : 'not_recorded_in_OMF' })
     groups.set(key, group)
     if (row.hasReceipt === true) receipts.savedFlagTrue++; else receipts.notRecordedInOMF++
     if (row.cardAccounting) { const ck = JSON.stringify([row.cardAccounting.accountName || '', row.cardAccounting.subAccountName || '']), c = credit.get(ck) || { accountName: row.cardAccounting.accountName || '', subAccountName: row.cardAccounting.subAccountName || '', count: 0 }; c.count++; credit.set(ck, c) }

@@ -147,12 +147,14 @@ export async function createTransaction(data: Partial<ITransaction>) {
   return saveTransaction(data)
 }
 
-// Only trusted server callers supply this company; never read it from a transaction payload.
-export async function createCompanyTransaction(data: Partial<ITransaction>, organizationId: mongoose.Types.ObjectId) {
-  return saveTransaction(data, organizationId)
+// Only trusted server callers supply this company; never read it from a transaction payload. A trusted server operation (company Navi)
+// may also fix the new row's id and its durable marker; both go into this one original insert, never a later side update.
+export type TransactionCreateOperation = { id: mongoose.Types.ObjectId, naviOperation: Record<string, unknown> }
+export async function createCompanyTransaction(data: Partial<ITransaction>, organizationId: mongoose.Types.ObjectId, operation?: TransactionCreateOperation) {
+  return saveTransaction(data, organizationId, operation)
 }
 
-async function saveTransaction(data: Partial<ITransaction>, organizationId?: mongoose.Types.ObjectId) {
+async function saveTransaction(data: Partial<ITransaction>, organizationId?: mongoose.Types.ObjectId, operation?: TransactionCreateOperation) {
   await ensureConnection()
   try {
     if (data.cardAccounting !== undefined) throw createError({ statusCode: 400, message: 'Card accounting is assigned through the reviewed import.' })
@@ -181,6 +183,8 @@ async function saveTransaction(data: Partial<ITransaction>, organizationId?: mon
     const { naviOperation: _nativeMarker, ...values } = data as any
     const transaction = new Transaction(values)
     if (organizationId) transaction.set('organizationId', organizationId, { strict: false })
+    if (operation?.id) transaction.set('_id', operation.id)
+    if (operation?.naviOperation) transaction.set('naviOperation', operation.naviOperation)
     await transaction.save()
 
     return transaction.toObject()
@@ -226,11 +230,17 @@ export async function updateTransaction(id: string, data: Partial<ITransaction>,
   }
 }
 
-/** Delete only the selected company record; no guessed legacy assignment. */
-export async function deleteTransaction(id: string, organizationId: mongoose.Types.ObjectId) {
+/** Delete only the selected company record; no guessed legacy assignment. A trusted operation also requires its read snapshot. */
+export type TransactionDeleteOperation = { expectedUpdatedAt: string }
+export async function deleteTransaction(id: string, organizationId: mongoose.Types.ObjectId, operation?: TransactionDeleteOperation) {
   await ensureConnection()
-  const transaction = await Transaction.findOneAndDelete({ _id: id, organizationId }).lean()
-  if (!transaction) throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
+  const removal: any = { _id: id, organizationId }
+  if (operation) removal.updatedAt = new Date(operation.expectedUpdatedAt)
+  const transaction = await Transaction.findOneAndDelete(removal).lean()
+  if (!transaction) {
+    if (operation && await Transaction.exists({ _id: id, organizationId })) throw createError({ statusCode: 409, statusMessage: 'Transaction changed; read it again' })
+    throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
+  }
   return transaction
 }
 

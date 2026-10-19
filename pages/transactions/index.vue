@@ -441,6 +441,11 @@ watch(() => navi.companyTransactionSavedSequence, () => {
   const saved = navi.companyTransactionSaved, scope = tokenClaims(user.token)
   if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId) fetchTransactions()
 })
+// Navi created or deleted a transaction (or generated a recurring forecast) for this same actor and company: reload the list.
+watch(() => navi.companyResourceSequence, () => {
+  const saved = navi.companyResource, scope = tokenClaims(user.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('transaction') && saved.effect !== 'update') fetchTransactions()
+})
 
 // Local state
 const showAdvancedFilters = ref(false)

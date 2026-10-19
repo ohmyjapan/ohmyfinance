@@ -3,6 +3,7 @@ import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -14,11 +15,12 @@ export default defineEventHandler(async (event) => {
   const endDate = new Date(taxYear, 11, 31, 23, 59, 59)
 
   await ensureConnection()
+  // Only the freshly checked selected company's saved bookkeeping; no global fallback.
+  const { organizationId } = await calendarCompany(event)
 
   // Get all transactions for the tax year
-  const transactions = await Transaction.find({
-    date: { $gte: startDate, $lte: endDate }
-  }).lean()
+  const taxScope = { organizationId, date: { $gte: startDate, $lte: endDate } };
+  const transactions = await Transaction.find(taxScope).lean()
 
   // Categorize transactions for tax purposes
   const income: any[] = []
@@ -113,6 +115,8 @@ export default defineEventHandler(async (event) => {
   const report = {
     taxYear,
     generatedAt: new Date(),
+    // A listing of saved bookkeeping by saved category labels, not a verified deductible-tax determination or professional advice.
+    evidence: 'saved_bookkeeping_not_a_tax_deduction_verdict',
     summary: {
       totalIncome,
       totalExpenses,

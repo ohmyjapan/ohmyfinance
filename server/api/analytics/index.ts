@@ -4,6 +4,8 @@ import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
+import type mongoose from 'mongoose'
 
 interface DateRange {
   start: Date
@@ -18,8 +20,10 @@ interface DateRange {
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
+  await ensureConnection()
+  // The freshly checked selected company is threaded into every helper, period and comparison query; no global fallback.
+  const { organizationId } = await calendarCompany(event)
   try {
-    await ensureConnection()
 
     const query = getQuery(event)
     const range = String(query.range || 'last30days')
@@ -36,12 +40,12 @@ export default defineEventHandler(async (event) => {
       trends,
       receiptStats
     ] = await Promise.all([
-      getKeyMetrics(dateRange),
-      getTransactionsOverTime(dateRange),
-      getSourceDistribution(dateRange),
-      getStatusDistribution(dateRange),
-      getTrends(dateRange),
-      getReceiptStats(dateRange)
+      getKeyMetrics(dateRange, organizationId),
+      getTransactionsOverTime(dateRange, organizationId),
+      getSourceDistribution(dateRange, organizationId),
+      getStatusDistribution(dateRange, organizationId),
+      getTrends(dateRange, organizationId),
+      getReceiptStats(dateRange, organizationId)
     ])
 
     return {
@@ -139,12 +143,12 @@ function getDateRange(range: string, customFrom?: string, customTo?: string): Da
 /**
  * Get key metrics with period comparison
  */
-async function getKeyMetrics(dateRange: DateRange) {
+async function getKeyMetrics(dateRange: DateRange, organizationId: mongoose.Types.ObjectId) {
   const { start, end, previousStart, previousEnd } = dateRange
 
   // Current period aggregation
   const currentStats = await Transaction.aggregate([
-    { $match: { date: { $gte: start, $lte: end } } },
+    { $match: { organizationId, date: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: null,
@@ -163,7 +167,7 @@ async function getKeyMetrics(dateRange: DateRange) {
 
   // Previous period for comparison
   const previousStats = await Transaction.aggregate([
-    { $match: { date: { $gte: previousStart, $lte: previousEnd } } },
+    { $match: { organizationId, date: { $gte: previousStart, $lte: previousEnd } } },
     {
       $group: {
         _id: null,
@@ -176,7 +180,7 @@ async function getKeyMetrics(dateRange: DateRange) {
 
   // Receipt stats
   const receiptStats = await Receipt.aggregate([
-    { $match: { uploadDate: { $gte: start, $lte: end } } },
+    { $match: { organizationId, uploadDate: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: '$status',
@@ -224,7 +228,7 @@ async function getKeyMetrics(dateRange: DateRange) {
 /**
  * Get transactions over time for line chart
  */
-async function getTransactionsOverTime(dateRange: DateRange) {
+async function getTransactionsOverTime(dateRange: DateRange, organizationId: mongoose.Types.ObjectId) {
   const { start, end } = dateRange
   const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
 
@@ -247,7 +251,7 @@ async function getTransactionsOverTime(dateRange: DateRange) {
   }
 
   const data = await Transaction.aggregate([
-    { $match: { date: { $gte: start, $lte: end } } },
+    { $match: { organizationId, date: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: groupBy,
@@ -277,11 +281,11 @@ async function getTransactionsOverTime(dateRange: DateRange) {
 /**
  * Get source distribution for pie chart
  */
-async function getSourceDistribution(dateRange: DateRange) {
+async function getSourceDistribution(dateRange: DateRange, organizationId: mongoose.Types.ObjectId) {
   const { start, end } = dateRange
 
   const data = await Transaction.aggregate([
-    { $match: { date: { $gte: start, $lte: end } } },
+    { $match: { organizationId, date: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: '$source',
@@ -316,11 +320,11 @@ async function getSourceDistribution(dateRange: DateRange) {
 /**
  * Get status distribution for pie chart
  */
-async function getStatusDistribution(dateRange: DateRange) {
+async function getStatusDistribution(dateRange: DateRange, organizationId: mongoose.Types.ObjectId) {
   const { start, end } = dateRange
 
   const data = await Transaction.aggregate([
-    { $match: { date: { $gte: start, $lte: end } } },
+    { $match: { organizationId, date: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: '$status',
@@ -354,13 +358,13 @@ async function getStatusDistribution(dateRange: DateRange) {
 /**
  * Get trend data for various metrics
  */
-async function getTrends(dateRange: DateRange) {
+async function getTrends(dateRange: DateRange, organizationId: mongoose.Types.ObjectId) {
   const { start, end } = dateRange
   const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
 
   // Weekly transaction counts (last 7 data points)
   const weeklyData = await Transaction.aggregate([
-    { $match: { date: { $gte: start, $lte: end } } },
+    { $match: { organizationId, date: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
@@ -374,7 +378,7 @@ async function getTrends(dateRange: DateRange) {
 
   // Failed transaction rate
   const failedRates = await Transaction.aggregate([
-    { $match: { date: { $gte: start, $lte: end } } },
+    { $match: { organizationId, date: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
@@ -388,7 +392,7 @@ async function getTrends(dateRange: DateRange) {
 
   // Receipt match rate
   const receiptStats = await Receipt.aggregate([
-    { $match: { uploadDate: { $gte: start, $lte: end } } },
+    { $match: { organizationId, uploadDate: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: null,
@@ -440,11 +444,11 @@ async function getTrends(dateRange: DateRange) {
 /**
  * Get receipt-specific statistics
  */
-async function getReceiptStats(dateRange: DateRange) {
+async function getReceiptStats(dateRange: DateRange, organizationId: mongoose.Types.ObjectId) {
   const { start, end } = dateRange
 
   const stats = await Receipt.aggregate([
-    { $match: { uploadDate: { $gte: start, $lte: end } } },
+    { $match: { organizationId, uploadDate: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: '$status',

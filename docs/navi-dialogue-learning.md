@@ -125,3 +125,12 @@ The existing `omf-company-assistant` fixture still passes its 8 groups and 31 de
 - Teachings are shared by all members of the company, including viewers. The viewer write policy is unchanged from the existing company tools.
 - No real-model answer quality, installed-Chrome UI acceptance or production reliability is claimed here. The parent runs real-model and browser acceptance.
 - No replay: no production population exists for this new data.
+
+## Business context and refresh (2026-10-20, C3)
+
+- **Pages.** The company conversation now runs on every normal company page (see `navi-company-workspace.md`). Teaching, recall, new chat and history, and the pinned inspector work as before.
+- **History.** Navi can also find archived conversations and teachings itself, with `list_company_conversation_history`, `get_company_conversation_archive` and `get_company_knowledge`. They are quoted as evidence and never authorise a save.
+- **Unknown answers.** The company system and the shared accountant role now carry this rule: when the owner says they do not know or cannot answer yet, that is the current answer. Navi keeps the point open, never asks it again, and completes the requested review with the open point stated. No post-response keyword filter enforces this.
+- **Dates.** Replies name local days in the company's saved time zone, using `facts.clock`; a JST message sent after midnight is not "yesterday". Saved timestamps stay literal UTC instants.
+- **Pattern examples.** They use the same whitelisted currency source as the transaction view: `currency`, else the card statement's `metadata.currency`, with `currencyEvidence`. A missing currency stays unknown.
+- **Refresh.** A done business receipt refreshes the open native page of the same actor and company. The conversation, its buffer and the pinned record stay in place.

@@ -1,7 +1,7 @@
 import {defineStore} from 'pinia'
 import {assistantTarget} from '~/shared/finance-assistant.mjs'
 export const useAssistantStore=defineStore('assistant',{
- state:()=>({open:false,owner:'',target:{kind:'workspace'} as any,draftPage:null as any,pageSelection:null as any,buffers:{} as Record<string,string>,pending:{} as Record<string,any>,saved:null as any,savedSequence:0,intakeSaved:null as any,intakeSavedSequence:0,companyInvoiceSaved:null as any,companyInvoiceSavedSequence:0,companyTransactionSaved:null as any,companyTransactionSavedSequence:0,companyKnowledgeSaved:null as any,companyKnowledgeSequence:0,
+ state:()=>({open:false,owner:'',target:{kind:'workspace'} as any,draftPage:null as any,pageSelection:null as any,buffers:{} as Record<string,string>,pending:{} as Record<string,any>,saved:null as any,savedSequence:0,intakeSaved:null as any,intakeSavedSequence:0,companyInvoiceSaved:null as any,companyInvoiceSavedSequence:0,companyTransactionSaved:null as any,companyTransactionSavedSequence:0,companyKnowledgeSaved:null as any,companyKnowledgeSequence:0,companyResource:null as any,companyResourceSequence:0,
   // Owner workspace: the server-checked ledger posting company of the current conversation scope (never the cached organization list).
   workspacePosting:null as null|{scopeKey:string,company:any},
   // A done/queued owner native Navi receipt (ids only); the open native page of the same owner refetches that record from the server.
@@ -21,6 +21,9 @@ export const useAssistantStore=defineStore('assistant',{
   receiveCompanyKnowledge(receipt:any){this.companyKnowledgeSaved=receipt;this.companyKnowledgeSequence++},
   receiveIntake(receipts:any[]){this.intakeSaved={sequence:++this.intakeSavedSequence,receipts}},
   receiveOwnerNative(receipt:any){this.ownerNative=receipt;this.ownerNativeSequence++},
-  postingFor(scopeKey:string,company:any){this.workspacePosting={scopeKey,company:company||null}}
+  postingFor(scopeKey:string,company:any){this.workspacePosting={scopeKey,company:company||null}},
+  // A done company business receipt: actor, company, which native page kinds to reload, the record id and the effect. Ids only, never
+  // record contents; each page reloads from its own native endpoint only when the actor and company are still the current ones.
+  receiveCompanyResource(signal:{actorId:string,organizationId:string,kinds:string[],id:string,effect:string}){this.companyResource={actorId:String(signal.actorId||''),organizationId:String(signal.organizationId||''),kinds:[...(signal.kinds||[])].map(String),id:String(signal.id||''),effect:String(signal.effect||'')};this.companyResourceSequence++}
  }
 })

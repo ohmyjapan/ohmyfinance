@@ -42,8 +42,8 @@ const postingKey=computed(()=>scope.value.key+'|'+(scope.value.organizationId||'
 const postingChecked=computed(()=>assistant.workspacePosting?.scopeKey===postingKey.value)
 const postingCompany=computed(()=>postingChecked.value?assistant.workspacePosting!.company:null)
 const page=computed(()=>assistantPage(route.path)),pageName=computed(()=>assistantPages[page.value])
-// What Navi can truthfully do on this page (catalogue entry). Company conversations stay on the pages whose records Navi has tools for;
-// other pages keep the separate owner/purchase conversations.
+// What Navi can truthfully do on this page (catalogue entry). Normal company finance pages use the company conversation; owner pages
+// (mapping, drafts, learning, connections, intake, payment matching, purchase workflow) keep the separate owner/purchase conversations.
 const feature=computed(()=>assistantFeature(route.path))
 const selection=computed(()=>assistant.pageSelection?.path===route.path?assistant.pageSelection:null)
  const context=computed(()=>({page:page.value,...(/^\/transactions\/[a-f0-9]{24}$/i.test(route.path)?{transactionId:String(route.params.id)}:{}),...(selection.value?.patternId?{patternId:selection.value.patternId}:{}),...(selection.value?.importId?{importId:selection.value.importId}:{}),...(/^\/intake\/[a-f0-9]{24}$/i.test(route.path)?{recordId:String(route.params.id)}:{}),...(page.value==='intake'&&selection.value?.documentId?{documentId:selection.value.documentId,sheet:selection.value.sheet,headerRow:selection.value.headerRow}:{}),...(page.value==='intake-payments'&&selection.value?.paymentKind?{paymentKind:selection.value.paymentKind,...(selection.value.paymentKind==='card'?{paymentImportId:selection.value.paymentImportId,paymentLine:selection.value.paymentLine}:{})}:{})}))

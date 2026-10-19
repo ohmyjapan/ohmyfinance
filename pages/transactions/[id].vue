@@ -34,8 +34,14 @@
       </div>
     </div>
 
+    <!-- Navi deleted the record shown here (same actor and company): no reload of a removed record, a plain notice instead. -->
+    <div v-if="removed" data-transaction-removed class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 p-6 text-sm text-gray-600 dark:text-gray-300">
+      <p class="font-medium text-gray-800 dark:text-gray-100">この取引は OMF Navi の操作で削除されました。</p>
+      <NuxtLink to="/transactions" class="mt-2 inline-block text-primary-main underline">取引一覧に戻る</NuxtLink>
+    </div>
+
     <!-- Loading State -->
-    <div v-if="isLoading" class="flex justify-center items-center h-64">
+    <div v-else-if="isLoading" class="flex justify-center items-center h-64">
       <div class="flex items-center gap-3">
         <Loader2 class="w-6 h-6 text-primary-main animate-spin" />
         <span class="text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</span>
@@ -404,6 +410,7 @@ const getAuthHeaders = () => userStore.authHeader
 const transactionId = computed(() => route.params.id as string)
 
 const transaction = ref<any>(null)
+const removed = ref(false)
 const isLoading = ref(true)
 const error = ref<string | null>(null)
 
@@ -414,6 +421,7 @@ onMounted(async () => {
 
 let detailTicket = 0
 const fetchTransaction = async () => {
+  if (removed.value) return
   const ticket = ++detailTicket, scope = tokenClaims(userStore.token), selectedId = transactionId.value
   isLoading.value = true
   error.value = null
@@ -443,6 +451,13 @@ watch(() => navi.companyTransactionSavedSequence, () => {
   const saved = navi.companyTransactionSaved, scope = tokenClaims(userStore.token)
   if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.transactionId === transactionId.value) fetchTransaction()
 })
+// A Navi receipt for this same record, actor and company: a delete shows the removed notice (pending loads are discarded), any
+// other change reloads the record from its native endpoint.
+watch(() => navi.companyResourceSequence, () => {
+  const saved = navi.companyResource, scope = tokenClaims(userStore.token)
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('transaction') && saved.id === transactionId.value) { if (saved.effect === 'delete') { detailTicket++; removed.value = true; transaction.value = null; isLoading.value = false; error.value = null } else fetchTransaction() }
+})
+watch(transactionId, () => { removed.value = false })
 onBeforeUnmount(() => { detailTicket++ })
 
 const formatDate = (dateString: string) => {

@@ -1,4 +1,4 @@
-import type mongoose from 'mongoose'
+import mongoose from 'mongoose'
 import { createError } from 'h3'
 import { Payment } from '../models/Payment'
 
@@ -24,4 +24,41 @@ export async function updateCompanyCalendarEntry(organizationId: mongoose.Types.
     throw createError({ statusCode: 404, statusMessage: 'Payment not found' })
   }
   return payment
+}
+
+// Native POST and company Navi create through this one operation (same fields, defaults and Mongoose validation as the page).
+// A trusted server operation (Navi) may fix the id and its durable marker in this same original insert; a body never can.
+export type CalendarCreateOperation = { id: mongoose.Types.ObjectId, naviOperation: Record<string, unknown> }
+export async function createCompanyCalendarEntry(organizationId: mongoose.Types.ObjectId, body: any, operation?: CalendarCreateOperation) {
+  if (!body || typeof body !== 'object' || !body.title || !body.amount || !body.dueDate || !body.type || !body.category) throw createError({ statusCode: 400, statusMessage: 'Missing required fields: title, amount, dueDate, type, category' })
+  const payment = new Payment({
+    title: body.title, amount: parseFloat(body.amount), currency: body.currency || 'JPY', dueDate: noon(body.dueDate), type: body.type, status: body.status || 'pending', category: body.category,
+    recurring: body.recurring || false, recurringFrequency: body.recurringFrequency, bankTransfer: body.bankTransfer, notes: body.notes, organizationId,
+    ...(operation ? { _id: operation.id, naviOperation: operation.naviOperation } : {})
+  })
+  await payment.save()
+  return payment
+}
+
+// Native DELETE and company Navi removal. A bill the issuer's statement or notice produced is suppressed, never erased (B3): its
+// financial fields stay, it leaves every calendar reader and can never be recreated. A trusted operation also requires its read
+// snapshot and records its marker on the suppressed row in the same update, which proves the suppression after a lost reply. A hard
+// delete leaves nothing to prove itself; its unknown outcome stays unresolved for the caller.
+export type CalendarDeleteOperation = { expectedUpdatedAt: string, naviOperation: Record<string, unknown> }
+export async function deleteCompanyCalendarEntry(organizationId: mongoose.Types.ObjectId, paymentId: string, actorId: string, operation?: CalendarDeleteOperation) {
+  const target: any = { _id: paymentId, organizationId, suppressedAt: { $exists: false } }
+  if (operation) target.updatedAt = new Date(operation.expectedUpdatedAt)
+  const current: any = await Payment.findOne(target).lean()
+  if (!current) {
+    if (operation && await Payment.exists({ _id: paymentId, organizationId, suppressedAt: { $exists: false } })) throw createError({ statusCode: 409, statusMessage: 'Calendar entry changed; read it again' })
+    throw createError({ statusCode: 404, statusMessage: 'Payment not found' })
+  }
+  if (current.source?.kind === 'card-statement') {
+    const changed = await Payment.updateOne(target, { $set: { suppressedAt: new Date(), suppressedBy: actorId, ...(operation ? { naviOperation: operation.naviOperation } : {}) } })
+    if (!changed.matchedCount) throw createError({ statusCode: 409, statusMessage: 'Calendar entry changed; read it again' })
+    return { suppressed: true, payment: current }
+  }
+  const removed = await Payment.deleteOne(target)
+  if (!removed.deletedCount) throw createError({ statusCode: 409, statusMessage: 'Calendar entry changed; read it again' })
+  return { suppressed: false, payment: current }
 }

@@ -12,8 +12,10 @@ test('transaction, invoice and calendar pages use explicit company conversations
  assert.equal(scope('actor','A','transactions').company,true);assert.equal(a.key,scope('actor','A','transactions').key);
  assert.equal(a.company,true);assert.notEqual(a.key,b.key);assert.equal(a.key,scope('actor','A','calendar').key);
  assert.notEqual(a.key,scope('other','A','invoices').key);assert.notEqual(a.key,scope('actor','','invoices').key);
- assert.equal(scope('actor','A','mapping').key,scope('actor','B','dashboard').key);
- assert.equal(scope('actor','A','mapping').company,false);
+ // Deliberate 2026-10-20: the dashboard and other normal company pages join the company conversation; owner pages keep theirs.
+ assert.equal(scope('actor','A','dashboard').key,a.key,'company-ui:dashboard-company');assert.equal(scope('actor','A','budgets').company,true);
+ assert.equal(scope('actor','A','mapping').key,scope('actor','B','learning').key);assert.equal(scope('actor','A','mapping').key,scope('actor','B','intake').key);
+ assert.equal(scope('actor','A','mapping').company,false);assert.equal(scope('actor','A','other').company,false);assert.equal(scope('actor','A','connections').company,false);
 });
 test('company conversations get the longer catalogue-aware reply; the owner workspace reply is 4000 characters with one fixed page link',async()=>{
  const {validateCompanyAssistantReply,assistantFeature}=await import('../shared/finance-assistant.mjs');
@@ -27,7 +29,7 @@ test('company conversations get the longer catalogue-aware reply; the owner work
  assert.equal(Object.hasOwn(validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{}}),'navigation'),false,'general-reply:no-link-invented');
  for(const navigation of[{feature:'transactions',transactionId:'a'.repeat(24)},{feature:'authentication'},{feature:'https://evil.example'},{feature:'connections',query:'x'},'connections'])assert.throws(()=>validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{},navigation}),'general-reply:link-refused '+JSON.stringify(navigation));
  assert.throws(()=>validateAssistantReply({kind:'proposal',summary:'s',patch:{purpose:'company'},quotes:{purpose:'s'},navigation:{feature:'connections'}}),'general-reply:still-no-purchase-change');
- assert.equal(assistantFeature('/calendar').disposition,'navi_tool');assert.equal(assistantFeature('/budgets').disposition,'page_handoff');assert.equal(assistantFeature('/login'),null);
+ assert.equal(assistantFeature('/calendar').disposition,'navi_tool');assert.equal(assistantFeature('/budgets').disposition,'navi_tool');assert.equal(assistantFeature('/transactions/import').disposition,'page_handoff');assert.equal(assistantFeature('/login'),null);
 });
 test('company replies may carry bounded source citations; general replies never do',async()=>{
  const {validateCompanyAssistantReply}=await import('../shared/finance-assistant.mjs');

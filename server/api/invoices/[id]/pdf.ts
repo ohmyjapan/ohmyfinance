@@ -22,26 +22,38 @@ export default defineEventHandler(async (event) => {
 
   const html = generateInvoiceHTML(invoice)
 
+  // A print preview, not a binary PDF: the browser prints it or saves it as PDF. No script may run in it (saved values are escaped
+  // and the policy forbids scripts, frames and remote loads, also when the page opens it from an owned blob URL).
   setHeader(event, 'Content-Type', 'text/html; charset=utf-8')
-  setHeader(event, 'Content-Disposition', `inline; filename="invoice_${invoice.invoiceNumber}.html"`)
+  setHeader(event, 'Content-Security-Policy', PRINT_POLICY)
+  setHeader(event, 'X-Content-Type-Options', 'nosniff')
+  setHeader(event, 'Cache-Control', 'no-store')
+  setHeader(event, 'Content-Disposition', `inline; filename="invoice_${String(invoice.invoiceNumber || '').replace(/[^A-Za-z0-9._-]/g, '_')}.html"`)
 
   return html
 })
 
+const PRINT_POLICY = "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+const HTML_ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+// Every interpolated saved value passes through this; newlines become <br> only after escaping.
+const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ENTITIES[ch])
+const multiline = (value: unknown) => escapeHtml(value).replace(/\r?\n/g, '<br>')
+
 function generateInvoiceHTML(invoice: any): string {
+  const currencyCode = typeof invoice.currency === 'string' && /^[A-Z]{3}$/.test(invoice.currency) ? invoice.currency : null
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('ja-JP', {
-      style: 'currency',
-      currency: invoice.currency || 'JPY'
-    }).format(amount)
+    if (!Number.isFinite(Number(amount))) return ''
+    if (!currencyCode) return escapeHtml(Number(amount).toLocaleString('ja-JP')) + (invoice.currency ? ' ' + escapeHtml(invoice.currency) : '')
+    try { return escapeHtml(new Intl.NumberFormat('ja-JP', { style: 'currency', currency: currencyCode }).format(Number(amount))) } catch { return escapeHtml(Number(amount).toLocaleString('ja-JP') + ' ' + currencyCode) }
   }
 
   const formatDate = (date: Date | string) => {
-    return new Date(date).toLocaleDateString('ja-JP', {
+    const value = new Date(date)
+    return Number.isFinite(value.getTime()) ? escapeHtml(value.toLocaleDateString('ja-JP', {
       year: 'numeric',
       month: 'long',
       day: 'numeric'
-    })
+    })) : ''
   }
 
   const statusColors: Record<string, string> = {
@@ -52,10 +64,10 @@ function generateInvoiceHTML(invoice: any): string {
     cancelled: '#9ca3af'
   }
 
-  const itemsHTML = invoice.items.map((item: any) => `
+  const itemsHTML = (invoice.items || []).map((item: any) => `
     <tr>
-      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${item.description}</td>
-      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${item.quantity}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${multiline(item.description)}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${escapeHtml(item.quantity)}</td>
       <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatCurrency(item.unitPrice)}</td>
       <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatCurrency(item.amount)}</td>
     </tr>
@@ -66,8 +78,9 @@ function generateInvoiceHTML(invoice: any): string {
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="${PRINT_POLICY}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Invoice ${invoice.invoiceNumber}</title>
+  <title>Invoice ${escapeHtml(invoice.invoiceNumber)}</title>
   <style>
     @media print {
       body { margin: 0; padding: 20px; }
@@ -197,16 +210,16 @@ function generateInvoiceHTML(invoice: any): string {
   </style>
 </head>
 <body>
-  <button class="print-btn no-print" onclick="window.print()">Print Invoice</button>
+  <p class="print-btn no-print">印刷用プレビューです。ブラウザの「印刷」から印刷・PDF として保存できます（サーバーが作る PDF ファイルではなく、送信もされません）。</p>
 
   <div class="invoice-header">
     <div>
       <div class="invoice-title">INVOICE</div>
-      <div class="invoice-number">${invoice.invoiceNumber}</div>
+      <div class="invoice-number">${escapeHtml(invoice.invoiceNumber)}</div>
     </div>
     <div>
       <span class="status-badge" style="background: ${statusColors[invoice.status] || '#6b7280'}">
-        ${invoice.status}
+        ${escapeHtml(invoice.status)}
       </span>
     </div>
   </div>
@@ -214,18 +227,18 @@ function generateInvoiceHTML(invoice: any): string {
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 30px;">
     <div class="party-info">
       <h3>From</h3>
-      <div class="name">${invoice.from?.name || 'Your Company'}</div>
-      ${invoice.from?.address ? `<div style="color: #6b7280; font-size: 14px;">${invoice.from.address}</div>` : ''}
-      ${invoice.from?.email ? `<div style="color: #6b7280; font-size: 14px;">${invoice.from.email}</div>` : ''}
-      ${invoice.from?.phone ? `<div style="color: #6b7280; font-size: 14px;">${invoice.from.phone}</div>` : ''}
-      ${invoice.from?.taxId ? `<div style="color: #6b7280; font-size: 14px;">Tax ID: ${invoice.from.taxId}</div>` : ''}
+      <div class="name">${escapeHtml(invoice.from?.name || 'Your Company')}</div>
+      ${invoice.from?.address ? `<div style="color: #6b7280; font-size: 14px;">${multiline(invoice.from.address)}</div>` : ''}
+      ${invoice.from?.email ? `<div style="color: #6b7280; font-size: 14px;">${multiline(invoice.from.email)}</div>` : ''}
+      ${invoice.from?.phone ? `<div style="color: #6b7280; font-size: 14px;">${multiline(invoice.from.phone)}</div>` : ''}
+      ${invoice.from?.taxId ? `<div style="color: #6b7280; font-size: 14px;">Tax ID: ${escapeHtml(invoice.from.taxId)}</div>` : ''}
     </div>
     <div class="party-info">
       <h3>Bill To</h3>
-      <div class="name">${invoice.to?.name || 'Customer'}</div>
-      ${invoice.to?.address ? `<div style="color: #6b7280; font-size: 14px;">${invoice.to.address}</div>` : ''}
-      ${invoice.to?.email ? `<div style="color: #6b7280; font-size: 14px;">${invoice.to.email}</div>` : ''}
-      ${invoice.to?.phone ? `<div style="color: #6b7280; font-size: 14px;">${invoice.to.phone}</div>` : ''}
+      <div class="name">${escapeHtml(invoice.to?.name || 'Customer')}</div>
+      ${invoice.to?.address ? `<div style="color: #6b7280; font-size: 14px;">${multiline(invoice.to.address)}</div>` : ''}
+      ${invoice.to?.email ? `<div style="color: #6b7280; font-size: 14px;">${multiline(invoice.to.email)}</div>` : ''}
+      ${invoice.to?.phone ? `<div style="color: #6b7280; font-size: 14px;">${multiline(invoice.to.phone)}</div>` : ''}
     </div>
   </div>
 
@@ -266,7 +279,7 @@ function generateInvoiceHTML(invoice: any): string {
       <span>${formatCurrency(invoice.subtotal)}</span>
     </div>
     <div class="totals-row">
-      <span>Tax (${invoice.taxRate}%)</span>
+      <span>Tax (${escapeHtml(invoice.taxRate)}%)</span>
       <span>${formatCurrency(invoice.taxAmount)}</span>
     </div>
     <div class="totals-row total">
@@ -277,15 +290,15 @@ function generateInvoiceHTML(invoice: any): string {
 
   ${invoice.notes || invoice.terms || invoice.bankDetails ? `
   <div class="notes">
-    ${invoice.notes ? `<div style="margin-bottom: 16px;"><h4>Notes</h4><p>${invoice.notes}</p></div>` : ''}
-    ${invoice.terms ? `<div style="margin-bottom: 16px;"><h4>Terms & Conditions</h4><p>${invoice.terms}</p></div>` : ''}
-    ${invoice.bankDetails ? `<div><h4>Bank Details</h4><p>${invoice.bankDetails}</p></div>` : ''}
+    ${invoice.notes ? `<div style="margin-bottom: 16px;"><h4>Notes</h4><p>${multiline(invoice.notes)}</p></div>` : ''}
+    ${invoice.terms ? `<div style="margin-bottom: 16px;"><h4>Terms &amp; Conditions</h4><p>${multiline(invoice.terms)}</p></div>` : ''}
+    ${invoice.bankDetails ? `<div><h4>Bank Details</h4><p>${multiline(invoice.bankDetails)}</p></div>` : ''}
   </div>
   ` : ''}
 
   <div style="margin-top: 40px; text-align: center; font-size: 12px; color: #9ca3af;">
     <p>Thank you for your business!</p>
-    <p>Generated by OhMyFinance · ${new Date().toLocaleString('ja-JP')}</p>
+    <p>Generated by OhMyFinance · ${escapeHtml(new Date().toLocaleString('ja-JP'))}</p>
   </div>
 </body>
 </html>
