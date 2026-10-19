@@ -22,6 +22,7 @@ const DEFECTS=[
  ['restore-keeps-navi-marker','"ownerId", "naviOperation", "cardAccounting"]','"ownerId", "cardAccounting"]','restore:no-marker'],
  ['restore-global-clear','.collection.deleteMany({ organizationId })','.collection.deleteMany({})','restore:clear-scoped'],
  ['restore-clear-without-company-rows','if (prepared[key].length > 0 || section.length === 0 && provesCompanySnapshot(backupData, organizationId)) clear.add(key);','if (true) clear.add(key);','restore:no-eligible-no-clear'],
+ ['restore-clear-despite-invalid-rows','if (result.reasons.invalid) result.clearSkipped = "selected_company_rows_invalid";\n        else if (','if (','restore:mixed-invalid-no-clear'],
  ['restore-global-duplicate','await models[key].exists({ organizationId, $or: keys })','await models[key].exists({ $or: keys })','restore:company-duplicate'],
  ['restore-raw-row-error-log','} catch {\n          console.error("Company backup restore: one row could not be saved");','} catch (rowError) {\n          console.error("Company backup restore: one row could not be saved", rowError);','restore:safe-log'],
  ['restore-echo-parse-error','} catch {\n      backupData = null;\n    }','} catch (parseError) {\n      throw createError({ statusCode: 400, statusMessage: String(parseError.message) });\n    }','restore:safe-error'],
@@ -31,8 +32,8 @@ const DEFECTS=[
 export default{name:'omf-company-import-restore',covers:['server/api/transactions/import.ts','server/api/backup/restore.ts','server/api/backup/index.ts','server/services/companyBackupService.ts','pages/settings/index.vue','pages/transactions/upload.vue','scripts/finance-company-import-restore-integration.cjs','scripts/finance-company-import-restore-browser.cjs','scripts/zoomer-fixtures/omf-company-import-restore.mjs'],async run(){
  const run=(app,part)=>new Promise(resolve=>execFile(process.execPath,[path.join(root,'scripts/finance-company-import-restore-integration.cjs')],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:'',MONGODB_URI:'',NUXT_MONGO_URI:'',ANTHROPIC_API_KEY:'',OPENAI_API_KEY:'',CLAUDE_CODE_OAUTH_TOKEN:'',CLAUDE_SETUP_TOKEN:'',SLACK_BOT_TOKEN:'',OMF_IMPORT_RESTORE_APP_ROOT:app,OMF_IMPORT_RESTORE_PART:part},timeout:900000,maxBuffer:8*1024*1024},(e,stdout,stderr)=>resolve({part,code:e?e.code??1:0,text:stdout+stderr})));
  const passed=r=>r.code===0&&r.text.includes(complete(r.part)),brief=r=>({...r,text:r.text.length>6000?r.text.slice(0,1500)+'\n...\n'+r.text.slice(-4500):r.text});
- // Each review finding alone first (F1 import, F2 restore), then the complete native + installed-Chrome suite.
- const findings=[await run(root,'import'),await run(root,'restore')],full=await run(root,FULL),controls=[],mutants=[];
+ // Each review finding alone first (F1 import, F2 restore, the installed-Chrome wizard/settings leg), then the complete native + installed-Chrome suite.
+ const findings=[await run(root,'import'),await run(root,'restore'),await run(root,'browser')],full=await run(root,FULL),controls=[],mutants=[];
  let pass=findings.every(passed)&&passed(full);
  if(pass){const base=path.resolve(root,'.zoomer','import-restore-mutants'),directory=path.resolve(base,randomUUID());if(!directory.startsWith(base+path.sep))throw Error('Unsafe owned test directory');await mkdir(directory,{recursive:true});
   try{

@@ -568,7 +568,7 @@ const performRestore = async () => {
 
 const sectionLabels: Record<string, string> = { transactions: '取引', receipts: '領収書', recurringPayments: '定期支払い', mappingTemplates: 'マッピングテンプレート' }
 const reasonLabels: Record<string, string> = { other_company: '他の会社の行', unassigned: '会社未設定の行', malformed: '形式が不正な行', invalid: '値が不正な行', duplicate: 'この会社に既にある行', shared_template: '共有テンプレート（会社のバックアップ対象外）' }
-const clearLabels: Record<string, string> = { no_selected_company_rows: 'この会社の行がないため既存データは削除していません', section_absent: 'ファイルに含まれないため既存データは削除していません', section_malformed: '形式が不正なため既存データは削除していません', shared_not_company_scoped: '共有のため削除していません', not_selected: '対象外のため削除していません' }
+const clearLabels: Record<string, string> = { no_selected_company_rows: 'この会社の行がないため既存データは削除していません', selected_company_rows_invalid: 'この会社の行に値が不正なものがあるため既存データは削除せず、正しい行だけを追加しました', section_absent: 'ファイルに含まれないため既存データは削除していません', section_malformed: '形式が不正なため既存データは削除していません', shared_not_company_scoped: '共有のため削除していません', not_selected: '対象外のため削除していません' }
 const withheldLabels: Record<string, string> = { cardAccounting: 'カード会計の情報（カード明細の取込で設定）', naviOperation: 'Naviの内部記録' }
 const restoreDetails = computed(() => {
   const lines: string[] = []

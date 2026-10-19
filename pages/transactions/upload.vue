@@ -151,7 +151,10 @@ const completedSteps = ref<number[]>([])
 const selectedSource = ref('credit_card')
 const uploadedFiles = ref<any[]>([])
 const fieldMappings = ref<Record<string, any>>({})
+// Raw rows from the file, keyed by the file's own headers. They stay unchanged so preview, back and remap always start from them,
+// and the route applies the mappings exactly once. The preview's mapped rows are kept only as its display output.
 const parsedData = ref<any[]>([])
+const previewRows = ref<any[]>([])
 const importStats = ref({
   totalRecords: 0,
   validRecords: 0,
@@ -227,6 +230,7 @@ const handleFilesSelected = (files: any[]) => {
     // so the user sees and controls all mapping decisions in one place
     fieldMappings.value = {}
     parsedData.value = allData
+    previewRows.value = []
 
     // Calculate stats
     const validCount = allData.filter((row: any) => {
@@ -252,7 +256,7 @@ const updateMappings = (mappings: Record<string, any>) => {
 
 // Update parsed data
 const updateParsedData = (data: any[]) => {
-  parsedData.value = data
+  previewRows.value = data
 }
 
 // Update import options
@@ -310,6 +314,7 @@ const resetWizard = () => {
   uploadedFiles.value = []
   fieldMappings.value = {}
   parsedData.value = []
+  previewRows.value = []
   importResult.value = null
   importResultCompany.value = ''
   staleNotice.value = ''

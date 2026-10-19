@@ -26,7 +26,8 @@ const duplicateKeys: Record<SectionKey, (doc: any, item: any) => any[]> = {
  * POST /api/backup/restore - Restore a backup into the token-selected company (final review F2). Only rows whose recorded
  * organizationId is that company are written, through the trusted company/creator setters; other-company, unassigned, malformed
  * and invalid rows are skipped with reasons. Duplicate checks and clearExisting are limited to that company, and a section is
- * cleared only when the file holds selected-company rows for it (or is this company's exact empty snapshot).
+ * cleared only when the file holds selected-company rows for it and none of them is invalid (or it is this company's exact empty
+ * snapshot); otherwise valid rows are added and the existing rows stay.
  */
 export default defineEventHandler(async (event) => {
   const { auth, organizationId } = await calendarCompany(event)
@@ -96,7 +97,9 @@ export default defineEventHandler(async (event) => {
         prepared[key].push({ doc, item })
       }
       if (options.clearExisting) {
-        if (prepared[key].length > 0 || (section.length === 0 && provesCompanySnapshot(backupData, organizationId))) clear.add(key)
+        // An invalid row of this company means the file is not a complete replacement: keep existing rows, add the valid ones.
+        if (result.reasons.invalid) result.clearSkipped = 'selected_company_rows_invalid'
+        else if (prepared[key].length > 0 || (section.length === 0 && provesCompanySnapshot(backupData, organizationId))) clear.add(key)
         else result.clearSkipped = 'no_selected_company_rows'
       }
     }

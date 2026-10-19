@@ -33,14 +33,26 @@ module.exports=async({root,origin,db,A,B,owner,members,organizations,pause,pass,
   await nativeSwitch(A);await page.goto(origin+'/transactions/upload',{waitUntil:'networkidle2'});
   await wait(()=>document.querySelector('[data-import-company]')?.textContent.includes('Synthetic import company A'),[],'import-scope-label');await fits('[data-import-company]','upload');
 
-  // 0. Recorded, not fixed here (pre-existing since before d732, outside F1/F2): with headers that differ from the target field names
-  // (e.g. Japanese date/amount headers), the preview step hands already-mapped rows back while the page re-sends the source mappings,
-  // so the route maps twice and every row fails as 'amount missing'. Observed and logged; it must never land in another company.
+  // 0. Non-canonical (Japanese) headers import exactly once through the actual wizard: raw rows are mapped once, by the route.
   await wizard(await csv('ui-japanese-headers.csv',['2026/05/03,5500,UI_JA_NOTE,UI_JA_PRODUCT'],'\u65e5\u4ed8,\u91d1\u984d,\u5099\u8003,\u5546\u54c1\u540d'));await click(label('importConfirmation.startImport'),'confirm-japanese',true);
   await wait(()=>document.querySelector('[data-import-result-company]')?.textContent.includes('Synthetic import company A'),[],'japanese-result');
-  const jaRows=await transactions.find({productName:'UI_JA_PRODUCT'}).toArray();assert.ok(jaRows.every(r=>String(r.organizationId)===String(A)),'import-restore-ui:import-company');
-  console.log('NOTE existing wizard defect: Japanese-header CSV through the native wizard saved '+jaRows.length+' row(s); result page lines: '+JSON.stringify((await text()).split('\n').filter(l=>/\d/.test(l)).slice(0,8)));
-  const jaStats=await stats();assert.equal(jaStats.length,3,'import-restore-ui:result-visible');console.log('NOTE japanese-header result counts shown (imported, skipped, errors): '+JSON.stringify(jaStats));
+  assert.deepEqual(await stats(),['1','0','0'],'import-restore-ui:japanese-once');const jaRows=await transactions.find({productName:'UI_JA_PRODUCT'}).toArray();
+  assert.equal(jaRows.length,1,'import-restore-ui:japanese-once');assert.equal(String(jaRows[0].organizationId),String(A),'import-restore-ui:import-company');assert.equal(jaRows[0].amount,5500,'import-restore-ui:japanese-once');assert.equal(jaRows[0].notes,'UI_JA_NOTE','import-restore-ui:japanese-once');assert.equal(jaRows[0].date.toISOString().slice(0,10),'2026-05-03','import-restore-ui:japanese-once');
+  // Back from the preview, remap (note column: do not import), preview again and import: the raw rows are still the input.
+  if(await page.evaluate(()=>location.pathname)==='/transactions/upload')await push('/transactions');await push('/transactions/upload');await wait(()=>location.pathname==='/transactions/upload'&&document.querySelector('input[type=file]'),[],'upload-page-remap');
+  await (await page.$('input[type=file]')).uploadFile(await csv('ui-japanese-remap.csv',['2026/05/04,6600,UI_REMAP_NOTE,UI_REMAP_PRODUCT'],'\u65e5\u4ed8,\u91d1\u984d,\u5099\u8003,\u5546\u54c1\u540d'));
+  await click(label('transactionImport.continueToMapping'),'remap-to-mapping');await click(label('fieldMapper.continueToPreview'),'remap-to-preview');await click(label('dataPreview.backToMapping'),'remap-back');
+  await wait(()=>[...document.querySelectorAll('tr')].some(r=>r.querySelector('td')?.textContent.trim()==='\u5099\u8003'&&r.querySelector('select')),[],'remap-row');
+  await page.evaluate(()=>{const row=[...document.querySelectorAll('tr')].find(r=>r.querySelector('td')?.textContent.trim()==='\u5099\u8003');const sel=row.querySelector('select');sel.value='null';sel.dispatchEvent(new Event('change',{bubbles:true}))});
+  await click(label('fieldMapper.continueToPreview'),'remap-preview-again');await click(label('dataPreview.continueToImport'),'remap-to-import');await click(label('importConfirmation.startImport'),'remap-start');await click(label('importConfirmation.startImport'),'remap-confirm',true);
+  await wait(()=>document.querySelector('[data-import-result-company]')?.textContent.includes('Synthetic import company A'),[],'remap-result');assert.deepEqual(await stats(),['1','0','0'],'import-restore-ui:remap-once');
+  const remapped=await transactions.find({productName:'UI_REMAP_PRODUCT'}).toArray();assert.equal(remapped.length,1,'import-restore-ui:remap-once');assert.equal(remapped[0].amount,6600,'import-restore-ui:remap-once');assert.equal(remapped[0].notes,'','import-restore-ui:remap-once');assert.equal(String(remapped[0].organizationId),String(A),'import-restore-ui:import-company');
+  pass('installed Chrome: Japanese-header CSV imports exactly once with its values, and back from preview + remap then import uses the raw rows once');
+
+  // Source selector fits a 390 px screen (all three choices visible, no page overflow on the upload step).
+  await push('/transactions');await push('/transactions/upload');await wait(()=>location.pathname==='/transactions/upload'&&document.querySelector('input[type=file]'),[],'upload-page-fit');
+  const sourceBoxes=await page.evaluate(labels=>labels.map(l=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.includes(l));return b?{left:b.getBoundingClientRect().left,right:b.getBoundingClientRect().right}:null}),[label('transactionImport.creditCard'),label('transactionImport.paymentGatewayLabel'),label('transactionImport.overseasLabel')]);
+  assert.ok(sourceBoxes.every(b=>b&&b.left>=0&&b.right<=390),'import-restore-ui:source-selector-fits '+JSON.stringify(sourceBoxes));if(await overflow())assert.fail('import-restore-ui:source-selector-fits '+await offenders());
 
   // 1. Actual CSV wizard imports into the selected company; the row appears on the native transactions page.
   await wizard(await csv('ui-import.csv',['2026/05/01,3300,UI_IMPORT_NOTE,UI_IMPORT_PRODUCT']));await click(label('importConfirmation.startImport'),'confirm-import',true);

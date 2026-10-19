@@ -5,7 +5,7 @@
       <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-4">
         {{ t('transactionImport.selectSource') }}
       </label>
-      <div class="flex gap-3">
+      <div class="flex flex-col sm:flex-row gap-3">
         <button
           v-for="source in sources"
           :key="source.id"
