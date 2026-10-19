@@ -34,11 +34,17 @@ export async function startNewCompanyConversation(ownerId: string, organizationI
   try { archived = (await Archive.create(archive)).toObject() } catch (e: any) {
     if (e?.code !== 11000) throw e
     const existing: any = await Archive.findOne({ conversationId: c._id, segment }).lean()
-    // Same request retried after a crash between the two writes: reuse its copy. Another un-adopted copy of this still-live
-    // segment (its reset never completed) is replaced; the live turns are its originals, so nothing is lost.
-    if (existing?.resetId === body.requestId && existing.fromRevision === c.revision) archived = existing
-    else if (existing) { await Archive.deleteOne({ _id: existing._id, resetId: existing.resetId, segment }); archived = (await Archive.create(archive)).toObject() }
-    else throw e
+    // Concurrent reset requests for the same revision share one copy. Never delete it: another request can already have
+    // adopted that archive. A stale, still-unadopted revision is replaced atomically, retaining the id. A reset of its old
+    // live revision cannot win the conversation CAS below after the live data has advanced to this revision.
+    if (existing?.fromRevision === c.revision) archived = existing
+    else if (existing && existing.fromRevision < c.revision) {
+      const candidate = new Archive({ ...archive, _id: existing._id, createdAt: existing.createdAt })
+      await candidate.validate()
+      await Archive.collection.replaceOne({ _id: existing._id, ownerId: c.ownerId, organizationId: c.organizationId, conversationId: c._id, segment, fromRevision: existing.fromRevision }, candidate.toObject({ virtuals: false }))
+      archived = await Archive.findById(existing._id).lean()
+      if (!archived || archived.fromRevision !== c.revision) fail(409, 'Conversation changed; reload')
+    } else fail(409, 'Conversation changed; reload')
   }
   const fingerprint = createHash('sha256').update(JSON.stringify(turns.map((t: any) => [t.id, (t.actions || []).map((a: any) => [a.operationId, a.state])]))).digest('hex')
   const changed = await Conversation.updateOne({ ...identity, _id: c._id, revision: c.revision, segment: c.segment === undefined ? { $in: [null, 0] } : segment, state: { $nin: ['queued', 'working'] }, 'turns.actions.state': { $ne: 'claimed' } },

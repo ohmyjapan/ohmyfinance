@@ -1,0 +1,12 @@
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+export const timeoutMs = 120000;
+export default { name: 'omf-company-archive-recovery', covers: ['server/services/companyConversationHistoryService.ts','scripts/finance-company-archive-recovery-integration.cjs'], async run() {
+  const env = { ...process.env, OMF_ARCHIVE_FIXTURE: 'owned' };
+  for (const key of ['MONGO_URI','MONGODB_URI','NUXT_MONGO_URI','DATABASE_URL']) env[key] = 'mongodb://127.0.0.1:1/zfx_no_ambient_database';
+  for (const key of ['ANTHROPIC_API_KEY','OPENAI_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','SLACK_BOT_TOKEN']) env[key] = 'no-model-or-business-send';
+  const r = await new Promise(resolve => execFile(process.execPath, [path.join(root,'scripts/finance-company-archive-recovery-integration.cjs')], { cwd: root, env, windowsHide: true, timeout: 60000, maxBuffer: 2000000 }, (error, stdout, stderr) => resolve({ code: error ? Number.isInteger(error.code) ? error.code : 1 : 0, text: stdout + stderr })));
+  return { pass: r.code === 0 && r.text.includes('PASS owned stale-copy'), databaseCoverage: { executed: r.code === 0, ownedProcess: r.code === 0 }, message: JSON.stringify(r) };
+} };
