@@ -50,6 +50,7 @@ export interface IInvoice extends Document<mongoose.Types.ObjectId> {
   terms?: string
   bankDetails?: string
 
+  naviOperation?: any
   createdBy?: mongoose.Types.ObjectId
   createdAt: Date
   updatedAt: Date
@@ -102,6 +103,7 @@ const InvoiceSchema = new Schema<IInvoice>({
   notes: String,
   terms: String,
   bankDetails: String,
+  naviOperation: { type: Schema.Types.Mixed },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
 }, {
   timestamps: true

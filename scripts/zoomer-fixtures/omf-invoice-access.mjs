@@ -34,8 +34,10 @@ export default {
      ['unscoped-preview', 'preview', 'Invoice.findOne({ _id: id, organizationId })', 'Invoice.findById(id)', 'invoice:preview-scope'],
      // Keep missing-company rejection intact: the deliberate defect trusts an existing
      // token's selected company but fails to recheck its current membership.
-     ...['list', 'detail', 'preview'].map(route => ['trust-token-' + route, route, 'await calendarCompany(event)',
-      '(event.context.auth.organizationId ? { organizationId: event.context.auth.organizationId } : await calendarCompany(event))', 'invoice:current-membership'])
+     ...['list', 'detail', 'preview'].map(route => {
+      const anchor = route === 'preview' ? 'await calendarCompany(event)' : 'if (method === "GET") {\n    const { organizationId } = await calendarCompany(event);'
+      return ['trust-token-' + route, route, anchor, anchor.replace('await calendarCompany(event)', '(event.context.auth.organizationId ? { organizationId: event.context.auth.organizationId } : await calendarCompany(event))'), 'invoice:current-membership']
+     })
     ];
     for (const [name, route, anchor, replacement, assertion] of specs) {
      const file = path.join(api, routes[route]);

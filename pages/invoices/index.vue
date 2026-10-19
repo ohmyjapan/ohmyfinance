@@ -236,9 +236,12 @@ import {
   Plus, FileText, Pencil, Trash2, X, Eye, Filter, Loader2
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { useAssistantStore } from '~/stores/assistant'
+import { tokenClaims } from '~/utils/auth-session'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
+const assistant = useAssistantStore()
 const getAuthHeaders = () => userStore.authHeader
 
 const isLoading = ref(false)
@@ -263,17 +266,20 @@ const form = reactive({
   notes: ''
 })
 
+let loadTicket = 0
 const loadInvoices = async () => {
+  const ticket = ++loadTicket, scope = tokenClaims(userStore.token)
   isLoading.value = true
   try {
     const params = new URLSearchParams()
     if (statusFilter.value) params.set('status', statusFilter.value)
     const data = await $fetch(`/api/invoices?${params.toString()}`, { headers: getAuthHeaders() })
-    invoices.value = data.invoices
+    const current = tokenClaims(userStore.token)
+    if (ticket === loadTicket && scope?.userId === current?.userId && scope?.organizationId === current?.organizationId) invoices.value = data.invoices
   } catch (error) {
     console.error('Failed to load invoices:', error)
   } finally {
-    isLoading.value = false
+    if (ticket === loadTicket) isLoading.value = false
   }
 }
 
@@ -373,5 +379,10 @@ const getStatusClass = (status: string) => {
   return classes[status] || 'bg-gray-500/10 text-gray-600 dark:text-gray-400'
 }
 
+watch(() => assistant.companyInvoiceSavedSequence, () => {
+  const saved = assistant.companyInvoiceSaved, current = tokenClaims(userStore.token)
+  if (saved && current?.userId === saved.actorId && current?.organizationId === saved.organizationId) loadInvoices()
+})
+onBeforeUnmount(() => { loadTicket++ })
 onMounted(() => loadInvoices())
 </script>

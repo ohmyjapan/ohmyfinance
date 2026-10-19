@@ -1,7 +1,7 @@
 // Owned synthetic native application only. Installed Chrome, no model/provider or business sends.
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {createRequire}=require('node:module'),{existsSync}=require('node:fs');
-module.exports=async({root,origin,call,ok,worker,ownerToken,tokenA,tokenB,A,B,calendarAction,pause,pass,setMembership})=>{
+module.exports=async({root,origin,call,ok,worker,ownerToken,tokenA,tokenB,A,B,calendarAction,invoiceAction,pause,pass,setMembership})=>{
  // Nested worktrees resolve the collector's installed dependencies from the parent checkout; no junction.
  let puppeteer;try{puppeteer=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core')}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;puppeteer=createRequire(path.resolve(root,'../collector/package.json'))('rebrowser-puppeteer-core')}
  const executablePath=[path.join(process.env.ProgramFiles||'C:/Program Files','Google/Chrome/Application/chrome.exe'),path.join(process.env['ProgramFiles(x86)']||'C:/Program Files (x86)','Google/Chrome/Application/chrome.exe'),path.join(process.env.LOCALAPPDATA||'','Google/Chrome/Application/chrome.exe')].find(existsSync);
@@ -71,6 +71,17 @@ module.exports=async({root,origin,call,ok,worker,ownerToken,tokenA,tokenB,A,B,ca
   await wait((paymentId,date)=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar')?.payments.find(p=>p.id===paymentId)?.dueDate===date+'T12:00:00.000Z',[calendarAction.paymentId,dueDate],'calendar-updated-from-receipt');
   assert.ok(await page.$('[data-workspace-action-state="done"]'),'company-ui:visible-calendar-receipt');
   if(screenshots)await page.screenshot({path:path.join(screenshots,'company-navi-calendar-save.png')});
+  await page.evaluate(()=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.push('/invoices'));
+  await wait(()=>location.pathname==='/invoices'&&document.querySelector('tbody tr'),[],'invoice-page-loaded');
+  await worker('heartbeat');await wait(()=>document.querySelector('#assistant-message')?.disabled===false,[],'invoice-action-ready');
+  await page.$eval('#assistant-message',e=>{e.value='Save the requested invoice status and date.';e.dispatchEvent(new Event('input',{bubbles:true}))});await page.evaluate(()=>document.querySelector('[data-assistant-send]').click());
+  await wait(()=>document.querySelector('#assistant-message')?.disabled,[],'invoice-action-sent');
+  await worker('heartbeat');const invoiceJob=(await worker('workspace-claim')).data.job;assert.ok(invoiceJob);
+  const invoiceRead=await worker('workspace/'+invoiceJob.id+'/actions',{lease:invoiceJob.lease,name:'get_company_invoice',args:{invoiceId:invoiceAction.invoiceId}});assert.equal(invoiceRead.status,200);
+  const invoiceSave=await worker('workspace/'+invoiceJob.id+'/actions',{lease:invoiceJob.lease,name:'update_company_invoice',slot:1,args:{invoiceId:invoiceAction.invoiceId,expectedUpdatedAt:invoiceRead.data.result.invoice.updatedAt,status:'paid',dueDate:'2026-11-18'}});assert.equal(invoiceSave.status,200);assert.equal(invoiceSave.data.receipt.state,'done');
+  await worker('workspace/'+invoiceJob.id+'/result',{lease:invoiceJob.lease,proposal:{kind:'unclear',summary:'Synthetic invoice saved and verified.',patch:{},quotes:{}}});
+  await wait(()=>Array.from(document.querySelectorAll('tbody tr')).some(r=>r.textContent.includes('INV-SYNTHETIC-001')&&r.textContent.includes('2026/11/18')&&r.querySelector('span.bg-green-500\\/10')),[],'invoice-list-refreshed');
+  if(screenshots)await page.screenshot({path:path.join(screenshots,'company-navi-invoice-save.png')});
   await page.evaluate(()=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.push('/'));await wait(()=>location.pathname==='/'&&document.querySelector('[data-assistant-accordion]')?.textContent.includes('PRIVATE_LEGACY_REPLY'),[],'legacy-page');assert.ok(!(await body()).includes('COMPANY_A_CHROME_REPLY'));
   assert.deepEqual(errors,[],'company-ui:console-errors');pass('real installed Chrome: separate company/legacy histories and buffers, delayed GET/POST discarded, accepted pending recovered without duplication, calendar route, native selector reload, mobile/desktop');
  }catch(e){if(page&&process.env.OMF_COMPANY_NAVI_SCREENSHOTS){await fs.mkdir(process.env.OMF_COMPANY_NAVI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.OMF_COMPANY_NAVI_SCREENSHOTS,'failure.png')}).catch(()=>{})}throw e}

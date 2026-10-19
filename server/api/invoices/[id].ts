@@ -1,3 +1,4 @@
+import { updateCompanyInvoice, invoiceWriteError } from '../../services/companyInvoiceWriteService'
 import { getCompanyInvoice } from '../../services/companyFinanceReadService'
 // server/api/invoices/[id].ts
 import { defineEventHandler, readBody, createError, setHeader } from 'h3'
@@ -22,35 +23,18 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'PUT') {
+    const { organizationId } = await calendarCompany(event)
     const body = await readBody(event)
-
-    // Recalculate totals if items changed
-    let updateData = { ...body }
-    if (body.items) {
-      const subtotal = body.items.reduce((sum: number, item: any) => sum + (item.amount || item.quantity * item.unitPrice), 0)
-      const taxRate = body.taxRate || 10
-      const taxAmount = Math.round(subtotal * (taxRate / 100))
-      updateData = {
-        ...updateData,
-        subtotal,
-        taxAmount,
-        total: subtotal + taxAmount
-      }
-    }
-
-    const invoice = await Invoice.findByIdAndUpdate(id, updateData, { new: true }).lean()
-    if (!invoice) {
-      throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
-    }
-
-    return { invoice: { ...invoice, id: invoice._id }, message: 'Invoice updated' }
+    try {
+      const invoice = await updateCompanyInvoice(organizationId, id, body)
+      return { invoice: { ...invoice, id: invoice._id }, message: 'Invoice updated' }
+    } catch (error) { return invoiceWriteError(error) }
   }
 
   if (method === 'DELETE') {
-    const result = await Invoice.findByIdAndDelete(id)
-    if (!result) {
-      throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
-    }
+    const { organizationId } = await calendarCompany(event)
+    const result = await Invoice.findOneAndDelete({ _id: id, organizationId })
+    if (!result) throw createError({ statusCode: 404, statusMessage: 'Invoice not found' })
     return { message: 'Invoice deleted' }
   }
 
