@@ -7,6 +7,9 @@ const chat=new Schema({
 },{timestamps:true})
 chat.index({ownerId:1,importId:1,line:1},{unique:true})
 chat.index({ownerId:1,accountId:1,state:1,updatedAt:1})
-const agent=new Schema({ownerId:{type:oid,required:true},accountIds:[oid],tokenHash:{type:String,required:true,unique:true},enabled:{type:Boolean,default:true},workspaceEnabled:{type:Boolean,default:false},documentEnabled:{type:Boolean,default:false},researchEnabled:{type:Boolean,default:false},researchStatus:mixed,lastSeenAt:Date,chatLastSeenAt:Date,revokedAt:Date},{timestamps:true})
+// publicResearch: the worker's own last report of the public research it can actually run for company jobs (version, WebSearch,
+// public page reader, owned Chrome, NTA connection state, reportedAt). Observed capability only: it grants no account, mailbox,
+// membership or private research access, and is cleared when a workspace claim no longer reports it.
+const agent=new Schema({ownerId:{type:oid,required:true},accountIds:[oid],tokenHash:{type:String,required:true,unique:true},enabled:{type:Boolean,default:true},workspaceEnabled:{type:Boolean,default:false},documentEnabled:{type:Boolean,default:false},researchEnabled:{type:Boolean,default:false},researchStatus:mixed,publicResearch:mixed,lastSeenAt:Date,chatLastSeenAt:Date,revokedAt:Date},{timestamps:true})
 export const FinanceChat: mongoose.Model<mongoose.InferSchemaType<typeof chat>> = (mongoose.models.FinanceChat as any) || mongoose.model('FinanceChat',chat)
 export const FinanceChatAgent: mongoose.Model<mongoose.InferSchemaType<typeof agent>> = (mongoose.models.FinanceChatAgent as any) || mongoose.model('FinanceChatAgent',agent)

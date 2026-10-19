@@ -4,6 +4,7 @@
 //   unsupported  — Navi deliberately never links or acts here; reason says why. The page may still exist.
 // Routes are fixed local paths. Navi never builds a URL from model or user text, never adds tokens, query strings or another
 // company; a record route only takes a server-checked company record id.
+import {validateCompanyCitations} from './finance-company-public-research.mjs';
 const f=(id,group,label,labelKo,route,disposition,reason,source,extra={})=>Object.freeze({id,group,label,labelKo,route,disposition,reason,source,...extra});
 const transactionTools=['list_company_transactions','get_company_transaction','list_company_transaction_choices','update_company_transaction','find_company_transaction_patterns'];
 export const naviFeatures=Object.freeze([
@@ -64,10 +65,13 @@ export function naviFeatureForPath(path){
 }
 // The only way a route leaves this module: a fixed catalogue path, or its record path with a 24-hex company record id.
 export function naviFeatureRoute(id,recordId){const x=naviFeature(id);if(!naviFeatureNavigable(x))return null;if(recordId===undefined||recordId===null||recordId==='')return x.route;if(!x.recordRoute||typeof recordId!=='string'||!/^[a-f0-9]{24}$/i.test(recordId))return null;return x.recordRoute.replace(':transactionId',recordId)}
-// Company reply: an explanation (unclear/defer) with no field patch, up to 4000 characters, and at most one catalogue pointer.
+// Company reply: an explanation (unclear/defer) with no field patch, up to 4000 characters, at most one catalogue pointer and
+// at most eight source citations (source id, literal quote, claim). Citations are only a shape here: the server resolves each one
+// against the captured sources of the same owner/company conversation and stores their actual URL/date/kind itself.
 export function validateCompanyAssistantReply(input){
- if(!input||typeof input!=='object'||!['unclear','defer'].includes(input.kind)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!input.patch||typeof input.patch!=='object'||Object.keys(input.patch).length||!input.quotes||typeof input.quotes!=='object'||Object.keys(input.quotes).length)throw Error('A company conversation reply is an explanation without field changes');
+ if(!input||typeof input!=='object'||Object.keys(input).some(k=>!['kind','summary','patch','quotes','navigation','citations'].includes(k))||!['unclear','defer'].includes(input.kind)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!input.patch||typeof input.patch!=='object'||Object.keys(input.patch).length||!input.quotes||typeof input.quotes!=='object'||Object.keys(input.quotes).length)throw Error('A company conversation reply is an explanation without field changes');
  const result={kind:input.kind,summary:input.summary.trim(),patch:{},quotes:{}};
+ if(input.citations!==undefined&&input.citations!==null){const citations=validateCompanyCitations(input.citations);if(citations.length)result.citations=citations}
  if(input.navigation!==undefined&&input.navigation!==null){
   const n=input.navigation;
   if(typeof n!=='object'||Array.isArray(n)||Object.keys(n).some(k=>!['feature','transactionId'].includes(k)))throw Error('Invalid navigation');

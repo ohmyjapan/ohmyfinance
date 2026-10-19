@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { FinanceCompanyAssistant as Conversation } from '../models/FinanceCompanyAssistant'
 import { FinanceCompanyConversationArchive as Archive } from '../models/FinanceCompanyConversationArchive'
 import { companyActionReceipt, reconcileCompanyActions } from './financeCompanyActionService'
+import { turnPublicSources } from './companyPublicResearchService'
 import { fail, id } from './financeService'
 
 const archiveScope = (ownerId: any, organizationId: any, archiveId: any) => ({ _id: archiveId, ownerId, organizationId })
@@ -69,5 +70,8 @@ export async function getCompanyConversationArchive(ownerId: string, organizatio
   const a: any = await Archive.findOne(archiveScope(ownerId, organizationId, id(archiveId))).lean()
   const live: any = a ? await Conversation.findOne({ _id: a.conversationId }).select('segment').lean() : null
   if (!a || !live || a.segment >= (live.segment || 0)) fail(404, 'Archived conversation not found')
-  return { archive: { id: String(a._id), segment: a.segment, turnCount: a.turnCount, firstAt: a.firstAt, lastAt: a.lastAt, archivedAt: a.createdAt, turns: a.turns.map(turnView) } }
+  // Public source cards of the archived segment (metadata only; bodies stay in their own owner/company collection), including
+  // those of a turn whose reply failed. Citations already travel with each turn's stored reply.
+  const sources = await turnPublicSources(a.ownerId, a.organizationId, a.conversationId, a.segment)
+  return { archive: { id: String(a._id), segment: a.segment, turnCount: a.turnCount, firstAt: a.firstAt, lastAt: a.lastAt, archivedAt: a.createdAt, turns: a.turns.map((t: any) => ({ ...turnView(t), ...(sources.get(t.id)?.length ? { sources: sources.get(t.id) } : {}) })) } }
 }

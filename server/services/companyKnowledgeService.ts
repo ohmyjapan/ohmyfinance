@@ -54,6 +54,17 @@ export async function listCompanyKnowledge(organizationId: any, args: any = {}) 
   return { items, page, limit, hasMore: rows.length > page * limit, status: status || 'all', scannedLimit: 500, truncated, source: 'company_teachings_only' }
 }
 
+// One teaching the user selected in the memory view to discuss: any status (a paused one is shown with its state, provenance and
+// history for discussion, never recalled as guidance), this company only.
+const selectedKnowledge = (organizationId: any, knowledgeId: any) => ({ _id: knowledgeId, organizationId })
+export async function getCompanyKnowledgeItem(organizationId: any, knowledgeId: string) {
+  await init()
+  if (typeof knowledgeId !== 'string' || !/^[a-f0-9]{24}$/i.test(knowledgeId)) bad(404, 'Company teaching not found')
+  const row: any = await Knowledge.findOne(selectedKnowledge(organizationId, new mongoose.Types.ObjectId(knowledgeId))).lean()
+  if (!row) bad(404, 'Company teaching not found')
+  return (await views([row]))[0]
+}
+
 // Recall for a claimed job: active teachings related to the current message or the selected transaction's merchant text.
 export async function relevantCompanyKnowledge(organizationId: any, text: string, related: string[] = []) {
   await init()

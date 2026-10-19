@@ -1,4 +1,5 @@
 import { renewCompanyAssistant } from './financeCompanyAssistantService'
+import { checkedCapabilityReport } from './companyPublicResearchService'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import type { Model } from 'mongoose'
 import { getHeader, type H3Event } from 'h3'
@@ -83,7 +84,11 @@ export async function chatHeartbeat(agent:any,body:any={}){
   if(!renewed.matchedCount){if(job.mode!=='workspace')fail(409,'Conversation job changed');await renewCompanyAssistant(agent,job)}
   else await Operation.updateMany({ownerId:agent.ownerId,agentId:agent._id,conversationKind:job.mode,conversationId:id(job.id),lease:job.lease,state:'claimed'},{$max:{leaseUntil}})
  }
- await Agent.updateOne({_id:agent._id,ownerId:agent.ownerId,enabled:true,revokedAt:null},{$set:{chatLastSeenAt:new Date()}})
+ // A workspace claim carries the worker's actual public-research capability (or null when it reports none, which clears it);
+ // other heartbeats leave it as it is. The report is validated literally and grants no account or membership access.
+ const reported=body?.capabilities===undefined?undefined:checkedCapabilityReport(body.capabilities)
+ await Agent.updateOne({_id:agent._id,ownerId:agent.ownerId,enabled:true,revokedAt:null},{$set:{chatLastSeenAt:new Date(),...(reported?{publicResearch:reported}:{})},...(reported===null?{$unset:{publicResearch:''}}:{})})
+ if(reported!==undefined)agent.publicResearch=reported||undefined
 }
 export async function createChatAgent(ownerId:string,body:any){
  await init()

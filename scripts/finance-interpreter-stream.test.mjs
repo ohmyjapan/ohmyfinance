@@ -2,7 +2,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -33,6 +33,8 @@ cp.spawn = function(command, args, options) {
  const s = scenario;
  assert.ok(s, 'Owned scenario must exist');
  s.args = args;
+ // The private job file is read while the child exists (it is removed after the child exits).
+ try { const configured = JSON.parse(args[args.indexOf('--mcp-config') + 1]); const file = configured.mcpServers?.omf_actions?.env?.OMF_ACTIONS_JOB_FILE; s.jobFile = file ? JSON.parse(readFileSync(file, 'utf8')) : null; } catch { s.jobFile = null; }
  const payloadFile = path.join(directory, 'synthetic-output.json'); writeFileSync(payloadFile, JSON.stringify(s.payload));
  s.child = nativeSpawn(process.execPath, ['-e', emitter, payloadFile], { ...options, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
  s.closed = new Promise(resolve => s.child.once('close', resolve));
@@ -133,5 +135,41 @@ for (const tooled of [false, true]) test(`${tooled ? 'tool' : 'plain'} timeout k
   assert.equal(s.child.killed, true);
   await mkdir(path.join(directory, 'jobs'), { recursive: true });
   assert.deepEqual(await readdir(path.join(directory, 'jobs')), [], 'utf8:timeout-cleanup');
+ } finally { t.mock.timers.reset(); if (s.child && !s.child.killed) s.child.kill(); }
+});
+// Company public research (2026-10-20): only a company job whose claim carried an actual public-research capability gets the
+// built-in WebSearch, the owned public tools in the same MCP server, more tool turns and a longer bound. Others are unchanged.
+const research = { ...workspace, companyScoped: true, mode: 'workspace', tools: [{ name: 'list_company_invoices' }], actionEndpoint: 'http://127.0.0.1/api/finance-chat/worker/workspace/0123456789abcdef01234567/actions', lease: 'synthetic-only', publicResearch: { version: 1, webSearch: true, publicPage: true, chrome: true, registry: 'connection_required', today: '2026-10-20' } };
+const flag = (args, name) => args[args.indexOf(name) + 1];
+test('a capable company job gets WebSearch and the owned public tools; other jobs keep the original CLI contract', async () => {
+ await invoke(wire(text), { job: research });
+ assert.equal(flag(scenario.args, '--tools'), 'WebSearch', 'research-cli:builtin-websearch-only');
+ const allowed = scenario.args.slice(scenario.args.indexOf('--allowedTools') + 1, scenario.args.indexOf('--max-turns'));
+ assert.deepEqual(allowed, ['mcp__omf_actions__*', 'WebSearch'], 'research-cli:allowed');
+ assert.equal(flag(scenario.args, '--max-turns'), '40', 'research-cli:turns');
+ assert.equal(flag(scenario.args, '--model'), 'claude-opus-5-5'); assert.equal(flag(scenario.args, '--effort'), 'high');
+ assert.deepEqual(scenario.jobFile.publicResearch, { chrome: true, registry: 'connection_required' }, 'research-cli:job-capability');
+ assert.ok(!JSON.stringify(scenario.jobFile).includes('omft_') && !/ntaApplicationId|token/.test(JSON.stringify(scenario.jobFile)), 'research-cli:no-secret-in-job');
+ assert.ok(JSON.parse(flag(scenario.args, '--json-schema')).properties.citations, 'research-cli:citations-schema');
+ assert.ok(flag(scenario.args, '--system-prompt').includes('read_public_page'));
+ assert.ok(['--setting-sources', '--strict-mcp-config', '--no-session-persistence'].every(f => scenario.args.includes(f)), 'research-cli:isolation-kept');
+ for (const job of [{ ...research, publicResearch: undefined }, { ...workspace, tools: [{ name: 'get_draft' }], actionEndpoint: 'http://127.0.0.1/synthetic', lease: 'synthetic-only', publicResearch: research.publicResearch }, workspace]) {
+  await invoke(wire(text), { job });
+  assert.equal(flag(scenario.args, '--tools'), '', 'research-cli:others-no-builtin-tools');
+  assert.ok(!scenario.args.includes('WebSearch'), 'research-cli:others-no-websearch');
+  if (job.tools) { assert.equal(flag(scenario.args, '--max-turns'), '16'); assert.equal(scenario.jobFile.publicResearch, undefined, 'research-cli:others-no-public-tools'); }
+  assert.equal(JSON.parse(flag(scenario.args, '--json-schema')).properties.citations, undefined);
+ }
+ assert.deepEqual(await readdir(path.join(directory, 'jobs')), [], 'research-cli:cleanup');
+});
+test('a research job has a longer bound and is still killed and cleaned up at its limit', async t => {
+ t.mock.timers.enable({ apis: ['setTimeout'] });
+ const s = prepare('', undefined, { hang: true });
+ try {
+  const rejected = assert.rejects(interpretChat(config, research), /Teaching interpretation timed out/);
+  while (!s.child) await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(480000 - 1); assert.equal(s.child.killed, false, 'research-cli:bounded-time');
+  t.mock.timers.tick(1); await rejected; await s.closed; assert.equal(s.child.killed, true);
+  assert.deepEqual(await readdir(path.join(directory, 'jobs')), [], 'research-cli:timeout-cleanup');
  } finally { t.mock.timers.reset(); if (s.child && !s.child.killed) s.child.kill(); }
 });

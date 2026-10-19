@@ -7,4 +7,5 @@ export function naviFeatureNavigable(feature: NaviFeature | null): boolean;
 export function findNaviFeatures(query?: any): NaviFeature[];
 export function naviFeatureForPath(path: any): NaviFeature | null;
 export function naviFeatureRoute(id: any, recordId?: any): string | null;
-export function validateCompanyAssistantReply(input: any): { kind: 'unclear' | 'defer'; summary: string; patch: Record<string, never>; quotes: Record<string, never>; navigation?: CompanyNavigation };
+export interface CompanyCitation { sourceId: string; quote: string; claim: string }
+export function validateCompanyAssistantReply(input: any): { kind: 'unclear' | 'defer'; summary: string; patch: Record<string, never>; quotes: Record<string, never>; navigation?: CompanyNavigation; citations?: CompanyCitation[] };

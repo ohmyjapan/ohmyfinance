@@ -23,3 +23,12 @@ test('company conversations get the longer catalogue-aware reply; general replie
  assert.equal(Object.hasOwn(validateAssistantReply({kind:'unclear',summary:'s',patch:{},quotes:{},navigation:{feature:'invoices'}}),'navigation'),false,'general-reply:no-navigation');
  assert.equal(assistantFeature('/calendar').disposition,'navi_tool');assert.equal(assistantFeature('/budgets').disposition,'page_handoff');assert.equal(assistantFeature('/login'),null);
 });
+test('company replies may carry bounded source citations; general replies never do',async()=>{
+ const {validateCompanyAssistantReply}=await import('../shared/finance-assistant.mjs');
+ const reply={kind:'unclear',summary:'公表ページでは登録番号が記載されています。',patch:{},quotes:{}},citation={sourceId:'b'.repeat(24),quote:'登録番号 T1234567890123',claim:'公表された登録番号'};
+ assert.deepEqual(validateCompanyAssistantReply({...reply,citations:[citation]}).citations,[citation],'company-reply:citations');
+ for(const citations of[[{...citation,sourceId:'x'}],[{...citation,verified:true}],Array.from({length:9},()=>citation),'x'])assert.throws(()=>validateCompanyAssistantReply({...reply,citations}),'company-reply:citation-shape');
+ assert.throws(()=>validateCompanyAssistantReply({...reply,sourceUrl:'https://evil.example/'}),'company-reply:no-extra-fields');
+ assert.equal(Object.hasOwn(validateAssistantReply({...reply,citations:[citation]}),'citations'),false,'general-reply:no-citations');
+ assert.equal(validateAssistantReply({kind:'unclear',summary:'x'.repeat(800),patch:{},quotes:{}}).summary.length,800,'general-reply:limit-kept');
+});
