@@ -1,0 +1,53 @@
+# Selected-company CSV import, backup export and restore
+
+Final independent review of d732f08 (`output/omf-navi-finish-20261019/final-review-result.md`, SHA-256 `0fc5961765ac6612845ec10fb541c1b3de8ba998e39b0f7a770f1a511b0762a3`), required findings F1 and F2, plus the review's optional same-pair export repair. Plan `omf-navi-import-restore-20261020`. Self-mapped from the current callers.
+
+## Callers
+
+- Transactions › Import (CSV): `pages/transactions/index.vue` → `pages/transactions/upload.vue` `performImport` → `POST /api/transactions/import` → `createCompanyTransaction(data, organizationId)`. Two older store/composable helpers (`stores/transaction.ts` `importTransactions`, `composables/useTransactions.ts`) post the same body to the same route and get the same company behaviour; their UI is unchanged.
+- Settings › Backup: `pages/settings/index.vue` `downloadBackup` → `GET /api/backup?format=download`.
+- Settings › Restore: `pages/settings/index.vue` `performRestore` → `POST /api/backup/restore`.
+- Shared helper: `server/services/companyBackupService.ts` (scope block, recorded-company check, trusted value filter). No other caller.
+- Not changed and still global (G4 work, named, not claimed): `POST /api/backup/schedule` (writes every company's data to the server disk), `/api/templates` (mapping templates have no company field), `search.ts`, `notifications/index.ts`, `email/send-reminders.ts`, receipt match/unmatch/auto-match, `transactions/duplicates` and `bulk`.
+
+## Authority
+
+All three routes resolve the token-selected company with fresh active membership (`calendarCompany`) before the body is read and before any reference, duplicate or data query. Owner, admin, member and viewer keep the existing write policy. No company, a removed member, an inactive company or a forged token for a non-member get 401/403 and nothing is written, including supplier/customer reference rows. A company named in the body, query, a CSV row or a mapping target is ignored.
+
+## CSV import (F1)
+
+Rows are saved through `createCompanyTransaction`, so the company is part of the one original insert (same `strict:false` setter as native `POST /api/transactions`). Parsing, zero amounts, comma amounts, date and type handling, reference-name lookups, auto-created suppliers/customers, timeline, batch tag/metadata, counts and per-row errors are unchanged. Reference collections stay global, as before; this change does not give them a company. The skip-duplicates check compares date, amount and note within the selected company only. It is not atomic: two identical imports sent at the same moment can both be saved (both in the selected company); no exactly-once claim is made.
+
+## Backup export (same file pair)
+
+`GET /api/backup` returns only rows whose recorded `organizationId` is the selected company: transactions, receipts and recurring payments. It keeps the legacy format, `format=download` and the `transactions/receipts/recurring=false` options, and adds `scope: { type: 'company', organizationId }` and an `excluded` note. Rows without a company (for example the five held legacy card rows) and shared mapping templates are never exported; `counts.mappingTemplates` is 0. The `templates` option no longer adds a section. Server errors return a fixed message without the exception text.
+
+## Restore (F2)
+
+1. The file must parse and carry `version` and `application`; otherwise 400 with a fixed message (no echo of the file).
+2. Each row of `transactions`, `receipts` and `recurringPayments` is classified by its recorded `organizationId`: the selected company is eligible; another company (`other_company`), none (`unassigned`) and a non-object (`malformed`) are skipped and counted, never reinterpreted as the selected company. Eligible rows that fail model validation are skipped as `invalid`. All of this happens before anything is cleared or written.
+3. A file never supplies identity or authority: `id/_id/__v`, `organizationId`, `createdBy`, `uploadedBy`, `ownerId`, `naviOperation` and `cardAccounting` are dropped. The company is set with the trusted `set('organizationId', company, { strict:false })` (Receipt declares the path). Recurring `createdBy` and receipt `uploadedBy` are the current signed-in actor. Card accounting is assigned only through the reviewed card import, so restored card rows come back without it (reported as `withheld.cardAccounting`); Navi write proofs are never restored (`withheld.naviOperation`).
+4. `clearExisting` deletes only the selected company's rows (`collection.deleteMany({ organizationId })`) and only for a section the file replaces: the section has at least one valid selected-company row, or it is empty and the file's `scope` names exactly this company (a backup of an empty company). A missing section, a section with only other-company/unassigned/invalid rows, other companies, held rows and shared templates are never erased; the result says why (`clearSkipped`). Mapping templates in a file are reported as `shared_template` and are neither restored nor cleared.
+5. Duplicate checks (default on, skipped for a section just cleared) look only inside the selected company: transactions by reference number or original id, receipts by file name or original id, recurring payments by name + customer or original id. A row without such a key is not a duplicate (no undefined-field query). Retrying the same file therefore restores nothing twice for keyed rows. The check is not atomic: two identical restores at the same moment can both insert.
+6. Rows are written one by one. A row that fails to save is counted as `failed`; the log line names no value. Restore is not a database transaction: a crash mid-restore leaves the rows written so far; re-running with skip-duplicates completes keyed rows. New ids are generated as before, so a restored receipt's `transactionId` and a recurring payment's `generatedTransactionIds` still point at the original ids (unchanged legacy behaviour).
+
+The response keeps `success`, `message`, `results.<section>.{restored, skipped, failed}` and `totals`, and adds `scope`, per-section `cleared`, `clearSkipped`, `reasons` and `withheld`.
+
+## Settings and import pages
+
+The import page names the destination company (`data-import-company`) and the result step names it again. The result step itself was blank before: components are registered without a folder prefix (`nuxt.config.ts` `pathPrefix: false`), so the page's `<TransactionImportResults>` tag never resolved; it now uses the registered `ImportResults` component, so imported/skipped/error counts are visible again (no change to that component). Settings explains that backup and restore cover the selected company, shows the clear-existing scope when ticked, lists cleared/skipped reasons per section and names the restore company. The actor and company are captured when an import, export or restore is sent; a reply that arrives after either changed is dropped with a notice (`data-import-stale`, `data-backup-stale`, `data-restore-stale`) instead of being shown or downloaded for the new company. An HTTP error from the export shows an inline message (`data-backup-error`) and never downloads the error body. The new wording is inline Japanese, like the existing company selector; the i18n files are not in this change.
+
+## Proof
+
+- `scripts/finance-company-import-restore-integration.cjs` (actual built server, owned in-memory Mongo, synthetic accounts): import, restore, export and Navi-read legs. `OMF_IMPORT_RESTORE_PART` runs a leg alone.
+- `scripts/finance-company-import-restore-browser.cjs`: installed Chrome drives the real CSV wizard and the settings controls (download, HTTP error, restore with clear, stale replies). Missing Chrome fails.
+- Fixture `scripts/zoomer-fixtures/omf-company-import-restore.mjs`: F1 and F2 alone (both failed at d732: `import:selected-company`, `restore:trusted-company`), the complete suite with Chrome, one unchanged packaged control and 16 compiled defects that must fail named assertions.
+- Deliberate flips: `creation:legacy-import-unassigned` / `creation:legacy-restore-unassigned` (now selected-company import, own restore visible, foreign/unassigned skipped) and `scheduled:restore-unassigned` (now own recurring restored with the current actor; foreign/unassigned skipped). The creation fixture's two defects that lost HTTP reach were replaced by import/restore authority defects.
+
+## Found, not fixed here
+
+Pre-existing wizard defect (unchanged code since before d732, outside F1/F2): `TransactionDataPreview` hands the already-mapped rows (keys `date`, `amount`, …) back to `upload.vue`, which then sends them together with the source-to-target mappings, so the route maps a second time. With headers that equal the target names (`date,amount,notes,productName`) this is harmless; with any other header names (for example Japanese 日付/金額) every row fails as "amount missing" and nothing is saved (with the result step now visible, the user at least sees the error count). The Chrome leg records this as a NOTE and checks that nothing lands in another company; the plan forbids an importer redesign, so it is reported for a separate decision.
+
+## Not claimed
+
+No migration or backfill: existing unassigned rows (including the five held legacy card rows) stay as they are. Global backup schedule, templates, search, notifications, reminders, receipt matching, duplicates and bulk remain G4 work. No reliability rate, deployed behaviour or production observation is claimed. These are new uses of the shared membership boundary and new recorded-provenance/clear guards; independent review is required.

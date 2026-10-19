@@ -162,6 +162,10 @@
           <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('settingsPage.backupRestore') }}</h2>
         </div>
         <div class="p-6 space-y-5">
+          <!-- Backup and restore cover the selected company only (final review F2). -->
+          <p data-backup-scope class="text-sm text-gray-600 dark:text-gray-300">
+            対象の会社: {{ companyName || '未選択' }}。バックアップはこの会社に記録された取引・領収書・定期支払いだけを書き出し、復元もこの会社に記録された行だけを戻します。他の会社や会社未設定の行、共有のマッピングテンプレートは含めず、復元時はスキップした理由を表示します。
+          </p>
           <!-- Download Backup -->
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
@@ -169,8 +173,8 @@
                 <Download class="w-5 h-5 text-teal-500" />
               </div>
               <div>
-                <div class="font-medium text-gray-900 dark:text-white">{{ t('settingsPage.exportAllData') }}</div>
-                <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('settingsPage.exportAllDataDesc') }}</div>
+                <div class="font-medium text-gray-900 dark:text-white">選択中の会社のデータをエクスポート</div>
+                <div class="text-sm text-gray-500 dark:text-gray-400">取引・領収書・定期支払いをJSON形式で書き出します</div>
               </div>
             </div>
             <button
@@ -183,6 +187,8 @@
               {{ isBackingUp ? t('settingsPage.downloading') : t('settingsPage.downloadBackup') }}
             </button>
           </div>
+          <p v-if="backupError" data-backup-error role="alert" class="text-sm text-red-600 dark:text-red-400">{{ backupError }}</p>
+          <p v-if="backupStale" data-backup-stale role="status" class="text-sm text-amber-700 dark:text-amber-400">{{ backupStale }}</p>
 
           <div class="border-t border-gray-100 dark:border-white/5"></div>
 
@@ -213,6 +219,9 @@
                   <input v-model="restoreOptions.clearExisting" type="checkbox" class="w-4 h-4 rounded border-gray-300 dark:border-white/10 text-primary-main focus:ring-primary-main/50" />
                   <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('settingsPage.clearExisting') }}</span>
                 </label>
+                <p v-if="restoreOptions.clearExisting" data-restore-clear-scope class="ml-6 text-xs text-amber-700 dark:text-amber-400">
+                  「{{ companyName }}」の記録だけを置き換えます。ファイルにこの会社の行がある項目だけを削除してから戻し、他の会社・会社未設定の行と共有テンプレートは削除しません。
+                </p>
                 <label class="flex items-center gap-2 cursor-pointer">
                   <input v-model="restoreOptions.skipDuplicates" type="checkbox" class="w-4 h-4 rounded border-gray-300 dark:border-white/10 text-primary-main focus:ring-primary-main/50" />
                   <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('settingsPage.skipDuplicates') }}</span>
@@ -237,16 +246,22 @@
             </div>
           </div>
 
+          <p v-if="restoreStale" data-restore-stale role="status" class="text-sm text-amber-700 dark:text-amber-400">{{ restoreStale }}</p>
+
           <!-- Restore Result -->
-          <div v-if="restoreResult" class="border-t border-gray-100 dark:border-white/5 pt-4">
+          <div v-if="restoreResult" data-restore-result class="border-t border-gray-100 dark:border-white/5 pt-4">
             <div class="font-medium text-gray-900 dark:text-white mb-2">{{ t('settingsPage.restoreResult') }}</div>
             <div class="bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 p-4 rounded-xl text-sm border border-green-200 dark:border-green-800/30">
+              <div>復元先の会社: {{ restoreResult.companyName }}</div>
               {{ restoreResult.message }}
               <div class="mt-2 flex gap-4 font-mono font-bold">
                 <span>{{ t('settingsPage.restored') }}: {{ restoreResult.totals?.restored || 0 }}</span>
                 <span>{{ t('settingsPage.skipped') }}: {{ restoreResult.totals?.skipped || 0 }}</span>
                 <span>{{ t('status.failed') }}: {{ restoreResult.totals?.failed || 0 }}</span>
               </div>
+              <ul v-if="restoreDetails.length" class="mt-2 space-y-1 text-xs">
+                <li v-for="line in restoreDetails" :key="line">{{ line }}</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -377,7 +392,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import {
   Settings2,
   SlidersHorizontal,
@@ -400,15 +415,20 @@ import {
   Loader2
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { tokenClaims } from '~/utils/auth-session'
 
 const { t } = useI18n()
 const userStore = useUserStore()
+const companyName = computed(() => userStore.currentOrganization?.name || '')
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const isBackingUp = ref(false)
 const isRestoring = ref(false)
 const restoreFile = ref<File | null>(null)
 const restoreResult = ref<any>(null)
+const backupError = ref('')
+const backupStale = ref('')
+const restoreStale = ref('')
 const showCategoryModal = ref(false)
 const newCategoryName = ref('')
 
@@ -461,12 +481,26 @@ const applyDarkMode = () => {
   }
 }
 
+// The actor and company are captured at send; a reply after either changed is dropped, and an HTTP error never becomes a file.
+const sameScope = (scope: any) => { const now = tokenClaims(userStore.token); return now?.userId === scope?.userId && now?.organizationId === scope?.organizationId }
+
 const downloadBackup = async () => {
+  const scope = tokenClaims(userStore.token), company = companyName.value
   isBackingUp.value = true
+  backupError.value = ''
+  backupStale.value = ''
   try {
     const response = await fetch('/api/backup?format=download', {
       headers: userStore.authHeader
     })
+    if (!sameScope(scope)) {
+      backupStale.value = `会社の選択が変わったため、「${company}」のバックアップは保存しませんでした。もう一度ダウンロードしてください。`
+      return
+    }
+    if (!response.ok) {
+      backupError.value = `バックアップを作成できませんでした（${response.status}）。会社の選択と権限を確認してください。`
+      return
+    }
     const blob = await response.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -474,9 +508,8 @@ const downloadBackup = async () => {
     a.download = `ohmyfinance_backup_${new Date().toISOString().split('T')[0]}.json`
     a.click()
     URL.revokeObjectURL(url)
-  } catch (error) {
-    console.error('Backup failed:', error)
-    alert(t('common.error'))
+  } catch {
+    if (sameScope(scope)) backupError.value = 'バックアップを作成できませんでした。通信を確認してもう一度お試しください。'
   } finally {
     isBackingUp.value = false
   }
@@ -487,6 +520,7 @@ const handleFileSelect = (event: Event) => {
   if (input.files && input.files[0]) {
     restoreFile.value = input.files[0]
     restoreResult.value = null
+    restoreStale.value = ''
   }
 }
 
@@ -500,7 +534,9 @@ const cancelRestore = () => {
 const performRestore = async () => {
   if (!restoreFile.value) return
 
+  const scope = tokenClaims(userStore.token), company = companyName.value
   isRestoring.value = true
+  restoreStale.value = ''
   try {
     const fileContent = await restoreFile.value.text()
     const data = JSON.parse(fileContent)
@@ -515,15 +551,36 @@ const performRestore = async () => {
       }
     })
 
-    restoreResult.value = result
     cancelRestore()
+    if (!sameScope(scope)) {
+      restoreStale.value = `会社の選択が変わったため、「${company}」への復元結果はここに表示しません。その会社を選んで内容を確認してください。`
+      return
+    }
+    restoreResult.value = { ...(result as any), companyName: company }
   } catch (error: any) {
-    console.error('Restore failed:', error)
+    if (!sameScope(scope)) return
+    console.error('Restore failed')
     alert(error.data?.statusMessage || t('common.error'))
   } finally {
     isRestoring.value = false
   }
 }
+
+const sectionLabels: Record<string, string> = { transactions: '取引', receipts: '領収書', recurringPayments: '定期支払い', mappingTemplates: 'マッピングテンプレート' }
+const reasonLabels: Record<string, string> = { other_company: '他の会社の行', unassigned: '会社未設定の行', malformed: '形式が不正な行', invalid: '値が不正な行', duplicate: 'この会社に既にある行', shared_template: '共有テンプレート（会社のバックアップ対象外）' }
+const clearLabels: Record<string, string> = { no_selected_company_rows: 'この会社の行がないため既存データは削除していません', section_absent: 'ファイルに含まれないため既存データは削除していません', section_malformed: '形式が不正なため既存データは削除していません', shared_not_company_scoped: '共有のため削除していません', not_selected: '対象外のため削除していません' }
+const withheldLabels: Record<string, string> = { cardAccounting: 'カード会計の情報（カード明細の取込で設定）', naviOperation: 'Naviの内部記録' }
+const restoreDetails = computed(() => {
+  const lines: string[] = []
+  for (const [key, r] of Object.entries<any>(restoreResult.value?.results || {})) {
+    const label = sectionLabels[key] || key
+    if (r.cleared) lines.push(`${label}: この会社の既存 ${r.cleared} 件を削除して置き換えました`)
+    for (const [reason, count] of Object.entries<any>(r.reasons || {})) lines.push(`${label}: スキップ ${count} 件 — ${reasonLabels[reason] || reason}`)
+    if (r.clearSkipped && clearLabels[r.clearSkipped]) lines.push(`${label}: ${clearLabels[r.clearSkipped]}`)
+    for (const [field, count] of Object.entries<any>(r.withheld || {})) lines.push(`${label}: ${withheldLabels[field] || field}は復元しません（${count} 件）`)
+  }
+  return lines
+})
 
 const loadCategories = () => {
   const saved = localStorage.getItem('ohmyfinance_categories')

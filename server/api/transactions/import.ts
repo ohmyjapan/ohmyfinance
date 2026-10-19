@@ -1,6 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import crypto from 'crypto'
-import { createTransaction } from '../../services/transactionService'
+import { createCompanyTransaction } from '../../services/transactionService'
 import AccountCategory from '../../models/AccountCategory'
 import TaxCategory from '../../models/TaxCategory'
 import Supplier from '../../models/Supplier'
@@ -8,13 +8,15 @@ import TransactionCategory from '../../models/TransactionCategory'
 import Customer from '../../models/Customer'
 import Transaction from '../../models/Transaction'
 import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * POST /api/transactions/import
  * Import pre-parsed transactions with field mappings applied.
  * Receives JSON body: { data: [...], mappings: {...}, options: {...}, source?: string, fileName?: string }
  * Data comes from the excel-processor API (already parsed).
- * Auth: handled by api.ts middleware for /api/transactions/* routes
+ * Auth: the token-selected company with fresh membership, checked before any read or write (final review F1). Rows are saved
+ * into that company only; a company named in the body, query, a row or a mapping is ignored.
  */
 export default defineEventHandler(async (event) => {
 
@@ -25,6 +27,9 @@ export default defineEventHandler(async (event) => {
             message: `Method ${event.method} not allowed for this endpoint`
         })
     }
+
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
 
     const body = await readBody(event)
 
@@ -179,6 +184,7 @@ export default defineEventHandler(async (event) => {
                 // Skip duplicates check
                 if (options.skipDuplicates) {
                     const existing = await Transaction.findOne({
+                        organizationId,
                         date: transactionDate,
                         amount: Math.abs(parsedAmount),
                         notes: record.notes || ''
@@ -239,7 +245,7 @@ export default defineEventHandler(async (event) => {
                     ]
                 }
 
-                const newTransaction = await createTransaction(transactionData)
+                const newTransaction = await createCompanyTransaction(transactionData as any, organizationId)
                 importedTransactions.push(newTransaction)
                 importResults.imported++
 

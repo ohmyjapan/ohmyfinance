@@ -4,6 +4,11 @@
     <header class="mb-8">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('transactionUpload.title') }}</h1>
       <p class="mt-1 text-gray-500 dark:text-gray-400">{{ t('transactionUpload.description') }}</p>
+      <!-- Rows are saved into the selected company only (final review F1). -->
+      <p data-import-company class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+        {{ companyName ? `取込先の会社: ${companyName}` : '会社を選択してから取り込んでください。' }}
+      </p>
+      <p v-if="staleNotice" data-import-stale role="status" class="mt-2 text-sm text-amber-700 dark:text-amber-400">{{ staleNotice }}</p>
     </header>
 
     <!-- Step Navigation -->
@@ -103,7 +108,9 @@
 
         <!-- Step 5: Results -->
         <div v-else-if="currentStep === 4" key="results">
-          <TransactionImportResults
+          <p v-if="importResultCompany" data-import-result-company class="mb-3 text-sm text-gray-600 dark:text-gray-300">取込先の会社: {{ importResultCompany }}</p>
+          <!-- components use pathPrefix:false, so this is ImportResults (the former TransactionImportResults tag never resolved) -->
+          <ImportResults
             :result="importResult"
             @import-more="resetWizard"
           />
@@ -114,9 +121,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { CheckCircle, Upload, GitBranch, Eye, Download, BarChart3 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { tokenClaims } from '~/utils/auth-session'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -157,6 +165,9 @@ const importOptions = ref({
   notifyWhenComplete: true
 })
 const importResult = ref<any>(null)
+const importResultCompany = ref('')
+const staleNotice = ref('')
+const companyName = computed(() => userStore.currentOrganization?.name || '')
 
 // Get step circle class
 const getStepCircleClass = (index: number) => {
@@ -249,8 +260,13 @@ const updateImportOptions = (options: any) => {
   importOptions.value = options
 }
 
-// Perform the actual import
+// Perform the actual import. The actor and company are captured at send; a reply that arrives after either changed is not
+// shown as the current company's result.
 const performImport = async () => {
+  const scope = tokenClaims(userStore.token), company = companyName.value
+  const current = () => { const now = tokenClaims(userStore.token); return now?.userId === scope?.userId && now?.organizationId === scope?.organizationId }
+  const dropStale = () => { staleNotice.value = `会社の選択が変わったため、「${company}」への取込結果はここに表示しません。その会社の取引一覧で確認してください。` }
+  staleNotice.value = ''
   try {
     const result = await $fetch('/api/transactions/import', {
       method: 'POST',
@@ -263,14 +279,18 @@ const performImport = async () => {
         fileName: uploadedFiles.value[0]?.name || ''
       }
     })
+    if (!current()) return dropStale()
     importResult.value = result
+    importResultCompany.value = company
     // Advance to results step
     if (!completedSteps.value.includes(currentStep.value)) {
       completedSteps.value.push(currentStep.value)
     }
     currentStep.value = 4
   } catch (error: any) {
+    if (!current()) return dropStale()
     // Show error in importResult
+    importResultCompany.value = company
     importResult.value = {
       success: false,
       error: error.message || t('common.error')
@@ -291,6 +311,8 @@ const resetWizard = () => {
   fieldMappings.value = {}
   parsedData.value = []
   importResult.value = null
+  importResultCompany.value = ''
+  staleNotice.value = ''
   importStats.value = { totalRecords: 0, validRecords: 0, warningRecords: 0, invalidRecords: 0 }
   importOptions.value = { skipDuplicates: true, updateMatches: false, saveTemplate: true, notifyWhenComplete: true }
 }

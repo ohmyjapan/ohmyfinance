@@ -1,26 +1,35 @@
 // server/api/backup/restore.ts
 import { defineEventHandler, readBody, createError } from 'h3'
+import mongoose from 'mongoose'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
-import { MappingTemplate } from '../../models/MappingTemplate'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
+import { backupScope, provesCompanySnapshot, recordedCompany, restorableValues, WITHHELD_FIELDS, type BackupSkipReason } from '../../services/companyBackupService'
 
-interface RestoreOptions {
-  clearExisting?: boolean
-  skipDuplicates?: boolean
-  transactions?: boolean
-  receipts?: boolean
-  recurringPayments?: boolean
-  mappingTemplates?: boolean
+type SectionKey = 'transactions' | 'receipts' | 'recurringPayments'
+type SectionResult = { restored: number, skipped: number, failed: number, cleared: number, clearSkipped: string | null, reasons: Partial<Record<BackupSkipReason, number>>, withheld: Record<string, number> }
+
+const sectionResult = (): SectionResult => ({ restored: 0, skipped: 0, failed: 0, cleared: 0, clearSkipped: null, reasons: {}, withheld: {} })
+const skip = (result: SectionResult, reason: BackupSkipReason, count = 1) => { result.skipped += count; result.reasons[reason] = (result.reasons[reason] || 0) + count }
+const objectId = (value: unknown) => typeof value === 'string' && mongoose.isValidObjectId(value) ? new mongoose.Types.ObjectId(value) : null
+
+// The selected company's own duplicate of a prepared row; no usable key means no duplicate (never an undefined-field query).
+const duplicateKeys: Record<SectionKey, (doc: any, item: any) => any[]> = {
+  transactions: (doc, item) => [...(typeof doc.referenceNumber === 'string' && doc.referenceNumber ? [{ referenceNumber: doc.referenceNumber }] : []), ...(objectId(item.id || item._id) ? [{ _id: objectId(item.id || item._id) }] : [])],
+  receipts: (doc, item) => [...(typeof doc.filename === 'string' && doc.filename ? [{ filename: doc.filename }] : []), ...(objectId(item.id || item._id) ? [{ _id: objectId(item.id || item._id) }] : [])],
+  recurringPayments: (doc, item) => [...(typeof doc.name === 'string' && doc.name && typeof doc.customer?.name === 'string' ? [{ name: doc.name, 'customer.name': doc.customer.name }] : []), ...(objectId(item.id || item._id) ? [{ _id: objectId(item.id || item._id) }] : [])]
 }
 
 /**
- * POST /api/backup/restore - Restore data from a backup
+ * POST /api/backup/restore - Restore a backup into the token-selected company (final review F2). Only rows whose recorded
+ * organizationId is that company are written, through the trusted company/creator setters; other-company, unassigned, malformed
+ * and invalid rows are skipped with reasons. Duplicate checks and clearExisting are limited to that company, and a section is
+ * cleared only when the file holds selected-company rows for it (or is this company's exact empty snapshot).
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const { auth, organizationId } = await calendarCompany(event)
   if (event.method !== 'POST') {
     throw createError({
       statusCode: 405,
@@ -33,24 +42,29 @@ export default defineEventHandler(async (event) => {
 
     const body = await readBody(event)
 
-    if (!body || !body.data) {
+    if (!body || body.data === undefined || body.data === null) {
       throw createError({
         statusCode: 400,
         statusMessage: 'Backup data is required in the "data" field'
       })
     }
 
-    const backupData = typeof body.data === 'string' ? JSON.parse(body.data) : body.data
+    let backupData: any
+    try {
+      backupData = typeof body.data === 'string' ? JSON.parse(body.data) : body.data
+    } catch {
+      backupData = null
+    }
 
     // Validate backup format
-    if (!backupData.version || !backupData.application) {
+    if (!backupData || typeof backupData !== 'object' || Array.isArray(backupData) || !backupData.version || !backupData.application) {
       throw createError({
         statusCode: 400,
         statusMessage: 'Invalid backup format'
       })
     }
 
-    const options: RestoreOptions = {
+    const options = {
       clearExisting: body.clearExisting === true,
       skipDuplicates: body.skipDuplicates !== false, // default true
       transactions: body.transactions !== false,
@@ -58,187 +72,75 @@ export default defineEventHandler(async (event) => {
       recurringPayments: body.recurringPayments !== false,
       mappingTemplates: body.mappingTemplates !== false
     }
+    const actor = new mongoose.Types.ObjectId(String(auth.userId))
+    const models: Record<SectionKey, any> = { transactions: Transaction, receipts: Receipt, recurringPayments: RecurringPayment }
+    const results: Record<SectionKey | 'mappingTemplates', SectionResult> = { transactions: sectionResult(), receipts: sectionResult(), recurringPayments: sectionResult(), mappingTemplates: sectionResult() }
+    const prepared: Record<SectionKey, { doc: any, item: any }[]> = { transactions: [], receipts: [], recurringPayments: [] }
+    const clear = new Set<SectionKey>()
 
-    const results = {
-      transactions: { restored: 0, skipped: 0, failed: 0 },
-      receipts: { restored: 0, skipped: 0, failed: 0 },
-      recurringPayments: { restored: 0, skipped: 0, failed: 0 },
-      mappingTemplates: { restored: 0, skipped: 0, failed: 0 }
+    // 1. Classify and validate every section before anything is cleared or written.
+    for (const key of Object.keys(models) as SectionKey[]) {
+      const result = results[key], section = backupData[key]
+      if (!options[key]) { if (options.clearExisting) result.clearSkipped = 'not_selected'; continue }
+      if (section === undefined || section === null) { if (options.clearExisting) result.clearSkipped = 'section_absent'; continue }
+      if (!Array.isArray(section)) { skip(result, 'malformed'); if (options.clearExisting) result.clearSkipped = 'section_malformed'; continue }
+      for (const item of section) {
+        const owner = recordedCompany(item, organizationId)
+        if (owner !== 'selected') { skip(result, owner); continue }
+        for (const field of WITHHELD_FIELDS) if (item[field] !== undefined && item[field] !== null) result.withheld[field] = (result.withheld[field] || 0) + 1
+        const doc = new models[key](restorableValues(item))
+        doc.set('organizationId', organizationId, { strict: false })
+        if (key === 'recurringPayments') doc.set('createdBy', actor, { strict: false })
+        if (key === 'receipts') doc.set('uploadedBy', actor)
+        if (doc.validateSync()) { skip(result, 'invalid'); continue }
+        prepared[key].push({ doc, item })
+      }
+      if (options.clearExisting) {
+        if (prepared[key].length > 0 || (section.length === 0 && provesCompanySnapshot(backupData, organizationId))) clear.add(key)
+        else result.clearSkipped = 'no_selected_company_rows'
+      }
     }
+    if (options.mappingTemplates && Array.isArray(backupData.mappingTemplates) && backupData.mappingTemplates.length) skip(results.mappingTemplates, 'shared_template', backupData.mappingTemplates.length)
+    if (options.clearExisting && options.mappingTemplates) results.mappingTemplates.clearSkipped = 'shared_not_company_scoped'
 
-    // Optionally clear existing data
-    if (options.clearExisting) {
-      if (options.transactions) await Transaction.deleteMany({})
-      if (options.receipts) await Receipt.deleteMany({})
-      if (options.recurringPayments) await RecurringPayment.deleteMany({})
-      if (options.mappingTemplates) await MappingTemplate.deleteMany({})
-    }
+    // 2. Clear only the selected company's rows of the sections this file replaces.
+    for (const key of clear) results[key].cleared = (await models[key].collection.deleteMany({ organizationId })).deletedCount || 0
 
-    // Restore transactions
-    if (options.transactions && backupData.transactions) {
-      for (const item of backupData.transactions) {
+    // 3. Write the prepared rows; duplicates are this company's own.
+    for (const key of Object.keys(prepared) as SectionKey[]) {
+      for (const { doc, item } of prepared[key]) {
         try {
-          const doc = prepareDocument(item)
-
-          if (options.skipDuplicates && !options.clearExisting) {
-            // Check for duplicate by reference or original ID
-            const exists = await Transaction.findOne({
-              $or: [
-                { reference: doc.reference },
-                { _id: item.id || item._id }
-              ]
-            })
-            if (exists) {
-              results.transactions.skipped++
-              continue
-            }
+          if (options.skipDuplicates && !clear.has(key)) {
+            const keys = duplicateKeys[key](doc, item)
+            if (keys.length && await models[key].exists({ organizationId, $or: keys })) { skip(results[key], 'duplicate'); continue }
           }
-
-          await Transaction.create(doc)
-          results.transactions.restored++
-        } catch (error) {
-          console.error('Failed to restore transaction:', error)
-          results.transactions.failed++
+          await doc.save()
+          results[key].restored++
+        } catch {
+          console.error('Company backup restore: one row could not be saved')
+          results[key].failed++
         }
       }
     }
 
-    // Restore receipts
-    if (options.receipts && backupData.receipts) {
-      for (const item of backupData.receipts) {
-        try {
-          const doc = prepareDocument(item)
-
-          if (options.skipDuplicates && !options.clearExisting) {
-            const exists = await Receipt.findOne({
-              $or: [
-                { filename: doc.filename },
-                { _id: item.id || item._id }
-              ]
-            })
-            if (exists) {
-              results.receipts.skipped++
-              continue
-            }
-          }
-
-          await Receipt.create(doc)
-          results.receipts.restored++
-        } catch (error) {
-          console.error('Failed to restore receipt:', error)
-          results.receipts.failed++
-        }
-      }
-    }
-
-    // Restore recurring payments
-    if (options.recurringPayments && backupData.recurringPayments) {
-      for (const item of backupData.recurringPayments) {
-        try {
-          const doc = prepareDocument(item)
-
-          if (options.skipDuplicates && !options.clearExisting) {
-            const exists = await RecurringPayment.findOne({
-              $or: [
-                { name: doc.name, 'customer.name': doc.customer?.name },
-                { _id: item.id || item._id }
-              ]
-            })
-            if (exists) {
-              results.recurringPayments.skipped++
-              continue
-            }
-          }
-
-          await RecurringPayment.create(doc)
-          results.recurringPayments.restored++
-        } catch (error) {
-          console.error('Failed to restore recurring payment:', error)
-          results.recurringPayments.failed++
-        }
-      }
-    }
-
-    // Restore mapping templates
-    if (options.mappingTemplates && backupData.mappingTemplates) {
-      for (const item of backupData.mappingTemplates) {
-        try {
-          const doc = prepareDocument(item)
-
-          if (options.skipDuplicates && !options.clearExisting) {
-            const exists = await MappingTemplate.findOne({
-              name: doc.name
-            })
-            if (exists) {
-              results.mappingTemplates.skipped++
-              continue
-            }
-          }
-
-          await MappingTemplate.create(doc)
-          results.mappingTemplates.restored++
-        } catch (error) {
-          console.error('Failed to restore mapping template:', error)
-          results.mappingTemplates.failed++
-        }
-      }
-    }
-
-    // Calculate totals
-    const totalRestored = Object.values(results).reduce((sum, r) => sum + r.restored, 0)
-    const totalSkipped = Object.values(results).reduce((sum, r) => sum + r.skipped, 0)
-    const totalFailed = Object.values(results).reduce((sum, r) => sum + r.failed, 0)
+    const all = Object.values(results)
+    const totals = { restored: all.reduce((s, r) => s + r.restored, 0), skipped: all.reduce((s, r) => s + r.skipped, 0), failed: all.reduce((s, r) => s + r.failed, 0), cleared: all.reduce((s, r) => s + r.cleared, 0) }
 
     return {
       success: true,
-      message: `Restore completed: ${totalRestored} items restored, ${totalSkipped} skipped, ${totalFailed} failed`,
+      message: `Restore completed for the selected company: ${totals.restored} items restored, ${totals.skipped} skipped, ${totals.failed} failed`,
+      scope: backupScope(organizationId),
       backupVersion: backupData.version,
       backupCreatedAt: backupData.createdAt,
       results,
-      totals: {
-        restored: totalRestored,
-        skipped: totalSkipped,
-        failed: totalFailed
-      }
+      totals
     }
   } catch (error: any) {
-    if (error.statusCode) throw error
-    console.error('Restore error:', error)
+    if (error?.statusCode) throw error
+    console.error('Company backup restore failed')
     throw createError({
       statusCode: 500,
-      statusMessage: error.message || 'Failed to restore backup'
+      statusMessage: 'Failed to restore backup'
     })
   }
 })
-
-/**
- * Prepare document for insertion (remove id, convert dates)
- */
-function prepareDocument(doc: any): any {
-  const prepared = { ...doc }
-
-  // Remove id fields (let MongoDB generate new ones)
-  delete prepared.id
-  delete prepared._id
-  delete prepared.__v
-
-  // Convert date strings to Date objects
-  const dateFields = ['date', 'createdAt', 'updatedAt', 'uploadDate', 'receiptDate',
-                      'startDate', 'endDate', 'nextDueDate', 'lastGeneratedDate']
-
-  for (const field of dateFields) {
-    if (prepared[field] && typeof prepared[field] === 'string') {
-      prepared[field] = new Date(prepared[field])
-    }
-  }
-
-  // Handle nested dates in timeline
-  if (Array.isArray(prepared.timeline)) {
-    prepared.timeline = prepared.timeline.map((event: any) => ({
-      ...event,
-      timestamp: event.timestamp ? new Date(event.timestamp) : new Date()
-    }))
-  }
-
-  return prepared
-}

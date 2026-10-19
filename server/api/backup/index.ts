@@ -4,14 +4,15 @@ import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
 import RecurringPayment from '../../models/RecurringPayment'
-import { MappingTemplate } from '../../models/MappingTemplate'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
+import { backupExclusions, backupScope } from '../../services/companyBackupService'
 
 /**
- * GET /api/backup - Create a full backup of all data
+ * GET /api/backup - Back up the token-selected company (fresh membership): its recorded transactions, receipts and recurring
+ * payments only, in the legacy format with a scope block. Unassigned rows and shared mapping templates are never included.
  */
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
+  const { organizationId } = await calendarCompany(event)
   try {
     await ensureConnection()
 
@@ -20,33 +21,29 @@ export default defineEventHandler(async (event) => {
     const includeReceipts = query.receipts !== 'false'
     const includeTransactions = query.transactions !== 'false'
     const includeRecurring = query.recurring !== 'false'
-    const includeTemplates = query.templates !== 'false'
 
-    // Fetch all data
+    // Fetch the selected company's data
     const backupData: Record<string, any> = {
       version: '1.0',
       createdAt: new Date().toISOString(),
-      application: 'ohmyfinance'
+      application: 'ohmyfinance',
+      scope: backupScope(organizationId),
+      excluded: { ...backupExclusions }
     }
 
     if (includeTransactions) {
-      const transactions = await Transaction.find({}).lean()
+      const transactions = await Transaction.find({ organizationId }).lean()
       backupData.transactions = transactions.map(cleanDocument)
     }
 
     if (includeReceipts) {
-      const receipts = await Receipt.find({}).lean()
+      const receipts = await Receipt.find({ organizationId }).lean()
       backupData.receipts = receipts.map(cleanDocument)
     }
 
     if (includeRecurring) {
-      const recurring = await RecurringPayment.find({}).lean()
+      const recurring = await RecurringPayment.find({ organizationId }).lean()
       backupData.recurringPayments = recurring.map(cleanDocument)
-    }
-
-    if (includeTemplates) {
-      const templates = await MappingTemplate.find({}).lean()
-      backupData.mappingTemplates = templates.map(cleanDocument)
     }
 
     // Add counts for reference
@@ -54,7 +51,7 @@ export default defineEventHandler(async (event) => {
       transactions: backupData.transactions?.length || 0,
       receipts: backupData.receipts?.length || 0,
       recurringPayments: backupData.recurringPayments?.length || 0,
-      mappingTemplates: backupData.mappingTemplates?.length || 0
+      mappingTemplates: 0
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
@@ -68,10 +65,11 @@ export default defineEventHandler(async (event) => {
 
     return JSON.stringify(backupData, null, 2)
   } catch (error: any) {
-    console.error('Backup error:', error)
+    if (error?.statusCode) throw error
+    console.error('Company backup export failed')
     throw createError({
       statusCode: 500,
-      statusMessage: error.message || 'Failed to create backup'
+      statusMessage: 'Failed to create backup'
     })
   }
 })
