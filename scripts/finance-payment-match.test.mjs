@@ -45,6 +45,32 @@ test('signed bank amounts follow the chosen convention and explicit directions t
  const separate=await normalizeBankRow({...values,amount:'',outflow:'1500',inflow:''},source,{amountSign:'outflow-negative'});assert.equal(separate.amount,1500,'bank-sign:separate-columns-unchanged');
  assert.equal(negative.key,(await normalizeBankRow(values,source)).key,'bank-sign:source-identity');assert.notEqual(negative.fingerprint,(await normalizeBankRow(values,source)).fingerprint);
 });
+// Plan omf-rakuten-csv-date-20261020: the bank's native statement CSV writes 取引日 as eight digits (YYYYMMDD) under four static
+// columns 取引日 / 入出金(円) / 残高(円) / 入出金先内容. Fictional rows only.
+test('compact YYYYMMDD dates normalize; separated and Japanese dates are unchanged; impossible calendar dates still fail',async()=>{
+ const s={hash:'d'.repeat(64),sheet:'Sheet1',row:2},v={description:'Fictional compact date entry',amount:'-1200'},day=async date=>(await normalizeBankRow({...v,date},s,{amountSign:'outflow-negative'})).date;
+ for(const [raw,iso] of [['20251101','2025-11-01'],['20251130','2025-11-30'],['20251231','2025-12-31'],['20260101','2026-01-01'],['20261020','2026-10-20'],['20240229','2024-02-29']])assert.equal(await day(raw),iso,'rakuten:compact-date '+raw);
+ for(const [raw,iso] of [['2026/08/10','2026-08-10'],['2026-8-1','2026-08-01'],['2026/8/1','2026-08-01'],['2026年8月1日','2026-08-01'],['2025-11-01','2025-11-01']])assert.equal(await day(raw),iso,'rakuten:legacy-date '+raw);
+ for(const raw of ['20260229','20251301','20251100','20251232','20250431','00000000','2025111','202511010','251101','2025 1101','2025-1101','20251101x','','2026-02-30','2026/13/01'])await assert.rejects(()=>normalizeBankRow({...v,date:raw},s,{amountSign:'outflow-negative'}),/取引日を確認してください/,'rakuten:invalid-calendar '+JSON.stringify(raw));
+ const compact=await normalizeBankRow({...v,date:'20251101'},s),slashed=await normalizeBankRow({...v,date:'2025/11/01'},{...s,hash:'e'.repeat(64)});
+ assert.equal(compact.fingerprint,slashed.fingerprint,'rakuten:same-entry-same-fingerprint');assert.notEqual(compact.key,slashed.key,'rakuten:file-row-identity');assert.equal(compact.idKind,'file-row');
+});
+test('the four native Rakuten headers are guessed into the existing fields; existing guesses and field keys are unchanged',()=>{
+ const native={date:'0',description:'3',amount:'1',outflow:'',inflow:'',balance:'2',reference:'',transactionId:'',currency:'',direction:''};
+ assert.deepEqual(guessBankMapping(['取引日','入出金(円)','残高(円)','入出金先内容']),native,'rakuten:header-guess');
+ assert.deepEqual(guessBankMapping(['取引日','入出金（円）','残高（円）','入出金先内容']),native,'rakuten:header-guess-fullwidth');
+ assert.deepEqual(BANK_FIELDS.map(f=>f[0]),['date','description','amount','outflow','inflow','balance','reference','transactionId','currency','direction'],'rakuten:field-keys-unchanged');
+ assert.deepEqual(guessBankMapping(['取引日','摘要','出金','入金','残高','メモ']),{date:'0',description:'1',amount:'',outflow:'2',inflow:'3',balance:'4',reference:'5',transactionId:'',currency:'',direction:''},'rakuten:legacy-guess-unchanged');
+ const direction=guessBankMapping(['取引日','摘要','金額','入出金区分']);assert.equal(direction.amount,'2','rakuten:no-alias-collision');assert.equal(direction.direction,'3','rakuten:no-alias-collision');
+ assert.equal(guessBankMapping(['取引日','入出金','残高','内容']).amount,'','rakuten:exact-alias-only');
+});
+test('a signed 入出金(円) under 出金がマイナス: positive is incoming, negative is outgoing; duplicate-looking rows keep their own file rows',async()=>{
+ const s={hash:'f'.repeat(64),sheet:'Sheet1',row:2},rows=[['20251105','250000','1250000','振込 架空商事'],['20251231','-330','1249670','振込手数料'],['20251231','-330','1249340','振込手数料']];
+ const out=[];for(const [i,[date,amount,balance,description]] of rows.entries())out.push(await normalizeBankRow({date,amount,balance,description},{...s,row:i+2},{amountSign:'outflow-negative'}));
+ assert.deepEqual(out.map(r=>[r.date,r.amount,r.direction,r.balance]),[['2025-11-05',-250000,'in',1250000],['2025-12-31',330,'out',1249670],['2025-12-31',330,'out',1249340]],'rakuten:signed');
+ assert.equal(out[1].fingerprint,out[2].fingerprint,'rakuten:duplicate-rows-look-alike');assert.notEqual(out[1].key,out[2].key,'rakuten:duplicate-rows-retained');assert.equal(correctionPairs([out[1]],[out[2]]).length,0,'rakuten:same-file-duplicates-not-paired');
+ assert.equal((await normalizeBankRow({date:'20251105',amount:'250000',description:'振込 架空商事'},s)).direction,'out','rakuten:sign-is-chosen-not-inferred');
+});
 test('cross-file overlap, reorder, filtered export and changed text give review candidates only',async()=>{
  const row=async(hash,n,description='SHOP')=>normalizeBankRow({date:'2026-08-10',amount:2000,description},{hash:hash.repeat(64),sheet:'Sheet1',row:n});
  const old=[await row('a',2),await row('a',3)],fresh=[await row('b',2),await row('b',3,'SHOP corrected')];

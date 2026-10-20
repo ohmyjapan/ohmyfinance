@@ -190,6 +190,35 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  if(burst[1].status===200)assert.ok(['imported','needs_review'].includes(burst[1].data.state),'bank:concurrent-capture-state');
  ok(await dev('bank/status',{jobId:jobC.jobId,state:'complete',message:'done'},loser),'status-concurrent');
  pass('C6/C7/D4: one of four racing claims wins; an expired lease is re-claimed with the same jobId and snapshot and the old device is refused; a lost acknowledgement still resolves its job; concurrent owner import and collector upload leave a consistent account while another account continues');
+ // ── N (plan omf-rakuten-csv-date-20261020): a fictional file in the bank's native statement format — Shift_JIS, four static
+ // columns 取引日 / 入出金(円) / 残高(円) / 入出金先内容, eight-digit dates, a signed amount (incoming positive) — through the
+ // owner upload: guessed columns, preview, import with a template, retained original, identical reimport. No real row.
+ const sjisOf=new Map(),sjisDecoder=new TextDecoder('shift_jis');for(let b=0;b<0x80;b++)sjisOf.set(String.fromCharCode(b),[b]);for(let b=0xa1;b<=0xdf;b++)sjisOf.set(sjisDecoder.decode(Uint8Array.of(b)),[b]);
+ for(let lead=0x81;lead<=0xfc;lead++){if(lead>0x9f&&lead<0xe0)continue;for(let trail=0x40;trail<=0xfc;trail++){if(trail===0x7f)continue;const c=sjisDecoder.decode(Uint8Array.of(lead,trail));if(c.length===1&&c!=='�'&&!sjisOf.has(c))sjisOf.set(c,[lead,trail]);}}
+ const sjis=s=>Buffer.from([...s].flatMap(c=>{const b=sjisOf.get(c);if(!b)throw Error('fixture text not in Shift_JIS: '+c);return b}));
+ const NATIVE_HEAD=['取引日','入出金(円)','残高(円)','入出金先内容'],NATIVE_MAP={date:'0',description:'3',amount:'1',outflow:'',inflow:'',balance:'2',reference:'',transactionId:'',currency:'',direction:''};
+ const nativeRows=[['20251101','250000','1250000','振込 架空商事'],['20251130','-1980','1248020','カード 架空ストア'],['20251231','-330','1247690','振込手数料 架空'],['20251231','-330','1247360','振込手数料 架空'],['20260101','12000','1259360','ﾌﾘｺﾐ ｶｸｳｼｮｳｼﾞ'],['20261020','-50000','1209360','口座振替 架空リース']];
+ const nativeBytes=sjis([NATIVE_HEAD,...nativeRows].map(r=>r.join(',')).join('\r\n')+'\r\n');assert.throws(()=>new TextDecoder('utf-8',{fatal:true}).decode(nativeBytes),'bank:native-fixture-is-shift-jis');
+ const bankN=await account('Synthetic bank (native statement)'),nf=await bankFile(nativeBytes,'rakuten-native.csv',bankN,{transactionIdConfirmed:false,amountSign:'outflow-negative'});
+ assert.equal(nf.doc.hash,crypto.createHash('sha256').update(nativeBytes).digest('hex'),'bank:native-original-hash');
+ const nativeSheet=ok(await get('bank/files/'+nf.doc.id+'/sheet'),'native-sheet');assert.deepEqual(nativeSheet.headers,NATIVE_HEAD,'bank:native-shift-jis-headers');assert.equal(nativeSheet.rowCount,6,'bank:native-row-count');assert.deepEqual(nativeSheet.rows[0],nativeRows[0],'bank:native-raw-row-shown');
+ assert.deepEqual(nf.body.mapping,NATIVE_MAP,'bank:native-header-guess');
+ const expectedNative=[['2025-11-01',-250000,'in',1250000],['2025-11-30',1980,'out',1248020],['2025-12-31',330,'out',1247690],['2025-12-31',330,'out',1247360],['2026-01-01',-12000,'in',1259360],['2026-10-20',50000,'out',1209360]];
+ const nativePreview=ok(await req('bank/files/'+nf.doc.id+'/preview',nf.body),'native-preview');assert.deepEqual(nativePreview.rows.map(r=>[r.date,r.amount,r.direction,r.balance]),expectedNative,'bank:native-compact-preview');assert.equal((await rows(bankN)).length,0,'bank:native-preview-writes-nothing');
+ const nativeImport=ok(await req('bank/files/'+nf.doc.id+'/import',{...nf.body,templateName:'Native statement map'}),'native-import');assert.equal(nativeImport.rows.length,6,'bank:native-six-rows');
+ const nativeStored=(await rows(bankN)).sort((a,b)=>a.provenance[0].row-b.provenance[0].row);assert.equal(nativeStored.length,6,'bank:native-six-rows');
+ assert.deepEqual(nativeStored.map(r=>[r.date,r.amount,r.direction,r.provenance[0].balance]),expectedNative,'bank:native-signed-import');
+ for(const [i,r] of nativeStored.entries()){assert.equal(r.revision,1);assert.equal(r.idKind,'file-row');assert.equal(r.key,'file:'+nf.doc.hash+':Sheet1:'+(i+2),'bank:native-file-row-key');assert.deepEqual(r.provenance[0].raw,nativeRows[i],'bank:native-raw-row-retained');assert.equal(r.provenance[0].amountSign,'outflow-negative');assert.equal(r.provenance[0].channel,'upload');assert.equal(r.currency,'JPY');}
+ const fees=nativeStored.filter(r=>r.description==='振込手数料 架空');assert.equal(fees.length,2,'bank:native-duplicate-looking-rows-retained');assert.equal(fees[0].fingerprint,fees[1].fingerprint);assert.notEqual(fees[0].key,fees[1].key);assert.deepEqual(fees.map(r=>[r.occurrence,r.identicalCount]),[[1,2],[2,2]],'bank:native-duplicate-occurrence');
+ assert.equal(nativeStored[4].description,'フリコミ カクウショウジ','bank:native-halfwidth-description');
+ assert.deepEqual(await fs.readFile(path.join(directory,'bank-statements',String(baseDevice.ownerId),nf.doc.hash)),nativeBytes,'bank:native-original-bytes');
+ assert.deepEqual((await statementDoc(nf.doc.id)).dateRange,{min:'2025-11-01',max:'2026-10-20'},'bank:native-date-range');
+ const nativeTemplate=ok(await get('bank/templates'),'native-templates').templates.find(t=>t.name==='Native statement map');assert.ok(nativeTemplate,'bank:native-template-saved');assert.deepEqual(nativeTemplate.headers,NATIVE_HEAD,'bank:native-template');assert.deepEqual(nativeTemplate.mapping,NATIVE_MAP,'bank:native-template');assert.equal(nativeTemplate.amountSign,'outflow-negative','bank:native-template');
+ const nativeAgain=await bankFile(nativeBytes,'rakuten-native-again.csv',bankN,{transactionIdConfirmed:false,amountSign:'outflow-negative'});assert.equal(nativeAgain.doc.id,nf.doc.id,'bank:native-same-statement');
+ const nativeReimport=ok(await req('bank/files/'+nf.doc.id+'/import',nativeAgain.body),'native-reimport');assert.deepEqual(nativeReimport.counts,{new:0,existing:6},'bank:native-identical-reimport');assert.equal(nativeReimport.pairs.length,0,'bank:native-reimport-no-pairs');
+ const nativeAfter=await rows(bankN);assert.equal(nativeAfter.length,6,'bank:native-identical-reimport');assert.deepEqual(nativeAfter.map(r=>[String(r._id),r.revision,r.provenance.length,r.history.map(h=>h.action).join()]).sort(),nativeStored.map(r=>[String(r._id),1,1,'imported']).sort(),'bank:native-identical-reimport');
+ assert.equal(ok(await all(),'native-payments').payments.filter(p=>p.kind==='bank'&&p.accountId===bankN).length,6,'bank:native-payments-listed');
+ pass('N native statement format: Shift_JIS four-column file read with its headers, columns guessed, compact dates and signed amounts previewed and imported (incoming negative/in, outgoing positive/out), duplicate-looking rows kept as two file rows, raw rows and original bytes retained, template saved, identical reimport changes nothing');
  // ── V: real Chrome at 390 px and 1440 px ──
  if(!mutant){
   const {browserFor}=await import(pathToFileURL(path.join(root,'collector/browser.mjs')).href),profileDir=await fs.mkdtemp(path.join(os.tmpdir(),'omf-bank-browser-')),browser=await browserFor(path.join(profileDir,'profile'),{headless:true});let page;const errors=[];
