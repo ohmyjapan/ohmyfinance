@@ -5,9 +5,12 @@
       <div class="flex items-center justify-between">
         <div>
           <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('calendarStats.expectedIncome') }}</p>
-          <p class="text-2xl font-bold text-success-main">
-            {{ formatCurrency(stats.totalIncome) }}
-          </p>
+          <div data-calendar-summary="income" class="space-y-1">
+            <p v-for="total in stats.byCurrency" :key="total.currency" :data-calendar-currency="total.currency" class="text-xl font-bold text-success-main break-words">
+              {{ formatCurrency(total.income, total.currency) }} <span class="text-xs font-medium">{{ total.currency || '—' }}</span>
+            </p>
+            <p v-if="!stats.byCurrency.length" class="text-xl text-success-main">—</p>
+          </div>
         </div>
         <div class="p-3 bg-success-light dark:bg-success-dark/30 rounded-full">
           <TrendingUp class="h-6 w-6 text-success-main" />
@@ -20,9 +23,12 @@
       <div class="flex items-center justify-between">
         <div>
           <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('calendarStats.expectedExpenses') }}</p>
-          <p class="text-2xl font-bold text-error-main">
-            {{ formatCurrency(stats.totalExpenses) }}
-          </p>
+          <div data-calendar-summary="expense" class="space-y-1">
+            <p v-for="total in stats.byCurrency" :key="total.currency" :data-calendar-currency="total.currency" class="text-xl font-bold text-error-main break-words">
+              {{ formatCurrency(total.expense, total.currency) }} <span class="text-xs font-medium">{{ total.currency || '—' }}</span>
+            </p>
+            <p v-if="!stats.byCurrency.length" class="text-xl text-error-main">—</p>
+          </div>
         </div>
         <div class="p-3 bg-error-light dark:bg-error-dark/30 rounded-full">
           <TrendingDown class="h-6 w-6 text-error-main" />
@@ -65,6 +71,7 @@
 <script setup lang="ts">
 import { TrendingUp, TrendingDown, Clock, AlertTriangle } from 'lucide-vue-next'
 import type { MonthlyStats } from '~/types/calendar'
+import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
 
 const { t, locale } = useI18n()
 
@@ -72,14 +79,5 @@ defineProps<{
   stats: MonthlyStats
 }>()
 
-const formatCurrency = (amount: number): string => {
-  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
-  return new Intl.NumberFormat(currencyLocale, {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount)
-}
+const formatCurrency = (amount: number, currency: string): string => formatCalendarMoney(amount, currency, locale.value)
 </script>

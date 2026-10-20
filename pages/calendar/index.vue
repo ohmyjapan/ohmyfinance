@@ -150,6 +150,7 @@ import { useAssistantStore } from '~/stores/assistant'
 import { useUserStore } from '~/stores/user'
 import { tokenClaims } from '~/utils/auth-session'
 import type { Payment, PaymentFormData } from '~/types/calendar'
+import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
 
 const { t, locale } = useI18n()
 const calendarStore = useCalendarStore()
@@ -282,13 +283,5 @@ const quickAdd = (type: 'expense' | 'income', category: string) => {
   openAddModal()
 }
 
-const formatCurrency = (amount: number, currency: string): string => {
-  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  return new Intl.NumberFormat(currencyLocale, {
-    style: 'currency',
-    currency: currency || (locale.value === 'ko' ? 'KRW' : 'JPY'),
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount)
-}
+const formatCurrency = (amount: number, currency: string): string => formatCalendarMoney(amount, currency, locale.value)
 </script>

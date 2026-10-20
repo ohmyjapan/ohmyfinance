@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import type { Payment, PaymentFormData, MonthlyStats } from '~/types/calendar'
 import { useUserStore } from '~/stores/user'
+import { calendarCurrencyTotals } from '~/shared/finance-calendar-money.mjs'
 
 // Format date to YYYY-MM-DD in local timezone (JST)
 const formatLocalDate = (date: Date): string => {
@@ -53,15 +54,8 @@ export const useCalendarStore = defineStore('calendar', {
     // Monthly statistics
     monthlyStats(): MonthlyStats {
       const payments = this.currentMonthPayments
-      // Include all non-cancelled payments for expected totals
-      const activePayments = payments.filter(p => p.status !== 'cancelled')
       return {
-        totalIncome: activePayments
-          .filter(p => p.type === 'income')
-          .reduce((sum, p) => sum + p.amount, 0),
-        totalExpenses: activePayments
-          .filter(p => p.type === 'expense')
-          .reduce((sum, p) => sum + p.amount, 0),
+        byCurrency: calendarCurrencyTotals(payments),
         pendingPayments: payments.filter(p => p.status === 'pending').length,
         overduePayments: payments.filter(p => p.status === 'overdue').length
       }

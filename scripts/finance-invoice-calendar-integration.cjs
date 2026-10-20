@@ -163,7 +163,8 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
 
   if(process.env.OMF_INVOICE_CALENDAR_BROWSER==='1'){
    const ui=await invoice({invoiceNumber:'INV-CAL-UI-001',currency:'USD',taxRate:0,items:[{description:'Synthetic USD cents',quantity:1,unitPrice:125.5}],dueDate:new Date(Date.now()+3*86400000).toISOString().slice(0,10)});
-   await require('./finance-invoice-calendar-browser.cjs')({root,origin,ok,worker,claim,actOk,finish,A:String(A),invoiceId:String(ui._id),invoiceNumber:ui.invoiceNumber,linked,pause,pass});
+   await ok('/api/payments',tokenA,'POST',{title:'JPY_CALENDAR_CONTROL',amount:12760,currency:'JPY',dueDate:ui.dueDate.toISOString().slice(0,10),type:'income',category:'Invoice'});
+   await require('./finance-invoice-calendar-browser.cjs')({root,origin,ok,worker,claim,actOk,finish,A:String(A),invoiceId:String(ui._id),invoiceNumber:ui.invoiceNumber,invoiceDueDate:ui.dueDate.toISOString().slice(0,10),linked,pause,pass});
    assert.equal((await linked(ui._id)).length,1,'invoice-calendar-ui:single-row');assert.deepEqual(await counts(),ledgerBefore,'invoice-calendar-ui:no-ledger');
   }
   console.log(groups+' Invoice calendar groups passed');

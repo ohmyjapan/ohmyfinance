@@ -10,7 +10,7 @@
 
       <!-- Modal -->
       <div class="relative bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:max-w-lg sm:w-full">
-        <form @submit.prevent="handleSubmit">
+        <form data-calendar-payment-form @submit.prevent="handleSubmit">
           <!-- Header -->
           <div class="px-6 py-4 border-b dark:border-white/10 flex items-center justify-between">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -102,12 +102,13 @@
             <div :class="settingsStore.isMultiCurrencyEnabled ? 'grid grid-cols-2 gap-4' : ''">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  {{ t('paymentModal.amount') }} ({{ settingsStore.defaultCurrency }}) *
+                  {{ t('paymentModal.amount') }} ({{ form.currency || '—' }}) *
                 </label>
                 <input
                   v-model="form.amount"
+                  data-calendar-amount
                   type="number"
-                  step="1"
+                  step="any"
                   min="0"
                   required
                   class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
@@ -148,9 +149,11 @@
                 </label>
                 <select
                   v-model="form.category"
+                  data-calendar-category
                   required
                   class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 >
+                  <option v-if="form.category && !PAYMENT_CATEGORIES.some(category => category === form.category)" :value="form.category">{{ form.category }}</option>
                   <option v-for="cat in PAYMENT_CATEGORIES" :key="cat" :value="cat">
                     {{ t(`paymentModal.categories.${cat.toLowerCase().replace(/\s+/g, '_')}`) }}
                   </option>
@@ -273,6 +276,7 @@
               </label>
               <textarea
                 v-model="form.notes"
+                data-calendar-notes
                 rows="2"
                 class="w-full px-3 py-2 border border-gray-300 dark:border-white/10 rounded-md shadow-sm focus:ring-primary-main focus:border-primary-main dark:bg-white/5 dark:text-white"
                 :placeholder="t('paymentModal.notesPlaceholder')"

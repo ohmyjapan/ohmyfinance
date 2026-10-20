@@ -99,6 +99,7 @@
           index % 7 === 6 ? 'border-r-0' : '',
           dragOverDate === day.dateString && draggedPayment && draggedPayment.dueDate.split('T')[0] !== day.dateString ? 'ring-2 ring-primary-main ring-inset scale-[1.02] shadow-lg z-10' : ''
         ]"
+        :data-calendar-day="day.dateString"
         @click="handleDayClick(day, $event)"
         @dragover.prevent="handleDragOver(day)"
         @dragleave="handleDragLeave"
@@ -254,6 +255,7 @@
 </template>
 
 <script setup lang="ts">
+import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
 import { ref, computed, h, onUnmounted } from 'vue'
 import { ChevronLeft, ChevronRight, Plus, Check, Star, GripVertical } from 'lucide-vue-next'
 import type { Payment, CalendarDay, CalendarHoliday } from '~/types/calendar'
@@ -653,13 +655,5 @@ const getDropPreviewClass = (payment: Payment): string => {
   return `${colors.border} ${colors.text} ${colors.bg}`
 }
 
-const formatCurrency = (amount: number, currency: string): string => {
-  const currencyLocale = currency === 'JPY' ? 'ja-JP' : currency === 'KRW' ? 'ko-KR' : 'en-US'
-  return new Intl.NumberFormat(currencyLocale, {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount)
-}
+const formatCurrency = (amount: number, currency: string): string => formatCalendarMoney(amount, currency, locale.value)
 </script>

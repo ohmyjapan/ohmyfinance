@@ -1,6 +1,7 @@
 <template>
   <div
     v-if="isOpen"
+    data-calendar-day-detail
     class="fixed inset-0 z-50 overflow-y-auto"
     @click.self="$emit('close')"
   >
@@ -87,7 +88,7 @@
                       getCategoryColors(payment.category).text
                     ]"
                   >
-                    {{ t(`paymentModal.categories.${payment.category.toLowerCase().replace(/\s+/g, '_')}`) }}
+                    {{ categoryLabel(payment.category) }}
                   </span>
                 </div>
                 <!-- Status Badge -->
@@ -149,11 +150,12 @@
 </template>
 
 <script setup lang="ts">
+import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
 import { computed } from 'vue'
 import { X, Check, Plus } from 'lucide-vue-next'
 import type { Payment } from '~/types/calendar'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 
 const props = defineProps<{
   isOpen: boolean
@@ -249,13 +251,9 @@ const getStatusClass = (status: string): string => {
   }
 }
 
-const formatCurrency = (amount: number, currency: string): string => {
-  const currencyLocale = currency === 'JPY' ? 'ja-JP' : currency === 'KRW' ? 'ko-KR' : 'en-US'
-  return new Intl.NumberFormat(currencyLocale, {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount)
+const categoryLabel = (category: string): string => {
+  const key = `paymentModal.categories.${category.toLowerCase().replace(/\s+/g, '_')}`
+  return te(key) ? t(key) : category
 }
+const formatCurrency = (amount: number, currency: string): string => formatCalendarMoney(amount, currency, locale.value)
 </script>

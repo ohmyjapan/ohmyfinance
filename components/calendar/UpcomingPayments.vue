@@ -7,6 +7,7 @@
       <div
         v-for="payment in payments"
         :key="payment.id"
+        :data-calendar-upcoming="payment.id"
         class="px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/[0.07]"
       >
         <div class="flex items-center gap-3">
@@ -57,6 +58,7 @@
 </template>
 
 <script setup lang="ts">
+import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
 import { Calendar, Check } from 'lucide-vue-next'
 import type { Payment } from '~/types/calendar'
 
@@ -111,15 +113,7 @@ const formatDate = (dateString: string): string => {
   })
 }
 
-const formatCurrency = (amount: number, currency: string): string => {
-  const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  return new Intl.NumberFormat(currencyLocale, {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount)
-}
+const formatCurrency = (amount: number, currency: string): string => formatCalendarMoney(amount, currency, locale.value)
 
 const getStatusClass = (status: string): string => {
   switch (status) {

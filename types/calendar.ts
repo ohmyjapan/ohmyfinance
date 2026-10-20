@@ -75,8 +75,7 @@ export interface CalendarDay {
 }
 
 export interface MonthlyStats {
-  totalIncome: number
-  totalExpenses: number
+  byCurrency: Array<{ currency: string; income: number; expense: number }>
   pendingPayments: number
   overduePayments: number
 }
