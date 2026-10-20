@@ -81,6 +81,24 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  ok(await dev('bank/status',{jobId:claimed.job.jobId,state:'running',message:'入出金明細を開く'},deviceToken),'status-running');
  let jobs=ok(await get('bank/accounts/'+bankA+'/jobs'),'jobs').jobs;assert.equal(jobs[0].state,'running');assert.equal(jobs[0].lastMessage,'入出金明細を開く');assert.equal(jobs[0].collectorId,String(baseDevice._id));
  pass('D1 claim: devices without bank scope or of another owner get no job; the scoped device gets the job with its frozen snapshot and support; the lease blocks a second claim; status is refused for a wrong job or another device');
+ // ── S (plan omf-rakuten-native-shiwake-20261020): 楽天銀行 standard corporate is the one retrieve variant; it needs no uploaded template and freezes the requested period ──
+ const bankR=await account('Synthetic bank (rakuten standard)'),standardPc=await collector('Standard PC');
+ assert.equal((await req('bank/accounts/'+bankR+'/connection',{provider:'rakuten',variant:'plus'},'PUT')).status,400,'bank:template-required-outside-standard');
+ const std=ok(await req('bank/accounts/'+bankR+'/connection',{provider:'rakuten',variant:'standard',accountLabel:'普通 7654321 サンプル',coverage:{from:'2025-11-01',to:null}},'PUT'),'connection-standard').account.connection;
+ const nativeTpl=ok(await get('bank/templates'),'templates-native').templates.find(t=>t.id===std.templateId);assert.ok(nativeTpl,'bank:standard-native-template');assert.deepEqual(nativeTpl.headers,['取引日','入出金(円)','残高(円)','入出金先内容'],'bank:standard-native-template');assert.equal(nativeTpl.amountSign,'outflow-negative','bank:standard-native-template');assert.equal(nativeTpl.mapping.transactionId,'','bank:standard-native-no-id');
+ assert.deepEqual(std.coverage,{from:'2025-11-01',to:null},'bank:standard-coverage-saved');assert.equal(std.variant,'standard');
+ assert.equal(ok(await req('bank/accounts/'+bankR+'/connection',{provider:'rakuten',variant:'standard',coverage:{from:'2025-11-01',to:null}},'PUT'),'connection-standard-again').account.connection.templateId,std.templateId,'bank:standard-native-template-reused');
+ assert.equal((await req('bank/accounts/'+bankR+'/connection',{provider:'rakuten',variant:'standard',coverage:{from:'2099-01-01',to:null}},'PUT')).status,400,'bank:coverage-future-refused');
+ assert.equal((await req('bank/accounts/'+bankR+'/connection',{provider:'rakuten',variant:'standard',coverage:{from:'2026-10-01',to:'2026-09-30'}},'PUT')).status,400,'bank:coverage-reversed-refused');
+ ok(await req('bank/accounts/'+bankR+'/connection',{provider:'rakuten',variant:'standard',accountLabel:'普通 7654321 サンプル',coverage:{from:'2025-11-01',to:null}},'PUT'),'connection-standard-restored');
+ ok(await req('bank/collectors/'+standardPc.id,{bankAccountIds:[bankR]},'PUT'),'collector-scope-standard');
+ const stdJob=ok(await req('bank/accounts/'+bankR+'/sync',{}),'sync-standard');assert.equal(stdJob.job.kind,'retrieve','bank:standard-retrieve');assert.equal(stdJob.job.snapshot.variant,'standard');
+ assert.equal(stdJob.job.snapshot.coverage.from,'2025-11-01','bank:standard-coverage-frozen');assert.match(stdJob.job.snapshot.coverage.to,/^\d{4}-\d{2}-\d{2}$/,'bank:standard-coverage-frozen');assert.deepEqual(stdJob.job.snapshot.mapping,nativeTpl.mapping,'bank:standard-snapshot-native');assert.equal(stdJob.job.snapshot.amountSign,'outflow-negative');
+ const stdClaim=ok(await dev('bank/claim',{},standardPc.token),'claim-standard');assert.equal(stdClaim.job.jobId,stdJob.job.jobId,'bank:standard-claimed');assert.equal(stdClaim.job.kind,'retrieve');assert.deepEqual(stdClaim.job.snapshot.coverage,stdJob.job.snapshot.coverage);
+ ok(await dev('bank/status',{jobId:stdJob.job.jobId,state:'failed',message:'synthetic standard stop'},standardPc.token),'status-standard');
+ ok(await req('bank/accounts/'+bankR+'/connection',{provider:'rakuten',variant:'standard'},'PUT'),'connection-standard-no-period');assert.equal((await req('bank/accounts/'+bankR+'/sync',{})).status,400,'bank:standard-period-required');
+ assert.equal((await jobDoc(stdJob.job.jobId)).snapshot.coverage.from,'2025-11-01','bank:existing-job-snapshot-kept');
+ pass('S 楽天銀行 standard: only the standard variant queues retrieve; the native four-column outflow-negative template is created once and reused; the requested period is validated, saved and frozen into the job and claim; a standard job without a period is refused; plus still needs a template');
  // ── D2 (+T7): upload is bound to the job and its snapshot; same bytes give the same capture ──
  assert.equal((await uploadCapture(claimed.job,csvBank(capRows),{},deviceToken,'application/json')).status,415,'bank:upload-415');
  assert.equal((await uploadCapture({jobId:uuid(),snapshotHash:claimed.job.snapshotHash},csvBank(capRows))).status,409,'bank:upload-409-unknown-job');

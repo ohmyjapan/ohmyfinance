@@ -37,8 +37,10 @@ label. `POST bank/accounts/:id/sync` queues one job (`financebankjobs`) for a co
 queue time — template id and revision, headers, mapping, amount sign, transaction-id confirmation, parser version, currency,
 provider, account label — as `snapshot` with its sha256 `snapshotHash`. Later template edits change only jobs queued after them.
 
-Job kinds: `retrieve` only for a provider whose `support` is `verified`. Every provider shipped so far is `contract-pending`,
-so `sync` queues an `observe` job and says so (`取得手順が未確認のため観察取得（準備）になります`). Job states: `queued` →
+Job kinds: `retrieve` for a provider whose `support` is `verified` or for a provider and frozen login variant listed in
+`BANK_VARIANT_COLLECTION` (`bankCollectionMode`; today only 楽天銀行 `standard`, see “楽天銀行 標準 and native bank classification”
+below). Every provider in `BANK_PROVIDERS` stays `contract-pending`, so every other provider/variant queues an `observe` job and says
+so (`取得手順が未確認のため観察取得（準備）になります`). Job states: `queued` →
 `running` (180 s lease renewed by heartbeats) → `verification_required` only while the person signs in → `complete` | `failed`.
 An expired lease is re-claimed by any allowed PC and continues the SAME job and snapshot; it no longer blocks a new request.
 
@@ -271,3 +273,29 @@ Verification: `node --test scripts/finance-payment-match.test.mjs`; through the 
 `node scripts/zoomer-verify.mjs --run-fixture omf-monthly-reconciliation.mjs --cwd <tree>`. Limits: synthetic data only; no real
 month, purchase-service file, bank statement, certificate login or NTA configuration has been exercised (F5, F6), historical
 replay is NOT RUN (F7) and the peer integration is not done (F8). No bank is verified by this change.
+
+## 楽天銀行 標準 and native bank classification (plan omf-rakuten-native-shiwake-20261020)
+
+**Retrieval.** `bankCollectionMode(provider, variant)` / `bankCapability` (shared/finance-payment-match.mjs) make 楽天銀行 `standard`
+(標準ログイン・法人ビジネス口座) the one retrieving variant; `plus`, no variant and unknown variants keep the observe stage and the
+provider table stays `contract-pending`. `capability.steps: implemented` is not a successful connection test (`liveVerified`
+stays false); the connection panel shows the connection-test state from the latest retrieve job separately. A standard connection
+needs no uploaded CSV: without a `templateId` the owner's native template `楽天銀行 標準フォーマット（自動）` (取引日・入出金(円)・
+残高(円)・入出金先内容, outflow-negative, no transaction ID; `BANK_NATIVE_TEMPLATES`) is created once and reused (a same-named
+template with other contents is a 409). The connection saves the requested period `coverage {from, to|null}` (validated: from
+≥ 2000-01-01, nothing after today in JST, never reversed); each queued job freezes `snapshot.coverage {from, to}` (`to` null →
+the JST date at queue time) inside its hash; a retrieve job without a period is a 400; jobs queued earlier keep their snapshot.
+The collector resolves `adapterFor(snapshot.provider, snapshot.variant)` (collector/bank.mjs; the frozen job, never the current connection); a variant adapter refuses a job frozen for
+another variant before any page. The flow, its observed facts and its live-test checklist: docs/rakuten-bank-connection.md.
+
+**Classification (仕訳) is not payment allocation.** Allocation (above) links a bank or card payment to purchases and card bills and
+never posts. The 銀行仕訳 tab (`/intake/payments`, `BankClassificationReview.vue`, `bank-classifications` routes) proposes and
+records a company's accounting classification of each owner bank row and, only on the explicit「確認して取引へ登録」, creates one
+native company Transaction (or links an existing one). It reads the selected company's calendar (fresh membership), never changes
+an allocation, a calendar entry or a bank row. Details, guards and limits: docs/bank-classification.md.
+
+Verification: `node --test collector/test/rakuten-standard.test.mjs scripts/finance-bank-classification.test.mjs
+scripts/finance-payment-match.test.mjs`; through the hub `node scripts/zoomer-verify.mjs --run-fixture omf-rakuten-native-shiwake.mjs
+--cwd <tree>` (fake START_CORP portal by request interception in owned Chrome, owned app and MongoDB). Limits: synthetic only — no
+real bank page, login, OTP, export or owner OMF account has been exercised by these tests; the actual collector run and the live
+仕訳 are the separate owner acceptance.

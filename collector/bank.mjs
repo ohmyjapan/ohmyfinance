@@ -3,8 +3,9 @@
 // {provider, label, start, hosts, support, contract, ui(page, browser)} where ui has open/state/login/show/openStatements/
 // selectPeriod/snapshot/exportCsv/downloadSession and state() reports login|verification|authenticated|statements|export_ready|
 // error_page|unknown. Authentication is the only human step (ensureBankLogin: verification_required + show, bounded, once);
-// the routine steps are automated. No adapter shipped here is verified: their routine methods throw contract-pending and
-// queueBankSync issues observe jobs for them — observeBankPortal records the page contract (pathnames, titles, control texts,
+// the routine steps are automated. Every provider default adapter shipped here is contract-pending: its routine methods throw
+// contract-pending and queueBankSync issues observe jobs for it. The one retrievable variant is 楽天銀行 `standard` (banks/rakuten.mjs
+// `variants.standard`, resolved from the job's frozen variant; plan omf-rakuten-native-shiwake-20261020) — observeBankPortal records the page contract (pathnames, titles, control texts,
 // input ids and types, select sizes, download events; never a typed value, credential, cookie or row) while the person
 // navigates, and keeps one CSV the person exports from the bank's hosts. Imports only packaged files and node built-ins apart
 // from ./browser.mjs, loaded lazily by the two launchers (so the staged copy loads without an install, like aplus.mjs).
@@ -21,7 +22,10 @@ import resona from './banks/resona.mjs';
 import ikeda from './banks/ikeda.mjs';
 
 export const ADAPTERS = Object.freeze({ rakuten, paypay, resona, ikeda });
-export const adapterFor = provider => ADAPTERS[provider] || null;
+// Plan omf-rakuten-native-shiwake-20261020 §1: the adapter of a provider AND its frozen login variant. A provider adapter may list
+// `variants` (楽天銀行: `standard`, the START_CORP corporate login); any other variant, none, or a provider without variants
+// resolves the provider adapter itself — for every shipped provider that is contract-pending (observe stage only).
+export const adapterFor = (provider, variant = null) => { const base = ADAPTERS[provider] || null; return (variant != null && base?.variants?.[variant]) || base; };
 export const providerLabel = provider => BANK_PROVIDERS.find(([key]) => key === provider)?.[1] || String(provider ?? '');
 const GUID = /^[a-f\d-]{36}$/;
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -95,6 +99,8 @@ async function completedAttempt(jobDir, bound, adapter, manifestOf, { now, wait,
 export async function collectBankFromPage(page, browser, adapter, bound, job, root, status, { ui = null, now = Date.now, wait = pause, pollMs = 1000, loginTimeoutMs = 300000, downloadTimeoutMs = 300000, extensionMs = 300000, signal = null } = {}) {
   if (!adapter) throw new Error('A bank adapter is required');
   if (adapter.support !== 'verified') throw coded('contract-pending', `${adapter.label}の取得手順は未確認です。観察取得で手順を記録してください`);
+  // A variant adapter retrieves only the job frozen for that variant (an injected or stale adapter never runs another login).
+  if (adapter.variant && adapter.variant !== (job?.snapshot?.variant ?? null)) throw coded('contract-pending', `${adapter.label}のこのログイン方式の取得手順は未確認です。観察取得で手順を記録してください`); // guard:variant-bound
   if (!/^[a-f\d]{24}$/.test(String(bound?.bankAccountId ?? '')) || typeof bound?.jobId !== 'string' || !bound.jobId || typeof bound?.snapshotHash !== 'string' || !bound.snapshotHash) throw new Error('A claimed bank job is required');
   ui ||= adapter.ui(page, browser, job?.snapshot ?? null);
   const stamp = () => new Date(now()).toISOString(), jobDir = path.join(bankOutbox(root, bound.bankAccountId), bound.jobId), marker = path.join(jobDir, 'attempt.json');
@@ -286,8 +292,12 @@ async function withBankBrowser(bound, root, batch, onLaunch, fn) {
     await removeEphemeral(profile, root).catch(() => {});
   }
 }
-/** One retrieve job through the provider's adapter (or an injected one) in an owned ephemeral Chrome. */
-export async function collectBankStatement(bound, job, root, status, { adapter = adapterFor(job?.provider ?? bound?.provider), batch = 'batch', onLaunch = null, signal = null, now = Date.now, wait = pause, ...rest } = {}) {
+/**
+ * One retrieve job through the adapter of the job's FROZEN provider and login variant (snapshot; the claim's current-connection
+ * provider only when a snapshot has none) — or an injected one — in an owned ephemeral Chrome. A connection changed after the job
+ * was queued never turns it into another bank's or variant's retrieval.
+ */
+export async function collectBankStatement(bound, job, root, status, { adapter = adapterFor(job?.snapshot?.provider ?? job?.provider ?? bound?.provider, job?.snapshot?.variant ?? null), batch = 'batch', onLaunch = null, signal = null, now = Date.now, wait = pause, ...rest } = {}) {
   if (!adapter) throw new Error('No bank adapter for ' + String(job?.provider ?? bound?.provider));
   return withBankBrowser(bound, root, batch, onLaunch, (page, browser) => collectBankFromPage(page, browser, adapter, bound, job, root, status, { signal, now, wait, ...rest }));
 }

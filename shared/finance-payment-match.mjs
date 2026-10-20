@@ -13,6 +13,30 @@ export const BANK_LOGIN_VARIANTS={rakuten:[['standard','標準ログイン（法
 // user rule; it promises nothing about the certificate picker under the collector's launch and nothing about required or installed
 // protections (PhishWall and the like) — those are checked in the actual connection environment (the observe run). A provider absent here has no note.
 export const BANK_SOFTWARE={resona:'りそなビジネスダイレクトの電子証明書ログインは、りそな銀行の電子証明書発行アプリで発行し、このPCにサインインしているのと同じWindowsユーザーの証明書ストアに入っている電子証明書を使い、ログイン時の証明書の選択は本人がChromeの画面で行います。証明書の選択画面が表示されるか、および必要なセキュリティソフトや拡張機能の要否は、実際の接続環境（観察取得）で確認してください。',ikeda:'池田泉州銀行の電子証明書ログインは、同行の電子証明書発行アプリで電子証明書を発行したときと同じWindowsユーザーでこのPCにサインインしている必要があり、ログイン時の証明書の選択は本人がChromeの画面で行います。証明書の選択画面が表示されるか、およびPhishWallなどのセキュリティソフトや拡張機能の要否は、実際の接続環境（観察取得）で確認してください。'};
+// Plan omf-rakuten-native-shiwake-20261020 §1/§3: the collection mode is per provider AND frozen login variant. The provider-wide
+// support in BANK_PROVIDERS stays honest (every bank contract-pending); a variant listed here has an implemented retrieval path in
+// the collector (collector/banks/<provider>.mjs `variants`). Implemented steps are not a successful connection test: liveVerified
+// stays false until an owner-run job proves the connection. Every other provider/variant keeps the preparatory observe stage.
+export const BANK_VARIANT_COLLECTION={rakuten:{standard:'retrieve'}};
+export function bankCollectionMode(provider,variant){if(BANK_PROVIDERS.find(p=>p[0]===provider)?.[2]==='verified')return 'retrieve';return BANK_VARIANT_COLLECTION[provider]?.[variant]==='retrieve'?'retrieve':'observe';}
+// The bank's own statement format a retrieving variant downloads: OMF creates/reuses this owner template for the connection, so no
+// CSV has to be uploaded first (楽天銀行 標準: the four observed columns, outflow negative, no bank transaction ID).
+export const BANK_NATIVE_TEMPLATES={rakuten:{standard:{key:'rakuten-standard-native',name:'楽天銀行 標準フォーマット（自動）',headers:['取引日','入出金(円)','残高(円)','入出金先内容'],mapping:{date:'0',description:'3',amount:'1',outflow:'',inflow:'',balance:'2',reference:'',transactionId:'',currency:'',direction:''},amountSign:'outflow-negative'}}};
+export function bankCapability(provider,variant){const mode=bankCollectionMode(provider,variant),template=BANK_NATIVE_TEMPLATES[provider]?.[variant]||null;return{mode,steps:mode==='retrieve'?'implemented':'contract-pending',template:template?template.key:null,period:mode==='retrieve'?'required':'portal',liveVerified:false};}
+// The requested period of a connection: an explicit start date and an optional end date (null = the JST date when a job is queued);
+// never after today, never reversed. frozenCoverage turns it into the concrete dates a job freezes in its snapshot.
+export function jstToday(now=new Date()){return new Date(now.getTime()+9*3600000).toISOString().slice(0,10);}
+const isoDay=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
+export function bankCoverageInput(input,today=jstToday()){
+ if(!input||typeof input!=='object'||Array.isArray(input))throw Error('取得期間を確認してください。');
+ const from=input.from,to=input.to===undefined||input.to===null||input.to===''?null:input.to;
+ if(!isoDay(from)||from<'2000-01-01')throw Error('取得期間の開始日を確認してください。');
+ if(to!==null&&!isoDay(to))throw Error('取得期間の終了日を確認してください。');
+ if(from>today||to!==null&&to>today)throw Error('取得期間に今日より後の日付は指定できません。');
+ if(to!==null&&from>to)throw Error('取得期間の開始日と終了日を確認してください。');
+ return{from,to};
+}
+export function frozenCoverage(saved,today=jstToday()){const c=bankCoverageInput(saved,today);return{from:c.from,to:c.to??today};}
 export const round=n=>Math.round((n+Number.EPSILON)*100)/100;
 const text=v=>String(v??'').normalize('NFKC').trim(),norm=v=>text(v).toLowerCase().replace(/\s+/g,' ');
 export function money(v){if(v===null||v===undefined||text(v)==='')return null;const s=text(v).replace(/[¥￥,$\s]/g,'');if(!/^-?\d+(?:\.\d{1,2})?$/.test(s)||!Number.isFinite(Number(s))||Math.abs(Number(s))>1e12)throw Error('金額を確認してください。');return Number(s);}

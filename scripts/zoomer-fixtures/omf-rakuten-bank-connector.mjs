@@ -35,8 +35,11 @@ const GUID = /^[a-f\d-]{36}$/;
 
 // ── The fake portal: two documents on the bank's login host, a CSV export, an error page and a wait page ──
 const HOST = 'fes.rakuten-bank.co.jp', ORIGIN = 'https://' + HOST, ONE_PATH = '/MS/main/RbS', TWO_PATH = '/MS/main/RbS/statements';
+// Plan omf-rakuten-native-shiwake-20261020 (deliberate change): the standard login link is the observed official START_CORP
+// entry; the fake serves document one (login, then the authenticated menu in place) there too. Plus and the menu keep ONE_PATH.
+const CORP_PATH = '/XMS/security/RbS';
 const EXPORT_PATH = '/MS/main/RbS/export/meisai.csv', ERROR_PATH = '/MS/main/RbS/error', WAIT_PATH = '/MS/main/RbS/wait';
-const START_STANDARD = ORIGIN + ONE_PATH + '?COMMAND=START&CurrentPageID=SWITCH_PAGE', START_PLUS = ORIGIN + ONE_PATH + '?COMMAND=LOGIN&CurrentPageID=START_ACCOUNT_PLUS';
+const START_STANDARD = ORIGIN + CORP_PATH + '?COMMAND=LOGIN&CurrentPageID=START_CORP', START_PLUS = ORIGIN + ONE_PATH + '?COMMAND=LOGIN&CurrentPageID=START_ACCOUNT_PLUS';
 const MENU_URL = ORIGIN + ONE_PATH + '?COMMAND=MENU', BUSINESS = 'https://www.rakuten-bank.co.jp/business/';
 const ACCOUNT_LABEL = '普通 1234567 サンプル商事';
 const CSV_BYTES = Buffer.from('取引日,摘要,出金,入金,残高,メモ\r\n2026/09/01,振込 サンプル商事,,50000,950000,入金\r\n2026/09/02,カード引落,30000,,920000,\r\n');
@@ -73,6 +76,7 @@ function intercept(page, stats) {
     const url = request.url(); stats.requests.push(url); if (request.isNavigationRequest()) stats.navigations.push(url);
     let parsed; try { parsed = new URL(url); } catch { return request.abort(); }
     if (parsed.origin === ORIGIN && parsed.pathname === ONE_PATH) return request.respond(html(oneDocument(parsed.searchParams.get('COMMAND') === 'MENU' ? 'authenticated' : 'login')));
+    if (parsed.origin === ORIGIN && parsed.pathname === CORP_PATH) return request.respond(html(oneDocument('login')));
     if (parsed.origin === ORIGIN && parsed.pathname === TWO_PATH) return request.respond(html(twoDocument()));
     if (parsed.origin === ORIGIN && parsed.pathname === EXPORT_PATH) { stats.exportRequests++; return request.respond({ status: 200, contentType: 'text/csv; charset=utf-8', headers: { 'Content-Disposition': 'attachment; filename="meisai.csv"' }, body: CSV_BYTES }); }
     if (parsed.origin === ORIGIN && parsed.pathname === ERROR_PATH) return request.respond(html(`<!doctype html><html lang="ja"><meta charset="utf-8"><title>エラー</title>${STYLE}<body><p>システムエラーが発生しました</p><a href="#">トップへ</a></body></html>`));
@@ -268,13 +272,13 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
       assert.ok(!/secret-user-id|Secret-Pass-9981|LEAKED/.test(text), 'rakuten:no-typed-value');
       assert.equal(obs.length, 3, 'rakuten:same-dom-events-retained (events never create a record: login, menu, statements) ' + obs.map(x => x.pathname + '/' + x.visibleControls.join('|')).join(' ; '));
       const [r0, r1, r2] = obs;
-      assert.ok(r0.pathname === ONE_PATH && r0.inputs.some(i => i.type === 'password'), 'login record first');
+      assert.ok(r0.pathname === CORP_PATH && r0.inputs.some(i => i.type === 'password'), 'login record first (the START_CORP document)');
       assert.deepEqual(r0.typedInto.map(t => t.id), ['userid', 'password', 'smuggle'], 'rakuten:same-dom-events-retained (edited fields on the unchanged login page, one entry per field)');
       assert.deepEqual(r0.clicks.map(c => [c.tag, c.text, c.id]), [['HOSTILE', 'x', 'y'], ['BUTTON', 'ログイン', 'login']], 'rakuten:same-dom-events-retained (clicks on the unchanged login page, in order)');
       assert.ok(r0.typedInto[0].at <= r0.typedInto[1].at && r0.typedInto[1].at <= r0.clicks[0].at && r0.clicks[0].at <= r0.clicks[1].at, 'rakuten:same-dom-events-retained (chronological)');
       assert.ok(r.bindingName, 'rakuten:binding-whitelist (the binding is reachable by a page script)'); assert.deepEqual(r.hostile, ['sent', 'sent', 'sent', 'sent'], 'hostile calls reached the binding');
       assert.equal(r0.clicks.length, 2, 'rakuten:binding-whitelist (a kind-less object and a non-JSON payload add nothing)'); assert.equal(r0.eventsDropped, 0);
-      assert.equal(r1.pathname, ONE_PATH); assert.ok(r1.visibleControls.includes('入出金明細') && !r1.inputs.length, 'authenticated menu record second');
+      assert.equal(r1.pathname, CORP_PATH); assert.ok(r1.visibleControls.includes('入出金明細') && !r1.inputs.length, 'authenticated menu record second');
       assert.deepEqual(r1.clicks.map(c => [c.tag, c.text, c.id]), [['A', '入出金明細', 'statements']], 'rakuten:events-survive-navigation (the navigating click stays on its source page)');
       assert.equal(r2.pathname, TWO_PATH, 'rakuten:events-survive-navigation (the new document has its own record)');
       assert.deepEqual(r2.clicks.map(c => c.text), ['CSV出力'], 'rakuten:events-survive-navigation (the new document has its own clicks)'); assert.deepEqual(r2.typedInto.map(t => t.id), ['from', 'to'], 'rakuten:events-survive-navigation (fields edited on the new document)');

@@ -1,0 +1,17 @@
+export const BANK_CLASSIFICATION_VERSION: string;
+export type BankDirection = 'in' | 'out';
+export type BankClassificationValues = { purpose: string; accountCategoryId: string; subAccountCategoryId: string; taxCategoryId: string; taxRate: number | null; supplierId: string; invoiceNumber: string; notes: string; transferReviewed: boolean };
+export type BankCalendarCandidate = { kind: 'unique' | 'ambiguous' | 'late'; paymentId: string; title: string; dueDate: string; amount: number; category: string; recurring: boolean; gapDays: number } | { kind: 'combined'; paymentIds: string[]; titles: string[]; categories: string[]; amount: number };
+export type BankProposal = { purposeKind: 'own-transfer' | 'bank-fee' | 'card-fee' | 'interest' | 'teaching' | 'history' | 'calendar' | 'none'; purpose: string; accountCategoryId: string | null; accountName: string | null; supplierId: string | null; origin: string; confidence: 'supported' | 'review' | 'none' };
+export type BankProposalRow = { rowId: string; date: string; amount: number; direction: BankDirection; currency: string; description: string; payeeKey: string; proposal: BankProposal; evidence: { kind: string; label: string }[]; unresolved: string[]; calendarCandidates: BankCalendarCandidate[]; transfer: { kind: 'own-company'; proof: 'awaiting-other-bank' } | null; tax: { status: 'unknown' }; invoice: { value: null; status: 'unverified' }; preview: { debit: { account: string; amount: number }; credit: { account: string; amount: number } }; values: BankClassificationValues };
+export function normalizePayee(description: any): string;
+export function textPurpose(description: any, direction: BankDirection): { kind: 'bank-fee' | 'card-fee' | 'interest'; label: string; account: string } | null;
+export function calendarMatches(rows: any[], entries: any[], options?: { windowDays?: number; lateDays?: number }): Map<any, BankCalendarCandidate[]>;
+export function journalPreview(direction: BankDirection, amount: number, accountName: string | null, bankAccountName: string | null): BankProposalRow['preview'];
+export function missingMonths(rows: { date?: string }[]): string[];
+export const EMPTY_VALUES: Readonly<BankClassificationValues>;
+export function classificationValues(input: any, base?: Partial<BankClassificationValues>): BankClassificationValues;
+export function registrationReady(input?: { values?: Partial<BankClassificationValues>; sourceChanged?: boolean; superseded?: boolean; predecessorRegistered?: boolean; transfer?: any; currency?: string }): { ready: boolean; reasons: string[] };
+export const UNRESOLVED_LABELS: Readonly<Record<string, string>>;
+export function proposalHash(row: any): string;
+export function proposeBankClassifications(input?: { rows?: any[]; calendar?: any[]; history?: any[]; teachings?: any[]; companyNames?: string[]; chart?: { id: string; name: string; type?: string }[]; bankAccountName?: string }): { rows: BankProposalRow[]; notes: { historyEmpty: boolean; monthsWithoutRows: string[]; calendarEntries: number } };

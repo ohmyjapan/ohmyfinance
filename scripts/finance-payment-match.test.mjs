@@ -149,3 +149,36 @@ test('Vue conditional and all new component templates compile',async()=>{
   const source=readFileSync(new URL('../'+name,import.meta.url),'utf8'),p=parse(source,{filename:name});assert.deepEqual(p.errors,[]);assert.deepEqual(compileTemplate({source:p.descriptor.template.content,filename:name,id:'payment-test'}).errors,[],name);
  }
 });
+// Plan omf-rakuten-native-shiwake-20261020 §1/§3: the per-variant collection mode and capability, the native Rakuten template
+// facts and the frozen coverage shape — additive; the provider-wide BANK_PROVIDERS table stays contract-pending for every bank.
+import * as bankTables from '../shared/finance-payment-match.mjs';
+const tableFn=name=>{const f=bankTables[name];assert.equal(typeof f,'function','native-bank:export '+name);return f};
+test('per-variant collection mode: only 楽天銀行 standard retrieves; the provider table stays honest',()=>{
+ const mode=tableFn('bankCollectionMode');
+ assert.equal(mode('rakuten','standard'),'retrieve','native-bank:standard-retrieve');
+ for(const [p,v] of [['rakuten','plus'],['rakuten',null],['rakuten','x'],['paypay',null],['resona','direct'],['ikeda','portal'],['nope','standard']])assert.equal(mode(p,v),'observe','native-bank:observe-kept '+p+'/'+v);
+ assert.ok(bankTables.BANK_PROVIDERS.every(p=>p[2]==='contract-pending'),'native-bank:provider-table-pending');
+ const capability=tableFn('bankCapability');
+ assert.deepEqual(capability('rakuten','standard'),{mode:'retrieve',steps:'implemented',template:'rakuten-standard-native',period:'required',liveVerified:false},'native-bank:standard-capability');
+ assert.deepEqual(capability('rakuten','plus'),{mode:'observe',steps:'contract-pending',template:null,period:'portal',liveVerified:false},'native-bank:plus-capability');
+});
+test('the native 楽天銀行 template is the four observed columns, outflow-negative, with no transaction ID',()=>{
+ const t=bankTables.BANK_NATIVE_TEMPLATES?.rakuten?.standard;assert.ok(t,'native-bank:native-template');
+ assert.deepEqual(t.headers,['取引日','入出金(円)','残高(円)','入出金先内容']);assert.deepEqual(t.mapping,guessBankMapping(t.headers),'native-bank:template-mapping-guess');
+ assert.deepEqual(Object.keys(t.mapping),BANK_FIELDS.map(f=>f[0]),'native-bank:template-mapping-keys');assert.equal(t.mapping.transactionId,'');assert.equal(t.amountSign,'outflow-negative');assert.equal(t.key,'rakuten-standard-native');
+});
+test('requested coverage: explicit from, optional to (today in JST at queue), never after today, frozen as concrete dates',()=>{
+ const input=tableFn('bankCoverageInput'),frozen=tableFn('frozenCoverage'),today=tableFn('jstToday');
+ assert.equal(today(new Date('2026-10-19T15:30:00Z')),'2026-10-20','native-bank:jst-today');assert.equal(today(new Date('2026-10-19T14:59:59Z')),'2026-10-19');
+ assert.deepEqual(input({from:'2025-11-01',to:null},'2026-10-20'),{from:'2025-11-01',to:null},'native-bank:coverage-open-end');
+ assert.deepEqual(input({from:'2025-11-01',to:'2026-10-20'},'2026-10-20'),{from:'2025-11-01',to:'2026-10-20'});
+ assert.deepEqual(frozen({from:'2025-11-01',to:null},'2026-10-21'),{from:'2025-11-01',to:'2026-10-21'},'native-bank:coverage-frozen-today');
+ assert.deepEqual(frozen({from:'2025-11-01',to:'2026-10-20'},'2026-10-21'),{from:'2025-11-01',to:'2026-10-20'},'native-bank:coverage-frozen-explicit');
+ for(const bad of [{from:'2026-10-21',to:null},{from:'2025-11-01',to:'2026-10-21'},{from:'2026-10-01',to:'2026-09-30'},{from:'20251101'},{from:'2026-02-30'},{from:'1999-12-31'},{to:'2026-10-20'},'2025-11-01',[]])assert.throws(()=>input(bad,'2026-10-20'),Error,'native-bank:coverage-refused '+JSON.stringify(bad));
+});
+test('the native bank connection and classification components compile',async()=>{
+ const {createRequire}=await import('node:module'),req=createRequire(import.meta.url),{parse,compileTemplate}=req('@vue/compiler-sfc');
+ for(const name of ['components/intake/BankConnections.vue','components/intake/BankClassificationReview.vue']){
+  const source=readFileSync(new URL('../'+name,import.meta.url),'utf8'),p=parse(source,{filename:name});assert.deepEqual(p.errors,[]);assert.deepEqual(compileTemplate({source:p.descriptor.template.content,filename:name,id:'native-bank-test'}).errors,[],name);
+ }
+});

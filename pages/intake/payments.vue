@@ -15,6 +15,7 @@
         <div class="w-full min-w-0 text-sm sm:w-auto sm:text-right"><p class="font-medium" :class="r.review || r.paymentState==='unknown' ? 'text-amber-700 dark:text-amber-300' : ''">{{ purchasePaymentName(r.paymentState) }}</p><p class="break-words text-xs text-gray-500">購入 {{ amount(r.total,r.currency) }} · 支払 {{ amount(r.paid,r.currency) }} · 返金 {{ amount(r.refunded,r.currency) }}</p><p class="text-xs text-gray-500">残額 {{ amount(r.remaining,r.currency) }}</p><p v-if="r.review" class="break-words text-xs text-amber-700 dark:text-amber-300" data-purchase-review>要確認：{{ reviewReasons(r) }}</p></div>
       </div>
     </section>
+    <BankClassificationReview v-else-if="tab==='bank-classification'" />
     <section v-else class="card divide-y divide-gray-100 dark:divide-gray-700" data-payment-list>
       <p v-if="!data.payments.length" class="p-6 text-sm text-gray-500">この条件の明細はありません。カード明細または銀行ファイルを取り込んでください。</p>
       <button v-for="p in data.payments" :key="p.paymentKey" class="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 p-4 text-left hover:bg-gray-50 dark:hover:bg-gray-800" :data-payment-key="p.paymentKey" @click="selectPayment(p)">
@@ -28,6 +29,7 @@
 <script setup lang="ts">
 import BankStatementImporter from '~/components/intake/BankStatementImporter.vue'
 import BankConnections from '~/components/intake/BankConnections.vue'
+import BankClassificationReview from '~/components/intake/BankClassificationReview.vue'
 import IntakePaymentMatches from '~/components/intake/IntakePaymentMatches.vue'
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
@@ -52,7 +54,9 @@ const detailVersion=ref(0)
 watch(()=>assistant.ownerNativeSequence,async()=>{const r=assistant.ownerNative;if(!r||r.kind!=='allocation'||String(r.actorId)!==String(user.user?.id||''))return;await load();if(selected.value?.kind==='card'&&String(selected.value.importId)===String(r.importId)&&Number(selected.value.line)===Number(r.line))detailVersion.value++})
 // F2 (plan omf-monthly-reconciliation-20261020): the period's purchases and their payment state. Same 開始/終了 as the payments, never
 // the account filter (an unpaid purchase has no account yet). Amounts are per purchase and currency; an unknown total stays 金額未確定.
-const TABS=[['payments','明細'],['purchases','購入（期間内）']] as const,PAYMENT_STATES=PURCHASE_PAYMENT_STATES
+// Plan omf-rakuten-native-shiwake-20261020 §4: 銀行仕訳 is the native bank classification review of the selected company. Like 購入（期間内）
+// it carries no payment selection for Navi (the watch below keeps the selection on 明細 only and restores it there).
+const TABS=[['payments','明細'],['purchases','購入（期間内）'],['bank-classification','銀行仕訳']] as const,PAYMENT_STATES=PURCHASE_PAYMENT_STATES
 const tab=ref<string>('payments'),purchases=ref<any>({rows:[],counts:{},undated:0}),purchaseFilters=reactive({paymentState:'all',purchaseState:'all'})
 // Navi sees the selected payment only while its detail is visible (明細). On 購入（期間内） a new message carries no payment selection;
 // `selected` stays so returning to 明細 restores the detail and its selection. A turn already sent keeps its own frozen target.

@@ -4,6 +4,8 @@ import { boundedBody } from '../../services/financeDraftService'
 import * as bank from '../../services/financeBankStatementService'
 import * as collection from '../../services/financeBankCollectionService'
 import * as matches from '../../services/financePaymentMatchService'
+import * as classification from '../../services/financeBankClassificationService'
+import { calendarCompany } from '../../utils/calendarAccess'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  try{
@@ -22,6 +24,18 @@ export default defineEventHandler(async event=>{
   // F2 (plan omf-monthly-reconciliation-20261020): the period's purchases with their payment state; records/:id below is unchanged.
   if(parts[0]==='records'&&parts.length===1&&method==='GET')return matches.listPurchaseRecords(ownerId,{from:q('from'),to:q('to'),paymentState:q('paymentState'),purchaseState:q('purchaseState')})
   if(parts[0]==='records'&&parts.length===2&&method==='GET')return matches.recordPaymentsView(ownerId,parts[1])
+  // Plan omf-rakuten-native-shiwake-20261020 §4: native bank classification (仕訳). The owner's bank account authorizes the source rows;
+  // the token's selected company with a fresh active membership (calendarCompany, read at this request) authorizes the calendar,
+  // history, teaching and the company Transaction. Existing routes below are unchanged.
+  if(parts[0]==='bank-classifications'){
+   const { organizationId: classificationCompany } = await calendarCompany(event)
+   if(parts.length===1&&method==='GET')return classification.listBankClassifications(ownerId,classificationCompany,{account:q('account')})
+   if(parts.length===2&&parts[1]==='generate'&&method==='POST')return classification.generateBankClassifications(ownerId,classificationCompany,await json())
+   if(parts.length===2&&method==='GET')return classification.getBankClassification(ownerId,classificationCompany,parts[1])
+   if(parts.length===2&&method==='PUT')return classification.updateBankClassification(ownerId,classificationCompany,parts[1],await json())
+   if(parts.length===3&&parts[2]==='remember'&&method==='POST')return classification.rememberBankClassification(ownerId,classificationCompany,parts[1],await json())
+   if(parts.length===3&&parts[2]==='register'&&method==='POST')return classification.registerBankClassification(ownerId,classificationCompany,parts[1],await json())
+  }
   if(parts[0]==='bank'){
    if(parts[1]==='accounts'&&parts.length===2){if(method==='GET')return bank.listBankAccounts(ownerId);if(method==='POST')return bank.createBankAccount(ownerId,await json())}
    // S4 (plan omf-bank-collection-amended-20261018): the owner's web-bank connection, request, jobs and captures of one account; the retained files; a PC's bank scope.
