@@ -66,4 +66,7 @@ A capture with zero rows is flagged; a date range starting after the requested s
 - Verify: date read-back, the 楽天銀行フォーマット CSV (not Zengin), the warning accepted once, one completed download from
   `fes.rakuten-bank.co.jp`, the retained original and manifest, the upload/import receipt; reconcile the requested period with the
   file's first/last dates; compare each saved date/sign/amount/balance/raw row with the original; repeat delivery creates nothing.
-- Then 銀行仕訳 (docs/bank-classification.md). Record actual counts and every limitation; keep unresolved rows visible.
+- Then 銀行仕訳 (docs/bank-classification.md) with the company actually selected. Record actual counts and every limitation; keep
+  unresolved rows visible. A draft made while another company was selected is moved with「この会社で仕訳する」; a mistaken link or a
+  registration whose Transaction was deleted is released with「紐付けを解除」/「登録を解除」; an undetected own-company holder is
+  remembered with「この支払先を自社口座として記憶」(it still needs the other bank's proof and an owner-chosen account).

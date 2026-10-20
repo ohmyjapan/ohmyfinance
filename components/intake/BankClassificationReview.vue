@@ -24,7 +24,14 @@
           <div class="min-w-0 flex-1"><p class="text-xs text-gray-500">{{ r.date }} · {{ r.direction === 'in' ? '入金' : '出金' }}</p><p class="break-words font-medium">{{ r.description }}</p></div>
           <div class="text-right text-sm"><p>{{ money(r) }}</p><p class="text-xs" :class="r.state === 'registered' || r.state === 'linked' ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'" data-bank-classification-state>{{ STATES[r.state] || r.state }}</p></div>
         </div>
-        <p v-if="r.state === 'other-company'" class="text-xs text-gray-500">別の会社で仕訳中の明細です。この会社では表示だけです。</p>
+        <div v-if="r.state === 'other-company'" class="min-w-0 space-y-2 text-xs text-gray-500" data-bank-classification-other-company>
+          <p class="break-words">別の会社で仕訳中の明細です。その会社の用途・メモ・根拠・履歴はこの会社には表示されません。</p>
+          <p v-if="r.otherCompanyDraft?.registered" class="break-words">別の会社で登録済み（または登録処理中）のため、この会社では仕訳・登録できません。</p>
+          <template v-else-if="r.otherCompanyDraft">
+            <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-200"><input v-model="reassignConfirm[r.rowId]" data-bank-classification-reassign-confirm type="checkbox" class="mt-1">この明細の仕訳を選択中の会社（{{ data.company?.name }}）に移します。別の会社の下書きは未登録で取引はありません。その内容は別の会社の記録として残り、この会社には引き継がれません。</label>
+            <button class="btn btn-secondary" :disabled="busy || !reassignConfirm[r.rowId]" data-bank-classification-reassign @click="reassign(r)">この会社で仕訳する</button>
+          </template>
+        </div>
         <template v-else-if="view(r)">
           <p class="break-words text-sm" data-bank-classification-proposal>{{ proposalText(r) }}</p>
           <p class="break-words text-xs text-gray-600 dark:text-gray-300" data-bank-classification-preview>借方 {{ view(r).preview.debit.account }} {{ num(view(r).preview.debit.amount) }} ／ 貸方 {{ view(r).preview.credit.account }} {{ num(view(r).preview.credit.amount) }}</p>
@@ -34,7 +41,18 @@
           <p v-if="r.draft?.sourceChanged" class="text-xs text-red-600 dark:text-red-300">元の明細が変更されています。内容を確認して保存してください。</p>
           <p v-if="r.predecessorRegistered" class="text-xs text-amber-700 dark:text-amber-300" data-bank-classification-predecessor>訂正前の同じ明細で登録・紐付け済みです。この明細は登録しません（二重登録の防止）。</p>
           <p v-if="r.draft?.evidenceChanged && !done(r)" class="text-xs text-amber-700 dark:text-amber-300">保存後に根拠が変わりました。「提案を作成・更新」で最新の提案を確認してください。</p>
-          <NuxtLink v-if="done(r)" :to="'/transactions/' + r.draft.registration.transactionId" class="block text-sm text-primary-main dark:text-primary-light" data-bank-classification-transaction>{{ r.draft.registration.state === 'linked' ? '紐付けた取引を開く' : '登録した取引を開く' }}</NuxtLink>
+          <NuxtLink v-if="done(r) && r.draft.registration.target !== 'missing'" :to="'/transactions/' + r.draft.registration.transactionId" class="block text-sm text-primary-main dark:text-primary-light" data-bank-classification-transaction>{{ r.draft.registration.state === 'linked' ? '紐付けた取引を開く' : '登録した取引を開く' }}</NuxtLink>
+          <div v-if="r.draft?.issue || canRelease(r)" class="min-w-0 space-y-2 rounded-xl border border-amber-200 p-2 dark:border-amber-800" data-bank-classification-issue>
+            <p v-if="r.draft.issue" class="break-words text-xs text-amber-700 dark:text-amber-300">{{ ISSUES[r.draft.issue] }}</p>
+            <template v-if="canRelease(r)">
+              <label class="flex items-start gap-2 text-sm"><input v-model="releaseConfirm[r.rowId]" data-bank-classification-release-confirm type="checkbox" class="mt-1">{{ r.draft.registration.kind === 'link' ? '紐付けを解除します（紐付けた取引は変更・削除しません）' : '登録を解除します（取引はすでにありません。同じ取引IDでもう一度登録できます）' }}</label>
+              <button class="btn btn-secondary" :disabled="busy || !releaseConfirm[r.rowId]" data-bank-classification-release @click="releaseRegistration(r)">{{ r.draft.registration.kind === 'link' ? '紐付けを解除' : '登録を解除' }}</button>
+            </template>
+          </div>
+          <div v-if="r.draft?.registration?.state === 'reserved'" class="min-w-0 space-y-2" data-bank-classification-resume-panel>
+            <p class="break-words text-xs text-amber-700 dark:text-amber-300">登録処理が完了していません。「登録処理を再開」で、予約済みの同じ取引ID・予約時の内容のまま{{ r.draft.registration.kind === 'link' ? '紐付け' : '登録' }}を完了します（その後に元の明細が変わっていても二重登録になりません）。</p>
+            <button class="btn btn-primary" :disabled="busy" data-bank-classification-resume @click="resume(r)">登録処理を再開</button>
+          </div>
           <p v-if="!r.draft && r.state === 'none'" class="text-xs text-gray-500">「提案を作成・更新」で下書きを作成すると、確認・修正・登録ができます。</p>
           <button v-if="r.draft && !done(r) && !r.superseded" class="text-sm text-primary-main dark:text-primary-light" data-bank-classification-open @click="toggle(r)">{{ open[r.rowId] ? '閉じる' : '確認・修正' }}</button>
         </template>
@@ -52,6 +70,7 @@
           <div class="flex flex-wrap gap-2">
             <button class="btn btn-secondary" :disabled="busy" data-bank-classification-save @click="save(r)">保存</button>
             <button class="btn btn-secondary" :disabled="busy || !r.draft.payeeKey || dirty(r)" data-bank-classification-remember @click="remember(r)">{{ r.draft.transfer ? 'この支払先を自社口座として記憶' : 'この支払先の仕訳として記憶' }}</button>
+            <button v-if="!r.draft.transfer && !TEXT_KINDS.includes(r.draft.proposed?.purposeKind)" class="btn btn-secondary" :disabled="busy || !r.draft.payeeKey" data-bank-classification-remember-own @click="rememberOwn(r)">この支払先を自社口座として記憶</button>
           </div>
           <div v-if="(links[r.rowId] || []).length" class="flex min-w-0 flex-wrap items-end gap-2">
             <label class="min-w-0 text-sm">既存の取引（同じ会社・金額・入出金・日付の候補）<select v-model="forms[r.rowId].linkId" data-bank-classification-link-select :class="INPUT"><option value="">選択してください</option><option v-for="t in links[r.rowId]" :key="t.id" :value="t.id">{{ String(t.date).slice(0, 10) }} · {{ num(t.amount) }} · {{ t.notes || '取引' }}</option></select></label>
@@ -80,12 +99,23 @@ const STATES: Record<string, string> = { none: '下書きなし', proposed: '提
 const ORIGINS: Record<string, string> = { 'bank-text': '明細の摘要', calendar: 'カレンダー', history: '過去の仕訳', teaching: '記憶した支払先', 'own-company-name': '自社名', none: '根拠なし' }
 const CONFIDENCE: Record<string, string> = { supported: '根拠あり', review: '要確認', none: '提案なし' }
 const VALUE_KEYS = ['purpose', 'accountCategoryId', 'taxCategoryId', 'supplierId', 'invoiceNumber', 'notes', 'transferReviewed'] as const
+// Review fold (plan omf-rakuten-shiwake-review-fold-20261020): the owner's exits — move another company's unregistered draft here,
+// release/unlink a registration whose Transaction is missing (or a mistaken link), resume a registering row, remember an
+// undetected holder as the company's own account (no account is stored; later rows stay transfers awaiting review).
+const TEXT_KINDS = ['bank-fee', 'card-fee', 'interest']
+const ISSUES: Record<string, string> = {
+  'transaction-missing': '登録した取引が見つかりません（取引ページで削除された可能性があります）。「登録を解除」すると、この明細を確認して同じ取引IDでもう一度登録できます。',
+  'transaction-changed': '登録した取引の金額・入出金・日付が明細と異なります。取引ページで修正するか、取引を削除してから「登録を解除」してください。過去の仕訳としては使いません。',
+  'link-missing': '紐付けた取引が見つかりません。「紐付けを解除」すると、この明細を確認・登録できます。',
+  'link-changed': '紐付けた取引の金額・入出金が明細と異なります。誤った紐付けなら「紐付けを解除」してください。過去の仕訳としては使いません。'
+}
 const accounts = ref<any[]>([]), chart = ref<any[]>([]), taxes = ref<any[]>([]), suppliers = ref<any[]>([]), account = ref(''), data = ref<any>({}), busy = ref(false), error = ref(''), message = ref('')
-const forms = reactive<Record<string, any>>({}), open = reactive<Record<string, boolean>>({}), links = reactive<Record<string, any[]>>({})
+const forms = reactive<Record<string, any>>({}), open = reactive<Record<string, boolean>>({}), links = reactive<Record<string, any[]>>({}), reassignConfirm = reactive<Record<string, boolean>>({}), releaseConfirm = reactive<Record<string, boolean>>({})
 const num = (n: any) => Number(n).toLocaleString('ja-JP')
 const money = (r: any) => (r.direction === 'in' ? '+' : '−') + num(Math.abs(Number(r.amount))) + ' ' + (r.currency || 'JPY')
 const view = (r: any) => r.draft || r.proposal
 const done = (r: any) => !!r.draft?.registration && ['registered', 'linked'].includes(r.draft.registration.state)
+const canRelease = (r: any) => done(r) && (r.draft.registration.kind === 'link' || r.draft.registration.target === 'missing')
 const evidenceOf = (r: any) => (r.draft ? r.draft.evidence : r.proposal?.evidence) || []
 const unresolvedOf = (r: any) => (r.draft ? r.draft.unresolved : r.proposal?.unresolved) || []
 const accountName = (id: string) => chart.value.find((a: any) => String(a._id) === String(id))?.name || ''
@@ -94,7 +124,7 @@ function proposalText(r: any) {
   const proposed = p ? `提案: ${p.purpose || '用途未確定'} · ${p.accountName || '勘定科目 未設定'} · 根拠 ${ORIGINS[p.origin] || p.origin} · ${CONFIDENCE[p.confidence] || p.confidence}` : '提案なし'
   return r.draft?.manual ? `${proposed} ／ 現在: ${r.draft.values.purpose || '用途未入力'} · ${accountName(r.draft.values.accountCategoryId) || '勘定科目 未設定'}` : proposed
 }
-const countsText = computed(() => { const c = data.value.counts || {}; return `明細 ${c.rows ?? 0}件 · 提案 ${c.proposed ?? 0} · 修正済み ${c.edited ?? 0} · 登録済み ${c.registered ?? 0} · 紐付け済み ${c.linked ?? 0} · 要確認 ${c.unresolved ?? 0} · 下書きなし ${c.none ?? 0} · 別の会社 ${c.otherCompany ?? 0} · 訂正済み ${c.superseded ?? 0}` })
+const countsText = computed(() => { const c = data.value.counts || {}; return `明細 ${c.rows ?? 0}件 · 提案 ${c.proposed ?? 0} · 修正済み ${c.edited ?? 0} · 登録済み ${c.registered ?? 0} · 紐付け済み ${c.linked ?? 0} · 要確認 ${c.unresolved ?? 0} · 下書きなし ${c.none ?? 0} · 別の会社 ${c.otherCompany ?? 0} · 訂正済み ${c.superseded ?? 0} · 要対応 ${c.issues ?? 0}` })
 const formOf = (d: any) => ({ revision: d.revision, ...Object.fromEntries(VALUE_KEYS.map(k => [k, k === 'transferReviewed' ? d.values?.[k] === true : String(d.values?.[k] ?? '')])), acceptSource: false, confirmed: false, confirmNew: false, linkId: '' })
 const dirty = (r: any) => { const f = forms[r.rowId], v = r.draft?.values || {}; return !!f && VALUE_KEYS.some(k => k === 'transferReviewed' ? f[k] !== (v[k] === true) : String(f[k] ?? '') !== String(v[k] ?? '')) }
 const messageOf = (e: any) => e?.data?.data?.message || e?.data?.statusMessage || e?.message || '処理できませんでした。'
@@ -126,6 +156,28 @@ async function register(r: any, action: 'create' | 'link') {
     adopt(await $fetch(api, { headers: user.authHeader, query: { account: account.value } }))
   })
 }
+const reloadList = async () => adopt(await $fetch(api, { headers: user.authHeader, query: { account: account.value } }))
+async function reassign(r: any) {
+  await run(async () => {
+    await $fetch(api + '/reassign', { method: 'POST', headers: user.authHeader, body: { bankAccountId: account.value, rowId: r.rowId, revision: r.otherCompanyDraft.revision, confirm: true } })
+    reassignConfirm[r.rowId] = false; message.value = 'この明細の仕訳をこの会社に移しました（別の会社の内容は引き継いでいません。取引はまだ作成していません）。'; await reloadList()
+  })
+}
+async function releaseRegistration(r: any) {
+  const reg = r.draft.registration
+  await run(async () => {
+    await $fetch(api + '/' + r.draft.id + '/release', { method: 'POST', headers: user.authHeader, body: { revision: r.draft.revision, transactionId: reg.transactionId, confirm: true } })
+    releaseConfirm[r.rowId] = false; message.value = reg.kind === 'link' ? '紐付けを解除しました（取引は変更していません）。' : '登録を解除しました（同じ取引IDでもう一度登録できます）。'; await reloadList()
+  })
+}
+async function resume(r: any) {
+  const reg = r.draft.registration
+  await run(async () => {
+    await $fetch(api + '/' + r.draft.id + '/register', { method: 'POST', headers: user.authHeader, body: { revision: r.draft.revision, action: reg.kind, confirm: true, ...(reg.kind === 'link' ? { transactionId: reg.transactionId } : {}) } })
+    message.value = (reg.kind === 'link' ? '紐付け' : '登録') + 'を完了しました（予約済みの同じ取引です）。'; await reloadList()
+  })
+}
+async function rememberOwn(r: any) { await run(async () => { await $fetch(api + '/' + r.draft.id + '/remember', { method: 'POST', headers: user.authHeader, body: { revision: r.draft.revision, kind: 'own-transfer' } }); message.value = 'この支払先を自社口座として記憶しました（次の明細からは資金移動として提案し、他行の入金確認と勘定科目の選択を求めます）。' }) }
 onMounted(() => run(async () => {
   const [a, c, t, s]: any[] = await Promise.all([$fetch('/api/finance-payments/bank/accounts', { headers: user.authHeader }), $fetch('/api/account-categories', { headers: user.authHeader }), $fetch('/api/tax-categories', { headers: user.authHeader }), $fetch('/api/suppliers', { headers: user.authHeader }).catch(() => [])])
   accounts.value = a.accounts || []; chart.value = Array.isArray(c) ? c : []; taxes.value = Array.isArray(t) ? t : []; suppliers.value = Array.isArray(s) ? s : (s?.suppliers || [])

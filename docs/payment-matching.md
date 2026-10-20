@@ -292,7 +292,9 @@ another variant before any page. The flow, its observed facts and its live-test 
 never posts. The 銀行仕訳 tab (`/intake/payments`, `BankClassificationReview.vue`, `bank-classifications` routes) proposes and
 records a company's accounting classification of each owner bank row and, only on the explicit「確認して取引へ登録」, creates one
 native company Transaction (or links an existing one). It reads the selected company's calendar (fresh membership), never changes
-an allocation, a calendar entry or a bank row. Details, guards and limits: docs/bank-classification.md.
+an allocation, a calendar entry or a bank row. Its owner exits (moving another company's unregistered draft, releasing or
+unlinking a registration whose Transaction is missing or mistaken, resuming a registering row, remembering an own-company holder)
+never write a Transaction either. Details, guards and limits: docs/bank-classification.md.
 
 Verification: `node --test collector/test/rakuten-standard.test.mjs scripts/finance-bank-classification.test.mjs
 scripts/finance-payment-match.test.mjs`; through the hub `node scripts/zoomer-verify.mjs --run-fixture omf-rakuten-native-shiwake.mjs

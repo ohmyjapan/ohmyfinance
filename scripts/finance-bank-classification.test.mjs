@@ -146,3 +146,19 @@ test('a calendar-only candidate keeps its title and stays review even when its c
 test('a row whose corrected predecessor was registered or linked is not registered again', () => {
   assert.deepEqual(fn('registrationReady')({ values: { purpose: 'x', accountCategoryId: 'a1'.repeat(12) }, currency: 'JPY', predecessorRegistered: true }).reasons, ['predecessor-registered'], 'classification:predecessor-registered');
 });
+// Review fold F4 (plan omf-rakuten-shiwake-review-fold-20261020): a holder the proposer did not detect (company key plus extra
+// holder text), remembered by the owner as an own-company account, is proposed as an own-company transfer awaiting the other
+// bank's proof: no account, no tax, no T number, not ready until the transfer is reviewed; a supplier history for the same payee
+// does not override it, and the other direction is untouched.
+test('a payee the owner remembered as an own-company account stays a transfer awaiting review, never a supported expense', () => {
+  const HOLDER = '振込 カクウホ-ルディングス ニホン', key = fn('normalizePayee')(HOLDER);
+  assert.notEqual(key, fn('normalizePayee')(OWN), 'classification:holder-not-detected');
+  const teachings = [{ payeeKey: key, direction: 'out', values: { purpose: 'own-transfer' } }], history = [{ payeeKey: key, direction: 'out', values: { purpose: '外注費', accountCategoryId: 'a5'.repeat(12) }, state: 'registered' }];
+  const r = one({ rows: [row('h1', '2026-10-14', 120000, HOLDER)], companyNames: [OWN], teachings, history }, 'h1');
+  assert.equal(r.proposal.purposeKind, 'own-transfer', 'classification:taught-own-holder'); assert.equal(r.proposal.origin, 'teaching'); assert.equal(r.proposal.confidence, 'review');
+  assert.equal(r.proposal.accountCategoryId, null, 'classification:taught-own-holder-no-account'); assert.equal(r.values.accountCategoryId, '');
+  assert.deepEqual(r.transfer, { kind: 'own-company', proof: 'awaiting-other-bank' }); assert.ok(r.unresolved.includes('transfer-awaiting-other-bank'));
+  assert.deepEqual([r.tax, r.invoice, r.values.taxCategoryId, r.values.invoiceNumber], [{ status: 'unknown' }, { value: null, status: 'unverified' }, '', ''], 'classification:taught-own-holder-no-tax-t');
+  assert.deepEqual(fn('registrationReady')({ values: r.values, transfer: r.transfer, currency: 'JPY' }).reasons, ['account-missing', 'transfer-unreviewed'], 'classification:taught-own-holder-not-ready');
+  assert.notEqual(one({ rows: [row('h2', '2026-10-15', -120000, HOLDER)], teachings }, 'h2').proposal.purposeKind, 'own-transfer', 'classification:taught-own-holder-direction');
+});

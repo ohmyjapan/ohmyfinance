@@ -31,10 +31,13 @@ export default defineEventHandler(async event=>{
    const { organizationId: classificationCompany } = await calendarCompany(event)
    if(parts.length===1&&method==='GET')return classification.listBankClassifications(ownerId,classificationCompany,{account:q('account')})
    if(parts.length===2&&parts[1]==='generate'&&method==='POST')return classification.generateBankClassifications(ownerId,classificationCompany,await json())
+   // Review fold (plan omf-rakuten-shiwake-review-fold-20261020): F1 explicit move of another company's unregistered draft; F2 explicit release/unlink.
+   if(parts.length===2&&parts[1]==='reassign'&&method==='POST')return classification.reassignBankClassification(ownerId,classificationCompany,await json())
    if(parts.length===2&&method==='GET')return classification.getBankClassification(ownerId,classificationCompany,parts[1])
    if(parts.length===2&&method==='PUT')return classification.updateBankClassification(ownerId,classificationCompany,parts[1],await json())
    if(parts.length===3&&parts[2]==='remember'&&method==='POST')return classification.rememberBankClassification(ownerId,classificationCompany,parts[1],await json())
    if(parts.length===3&&parts[2]==='register'&&method==='POST')return classification.registerBankClassification(ownerId,classificationCompany,parts[1],await json())
+   if(parts.length===3&&parts[2]==='release'&&method==='POST')return classification.releaseBankClassification(ownerId,classificationCompany,parts[1],await json())
   }
   if(parts[0]==='bank'){
    if(parts[1]==='accounts'&&parts.length===2){if(method==='GET')return bank.listBankAccounts(ownerId);if(method==='POST')return bank.createBankAccount(ownerId,await json())}
