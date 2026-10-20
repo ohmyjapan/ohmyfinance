@@ -72,6 +72,69 @@ function portal(){
 }
 
 async function availablePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
+// F2: use the actual daemon, setup HTTP routes and tick. Only the subprocess transport and Chrome network are intercepted.
+async function runningCollectorLeg({temp,collectorDir,origin,config,store,vault,installationId,generation,localKey,broker,bank,ownerReq,ok,db,pass}){
+  const activatedAt=new Date().toISOString(),protection={installationId,generation,keyProvider:'CurrentUser DPAPI + OMF',publicKey:localKey.publicKey,activatedAt};
+  await store.withLock(async()=>{
+    await store.save('check',vault.aadOf({installationId,origin:PUBLIC,ownerId:config.accountInfo[0].ownerId,provider:'check',accountId:'check'}),{canary:hex(16)},broker);
+    await new vault.Vault(collectorDir).update(()=>({...config,accounts:{},services:{},protection,paused:true}));
+    await vault.replaceVaultFile(path.join(collectorDir,'vault-state.json'),JSON.stringify({v:3,phase:'active',installationId,generation,publicKey:localKey.publicKey,activatedAt}));
+  });
+  const port=await availablePort(),metrics=path.join(temp,'daemon-portal.json'),requests=path.join(temp,'daemon-http.jsonl'),launcher=path.join(temp,'daemon-launcher.mjs');
+  const mutant=process.env.OMF_TEST_RAKUTEN_DAEMON_MUTANT||'';
+  assert.ok(['','omit-login','omit-save','status-no-presence'].includes(mutant),'known daemon mutation');
+  const script=`import fs from 'node:fs';import {createRequire,registerHooks} from 'node:module';
+const require=createRequire(${JSON.stringify(path.join(root,'package.json'))});const {portal}=require(${JSON.stringify(__filename)});const site=portal();
+const metricFile=${JSON.stringify(metrics)},requestFile=${JSON.stringify(requests)},publicOrigin=${JSON.stringify(PUBLIC)},localOrigin=${JSON.stringify(origin)};
+const realFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const value=String(input?.url||input);const mapped=value.startsWith(publicOrigin+'/')?localOrigin+value.slice(publicOrigin.length):value;
+const parsed=new URL(mapped);if(parsed.origin!==localOrigin&&parsed.origin!==${JSON.stringify('http://127.0.0.1:'+port)})throw Error('fixture blocked unexpected fetch');
+fs.appendFileSync(requestFile,JSON.stringify({path:parsed.pathname,method:init?.method||'GET'})+'\\n');return realFetch(mapped,init);};
+globalThis.__omfFictionalBankBrowser=async browser=>{let create=browser.newPage.bind(browser);Object.defineProperty(browser,'newPage',{configurable:true,get(){return async(...args)=>{const page=await create(...args);await page.setRequestInterception(true);page.on('request',async request=>{await site.respond(request);fs.writeFileSync(metricFile,JSON.stringify({posts:site.loginPosts,downloads:site.downloads,foreign:site.foreign}));});return page;};},set(fn){create=fn.bind(browser);}});return browser;};
+registerHooks({load(url,context,next){const result=next(url,context);if(url===${JSON.stringify(u('collector/browser.mjs'))})return {...result,source:String(result.source)+'\\nconst fixtureLaunch=puppeteer.launch.bind(puppeteer);puppeteer.launch=async(...args)=>globalThis.__omfFictionalBankBrowser(await fixtureLaunch(...args));\\n'};
+if(url===${JSON.stringify(u('collector/index.mjs'))}&&${JSON.stringify(mutant)}){let source=String(result.source);const kind=${JSON.stringify(mutant)};
+const anchor=kind==='omit-login'?'login:bankLoginFor(bank,config,live)':kind==='status-no-presence'?'hasCredentials:!!envelope':source.split('\\n').find(line=>line.includes('return reply(200,await saveBankLogin(input,'));
+if(!anchor||source.split(anchor).length!==2)throw Error('daemon mutation anchor mismatch');source=source.replace(anchor,kind==='omit-login'?'login:null':kind==='status-no-presence'?'hasCredentials:false':'        return reply(200,{saved:true});');return {...result,source};}return result;}});
+await import(${JSON.stringify(u('collector/run.mjs'))});`;
+  await fsp.writeFile(launcher,script);
+  const child=spawn(process.execPath,[launcher],{cwd:root,windowsHide:true,env:{...process.env,OMF_COLLECTOR_DIR:collectorDir,OMF_COLLECTOR_PORT:String(port),OMF_COLLECTOR_TICK_MS:'1000'},stdio:['ignore','pipe','pipe']});let output='';for(const stream of [child.stdout,child.stderr])stream.on('data',v=>{output=(output+v).slice(-6000)});
+  const waitFor=async(read,label,timeout=90000)=>{const until=Date.now()+timeout;while(Date.now()<until){if(child.exitCode!==null)throw Error('daemon exited: '+output);const value=await read();if(value)return value;await pause(200);}throw Error('daemon timeout '+label+': '+output);};
+  let local;
+  try{
+    const setup=await waitFor(async()=>{try{const u=new URL((await fsp.readFile(path.join(collectorDir,'setup-link.txt'),'utf8')).trim());return u.port===String(port)?u:null}catch{return null}},'setup link');
+    local=async(route,body)=>{const response=await fetch(setup.origin+route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-Setup-Key':setup.hash.slice(1),Origin:setup.origin},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(30000)});return {status:response.status,data:await response.json()};};
+    await waitFor(async()=>{const r=await local('/status');return r.status===200&&r.data.startupDone},'startup');
+    ok(await local('/resume',{}),'daemon resume');
+    await waitFor(async()=>{const r=await local('/status');if(r.data.keyLost||r.data.reconnectNeeded)throw Error('daemon resume: '+r.data.message);return r.data.protected&&r.data.unlocked&&!r.data.busy&&!r.data.authorizing&&!r.data.testBroker},'normal remembered-PC resume');
+    const body={bankAccountId:bank,username:FICT_USER,password:FICT_PASS};
+    const priorKey=JSON.parse(await fsp.readFile(path.join(collectorDir,'secrets','rakuten-'+bank+'.sealed'),'utf8')).keyId;
+    ok(await local('/bank/credentials',body),'daemon positive bank save');
+    assert.notEqual(JSON.parse(await fsp.readFile(path.join(collectorDir,'secrets','rakuten-'+bank+'.sealed'),'utf8')).keyId,priorKey,'auto:daemon-http-save-writes-new-envelope');
+    const after=ok(await local('/status'),'daemon status after save'),saved=after.banks.find(b=>b.bankAccountId===bank);
+    assert.ok(saved?.supported&&saved.hasCredentials&&!saved.refused,'auto:daemon-http-save-status');
+    assert.ok(!JSON.stringify(after).includes(FICT_PASS)&&!JSON.stringify(after).includes(FICT_USER),'auto:daemon-status-no-values');
+    const marker=path.join(collectorDir,'bank-login','rakuten-'+bank+'.json'),entry=JSON.parse(await fsp.readFile(path.join(collectorDir,'secrets','rakuten-'+bank+'.sealed'),'utf8'));
+    await fsp.mkdir(path.dirname(marker),{recursive:true});await vault.replaceVaultFile(marker,JSON.stringify({entry:'rakuten-'+bank,keyId:entry.keyId,refusedAt:new Date().toISOString()}));
+    assert.equal(ok(await local('/status'),'daemon pending status').banks.find(b=>b.bankAccountId===bank).refused,true,'auto:daemon-status-real-marker');
+    ok(await local('/bank/credentials',body),'daemon owner resave clears pending');
+    assert.equal(ok(await local('/status'),'daemon resaved status').banks.find(b=>b.bankAccountId===bank).refused,false,'auto:daemon-resave-clears-marker');
+    const reads=()=>fs.existsSync(requests)?fs.readFileSync(requests,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[];
+    const before=reads().filter(r=>r.path.includes('/collector-security/keys/')&&r.method==='GET').length;
+    const job=ok(await ownerReq('bank/accounts/'+bank+'/sync',{}),'daemon native sync').job;
+    await waitFor(async()=>{const row=await db.collection('financebankjobs').findOne({jobId:job.jobId});assert.notEqual(row?.state,'verification_required','auto:daemon-no-manual-attention');if(row?.state==='failed')throw Error('daemon bank failed: '+row.message);return row?.state==='complete'},'real tick retrieval',120000);
+    await waitFor(async()=>{const s=ok(await local('/status'),'daemon idle');return !s.busy&&s.banks.find(b=>b.bankAccountId===bank)?.refused===false},'accepted pending marker cleared');
+    const observed=JSON.parse(await fsp.readFile(metrics,'utf8'));
+    assert.deepEqual(observed.posts.map(p=>p.ok),[true],'auto:daemon-one-submit');assert.equal(observed.downloads.length,1,'auto:daemon-export');assert.deepEqual(observed.foreign,[]);
+    const afterReads=reads();assert.equal(afterReads.filter(r=>r.path.includes('/collector-security/keys/')&&r.method==='GET').length-before,1,'auto:daemon-one-key-open');
+    assert.ok(afterReads.some(r=>r.path==='/api/finance-payments/collector/bank/claim'&&r.method==='POST'),'auto:daemon-real-tick-claim');
+    const completed=await db.collection('financebankjobs').findOne({jobId:job.jobId});assert.equal(completed.statementIds.length,1,'auto:daemon-capture-linked');
+    assert.equal(await db.collection('financebankstatements').countDocuments({_id:completed.statementIds[0],'capture.bankAccountId':bank,'capture.state':'imported'}),1,'auto:daemon-capture-imported (source dedup may reuse the earlier capture)');
+    pass('real collector process: remembered-PC resume with real owner broker/DPAPI, POST /bank/credentials positive save and re-save, /status.banks reads real sealed-entry and pending marker without values, real tick claims and completes one native retrieval with one key open and one intercepted login submission');
+    return {loginSubmissions:observed.posts.length,exports:observed.downloads.length,keyOpens:1,keyCalls:afterReads.filter(r=>r.path.includes('/collector-security/keys')).length};
+  }finally{
+    if(local&&child.exitCode===null)await local('/pause',{}).catch(()=>{});
+    if(child.exitCode===null){const exited=new Promise(r=>child.once('exit',r));child.kill();await exited;}
+  }
+}
 async function main(){
   assert.equal(process.platform,'win32','the collector vault (DPAPI) and owned Chrome need Windows');
   if(!fs.existsSync(path.join(root,'.output/server/index.mjs')))throw Error('built app absent; build OMF first');
@@ -100,8 +163,9 @@ async function main(){
     const device=ok(await call('/api/finance/collectors',{method:'POST',token:owner,body:{name:'Fictional PC',accountIds:[card._id]}}),'collector');
     const deviceToken=device.token,deviceId=device.id;
     const vault=await import(u('collector/vault.mjs')),authz=await import(u('collector/omf-authorization.mjs')),idx=await import(u('collector/index.mjs')),browserModule=await import(u('collector/browser.mjs'));
-    const store=new vault.SplitStore(collectorDir),generation=hex(32),installationId=hex(16),trustToken=hex(32),verifier=crypto.randomBytes(32).toString('base64url');
+    const store=new vault.SplitStore(collectorDir),generation=hex(32),installationId=hex(16),verifier=crypto.randomBytes(32).toString('base64url');
     const localKey=await store.withLock(()=>store.deviceKey(generation,{create:true}));
+    const trustToken=await store.withLock(()=>store.trustCredential(generation,{create:true}));
     // the key-service transport over loopback http (securityCall itself requires https); every call is recorded
     const keyCalls=[];
     const securityHttp=async(route,{body,grant,token=deviceToken,signal}={})=>{keyCalls.push({route:route.split('/')[0],method:body===undefined?'GET':'POST'});const r=await fetch(origin+'/api/finance/collector-security/'+route,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...(grant?{'X-Collector-Grant':grant}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)});const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.statusMessage||'OMF did not authorize this action.'),{status:r.status});return data;};
@@ -195,6 +259,7 @@ async function main(){
     assert.equal(site.downloads.length,2,'two exports');assert.ok(site.downloads.every(d=>d.format==='native'&&d.from==='2025-11-01'&&d.to==='2026-10-01'),'auto:native-format-period');
     assert.deepEqual(site.foreign,[],'auto:no-foreign-request');
     pass('second independent retrieval after the first browser closed, on a renewed remembered-PC grant: saved login used again automatically (one submission, one key release), the identical source deduplicated (no new rows), period and native format preserved, no foreign request');
+    const daemon=await runningCollectorLeg({temp,collectorDir,origin,config,store,vault,installationId,generation,localKey,broker:live.broker,bank,ownerReq,ok,db,pass});
     // ── changes after the save stop the release; the card key and the restored bank key keep working ──
     const s1=brokerOf(await securityHttp('session',{body:{installationId,generation,trustToken}}));const fresh=()=>idx.bankLoginFor({job:{kind:'retrieve',snapshot:second.row.snapshot,provider:'rakuten'},account:{_id:bank,ownerId:String(grantRow.ownerId)}},config,s1,{store,root:collectorDir,assert:()=>{}});
     ok(await ownerReq('bank/collectors/'+deviceId,{bankAccountIds:[paypay]},'PUT'),'scope removed');
@@ -208,7 +273,7 @@ async function main(){
     ok(await call('/api/finance/collectors/'+deviceId,{method:'DELETE',token:owner}),'device revoked');
     await assert.rejects(fresh().open(),e=>[401,403].includes(e.status)||e.code==='bank-login-unavailable','auto:revoked-device-no-release');
     pass('after the save, a removed bank scope and a variant change stop the release (controlled bank-login failure); restored, it releases again; the card key on the same grant is unaffected; a revoked PC releases nothing');
-    console.log(JSON.stringify({pass:true,checks,keyCalls:keyCalls.length,loginSubmissions:site.loginPosts.length,exports:site.downloads.length,bankRequests:0,productionWrites:0}));
+    console.log(JSON.stringify({pass:true,checks,keyCalls:keyCalls.length+daemon.keyCalls,loginSubmissions:site.loginPosts.length+daemon.loginSubmissions,exports:site.downloads.length+daemon.exports,daemon,bankRequests:0,productionWrites:0}));
   }finally{
     for(const b of brokers)await b.remote.end().catch(()=>{});
     await (await import(u('collector/browser.mjs'))).closeOwnedBrowsers().catch(()=>{});
@@ -218,4 +283,5 @@ async function main(){
     if(path.resolve(temp).startsWith(path.resolve(os.tmpdir())+path.sep))await fsp.rm(temp,{recursive:true,force:true}).catch(()=>{});
   }
 }
-main().then(()=>0,error=>{console.error(String(error&&error.stack||error).slice(0,3000));return 1;}).then(code=>{process.stdout.write('',()=>process.exit(code));});
+module.exports={portal};
+if(require.main===module)main().then(()=>0,error=>{console.error(String(error&&error.stack||error).slice(0,3000));return 1;}).then(code=>{process.stdout.write('',()=>process.exit(code));});

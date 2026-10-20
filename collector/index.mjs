@@ -300,8 +300,8 @@ export function credentialEntryFor(account,entries,scope=[]) {
 // ── Saved 楽天銀行 standard logins (plan omf-rakuten-auto-login-20261021 §2-§3) ─────────────────────────────────────────────────
 // One sealed SplitStore entry per granted bank account, rakuten-<bankAccountId>, bound (AAD) to this installation, the paired OMF
 // origin, the account's owner and the account; its wrapped key is released by OMF only for a bank account currently granted to this
-// PC with a live 楽天銀行 standard connection (financeCollectorSecurityService bankBinding). A refusal by the bank is remembered per
-// saved key in bank-login/<entry>.json (the key id and a time, never a credential) so no later claim submits it again.
+// PC with a live 楽天銀行 standard connection (financeCollectorSecurityService bankBinding). A pending automatic attempt is remembered
+// per saved key in bank-login/<entry>.json before submission; authentication or an owner re-save clears it, never a failed job.
 const bankEntry=id=>'rakuten-'+id;
 const bankMarker=(id,root=directory)=>path.join(root,'bank-login',bankEntry(id)+'.json');
 export const bankLoginSupported=bank=>bank?.provider==='rakuten'&&bank?.variant==='standard';
@@ -313,7 +313,7 @@ async function refusedKeyId(file){try{return JSON.parse(await readFile(file,'utf
  * valid account. Building it reads nothing. state() reads file metadata only ('none'|'unbound'|'blocked'|'ready'); open() asserts
  * the live session, then decrypts the account's own entry ONCE through the batch's key broker (a refused key release becomes the
  * controlled code bank-login-unavailable; an ended session, an abort or a 401 revocation propagate); rejected() remembers the
- * bank's refusal for this saved key; accepted() clears it. `store`, `root` and `assert` are the fixture's seams.
+ * an unconfirmed attempt for this saved key; accepted() clears it. `store`, `root` and `assert` are the fixture's seams.
  */
 export function bankLoginFor(bank,config,live,{store=secrets,root=directory,assert=assertSession}={}){
   const job=bank?.job,account=bank?.account,id=String(account?._id??''),ownerId=String(account?.ownerId??'');

@@ -108,7 +108,7 @@ test('the real setup page lists only the granted banks, saves the exact account 
     const html = await page.content(); assert.ok(!html.includes('Fictional-Pass-0001') && !html.includes('fictional-user'), 'bank-setup:no-readback');
     assert.equal(await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage) + document.cookie), '{}{}', 'bank-setup:no-browser-storage');
     // a refusal by the bank is shown with the way out; a failed save keeps nothing typed
-    state.refused = true; await open(); await wait(sel => /did not accept/i.test(document.querySelector(sel)?.textContent || ''), card + '[data-bank-login-note]', 'refused note');
+    state.refused = true; await open(); await wait(sel => /not confirmed/i.test(document.querySelector(sel)?.textContent || ''), card + '[data-bank-login-note]', 'refused note');
     state.fail = true; await page.type(card + '[data-bank-login-user]', 'fictional-user'); await page.type(card + '[data-bank-login-password]', 'Fictional-Pass-0003'); await page.click(card + '[data-bank-login-save]');
     await wait(sel => /標準ログイン/.test(document.querySelector(sel)?.textContent || ''), card + '[data-bank-login-note]', 'error shown');
     assert.equal(await page.$eval(card + '[data-bank-login-password]', e => e.value), '', 'bank-setup:password-cleared-on-error');

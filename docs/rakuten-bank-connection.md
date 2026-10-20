@@ -52,22 +52,27 @@ STANDARD_LOGIN` records exactly this.
   password once and saves (`POST /bank/credentials`, protected connection required). It is sealed in the existing SplitStore as
   `rakuten-<bankAccountId>`, bound (AAD) to this installation, the paired OMF origin, the account's owner and the account; OMF holds
   only the wrapped key. The fields are cleared; the screen shows "saved" or "refused", never the values. Saving does not open the
-  bank, queue a job or make a payment. Saving again replaces the login (and lifts a remembered refusal).
+  bank, queue a job or make a payment. Saving again replaces the login (and lifts a remembered unconfirmed attempt).
 - **Use.** A claimed retrieve job frozen for 楽天銀行 standard carries a handle to that account's entry (`collector/index.mjs
   bankLoginFor`). Idle ticks, status, setup status, the observe stage, retained-file uploads and recovery never open it. When the
   bank shows its login page, the collector checks the exact form on the live document (origin and surface, the form and its
   action/method, both fields — visible, enabled, inside that form, unique by name — no other visible password field, exactly one
-  「ログイン」control) and the earlier-attempt marker, decrypts the saved login once, then writes `login.json` before the action.
+  「ログイン」control) and the earlier-attempt marker, decrypts the saved login once, then writes `login.json` and blocks the saved
+  key in `bank-login/<entry>.json` before the possible submission. This durable block also survives a process crash.
   Entry runs through the DevTools pipe in one page task that checks the original document/form and sets both field properties;
   it uses no later page-keyboard operation. The collector checks cancellation after the final form check, then revalidates and
   activates the intended「ログイン」node together inside its original document. A replacement document, including a fresh one on
   the same bank origin, receives no credential input or login action. Abort, pause, Windows lock and revocation retain their
   existing checks. The frozen statement/export/import steps are unchanged.
-- **Outcomes.** Authenticated → the routine continues (step 2). The exact form again on a new document → the bank refused the saved
-  login: it is remembered for that saved key (`bank-login/<entry>.json`, the key id and a time only) and no later job submits it
+- **Outcomes.** Confirmed authentication clears the saved key's pending block and the routine continues (step 2). An automatic
+  attempt ending without authentication (error page, unknown answer through the deadline, cancellation or process loss) leaves
+  the block in place: no later job automatically decrypts or submits this saved key. The owner checks the bank window and saves
+  the login again. The marker holds the key id and a time only, never credentials. The exact form again on a new document is
+  treated as a refusal and likewise remains blocked
   until it is saved again; the person may sign in in the same window; at the deadline the job fails with "保存し直してから…". Any
   other page (additional verification, a password change, an unknown page or dialog) → `verification_required` with the same
-  window shown; nothing is submitted again. A reclaimed job whose folder already holds `login.json` never submits again. A form
+  window shown; nothing is submitted again within that job. Without confirmed authentication the saved key remains blocked across
+  later jobs until the owner saves it again. A reclaimed job whose folder already holds `login.json` never submits again. A form
   that is not the recorded one, an unopenable or unbound saved login, or no saved login → the person signs in, exactly as before.
 - **Key release** (`server/services/financeCollectorSecurityService.ts bankBinding`): `rakuten-<id>` is released only to a live
   grant of this installation/generation/origin/owner, for an owned BankAccount that is in the device's CURRENT bank scope
@@ -108,6 +113,12 @@ Every automatic-login leg is synthetic: a fake portal served by request intercep
 logins, owned disposable databases. No real 楽天銀行 login has been saved or submitted by this software and no actual collector
 retrieval has succeeded yet (the two actual jobs of 2026-10-20 ended at the login page). The owner's initial save and two actual
 retrievals follow the reviewed deployment.
+
+The native test also starts the real downloader process with its own protected PC state, real DPAPI/owner broker and normal
+remembered-PC resume against the isolated built app. It saves and replaces the bank login through the real setup HTTP endpoint,
+reads the real sealed-entry/pending-marker status without values, and lets the actual tick claim, sign in once, export and import.
+Three test-only subprocess mutations (skip saving, lie about saved status, omit the tick's login handle) must fail their named
+assertions. They change only loaded code in that fictional subprocess; the product source and all real bank traffic are untouched.
 
 ## OMF setup
 

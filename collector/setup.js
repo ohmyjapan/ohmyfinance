@@ -99,7 +99,7 @@ function showBanks(data) {
     section.dataset.bankLogin=bank.bankAccountId;note.dataset.bankLoginNote='';note.setAttribute('role','status');
     title.textContent=bank.name;
     if(!bank.supported){note.textContent='Saved sign-in is not available for this bank or login type. When a download needs it, sign in in the Chrome window the downloader opens.';section.append(title,note);main.append(section);continue;}
-    note.textContent=bank.refused?'楽天銀行 did not accept the saved login at the last sign-in. Enter the current login ID and password to replace it; automatic sign-in stays off until then.'
+    note.textContent=bank.refused?'The previous automatic sign-in was not confirmed. Check the bank window, then enter the current login ID and password to replace it; automatic sign-in stays off until then.'
       :bank.hasCredentials?'Login saved on this PC. Downloads sign in automatically in the background; if the bank asks for an additional check, the same Chrome window is shown for you. Enter both fields to replace it.'
       :'Enter the 楽天銀行 標準ログイン (法人ビジネス口座) login ID and password once. They are encrypted on this PC and never sent to OMF; downloads then sign in automatically.';
     const form=document.createElement('form'),fields={};

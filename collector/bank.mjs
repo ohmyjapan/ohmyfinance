@@ -64,7 +64,8 @@ export const LOGIN_TEXT = Object.freeze({
   manual: label => `${label}にChromeでサインインしてください`,
   verify: label => `${label}の追加の確認（認証コード・パスワード変更など）をChromeの画面で完了してください。保存済みのログインは1回だけ送信しました`,
   refused: label => `${label}が保存済みのログインを受け付けませんでした。Chromeでサインインするか、ダウンローダーの設定画面でIDとパスワードを保存し直してください（保存し直すまで自動では送信しません）`,
-  blocked: label => `${label}の保存済みのログインは前回受け付けられなかったため、自動では送信しません。Chromeでサインインするか、ダウンローダーの設定画面でログインを保存し直してください`,
+  blocked: label => `${label}の前回の自動サインインが確認できていないため、保存済みのログインを自動では送信しません。Chromeでサインインするか、ダウンローダーの設定画面でログインを保存し直してください`,
+  unconfirmed: label => `${label}への自動サインインの完了を確認できませんでした。保存済みのログインは自動では再送信しません。Chromeの画面を確認し、ダウンローダーの設定画面でIDとパスワードを保存し直してから「取得」を押してください`,
   unavailable: label => `${label}の保存済みのログインをこのPCで開けませんでした。Chromeでサインインするか、ダウンローダーの設定画面でログインを保存し直してください`,
   form: label => `${label}のログイン画面が確認済みの形と異なるため、自動サインインは行いません。Chromeでサインインしてください`,
   retried: label => `${label}への前回の自動サインインの結果を確認できなかったため、もう一度は送信しません。Chromeでサインインしてください`,
@@ -75,8 +76,8 @@ export const LOGIN_TEXT = Object.freeze({
  * once (verification_required + show) and the wait is bounded. With a saved `login` and an adapter ui that offers loginForm/login,
  * the exact recorded login form is filled from it ONCE (lazy: file metadata, the form and the job journal are checked before the
  * single decryption; abort is checked before the decryption, before the typing and before the click). The bank's refusal (the exact
- * form again on a new document) is remembered through login.rejected() and the person is asked; any other page after the submit
- * is the person's step. Resolves when the page is authenticated (an accepted submission is reported through login.accepted());
+ * form again on a new document) asks the person. Before a possible submission, login.rejected() durably blocks this saved key;
+ * only confirmed authentication (login.accepted()) or an owner re-save clears it, including after an uncertain end or a crash.
  * an error page or the deadline throws (a remembered refusal with code login-refused).
  */
 export async function ensureBankLogin(ui, status, { label, login = null, journal = null, now = Date.now, wait = pause, timeoutMs = 300000, pollMs = 1500, signal = null } = {}) {
@@ -85,7 +86,6 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   const automatic = !!login && typeof ui.login === 'function' && typeof ui.loginForm === 'function';
   const refuse = async () => {
     if (refused) return; refused = true;
-    await login.rejected(); // guard:login-refused
   };
   // The login form again, on another document than the one the saved login was submitted from, is the bank's refusal.
   const loginAgain = async () => { if (!sent) return false; const doc = await ui.document?.(); return !!doc && doc !== sent && !!(await ui.loginForm())?.ok; };
@@ -102,6 +102,7 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
     try {
       signal?.throwIfAborted();
       await journal?.mark();
+      await login.rejected(); // guard:login-refused — persist before the possible submission, clear only after authentication
       submitted = true;
       await status('running', `${label}に保存済みのログインでサインイン`);
       const result = await ui.login(secret, { signal });
@@ -119,7 +120,7 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
     signal?.throwIfAborted();
     const kind = (await ui.state())?.kind;
     if (AUTHENTICATED.includes(kind)) { if (submitted && !refused) await Promise.resolve(login.accepted?.()).catch(() => {}); return { submitted, refused }; }
-    if (kind === 'error_page') throw new Error(`${label}のページでエラーが表示されました。Chromeを確認して再試行してください`);
+    if (kind === 'error_page') throw submitted ? coded('login-refused', LOGIN_TEXT.unconfirmed(label)) : new Error(`${label}のページでエラーが表示されました。Chromeを確認して再試行してください`);
     let auto = kind === 'login' && automatic && !declined;
     if (submitted) auto = false; // guard:login-once
     if (kind === 'login' && submitted && !refused && await loginAgain()) { await refuse(); await attention(LOGIN_TEXT.refused(label)); }
@@ -129,6 +130,7 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   }
   await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
   if (refused) throw coded('login-refused', `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面でIDとパスワードを保存し直してから、再度「取得」を押してください`);
+  if (submitted) throw coded('login-refused', LOGIN_TEXT.unconfirmed(label));
   throw new Error(`${label}へのサインインが完了しませんでした。再度「取得」を押してください`);
 }
 

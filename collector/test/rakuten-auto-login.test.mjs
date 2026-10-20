@@ -55,7 +55,7 @@ function pageUi({ start = 'login', form = true, outcome = 'authenticated', deliv
 // A fictional saved login with the interface bank.mjs expects: state() (no decryption), open() (once), rejected(), accepted().
 function savedLogin({ state = 'ready', openError = null, onOpen = null } = {}) {
   const calls = { state: 0, open: 0, rejected: 0, accepted: 0 }; let current = state;
-  return { calls, async state() { calls.state++; return current; }, async open() { calls.open++; await onOpen?.(); if (openError) throw openError; return { ...SECRET }; }, async rejected() { calls.rejected++; current = 'blocked'; }, async accepted() { calls.accepted++; } };
+  return { calls, async state() { calls.state++; return current; }, async open() { calls.open++; await onOpen?.(); if (openError) throw openError; return { ...SECRET }; }, async rejected() { calls.rejected++; current = 'blocked'; }, async accepted() { calls.accepted++; current = 'ready'; } };
 }
 const statuses = () => { const list = []; const fn = async (state, text) => { list.push([state, text]); }; fn.list = list; return fn; };
 const attentions = s => s.list.filter(([state]) => state === 'verification_required');
@@ -69,7 +69,7 @@ test('a ready saved login on the exact login form: one decryption, one submissio
   assert.equal(login.calls.open, 1, 'auto-login:one-decryption'); assert.equal(ui.calls.login, 1, 'auto-login:one-submit');
   assert.deepEqual(ui.calls.secrets, [SECRET], 'auto-login:own-secret-submitted');
   assert.equal(attentions(r.status).length, 0, 'auto-login:no-manual-attention'); assert.equal(ui.calls.show, 0);
-  assert.equal(login.calls.accepted, 1, 'auto-login:accepted-recorded'); assert.equal(login.calls.rejected, 0);
+  assert.equal(login.calls.accepted, 1, 'auto-login:accepted-recorded'); assert.equal(login.calls.rejected, 1);
   assert.deepEqual([ui.calls.openStatements, ui.calls.exportCsv], [1, 1]);
   assert.ok(!JSON.stringify(r.status.list).includes(SECRET.password) && !JSON.stringify(r.status.list).includes(SECRET.username), 'auto-login:no-secret-in-status');
   assert.ok(!JSON.stringify(r.result).includes(SECRET.password), 'auto-login:no-secret-in-result');
@@ -96,7 +96,7 @@ test('the bank refuses the saved login: one submission, the refusal is remembere
   // the next job with the same (now blocked) saved login: nothing decrypted, nothing submitted, the person is asked
   const next = pageUi(), r2 = await collect(next, jobOf(), login, { loginTimeoutMs: 5000 });
   assert.equal(next.calls.login, 0, 'auto-login:blocked-after-refusal'); assert.equal(login.calls.open, 1, 'auto-login:blocked-no-decryption');
-  assert.match(attentions(r2.status)[0]?.[1] || '', /前回受け付けられなかった/, 'auto-login:blocked-message');
+  assert.match(attentions(r2.status)[0]?.[1] || '', /前回の自動サインインが確認できていない/, 'auto-login:blocked-message');
   // after the login is saved again (a new key: ready again) the next job signs in automatically
   const updated = savedLogin(), fresh = pageUi(), r3 = await collect(fresh, jobOf(), updated);
   assert.equal(r3.result.items.length, 1, 'auto-login:update-then-success'); assert.equal(fresh.calls.login, 1); assert.equal(updated.calls.accepted, 1);
@@ -108,7 +108,7 @@ test('additional verification after the submission is the person\'s step in the 
   const r = await bank.collectBankFromPage(null, null, ADAPTER, boundOf(job), job, dir, status, { ui, login, now: ui.now, wait: ui.wait, pollMs: 1000, loginTimeoutMs: 20000 });
   assert.equal(r.items.length, 1); assert.equal(ui.calls.login, 1, 'auto-login:one-submit'); assert.equal(ui.calls.show, 1, 'auto-login:attention-shows-window');
   const asked = list.filter(([s]) => s === 'verification_required'); assert.equal(asked.length, 1); assert.match(asked[0][1], /追加の確認/, 'auto-login:verification-message');
-  assert.equal(login.calls.accepted, 1, 'auto-login:verified-login-accepted'); assert.equal(login.calls.rejected, 0);
+  assert.equal(login.calls.accepted, 1, 'auto-login:verified-login-accepted'); assert.equal(login.calls.rejected, 1);
 });
 
 test('the login form back in a new document after the submission is a refusal; the same document is not', async () => {
@@ -120,7 +120,7 @@ test('the login form back in a new document after the submission is a refusal; t
 
 test('a blocked, unbound or unopenable saved login, or a login form that is not the recorded one: nothing is typed and the person is asked', async () => {
   for (const [label, login, form, pattern, opens] of [
-    ['blocked', savedLogin({ state: 'blocked' }), true, /前回受け付けられなかった/, 0],
+    ['blocked', savedLogin({ state: 'blocked' }), true, /前回の自動サインインが確認できていない/, 0],
     ['unbound', savedLogin({ state: 'unbound' }), true, /開けませんでした/, 0],
     ['unopenable', savedLogin({ openError: Object.assign(new Error('x'), { code: 'bank-login-unavailable' }) }), true, /開けませんでした/, 1],
     ['changed form', savedLogin(), false, /確認済みの形と異なる/, 0]
@@ -213,6 +213,38 @@ test('bankLoginFor: a refused key release is a controlled bank-login failure; a 
   const before = store.calls.open.length;
   await assert.rejects(index.bankLoginFor({ job: jobOf(), account: ACCOUNT }, CONFIG, LIVE, { store, root: dir, assert: () => { throw Object.assign(new Error('The connection has ended. Reconnect this PC.'), { code: 'forbidden' }); } }).open(), e => e.code === 'forbidden', 'auto-login:session-checked-first');
   assert.equal(store.calls.open.length, before, 'auto-login:no-open-after-session-end');
+});
+
+for (const end of ['error_page', 'unknown', 'abort']) test('unconfirmed automatic sign-in blocks the saved key across fresh jobs: ' + end, async () => {
+  const store = memoryStore(), dir = await root(); store.save('rakuten-' + ACCOUNT._id, AAD, SECRET);
+  const handle = () => index.bankLoginFor({ job: jobOf(), account: ACCOUNT }, CONFIG, LIVE, { store, root: dir, assert: () => {} });
+  const first = pageUi({ outcome: 'attention' }), abort = new AbortController();
+  const submit = first.login.bind(first);
+  first.login = async (...args) => { const result = await submit(...args); first.setKind(end === 'abort' ? 'unknown' : end); if (end === 'abort') abort.abort(); return result; };
+  const failed = await collect(first, jobOf(), handle(), { loginTimeoutMs: 3000, signal: abort.signal });
+  assert.equal(first.calls.login, 1); assert.equal(first.calls.exportCsv, 0);
+  assert.ok(failed.error || failed.result?.failed, 'auto-login:unconfirmed-job-fails ' + end);
+  assert.equal(await handle().state(), 'blocked', 'auto-login:unconfirmed-blocked ' + end);
+  if (end !== 'abort') assert.match(failed.error?.message || failed.result?.failed || '', /保存し直/, 'auto-login:unconfirmed-actionable ' + end);
+  const opens = store.calls.open.length, next = pageUi();
+  await collect(next, jobOf(), handle(), { loginTimeoutMs: 3000 });
+  assert.equal(next.calls.login, 0, 'auto-login:unconfirmed-next-job-no-submit ' + end);
+  assert.equal(store.calls.open.length, opens, 'auto-login:unconfirmed-next-job-no-decryption ' + end);
+  store.save('rakuten-' + ACCOUNT._id, AAD, SECRET);
+  const corrected = pageUi(), success = await collect(corrected, jobOf(), handle());
+  assert.equal(success.error, null); assert.equal(success.result.failed, null); assert.equal(corrected.calls.login, 1);
+  assert.equal(await handle().state(), 'ready', 'auto-login:unconfirmed-resave-success-unblocks ' + end);
+});
+
+test('confirmed authentication clears pending saved-key memory before the next independent job', async () => {
+  const store = memoryStore(), dir = await root(); store.save('rakuten-' + ACCOUNT._id, AAD, SECRET);
+  const handle = () => index.bankLoginFor({ job: jobOf(), account: ACCOUNT }, CONFIG, LIVE, { store, root: dir, assert: () => {} });
+  const ui = pageUi(), submit = ui.login.bind(ui); let blockedDuringSubmit = false;
+  ui.login = async (...args) => { blockedDuringSubmit = await handle().state() === 'blocked'; return submit(...args); };
+  const result = await collect(ui, jobOf(), handle());
+  assert.equal(blockedDuringSubmit, true, 'auto-login:pending-persisted-before-action');
+  assert.equal(result.error, null); assert.equal(await handle().state(), 'ready', 'auto-login:confirmed-clears-pending');
+  const second = pageUi(); await collect(second, jobOf(), handle()); assert.equal(second.calls.login, 1, 'auto-login:confirmed-next-job-allowed');
 });
 
 test('the standard adapter: constructs without a page, refuses a missing or malformed login before any page, exposes the form check', async () => {

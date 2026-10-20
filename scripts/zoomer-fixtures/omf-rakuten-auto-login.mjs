@@ -87,6 +87,8 @@ function portal() {
       const body = new URLSearchParams(request.postData() || ''), ok = body.get('LOGIN:USER_ID') === FICT.username && body.get('LOGIN:LOGIN_PASSWORD') === s.password;
       s.loginPosts.push({ ok, fields: [...body.keys()].sort() });
       if (s.mode === 'reject' || !ok) return request.respond(html(loginDoc(v, 'ユーザIDまたはログインパスワードが正しくありません')));
+      if (s.mode === 'error') return request.respond(html('<!doctype html><html lang="ja"><meta charset="utf-8"><title>エラー</title><body>処理できませんでした</body></html>'));
+      if (s.mode === 'unknown') return request.respond(html('<!doctype html><html lang="ja"><meta charset="utf-8"><title>処理中</title><body>確認中です</body></html>'));
       if (s.mode === 'verify') return request.respond(html(verifyDoc()));
       if (s.mode === 'expired') return request.respond(html(expiredDoc()));
       return request.respond(html(`<!doctype html><html lang="ja"><meta charset="utf-8"><title>ログイン中</title><body><p>ログインしています…</p><script>location.replace(${JSON.stringify(OVERVIEW)})</script></body></html>`));
@@ -133,7 +135,7 @@ const onScreen = facts => facts.windows.filter(w => w.cls === 'Chrome_WidgetWin_
 // A fictional saved login with the interface collector/bank.mjs expects (state/open/rejected/accepted), counting every call.
 function savedLogin({ state = 'ready', onOpen = null, openError = null } = {}) {
   const calls = { state: 0, open: 0, rejected: 0, accepted: 0 }; let current = state;
-  return { calls, async state() { calls.state++; return current; }, async open() { calls.open++; await onOpen?.(); if (openError) throw openError; return { ...FICT }; }, async rejected() { calls.rejected++; current = 'blocked'; }, async accepted() { calls.accepted++; } };
+  return { calls, async state() { calls.state++; return current; }, async open() { calls.open++; await onOpen?.(); if (openError) throw openError; return { ...FICT }; }, async rejected() { calls.rejected++; current = 'blocked'; }, async accepted() { calls.accepted++; current = 'ready'; } };
 }
 const ACCOUNT = { _id: 'c3c3c3c3c3c3c3c3c3c3c3c3', ownerId: 'd4d4d4d4d4d4d4d4d4d4d4d4', name: 'Fictional Rakuten' };
 const SNAPSHOT = { templateId: 'e5e5e5e5e5e5e5e5e5e5e5e5', templateRevision: 1, headers: ['取引日', '入出金(円)', '残高(円)', '入出金先内容'], mapping: { date: '0', description: '3', amount: '1', balance: '2' }, amountSign: 'outflow-negative', transactionIdConfirmed: false, parserVersion: 'bank-template-1', currency: 'JPY', provider: 'rakuten', accountLabel: 'カクウホールディングス', variant: 'standard', coverage: { from: '2025-11-01', to: '2026-10-01' } };
@@ -263,7 +265,7 @@ export default { name: 'omf-rakuten-auto-login', covers: COVERS, async run() {
       assert.equal(r1.exports, 0, 'rakuten-auto:no-export-before-auth'); assert.equal(r1.statuses.filter(([s]) => s === 'verification_required').length, 1);
       assert.equal(await handle(jobOf()).state(), 'blocked', 'rakuten-auto:refusal-remembered');
       const j2 = jobOf(), r2 = await retrieval('a3-blocked', { login: handle(j2), job: j2, collect: shortCollect({ loginTimeoutMs: 5000 }) });
-      assert.equal(r2.posts.length, 0, 'rakuten-auto:blocked-after-refusal'); assert.match(r2.statuses.find(([s]) => s === 'verification_required')?.[1] || '', /前回受け付けられなかった/, 'rakuten-auto:blocked-message');
+      assert.equal(r2.posts.length, 0, 'rakuten-auto:blocked-after-refusal'); assert.match(r2.statuses.find(([s]) => s === 'verification_required')?.[1] || '', /前回の自動サインインが確認できていない/, 'rakuten-auto:blocked-message');
       store.save('rakuten-' + ACCOUNT._id, aad, { ...FICT });
       const j3 = jobOf(), r3 = await retrieval('a3-updated', { login: handle(j3), job: j3, statusHook: noAttention });
       if (r3.error) throw r3.error; assert.equal(r3.outcome?.failed, null); assert.deepEqual(r3.posts.map(p => p.ok), [true], 'rakuten-auto:update-then-success');
@@ -316,11 +318,22 @@ export default { name: 'omf-rakuten-auto-login', covers: COVERS, async run() {
       const l3 = savedLogin({ openError: Object.assign(new Error('Collector access expired or changed.'), { status: 401 }) }), r3 = await retrieval('a6-revoked', { login: l3, collect: shortCollect() });
       assert.equal(r3.error?.status, 401, 'rakuten-auto:revocation-propagates'); assert.equal(r3.posts.length, 0);
       const l4 = savedLogin(), r4 = await retrieval('a6-expired', { login: l4, mode: 'expired', collect: shortCollect({ loginTimeoutMs: 9000 }) });
-      assert.deepEqual(r4.posts.map(p => p.ok), [true], 'rakuten-auto:expired-one-submit'); assert.match(r4.statuses.find(([s]) => s === 'verification_required')?.[1] || '', /追加の確認/, 'rakuten-auto:expired-attention'); assert.equal(r4.exports, 0); assert.equal(l4.calls.rejected, 0, 'rakuten-auto:expired-not-a-refusal');
+      assert.deepEqual(r4.posts.map(p => p.ok), [true], 'rakuten-auto:expired-one-submit'); assert.match(r4.statuses.find(([s]) => s === 'verification_required')?.[1] || '', /追加の確認/, 'rakuten-auto:expired-attention'); assert.equal(r4.exports, 0); assert.equal(l4.calls.rejected, 1, 'rakuten-auto:expired-pending-block-remembered');
       const job = jobOf(), dir = path.join(temp, 'a6-reclaim'), jobDir = path.join(dir, 'outbox', 'bank', ACCOUNT._id, job.jobId); await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ jobId: job.jobId }));
       const l5 = savedLogin(), r5 = await retrieval('a6-reclaim', { login: l5, job, collect: (b, j, _r, st, o) => bank.collectBankStatement(b, j, dir, st, { ...o, pollMs: 300, loginTimeoutMs: 4000 }) });
       assert.equal(r5.posts.length, 0, 'rakuten-auto:reclaim-no-resubmit'); assert.equal(l5.calls.open, 0); assert.equal(connected(), 0); assert.equal(unrelatedAlive(), true);
       return 'aborts fail closed with 0 submissions, revocation propagates, expired → attention without resubmission, reclaimed job submits nothing; unrelated Chrome alive';
+    });
+    await leg('A7 unconfirmed automatic attempts: an error-titled answer or an unknown page through the deadline blocks the saved key before submission; the next independent job never opens or resubmits it', async () => {
+      for (const mode of ['error', 'unknown']) {
+        const login = savedLogin(), first = await retrieval('a7-' + mode + '-first', { login, mode, collect: shortCollect({ loginTimeoutMs: 4000 }) });
+        assert.equal(first.posts.length, 1, 'rakuten-auto:unconfirmed-one-submit ' + mode);
+        assert.match(first.outcome?.failed || first.error?.message || '', /保存し直/, 'rakuten-auto:unconfirmed-actionable ' + mode);
+        const opens = login.calls.open, second = await retrieval('a7-' + mode + '-second', { login, mode, collect: shortCollect({ loginTimeoutMs: 2000 }) });
+        assert.equal(second.posts.length, 0, 'rakuten-auto:blocked-after-unconfirmed ' + mode);
+        assert.equal(login.calls.open, opens, 'rakuten-auto:blocked-no-open ' + mode);
+      }
+      return 'both uncertain outcomes fail with re-save guidance; both following jobs have 0 opens/submissions';
     });
     // ── U: the collector unit legs (node --test) ──
     await leg('U collector unit legs: rakuten-auto-login, rakuten-setup (real setup page in owned headless Chrome, real collector process refusals), rakuten-standard', async () => {
@@ -367,7 +380,7 @@ export default { name: 'omf-rakuten-auto-login', covers: COVERS, async run() {
       }
       { const m = await mutantModule('collector/bank.mjs', { guard: 'login-once' }); try { const mod = await m.load(); site.mode = 'reject'; await flips('login-once', async () => { const login = savedLogin(); login.rejected = async () => { login.calls.rejected++; }; /* isolates the one-submit line from the refusal memory */ const r = await retrieval('m-once', { login, mode: 'reject', collect: (b, j, r0, st, o) => mod.collectBankStatement(b, j, r0, st, { ...o, pollMs: 300, loginTimeoutMs: 9000 }) }); assert.deepEqual(r.posts.map(p => p.ok), [false], 'rakuten-auto:one-submit'); }, /rakuten-auto:one-submit/); } finally { await m.dispose(); } }
       { const m = await mutantModule('collector/bank.mjs', { guard: 'login-journal' }); try { const mod = await m.load(); await flips('login-journal', async () => { const job = jobOf(), dir = path.join(temp, 'm-journal'), jobDir = path.join(dir, 'outbox', 'bank', ACCOUNT._id, job.jobId); await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), '{}'); const r = await retrieval('m-journal', { login: savedLogin(), job, collect: (b, j, _r, st, o) => mod.collectBankStatement(b, j, dir, st, { ...o, pollMs: 300, loginTimeoutMs: 6000 }) }); assert.equal(r.posts.length, 0, 'rakuten-auto:reclaim-no-resubmit'); }, /rakuten-auto:reclaim-no-resubmit/); } finally { await m.dispose(); } }
-      { const m = await mutantModule('collector/bank.mjs', { guard: 'login-refused' }); try { const mod = await m.load(); await flips('login-refused', async () => { const login = savedLogin(), c = extra => (b, j, r0, st, o) => mod.collectBankStatement(b, j, r0, st, { ...o, pollMs: 300, ...extra }); await retrieval('m-refused-1', { login, mode: 'reject', collect: c({ loginTimeoutMs: 6000 }) }); const r = await retrieval('m-refused-2', { login, mode: 'reject', collect: c({ loginTimeoutMs: 4000 }) }); assert.equal(r.posts.length, 0, 'rakuten-auto:blocked-after-refusal'); }, /rakuten-auto:blocked-after-refusal/); } finally { await m.dispose(); } }
+      { const m = await mutantModule('collector/bank.mjs', { guard: 'login-refused' }); try { const mod = await m.load(); await flips('login-refused', async () => { const login = savedLogin(), c = extra => (b, j, r0, st, o) => mod.collectBankStatement(b, j, r0, st, { ...o, pollMs: 300, ...extra }); await retrieval('m-unconfirmed-1', { login, mode: 'error', collect: c({ loginTimeoutMs: 6000 }) }); const r = await retrieval('m-unconfirmed-2', { login, mode: 'error', collect: c({ loginTimeoutMs: 4000 }) }); assert.equal(r.posts.length, 0, 'rakuten-auto:blocked-after-unconfirmed'); }, /rakuten-auto:blocked-after-unconfirmed/); } finally { await m.dispose(); } }
       { const m = await mutantModule('collector/index.mjs', { guard: 'bank-login-blocked' }); try { const mod = await m.load(); const { aadOf } = await import(u('collector/vault.mjs')); await flips('bank-login-blocked', async () => { const store = memoryStore(), dir = path.join(temp, 'm-blocked'); await mkdir(dir, { recursive: true }); const live = { mode: 'protected', installationId: 'f'.repeat(32), broker: {}, abort: new AbortController() }, config = { baseUrl: 'https://omf.example', token: 'omfc_' + 'c'.repeat(64) }; store.save('rakuten-' + ACCOUNT._id, aadOf({ installationId: live.installationId, origin: config.baseUrl, ownerId: ACCOUNT.ownerId, provider: 'rakuten', accountId: ACCOUNT._id }), FICT); const h = () => mod.bankLoginFor({ job: jobOf(), account: ACCOUNT }, config, live, { store, root: dir, assert: () => {} }); await h().rejected(); assert.equal(await h().state(), 'blocked', 'rakuten-auto:refusal-remembered'); }, /rakuten-auto:refusal-remembered/); } finally { await m.dispose(); } }
       { const browserMutant = await mutantModule('collector/browser.mjs', { guard: 'background-window' }); let bankMutant = null; try { bankMutant = await mutantModule('collector/bank.mjs', { edits: [[/import\('\.\/browser\.mjs'\)/, `import('./${path.basename(browserMutant.file)}')`]] }); const mod = await bankMutant.load();
           await flips('background-window', async () => { const r = await retrieval('m-background', { login: savedLogin(), collect: (b, j, r0, st, o) => mod.collectBankStatement(b, j, r0, st, { ...o, pollMs: 300, loginTimeoutMs: 20000 }) }); if (r.error) throw r.error; backgroundChecks(r, 'mutant'); }, /rakuten-auto:background-(no-foreground|offscreen)/); }
