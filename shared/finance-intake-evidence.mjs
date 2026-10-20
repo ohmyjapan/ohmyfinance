@@ -28,7 +28,7 @@ function correspondence(values, research) {
   const urlCurrent = !!research?.context && text(research.context.merchantUrl) === text(v.merchantUrl);
   const confirmed = research?.state === 'confirmed' && research.confirmed ? { supplierName: text(research.confirmed.supplierName), invoiceNumber: text(research.confirmed.invoiceNumber) } : null;
   const supplier = research?.report?.supplier || null, reported = supplier ? { supplierName: text(supplier.legalName), invoiceNumber: text(supplier.invoiceNumber) } : null;
-  const supported = confirmed || reported, basis = supported ? registryBasisOf(v, research) : null;
+  const supported = confirmed || reported, basis = registryBasisOf(v, research);
   const valuesCurrent = !!confirmed && urlCurrent && FIELDS.every(k => stored[k] === confirmed[k]);
   return { stored, urlCurrent, confirmed, reported, supported, valuesCurrent, basis, current: valuesCurrent && (!basis || basis.current) };
 }

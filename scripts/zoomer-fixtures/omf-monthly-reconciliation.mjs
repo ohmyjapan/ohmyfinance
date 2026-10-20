@@ -11,6 +11,8 @@
 // Fold (plan omf-monthly-reconciliation-fold-20261020, review omf-monthly-patch-opus55-20261020 F1/F4): the same legs carry the
 // negative cases P1/P2c/P3 (a re-read file row never re-keys a hand-corrected or already-repaired record) and E1/E2 (registry
 // basis date vs current purchase date; no changed-after-research label without supported values), plus two mutants below.
+// F9 (plan omf-monthly-registry-basis-20261020, review omf-monthly-integrated-opus55-20261020): the F4 legs also carry a registry
+// check without a supplier candidate (basis named, not verified after the purchase date moves, no difference), plus one mutant.
 // `covers` is decided at load: the built-app files are listed only when .output/server/index.mjs exists. Synthetic owners
 // monthly-a/b@example.invalid only; no bank, mail, Slack, model, production database or shared harness is touched.
 import { execFile } from 'node:child_process';
@@ -41,7 +43,9 @@ export const MUTANTS = [
   { group: 'F1', name: 'provenance-rebind-dropped', anchor: /const\s+rebind\s*=\s*!old\s*&&/g, replacement: 'const rebind = false &&', expect: /monthly:f1-legacy-preview/ },
   { group: 'F4', name: 'registry-date-check-removed', anchor: /current\s*:\s*!dated\s*\|\|\s*dated\s*===\s*asOf/g, replacement: 'current: true', expect: /monthly:f4-date-basis-stale/ },
   { group: 'F1', name: 'identity-predicate-removed', anchor: /const\s+ownedByRow\s*=\s*\(\s*r\s*,\s*fileRow\s*,\s*key\s*\)\s*=>/g, replacement: 'const ownedByRow = (r, fileRow, key) => true ||', expect: /monthly:f1-manual-id-kept/ },
-  { group: 'F1', name: 'bank-reader-default-changed', anchor: /const\s+typed\s*=\s*options\.intake\s*===\s*true\s*;/g, replacement: 'const typed = true;', expect: /monthly:f1-bank-(?:control|key-unchanged)/ }
+  { group: 'F1', name: 'bank-reader-default-changed', anchor: /const\s+typed\s*=\s*options\.intake\s*===\s*true\s*;/g, replacement: 'const typed = true;', expect: /monthly:f1-bank-(?:control|key-unchanged)/ },
+  // F9 (plan omf-monthly-registry-basis-20261020): restores the old gate that dropped the registry date basis without supported values.
+  { group: 'F4', name: 'registry-basis-supported-gate-restored', anchor: /basis\s*=\s*registryBasisOf\(\s*v\s*,\s*research\s*\)/g, replacement: 'basis = supported ? registryBasisOf(v, research) : null', expect: /monthly:f9-registry-only-basis/ }
 ];
 
 function run(args, env, timeout, cwd = REPO_ROOT) {

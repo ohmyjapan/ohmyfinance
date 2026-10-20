@@ -1,4 +1,5 @@
 // Plan omf-monthly-reconciliation-20261020 F4: which values a company/T-number research supports after later edits.
+// Plan omf-monthly-registry-basis-20261020 F9: the registry date basis without a supplier candidate.
 // Pure helper tests on synthetic data only; the payment projection and the research stale read reuse the same helper.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,6 +85,31 @@ test('F4 fold E1: a date-only change keeps the value origin but invalidates the 
   assert.deepEqual([readyChecked.origin, readyChecked.differs], ['candidate', ['purchaseDate']], 'monthly:f4-unit-date-ready-candidate');
   const unchecked = intakeEvidence(values({ purchaseDate: '2026-10-05' }), confirmed());
   assert.deepEqual([unchecked.origin, unchecked.differs, unchecked.registryBasis, confirmedResearchCurrent(values({ purchaseDate: '2026-10-05' }), confirmed())], ['research-confirmed', [], null, true], 'monthly:f4-unit-no-registry-no-basis');
+});
+// Integrated review omf-monthly-integrated-opus55-20261020 F9: a ready research that returned no supplier candidate but holds a
+// registry check (asOf D) for a record whose stored 会社名/T番号 equal that registry row. The check still names D and is not current
+// once the purchase date moves; with no supported values there is no difference, so no changed-after-research label.
+const registryD = { number: NUMBER, legalName: NAME, active: true, asOf: '2026-10-20', registeredFrom: '2023-10-01', disposalDate: '', expireDate: '' };
+const registryOnly = (registry = registryD) => ready({ report: { summary: 'not found', question: '', findings: [], supplier: null }, registry });
+test('F9 a registry check without a supplier candidate names its 基準日 for the current purchase date', async () => {
+  const { intakeEvidence } = await helpers();
+  const e = intakeEvidence(values({ purchaseDate: '2026-10-20' }), registryOnly());
+  assert.deepEqual([e.origin, e.differs, e.registryBasis], ['file-manual', [], { asOf: '2026-10-20', purchaseDate: '2026-10-20', current: true }], 'monthly:f9-unit-registry-only-basis');
+  for (const day of ['', '10/5/26']) assert.deepEqual(intakeEvidence(values({ purchaseDate: day }), registryOnly()).registryBasis, { asOf: '2026-10-20', purchaseDate: '', current: true }, 'monthly:f9-unit-registry-only-undated ' + JSON.stringify(day));
+});
+test('F9 a registry check without a supplier candidate is not current after the purchase date moves, and adds no difference', async () => {
+  const { intakeEvidence } = await helpers();
+  const moved = intakeEvidence(values({ purchaseDate: '2026-10-05' }), registryOnly());
+  assert.deepEqual([moved.origin, moved.differs, moved.registryBasis], ['file-manual', [], { asOf: '2026-10-20', purchaseDate: '2026-10-05', current: false }], 'monthly:f9-unit-registry-only-date-moved');
+});
+test('F9 controls: no registry means no basis; a registry-only research is never confirmed-current, claims no sources and adds no difference', async () => {
+  const { intakeEvidence, confirmedResearchCurrent } = await helpers();
+  for (const v of [values({ purchaseDate: '2026-10-20' }), values({ purchaseDate: '2026-10-05' }), { merchantUrl: URL1, purchaseDate: '2026-10-05' }]) {
+    const none = intakeEvidence(v, registryOnly(null));
+    assert.deepEqual([none.differs, none.registryBasis, none.sourcesCurrent], [[], null, false], 'monthly:f9-unit-no-registry-no-basis');
+    const checked = intakeEvidence(v, registryOnly());
+    assert.deepEqual([checked.differs, checked.sourcesCurrent, confirmedResearchCurrent(v, registryOnly())], [[], false, false], 'monthly:f9-unit-registry-only-no-difference');
+  }
 });
 test('F4 the record page and payment evidence templates compile', async () => {
   const { createRequire } = await import('node:module'), req = createRequire(import.meta.url), { parse, compileTemplate } = req('@vue/compiler-sfc');

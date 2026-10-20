@@ -272,6 +272,15 @@ async function main() {
       const job6 = ok(await wcall('intake/claim'), 'monthly:f4-claim-failed').job;
       assert.equal(job6?.context?.recordId, r6.id, 'SETUP:failed-job');
       ok(await wcall('intake/' + job6.id + '/result', { lease: job6.lease, failed: true }), 'monthly:f4-failed-result');
+      // F9 (integrated review omf-monthly-integrated-opus55-20261020): a ready research that returned no supplier candidate but holds
+      // a registry check as of the research-time 購入日 2026-11-12, for a record whose stored 会社名/T番号 equal that registry row.
+      // Queued and finished before r5, so r5 stays the one queued research.
+      const r9 = await createRecord({ orderId: 'F4-0009', description: 'F4 registry-only item', merchant: 'Synthetic Evidence', merchantUrl: 'https://evidence.example.invalid/items/9', purchaseDate: '2026-11-12', amount: '900', supplierName: NAME, invoiceNumber: NUMBER });
+      ok(await worker(), 'SETUP:worker-status');
+      ok(await intake('records/' + r9.id + '/research', { method: 'POST', body: { revision: r9.revision, researchRevision: 0, requestId: uuid(), instruction: '' } }), 'monthly:f9-queue');
+      const job9 = ok(await wcall('intake/claim'), 'monthly:f9-claim').job;
+      assert.equal(job9?.context?.recordId, r9.id, 'SETUP:registry-only-job');
+      ok(await wcall('intake/' + job9.id + '/result', { lease: job9.lease, sources: [...job9.sources, registry('s1', NUMBER, NAME)], report: { summary: '会社名を特定できませんでした。', question: '', findings: [], supplier: null }, registry: { sourceId: 's1', number: NUMBER, date: job9.context.source.purchaseDate } }), 'monthly:f9-result');
       const r5 = await createRecord({ orderId: 'F4-0005', description: 'F4 queued research item', merchant: 'Synthetic Evidence', merchantUrl: 'https://evidence.example.invalid/items/5', purchaseDate: '2026-11-06', amount: '300' });
       ok(await worker(), 'SETUP:worker-status');
       ok(await intake('records/' + r5.id + '/research', { method: 'POST', body: { revision: r5.revision, researchRevision: 0, requestId: uuid(), instruction: '' } }), 'monthly:f4-queue-left');
@@ -283,6 +292,10 @@ async function main() {
       await allocateRecord(await findPayment('F4-0001 Synthetic Evidence'), r1, 1200);
       for (const [r, amount] of [[r4, 400], [r5, 300], [r6, 500]]) await allocateRecord(await findPayment('F4 EVIDENCE SET'), r, amount);
       ui.f4 = { r1, fileRecord, r4, r5, r6 };
+      const registryBank = await bankAccount('F4 registry-only bank');
+      await bankImport(registryBank, csv(BANK_HEAD, [['2026/11/12', 'F4 REGISTRY ONLY', '900', '', '', '']]), 'f4-registry-only-bank.csv');
+      await allocateRecord(await findPayment('F4 REGISTRY ONLY'), r9, 900);
+      ui.f4.r9 = r9;
       // E1: only the purchase date moves (to before the registration date); the value origin stays, the check is not current.
       r4 = await patch(r4, { purchaseDate: '2026-11-03' });
       rv = await researchView(r4);
@@ -297,6 +310,23 @@ async function main() {
       pass('restoring the purchase date restores the registry correspondence');
       r4 = await patch(r4, { purchaseDate: '2026-11-03' });
       ui.f4.r4 = r4;
+      // F9: payment evidence of the registry-only record names the 2026-11-12 basis while the date is current, is not verified once
+      // the purchase date moves, and never shows a difference (no supported values). Ends restored to 2026-11-12 for Chrome.
+      let r9v = ui.f4.r9;
+      e = await evidence(r9v); rv = await researchView(r9v);
+      assert.deepEqual([rv.research.state, rv.research.report?.supplier ?? null, e.origin, e.verified, e.differs, e.registryBasis], ['ready', null, 'file-manual', true, [], { asOf: '2026-11-12', purchaseDate: '2026-11-12', current: true }], 'monthly:f9-registry-only-basis');
+      assert.deepEqual(rv.attribution?.registryBasis, { asOf: '2026-11-12', purchaseDate: '2026-11-12', current: true }, 'monthly:f9-registry-only-research-view');
+      pass('a registry check without a supplier candidate: payment evidence verified for the stored 会社名/T番号 and names its 基準日 2026-11-12');
+      r9v = await patch(r9v, { purchaseDate: '2026-11-04' });
+      e = await evidence(r9v); rv = await researchView(r9v);
+      assert.deepEqual([e.origin, e.verified, e.differs, e.registryBasis], ['file-manual', false, [], { asOf: '2026-11-12', purchaseDate: '2026-11-04', current: false }], 'monthly:f9-registry-only-date-unverified');
+      assert.deepEqual([rv.research.verified, rv.attribution?.differs, rv.attribution?.registryBasis?.current], [false, [], false], 'monthly:f9-registry-only-research-view-moved');
+      pass('after the purchase date moves the registry-only check is not verified and still adds no difference');
+      r9v = await patch(r9v, { purchaseDate: '2026-11-12' });
+      e = await evidence(r9v);
+      assert.deepEqual([e.verified, e.differs, e.registryBasis?.current], [true, [], true], 'monthly:f9-registry-only-restored');
+      pass('restoring the purchase date restores the registry-only verification');
+      ui.f4.r9 = r9v;
     });
 
     // ── F1 — typed spreadsheet cells, bank reader control, template drift, same-file reimport ─────────────────────────
@@ -543,6 +573,32 @@ async function main() {
           await wait(() => { const b = document.querySelector('[data-research-start]'); return b && !b.disabled && b.textContent.includes('もう一度調べる'); }, null, 'monthly:f4-chrome-date-reresearch');
           assert.equal(await overflow(), false, 'monthly:f4-chrome-date-no-overflow'); await shot('research-date-basis-390');
           pass('hidden real Chrome: no changed-after-research label for queued/failed research (payment evidence and month list); the moved purchase date shows its 基準日, is not 照合済み, and offers re-research');
+          // F9: the registry-only purchase on its own bank row. Its purchase date is moved, then restored, through the API here, so
+          // the label of each state is read in the browser whatever state the API leg left.
+          const r9 = ui.f4.r9, single = (await payments()).find(p => p.description === 'F4 REGISTRY ONLY'), a9 = (await view(single)).allocations.find(a => a.record?.id === r9.id)?.id;
+          assert.ok(a9, 'SETUP:f9-registry-only-allocation');
+          const date9 = async purchaseDate => ok(await intake('records/' + r9.id, { method: 'PATCH', body: { revision: ok(await intake('records/' + r9.id), 'record').revision, values: { purchaseDate } } }), 'monthly:f9-chrome-edit');
+          const label9 = async () => {
+            await page.goto(origin + '/intake/payments', { waitUntil: 'networkidle2' }); await wait(() => !!document.querySelector('[data-payment-list]'));
+            await page.evaluate(k => document.querySelector('[data-payment-key="' + k + '"]').click(), single.paymentKey);
+            await wait(id => !!document.querySelector('[data-allocation="' + id + '"] [data-evidence-origin]'), a9, 'monthly:f9-chrome-evidence');
+            return page.evaluate(id => ({ origin: document.querySelector('[data-allocation="' + id + '"] [data-evidence-origin]')?.textContent || '', historical: !!document.querySelector('[data-allocation="' + id + '"] [data-evidence-historical]') }), a9);
+          };
+          await date9('2026-11-04');
+          const moved9 = await label9();
+          assert.ok(moved9.origin.includes('国税庁照合は基準日 2026-11-12 のもの') && moved9.origin.includes('現在の購入日 2026-11-04 では未確認') && !moved9.origin.includes('国税庁照合済み') && !moved9.historical, 'monthly:f9-chrome-registry-only-date-moved ' + JSON.stringify(moved9));
+          assert.equal(await overflow(), false, 'monthly:f9-chrome-evidence-no-overflow'); await shot('registry-only-moved-390');
+          await setInput('[data-payment-from]', '2026-11-01'); await setInput('[data-payment-to]', '2026-11-30');
+          await page.click('[data-review-tab="purchases"]');
+          await wait(id => !!document.querySelector('[data-purchase-record="' + id + '"]'), r9.id, 'monthly:f9-chrome-month-row');
+          const row9 = await page.$eval('[data-purchase-record="' + r9.id + '"]', el => el.textContent);
+          assert.ok(row9.includes('2026-11-04') && !row9.includes('調査後に変更あり'), 'monthly:f9-chrome-month-no-false-change ' + row9.slice(0, 300));
+          assert.equal(await overflow(), false, 'monthly:f9-chrome-month-no-overflow');
+          await date9('2026-11-12');
+          const current9 = await label9();
+          assert.ok(current9.origin.includes('国税庁照合済み（基準日 2026-11-12）') && !current9.historical, 'monthly:f9-chrome-registry-only-basis ' + JSON.stringify(current9));
+          assert.equal(await overflow(), false, 'monthly:f9-chrome-current-no-overflow'); await shot('registry-only-current-390');
+          pass('hidden real Chrome: a registry check without a supplier candidate names 基準日 2026-11-12, is not 国税庁照合済み after the 購入日 moves, and shows no changed-after-research label');
         });
         if (ui.f1) await group('F1', async pass => {
           for (const [file, notice] of [[ui.f1.originalPath, false], [ui.f1.reorderedPath, true]]) {
