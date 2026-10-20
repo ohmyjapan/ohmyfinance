@@ -87,7 +87,9 @@ onBeforeUnmount(()=>{ticket++;window.removeEventListener('resize',syncViewport);
 </script>
 <style>
 .assistant-input { @apply block w-full min-w-0 resize-y rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-800 placeholder:text-gray-400 focus:border-primary-main focus:outline-none focus:ring-1 focus:ring-primary-main disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:text-gray-100; max-height:180px; }
-.navi-dock { --navi-launcher-size:6rem;position:fixed;z-index:20;right:max(1rem,env(safe-area-inset-right));bottom:calc(max(1rem,env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px));width:var(--navi-launcher-size); }
+:root { --navi-launcher-size:6rem; }
+[data-page-content] { padding-bottom:var(--navi-launcher-size); }
+.navi-dock { position:fixed;z-index:20;right:max(1rem,env(safe-area-inset-right));bottom:calc(max(1rem,env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px));width:var(--navi-launcher-size); }
 .navi-launcher { position:relative;display:flex;align-items:center;justify-content:center;width:var(--navi-launcher-size);height:var(--navi-launcher-size);border-radius:50%;box-shadow:0 4px 20px rgb(61 42 32 / 16%);outline-offset:4px; }
 .navi-launcher:focus-visible { outline:2px solid #93402b; }
 .navi-launcher-label { position:absolute;right:calc(100% + .625rem);white-space:nowrap;border:1px solid #e5e7eb;border-radius:.75rem;background:#fff;padding:.5rem .75rem;text-align:left;font-size:.75rem;font-weight:600;color:#374151;box-shadow:0 2px 8px rgb(61 42 32 / 5%); }
@@ -98,7 +100,8 @@ onBeforeUnmount(()=>{ticket++;window.removeEventListener('resize',syncViewport);
 .navi-support { flex-shrink:0;max-height:25%;overflow-y:auto; }
 .assistant-panel > section { width:100%;max-width:56rem;align-self:center; }
 @media(max-width:639px) {
- .navi-dock { --navi-launcher-size:5rem;right:max(.75rem,env(safe-area-inset-right));bottom:calc(max(.75rem,env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px)); }
+ :root { --navi-launcher-size:5rem; }
+ .navi-dock { right:max(.75rem,env(safe-area-inset-right));bottom:calc(max(.75rem,env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px)); }
  .navi-dialog { width:calc(100vw - 1.5rem);height:min(44rem,calc(var(--navi-viewport-height,100dvh) - var(--navi-launcher-size) - 2.5rem - var(--navi-top-clearance,0px))); }
  .navi-dialog .assistant-input { max-height:7rem; }
 }
