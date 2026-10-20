@@ -361,6 +361,22 @@ const legs = {
     await w.gen(P, acct); const dn = await w.draftOf(P, acct, await w.rowBy(acct, HOLDER, '2026-10-14'));
     assert.deepEqual(dn.ready.reasons, ['account-missing', 'transfer-unreviewed'], 'fold:own-teaching-not-registrable-without-review');
     assert.equal((await w.register(P, dn, { revision: dn.revision, action: 'create', confirm: true })).status, 409);
+    // An owner-entered own-account teaching can be a mistake: correct it through the ordinary reviewed teaching action.
+    const corrected = await w.fix(P, acct, await w.rowBy(acct, HOLDER, '2026-10-14'), 'Synthetic corrected supplier', '外注費');
+    assert.equal(corrected.proposed.origin, 'teaching'); assert.ok(corrected.transfer);
+    const correction = await w.remember(P, corrected, { revision: corrected.revision });
+    assert.equal(correction.status, 200, 'fold:own-teaching-correctable (reviewed supplier replaces an owner-entered own-account rule)');
+    assert.equal(correction.data.teaching.values.purpose, 'Synthetic corrected supplier');
+    await w.importRows(acct, [['20261017', -123000, HOLDER]], 'fold-own-corrected.csv', 1000000);
+    const future = w.rowIn(w.ok(await w.list(P, acct), 'list-corrected-future'), await w.rowBy(acct, HOLDER, '2026-10-17')).proposal;
+    assert.deepEqual([future.proposal.origin, future.proposal.purpose, future.proposal.accountCategoryId, future.transfer], ['teaching', 'Synthetic corrected supplier', String(w.chart['外注費']), null], 'fold:own-teaching-corrected-future');
+    assert.deepEqual([future.tax.status, future.invoice.status], ['unknown', 'unverified']);
+    assert.equal(await w.db.collection('transactions').countDocuments({ organizationId: P.id }), 0, 'fold:teaching-correction-creates-no-transaction');
+    await w.importRows(acct, [['20261018', -50000, '振込 カクウホールディングス']], 'fold-own-exact-name.csv', 1000000);
+    const automatic = await w.rowBy(acct, '振込 カクウホールディングス', '2026-10-18'); await w.gen(P, acct);
+    const autoDraft = await w.fix(P, acct, automatic, 'Synthetic supplier override', '外注費');
+    assert.equal(autoDraft.proposed.origin, 'own-company-name');
+    assert.equal((await w.remember(P, autoDraft, { revision: autoDraft.revision })).status, 400, 'fold:automatic-own-name-stays-transfer');
     return 'own-company choice stored without an account (fee and undecided supplier refused); next row: own-transfer / teaching / review, transfer awaiting the other bank, tax unknown, T unverified, not registrable';
   }
 };
@@ -486,6 +502,21 @@ const chromeLegs = {
       await s.page.click(h + '[data-bank-classification-remember-own]');
       const taught = await s.until(async () => w.db.collection('financebankteachings').findOne({ organizationId: R2.id, payeeKey: dHolder.payeeKey }), 'fold:chrome-own-teach');
       assert.deepEqual(taught.values, { purpose: 'own-transfer' }, 'fold:chrome-own-teach-no-account');
+      // Correct a mistaken own-account rule using the native editor, then verify the next row uses that correction.
+      await w.importRows(acct, [['20261001', -61000, holder.description]], 'fold-chrome-own-later.csv', 1000000);
+      await w.gen(R2, acct); await s.reload();
+      const laterHolder = await w.rowBy(acct, holder.description, '2026-10-01'), hc = s.rowSel(laterHolder);
+      await editRow(s, hc, 'Synthetic corrected chrome supplier', String(w.chart['外注費']));
+      const laterDraft = await w.draftOf(R2, acct, laterHolder);
+      await s.until(async () => (await w.stored(laterDraft.id)).values.purpose === 'Synthetic corrected chrome supplier', 'fold:chrome-correction-saved');
+      await s.settle(hc);
+      await s.wait(x => !!document.querySelector(x + '[data-bank-classification-remember-correction]') && !document.querySelector(x + '[data-bank-classification-remember-correction]').disabled, hc, 'fold:chrome-own-teaching-correctable');
+      await s.page.click(hc + '[data-bank-classification-remember-correction]');
+      const correctedTeaching = await s.until(async () => { const t = await w.db.collection('financebankteachings').findOne({ organizationId: R2.id, payeeKey: dHolder.payeeKey }); return t?.values?.purpose === 'Synthetic corrected chrome supplier' ? t : null; }, 'fold:chrome-own-teaching-corrected');
+      assert.equal(String(correctedTeaching.values.accountCategoryId), String(w.chart['外注費']));
+      await w.importRows(acct, [['20261002', -62000, holder.description]], 'fold-chrome-own-corrected.csv', 1000000);
+      const futureHolder = w.rowIn(w.ok(await w.list(R2, acct), 'list-chrome-corrected'), await w.rowBy(acct, holder.description, '2026-10-02')).proposal;
+      assert.deepEqual([futureHolder.proposal.origin, futureHolder.proposal.purpose, futureHolder.transfer, futureHolder.tax.status, futureHolder.invoice.status], ['teaching', 'Synthetic corrected chrome supplier', null, 'unknown', 'unverified'], 'fold:chrome-corrected-future');
       assert.equal(await s.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'fold:chrome-no-overflow');
       await s.page.setViewport({ width: 1440, height: 1000 }); await pause(300); assert.equal(await s.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'fold:chrome-desktop-no-overflow');
       await s.page.evaluate(() => document.documentElement.classList.add('dark')); assert.equal(await s.page.$eval('[data-bank-classification-account]', e => getComputedStyle(e).backgroundColor), 'rgb(30, 41, 59)', 'fold:chrome-dark-control');
@@ -498,6 +529,7 @@ const chromeLegs = {
 
 // ══ Deliberately reintroduced defects in copies of the built server chunks (each anchor must hit exactly once) ══
 const SERVER_MUTANTS = [
+  ['MF15', 'A6', [[/if \(!ownTransfer && current\.proposed\?\.transfer && current\.proposed\?\.proposal\?\.origin !== "teaching"\)/g, 'if (!ownTransfer && current.proposed?.transfer)']], /fold:own-teaching-correctable/],
   ['MF1', 'A2', [[/const claimFilter = \{ _id: d\._id, ownerId, organizationId: d\.organizationId, revision: d\.revision, registration: null \}/g, 'const claimFilter = { _id: d._id, ownerId, organizationId: d.organizationId, revision: d.revision }'], [/const exclusive = !!d\.registration;/g, 'const exclusive = false;']], /fold:reassign-registered-exclusive/],
   ['MF2', 'A2', [[/const claimFilter = \{ _id: d\._id, ownerId, organizationId: d\.organizationId, revision: d\.revision, registration: null \}/g, 'const claimFilter = { _id: d._id, ownerId, organizationId: d.organizationId, registration: null }'], [/if \(Number\(body\.revision\) !== d\.revision\) fail\(409, STALE\);/g, '']], /fold:reassign-stale|fold:reassign-cas/],
   ['MF3', 'A2', [[/values: fresh\.values,/g, 'values: d.values,']], /fold:reassign-no-leak/],

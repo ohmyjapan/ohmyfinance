@@ -186,7 +186,9 @@ export async function rememberBankClassification(ownerId: string, organizationId
   if (ownTransfer && TEXT_KINDS.includes(String(current.proposed?.proposal?.purposeKind || ''))) fail(400, '手数料・カード会費・利息の明細は自社口座として記憶できません。')
   if (!ownTransfer && !current.manual && !current.registration) fail(400, '確認・修正した仕訳だけを記憶できます。')
   if (!ownTransfer && (!String(v.purpose || '').trim() || !/^[a-f\d]{24}$/i.test(String(v.accountCategoryId || '')))) fail(400, '用途と勘定科目を確認してから記憶してください。')
-  if (!ownTransfer && current.proposed?.transfer) fail(400, '自社名の振込は資金移動として記憶してください。')
+  // An owner-entered own-account rule is correctable after an ordinary purpose/account review; automatic company-name
+  // evidence still requires the own-transfer decision. This widens the existing remember exit, with no Transaction write.
+  if (!ownTransfer && current.proposed?.transfer && current.proposed?.proposal?.origin !== 'teaching') fail(400, '自社名の振込は資金移動として記憶してください。')
   const values = ownTransfer ? { purpose: 'own-transfer' } : { purpose: v.purpose, accountCategoryId: v.accountCategoryId, subAccountCategoryId: v.subAccountCategoryId || '', supplierId: v.supplierId || '' }
   const write = () => BankTeaching.findOneAndUpdate({ organizationId, payeeKey: current.payeeKey, direction: current.direction }, { $set: { ownerId, values, sourceDraftId: current._id }, $inc: { revision: 1 }, $push: { history: { at: new Date(), by: ownerId, draftId: current._id, values } } }, { upsert: true, new: true }).lean()
   let saved: any; try { saved = await write() } catch (e: any) { if (e?.code !== 11000) throw e; saved = await write() }

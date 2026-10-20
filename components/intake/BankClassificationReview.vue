@@ -70,6 +70,7 @@
           <div class="flex flex-wrap gap-2">
             <button class="btn btn-secondary" :disabled="busy" data-bank-classification-save @click="save(r)">保存</button>
             <button class="btn btn-secondary" :disabled="busy || !r.draft.payeeKey || dirty(r)" data-bank-classification-remember @click="remember(r)">{{ r.draft.transfer ? 'この支払先を自社口座として記憶' : 'この支払先の仕訳として記憶' }}</button>
+            <button v-if="r.draft.transfer && r.draft.proposed?.origin === 'teaching'" class="btn btn-secondary" :disabled="busy || !r.draft.manual || !r.draft.payeeKey || dirty(r)" data-bank-classification-remember-correction @click="remember(r, true)">自社口座の記憶を、この仕訳に訂正</button>
             <button v-if="!r.draft.transfer && !TEXT_KINDS.includes(r.draft.proposed?.purposeKind)" class="btn btn-secondary" :disabled="busy || !r.draft.payeeKey" data-bank-classification-remember-own @click="rememberOwn(r)">この支払先を自社口座として記憶</button>
           </div>
           <div v-if="(links[r.rowId] || []).length" class="flex min-w-0 flex-wrap items-end gap-2">
@@ -147,7 +148,7 @@ async function save(r: any) {
     message.value = '修正を保存しました（取引はまだ作成していません）。'; adopt(await $fetch(api, { headers: user.authHeader, query: { account: account.value } }))
   })
 }
-async function remember(r: any) { await run(async () => { await $fetch(api + '/' + r.draft.id + '/remember', { method: 'POST', headers: user.authHeader, body: { revision: r.draft.revision, ...(r.draft.transfer ? { kind: 'own-transfer' } : {}) } }); message.value = 'この支払先の仕訳を記憶しました（次の提案に使います）。' }) }
+async function remember(r: any, correctOwn = false) { await run(async () => { await $fetch(api + '/' + r.draft.id + '/remember', { method: 'POST', headers: user.authHeader, body: { revision: r.draft.revision, ...(r.draft.transfer && !correctOwn ? { kind: 'own-transfer' } : {}) } }); message.value = correctOwn ? '自社口座として記憶した内容を、この仕訳に訂正しました（次の提案に使います）。' : 'この支払先の仕訳を記憶しました（次の提案に使います）。' }) }
 async function register(r: any, action: 'create' | 'link') {
   const f = forms[r.rowId]
   await run(async () => {

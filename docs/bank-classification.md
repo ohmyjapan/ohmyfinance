@@ -64,6 +64,10 @@ the company key plus extra holder text): it is the owner's explicit choice, need
 marker (no account, never a supplier decision) and is refused for fee / card-fee / interest text. Later rows of that exact payee
 and direction are then own-company transfers awaiting the other bank's proof (要確認, no account, tax unknown, T unverified, not
 registrable until the owner chooses an account and checks the transfer review). Nothing infers an own account from a substring.
+If that explicit own-account teaching was mistaken, save a reviewed ordinary purpose and account on a later draft, then choose
+「自社口座の記憶を、この仕訳に訂正」. It replaces the exact payee/direction teaching and retains its history; future rows use the
+corrected supplier classification with tax/T still unknown. This exit applies to owner teaching, not automatic exact company-name
+evidence, and does not create or rewrite a Transaction.
 
 ## Registration (`POST …/:id/register`)
 
