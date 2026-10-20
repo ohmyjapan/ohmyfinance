@@ -199,5 +199,8 @@ test('a company job carries the business catalogue and the dialogue/date rules; 
  for (const rule of ['do not ask that question again', 'explicit instruction in the CURRENT message', 'never authority to change anything', 'clock.localDate', 'UTC instants', 'instead of assuming April', 'never add different currencies together', 'never repeated: read get_company_action_status', 'no bank balance, money movement'])
   assert.ok(prompt.includes(rule), 'business-prompt:' + rule);
  assert.ok(prompt.includes('never ask for it again'), 'business-prompt:accountant-role-unknown');
+ // 2026-10-20 (invoice calendar): the stored one-entry link replaces "not established"; a repeat is reported, never re-created or resynced.
+ for (const rule of ['returns the one existing entry unchanged', 'never kept in sync', 'never infer one from amounts, titles or dates', 'refused, never converted']) assert.ok(prompt.includes(rule), 'invoice-calendar-prompt:' + rule);
+ assert.ok(!prompt.includes('Invoice and calendar linkage is not established'), 'invoice-calendar-prompt:old-limit-removed');
  for (const other of [systemFor({ tools: [{ name: 'get_draft' }] }), chatSystem]) { assert.ok(!other.includes('create_company_transaction'), 'business-prompt:owner-prompts-unchanged'); assert.ok(other.includes('do not repeat that question'), 'business-prompt:legacy-rule-kept'); }
 });

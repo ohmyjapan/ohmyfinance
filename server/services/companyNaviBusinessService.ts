@@ -17,6 +17,7 @@ import { listCompanyBudgets, getCompanyBudget, createCompanyBudget, updateCompan
 import { getRecurringPayments, getRecurringPaymentById, createRecurringPayment, updateRecurringPayment, deleteRecurringPayment, generateTransaction } from './recurringPaymentService'
 import { getCompanyNaviTransaction, transactionNaviView } from './companyTransactionAssistantService'
 import { companyProfile, companyFinanceSummary, listCompanyReceipts, getCompanyReceipt } from './companyNaviSummaryService'
+import { readInvoiceCalendar, scheduleInvoicePayment, invoicePaymentId, invoiceLinkSummary } from './companyInvoiceCalendarService'
 import { businessToolMeta, businessFields } from '../../shared/finance-navi-business.mjs'
 
 const bad = (statusCode: number, statusMessage: string): never => { throw createError({ statusCode, statusMessage }) }
@@ -44,7 +45,7 @@ const validation = (error: any): never => { if (error?.name === 'ValidationError
 // ---- Safe projections (no creator/company/marker, contacts, bank text or private metadata)
 export const invoiceResultValues = (values: any) => ({ ...Object.fromEntries(Object.entries(values || {}).filter(([k]) => !['bankDetails', 'from', 'to', 'items', 'naviOperation'].includes(k))), ...(values?.from ? { from: { name: values.from.name, taxId: values.from.taxId || '' } } : {}), ...(values?.to ? { to: { name: values.to.name } } : {}), ...(values?.items ? { itemCount: values.items.length } : {}), ...(values?.bankDetails !== undefined ? { bankDetails: values.bankDetails ? 'saved_not_shown' : 'cleared' } : {}) })
 const invoiceSummary = (v: any) => ({ id: String(v._id), invoiceNumber: v.invoiceNumber, status: v.status, issueDate: v.issueDate, dueDate: v.dueDate, currency: v.currency, subtotal: v.subtotal, taxRate: v.taxRate, taxAmount: v.taxAmount, total: v.total, from: { name: v.from?.name, taxId: v.from?.taxId || '' }, to: { name: v.to?.name }, itemCount: v.items?.length || 0, hasBankDetails: !!v.bankDetails, transactionId: v.transactionId ? String(v.transactionId) : null, updatedAt: v.updatedAt, delivery: 'not_sent_saved_record_only' })
-const entryView = (v: any) => ({ id: String(v._id), title: v.title, amount: v.amount, currency: v.currency, dueDate: v.dueDate, type: v.type, status: v.status, category: v.category, recurring: v.recurring === true, recurringFrequency: v.recurringFrequency || null, notes: v.notes || '', source: v.source ? { kind: v.source.kind, adopted: v.source.adopted === true } : null, updatedAt: v.updatedAt, moneyMovement: 'none_internal_plan_only' })
+const entryView = (v: any) => ({ id: String(v._id), title: v.title, amount: v.amount, currency: v.currency, dueDate: v.dueDate, type: v.type, status: v.status, category: v.category, recurring: v.recurring === true, recurringFrequency: v.recurringFrequency || null, notes: v.notes || '', source: v.source ? { kind: v.source.kind, adopted: v.source.adopted === true } : null, invoiceLink: invoiceLinkSummary(v.invoiceLink), updatedAt: v.updatedAt, moneyMovement: 'none_internal_plan_only' })
 const budgetView = (v: any) => { if (!v) return v; const { organizationId: _o, createdBy: _c, naviOperation: _m, __v: _v, _id, ...rest } = v; return { ...rest, id: String(_id || v.id) } }
 const recurringView = (v: any) => v ? { id: String(v._id || v.id), name: v.name, description: v.description || '', amount: v.amount, currency: v.currency || null, transactionType: v.transactionType || null, frequency: v.frequency, dayOfMonth: v.dayOfMonth ?? null, dayOfWeek: v.dayOfWeek ?? null, startDate: v.startDate, endDate: v.endDate || null, nextDueDate: v.nextDueDate, lastGeneratedDate: v.lastGeneratedDate || null, status: v.status, payeeName: v.customer?.name || '', category: v.category || '', notes: v.notes || '', autoGenerate: v.autoGenerate !== false, generatedCount: (v.generatedTransactionIds || []).length, updatedAt: v.updatedAt } : v
 const recurringBody = (args: any) => { const body: any = pick(args, businessFields.recurring.filter(k => k !== 'payeeName')); if (args.status !== undefined) body.status = args.status; if (args.payeeName !== undefined) body.customer = { name: args.payeeName }; return body }
@@ -113,6 +114,22 @@ const adapters: Record<string, Adapter> = {
     run: async ({ c, args, marker }) => { const r: any = await deleteCompanyCalendarEntry(c.organizationId, args.paymentId, String(c.ownerId), { expectedUpdatedAt: args.expectedUpdatedAt, naviOperation: marker }); return { resourceIds: { paymentId: String(args.paymentId) }, result: { suppressed: r.suppressed, meaning: r.suppressed ? 'issuer bill hidden from the calendar; its saved facts are kept and it cannot be recreated' : 'manual calendar entry deleted', entry: { id: String(r.payment._id), title: r.payment.title, amount: r.payment.amount, currency: r.payment.currency, dueDate: r.payment.dueDate } } } },
     // Only a suppression keeps its row (with this operation's marker); a hard-deleted manual entry cannot prove itself.
     recover: markedOn(Payment)
+  },
+  // The invoice's one income entry, through the same service as the native route. The entry id is fixed by the invoice, so a repeat
+  // in a later turn, a concurrent native request or a retry meets the same row and gets it back unchanged. Only the row this
+  // operation inserted carries its marker; returning an existing entry writes nothing, so its lost reply stays unresolved.
+  schedule_company_invoice_payment: {
+    resource: (args) => String(invoicePaymentId(String(args.invoiceId))),
+    detail: args => ({ invoiceId: String(args.invoiceId) }),
+    precheck: async (_c, args) => { exactSnapshot(args.expectedUpdatedAt) },
+    run: async ({ c, args, marker }) => {
+      const r: any = await scheduleInvoicePayment(companyOf(c), String(args.invoiceId), { expectedUpdatedAt: args.expectedUpdatedAt, actorId: String(c.ownerId), naviOperation: marker })
+      return { resourceIds: { paymentId: r.entry.id, invoiceId: String(args.invoiceId) }, result: r }
+    },
+    recover: async (c: any, op: any) => {
+      const m = await markerOf(Payment, c.organizationId, op.resourceId)
+      return sameMarker(m, op) ? { ...m, nativeResourceIds: { paymentId: String(op.resourceId), invoiceId: String(op.detail?.invoiceId) } } : null
+    }
   },
   create_company_budget: {
     resource: (_args, operationId) => String(createdId(operationId)),
@@ -185,6 +202,7 @@ export async function businessRead(c: any, name: string, args: any) {
   if (name === 'get_company_finance_summary') return companyFinanceSummary(organizationId, args)
   if (name === 'list_company_receipts') return listCompanyReceipts(organizationId, args)
   if (name === 'get_company_receipt') return getCompanyReceipt(organizationId, args.receiptId)
+  if (name === 'get_company_invoice_calendar') return readInvoiceCalendar(companyOf(c), String(args.invoiceId))
   if (name === 'list_company_budgets') { const rows = await listCompanyBudgets(companyOf(c), { active: args.active === true ? 'true' : undefined, period: args.period }); return { budgets: rows.slice(0, 100).map(budgetView), truncated: rows.length > 100 } }
   if (name === 'get_company_budget') { const v = await getCompanyBudget(companyOf(c), args.budgetId); if (!v) bad(404, 'Budget not found'); return { budget: budgetView(v) } }
   if (name === 'list_company_recurring_payments') { const rows = await getRecurringPayments(companyOf(c), pick(args, ['status', 'frequency', 'search'])); return { recurringPayments: rows.slice(0, 100).map(recurringView), truncated: rows.length > 100 } }

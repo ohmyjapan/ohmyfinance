@@ -1,12 +1,12 @@
 // Company business tool contracts, dates, currencies and pages: shared code only, no database, model or network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { companyBusinessTools, businessTool, businessToolMeta, validateBusinessArgs, companyNaviPages, companyNaviPage, zonedDayStart, zonedRange, localBusinessDate, recordCurrency, currencyCode, fiscalYearFor, validTimeZone } from '../shared/finance-navi-business.mjs';
+import { companyBusinessTools, businessTool, businessToolMeta, refreshKinds, validateBusinessArgs, companyNaviPages, companyNaviPage, zonedDayStart, zonedRange, localBusinessDate, recordCurrency, currencyCode, fiscalYearFor, validTimeZone } from '../shared/finance-navi-business.mjs';
 import { assistantConversationScope, assistantPage } from '../shared/finance-assistant.mjs';
 import { naviFeature } from '../shared/finance-navi-features.mjs';
 
-const writes = ['create_company_transaction', 'delete_company_transaction', 'create_company_invoice', 'delete_company_invoice', 'create_company_calendar_entry', 'delete_company_calendar_entry', 'create_company_budget', 'update_company_budget', 'delete_company_budget', 'create_company_recurring_payment', 'update_company_recurring_payment', 'delete_company_recurring_payment', 'generate_company_recurring_forecast'];
-const reads = ['get_company_profile', 'get_company_finance_summary', 'list_company_receipts', 'get_company_receipt', 'list_company_budgets', 'get_company_budget', 'list_company_recurring_payments', 'get_company_recurring_payment', 'list_company_conversation_history', 'get_company_conversation_archive', 'get_company_knowledge'];
+const writes = ['create_company_transaction', 'delete_company_transaction', 'create_company_invoice', 'delete_company_invoice', 'create_company_calendar_entry', 'delete_company_calendar_entry', 'create_company_budget', 'update_company_budget', 'delete_company_budget', 'create_company_recurring_payment', 'update_company_recurring_payment', 'delete_company_recurring_payment', 'generate_company_recurring_forecast', 'schedule_company_invoice_payment'];
+const reads = ['get_company_invoice_calendar','get_company_profile', 'get_company_finance_summary', 'list_company_receipts', 'get_company_receipt', 'list_company_budgets', 'get_company_budget', 'list_company_recurring_payments', 'get_company_recurring_payment', 'list_company_conversation_history', 'get_company_conversation_archive', 'get_company_knowledge'];
 
 test('the business catalogue is a finite set of named native adapters, never a generic endpoint', () => {
  assert.deepEqual(companyBusinessTools.map(t => t.name).sort(), [...writes, ...reads].sort(), 'business:catalogue');
@@ -30,6 +30,22 @@ test('arguments are validated against the finite schema, nested objects and arra
  assert.doesNotThrow(() => validateBusinessArgs(tx, { date: '2026-10-20', amount: 0, type: '支出', tags: ['a'], items: [{ productName: 'p', quantity: 1, unitPrice: 0 }] }), 'business:zero-is-valid');
  assert.throws(() => validateBusinessArgs(tx, { date: '2026-10-20', amount: 1, type: 'expense' }), 'business:japanese-type');
  assert.throws(() => validateBusinessArgs(tx, { date: '2026-10-20', amount: 1, type: '支出', naviOperation: {} }));
+});
+
+// 2026-10-20 (plan omf-navi-invoice-calendar-20261020): the invoice's one calendar entry is a finite read and an explicit create that
+// name only the invoice and its exact read snapshot; the receipt refreshes the calendar and invoice pages.
+test('invoice calendar tools take only the invoice id and its exact read snapshot', () => {
+ const read = businessTool('get_company_invoice_calendar').inputSchema, write = businessTool('schedule_company_invoice_payment').inputSchema;
+ assert.deepEqual(Object.keys(read.properties), ['invoiceId']); assert.deepEqual(read.required, ['invoiceId']);
+ assert.deepEqual(Object.keys(write.properties).sort(), ['expectedUpdatedAt', 'invoiceId'], 'invoice-calendar:no-amount-date-status-or-company'); assert.deepEqual(write.required.slice().sort(), ['expectedUpdatedAt', 'invoiceId'], 'invoice-calendar:snapshot-required');
+ const good = { invoiceId: 'a'.repeat(24), expectedUpdatedAt: '2026-10-20T00:00:00.000Z' };
+ assert.doesNotThrow(() => validateBusinessArgs(write, good));
+ for (const bad of [{ ...good, amount: 1 }, { ...good, organizationId: 'b'.repeat(24) }, { ...good, paymentId: 'c'.repeat(24) }, { ...good, invoiceId: 'x' }, { invoiceId: good.invoiceId }, { ...good, invoiceLink: {} }]) assert.throws(() => validateBusinessArgs(write, bad), JSON.stringify(bad));
+ assert.deepEqual(businessToolMeta.schedule_company_invoice_payment, { kind: 'payment', effect: 'create', idKey: 'paymentId' }); assert.equal(businessToolMeta.get_company_invoice_calendar.effect, 'read');
+ assert.deepEqual(refreshKinds.schedule_company_invoice_payment, ['payment', 'invoice']);
+ assert.ok(!businessTool('create_company_calendar_entry').inputSchema.properties.invoiceLink, 'invoice-calendar:manual-create-no-link');
+ for (const name of ['invoices', 'calendar']) assert.ok(naviFeature(name).tools.includes('schedule_company_invoice_payment') && naviFeature(name).tools.includes('get_company_invoice_calendar'), 'invoice-calendar:feature ' + name);
+ assert.match(businessTool('schedule_company_invoice_payment').description, /never resynced or overwritten/); assert.match(businessTool('get_company_invoice_calendar').description, /never infer a link/);
 });
 
 test('company pages are fixed; owner pages keep the separate owner conversation', () => {

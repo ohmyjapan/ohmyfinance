@@ -30,6 +30,20 @@ export interface IPaymentSource {
   updatedAt?: Date
 }
 
+// The one income entry an explicit schedule made from a saved invoice (plan omf-navi-invoice-calendar-20261020): written only by
+// companyInvoiceCalendarService in the original insert, never by a request body, an update or a later sync. `snapshot` is the
+// invoice as saved at that moment; later invoice or calendar changes are reported as differences, never applied.
+export interface IPaymentInvoiceLink {
+  invoiceId: mongoose.Types.ObjectId
+  invoiceNumber: string
+  invoiceUpdatedAt: Date
+  snapshot: { total: number, currency: string, dueDate: Date, status: string }
+  linkedAt: Date
+  linkedBy?: mongoose.Types.ObjectId
+}
+
+export const calendarCurrencies = ['JPY', 'USD', 'EUR', 'GBP', 'KRW', 'CNY']
+
 export interface IPayment extends Document {
   title: string
   amount: number
@@ -44,6 +58,7 @@ export interface IPayment extends Document {
   notes?: string
   organizationId?: mongoose.Types.ObjectId
   source?: IPaymentSource
+  invoiceLink?: IPaymentInvoiceLink
   naviOperation?: any
   settledAt?: Date
   // A sourced bill the owner removed from the calendar keeps its row (B3): hidden from every calendar reader, never
@@ -80,6 +95,20 @@ const PaymentSourceSchema = new Schema({
   updatedAt: { type: Date }
 }, { _id: false })
 
+const PaymentInvoiceLinkSchema = new Schema({
+  invoiceId: { type: Schema.Types.ObjectId, ref: 'Invoice', required: true },
+  invoiceNumber: { type: String, required: true },
+  invoiceUpdatedAt: { type: Date, required: true },
+  snapshot: {
+    total: { type: Number, required: true },
+    currency: { type: String, required: true },
+    dueDate: { type: Date, required: true },
+    status: { type: String, required: true }
+  },
+  linkedAt: { type: Date, required: true },
+  linkedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+}, { _id: false })
+
 const PaymentSchema = new Schema<IPayment>({
   title: {
     type: String,
@@ -95,7 +124,7 @@ const PaymentSchema = new Schema<IPayment>({
     type: String,
     required: true,
     default: 'JPY',
-    enum: ['JPY', 'USD', 'EUR', 'GBP', 'KRW', 'CNY']
+    enum: calendarCurrencies
   },
   dueDate: {
     type: Date,
@@ -138,6 +167,9 @@ const PaymentSchema = new Schema<IPayment>({
   source: {
     type: PaymentSourceSchema
   },
+  invoiceLink: {
+    type: PaymentInvoiceLinkSchema
+  },
   naviOperation: { type: Schema.Types.Mixed },
   settledAt: {
     type: Date
@@ -170,5 +202,8 @@ PaymentSchema.index({ category: 1 })
 // One sourced bill per card account and statement cycle, whichever company holds it (company-agnostic by design: a bill
 // stays in the company it was created in when the account is later bound elsewhere).
 PaymentSchema.index({ 'source.accountId': 1, 'source.periodKey': 1 }, { unique: true, partialFilterExpression: { 'source.kind': 'card-statement' } })
+// One entry per invoice in its company, hidden (suppressed) rows included, so a link is never made twice or silently revived. Only
+// rows that carry a link are indexed: no existing row is touched or backfilled.
+PaymentSchema.index({ organizationId: 1, 'invoiceLink.invoiceId': 1 }, { unique: true, partialFilterExpression: { 'invoiceLink.invoiceId': { $exists: true } } })
 
 export const Payment = mongoose.models.Payment || mongoose.model<IPayment>('Payment', PaymentSchema)

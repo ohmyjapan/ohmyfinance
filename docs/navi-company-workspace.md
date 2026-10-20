@@ -172,6 +172,12 @@ Registered unused accounts (2026-10-20, plan omf-navi-account-registrations-2026
 - Teachings may suggest a registered account.
 - Callers, guards and limits: [company account registrations](navi-company-account-registrations.md).
 
+Invoice to calendar (2026-10-20, plan omf-navi-invoice-calendar-20261020). The read result flag `calendarInvoiceLink` was `not_established`; it is now `stored_link_only_initial_snapshot_not_synced`.
+- Navi has `get_company_invoice_calendar` and `schedule_company_invoice_payment`, and the native route `GET/POST /api/invoices/:id/calendar` uses the same service. The catalogue is 43 exact names.
+- An explicit schedule creates one income entry per invoice from the saved total, currency, due day and status. A repeat returns that entry unchanged.
+- Reads show the saved snapshot, the invoice and entry now, and the differing fields. No automatic sync, settlement claim, send or ledger write.
+- Callers, guards and limits: [invoice calendar](navi-invoice-calendar.md).
+
 Still open:
 - real product-model dialogue, including an explicit cannot-answer-yet case;
 - live public web;
