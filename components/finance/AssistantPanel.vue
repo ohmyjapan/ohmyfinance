@@ -24,8 +24,7 @@
    <div id="omf-assistant-support" class="navi-support" :class="{'navi-sheet-open':compactSheet==='support'}"><SupportReport :key="user.user?.id" /></div>
   </aside>
   <button type="button" data-assistant-toggle class="navi-launcher" aria-controls="omf-assistant" :aria-expanded="assistant.open" :aria-label="assistant.open ? 'Naviを小さくする' : 'OMF Naviに相談する'" @click="assistant.open ? close() : summon()">
-   <span v-if="!assistant.open" class="navi-launcher-label">OMF Navi<span class="block text-[10px] font-normal text-gray-500">相談する</span></span>
-   <NaviAvatar size="launcher" />
+   <img data-navi-character class="navi-character" src="/images/omf-navi-character.png" alt="" aria-hidden="true" width="1156" height="1361" decoding="async">
   </button>
  </div>
 </template>
@@ -87,25 +86,26 @@ onBeforeUnmount(()=>{ticket++;window.removeEventListener('resize',syncViewport);
 </script>
 <style>
 .assistant-input { @apply block w-full min-w-0 resize-y rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-800 placeholder:text-gray-400 focus:border-primary-main focus:outline-none focus:ring-1 focus:ring-primary-main disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:text-gray-100; max-height:180px; }
-:root { --navi-launcher-size:6rem; }
+:root { --navi-launcher-size:min(18rem,40dvh);--navi-launcher-width:calc(var(--navi-launcher-size) * .85);--navi-edge-gap:2rem;--navi-bottom-gap:2rem; }
 [data-page-content] { padding-bottom:var(--navi-launcher-size); }
-.navi-dock { position:fixed;z-index:20;right:max(1rem,env(safe-area-inset-right));bottom:calc(max(1rem,env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px));width:var(--navi-launcher-size); }
-.navi-launcher { position:relative;display:flex;align-items:center;justify-content:center;width:var(--navi-launcher-size);height:var(--navi-launcher-size);border-radius:50%;box-shadow:0 4px 20px rgb(61 42 32 / 16%);outline-offset:4px; }
+.navi-dock { position:fixed;z-index:20;right:max(var(--navi-edge-gap),calc((100vw - 99rem) / 2 + var(--navi-edge-gap)),env(safe-area-inset-right));bottom:calc(max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px));width:var(--navi-launcher-width); }
+.navi-launcher { position:relative;display:flex;align-items:center;justify-content:center;width:var(--navi-launcher-width);height:var(--navi-launcher-size);padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline-offset:4px; }
+.navi-character { display:block;width:100%;height:100%;object-fit:contain;object-position:bottom;pointer-events:none; }
 .navi-launcher:focus-visible { outline:2px solid #93402b; }
-.navi-launcher-label { position:absolute;right:calc(100% + .625rem);white-space:nowrap;border:1px solid #e5e7eb;border-radius:.75rem;background:#fff;padding:.5rem .75rem;text-align:left;font-size:.75rem;font-weight:600;color:#374151;box-shadow:0 2px 8px rgb(61 42 32 / 5%); }
-.navi-dialog { position:absolute;right:0;bottom:calc(100% + .875rem);width:min(29rem,calc(100vw - 2rem));height:min(44rem,calc(var(--navi-viewport-height,100dvh) - var(--navi-launcher-size) - 3rem - var(--navi-top-clearance,0px)));box-shadow:0 12px 48px rgb(61 42 32 / 16%); }
+.navi-dialog { position:absolute;right:calc(100% + 1rem);bottom:0;width:min(29rem,calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap) - var(--navi-launcher-width) - 1rem));height:min(44rem,calc(var(--navi-viewport-height,100dvh) - max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) - .875rem - var(--navi-top-clearance,0px)));box-shadow:0 12px 48px rgb(61 42 32 / 16%); }
 .navi-dialog > div:first-of-type { max-height:35%;overflow-y:auto; }
 .navi-dialog > section > form { padding:.75rem; }
 .navi-dialog textarea.assistant-input { height:4rem;min-height:4rem;max-height:7rem; }
 .navi-support { flex-shrink:0;max-height:25%;overflow-y:auto; }
 .assistant-panel > section { width:100%;max-width:56rem;align-self:center; }
 @media(max-width:639px) {
- :root { --navi-launcher-size:5rem; }
- .navi-dock { right:max(.75rem,env(safe-area-inset-right));bottom:calc(max(.75rem,env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px)); }
- .navi-dialog { width:calc(100vw - 1.5rem);height:min(44rem,calc(var(--navi-viewport-height,100dvh) - var(--navi-launcher-size) - 2.5rem - var(--navi-top-clearance,0px))); }
+ :root { --navi-launcher-size:min(13rem,40dvh);--navi-edge-gap:1rem;--navi-bottom-gap:1rem; }
+ .navi-dialog { right:0;width:calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap)); }
+ .navi-dock-open > .navi-launcher { visibility:hidden; }
  .navi-dialog .assistant-input { max-height:7rem; }
 }
-.navi-dock-compact .navi-dialog { height:calc(var(--navi-viewport-height,100dvh) - 1.5rem - var(--navi-top-clearance,0px));bottom:0; }
+.navi-dock-compact.navi-dock-open { --navi-bottom-gap:1rem; }
+.navi-dock-compact .navi-dialog { right:0;width:min(29rem,calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap)));height:calc(var(--navi-viewport-height,100dvh) - max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) - .5rem - var(--navi-top-clearance,0px));bottom:0; }
 .navi-dock-compact.navi-dock-open > .navi-launcher { visibility:hidden; }
 .navi-dock-compact .navi-dialog header { padding-top:.5rem;padding-bottom:.5rem; }
 .navi-dock-compact .navi-dialog header p { display:none; }
