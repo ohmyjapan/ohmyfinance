@@ -3,7 +3,13 @@
 // {provider, label, start, hosts, support, contract, ui(page, browser)} where ui has open/state/login/show/openStatements/
 // selectPeriod/snapshot/exportCsv/downloadSession and state() reports login|verification|authenticated|statements|export_ready|
 // error_page|unknown. Authentication is the only human step (ensureBankLogin: verification_required + show, bounded, once);
-// the routine steps are automated. Every provider default adapter shipped here is contract-pending: its routine methods throw
+// the routine steps are automated. Plan omf-rakuten-auto-login-20261021 §2: a retrieval may carry the claimed account's saved
+// login (index.mjs bankLoginFor — state() from file metadata only, open() decrypts once); an adapter whose ui offers loginForm/
+// login (楽天銀行 standard) then submits it ONCE per job on the exact recorded form, journalled in the job folder before the submit
+// so a reclaimed job never submits again; a refusal by the bank is remembered (rejected()) so no later job submits that saved
+// login again; anything else after the submit (additional verification, a password change) is the person's step in the same
+// window. collectBankStatement runs in a background owned Chrome (browser.mjs `background`) and shows that window only when the
+// person is asked. Every provider default adapter shipped here is contract-pending: its routine methods throw
 // contract-pending and queueBankSync issues observe jobs for it. The one retrievable variant is 楽天銀行 `standard` (banks/rakuten.mjs
 // `variants.standard`, resolved from the job's frozen variant; plan omf-rakuten-native-shiwake-20261020) — observeBankPortal records the page contract (pathnames, titles, control texts,
 // input ids and types, select sizes, download events; never a typed value, credential, cookie or row) while the person
@@ -52,23 +58,77 @@ async function writeManifest(directory, manifest) {
   finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 }
 
+const AUTHENTICATED = ['authenticated', 'statements', 'export_ready'];
+/** The person-facing texts of the sign-in step (also the job's status in OMF). None carries a credential, a URL or page text. */
+export const LOGIN_TEXT = Object.freeze({
+  manual: label => `${label}にChromeでサインインしてください`,
+  verify: label => `${label}の追加の確認（認証コード・パスワード変更など）をChromeの画面で完了してください。保存済みのログインは1回だけ送信しました`,
+  refused: label => `${label}が保存済みのログインを受け付けませんでした。Chromeでサインインするか、ダウンローダーの設定画面でIDとパスワードを保存し直してください（保存し直すまで自動では送信しません）`,
+  blocked: label => `${label}の保存済みのログインは前回受け付けられなかったため、自動では送信しません。Chromeでサインインするか、ダウンローダーの設定画面でログインを保存し直してください`,
+  unavailable: label => `${label}の保存済みのログインをこのPCで開けませんでした。Chromeでサインインするか、ダウンローダーの設定画面でログインを保存し直してください`,
+  form: label => `${label}のログイン画面が確認済みの形と異なるため、自動サインインは行いません。Chromeでサインインしてください`,
+  retried: label => `${label}への前回の自動サインインの結果を確認できなかったため、もう一度は送信しません。Chromeでサインインしてください`,
+  failed: label => `${label}への自動サインインを完了できませんでした。Chromeでサインインしてください`
+});
 /**
- * Authentication intervention only (the shape of ensureAplusLogin): the page is opened; while it shows login or verification
- * the person is told once (verification_required + show) and the wait is bounded; nothing is typed. Resolves when the page is
- * authenticated; an error page or the deadline throws.
+ * Authentication (the shape of ensureAplusLogin): the page is opened; while it shows login or verification the person is told
+ * once (verification_required + show) and the wait is bounded. With a saved `login` and an adapter ui that offers loginForm/login,
+ * the exact recorded login form is filled from it ONCE (lazy: file metadata, the form and the job journal are checked before the
+ * single decryption; abort is checked before the decryption, before the typing and before the click). The bank's refusal (the exact
+ * form again on a new document) is remembered through login.rejected() and the person is asked; any other page after the submit
+ * is the person's step. Resolves when the page is authenticated (an accepted submission is reported through login.accepted());
+ * an error page or the deadline throws (a remembered refusal with code login-refused).
  */
-export async function ensureBankLogin(ui, status, { label, now = Date.now, wait = pause, timeoutMs = 300000, pollMs = 1500 } = {}) {
-  const deadline = now() + timeoutMs; let manual = false;
-  const attention = async () => { if (manual) return; manual = true; await status('verification_required', `${label}にChromeでサインインしてください`); await ui.show(); };
+export async function ensureBankLogin(ui, status, { label, login = null, journal = null, now = Date.now, wait = pause, timeoutMs = 300000, pollMs = 1500, signal = null } = {}) {
+  const deadline = now() + timeoutMs; let manual = false, submitted = false, declined = false, refused = false, reclaimed = null, sent = null;
+  const attention = async text => { if (manual) return; manual = true; await status('verification_required', text); await ui.show(); };
+  const automatic = !!login && typeof ui.login === 'function' && typeof ui.loginForm === 'function';
+  const refuse = async () => {
+    if (refused) return; refused = true;
+    await login.rejected(); // guard:login-refused
+  };
+  // The login form again, on another document than the one the saved login was submitted from, is the bank's refusal.
+  const loginAgain = async () => { if (!sent) return false; const doc = await ui.document?.(); return !!doc && doc !== sent && !!(await ui.loginForm())?.ok; };
+  const signIn = async () => {
+    const saved = await login.state();
+    if (saved !== 'ready') { declined = true; return saved === 'blocked' ? LOGIN_TEXT.blocked(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : LOGIN_TEXT.manual(label); }
+    if (!(await ui.loginForm())?.ok) { declined = true; return LOGIN_TEXT.form(label); }
+    reclaimed ??= journal ? await journal.seen() : false;
+    if (reclaimed) { declined = true; return LOGIN_TEXT.retried(label); } // guard:login-journal
+    signal?.throwIfAborted();
+    let secret = null;
+    try { secret = await login.open(); }
+    catch (error) { if (signal?.aborted || error?.name === 'AbortError' || error?.status === 401 || error?.code === 'forbidden') throw error; declined = true; return LOGIN_TEXT.unavailable(label); }
+    try {
+      signal?.throwIfAborted();
+      await journal?.mark();
+      submitted = true;
+      await status('running', `${label}に保存済みのログインでサインイン`);
+      const result = await ui.login(secret, { signal });
+      sent = result?.document || false;
+      if (result?.outcome === 'authenticated') return null;
+      if (result?.outcome === 'rejected') { await refuse(); return LOGIN_TEXT.refused(label); }
+      return LOGIN_TEXT.verify(label);
+    } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') throw error;
+      sent = false; return error?.code === 'login-form' ? LOGIN_TEXT.form(label) : LOGIN_TEXT.failed(label);
+    } finally { secret = null; }
+  };
   await ui.open();
   while (now() < deadline) {
+    signal?.throwIfAborted();
     const kind = (await ui.state())?.kind;
-    if (['authenticated', 'statements', 'export_ready'].includes(kind)) return;
+    if (AUTHENTICATED.includes(kind)) { if (submitted && !refused) await Promise.resolve(login.accepted?.()).catch(() => {}); return { submitted, refused }; }
     if (kind === 'error_page') throw new Error(`${label}のページでエラーが表示されました。Chromeを確認して再試行してください`);
-    if (['login', 'verification', 'unknown'].includes(kind)) await attention();
+    let auto = kind === 'login' && automatic && !declined;
+    if (submitted) auto = false; // guard:login-once
+    if (kind === 'login' && submitted && !refused && await loginAgain()) { await refuse(); await attention(LOGIN_TEXT.refused(label)); }
+    else if (auto) { const text = await signIn(); if (text) await attention(text); }
+    else if (['login', 'verification', 'unknown'].includes(kind)) await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
     await wait(pollMs);
   }
-  await attention();
+  await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
+  if (refused) throw coded('login-refused', `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面でIDとパスワードを保存し直してから、再度「取得」を押してください`);
   throw new Error(`${label}へのサインインが完了しませんでした。再度「取得」を押してください`);
 }
 
@@ -94,15 +154,19 @@ async function completedAttempt(jobDir, bound, adapter, manifestOf, { now, wait,
  * origin, jobId, snapshotHash, period) before the single export click, wait for the download, refuse a file whose download did
  * not begin on the bank's hosts, and write the manifest (jobId + snapshotHash copied from the claim; the collector never holds
  * the mapping) under outbox/bank/<bankAccountId>/<jobId>. `ui` is injectable (fixture); the default is the adapter's page.
+ * `login` is the claimed account's saved login (ensureBankLogin; journal login.json in the job folder), `reveal` shows the owned
+ * window when the person is asked (collectBankStatement's background Chrome). A remembered refusal returns `failed` with its text.
  * Returns { items, failed, recovered?, skipped? }.
  */
-export async function collectBankFromPage(page, browser, adapter, bound, job, root, status, { ui = null, now = Date.now, wait = pause, pollMs = 1000, loginTimeoutMs = 300000, downloadTimeoutMs = 300000, extensionMs = 300000, signal = null } = {}) {
+export async function collectBankFromPage(page, browser, adapter, bound, job, root, status, { ui = null, now = Date.now, wait = pause, pollMs = 1000, loginTimeoutMs = 300000, downloadTimeoutMs = 300000, extensionMs = 300000, signal = null, login = null, reveal = null } = {}) {
   if (!adapter) throw new Error('A bank adapter is required');
   if (adapter.support !== 'verified') throw coded('contract-pending', `${adapter.label}の取得手順は未確認です。観察取得で手順を記録してください`);
   // A variant adapter retrieves only the job frozen for that variant (an injected or stale adapter never runs another login).
   if (adapter.variant && adapter.variant !== (job?.snapshot?.variant ?? null)) throw coded('contract-pending', `${adapter.label}のこのログイン方式の取得手順は未確認です。観察取得で手順を記録してください`); // guard:variant-bound
   if (!/^[a-f\d]{24}$/.test(String(bound?.bankAccountId ?? '')) || typeof bound?.jobId !== 'string' || !bound.jobId || typeof bound?.snapshotHash !== 'string' || !bound.snapshotHash) throw new Error('A claimed bank job is required');
   ui ||= adapter.ui(page, browser, job?.snapshot ?? null);
+  // The window is shown for the person (reveal), then the adapter's own show runs as before.
+  if (reveal) { const base = ui; ui = { ...base, async show() { try { await reveal(); } catch { /* the adapter's own show below */ } await base.show(); } }; }
   const stamp = () => new Date(now()).toISOString(), jobDir = path.join(bankOutbox(root, bound.bankAccountId), bound.jobId), marker = path.join(jobDir, 'attempt.json');
   const manifestOf = (filename, bytes, extra) => ({ ...bound, kind: 'statement', channel: 'collector', sourceFormat: 'csv', sha256: sha256(bytes), filename, bytes: bytes.length, downloadedAt: stamp(), ...extra });
   if (await exists(marker)) {
@@ -110,13 +174,18 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
     if (recovered) { await status('running', '保存済みの明細を復旧'); return { items: [recovered], failed: null, recovered: true }; }
     return { items: [], failed: 'ダウンロードが完了しませんでした。再度「取得」を押してください', skipped: 'attempted' }; // guard:attempt-marker
   }
-  await ensureBankLogin(ui, status, { label: adapter.label, now, wait, timeoutMs: loginTimeoutMs });
+  // The job's sign-in journal: written (exclusively, bound to the job, no credential) before the one automatic submission.
+  const journal = { seen: () => exists(path.join(jobDir, 'login.json')), async mark() { await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ ...bound, submittedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error; }); } };
+  try { await ensureBankLogin(ui, status, { label: adapter.label, login, journal: login ? journal : null, now, wait, timeoutMs: loginTimeoutMs, signal }); }
+  catch (error) { if (error?.code === 'login-refused') return { items: [], failed: error.message }; throw error; }
+  signal?.throwIfAborted();
   await status('running', '入出金明細を開く');
   await ui.openStatements();
   await status('running', '対象期間を選択');
   await ui.selectPeriod(job?.snapshot?.coverage ?? null);
   const snapshot = verifyBankSnapshot(await ui.snapshot(), job?.snapshot);
   const labelChecked = Boolean(String(job?.snapshot?.accountLabel ?? '').trim());
+  signal?.throwIfAborted();
   await mkdir(jobDir, { recursive: true });
   await writeFile(marker, JSON.stringify({ ...bound, period: snapshot?.period ?? null, labelChecked, requestedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 });
   const session = ui.downloadSession ? await ui.downloadSession(jobDir) : null;
@@ -279,12 +348,13 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
 
 // An owned, ephemeral, sandboxed Chrome for one bank job: profiles/ephemeral/<owner>-bank-<account>-<batch> (browser.mjs
 // ephemeralProfile/browserFor), closed and deleted afterwards. browser.mjs is loaded here, not at import, so the page logic
-// above stays loadable without node_modules (the staged-package check imports it that way).
-async function withBankBrowser(bound, root, batch, onLaunch, fn) {
-  const { browserFor, ephemeralProfile, removeEphemeral } = await import('./browser.mjs');
+// above stays loadable without node_modules (the staged-package check imports it that way). `background` (retrievals): the
+// owned Chrome starts without a window and its page opens in an inactive off-screen window; `reveal` shows that same window.
+async function withBankBrowser(bound, root, batch, onLaunch, fn, { background = false } = {}) {
+  const { browserFor, ephemeralProfile, removeEphemeral, showWindow } = await import('./browser.mjs');
   const profile = ephemeralProfile(root, bound.ownerId, 'bank', bound.bankAccountId, batch);
-  const browser = await browserFor(profile, { ephemeral: true, root, onLaunch });
-  try { const page = await browser.newPage(); return await fn(page, browser); }
+  const browser = await browserFor(profile, { ephemeral: true, root, onLaunch, background });
+  try { const page = await browser.newPage(); return await fn(page, browser, background ? () => showWindow(page) : null); }
   finally {
     const child = browser.process();
     try { if (browser.connected) await Promise.race([browser.close(), pause(5000)]); } catch { /* closing */ }
@@ -295,11 +365,12 @@ async function withBankBrowser(bound, root, batch, onLaunch, fn) {
 /**
  * One retrieve job through the adapter of the job's FROZEN provider and login variant (snapshot; the claim's current-connection
  * provider only when a snapshot has none) — or an injected one — in an owned ephemeral Chrome. A connection changed after the job
- * was queued never turns it into another bank's or variant's retrieval.
+ * was queued never turns it into another bank's or variant's retrieval. The owned Chrome runs in the background (no foreground,
+ * no system cursor) and its window is shown only when the person is asked; `login` is the claimed account's saved login.
  */
-export async function collectBankStatement(bound, job, root, status, { adapter = adapterFor(job?.snapshot?.provider ?? job?.provider ?? bound?.provider, job?.snapshot?.variant ?? null), batch = 'batch', onLaunch = null, signal = null, now = Date.now, wait = pause, ...rest } = {}) {
+export async function collectBankStatement(bound, job, root, status, { adapter = adapterFor(job?.snapshot?.provider ?? job?.provider ?? bound?.provider, job?.snapshot?.variant ?? null), batch = 'batch', onLaunch = null, signal = null, now = Date.now, wait = pause, login = null, ...rest } = {}) {
   if (!adapter) throw new Error('No bank adapter for ' + String(job?.provider ?? bound?.provider));
-  return withBankBrowser(bound, root, batch, onLaunch, (page, browser) => collectBankFromPage(page, browser, adapter, bound, job, root, status, { signal, now, wait, ...rest }));
+  return withBankBrowser(bound, root, batch, onLaunch, (page, browser, reveal) => collectBankFromPage(page, browser, adapter, bound, job, root, status, { signal, now, wait, login, reveal, ...rest }), { background: true });
 }
 /** One observe job (preparatory stage) through the provider's adapter (or an injected one) in an owned ephemeral Chrome. */
 export async function observeBankPortal(bound, job, root, status, { adapter = adapterFor(job?.provider ?? bound?.provider), batch = 'batch', onLaunch = null, signal = null, now = Date.now, wait = pause, ...rest } = {}) {

@@ -48,6 +48,37 @@ public static class OmfPeek {
 [OmfPeek]::Level(${Number(pid)})`));
 }
 const FORBIDDEN = ['--no-sandbox', '--disable-web-security', '--remote-debugging-port'];
+// B8 (plan omf-rakuten-auto-login-20261021 §5): read-only window facts of one process — the foreground window's process, the cursor,
+// the virtual screen and that process's visible top-level windows. Nothing here moves or activates a window of any process.
+export async function windowFacts(pid) {
+  const text = await powershell(`Add-Type -TypeDefinition @'
+using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
+public static class OmfB8 {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  public static string Facts(uint want) {
+    var list = new List<string>(); EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p); if (p == want && IsWindowVisible(h)) { RECT r; GetWindowRect(h, out r); var c = new StringBuilder(256); GetClassName(h, c, 256); list.Add(string.Format("{{\\"cls\\":\\"{0}\\",\\"iconic\\":{1},\\"rect\\":[{2},{3},{4},{5}]}}", c, IsIconic(h) ? "true" : "false", r.L, r.T, r.R, r.B)); } return true; }, IntPtr.Zero);
+    uint fp; GetWindowThreadProcessId(GetForegroundWindow(), out fp); POINT q; GetCursorPos(out q);
+    int x = GetSystemMetrics(76), y = GetSystemMetrics(77);
+    return string.Format("{{\\"foregroundPid\\":{0},\\"cursor\\":[{1},{2}],\\"screen\\":[{3},{4},{5},{6}],\\"windows\\":[{7}]}}", fp, q.X, q.Y, x, y, x + GetSystemMetrics(78), y + GetSystemMetrics(79), string.Join(",", list));
+  }
+}
+'@
+[OmfB8]::Facts(${Number(pid)})`);
+  return JSON.parse(text);
+}
+const intersects = (r, s) => r[0] < s[2] && r[2] > s[0] && r[1] < s[3] && r[3] > s[1];
+const onScreen = facts => facts.windows.filter(w => w.cls === 'Chrome_WidgetWin_1' && !w.iconic && intersects(w.rect, facts.screen) && w.rect[2] - w.rect[0] > 200 && w.rect[3] - w.rect[1] > 200);
 
 /** @returns {Promise<{ ok: boolean, legs: { name: string, ok: boolean, message: string, ms: number }[], ms: number, chrome: string|null }>} */
 export async function runBrowserBoundaryLegs({ tmpdir = os.tmpdir() } = {}) {
@@ -67,7 +98,7 @@ export async function runBrowserBoundaryLegs({ tmpdir = os.tmpdir() } = {}) {
   process.env.OMF_COLLECTOR_DIR = D; process.env.OMF_COLLECTOR_PORT = String(port); process.env.OMF_COLLECTOR_TICK_MS = '1000'; process.env.OMF_COLLECTOR_BATCH_MS = '8000';
   Object.assign(process.env, brokerEnv(B));
   const browserModule = await import(pathToFileURL(path.join(COLLECTOR, 'browser.mjs')).href);
-  const { browserFor, closeOwnedBrowsers, ephemeralProfile, ephemeralRoot, findChrome, ownedBrowsers } = browserModule;
+  const { browserFor, closeOwnedBrowsers, ephemeralProfile, ephemeralRoot, findChrome, ownedBrowsers, showWindow } = browserModule;
   const chrome = findChrome();
   /** @type {Awaited<ReturnType<typeof import('../index.mjs').startCollector>>|null} */ let collector = null;
   let unrelated = null, leftover = null, b7Browser = null;
@@ -223,6 +254,37 @@ export async function runBrowserBoundaryLegs({ tmpdir = os.tmpdir() } = {}) {
       check(await gone(pid, 8000), `pid ${pid} still alive after the child and its broker died`);
       check(alive(unrelated.process().pid), 'the unrelated Chrome was ended');
       return `child killed → broker ${broker} gone → browser ${pid} gone; unrelated alive`;
+    });
+
+    // The one HEADED leg: background/attention behaviour exists only for a real window. The page stays on a local document.
+    await leg('B8 background bank launch (headed): no startup window; the page opens in an inactive off-screen window — foreground and cursor unchanged, input still delivered; showWindow brings the SAME window on screen at usable bounds; same sandbox/pipe/no-port flags; closure and the unrelated Chrome as before', async () => {
+      check(typeof showWindow === 'function', 'browser.mjs exports no showWindow');
+      const profile = ephemeralProfile(D, 'owner', 'bank', 'account', 'b8'), before = await windowFacts(0);
+      const browser = await browserFor(profile, { ephemeral: true, root: D, background: true });
+      const pid = browser.process().pid, command = await commandLineOf(pid);
+      for (const flag of FORBIDDEN) check(!command.includes(flag), `${flag} present: ${command.slice(0, 300)}`);
+      check(command.includes('--remote-debugging-pipe') && command.includes('--no-startup-window') && !command.includes('--headless'), `background launch flags: ${command.slice(0, 400)}`);
+      check((await listeningPorts(pid)).length === 0, 'the background Chrome listens on a port');
+      check((await browser.pages()).length === 0, 'a startup window/page exists');
+      const page = await browser.newPage();
+      await page.setContent('<input id="field"><button id="go" onclick="window.done=1">go</button>');
+      await page.type('#field', 'abc'); await page.click('#go');
+      check(await page.evaluate(() => document.getElementById('field').value === 'abc' && window.done === 1), 'input was not delivered to the background window');
+      const quiet = await windowFacts(pid);
+      check(quiet.foregroundPid !== pid, `the background Chrome ${pid} took the foreground`);
+      check(onScreen(quiet).length === 0, `a background window is on screen: ${JSON.stringify(quiet.windows)}`);
+      check(JSON.stringify(quiet.cursor) === JSON.stringify(before.cursor), `the cursor moved ${JSON.stringify(before.cursor)} → ${JSON.stringify(quiet.cursor)}`);
+      await showWindow(page); await sleep(800);
+      const shown = await windowFacts(pid), visible = onScreen(shown);
+      check(visible.length >= 1, `attention: no visible window ${JSON.stringify(shown.windows)}`);
+      const [w] = visible;
+      check(w.rect[2] - w.rect[0] >= 800 && w.rect[3] - w.rect[1] >= 600 && w.rect[0] >= shown.screen[0] && w.rect[1] >= shown.screen[1] && w.rect[2] <= shown.screen[2] && w.rect[3] <= shown.screen[3], `attention bounds ${JSON.stringify(w.rect)} in ${JSON.stringify(shown.screen)}`);
+      const pages = await browser.pages(); check(pages.length === 1 && pages[0] === page && await page.evaluate(() => document.getElementById('field').value) === 'abc', 'attention opened another page or window');
+      check(ownedBrowsers().filter(e => e.pid === pid && e.connected).length === 1, 'not the same owned browser');
+      check(alive(unrelated.process().pid), 'the unrelated Chrome was ended');
+      await closeOwnedBrowsers();
+      check(await gone(pid, 8000), `pid ${pid} still alive after closure`); check(await removed(profile, 8000), 'ephemeral profile still exists');
+      return `pid ${pid}: no startup page, foreground stayed with pid ${quiet.foregroundPid}, cursor ${JSON.stringify(quiet.cursor)}, window off-screen; shown at ${JSON.stringify(w.rect)}; closed and removed`;
     });
 
     await leg('B6 the retained profile sentinel survived every leg', async () => {

@@ -18,6 +18,7 @@ const CONNECT_SERVICE=path.resolve(__dirname,'..','server','services','financeCo
 const SECURITY_SERVICE=path.resolve(__dirname,'..','server','services','financeCollectorSecurityService.ts')
 const BINDINGS=['proof','origin','scope','authstamp','pkce','code','expiry','revoked']
 const SECURITY_BINDINGS=['entry','grant-scope','device-scope','account-live','service']
+const BANK_BINDINGS=['bank-entry','bank-scope','bank-live','bank-recheck-put','bank-recheck-get']
 // One `// binding:<marker>` line removed from a copy written beside its original (relative imports resolve); a copy that
 // fails to import is a harness fault, printed as FAIL and never counted as detection.
 async function withMutant(file:string,marker:string,fn:(mutant:any)=>Promise<void>){
@@ -273,6 +274,105 @@ async function securityBindingLegs({pass,digest,origin,user,service,models}:{pas
   pass('each of the '+SECURITY_BINDINGS.length+' binding mutants accepts exactly its own Aplus attack and only its own shared Amex predicate (account-live: the inactive Amex account), refusing every other attack')
 }
 
+// Bank entries (plan omf-rakuten-auto-login-20261021 §4): the saved 楽天銀行 standard login rakuten-<bankAccountId> of an owned
+// BankAccount the owner granted to this device AFTER the card-only PC pairing (FinanceCollector.bankAccountIds; the grant and the
+// installation keep card ids only). Positive flow without a new connection or a fake card, then one-field attacks, revocation and
+// account changes between the checks and the key I/O, the legacy card/service keys on the same grant, and each new binding line
+// removed in turn from a mutant copy: the mutant accepts exactly its own attack and nothing else.
+async function bankBindingLegs({pass,digest,origin,user,other,service,models}:{pass:(name:string)=>void,digest:(v:string)=>string,origin:string,user:any,other:any,service:any,models:any}){
+  const {sealEnvelope}=await import('../collector/vault.mjs')
+  const {BankAccount}=await import('../server/models/FinancePaymentMatch')
+  const fresh:any=await User.findById(user._id).select('+password +twoFactorSecret +twoFactorBackupCodes')
+  const authStamp=service.stamp(fresh),trustToken=randomBytes(32).toString('hex')
+  const pair=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
+  const card:any=await FinancialAccount.create({ownerId:user._id,provider:'amex',name:'Bank-leg Amex',cardIdentifiers:['56789'],primaryCard:'56789',otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'})
+  const aplus:any=await FinancialAccount.create({ownerId:user._id,provider:'aplus',name:'Bank-leg Aplus',cardIdentifiers:['9876'],primaryCard:'9876'})
+  const connection=(provider:string,variant:string|null)=>({provider,templateId:'e5e5e5e5e5e5e5e5e5e5e5e5',transactionIdConfirmed:false,accountLabel:null,variant,coverage:{from:'2025-11-01',to:null},connectedAt:new Date()})
+  const R:any=await BankAccount.create({ownerId:user._id,name:'Fictional Rakuten',currency:'JPY',revision:1,connection:connection('rakuten','standard')})
+  const R2:any=await BankAccount.create({ownerId:user._id,name:'Fictional Rakuten 2',currency:'JPY',revision:1,connection:connection('rakuten','standard')})
+  const P:any=await BankAccount.create({ownerId:user._id,name:'Fictional Rakuten Plus',currency:'JPY',revision:1,connection:connection('rakuten','plus')})
+  const F:any=await BankAccount.create({ownerId:other._id,name:'Foreign Rakuten',currency:'JPY',revision:1,connection:connection('rakuten','standard')})
+  // Card-only pairing: device, installation and grant name the two cards only; the bank scope is added to the device afterwards.
+  const token='omfc_'+randomBytes(32).toString('hex')
+  const device:any=await FinanceCollector.create({ownerId:user._id,name:'Bank-leg PC',tokenHash:digest(token),accountIds:[card._id,aplus._id]})
+  const inst={id:randomBytes(16).toString('hex'),generation:randomBytes(32).toString('hex')}
+  await models.CollectorInstallation.create({_id:inst.id,ownerId:user._id,collectorId:device._id,generation:inst.generation,publicKey:pair.publicKey,fingerprint:digest(pair.publicKey),origin,trustHash:digest(trustToken),authStamp,accountIds:[card._id,aplus._id],trustedAt:new Date()})
+  const grantFor=async(collectorId:any,at=inst,expiresAt=new Date(Date.now()+20*60000))=>{const g=randomBytes(32).toString('hex');await models.CollectorGrant.create({_id:digest(g),ownerId:user._id,collectorId,installationId:at.id,generation:at.generation,origin,accountIds:[card._id,aplus._id],authStamp,trustHash:digest(trustToken),expiresAt});return g}
+  const grant=await grantFor(device._id)
+  const scope=(ids:any[])=>FinanceCollector.updateOne({_id:device._id},{$set:{bankAccountIds:ids}})
+  await scope([R._id,P._id,F._id])
+  const record=(provider:string,accountId:string,entryId:string,{at=inst,ownerId=String(user._id),aadOrigin=origin}:{at?:{id:string,generation:string},ownerId?:string,aadOrigin?:string}={})=>{const keyId=randomBytes(32).toString('hex');const aad={v:3,installationId:at.id,origin:aadOrigin,ownerId,provider,accountId,generation:at.generation,keyId};return {keyId,entryId,aad,wrapped:sealEnvelope(pair.publicKey,aad,{username:'fictional',password:randomBytes(8).toString('hex')}).wrapped}}
+  const bankRecord=(id:any=R._id,entry='rakuten-'+String(id),extra={})=>record('rakuten',String(id),entry,extra)
+  const refused=async(attempt:Promise<any>)=>{try{await attempt;return false}catch(error:any){if([400,401,403,404].includes(error?.statusCode))return true;throw error}}
+  // 1. Positive: put, idempotent re-put, read-after-write and a later read under a renewed grant — the real current flow.
+  const base=bankRecord()
+  await service.putKey(token,grant,base);await service.putKey(token,grant,base)
+  assert.equal((await service.getKey(token,grant,base.keyId)).wrapped,base.wrapped,'bank:read-after-write')
+  const renewed=await grantFor(device._id);assert.equal((await service.getKey(token,renewed,base.keyId)).wrapped,base.wrapped,'bank:renewed-grant-read')
+  await assert.rejects(service.putKey(token,grant,{...base,wrapped:sealEnvelope(pair.publicKey,base.aad,{x:1}).wrapped}),(e:any)=>e.statusCode===409,'bank:key-replay-different-data')
+  pass('bank key: a Rakuten standard account granted to the device after the card-only pairing seals, re-registers idempotently, reads back and reads under a renewed grant; no bank field in the grant, no fake card, no new connection')
+  // 2. Legacy keys on the same card-only grant keep working next to the bank key.
+  for(const r of [record('amex',String(card._id),'amex-'+String(card._id)),record('aplus',String(aplus._id),'aplus-'+String(aplus._id)),record('aplus','aplus','aplus'),record('gmail','gmail','gmail'),record('yayoi','yayoi','yayoi'),record('check','check','check'),record('legacy','legacy-1700000000000','legacy-1700000000000')]){await service.putKey(token,grant,r);assert.equal((await service.getKey(token,grant,r.keyId)).wrapped,r.wrapped,'bank:legacy-compatible '+r.entryId)}
+  pass('the same card-only grant still releases Amex, per-account Aplus, legacy Aplus, Gmail, Yayoi, check and archived legacy keys')
+  // 3. One-field attacks, each with a fresh key id: the real service refuses every one.
+  const otherDevice=await FinanceCollector.create({ownerId:user._id,name:'Other PC',tokenHash:digest('omfc_'+'9'.repeat(64)),accountIds:[card._id]})
+  const BANK_ATTACKS:Record<string,(svc:any)=>Promise<any>>={
+    'bank-entry':svc=>svc.putKey(token,grant,bankRecord(R._id,'rakuten-'+String(R2._id))),
+    'bank-scope':svc=>svc.putKey(token,grant,bankRecord(R2._id)),
+    'bank-live':svc=>svc.putKey(token,grant,bankRecord(P._id)),
+    'bank-owner':svc=>svc.putKey(token,grant,bankRecord(F._id))
+  }
+  const otherAttacks:Record<string,(svc:any)=>Promise<any>>={
+    'card-as-bank':svc=>svc.putKey(token,grant,record('rakuten',String(card._id),'rakuten-'+String(card._id))),
+    'bank-as-card':svc=>svc.putKey(token,grant,record('amex',String(R._id),'amex-'+String(R._id))),
+    'bank-as-aplus':svc=>svc.putKey(token,grant,record('aplus',String(R._id),'aplus-'+String(R._id))),
+    'bank-as-service':svc=>svc.putKey(token,grant,record('rakuten','rakuten','rakuten')),
+    'bank-malformed-id':svc=>svc.putKey(token,grant,record('rakuten','x','rakuten-x')),
+    'aad-owner':svc=>svc.putKey(token,grant,bankRecord(R._id,undefined,{ownerId:String(other._id)})),
+    'aad-origin':svc=>svc.putKey(token,grant,bankRecord(R._id,undefined,{aadOrigin:'https://other.example.invalid'})),
+    'aad-installation':svc=>svc.putKey(token,grant,bankRecord(R._id,undefined,{at:{id:randomBytes(16).toString('hex'),generation:inst.generation}})),
+    'aad-generation':svc=>svc.putKey(token,grant,bankRecord(R._id,undefined,{at:{id:inst.id,generation:randomBytes(32).toString('hex')}})),
+    'aad-keyid':svc=>{const r=bankRecord();return svc.putKey(token,grant,{...r,keyId:randomBytes(32).toString('hex')})},
+    'poll-token-as-grant':svc=>svc.putKey(token,token.slice(5),bankRecord()),
+    'other-device-token':svc=>svc.getKey('omfc_'+'9'.repeat(64),grant,base.keyId)
+  }
+  void otherDevice
+  for(const [name,attack] of Object.entries({...BANK_ATTACKS,...otherAttacks}))assert.equal(await refused(attack(service)),true,'the real service accepted the bank attack '+name)
+  pass('bank key attacks refused: wrong entry, bank outside the device scope, plus/changed variant, another owner\'s bank, card↔bank impersonation, service-named bank entry, malformed id, owner/origin/installation/generation/key-id mismatch, poll token as grant, another device')
+  // 4. Changes after the save: removed scope, provider/variant change, deletion, expiry, revocation and an inactive owner stop release.
+  const release=()=>service.getKey(token,grant,base.keyId)
+  await scope([P._id,F._id]);assert.equal(await refused(release()),true,'bank:removed-scope');await scope([R._id,P._id,F._id])
+  for(const change of [{'connection.provider':'paypay'},{'connection.variant':'plus'},{'connection.variant':null},{connection:null}]){const saved:any=await BankAccount.findById(R._id).lean();await BankAccount.updateOne({_id:R._id},{$set:change});assert.equal(await refused(release()),true,'bank:changed-connection '+JSON.stringify(change));await BankAccount.updateOne({_id:R._id},{$set:{connection:saved.connection}})}
+  await models.CollectorGrant.updateOne({_id:digest(grant)},{$set:{expiresAt:new Date(Date.now()-1000)}});assert.equal(await refused(release()),true,'bank:expired-grant');await models.CollectorGrant.updateOne({_id:digest(grant)},{$set:{expiresAt:new Date(Date.now()+20*60000)}})
+  await models.CollectorGrant.updateOne({_id:digest(grant)},{$set:{revokedAt:new Date()}});assert.equal(await refused(release()),true,'bank:revoked-grant');await models.CollectorGrant.updateOne({_id:digest(grant)},{$unset:{revokedAt:1}})
+  await FinanceCollector.updateOne({_id:device._id},{$set:{revokedAt:new Date()}});assert.equal(await refused(release()),true,'bank:revoked-device');await FinanceCollector.updateOne({_id:device._id},{$unset:{revokedAt:1}})
+  await User.updateOne({_id:user._id},{$set:{isActive:false}});assert.equal(await refused(release()),true,'bank:inactive-owner');await User.updateOne({_id:user._id},{$set:{isActive:true}})
+  assert.equal((await release()).wrapped,base.wrapped,'bank:restored-release')
+  pass('after the save, a removed bank scope, a provider/variant change, a cleared connection, an expired or revoked grant, a revoked device and an inactive owner each stop the bank key release; restoring them releases it again')
+  // 5. Races: the scope removed or the account changed after the first binding check and before the key I/O completes.
+  // The change lands when the service reads the device the SECOND time in the attempt (its post-I/O activeGrant): after the first
+  // binding check and the key I/O, before the recheck — independent of which binding line a mutant copy removed.
+  const findOne=FinanceCollector.findOne.bind(FinanceCollector)
+  const raced=async(svc:any,attempt:()=>Promise<any>,change:()=>Promise<any>,undo:()=>Promise<any>)=>{let reads=0,fired=false;(FinanceCollector as any).findOne=(...args:any[])=>{const q:any=(findOne as any)(...args);if(++reads===2&&!fired){fired=true;const lean=q.lean.bind(q);q.lean=async(...l:any[])=>{await change();return lean(...l)}}return q};try{const result=await refused(attempt());assert.equal(fired,true,'the race hook fired (second device read)');return result}finally{(FinanceCollector as any).findOne=findOne;await undo()}}
+  // Each race is caught by the recheck AND names the binding line whose repeated predicate catches it.
+  const RACES:Record<string,{guard:string,recheck:string,run:(svc:any)=>Promise<boolean>}>={
+    'get-scope':{guard:'bank-scope',recheck:'bank-recheck-get',run:svc=>raced(svc,()=>svc.getKey(token,grant,base.keyId),()=>scope([P._id,F._id]),()=>scope([R._id,P._id,F._id]))},
+    'get-variant':{guard:'bank-live',recheck:'bank-recheck-get',run:svc=>raced(svc,()=>svc.getKey(token,grant,base.keyId),()=>BankAccount.updateOne({_id:R._id},{$set:{'connection.variant':'plus'}}),()=>BankAccount.updateOne({_id:R._id},{$set:{'connection.variant':'standard'}}))},
+    'put-scope':{guard:'bank-scope',recheck:'bank-recheck-put',run:svc=>raced(svc,()=>svc.putKey(token,grant,bankRecord()),()=>scope([P._id,F._id]),()=>scope([R._id,P._id,F._id]))}
+  }
+  for(const [name,race] of Object.entries(RACES))assert.equal(await race.run(service),true,'the real service released a bank key across the race '+name)
+  assert.equal((await release()).wrapped,base.wrapped)
+  pass('a bank scope removal or variant change between the first binding check and the end of the key I/O is caught by the post-I/O recheck (get and put)')
+  // 6. Each bank binding line removed in turn: the mutant accepts exactly its own attack (bank-recheck: the races) and nothing else.
+  for(const marker of BANK_BINDINGS)await withMutant(SECURITY_SERVICE,marker,async m=>{
+    for(const [name,attack] of Object.entries(BANK_ATTACKS)){const expected=name===marker||(marker==='bank-live'&&name==='bank-owner');assert.equal(await refused(attack(m)),!expected,`bank mutant ${marker}: the attack ${name} was ${expected?'still refused':'accepted'}`)}
+    for(const [name,attack] of Object.entries(otherAttacks))assert.equal(await refused(attack(m)),true,`bank mutant ${marker}: the attack ${name} was accepted`)
+    for(const [name,race] of Object.entries(RACES)){const open=marker===race.recheck||marker===race.guard;assert.equal(await race.run(m),!open,`bank mutant ${marker}: the race ${name} was ${open?'still refused':'accepted'}`)}
+    assert.equal((await m.getKey(token,grant,base.keyId)).wrapped,base.wrapped,`bank mutant ${marker}: the legitimate bank key`)
+  })
+  pass('each of the '+BANK_BINDINGS.length+' bank binding mutants ('+BANK_BINDINGS.join(', ')+') accepts exactly its own attack (bank-live also the foreign-owner account it checks; bank-recheck-get/-put the races of their own key operation; bank-scope/bank-live also the races their repeated predicate catches) and still refuses every other attack')
+}
+
 async function main() {
   const service = await import('../server/services/financeCollectorSecurityService')
   const models = await import('../server/models/FinanceCollectorSecurity')
@@ -415,7 +515,8 @@ async function main() {
     await User.updateOne({_id:user._id},{$set:{twoFactorSecret:secret,loginAttempts:0},$unset:{lockoutUntil:1}})
     await connectLegs({pass,digest,origin,user,other,account,password,secret,legacyToken:token,service,models})
     await securityBindingLegs({pass,digest,origin,user,service,models})
-    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,connectMutants:BINDINGS.length,securityMutants:SECURITY_BINDINGS.length}))
+    await bankBindingLegs({pass,digest,origin,user,other,service,models})
+    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,connectMutants:BINDINGS.length,securityMutants:SECURITY_BINDINGS.length,bankMutants:BANK_BINDINGS.length}))
   } finally {await mongoose.disconnect();await mongo.stop()}
 }
 // authService's import starts the token-blacklist cleanup interval, which would keep this child alive after the receipt.

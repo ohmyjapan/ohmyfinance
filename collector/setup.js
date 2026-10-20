@@ -81,6 +81,41 @@ async function refresh() {
     form.onsubmit=async e=>{e.preventDefault();button.disabled=true;try{await call('/credentials',{accountId:account.accountId,username:values.username.value,password:values.password.value});values.password.value='';values.username.value='';await refresh();}catch(error){note.textContent=error.message;button.disabled=false;}};
     section.append(title,note,form);main.append(section);
   }
+  showBanks(data);
+}
+// Bank logins (plan omf-rakuten-auto-login-20261021 §3): one section per bank account OMF grants to this PC (/status.banks,
+// metadata only — a saved login is never read back). 楽天銀行 標準 gets the one-time ID/password form, saved to /bank/credentials for
+// exactly that account inside a protected connection; both fields are cleared after every attempt.
+function showBanks(data) {
+  const main=$('#banks');main.replaceChildren();
+  const banks=Array.isArray(data.banks)?data.banks:[],protectedBatch=!!data.unlocked && data.mode==='protected';
+  if(data.protected && !banks.length) {
+    const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p');
+    title.textContent='Bank logins';note.textContent='No bank account is allowed for this PC yet. In OMF → 支払い照合 → 銀行口座の接続・自動取得, allow this PC for the bank account, then reopen this screen.';
+    section.append(title,note);main.append(section);return;
+  }
+  for(const bank of banks) {
+    const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p');
+    section.dataset.bankLogin=bank.bankAccountId;note.dataset.bankLoginNote='';note.setAttribute('role','status');
+    title.textContent=bank.name;
+    if(!bank.supported){note.textContent='Saved sign-in is not available for this bank or login type. When a download needs it, sign in in the Chrome window the downloader opens.';section.append(title,note);main.append(section);continue;}
+    note.textContent=bank.refused?'楽天銀行 did not accept the saved login at the last sign-in. Enter the current login ID and password to replace it; automatic sign-in stays off until then.'
+      :bank.hasCredentials?'Login saved on this PC. Downloads sign in automatically in the background; if the bank asks for an additional check, the same Chrome window is shown for you. Enter both fields to replace it.'
+      :'Enter the 楽天銀行 標準ログイン (法人ビジネス口座) login ID and password once. They are encrypted on this PC and never sent to OMF; downloads then sign in automatically.';
+    const form=document.createElement('form'),fields={};
+    for(const [name,label,type] of [['user','楽天銀行 login ID','text'],['password','楽天銀行 login password','password']]) {
+      const el=document.createElement('input'),l=document.createElement('label');el.id='bank-'+bank.bankAccountId+'-'+name;el.type=type;el.required=true;el.autocomplete='off';el.maxLength=256;el.dataset['bankLogin'+(name==='user'?'User':'Password')]='';l.htmlFor=el.id;l.textContent=label;form.append(l,el);fields[name]=el;
+    }
+    const button=document.createElement('button');button.textContent='Save encrypted login';button.dataset.bankLoginSave='';button.disabled=!protectedBatch || !!data.busy;form.append(button);
+    form.onsubmit=async e=>{
+      e.preventDefault();button.disabled=true;let failure=null;
+      try{await call('/bank/credentials',{bankAccountId:bank.bankAccountId,username:fields.user.value,password:fields.password.value});}catch(error){failure=error;}
+      finally{fields.password.value='';fields.user.value='';}
+      if(failure){note.textContent=failure.message;button.disabled=false;return;}
+      await refresh().catch(error=>{note.textContent=error.message;});
+    };
+    section.append(title,note,form);main.append(section);
+  }
 }
 async function finishProtectionAction(button,failure) {
   try{await refresh();}catch(error){failure ||= error;button.disabled=false;}

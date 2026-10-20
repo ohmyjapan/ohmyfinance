@@ -3,10 +3,15 @@
 // no variant and unknown variants keep the preparatory observe stage through ./contract.mjs). Only the frozen variant `standard`
 // resolves `variants.standard` (collector/bank.mjs adapterFor): the 標準 corporate login observed with the owner on 2026-10-20 —
 // the official START_CORP entry, the authenticated overview, 入出金明細, the statement form FORM_DOWNLOAD_AP_2 with its six date
-// fields and its first, native-format (楽天銀行フォーマット) CSV control, separate from the Zengin one. Nothing here types or
-// reads a credential (the person signs in in Chrome, bank.mjs ensureBankLogin), clicks a transfer, or accepts a dialog other
-// than the observed daily-download warning on the armed export surface. A generated JSF id is never pinned. Implemented steps
-// are not a verified connection: that needs an owner-run job (shared/finance-payment-match.mjs bankCapability liveVerified).
+// fields and its first, native-format (楽天銀行フォーマット) CSV control, separate from the Zengin one. Plan
+// omf-rakuten-auto-login-20261021 §1: login(secret) types the claimed account's saved login ID and password (opened by
+// index.mjs bankLoginFor, handed over by bank.mjs ensureBankLogin) into the exact recorded public form LOGIN and presses its one
+// visible「ログイン」control once — only after the page origin, surface, form action/method, both fields and the control were
+// checked on the live document (STANDARD_LOGIN, from the public LIVE-LOGIN-CONTRACT/CONTROLS reads). It never reads a typed or
+// stored field value, a cookie or a transfer PIN, never uses another form, and never clicks a transfer; without a saved login the
+// person signs in in Chrome as before. Nor does it accept a dialog other than the observed daily-download warning on the armed
+// export surface. A generated JSF id is never pinned. Implemented steps are not a verified connection: that needs an owner-run
+// job (shared/finance-payment-match.mjs bankCapability liveVerified).
 // Imports only ./contract.mjs, ../interaction.mjs and nothing else, so the staged copy loads without node_modules.
 import { contractUi, validateContract } from './contract.mjs';
 import { pause, poll } from '../interaction.mjs';
@@ -31,9 +36,25 @@ export const STANDARD_CONTRACT = Object.freeze({
   export: { pathname: STATEMENT_PATH, control: 'CSVダウンロード', form: 'FORM_DOWNLOAD_AP_2', format: '楽天銀行フォーマット', downloadPath: '/XMS/inquiry/fcs/rb/fes/views/mainservice/Inquiry/CreditDebitInquiry/CreditDebitInquiry/CreditDebitInquiry.xhtml' },
   error: { titleIncludes: 'エラー' }
 });
+const LOGIN_ACTION = '/XMS/security/fcs/rb/fes/views/mainservice/Security/LoginAuthentication/Login/CorpLogin.xhtml';
+/**
+ * The recorded public login form of the standard corporate portal (output/plan/omf-rakuten-auto-login-20261021/
+ * LIVE-LOGIN-CONTRACT.json and LIVE-LOGIN-CONTROLS.json, read 2026-10-20 without a credential or a submission): the official
+ * origin, the two observed login surfaces (the START_CORP entry and the form's own CorpLogin.xhtml), the form LOGIN posting to
+ * CorpLogin.xhtml, its text field LOGIN:USER_ID and password field LOGIN:LOGIN_PASSWORD, and its one visible control「ログイン」.
+ */
+export const STANDARD_LOGIN = Object.freeze({
+  origin: 'https://fes.rakuten-bank.co.jp', pathnames: Object.freeze(['/XMS/security/RbS', LOGIN_ACTION]),
+  form: 'LOGIN', method: 'post', action: LOGIN_ACTION, user: 'LOGIN:USER_ID', password: 'LOGIN:LOGIN_PASSWORD', control: 'ログイン'
+});
 const coded = (code, message) => Object.assign(new Error(message), { code });
 const onHosts = (host, hosts) => !!host && (hosts || []).some(h => host === h || host.endsWith('.' + h));
 const CONTROLS = 'button, a, [role="button"], input[type="submit"]';
+/** GUARD — the saved login handed to login(): exactly a non-empty login ID and password of at most 256 characters; else manual. */
+export function standardLoginSecret(secret, label = '楽天銀行') {
+  if (!secret || typeof secret !== 'object' || ![secret.username, secret.password].every(v => typeof v === 'string' && v.length > 0 && v.length <= 256)) throw coded('manual-login', `${label}へのサインインはChromeで人が行います`);
+  return { username: secret.username, password: secret.password };
+}
 
 /**
  * GUARD — which CSV control is the standard (native) export: `controls` are the CSVダウンロード controls of the export form in
@@ -119,12 +140,54 @@ const SET_PERIOD = pairs => {
   return { ok: true };
 };
 const READ_PERIOD = ids => ids.map(id => { const e = document.getElementById(id); return e && 'value' in e ? String(e.value).trim().slice(0, 10) : ''; });
+// GUARD (serialized; uses only its argument; reads no field value) — the exact recorded login form on this document, or why not:
+// the official origin and an observed surface; one form LOGIN (id and name) posting to CorpLogin.xhtml on the same origin; exactly
+// one visible, enabled, writable text field LOGIN:USER_ID and password field LOGIN:LOGIN_PASSWORD inside it (id = name); no other
+// visible password field on the page (no PIN); exactly one visible enabled control「ログイン」in that form. With `point` the control
+// is scrolled into view and its centre returned when it is the topmost element there. Each `// guard:<name>` line is one predicate
+// the fixture removes in turn from a mutant copy.
+const LOGIN_FORM = ({ c, point, expectedDocument = null, fill = null, submit = false }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  if (location.origin !== c.origin || !c.pathnames.includes(location.pathname) || (expectedDocument !== null && String(performance.timeOrigin) !== expectedDocument)) return { ok: false, reason: 'surface' }; // guard:login-surface
+  const forms = [...document.forms].filter(f => f.id === c.form || f.getAttribute('name') === c.form);
+  if (forms.length !== 1 || forms[0].id !== c.form || forms[0].getAttribute('name') !== c.form) return { ok: false, reason: 'form' };
+  const f = forms[0]; let action = null; try { action = new URL(f.getAttribute('action') || '', location.href); } catch { action = null; }
+  if (String(f.getAttribute('method') || '').toLowerCase() !== c.method || !action || action.origin !== c.origin || action.pathname !== c.action) return { ok: false, reason: 'action' }; // guard:login-action
+  const field = (name, type) => { const list = [...document.getElementsByName(name)]; return list.length === 1 && list[0] instanceof HTMLInputElement && list[0].form === f && list[0].id === name && list[0].type === type && visible(list[0]) && !list[0].disabled && !list[0].readOnly; };
+  if (!field(c.user, 'text') || !field(c.password, 'password')) return { ok: false, reason: 'fields' }; // guard:login-fields
+  if ([...document.querySelectorAll('input[type="password"]')].filter(visible).length !== 1) return { ok: false, reason: 'password' }; // guard:login-password-unique
+  const controls = [...f.querySelectorAll('a, button, input[type="submit"], input[type="button"], [role="button"]')].filter(e => visible(e) && !e.disabled && String(e.innerText || e.value || '').trim() === c.control);
+  if (controls.length !== 1) return { ok: false, reason: 'control' }; // guard:login-control
+  const found = { ok: true, document: String(performance.timeOrigin) };
+  // Validation and property writes run in this one page task; a navigation cannot redirect later keyboard input elsewhere.
+  if (fill) {
+    const inputs = [[document.getElementsByName(c.user)[0], fill.username], [document.getElementsByName(c.password)[0], fill.password]];
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    for (const [input, value] of inputs) setter.call(input, value);
+    for (const [input] of inputs) { input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); }
+    return found;
+  }
+  if (!point && !submit) return found;
+  // A wrapped inline control has several line boxes and its bounding box centre can fall between them: hit-test each box.
+  const target = controls[0]; target.scrollIntoView({ block: 'center', behavior: 'instant' });
+  for (const r of target.getClientRects()) {
+    const x = r.x + r.width / 2, y = r.y + r.height / 2;
+    if (target.contains(document.elementFromPoint(x, y))) {
+      // The observed MyFaces login handler is invoked on this validated node in the same task, never by stale coordinates.
+      if (submit) { target.click(); return found; }
+      return { ...found, x, y };
+    }
+  }
+  return { ok: false, reason: 'covered' };
+};
+const AUTHENTICATED = ['authenticated', 'statements', 'export_ready'];
 
 /**
  * The ui of the standard corporate adapter (the shape of contractUi). Nothing is read from the page at construction (the
  * staged-package check constructs it with empty objects). A dialog watcher (its own CDP session) is installed when the start
  * page is opened: while an undecided dialog is open, state() is `verification` (bank.mjs then asks the person) and nothing else
  * is clicked; the single CSV click arms it for that surface. selectPeriod needs the frozen coverage before any page is touched.
+ * loginForm()/login(secret)/document() are the saved-login steps bank.mjs ensureBankLogin drives (at most one submission per job).
  */
 export function standardUi(page, browser, adapter = standard, snapshot = null) {
   const label = adapter?.label || '楽天銀行', contract = adapter?.contract ?? null, hosts = adapter?.hosts || HOSTS, start = adapter?.start || START_CORP;
@@ -153,6 +216,23 @@ export function standardUi(page, browser, adapter = standard, snapshot = null) {
     if (!point) throw new Error(`${label}の「${text}」が見つかりません。Chromeを確認して再試行してください`);
     current(); await page.mouse.click(point.x, point.y);
   };
+  // After the one submission: authenticated → 'authenticated'; the exact login form on a NEW document → 'rejected'; an open
+  // dialog, or any other page that stays put for 2.5 s (additional verification, password change, unknown), or no new document
+  // within 30 s → 'attention' (the person decides; nothing is submitted again).
+  const settle = async before => {
+    const until = Date.now() + 30000; let changed = false, last = null, since = 0;
+    while (Date.now() < until) {
+      await pause(250);
+      const kind = (await ui.state()).kind;
+      if (AUTHENTICATED.includes(kind)) return 'authenticated';
+      if (kind === 'verification') return 'attention';
+      const doc = await ui.document(); if (doc && doc !== before) changed = true;
+      if (!changed) continue;
+      if (kind === 'login' && (await ui.loginForm()).ok) return 'rejected';
+      const key = kind + ':' + doc; if (key !== last) { last = key; since = Date.now(); } else if (Date.now() - since >= 2500) return 'attention';
+    }
+    return 'attention';
+  };
   const ui = {
     async open() { await watch(); await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 60000 }); },
     async state() {
@@ -163,7 +243,37 @@ export function standardUi(page, browser, adapter = standard, snapshot = null) {
       return { kind: classifyStandardPage(read, adapter) };
     },
     async show() { await bounded(page.bringToFront(), 3000); },
-    async login() { throw coded('manual-login', `${label}へのサインインはChromeで人が行います`); },
+    /** The exact recorded login form on the current page ({ok, document}) or {ok:false, reason}; nothing is typed or read. */
+    async loginForm() {
+      if (!contract) return { ok: false, reason: 'contract' };
+      let url; try { url = new URL(page.url()); } catch { return { ok: false, reason: 'surface' }; }
+      if (url.origin !== STANDARD_LOGIN.origin) return { ok: false, reason: 'surface' };
+      try { return (await bounded(page.evaluate(LOGIN_FORM, { c: STANDARD_LOGIN, point: false }))) || { ok: false, reason: 'unreadable' }; } catch { return { ok: false, reason: 'unreadable' }; }
+    },
+    /** The identity of the current document (its time origin): a submission is judged on a NEW document only. */
+    async document() { try { return (await bounded(page.evaluate(() => String(performance.timeOrigin)))) ?? null; } catch { return null; } },
+    /**
+     * The one submission of a saved login: the secret's shape before any page; the recorded form checked; both field properties
+     * set atomically with a repeated original-document/form check through the DevTools pipe; then cancellation and the form are
+     * checked again, and its verified「ログイン」control is activated within that same document. No unbound keyboard or coordinate
+     * click can reach a replacement page. Outcome: authenticated, rejected (the exact form on a new document), or attention.
+     */
+    async login(secret, { signal = null } = {}) {
+      const { username, password } = standardLoginSecret(secret, label);
+      const form = await ui.loginForm();
+      if (!form.ok) throw coded('login-form', `${label}のログイン画面が確認済みの形と異なります（${form.reason}）`);
+      signal?.throwIfAborted();
+      const filled = await page.evaluate(LOGIN_FORM, { c: STANDARD_LOGIN, point: false, expectedDocument: form.document, fill: { username, password } });
+      if (!filled?.ok || filled.document !== form.document) throw coded('login-changed', `${label}のログイン画面が入力前に変わりました`);
+      signal?.throwIfAborted();
+      const target = await page.evaluate(LOGIN_FORM, { c: STANDARD_LOGIN, point: true, expectedDocument: form.document });
+      if (!target?.ok || target.document !== form.document) throw coded('login-changed', `${label}のログイン画面が入力中に変わりました`);
+      signal?.throwIfAborted();
+      current();
+      const clicked = await page.evaluate(LOGIN_FORM, { c: STANDARD_LOGIN, point: false, expectedDocument: form.document, submit: true });
+      if (!clicked?.ok || clicked.document !== form.document) throw coded('login-changed', `${label}のログイン画面が送信前に変わりました`);
+      return { outcome: await settle(form.document), document: form.document };
+    },
     async openStatements() {
       const c = required();
       if ((await ui.state()).kind === 'export_ready') return;

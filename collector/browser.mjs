@@ -54,13 +54,45 @@ async function probeProfile(profile) {
 }
 export function ownedBrowsers() { return [...owned.values()].map(entry => ({ pid: entry.pid, profile: entry.profile, ephemeral: entry.ephemeral, connected: !!entry.browser.connected })); }
 
+// Background bank pages (plan omf-rakuten-auto-login-20261021 §5), stock Chrome and DevTools only: a headed owned Chrome started
+// without a window of its own (--no-startup-window); its pages open in an INACTIVE new window placed off-screen
+// (Target.createTarget background:true), so a job never takes the foreground, and the page receives its input through the
+// DevTools pipe, never the system cursor or keyboard. showWindow(page) moves that SAME window to usable bounds on the primary work
+// area when the person is needed. No other process's window is ever touched.
+export const BACKGROUND_ARGS = Object.freeze(['--no-startup-window']);
+const OFFSCREEN = Object.freeze({ left: -32000, top: -32000, width: 1280, height: 900 });
+async function backgroundPage(browser) {
+  const session = await browser.target().createCDPSession(); let targetId;
+  try { ({ targetId } = await session.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true, ...OFFSCREEN })); }
+  finally { await session.detach().catch(() => {}); }
+  const target = await browser.waitForTarget(t => t._targetId === targetId, { timeout: 30000 });
+  const page = await target.page();
+  if (!page) throw new Error('The background bank window did not open');
+  return page;
+}
+/** Shows the owned window of `page` at normal, usable bounds on the primary work area and brings its tab to the front. */
+export async function showWindow(page, { margin = 40 } = {}) {
+  let session = null;
+  try {
+    session = await page.createCDPSession();
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    const area = await page.evaluate(() => ({ left: screen.availLeft, top: screen.availTop, width: screen.availWidth, height: screen.availHeight }));
+    const width = Math.max(800, Math.min(1280, area.width - 2 * margin)), height = Math.max(600, Math.min(900, area.height - 2 * margin));
+    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+    await session.send('Browser.setWindowBounds', { windowId, bounds: { left: area.left + margin, top: area.top + margin, width, height } });
+  } catch { /* headless or closing: bringing the tab to the front below is all that remains */ }
+  finally { await session?.detach().catch(() => {}); }
+  await Promise.race([page.bringToFront(), new Promise(resolve => setTimeout(resolve, 3000))]);
+}
+
 /**
  * Launches owned Chrome on `profile` (or returns the browser this process already launched there).
  * options: ephemeral (the profile is deleted at closure; needs root), root (the collector directory), headless
  * (false = the visible window of the first release; tests use true), onLaunch({pid, browser}) — the collector
- * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows.
+ * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows. background (headed
+ * only; bank retrievals): no startup window, and this browser's newPage() opens an inactive off-screen window (see above).
  */
-export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null } = {}) {
+export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null, background = false } = {}) {
   const key = keyOf(profile);
   for (const entry of owned.values()) if (entry.key === key && entry.browser.connected) return entry.browser;
   if (ephemeral) { assertEphemeralPath(profile, root); await mkdir(ephemeralRoot(root), { recursive: true }); await assertPlainDirectory(ephemeralRoot(root)); }
@@ -70,7 +102,9 @@ export async function browserFor(profile, { ephemeral = false, root = /** @type 
   if (probe.matches.length || (existingProfile && probe.unreadable.length)) throw new Error('Close the Chrome window that is already using this profile before retrying; the collector never attaches to an existing browser');
   const executablePath = findChrome();
   if (!executablePath) throw new Error('Google Chrome was not found in its standard locations on this PC');
-  const browser = await puppeteer.launch({ executablePath, pipe: true, headless, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS] });
+  const quiet = background && !headless;
+  const browser = await puppeteer.launch({ executablePath, pipe: true, headless, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, ...(quiet ? BACKGROUND_ARGS : [])], ...(quiet ? { ignoreDefaultArgs: ['about:blank'], waitForInitialPage: false } : {}) });
+  if (quiet) browser.newPage = () => backgroundPage(browser); // guard:background-window
   const child = browser.process(), pid = child && child.pid ? child.pid : -1;
   const entry = { key, profile, ephemeral, root, pid, browser, child };
   owned.set(pid, entry);

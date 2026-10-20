@@ -64,7 +64,8 @@ async function updateMetadata(updater) {
 }
 
 function aadFor(installationId,provider,account,config) {
-  if(provider==='amex'||(provider==='aplus'&&account)) return aadOf({installationId,origin:config.baseUrl,ownerId:account.ownerId,provider,accountId:account._id});
+  // Per-account entries: a card (amex-<id>, aplus-<id>) or a granted 楽天銀行 standard bank account (rakuten-<bankAccountId>).
+  if(provider==='amex'||(provider==='aplus'&&account)||(provider==='rakuten'&&account)) return aadOf({installationId,origin:config.baseUrl,ownerId:account.ownerId,provider,accountId:account._id});
   // Service credentials and the canary bind to the single owner of the current pairing.
   let origin='',ownerId=`local:${installationId}`;
   if(config?.token || config?.baseUrl) {
@@ -261,14 +262,16 @@ export async function claimWork(config,live) {
 }
 // One claimed bank job: drain the retained manifests (each under its own job and snapshot), then retrieve through the adapter
 // (kind retrieve) or observe the portal (kind observe), retain and send every artifact, acknowledge each only after OMF
-// answered, then complete. No secret is opened: the person signs in on the bank page. `deps` are the fixture's seams.
-export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now}={}) {
+// answered, then complete. Only a retrieval receives `login` (bankLoginFor: the claimed account's saved login, opened by the
+// adapter's login step only when the bank's exact login form is shown); the drain, the observe stage, the uploads and the status
+// never touch it. `deps` are the fixture's seams.
+export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null}={}) {
   const {job,account}=bank;
   const sendItem=item=>send(config,account,item,live,{route:'bank/upload',base:BANK_BASE,query:bankUploadQuery(item.manifest)});
   let drained=0;
   for(const item of await listPending(account,config,root)){await status('running','保存済みの明細を送信中');await sendItem(item);drained++;}
   const bound={bankAccountId:String(account._id),ownerId:String(account.ownerId),origin:config.baseUrl,jobId:job.jobId,snapshotHash:job.snapshotHash,provider:job.provider};
-  const result=job.kind==='retrieve'?await collect(bound,job,root,status,{batch,onLaunch,signal,now}):await observe(bound,job,root,status,{batch,onLaunch,signal,now});
+  const result=job.kind==='retrieve'?await collect(bound,job,root,status,{batch,onLaunch,signal,now,login}):await observe(bound,job,root,status,{batch,onLaunch,signal,now});
   const items=[...(result.items||[])];
   if(result.observation){
     const dir=path.join(root,'outbox','bank',bound.bankAccountId,job.jobId+'-observation');await mkdir(dir,{recursive:true});
@@ -293,6 +296,65 @@ export function credentialEntryFor(account,entries,scope=[]) {
   if(entries.includes(own))return own;
   if(provider==='aplus'&&entries.includes('aplus')&&scope.filter(a=>(a.provider||'amex')==='aplus').length===1)return 'aplus';
   return null;
+}
+// ── Saved 楽天銀行 standard logins (plan omf-rakuten-auto-login-20261021 §2-§3) ─────────────────────────────────────────────────
+// One sealed SplitStore entry per granted bank account, rakuten-<bankAccountId>, bound (AAD) to this installation, the paired OMF
+// origin, the account's owner and the account; its wrapped key is released by OMF only for a bank account currently granted to this
+// PC with a live 楽天銀行 standard connection (financeCollectorSecurityService bankBinding). A refusal by the bank is remembered per
+// saved key in bank-login/<entry>.json (the key id and a time, never a credential) so no later claim submits it again.
+const bankEntry=id=>'rakuten-'+id;
+const bankMarker=(id,root=directory)=>path.join(root,'bank-login',bankEntry(id)+'.json');
+export const bankLoginSupported=bank=>bank?.provider==='rakuten'&&bank?.variant==='standard';
+// The sealed envelope of the entry when it belongs to this account and connection; false when it exists but is bound elsewhere.
+async function savedBankLogin(store,entry,aad){if(!await store.has(entry))return null;try{const envelope=await store.read(entry);return JSON.stringify(entryBinding(envelope))===JSON.stringify(aad)?envelope:false;}catch{return false;}}
+async function refusedKeyId(file){try{return JSON.parse(await readFile(file,'utf8')).keyId||null;}catch{return null;}}
+/**
+ * The saved-login handle of one claimed bank job, or null: only a protected session's retrieve job frozen for 楽天銀行 standard on a
+ * valid account. Building it reads nothing. state() reads file metadata only ('none'|'unbound'|'blocked'|'ready'); open() asserts
+ * the live session, then decrypts the account's own entry ONCE through the batch's key broker (a refused key release becomes the
+ * controlled code bank-login-unavailable; an ended session, an abort or a 401 revocation propagate); rejected() remembers the
+ * bank's refusal for this saved key; accepted() clears it. `store`, `root` and `assert` are the fixture's seams.
+ */
+export function bankLoginFor(bank,config,live,{store=secrets,root=directory,assert=assertSession}={}){
+  const job=bank?.job,account=bank?.account,id=String(account?._id??''),ownerId=String(account?.ownerId??'');
+  if(!live||live.mode!=='protected'||job?.kind!=='retrieve'||!/^[a-f\d]{24}$/.test(id)||!/^[a-f\d]{24}$/.test(ownerId))return null;
+  if((job.snapshot?.provider??job.provider)!=='rakuten'||job.snapshot?.variant!=='standard')return null;
+  const entry=bankEntry(id),marker=bankMarker(id,root);let opened=false;
+  const aad=()=>aadFor(live.installationId,'rakuten',{_id:id,ownerId},config);
+  return {
+    entry,
+    async state(){const envelope=await savedBankLogin(store,entry,aad());if(envelope===null)return 'none';if(envelope===false)return 'unbound';
+      if(await refusedKeyId(marker)===envelope.keyId)return 'blocked'; // guard:bank-login-blocked
+      return 'ready';},
+    async open(){
+      if(opened)throw coded('bank-login-used','The saved bank login was already used for this job');opened=true;
+      assert(live);
+      try{const value=await store.open(entry,aad(),live.broker);assert(live);return value;}
+      catch(error){if(live.abort?.signal?.aborted||error?.name==='AbortError'||error?.status===401||error?.code==='forbidden')throw error;throw coded('bank-login-unavailable','The saved bank login could not be opened for this connection');}
+    },
+    async rejected(){const envelope=await savedBankLogin(store,entry,aad());if(!envelope)return;await mkdir(path.dirname(marker),{recursive:true});await replaceVaultFile(marker,JSON.stringify({entry,keyId:envelope.keyId,refusedAt:new Date().toISOString()}));},
+    async accepted(){await unlink(marker).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+  };
+}
+/** The local setup's bank-login body: exactly bankAccountId, a login ID (trimmed) and a password (verbatim), each ≤256. */
+export function bankLoginInput(body){
+  if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(k=>!['bankAccountId','username','password'].includes(k))||!/^[a-f\d]{24}$/.test(String(body.bankAccountId))||![body.username,body.password].every(v=>typeof v==='string'&&v.length>0&&v.length<=256)||!body.username.trim())throw new Error('Enter both the 楽天銀行 login ID and password');
+  return {bankAccountId:String(body.bankAccountId),username:body.username.trim(),password:body.password};
+}
+/**
+ * The one-time save of a bank login (local setup): the exact account must be one OMF currently grants to this PC (`banks`: the
+ * collector's bank/accounts under its live bank scope), 楽天銀行 標準, owned by this pairing's owner; it is sealed as that account's
+ * own entry through `write` (the SplitStore inside the protected batch). Nothing is launched or queued; the reply carries no field.
+ */
+export async function saveBankLogin(input,{live,config,banks,write,root=directory}){
+  const list=await banks(),bank=(Array.isArray(list)?list:[]).find(a=>String(a?._id)===input.bankAccountId);
+  if(!bank)throw coded('forbidden','This bank account is not allowed for this PC in OMF. Allow the PC for it in OMF first.');
+  if(!bankLoginSupported(bank))throw coded('unsupported','Saved sign-in is available only for 楽天銀行 標準ログイン.');
+  const owner=String(bank.ownerId||''),paired=[...new Set((config?.accountInfo||[]).map(a=>String(a.ownerId||'')))];
+  if(!/^[a-f\d]{24}$/.test(owner)||paired.some(id=>id!==owner))throw coded('forbidden','This bank account belongs to another OMF owner.');
+  await write(bankEntry(input.bankAccountId),aadFor(live.installationId,'rakuten',{_id:input.bankAccountId,ownerId:owner},config),{username:input.username,password:input.password});
+  await unlink(bankMarker(input.bankAccountId,root)).catch(error=>{if(error.code!=='ENOENT')throw error;});
+  return {saved:true};
 }
 // Finalized months already retained in this account's outbox (acknowledged or not): a manifest on disk is never downloaded again.
 async function outboxMonths(account,root,config) {
@@ -392,12 +454,13 @@ async function tickWork() {
     if(!account&&!bank){ if(live.ran&&live.mode==='manual'){running=false;await endSession('batch complete');} return; }
     activeAction=true;
     if(bank) {
-      // A claimed bank job (plan omf-bank-collection-amended-20261018 A5): status and the heartbeat go to the bank routes; no
-      // secret is opened — the person signs in on the bank page inside the owned Chrome.
+      // A claimed bank job (plan omf-bank-collection-amended-20261018 A5): status and the heartbeat go to the bank routes. Plan
+      // omf-rakuten-auto-login-20261021: a 楽天銀行 standard retrieval carries the account's saved-login handle (bankLoginFor);
+      // its entry is decrypted only when the bank's exact login form is shown, else the person signs in in the owned Chrome.
       let currentState='running',currentMessage='取得を開始',heartbeatFailure;
       const bankStatus=async(state,text)=>{assertSession(live);if(heartbeatFailure)throw heartbeatFailure;currentState=state;currentMessage=text;message=`${bank.account.name}: ${text}`;await api(config,'bank/status',{jobId:bank.job.jobId,state,message:text},undefined,live,{base:BANK_BASE});};
       heartbeat=setInterval(()=>{api(config,'bank/status',{jobId:bank.job.jobId,state:currentState,message:currentMessage},undefined,live,{base:BANK_BASE}).catch(e=>{heartbeatFailure=e;});},45000);
-      await runBankJob(bank,config,live,{status:bankStatus,onLaunch:ownBrowser(live),batch:live.id,signal:live.abort.signal});
+      await runBankJob(bank,config,live,{status:bankStatus,onLaunch:ownBrowser(live),batch:live.id,signal:live.abort.signal,login:bankLoginFor(bank,config,live)});
       assertSession(live);live.ran=true;
       clearInterval(heartbeat);
       return;
@@ -750,10 +813,17 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         // No secret is read here: entry presence comes from file names, metadata from the secret-free blob.
         const state=await vaultState();let config,legacy=false;
         try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;legacy=true;config={accounts:{}};}
+        // The bank accounts OMF grants to this PC are requested in parallel with the card accounts: still one OMF round trip.
+        const grantedBanks=config.token?api(config,'bank/accounts',undefined,undefined,null,{base:BANK_BASE}).then(r=>r.accounts||[],()=>[]):Promise.resolve([]);
         let info=config.accountInfo || [],due=false;if(config.token)try{info=(await api(config,'accounts')).accounts;due=info.some(a=>a.jobState==='queued');}catch{}
         const [aplus,yayoi,gmail]=await Promise.all(['aplus','yayoi','gmail'].map(id=>boundSecret(id,state?.installationId,id,null,config)));
         const accounts=await Promise.all(info.map(async a=>{const provider=a.provider||'amex';return {id:a.primaryCard,accountId:String(a._id||''),name:a.name,provider,hasCredentials:await boundSecret(provider+'-'+String(a._id),state?.installationId,provider,a,config)};}));
-        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},smsSource:{serial:config.smsSource?.serial??null,adbFound:!!findAdb()},accounts});
+        // Those bank accounts (metadata only) and whether a bound saved login exists or was refused by the bank.
+        const granted=await grantedBanks;
+        const banks=await Promise.all((Array.isArray(granted)?granted:[]).map(async b=>{const id=String(b?._id||''),ownerId=String(b?.ownerId||''),supported=bankLoginSupported(b)&&/^[a-f\d]{24}$/.test(id)&&/^[a-f\d]{24}$/.test(ownerId);
+          const envelope=supported?await savedBankLogin(secrets,bankEntry(id),aadFor(state?.installationId,'rakuten',{_id:id,ownerId},config)).catch(()=>null):null;
+          return {bankAccountId:id,name:String(b?.name||''),provider:b?.provider||null,variant:b?.variant??null,supported,hasCredentials:!!envelope,refused:!!envelope&&await refusedKeyId(bankMarker(id))===envelope.keyId};}));
+        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},smsSource:{serial:config.smsSource?.serial??null,adbFound:!!findAdb()},accounts,banks});
       }
       if(req.method==='POST' && ['/connect','/connect/resume'].includes(req.url)) { await json(req).catch(()=>({})); try { return reply(200,await connect({resume:req.url==='/connect/resume'})); } catch(error) { return reply(codeOf(error),{error:error.message,keyLost}); } }
       if(req.method==='POST' && req.url==='/pair') {
@@ -783,6 +853,15 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         const provider=info.provider||'amex';
         await writeSecret(live,provider+'-'+info._id,aadOf({installationId:live.installationId,origin:config.baseUrl,ownerId:info.ownerId,provider,accountId:info._id}),{username:body.username,password:body.password});
         return reply(200,{saved:true});
+      }
+      if(req.method==='POST' && req.url==='/bank/credentials') {
+        // The one-time 楽天銀行 standard login (plan omf-rakuten-auto-login-20261021 §3): body shape (400), then the protected session
+        // (403), then no collector action in flight (409); OMF's live bank scope decides the account (saveBankLogin).
+        const input=bankLoginInput(await json(req));
+        const live=requireProtectedSession();
+        if(activeAction)return reply(409,{error:'Wait for the current collector action to finish'});
+        const config=await metadata();
+        return reply(200,await saveBankLogin(input,{live,config,banks:async()=>(await api(config,'bank/accounts',undefined,undefined,live,{base:BANK_BASE})).accounts,write:(id,aad,value)=>writeSecret(live,id,aad,value)}));
       }
       if(req.method==='GET' && req.url==='/aplus/status') {const state=await vaultState();let config;try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;config={};}return reply(200,{busy:running,unlocked:!!session,aplus:{hasCredentials:await boundSecret('aplus',state?.installationId,'aplus',null,config)}});}
       if(req.method==='POST' && req.url==='/aplus/credentials') {
@@ -842,7 +921,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         const state=await vaultState(),config=await metadata();
         if(session)throw coded('conflict','Lock the current batch first');
         if(body.mode==='manual') {
-          if((await secrets.list()).some(id=>id.startsWith('amex-')||id.startsWith('aplus-')||['aplus','yayoi','gmail'].includes(id)))throw coded('conflict','Sealed logins exist; manual mode needs an empty vault');
+          if((await secrets.list()).some(id=>id.startsWith('amex-')||id.startsWith('aplus-')||id.startsWith('rakuten-')||['aplus','yayoi','gmail'].includes(id)))throw coded('conflict','Sealed logins exist; manual mode needs an empty vault');
           await updateMetadata(old=>({...old,mode:'manual'}));return {mode:'manual'};
         }
         if(body.mode==='protected') { if(!activated(state,config))throw coded('conflict','Enable protection first'); await updateMetadata(old=>({...old,mode:'protected'}));return {mode:'protected'}; }

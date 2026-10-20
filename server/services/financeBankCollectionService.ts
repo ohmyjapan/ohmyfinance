@@ -70,6 +70,14 @@ export async function setCollectorBankScope(ownerId:string,collectorId:string,bo
  await FinanceCollector.updateOne({_id:device._id,ownerId,revokedAt:null},{$set:{bankAccountIds:ids}})
  return{collector:{id:sid(device._id),name:device.name,bankAccountIds:ids}}
 }
+// The bank accounts the owner granted to THIS device (plan omf-rakuten-auto-login-20261021 §3), read-only for the downloader's
+// local setup and its saved-login check: id, name, owner, provider and login variant of each owned account in the device's live
+// bank scope — never the template, coverage, label, statements or jobs.
+export async function listCollectorBankAccounts(device:any){
+ await init();const ids=(device.bankAccountIds||[]).map(sid)
+ const rows:any[]=ids.length?await BankAccount.find({ownerId:device.ownerId,_id:{$in:ids}}).sort({name:1,_id:1}).lean():[]
+ return{accounts:rows.map((a:any)=>({_id:sid(a._id),name:a.name,ownerId:sid(a.ownerId),provider:a.connection?.provider||null,variant:a.connection?.variant??null}))}
+}
 // One atomic claim (shape of finance/[...path].ts:22): the oldest queued job, or a running one whose lease expired, within the
 // device's bank scope; the claim carries the frozen snapshot, its hash, the provider and its adapter support.
 export async function claimBankJob(device:any){

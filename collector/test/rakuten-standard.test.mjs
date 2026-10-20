@@ -89,7 +89,9 @@ test('the standard page states: password on the login host, export form with six
   assert.equal(classify({ ...base, controls: [] }), 'unknown', 'rakuten-standard:state-unknown');
 });
 
-test('the standard adapter constructs without touching a page (staged-package check) and never automates the login', async () => {
+// Deliberate change (plan omf-rakuten-auto-login-20261021 §1): the adapter can now submit a saved login on the exact recorded form;
+// without one it still refuses before any page (the automatic path is covered by rakuten-auto-login.test.mjs and the fixture).
+test('the standard adapter constructs without touching a page (staged-package check) and never signs in without a saved login', async () => {
   const standard = rakutenModule.standard; assert.ok(standard, 'rakuten-standard:named-export');
   const ui = standard.ui({}, {}, { variant: 'standard', coverage: { from: '2025-11-01', to: '2026-10-20' } });
   for (const step of ['open', 'state', 'show', 'login', 'openStatements', 'selectPeriod', 'snapshot', 'exportCsv', 'downloadSession']) assert.equal(typeof ui[step], 'function', 'rakuten-standard:ui ' + step);

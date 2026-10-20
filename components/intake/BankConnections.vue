@@ -1,7 +1,7 @@
 <template>
   <section class="card min-w-0 text-gray-800 dark:text-gray-100 space-y-5 p-4 md:p-6" data-bank-connections>
     <header class="flex flex-wrap justify-between gap-2"><h2 class="font-semibold">銀行口座の接続・自動取得</h2><button class="text-sm text-gray-500" @click="emit('close')">閉じる</button></header>
-    <p class="text-sm leading-relaxed text-gray-500">接続したPCのChromeで銀行サイトを開き、サインインだけを手動で行います。取得手順を実装したログイン方式（楽天銀行の標準ログイン）は、指定した期間の入出金明細のCSVを自動で取得します。それ以外の銀行・ログイン方式は「観察取得（準備）」として画面の手順を記録し、CSVが出力された場合のみ取り込みます。列の割り当て・符号・取得期間は予約時に固定され、あとで変えても過去の取得分は変わりません。手順が実装済みでも、実際の接続テストが成功するまでは確認済みではありません。</p>
+    <p class="text-sm leading-relaxed text-gray-500" data-bank-login-guidance>接続したPCのChromeで銀行サイトを開きます。取得手順を実装したログイン方式（楽天銀行の標準ログイン）は、指定した期間の入出金明細のCSVを自動で取得します。楽天銀行の標準ログインは、接続したPCのダウンローダーの設定画面にログインIDとパスワードを一度保存すると、取得のたびに自動でサインインし、ふだんは画面の裏で動きます（保存したログインは暗号化してそのPCにだけ置かれ、OMFには送られません）。銀行が追加の確認（認証コード・パスワード変更など）を求めたときや、保存していない・受け付けられなかったときは、同じChromeの画面が表示されるので本人が操作してください。それ以外の銀行・ログイン方式は「観察取得（準備）」として画面の手順を記録し、CSVが出力された場合のみ取り込みます。列の割り当て・符号・取得期間は予約時に固定され、あとで変えても過去の取得分は変わりません。手順が実装済みでも、実際の接続テストが成功するまでは確認済みではありません。</p>
     <p v-if="error" role="alert" class="break-words text-sm text-red-600 dark:text-red-300">{{ error }}</p>
     <div class="flex min-w-0 flex-wrap items-end gap-3 rounded-xl border border-dashed border-gray-200 p-3 dark:border-gray-700" data-bank-account-new>
       <label class="min-w-0 text-sm">新しい銀行口座の名前<input v-model="newAccount.name" data-bank-account-new-name type="text" maxlength="100" placeholder="楽天銀行 普通" :class="INPUT"></label>
@@ -47,7 +47,7 @@ const capabilityOf=(f:any)=>bankCapability(f?.provider,f?.variant||null)
 const nativeOf=(f:any)=>f?.variant?BANK_NATIVE_TEMPLATES[f.provider]?.[f.variant]||null:null
 const supportText=(c:any)=>c.steps==='implemented'?'取得手順 実装済み':'取得手順 未確認'
 const providerSupportText=(key:string,support:string)=>support==='verified'?'取得手順 確認済み':Object.keys(BANK_VARIANT_COLLECTION[key]||{}).length?(BANK_LOGIN_VARIANTS[key]||[]).filter(([v])=>BANK_VARIANT_COLLECTION[key][v]==='retrieve').map(([,label])=>label.replace(/（.*$/,'')).join('・')+'は取得手順 実装済み':'取得手順 未確認'
-const capabilityText=(f:any)=>{const c=capabilityOf(f);return c.mode==='retrieve'?`${supportText(c)}（自動取得）: 指定した期間を銀行の画面に入力し、楽天銀行フォーマットのCSVを1回だけ出力します。サインインは本人がChromeで行います。実際の接続テストの結果は下の「接続テスト」に表示されます。`:`${supportText(c)}: 観察取得（準備）になります${providerOf(f?.provider)&&BANK_LOGIN_VARIANTS[f.provider]&&!f.variant?'（ログイン方式を選ぶと取得手順を確認できます）':''}。`}
+const capabilityText=(f:any)=>{const c=capabilityOf(f);return c.mode==='retrieve'?`${supportText(c)}（自動取得）: 指定した期間を銀行の画面に入力し、楽天銀行フォーマットのCSVを1回だけ出力します。サインインは、PCのダウンローダーの設定画面に保存したログインで自動（1回の取得で1回だけ送信）、未保存なら本人がChromeで行います。銀行の追加の確認は本人が行います。実際の接続テストの結果は下の「接続テスト」に表示されます。`:`${supportText(c)}: 観察取得（準備）になります${providerOf(f?.provider)&&BANK_LOGIN_VARIANTS[f.provider]&&!f.variant?'（ログイン方式を選ぶと取得手順を確認できます）':''}。`}
 const connectionText=(a:any)=>{const c=a.connection;if(!c?.provider)return '未接続';const p=providerOf(c.provider);return `${p?.[1]||c.provider} · ${supportText(bankCapability(c.provider,c.variant??null))} · テンプレート ${templates.value.find(t=>t.id===c.templateId)?.name||c.templateId}${c.accountLabel?' · '+c.accountLabel:''}${c.variant?' · '+variantLabel(c.provider,c.variant):''}${c.coverage?' · 取得期間 '+c.coverage.from+'〜'+(c.coverage.to||'当日'):''}`}
 const syncLabel=(a:any)=>bankCapability(a.connection?.provider,a.connection?.variant??null).mode==='retrieve'?'取得':'観察取得（準備）'
 // The connection test is the latest retrieve job: success only when it completed and a capture of it was imported.
@@ -62,7 +62,7 @@ const testStateText=(a:any)=>{
 const pcStatusText=(a:any)=>{const n=collectors.value.filter((c:any)=>(c.bankAccountIds||[]).map(String).includes(a.id)).length;return n?`取得を許可したPC: ${n}台`:'この口座の取得を許可したPCがありません（下のチェックで許可してください）'}
 const emptyCapture=(c:any)=>c.state==='imported'&&!!c.rows&&Number(c.rows.new||0)+Number(c.rows.existing||0)+Number(c.rows.unchanged||0)===0
 const kindName=(k:string)=>k==='retrieve'?'自動取得':'観察取得'
-const stateName=(s:string)=>({queued:'予約',running:'実行中',verification_required:'サインイン待ち',complete:'完了',failed:'失敗'} as Record<string,string>)[s]||s
+const stateName=(s:string)=>({queued:'予約',running:'実行中',verification_required:'サインイン・確認待ち（PCのChromeを確認）',complete:'完了',failed:'失敗'} as Record<string,string>)[s]||s
 const captureState=(s:string)=>({received:'受信',imported:'取込済み',needs_review:'要確認'} as Record<string,string>)[s]||s
 const labelCheckText=(checked:any)=>['未確認','確認済み'][Number(checked===true)]
 const eventChannelText=(channel:any)=>({false:' · 操作の記録なし（画面の記録は保存済み）'} as Record<string,string>)[String(channel)]||''
