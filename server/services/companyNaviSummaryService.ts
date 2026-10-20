@@ -9,6 +9,8 @@ import Invoice from '../models/Invoice'
 import Receipt from '../models/Receipt'
 import { Payment } from '../models/Payment'
 import { ensureConnection } from '../config/database'
+import { findCompanyMatchesForReceipt } from './receiptService'
+import { getCompanyNaviTransaction } from './companyTransactionAssistantService'
 import { validTimeZone, localBusinessDate, zonedRange, fiscalYearFor, currencyCode, isRealDateKey, zonedDayStart, addDayKey } from '../../shared/finance-navi-business.mjs'
 
 const DEFAULT_ZONE = 'Asia/Tokyo'
@@ -119,4 +121,24 @@ export async function getCompanyReceipt(organizationId: mongoose.Types.ObjectId,
   const r: any = await Receipt.findOne({ ...summaryScope(organizationId), _id: new mongoose.Types.ObjectId(receiptId) }).select('-filePath -fileUrl -thumbnailUrl -extractedData.rawText -extractedData.merchantAddress -extractedData.merchantPhone -metadata -originalFilename -filename').lean()
   if (!r) bad(404, 'Receipt not found')
   return { receipt: { ...receiptView(r), ...await linked(organizationId, r) } }
+}
+
+// Use the same bounded, company-filtered candidate lookup as the receipt page. Its scores are heuristics, not probabilities
+// or verified purchase links. Read candidate details through the existing company transaction whitelist, including the card's
+// saved currency; the native scorer can suggest different-currency and unknown-currency rows, so preserve those facts.
+export async function findCompanyReceiptMatches(organizationId: mongoose.Types.ObjectId, receiptId: string) {
+  const { receipt } = await getCompanyReceipt(organizationId, receiptId)
+  const candidates = await findCompanyMatchesForReceipt(receiptId, organizationId)
+  if (!candidates) bad(404, 'Receipt not found')
+  const matches = await Promise.all(candidates.map(async (candidate, index) => ({
+    rank: index + 1,
+    heuristicScore: candidate.confidence,
+    factors: candidate.matchFactors,
+    transaction: await getCompanyNaviTransaction(organizationId, candidate.transactionId)
+  })))
+  return {
+    receipt, matches,
+    search: { source: 'native_company_receipt_candidates', exhaustive: false },
+    meaning: 'heuristic_candidates_not_verified_links_or_probability'
+  }
 }

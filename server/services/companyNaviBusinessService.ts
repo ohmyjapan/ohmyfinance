@@ -16,7 +16,7 @@ import { createCompanyCalendarEntry, deleteCompanyCalendarEntry } from './compan
 import { listCompanyBudgets, getCompanyBudget, createCompanyBudget, updateCompanyBudget, deleteCompanyBudget } from './companyBudgetService'
 import { getRecurringPayments, getRecurringPaymentById, createRecurringPayment, updateRecurringPayment, deleteRecurringPayment, generateTransaction } from './recurringPaymentService'
 import { getCompanyNaviTransaction, transactionNaviView } from './companyTransactionAssistantService'
-import { companyProfile, companyFinanceSummary, listCompanyReceipts, getCompanyReceipt } from './companyNaviSummaryService'
+import { companyProfile, companyFinanceSummary, listCompanyReceipts, getCompanyReceipt, findCompanyReceiptMatches } from './companyNaviSummaryService'
 import { readInvoiceCalendar, scheduleInvoicePayment, invoicePaymentId, invoiceLinkSummary } from './companyInvoiceCalendarService'
 import { businessToolMeta, businessFields } from '../../shared/finance-navi-business.mjs'
 
@@ -202,6 +202,7 @@ export async function businessRead(c: any, name: string, args: any) {
   if (name === 'get_company_finance_summary') return companyFinanceSummary(organizationId, args)
   if (name === 'list_company_receipts') return listCompanyReceipts(organizationId, args)
   if (name === 'get_company_receipt') return getCompanyReceipt(organizationId, args.receiptId)
+  if (name === 'find_company_receipt_matches') return findCompanyReceiptMatches(organizationId, args.receiptId)
   if (name === 'get_company_invoice_calendar') return readInvoiceCalendar(companyOf(c), String(args.invoiceId))
   if (name === 'list_company_budgets') { const rows = await listCompanyBudgets(companyOf(c), { active: args.active === true ? 'true' : undefined, period: args.period }); return { budgets: rows.slice(0, 100).map(budgetView), truncated: rows.length > 100 } }
   if (name === 'get_company_budget') { const v = await getCompanyBudget(companyOf(c), args.budgetId); if (!v) bad(404, 'Budget not found'); return { budget: budgetView(v) } }
