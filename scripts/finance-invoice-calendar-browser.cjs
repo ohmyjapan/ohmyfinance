@@ -35,6 +35,9 @@ module.exports=async({root,origin,worker,claim,actOk,finish,A,invoiceId,invoiceN
   assert.equal(await overflow(),false,'invoice-calendar-ui:mobile-overflow');
   // 2. From the invoices page: a repeat meets the same one entry; an unsent draft survives minimize and navigation.
   await push('/invoices');await wait(()=>location.pathname==='/invoices',[],'invoices-page');
+  await wait(id=>!!document.querySelector('[data-invoice-print="'+id+'"]')?.closest('tr')?.querySelector('td.text-right.font-bold.font-mono')?.textContent.trim(),[invoiceId],'invoice-total-loaded');
+  const invoiceTotal=await page.evaluate(id=>document.querySelector('[data-invoice-print="'+id+'"]')?.closest('tr')?.querySelector('td.text-right.font-bold.font-mono')?.textContent.trim(),invoiceId);
+  assert.match(invoiceTotal,/125\.50/,'invoice-calendar-ui:saved-currency-decimals '+invoiceTotal);assert.ok(/USD|\$/.test(invoiceTotal)&&!/[￥¥₩]/.test(invoiceTotal),'invoice-calendar-ui:saved-currency-code '+invoiceTotal);
   job=await say('もう一度この請求書の入金予定を追加して。');assert.equal(job.context.page,'invoices','invoice-calendar-ui:invoice-context');
   read=(await actOk(job,'get_company_invoice_calendar',{invoiceId})).result;assert.equal(read.state,'linked');
   done=await actOk(job,'schedule_company_invoice_payment',{invoiceId,expectedUpdatedAt:read.invoice.updatedAt});assert.equal(done.result.outcome,'existing','invoice-calendar-ui:repeat-existing');await finish(job);

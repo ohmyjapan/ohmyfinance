@@ -113,7 +113,7 @@
             <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">{{ invoice.to?.name }}</td>
             <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{{ formatDate(invoice.issueDate) }}</td>
             <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{{ formatDate(invoice.dueDate) }}</td>
-            <td class="px-6 py-4 text-right font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(invoice.total) }}</td>
+            <td class="px-6 py-4 text-right font-bold font-mono text-gray-900 dark:text-gray-100">{{ formatCurrency(invoice.total, invoice.currency) }}</td>
             <td class="px-6 py-4 text-center">
               <span :class="getStatusClass(invoice.status)" class="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-lg capitalize">
                 {{ t(`invoices.statuses.${invoice.status}`) || invoice.status }}
@@ -377,10 +377,13 @@ const viewPdf = async (id: string) => {
   }
 }
 
-const formatCurrency = (value: number) => {
+const formatCurrency = (value: number, currency?: string) => {
   const currencyLocale = locale.value === 'ko' ? 'ko-KR' : 'ja-JP'
-  const currency = locale.value === 'ko' ? 'KRW' : 'JPY'
-  return new Intl.NumberFormat(currencyLocale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(value)
+  try {
+    return new Intl.NumberFormat(currencyLocale, { style: 'currency', currency }).format(value)
+  } catch {
+    return `${value} ${currency || (locale.value === 'ko' ? '통화 미기록' : '通貨未記録')}`
+  }
 }
 
 const formatDate = (date: string) => {
