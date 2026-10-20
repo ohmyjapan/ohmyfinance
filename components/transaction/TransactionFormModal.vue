@@ -144,6 +144,7 @@
                               <option value="">{{ t('common.select') }}</option>
                               <option v-for="cat in accountCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                             </select>
+                            <AccountCompanyRegistration :account-id="form.accountCategoryId" :account-name="selectedAccountCategoryName" kind="account" :created="lastCreatedAccount" />
                           </div>
 
                           <!-- Sub Account Category -->
@@ -196,6 +197,7 @@
                                 <Edit3 class="w-4 h-4" />
                               </button>
                             </div>
+                            <AccountCompanyRegistration :account-id="form.subAccountCategoryId" :account-name="selectedSubAccount?.name" kind="subAccount" :created="lastCreatedAccount" />
                           </div>
                         </div>
 
@@ -899,6 +901,7 @@ import {
   Receipt, Upload, ChevronDown, Info, Save, Loader, CheckCircle, Plus, Edit3
 } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import AccountCompanyRegistration from './AccountCompanyRegistration.vue'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
@@ -1076,6 +1079,10 @@ const selectedSubAccount = computed(() => {
   if (!form.value.subAccountCategoryId) return null
   return subAccountCategories.value.find(c => c.id === form.value.subAccountCategoryId || c._id === form.value.subAccountCategoryId)
 })
+
+// Company Navi availability of the selected accounts; the last account created here carries its native registration result.
+const selectedAccountCategoryName = computed(() => accountCategories.value.find(c => c.id === form.value.accountCategoryId)?.name || '')
+const lastCreatedAccount = ref<{ accountId: string, companyId: string | null } | null>(null)
 
 const filteredSuppliers = computed(() => {
   if (!supplierSearch.value) return suppliers.value.slice(0, 10)
@@ -1278,6 +1285,7 @@ const saveSubAccount = async () => {
 
     // Select the new/updated sub-account
     const newId = result._id || result.id
+    if (!editingSubAccount.value) lastCreatedAccount.value = { accountId: String(newId), companyId: result.companyRegistration?.companyId || null }
     form.value.subAccountCategoryId = newId
     subAccountSearch.value = result.name
 

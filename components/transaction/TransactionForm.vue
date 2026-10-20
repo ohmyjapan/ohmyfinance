@@ -104,6 +104,7 @@
               <option value="new">{{ t('transactionForm.addNewAccountCategory') }}</option>
             </select>
           </div>
+          <AccountCompanyRegistration :account-id="selectedAccountId" :account-name="selectedAccountName" kind="account" :created="lastCreatedAccount" />
 
           <!-- New Account Category Form -->
           <div v-if="form.accountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
@@ -149,6 +150,7 @@
               <option value="new">{{ t('transactionForm.addNewSubAccountCategory') }}</option>
             </select>
           </div>
+          <AccountCompanyRegistration :account-id="selectedSubAccountId" :account-name="selectedSubAccountName" kind="subAccount" :created="lastCreatedAccount" />
 
           <!-- New Sub Account Category Form -->
           <div v-if="form.subAccountCategoryId === 'new'" class="mt-3 p-3 border border-gray-200 dark:border-white/10 rounded-md">
@@ -604,6 +606,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import AccountCompanyRegistration from './AccountCompanyRegistration.vue'
 
 const { t } = useI18n()
 
@@ -799,6 +802,13 @@ const filteredSubAccountCategories = computed(() => {
   return subAccountCategories.value
 })
 
+// Company Navi availability of the selected accounts ('new' is the create option, not an account).
+const selectedAccountId = computed(() => form.value.accountCategoryId && form.value.accountCategoryId !== 'new' ? form.value.accountCategoryId : '')
+const selectedSubAccountId = computed(() => form.value.subAccountCategoryId && form.value.subAccountCategoryId !== 'new' ? form.value.subAccountCategoryId : '')
+const selectedAccountName = computed(() => accountCategories.value.find(c => c.id === selectedAccountId.value)?.name || '')
+const selectedSubAccountName = computed(() => subAccountCategories.value.find(c => c.id === selectedSubAccountId.value)?.name || '')
+const lastCreatedAccount = ref<{ accountId: string, companyId: string | null } | null>(null)
+
 // Methods
 const onSupplierSearchInput = () => {
   showSupplierSuggestions.value = true
@@ -921,6 +931,7 @@ const addNewAccountCategory = async () => {
       })
       const newId = result.id || result._id
       accountCategories.value.push({ id: newId, name: newAccountCategory.value.name })
+      lastCreatedAccount.value = { accountId: String(newId), companyId: result.companyRegistration?.companyId || null }
       form.value.accountCategoryId = newId
       newAccountCategory.value.name = ''
     } catch (error) {
@@ -954,6 +965,7 @@ const addNewSubAccountCategory = async () => {
         cardNumber: newSubAccountCategory.value.cardNumber,
         cardProvider: newSubAccountCategory.value.cardProvider
       })
+      lastCreatedAccount.value = { accountId: String(newId), companyId: result.companyRegistration?.companyId || null }
       form.value.subAccountCategoryId = newId
       newSubAccountCategory.value = { name: '', parentId: '', cardNumber: '', cardProvider: '' }
     } catch (error) {

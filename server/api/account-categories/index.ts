@@ -3,6 +3,9 @@ import { defineEventHandler, getQuery, readBody, getMethod, createError } from '
 import AccountCategory from '../../models/AccountCategory'
 import { ensureConnection } from '../../config/database'
 import { requireAuth } from '../../middleware/auth'
+import { selectedCompany, companyRegistrationEntry } from '../../services/companyAccountRegistrationService'
+
+const nativeCategoryFields = ['name', 'code', 'description', 'parentId', 'type', 'order', 'metadata']
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -41,7 +44,7 @@ export default defineEventHandler(async (event) => {
   if (method === 'POST') {
     const body = await readBody(event)
 
-    if (!body.name) {
+    if (!body?.name) {
       throw createError({
         statusCode: 400,
         statusMessage: 'Bad Request',
@@ -49,13 +52,21 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    // With a selected company (membership checked fresh before any write) the new account is created already available to that
+    // company's Navi, in the same insert. No selected company keeps the legacy shared create with no registration. Only the
+    // supported native fields come from the body; ids, company and registration fields from the body are ignored.
+    const { auth, organizationId } = await selectedCompany(event)
+    const values = Object.fromEntries(nativeCategoryFields.filter((key) => body[key] !== undefined).map((key) => [key, body[key]]))
+    const registration = organizationId ? { companyRegistrations: [companyRegistrationEntry(organizationId, auth.userId, 'created')] } : {}
     const category = new AccountCategory({
-      ...body,
+      ...values,
+      ...registration,
       isActive: true
     })
     await category.save()
 
-    return category.toObject()
+    const { companyRegistrations, ...created } = category.toObject()
+    return { ...created, ...(organizationId ? { companyRegistration: { companyId: String(organizationId), state: 'registered', via: 'created' } } : {}) }
   }
 
   throw createError({

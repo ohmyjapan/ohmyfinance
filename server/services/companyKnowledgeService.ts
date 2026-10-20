@@ -10,6 +10,7 @@ import Customer from '../models/Customer'
 import Supplier from '../models/Supplier'
 import { ready, fail as bad } from './financeService'
 import { companyTransactionChoices, getCompanyNaviTransaction } from './companyTransactionAssistantService'
+import { accountReferenceFields, isRegisteredAccount } from './companyAccountRegistrationService'
 
 const init = async () => { await ready(); await Knowledge.init() }
 export const knowledgeReferenceFields = ['accountCategoryId', 'subAccountCategoryId', 'taxCategoryId', 'transactionCategoryId', 'customerId', 'supplierId']
@@ -89,9 +90,14 @@ async function validatedValues(organizationId: any, args: any, turnText: string,
   if (args.effectiveFrom !== undefined) conditions.effectiveFrom = args.effectiveFrom ? new Date(args.effectiveFrom + 'T00:00:00Z') : ''
   const wanted = knowledgeReferenceFields.filter(k => args[k] !== undefined && args[k] !== '')
   if (wanted.length) {
-    // Suggested values must be references this company actually used, never guessed or global ids.
+    // Suggested values must be references this company actually used, or accounting accounts it explicitly registered (checked
+    // directly, any catalogue page), never guessed or global ids.
     const observed = (await companyTransactionChoices(organizationId)).choices
-    for (const k of wanted) if (!(observed[k] || []).some((r: any) => r.id === args[k])) bad(400, 'Use a reference observed in this company history (list_company_transaction_choices) for ' + k)
+    for (const k of wanted) {
+      if ((observed[k] || []).some((r: any) => r.id === args[k])) continue
+      if (accountReferenceFields.includes(k) && await isRegisteredAccount(organizationId, k, args[k])) continue;
+      bad(400, 'Use a reference observed in this company history, or an accounting account registered for this company (list_company_transaction_choices), for ' + k)
+    }
   }
   const suggested: any = {}
   for (const k of knowledgeReferenceFields) if (args[k] !== undefined) suggested[k] = args[k] === '' ? (clearing ? null : undefined) : new mongoose.Types.ObjectId(args[k])

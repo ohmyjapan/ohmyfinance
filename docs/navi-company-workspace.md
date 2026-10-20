@@ -162,6 +162,14 @@ These routes are not called by Navi and are not claimed tenant-safe (recorded in
 
 Native import/backup/restore (final review F1/F2, plan omf-navi-import-restore-20261020). Navi still does not call them. `POST /api/transactions/import`, `GET /api/backup` and `POST /api/backup/restore` now use the fresh selected-company boundary: import saves through `createCompanyTransaction` with a company-scoped duplicate check; export holds only the company's recorded rows with a scope block; restore writes only rows recorded for that company, with the current actor as creator and no Navi/card markers, scopes duplicates and clear-existing to the company, and reports skipped other-company/unassigned/malformed/invalid rows. The import and settings pages name the company and drop replies that arrive after a switch. These rows are immediately visible to the company pages and company Navi reads. Details, guard exits and limits: [company import and restore](company-import-restore.md). This is not a full G4/SaaS closure.
 
+Registered unused accounts (2026-10-20, plan omf-navi-account-registrations-20261020). Navi's `list_company_transaction_choices` still lists references observed in the company's last 500 transactions. It now also lists 勘定科目/補助科目 that the company registered for Navi, even ones never used, with `source: company_registration`, the actual parent of a sub-account, and a literal `accountQuery` / `accountPage` (50 per page, `registeredAccounts.hasMore`). Every other reference stays history-only, and nothing global is listed.
+- A registration is made by the native create (`POST /api/account-categories`) when a company is selected, in the same insert. It can also be made explicitly with `POST /api/account-categories/:id/registration` from the transaction modal and form. Both use the token company with fresh membership; the body is ignored.
+- A create with no selected company stays the legacy shared create with no registration. No legacy account is adopted.
+- The registration list is hidden from every ordinary read, and an update cannot write or erase it.
+- Registration is availability only. It saves no transaction, and the shared chart's edit/delete policy is unchanged (wider G4).
+- Teachings may suggest a registered account.
+- Callers, guards and limits: [company account registrations](navi-company-account-registrations.md).
+
 Still open:
 - real product-model dialogue, including an explicit cannot-answer-yet case;
 - live public web;

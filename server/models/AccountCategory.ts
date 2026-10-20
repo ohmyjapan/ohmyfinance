@@ -9,9 +9,20 @@ export interface IAccountCategory extends Document {
   isActive: boolean
   order?: number
   metadata?: Record<string, any>
+  companyRegistrations?: { organizationId: mongoose.Types.ObjectId, registeredBy: mongoose.Types.ObjectId, registeredAt: Date, via: 'created' | 'registered' }[]
   createdAt: Date
   updatedAt: Date
 }
+
+// A company made this shared account available to its Navi (native create with a selected company, or explicit registration).
+// Availability and provenance only: it is not company ownership of the shared chart, and legacy records are never adopted.
+// Hidden from ordinary reads (select: false); only the server's registration filters and writes use it.
+const CompanyRegistrationSchema = new Schema({
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true },
+  registeredBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  registeredAt: { type: Date, required: true },
+  via: { type: String, enum: ['created', 'registered'], required: true }
+}, { _id: false })
 
 const AccountCategorySchema = new Schema<IAccountCategory>({
   name: { type: String, required: true },
@@ -24,7 +35,8 @@ const AccountCategorySchema = new Schema<IAccountCategory>({
   },
   isActive: { type: Boolean, default: true },
   order: { type: Number, default: 0 },
-  metadata: Schema.Types.Mixed
+  metadata: Schema.Types.Mixed,
+  companyRegistrations: { type: [CompanyRegistrationSchema], select: false, default: undefined }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
