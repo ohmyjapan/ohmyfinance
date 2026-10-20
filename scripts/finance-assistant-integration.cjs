@@ -35,12 +35,13 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
   const {createRequire}=require('node:module'),req=createRequire(path.join(root,'collector/package.json')),p=req('rebrowser-puppeteer-core'),browser=await p.connect({browserURL:'http://127.0.0.1:'+Number(process.env.OMF_TEST_CHROME_PORT),defaultViewport:null});let page;
   try{
    const batch=await upload(csv([row({2:'Summonable first purchase',5:'919'}),row({2:'Summonable second purchase',5:'920'})]));assert.equal(batch.status,200);
-   page=await browser.newPage();await page.setViewport({width:1440,height:1000});await page.goto(origin+'/transactions',{waitUntil:'networkidle2'});
+   // The owner chat belongs to mapping/learning; transactions uses the separate company chat (shared/finance-assistant.mjs).
+   page=await browser.newPage();await page.setViewport({width:1440,height:1000});await page.goto(origin+'/mapping',{waitUntil:'networkidle2'});
    const waitFor=async fn=>{for(let i=0;i<120;i++){if(await page.evaluate(fn))return;await pause(100)}throw Error('Assistant browser condition timed out')};
    await page.evaluate(()=>{for(const key of Object.keys(sessionStorage))if(key.startsWith('omf-assistant:'))sessionStorage.removeItem(key)});await page.reload({waitUntil:'networkidle2'});
    await waitFor(()=>!!document.querySelector('[data-assistant-toggle]'));await page.evaluate(()=>document.querySelector('[data-assistant-toggle]').click());
    await waitFor(()=>!!document.querySelector('#assistant-message')&&!document.querySelector('#assistant-message').disabled);
-   assert.ok(await page.evaluate(()=>document.querySelector('[data-assistant-context]').textContent.includes('取引一覧')));
+   assert.ok(await page.evaluate(()=>document.querySelector('[data-assistant-context]').textContent.includes('明細マッピング')));
    await page.evaluate(()=>document.querySelector('#assistant-message').focus());await page.keyboard.type('이 화면을 설명해 줘.');
    await page.evaluate(()=>document.querySelector('a[href="/learning"]').click());await waitFor(()=>location.pathname==='/learning');
    assert.equal(await page.evaluate(()=>document.querySelector('#assistant-message').value),'이 화면을 설명해 줘.');assert.ok(await page.evaluate(()=>document.querySelector('[data-assistant-context]').textContent.includes('学習ノート')));
@@ -51,9 +52,9 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
    await page.evaluate(()=>document.querySelector('[data-assistant-close]').click());await waitFor(()=>!!document.querySelector('[data-assistant-toggle]'));await page.evaluate(()=>document.querySelector('[data-assistant-toggle]').click());await waitFor(()=>!!document.querySelector('#assistant-message'));
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
    if(process.env.OMF_TEST_SCREENSHOT){await page.evaluate(()=>document.activeElement.blur());await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-assistant-desktop.png'),fullPage:true});}
-   const noOverlap=()=>{const panel=document.querySelector('[data-assistant-accordion]'),content=document.querySelector('[data-page-content]'),p=panel.getBoundingClientRect(),c=content.getBoundingClientRect();return getComputedStyle(panel).position==='static'&&c.top>=p.bottom&&document.documentElement.scrollWidth<=innerWidth&&!document.querySelector('[aria-modal="true"]')};
-   assert.equal(await page.evaluate(noOverlap),true,'Desktop assistant must reserve space above the page');
-   await page.setViewport({width:390,height:844});assert.equal(await page.evaluate(noOverlap),true,'Mobile assistant must reserve space without a modal');
+   const floating=()=>{const dock=document.querySelector('[data-assistant-dock]'),p=document.querySelector('#omf-assistant').getBoundingClientRect();return getComputedStyle(dock).position==='fixed'&&p.left>=0&&p.right<=innerWidth&&p.top>=0&&p.bottom<=innerHeight&&document.documentElement.scrollWidth<=innerWidth&&!document.querySelector('[aria-modal="true"]')};
+   assert.equal(await page.evaluate(floating),true,'Desktop Navi must float within the viewport');
+   await page.setViewport({width:390,height:844});assert.equal(await page.evaluate(floating),true,'Mobile Navi must float without a modal');
    assert.equal(await page.evaluate(()=>document.documentElement.style.overflow==='hidden'),false);
    await page.evaluate(()=>document.querySelector('[data-assistant-close]').focus());await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.querySelector('#omf-assistant').contains(document.activeElement)),true);
    if(process.env.OMF_TEST_SCREENSHOT){await page.evaluate(()=>document.activeElement.blur());await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-assistant-mobile.png'),captureBeyondViewport:false});}

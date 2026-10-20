@@ -21,7 +21,7 @@ module.exports=async({root,origin,ok,worker,claim,actOk,finish,ownerToken,tokenA
   await page.evaluate(()=>{const t=document.querySelector('[data-assistant-toggle]');if(t.getAttribute('aria-expanded')!=='true')t.click()});
   await wait(()=>document.querySelector('[data-assistant-company-status]')?.textContent.includes('Synthetic business A'),[],'dashboard-company');
   assert.equal(await page.$eval('[data-assistant-feature]',e=>e.dataset.assistantFeatureDisposition),'navi_tool','business-ui:dashboard-company');assert.equal(await page.$('[data-assistant-posting-company]'),null,'business-ui:company-no-owner-label');
-  assert.ok(await page.$('[data-assistant-accordion] img[src="/images/omf-navi-film.jpg"]'),'business-ui:navi-girl');assert.equal(await overflow(),false,'business-ui:mobile-overflow');assert.ok(await page.$eval('[role=log]',e=>e.clientHeight)>=150,'business-ui:mobile-conversation-space');
+  assert.ok(await page.$('[data-assistant-dock] img[src="/images/omf-navi-film.jpg"]'),'business-ui:navi-girl');assert.equal(await overflow(),false,'business-ui:mobile-overflow');assert.ok(await page.$eval('[role=log]',e=>e.clientHeight)>=150,'business-ui:mobile-conversation-space');
   await wait(()=>document.querySelector('[data-dashboard-total]')?.dataset.dashboardTotal!=='',[],'dashboard-loaded');const total=Number(await page.$eval('[data-dashboard-total]',e=>e.dataset.dashboardTotal));
   let job=await say('今日の文房具 800円を経費として登録して。');assert.equal(job.context.page,'dashboard','business-ui:dashboard-context');
   await actOk(job,'create_company_transaction',{date:'2026-10-20',amount:800,type:'\u652f\u51fa',productName:'UI_DASHBOARD_TX'});await finish(job);

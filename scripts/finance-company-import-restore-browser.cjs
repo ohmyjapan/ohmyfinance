@@ -101,7 +101,7 @@ module.exports=async({root,origin,db,A,B,owner,members,organizations,pause,pass,
 
   // 6. The Navi girl and accordion stay on the page; no unexpected browser errors or alert dialogs.
   await nativeSwitch(A);await push('/settings');await page.evaluate(()=>{const t=document.querySelector('[data-assistant-toggle]');if(t&&t.getAttribute('aria-expanded')!=='true')t.click()});
-  await wait(()=>!!document.querySelector('[data-assistant-accordion] img[src="/images/omf-navi-film.jpg"]'),[],'navi-girl');assert.deepEqual(errors,[],'import-restore-ui:no-errors');assert.deepEqual(dialogs,[],'import-restore-ui:no-alert');
+  await wait(()=>!!document.querySelector('[data-assistant-dock] img[src="/images/omf-navi-film.jpg"]'),[],'navi-girl');assert.deepEqual(errors,[],'import-restore-ui:no-errors');assert.deepEqual(dialogs,[],'import-restore-ui:no-alert');
   pass('installed Chrome: the Navi girl/accordion remains, no page errors or alert dialogs');
  }finally{if(browser)await browser.close().catch(()=>{});await fs.rm(directory,{recursive:true,force:true}).catch(()=>{})}
 };

@@ -18,7 +18,7 @@ module.exports=async({root,origin,db,worker,acted,finished,plain,A,B,owner,impor
   const r=await fetch('/api/auth/switch-organization',{method:'POST',headers:{...user.authHeader,'Content-Type':'application/json'},body:JSON.stringify({organizationId})}),s=await r.json();if(!r.ok)throw Error('Synthetic switch failed');
   const p=await fetch('/api/auth/me',{headers:{Authorization:'Bearer '+s.tokens.accessToken}}),profile=await p.json();if(!p.ok)throw Error('Synthetic profile failed');user.acceptSession({...profile,tokens:s.tokens},false);
  },String(organizationId));
- const panelText=()=>page.$eval('[data-assistant-accordion]',e=>e.textContent);
+ const panelText=()=>page.$eval('[data-assistant-dock]',e=>e.textContent);
  const click=selector=>page.evaluate(s=>{const e=document.querySelector(s);if(!e)throw Error('missing '+s);e.click()},selector);
  const typeMessage=async text=>{await page.$eval('#assistant-message',(e,t)=>{e.value=t;e.dispatchEvent(new Event('input',{bubbles:true}))},text);await click('[data-assistant-send]')};
  const claimFinish=async(summary,extra={},check)=>{const r=await worker('workspace-claim');assert.ok(r.data?.job,'owner-cont:chrome-claim '+r.raw.slice(0,200));const job=r.data.job;if(check)await check(job);await finished(job,summary,extra);return job};
@@ -36,7 +36,7 @@ module.exports=async({root,origin,db,worker,acted,finished,plain,A,B,owner,impor
   });
   const release=async()=>{for(const h of held.splice(0))await h.request.respond({status:h.status,contentType:'application/json',body:h.raw}).catch(()=>{})};
   await page.goto(origin+'/login',{waitUntil:'networkidle2'});await wait(()=>!!document.querySelector('#email'),[],'login-form');await page.type('#email','owner-cont-owner@example.invalid');await page.type('#password','Synthetic-password-Only1!');await page.evaluate(()=>document.querySelector('button[type=submit]').click());await wait(()=>location.pathname==='/',[],'login');
-  await nativeSwitch(A);await page.goto(origin+'/mapping',{waitUntil:'networkidle2'});await page.evaluate(()=>document.querySelector('[data-assistant-toggle]').click());
+  await nativeSwitch(A);await page.goto(origin+'/mapping',{waitUntil:'networkidle2'});await wait(()=>!!document.querySelector('[data-assistant-toggle]'),[],'launcher-ready');await page.evaluate(()=>document.querySelector('[data-assistant-toggle]').click());
   await wait(()=>!!document.querySelector('[data-assistant-owner-controls]'),[],'owner-controls');
   // the posting label is the server-checked company; a removed membership clears it although the cached organization list still has it
   await wait(id=>document.querySelector('[data-assistant-posting-company]')?.dataset.assistantPostingCompanyId===id,[String(A)],'posting-label-A');
@@ -59,11 +59,11 @@ module.exports=async({root,origin,db,worker,acted,finished,plain,A,B,owner,impor
   // company-teaching turns: visible under A, masked under B, and a delayed A response after the switch is dropped
   await typeMessage('Bridge shopの文具はどう処理する？');await wait(()=>[...document.querySelectorAll('[data-workspace-turn]')].some(e=>e.textContent.includes('Bridge shopの文具はどう処理する？')),[],'teaching-sent');
   await claimFinish('A_BROWSER_REPLY 消耗品費として扱います。',{},async job=>assert.ok(job.knowledge?.length,'owner-cont:chrome-teaching-recalled'));
-  await wait(()=>document.querySelector('[data-assistant-accordion]').textContent.includes('A_BROWSER_REPLY'),[],'A-reply-visible');
+  await wait(()=>document.querySelector('[data-assistant-dock]').textContent.includes('A_BROWSER_REPLY'),[],'A-reply-visible');
   let resolveHold;const holding=new Promise(r=>resolveHold=r);hold={resolve:resolveHold};await holding;await nativeSwitch(B);await release();
-  await wait(()=>!document.querySelector('[data-assistant-accordion]').textContent.includes('A_BROWSER_REPLY')&&!!document.querySelector('[data-workspace-withheld]'),[],'masked-under-B');
+  await wait(()=>!document.querySelector('[data-assistant-dock]').textContent.includes('A_BROWSER_REPLY')&&!!document.querySelector('[data-workspace-withheld]'),[],'masked-under-B');
   for(let i=0;i<20;i++){assert.ok(!(await panelText()).includes('A_BROWSER_REPLY'),'owner-cont:chrome-delayed-A-response-dropped');await pause(150)}
-  await nativeSwitch(A);await wait(()=>document.querySelector('[data-assistant-accordion]').textContent.includes('A_BROWSER_REPLY'),[],'visible-again-A');
+  await nativeSwitch(A);await wait(()=>document.querySelector('[data-assistant-dock]').textContent.includes('A_BROWSER_REPLY'),[],'visible-again-A');
   pass('browser 390: a company-teaching turn shows under its company, is masked after switching, and a delayed response of the old selection is dropped');
   // new chat empties the live conversation; the old turns move to history
   await page.setViewport({width:1280,height:900});await wait(()=>!document.querySelector('[data-assistant-new-chat]')?.disabled,[],'new-chat-ready');

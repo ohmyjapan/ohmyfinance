@@ -1,5 +1,7 @@
 # Company Navi workspace
 
+Presentation update 2026-10-20: Navi now opens from the introduction-film girl's floating icon in the bottom-right. The earlier accordion references below describe the previous presentation. See [the current UI mapping and checks](navi-floating-assistant.md); company authority, conversation separation and financial actions are unchanged.
+
 Self-mapped (FOLD). Explicit GET/POST `/api/finance-chat/company-workspace` and POST `/company-workspace/retry` use the session selected company plus native source user and fresh active membership. Company conversations live in a separate owner/company-unique collection. Server actor/company fields are immutable; each turn/context captures the same identity. Legacy owner/purchase chats are not adopted, reindexed, shared or changed. Same request id can exist independently in different companies; a repeated request within one company must retain its text and selection.
 
 Caller chain: native company route -> company assistant -> separate stored turn/context -> existing workspace worker claim -> company-only tool catalogue -> shared invoice/calendar read operation -> rechecked live job/member -> native result. Existing workspace worker protocol and model/provider selection are unchanged. Legacy jobs retain priority in the existing claim endpoint; company jobs are picked when no legacy job is available. Legacy journal recovery remains untouched. Heartbeat widens the old renewal exit to recognize company jobs and does not renew legacy operation journals for them.
