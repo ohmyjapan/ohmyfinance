@@ -129,7 +129,7 @@ export async function getCompanyReceipt(organizationId: mongoose.Types.ObjectId,
 export async function findCompanyReceiptMatches(organizationId: mongoose.Types.ObjectId, receiptId: string) {
   const { receipt } = await getCompanyReceipt(organizationId, receiptId)
   const candidates = await findCompanyMatchesForReceipt(receiptId, organizationId)
-  if (!candidates) bad(404, 'Receipt not found')
+  if (!candidates) throw createError({ statusCode: 404, statusMessage: 'Receipt not found' })
   const matches = await Promise.all(candidates.map(async (candidate, index) => ({
     rank: index + 1,
     heuristicScore: candidate.confidence,
