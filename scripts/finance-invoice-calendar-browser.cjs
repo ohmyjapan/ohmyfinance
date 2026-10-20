@@ -2,7 +2,7 @@
 // synthetic test replies through the real worker routes; the schedule itself runs the real native service. No model, provider or sends.
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {createRequire}=require('node:module'),{existsSync}=require('node:fs');
-module.exports=async({root,origin,worker,claim,actOk,finish,A,invoiceId,invoiceNumber,invoiceDueDate,linked,pause,pass})=>{
+module.exports=async({root,origin,worker,claim,actOk,finish,A,invoiceId,invoiceNumber,invoiceDueDate,jpyPaymentId,ledgerRows,linked,pause,pass})=>{
  let puppeteer;try{puppeteer=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core')}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;puppeteer=createRequire(path.resolve(root,'../collector/package.json'))('rebrowser-puppeteer-core')}
  const executablePath=[path.join(process.env.ProgramFiles||'C:/Program Files','Google/Chrome/Application/chrome.exe'),path.join(process.env['ProgramFiles(x86)']||'C:/Program Files (x86)','Google/Chrome/Application/chrome.exe'),path.join(process.env.LOCALAPPDATA||'','Google/Chrome/Application/chrome.exe')].find(existsSync);
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'omf-invoice-calendar-ui-'));let browser,page;const errors=[],dialogs=[],scheduleRequests=[];
@@ -75,11 +75,19 @@ module.exports=async({root,origin,worker,claim,actOk,finish,A,invoiceId,invoiceN
   const paymentAfter=(await linked(invoiceId))[0];assert.equal(paymentAfter.notes,'NATIVE_DECIMAL_NOTE_ONLY','invoice-calendar-ui:native-save-observed');
   for(const field of ['amount','currency','category','type','status'])assert.equal(paymentAfter[field],paymentBefore[field],'invoice-calendar-ui:native-keeps-'+field);
   assert.deepEqual(paymentAfter.invoiceLink,paymentBefore.invoiceLink,'invoice-calendar-ui:native-keeps-link-snapshot');
+  // 5. Await the real store action so the check cannot race a later ledger POST after the status PUT.
+  const beforeComplete=await ledgerRows();
+  await page.evaluate(async id=>{const store=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar');store.payments.find(p=>p.id===id).currency='JPY';await store.markAsCompleted(id)},paymentId);
+  assert.deepEqual(await ledgerRows(),beforeComplete,'invoice-calendar-ui:foreign-complete-no-ledger');
+  const completedForeign=(await linked(invoiceId))[0];assert.equal(completedForeign.status,'paid','invoice-calendar-ui:foreign-status-completed');assert.equal(completedForeign.currency,'USD');assert.equal(completedForeign.amount,125.5);assert.deepEqual(completedForeign.invoiceLink,paymentBefore.invoiceLink);
+  const notice=await page.$eval('[data-calendar-currency-notice]',e=>e.textContent);assert.match(notice,/円|엔화/,'invoice-calendar-ui:currency-notice');assert.ok(await page.$('[data-calendar-currency-notice] a[href="/transactions"]'),'invoice-calendar-ui:ledger-next-lane');
+  await page.evaluate(async id=>{const store=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar');const held=store.payments.find(p=>p.id===id);held.currency='USD';held.amount=0.01;await store.markAsCompleted(id)},jpyPaymentId);
+  const afterJpy=await ledgerRows();assert.equal(afterJpy.length,beforeComplete.length+1,'invoice-calendar-ui:jpy-still-posts');const jpyLedger=afterJpy.find(p=>p.referenceNumber==='PAY-'+jpyPaymentId);assert.ok(jpyLedger,'invoice-calendar-ui:jpy-post-reference');assert.equal(jpyLedger.amount,12760);assert.equal(jpyLedger.type,'入金');assert.equal(jpyLedger.status,'completed');
   assert.deepEqual(scheduleRequests,[],'invoice-calendar-ui:browser-sends-no-schedule');
   await page.setViewport({width:1280,height:900});await pause(300);assert.equal(await overflow(),false,'invoice-calendar-ui:desktop-overflow');
   const screenshots=process.env.OMF_INVOICE_CALENDAR_SCREENSHOTS;if(screenshots){await fs.mkdir(screenshots,{recursive:true});await page.screenshot({path:path.join(screenshots,'invoice-calendar-desktop.png')})}
   assert.deepEqual(dialogs,[],'invoice-calendar-ui:no-script-dialogs');assert.deepEqual(errors,[],'invoice-calendar-ui:console-errors');
-  pass('real installed Chrome: Navi schedule/repeat, persisted receipts, kept buffer; USD125.50 on grid/upcoming/day and separate USD/JPY monthly totals; native notes-only save preserves cents/currency/category/link; no overflow at390or1280');
+  pass('real installed Chrome: Navi schedule/repeat, persisted receipts, kept buffer; USD125.50 and separate USD/JPY totals; native notes-only edit preserves money/link; non-JPY completion uses server echo and writes no ledger, explicitJPY control posts exactly once; no overflow at390or1280');
  }catch(e){if(page&&process.env.OMF_INVOICE_CALENDAR_SCREENSHOTS){await fs.mkdir(process.env.OMF_INVOICE_CALENDAR_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.OMF_INVOICE_CALENDAR_SCREENSHOTS,'failure.png')}).catch(()=>{})}throw e}
  finally{if(browser)await browser.close();const resolved=path.resolve(directory),temp=path.resolve(os.tmpdir());assert.ok(resolved.startsWith(temp+path.sep)&&path.basename(resolved).startsWith('omf-invoice-calendar-ui-'));await fs.rm(resolved,{recursive:true,force:true})}
 };

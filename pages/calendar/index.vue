@@ -17,6 +17,10 @@
 
     <!-- Stats -->
     <CalendarStats :stats="calendarStore.monthlyStats" />
+    <p v-if="calendarStore.payments.some(payment => payment.currency !== 'JPY')" data-calendar-currency-notice class="mb-6 text-sm text-gray-600 dark:text-gray-400">
+      {{ locale === 'ko' ? '엔화 이외의 예정은 완료해도 달력 상태만 갱신합니다. 엔화 장부 기록은 은행·거래 화면에서 등록해 주세요.' : '円以外の予定の完了はカレンダーの状態更新です。円建ての記帳は銀行・取引画面で行ってください。' }}
+      <NuxtLink to="/transactions" class="text-primary-main underline">{{ t('nav.transactions') }}</NuxtLink>
+    </p>
 
     <!-- Main Content -->
     <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">

@@ -185,9 +185,10 @@ export const useCalendarStore = defineStore('calendar', {
       const updatedPayment = await this.updatePayment(id, { status: 'paid' })
 
       // A card bill from the issuer's statement or notice is settled by the status alone: its purchases are already
-      // ledger rows from the statement import, so no second purchase expense is posted. Decided on the server's echo,
-      // never on the row held before the request.
-      if (updatedPayment?.source?.kind === 'card-statement') return updatedPayment
+      // ledger rows from the statement import, so no second purchase expense is posted. The ledger has no currency
+      // field: non-JPY (or unestablished-unit) plans also finish by status only, with yen bookkeeping entered separately.
+      // Both decisions use the server's echo, never the row held before the request.
+      if (updatedPayment?.source?.kind === 'card-statement' || updatedPayment?.currency !== 'JPY') return updatedPayment
 
       // Create a transaction for this payment
       try {
@@ -195,11 +196,11 @@ export const useCalendarStore = defineStore('calendar', {
           method: 'POST',
           headers: this._getAuthHeaders(),
           body: {
-            date: new Date(payment.dueDate),
-            amount: payment.amount,
-            type: payment.type === 'income' ? '入金' : '支出',
+            date: new Date(updatedPayment.dueDate),
+            amount: updatedPayment.amount,
+            type: updatedPayment.type === 'income' ? '入金' : '支出',
             status: 'completed',
-            notes: `支払いカレンダーより: ${payment.title}`,
+            notes: `支払いカレンダーより: ${updatedPayment.title}`,
             referenceNumber: `PAY-${id}`,
             // Link to payment
             paymentId: id
