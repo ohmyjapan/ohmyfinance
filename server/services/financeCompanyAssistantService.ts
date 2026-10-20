@@ -6,7 +6,7 @@ import { publicResearchCapabilityOf, prepareRegistry, capturePublicSource, listP
 import { validateCompanyAssistantReply, findNaviFeatures, naviFeature } from '../../shared/finance-navi-features.mjs'
 import { companyBusinessTools, businessToolMeta, businessWriteNames, companyNaviPage, transactionEditAdditions, invoiceEditAdditions, validateBusinessArgs } from '../../shared/finance-navi-business.mjs'
 import { businessRead } from './companyNaviBusinessService'
-import { companyClock } from './companyNaviSummaryService'
+import { companyClock, getCompanyReceipt } from './companyNaviSummaryService'
 import { companyBusinessAction } from './financeCompanyActionService'
 import { createHash, randomUUID } from 'node:crypto'
 import { FinanceCompanyAssistant as Conversation } from '../models/FinanceCompanyAssistant'
@@ -44,6 +44,7 @@ function selection(input: any) {
   if (input.invoiceId !== undefined) { if (input.page !== 'invoices') fail(400, 'Choose an invoice'); selected.invoiceId = id(input.invoiceId) }
   if (input.paymentId !== undefined) { if (input.page !== 'calendar') fail(400, 'Choose a calendar entry'); selected.paymentId = id(input.paymentId) }
   if (input.transactionId !== undefined) { if (input.page !== 'transactions') fail(400, 'Choose a transaction'); selected.transactionId = id(input.transactionId) }
+  if (input.receiptId !== undefined) { if (input.page !== 'receipts') fail(400, 'Choose a receipt'); selected.receiptId = id(input.receiptId) }
   if (input.inspected !== undefined && input.inspected !== null) selected.inspected = inspectedPointer(input.inspected)
   return selected
 }
@@ -73,6 +74,7 @@ export async function sendCompanyAssistant(ownerId: string, organizationId: any,
   if ((c?.turns.length || 0) >= turnLimit) fail(409, 'この会話は200件に達しました。「新しい会話」で続けてください。これまでの会話と保存の記録は履歴に残ります。')
   const agent: any = await available(ownerId); if (!agent) fail(409, 'AI is unavailable; retry later')
   if (target.transactionId) await getCompanyNaviTransaction(organizationId, target.transactionId)
+  if (target.receiptId) await getCompanyReceipt(organizationId, target.receiptId)
   if (target.invoiceId) await getCompanyInvoice(organizationId, target.invoiceId)
   if (target.paymentId) await getCompanyCalendarEntry(organizationId, target.paymentId)
   if (target.inspected) await inspectedRecord(ownerId, organizationId, target.inspected)
@@ -157,7 +159,7 @@ export async function renewCompanyAssistant(agent: any, job: any) {
   return !!c
 }
 // A reply's record pointer must name a record of the frozen company, checked now rather than trusted from the model.
-const recordPointer = async (organizationId: any, navigation: any) => { if (!navigation?.transactionId) return true; try { await getCompanyNaviTransaction(organizationId, navigation.transactionId); return true } catch { return false } }
+const recordPointer = async (organizationId: any, navigation: any) => { try { if (navigation?.transactionId) await getCompanyNaviTransaction(organizationId, navigation.transactionId); if (navigation?.receiptId) await getCompanyReceipt(organizationId, navigation.receiptId); return true } catch { return false } }
 export async function finishCompanyAssistant(agent: any, chatId: string, body: any) {
   const c = await working(agent, chatId, body?.lease)
   let proposal: any
@@ -191,7 +193,7 @@ const companyTools = [
   tool('list_navi_features', 'Read the OMF feature guide: every page group with its local page, whether Navi has tools for it, the user opens the page, or it is unsupported and why. Use it to explain where and how to do something; a reply may link one listed page.', { query: textFilter }),
   ...companyBusinessTools
 ]
-const featureView = (f: any) => ({ id: f.id, group: f.group, label: f.label, labelKo: f.labelKo, route: f.route, disposition: f.disposition, reason: f.reason, tools: f.tools || [], recordPage: f.recordRoute ? 'transaction detail by id' : null, sensitive: f.sensitive === true, source: f.source })
+const featureView = (f: any) => ({ id: f.id, group: f.group, label: f.label, labelKo: f.labelKo, route: f.route, disposition: f.disposition, reason: f.reason, tools: f.tools || [], recordPage: f.recordRoute ? (f.id === 'receipts' ? 'receipt evidence by receiptId' : 'transaction detail by transactionId') : null, sensitive: f.sensitive === true, source: f.source })
 const invoiceView = (v: any) => ({ id: String(v._id), hasBankDetails: !!v.bankDetails, transactionId: v.transactionId ? String(v.transactionId) : null, invoiceNumber: v.invoiceNumber, status: v.status, issueDate: v.issueDate, dueDate: v.dueDate, paidDate: v.paidDate || null, notes: String(v.notes || '').slice(0,2000), notesTruncated: String(v.notes || '').length > 2000, terms: String(v.terms || '').slice(0,2000), termsTruncated: String(v.terms || '').length > 2000, from: { name: v.from?.name, taxId: v.from?.taxId || '' }, to: { name: v.to?.name }, subtotal: v.subtotal, taxRate: v.taxRate, taxAmount: v.taxAmount, total: v.total, currency: v.currency, items: (v.items || []).slice(0, 50), itemsTruncated: (v.items?.length || 0) > 50, updatedAt: v.updatedAt || null })
 const paymentView = (v: any) => ({ id: String(v._id), title: v.title, notes: String(v.notes || '').slice(0, 2000), notesTruncated: String(v.notes || '').length > 2000, amount: v.amount, currency: v.currency, dueDate: v.dueDate, type: v.type, status: v.status, category: v.category, settledAt: v.settledAt || null, invoiceLink: invoiceLinkSummary(v.invoiceLink), source: v.source ? { kind: v.source.kind, provider: v.source.provider, periodKey: v.source.periodKey, statementMonth: v.source.statementMonth, adopted: v.source.adopted === true, dueDateEvidence: v.source.dueDateEvidence, importId: v.source.importId ? String(v.source.importId) : null, noticeId: v.source.noticeId ? String(v.source.noticeId) : null } : null, updatedAt: v.updatedAt || null })
 export async function actionCompanyAssistant(agent: any, chatId: string, body: any) {

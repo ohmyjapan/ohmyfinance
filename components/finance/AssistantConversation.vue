@@ -84,8 +84,8 @@ const data=ref<any>(null),error=ref(''),busy=ref(false),transcript=ref<HTMLEleme
 const view=ref<'chat'|'history'|'knowledge'>('chat'),archives=ref<any[]>([]),archive=ref<any>(null),historyLoaded=ref(false),historyPage=ref(1),historyMore=ref(false),knowledge=ref<any[]>([]),knowledgeLoaded=ref(false)
 const randomId=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('')
 let resetRequest=''
-// A reply link is only ever a fixed catalogue page (or one company transaction page); it opens on the user's click, never by itself.
-const navigationRoute=(p:any)=>p?.navigation?naviFeatureRoute(p.navigation.feature,p.navigation.transactionId):null
+// A reply link is a fixed catalogue page or a server-checked transaction/receipt; it opens only on the user's click.
+const navigationRoute=(p:any)=>p?.navigation?naviFeatureRoute(p.navigation.feature,p.navigation.transactionId??p.navigation.receiptId):null
 const navigationLabel=(p:any)=>naviFeature(p?.navigation?.feature)?.label||'画面'
 const formatDate=(v:any)=>v?new Date(v).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):''
 const suggestedNames:Record<string,string>={accountCategory:'勘定科目',subAccountCategory:'補助科目',taxCategory:'税区分',transactionCategory:'区分',customer:'顧客',supplier:'仕入先'}

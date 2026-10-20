@@ -1,7 +1,7 @@
 // Runs only inside finance-company-business-integration.cjs's owned disposable database and native app.
 const assert = require('node:assert/strict');
 
-module.exports = async ({ db, ObjectId, A, B, tokenA, tokenB, job, act, actOk, turn, finish, ok, worker, members, pass }) => {
+module.exports = async ({ root, origin, db, ObjectId, A, B, tokenA, tokenB, job, act, actOk, turn, finish, ok, call, worker, members, pass }) => {
   const receipts = db.collection('receipts'), transactions = db.collection('transactions');
   const receiptIds = Array.from({ length: 4 }, () => new ObjectId());
   const now = new Date('2026-02-12T12:00:00Z');
@@ -35,6 +35,11 @@ module.exports = async ({ db, ObjectId, A, B, tokenA, tokenB, job, act, actOk, t
   const snapshot = async () => JSON.stringify(await Promise.all(['receipts', 'transactions', 'invoices', 'payments', 'budgets', 'recurringpayments', 'financecompanyknowledges'].map(n => db.collection(n).find().sort({ _id: 1 }).toArray())));
   const before = await snapshot();
   try {
+    const evidence = await worker('heartbeat');
+    assert.equal(evidence.status, 200);
+    const pageEvidence = await ok('/api/receipts/' + receiptIds[0] + '/evidence', tokenA);
+    assert.ok(pageEvidence?.receipt, 'receipt-navi:evidence-page-available');
+    assert.equal(pageEvidence.receipt.id, String(receiptIds[0]), 'receipt-navi:evidence-page');
     let r = await act(job, 'find_company_receipt_matches', { receiptId: String(receiptIds[0]) });
     assert.equal(r.status, 200, 'receipt-navi:available ' + r.raw.slice(0, 300));
     const result = r.data.result;
@@ -46,6 +51,12 @@ module.exports = async ({ db, ObjectId, A, B, tokenA, tokenB, job, act, actOk, t
     assert.deepEqual(new Set(result.matches.map(m => m.transaction.id)), new Set(candidates.map(t => String(t._id))), 'receipt-navi:company-and-native-filters');
     assert.deepEqual(result.matches.map(m => m.heuristicScore), native.matches.map(m => m.confidence), 'receipt-navi:score-parity');
     assert.deepEqual(result.matches.map(m => m.factors), native.matches.map(m => m.matchFactors));
+    assert.deepEqual(pageEvidence.matches, result.matches, 'receipt-navi:evidence-parity');
+    assert.ok(!JSON.stringify(pageEvidence).includes('PRIVATE_'), 'receipt-navi:evidence-private');
+    for (const id of [receiptIds[1], receiptIds[2], new ObjectId()]) assert.equal((await call('/api/receipts/' + id + '/evidence', tokenA)).status, 404, 'receipt-navi:evidence-company');
+    assert.equal((await call('/api/receipts/not-an-id/evidence', tokenA)).status, 400);
+    assert.equal((await call('/api/receipts/' + receiptIds[0] + '/evidence', null)).status, 401);
+    assert.equal((await call('/api/receipts/' + receiptIds[0] + '/evidence', tokenA)).headers.get('cache-control'), 'no-store');
     assert.equal(result.matches.length, 4, 'receipt-navi:ambiguity-preserved');
     const match = id => result.matches.find(m => m.transaction.id === String(id)).transaction;
     assert.equal(match(candidates[0]._id).currency, 'JPY', 'receipt-navi:card-currency');
@@ -67,6 +78,7 @@ module.exports = async ({ db, ObjectId, A, B, tokenA, tokenB, job, act, actOk, t
     assert.equal(stale.status, 409, 'receipt-navi:lease');
     await db.collection('organizations').updateOne({ _id: A }, { $set: { members: [] } });
     assert.equal((await act(job, 'find_company_receipt_matches', { receiptId: String(receiptIds[0]) })).status, 403, 'receipt-navi:revoked');
+    assert.equal((await call('/api/receipts/' + receiptIds[0] + '/evidence', tokenA)).status, 403, 'receipt-navi:evidence-revoked');
     await db.collection('organizations').updateOne({ _id: A }, { $set: { members } });
     const parallel = await Promise.all(Array.from({ length: 6 }, () => act(job, 'find_company_receipt_matches', { receiptId: String(receiptIds[0]) })));
     for (const response of parallel) {
@@ -87,6 +99,26 @@ module.exports = async ({ db, ObjectId, A, B, tokenA, tokenB, job, act, actOk, t
     await finish(otherJob);
     assert.equal(await snapshot(), before, 'receipt-navi:switch-no-writes');
     pass('separate company conversation sees only its own capped candidates after company switch');
+
+    const endpoint = '/api/finance-chat/company-workspace';
+    const selection = async context => {
+      const current = await ok(endpoint, tokenA);
+      return call(endpoint, tokenA, 'POST', { requestId: require('node:crypto').randomUUID(), chatRevision: current.conversation.revision, text: 'Inspect the selected receipt without any change', context });
+    };
+    for (const id of [receiptIds[1], receiptIds[2]]) assert.equal((await selection({ page: 'receipts', receiptId: String(id) })).status, 404, 'receipt-navi:selection-company');
+    assert.equal((await selection({ page: 'transactions', receiptId: String(receiptIds[0]) })).status, 400, 'receipt-navi:selection-page');
+    const selected = await turn(tokenA, 'Show this exact saved receipt', { page: 'receipts', receiptId: String(receiptIds[0]) });
+    assert.equal(selected.context.facts.selection.receiptId, String(receiptIds[0]), 'receipt-navi:selected-context');
+    const reply = navigation => worker('workspace/' + selected.id + '/result', { lease: selected.lease, proposal: { kind: 'unclear', summary: 'This saved receipt is available for inspection.', patch: {}, quotes: {}, navigation } });
+    assert.equal((await reply({ feature: 'receipts', receiptId: String(receiptIds[1]) })).status, 400, 'receipt-navi:navigation-company');
+    assert.equal((await reply({ feature: 'transactions', receiptId: String(receiptIds[0]) })).status, 400, 'receipt-navi:navigation-page');
+    assert.equal((await reply({ feature: 'receipts', receiptId: String(receiptIds[0]) })).status, 200, 'receipt-navi:navigation-admitted');
+    const saved = await ok(endpoint, tokenA);
+    assert.deepEqual(saved.conversation.turns.at(-1).proposal.navigation, { feature: 'receipts', receiptId: String(receiptIds[0]) });
+    assert.equal(await snapshot(), before, 'receipt-navi:navigation-no-writes');
+    pass('receipt evidence API and selected receipt/result pointer require current company; exact receipt navigation persisted without domain writes');
+    if (process.env.OMF_RECEIPT_NAV_BROWSER === '1') await require('./finance-navi-receipt-navigation-browser.cjs')({ root, origin, db, A, B, receiptIds, candidates, worker, tokenA, pause: ms => new Promise(r => setTimeout(r, ms)), pass });
+    assert.equal(await snapshot(), before, 'receipt-navi:browser-no-domain-writes');
   } finally {
     await db.collection('organizations').updateOne({ _id: A }, { $set: { members } });
     await receipts.deleteMany({ _id: { $in: receiptIds } });

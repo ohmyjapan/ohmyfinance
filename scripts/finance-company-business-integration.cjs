@@ -86,7 +86,7 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   await finish(job);
   pass('receipt list/detail: this company only, whitelisted extracted facts, links checked against this company, no paths/urls/raw OCR/addresses, no receipt write tools');
   job=await turn(tokenA,'Compare a receipt with its possible transactions',{page:'receipts'});
-  await require('./finance-navi-receipt-matches-integration.cjs')({db,ObjectId,A,B,tokenA,tokenB,job,act,actOk,turn,finish,ok,worker,members,pass});
+  await require('./finance-navi-receipt-matches-integration.cjs')({root,origin,db,ObjectId,A,B,tokenA,tokenB,job,act,actOk,turn,finish,ok,call,worker,members,pass});
 
   // ---- 4. Transaction create: marker in the original insert, idempotency, recovery, refusal, roles
   const refRow=await ok('/api/account-categories',tokenA,'POST',{name:'BUSINESS_CATEGORY',type:'expense',code:'BSN'}),ref=String(refRow._id||refRow.id);assert.ok(/^[a-f0-9]{24}$/.test(ref));
@@ -94,7 +94,9 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   job=await turn(tokenA,'Create this expense: pens 1,200 yen today.',{page:'transactions'});
   const createArgs={date:'2026-10-20',amount:1200,type:EXPENSE,status:'completed',productName:'NAVI_CREATED_TX',notes:'Created by explicit request',accountCategoryId:ref,items:[{productName:'pen',quantity:2,unitPrice:600,taxRate:10}],tags:['navi']};
   const parallel=await Promise.all([act(job,'create_company_transaction',createArgs),act(job,'create_company_transaction',createArgs)]);for(const x of parallel)assert.equal(x.status,200,'business:create '+x.raw.slice(0,400));
-  const created=parallel[0].data;assert.equal(created.receipt.state,'done');assert.equal(parallel[1].data.receipt.operationId,created.receipt.operationId,'business:create-idempotent');
+  // Either request may win the claim; its concurrent duplicate can truthfully return working. Require an actual completed
+  // response and the same operation in both replies, rather than assuming input position zero won the race.
+  const created=parallel.find(x=>x.data.receipt.state==='done')?.data;assert.ok(created,'business:create-completed');for(const x of parallel)assert.equal(x.data.receipt.operationId,created.receipt.operationId,'business:create-idempotent');
   const createdId=created.receipt.nativeResourceIds.transactionId;assert.equal(created.result.transaction.id,createdId);assert.equal(created.result.transaction.productName,'NAVI_CREATED_TX');
   assert.equal(await tx.countDocuments({productName:'NAVI_CREATED_TX'}),1,'business:create-idempotent');const createdDoc=await tx.findOne({_id:new ObjectId(createdId)});assert.equal(String(createdDoc.organizationId),String(A));assert.equal(createdDoc.naviOperation?.operationId,created.receipt.operationId,'business:create-marker');
   await db.command({profile:0});const ns=dbName+'.transactions',profiled=await db.collection('system.profile').find({ns}).toArray();

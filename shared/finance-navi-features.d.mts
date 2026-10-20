@@ -1,6 +1,6 @@
 export type NaviFeatureDisposition = 'navi_tool' | 'page_handoff' | 'unsupported';
 export interface NaviFeature { id: string; group: string; label: string; labelKo: string; route: string | null; disposition: NaviFeatureDisposition; reason: string; source: string; tools?: string[]; recordRoute?: string; recordSource?: string; sensitive?: boolean }
-export interface CompanyNavigation { feature: string; transactionId?: string }
+export interface CompanyNavigation { feature: string; transactionId?: string; receiptId?: string }
 export const naviFeatures: readonly NaviFeature[];
 export function naviFeature(id: any): NaviFeature | null;
 export function naviFeatureNavigable(feature: NaviFeature | null): boolean;

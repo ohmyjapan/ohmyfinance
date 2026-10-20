@@ -1,0 +1,15 @@
+# Receipt evidence and Navi navigation
+
+`/receipts/:id` is a real read-only detail page. The former receipt-list detail links pointed at a page that did not exist. The new page shows the saved receipt facts, extracted items, a checked existing transaction link and bounded native transaction suggestions. It uses existing OMF cards, borders and primary colors. Saved currency is formatted directly, including fractional currencies; an unknown currency is labeled, never changed by the UI language. Candidate scores are points rather than probabilities. There is no save/link/OCR operation on this page.
+
+The page reads `GET /api/receipts/:id/evidence`, which uses fresh selected-company membership and the same whitelisted composition as `find_company_receipt_matches`. Paths, URLs, raw OCR, raw metadata and contacts are not in its response. The existing raw receipt detail route is unchanged. The page clears evidence synchronously on actor/company/record changes and discards late responses; it reports a missing or inaccessible receipt without rendering the earlier company data.
+
+The floating panel adds `receiptId` from a real receipt detail path. `sendCompanyAssistant` validates that selected receipt in the token company before queueing. The frozen job carries its pointer in `facts.selection.receiptId`. Navi reads the selected record through her existing tools; the pointer alone does not establish its facts.
+
+Company replies may carry `{feature:'receipts',receiptId}`. The shared validator requires the correct feature, a single valid record key and a 24-hex id. Server result admission checks the receipt against the job's company, like existing transaction pointers. The catalogue maps the actual detail page, interpreter schema/prompt permit the pointer, and the existing dialogue button resolves it to a fixed local path. It opens on user click. Owner navigation remains page-only. Transaction links are unchanged.
+
+New guards: selected-receipt validation, receipt result-pointer admission, the native evidence endpoint's existing company boundary and the detail page's stale-response checks. These need scoped independent review before release; no membership or worker lease predicate is changed. No account, bank, collector, financial or teaching write is added.
+
+The native receipt fixture covers whitelisted evidence parity, private data exclusion, no-store, current-company/membership/record checks, selected-page context, result-pointer admission and unchanged financial snapshots. The browser leg uses installed Chrome on its own profile and synthetic data, sends a real company message, clicks the accepted record link and candidate link, checks mobile/desktop layout, errors and late cross-company responses. Worker replies in that fixture are simulated, not model-quality evidence.
+
+Separate existing limitation: `/receipts` still generates demonstration rows and hardcoded statistics. This increment adds an actual record view for saved receipts exposed by Navi; it does not make that legacy list a real saved-receipt browser. No claim that the overall receipt feature is complete.

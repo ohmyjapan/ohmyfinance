@@ -4,7 +4,7 @@ import { readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { naviFeatures, naviFeature, naviFeatureRoute, naviFeatureForPath, findNaviFeatures, validateCompanyAssistantReply } from '../shared/finance-navi-features.mjs';
+import { naviFeatures, naviFeature, naviFeatureRoute, naviFeatureForPath, findNaviFeatures, validateCompanyAssistantReply, validateOwnerNavigation } from '../shared/finance-navi-features.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 async function pageFiles(dir = path.join(root, 'pages')) { const out = []; for (const e of await readdir(dir, { withFileTypes: true })) { const f = path.join(dir, e.name); if (e.isDirectory()) out.push(...await pageFiles(f)); else if (e.name.endsWith('.vue')) out.push(path.relative(root, f).split(path.sep).join('/')); } return out; }
 
@@ -33,6 +33,9 @@ test('routes are fixed local pages that exist; record routes accept only a compa
  }
  const id = 'a'.repeat(24);
  assert.equal(naviFeatureRoute('transactions', id), '/transactions/' + id);
+ assert.equal(naviFeatureRoute('receipts', id), '/receipts/' + id);
+ assert.equal(naviFeatureForPath('/receipts/' + id).id, 'receipts');
+ assert.equal(naviFeatureForPath('/receipts/upload').id, 'receipt-upload');
  for (const bad of ['../admin', 'https://evil.example', 'a'.repeat(23), id + '?token=x', 5]) assert.equal(naviFeatureRoute('transactions', bad), null, 'navi-features:record-id ' + bad);
  assert.equal(naviFeatureRoute('invoices', id), null, 'navi-features:no-invented-record-page');
  for (const bad of ['https://evil.example', '/admin', 'javascript:alert(1)', 'authentication', 'organization-switch', undefined]) assert.equal(naviFeatureRoute(bad), null, 'navi-features:unknown ' + bad);
@@ -51,6 +54,10 @@ test('company replies carry at most one catalogue pointer and no field changes',
  assert.throws(() => validateCompanyAssistantReply({ ...reply, summary: 'x'.repeat(4001) }));
  assert.deepEqual(validateCompanyAssistantReply({ ...reply, navigation: { feature: 'budgets' } }).navigation, { feature: 'budgets' });
  assert.deepEqual(validateCompanyAssistantReply({ ...reply, navigation: { feature: 'transactions', transactionId: 'A'.repeat(24) } }).navigation, { feature: 'transactions', transactionId: 'a'.repeat(24) });
+ assert.deepEqual(validateCompanyAssistantReply({ ...reply, navigation: { feature: 'receipts', receiptId: 'A'.repeat(24) } }).navigation, { feature: 'receipts', receiptId: 'a'.repeat(24) });
+ assert.deepEqual(validateOwnerNavigation({feature:'receipts'}),{feature:'receipts'});
+ assert.throws(()=>validateOwnerNavigation({feature:'receipts',receiptId:'a'.repeat(24)}),'owner realm remains page-only');
+ for(const navigation of [{feature:'transactions',receiptId:'a'.repeat(24)},{feature:'receipts',transactionId:'a'.repeat(24)},{feature:'receipts',receiptId:'../x'},{feature:'receipts',receiptId:'a'.repeat(24),transactionId:'b'.repeat(24)}])assert.throws(()=>validateCompanyAssistantReply({...reply,navigation}),JSON.stringify(navigation));
  for (const navigation of [{ feature: 'https://evil.example' }, { feature: 'authentication' }, { feature: 'support-report' }, { feature: 'invoices', transactionId: 'a'.repeat(24) }, { feature: 'transactions', url: '/admin' }, { feature: 'transactions', transactionId: '../x' }, 'invoices', ['invoices']]) assert.throws(() => validateCompanyAssistantReply({ ...reply, navigation }), JSON.stringify(navigation));
  for (const bad of [{ ...reply, kind: 'proposal' }, { ...reply, patch: { notes: 'x' } }, { ...reply, quotes: { notes: 'x' } }, { ...reply, summary: ' ' }]) assert.throws(() => validateCompanyAssistantReply(bad));
  assert.equal(naviFeature('nope'), null);
