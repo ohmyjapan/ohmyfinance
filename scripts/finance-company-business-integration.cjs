@@ -87,6 +87,7 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   pass('receipt list/detail: this company only, whitelisted extracted facts, links checked against this company, no paths/urls/raw OCR/addresses, no receipt write tools');
   job=await turn(tokenA,'Compare a receipt with its possible transactions',{page:'receipts'});
   await require('./finance-navi-receipt-matches-integration.cjs')({root,origin,db,ObjectId,A,B,tokenA,tokenB,job,act,actOk,turn,finish,ok,call,worker,members,pass});
+  await require('./finance-receipt-library-integration.cjs')({root,origin,db,ObjectId,A,B,ownerToken,tokenA,tokenB,ok,call,members,pass});
 
   // ---- 4. Transaction create: marker in the original insert, idempotency, recovery, refusal, roles
   const refRow=await ok('/api/account-categories',tokenA,'POST',{name:'BUSINESS_CATEGORY',type:'expense',code:'BSN'}),ref=String(refRow._id||refRow.id);assert.ok(/^[a-f0-9]{24}$/.test(ref));
