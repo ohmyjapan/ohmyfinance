@@ -79,8 +79,11 @@ export async function importBankFile(ownerId:string,fileId:string,body:any){awai
  if(body?.templateName)await saveBankTemplate(ownerId,{name:body.templateName,headers:p.headers,mapping:p.mapping,amountSign:p.amountSign});
  return{...importView(p),imported:true,rows:(await BankRow.find({ownerId,bankAccountId:p.account._id,key:{$in:p.rows.map((r:any)=>r.key)}}).lean()).map(view)};
 }
-// The interpretation a capture is read with: ONLY the job's frozen snapshot, never the live template.
-const interpretationOf=(snapshot:any)=>({headers:Array.isArray(snapshot?.headers)?snapshot.headers.map(text):[],mapping:snapshot?.mapping||{},amountSign:(snapshot?.amountSign||'outflow-positive') as BankAmountSign,transactionIdConfirmed:snapshot?.transactionIdConfirmed===true,currency:text(snapshot?.currency)})
+// The interpretation a capture is read with: ONLY the job's frozen snapshot, never the live template. `unmapped` (plan
+// omf-paypay-four-accounts-20261021): the job froze no mapping at all (a template-free first capture).
+const interpretationOf=(snapshot:any)=>({headers:Array.isArray(snapshot?.headers)?snapshot.headers.map(text):[],mapping:snapshot?.mapping||{},amountSign:(snapshot?.amountSign||'outflow-positive') as BankAmountSign,transactionIdConfirmed:snapshot?.transactionIdConfirmed===true,currency:text(snapshot?.currency),unmapped:snapshot?.interpretation==='unmapped'})
+// The reason of a template-free first capture: retained as needs_review with no rows until the owner maps it in the importer.
+export const MAPPING_REQUIRED='mapping-required: 初回の取得のため列の割り当てがまだありません。「取込で割り当て」から列を割り当てて取り込んでください（取引はまだ取り込まれていません）'
 const safeName=(v:any)=>{const s=text(v);return s&&s.length<=200&&!/[\x00-\x1f\\/]/.test(s)?s:''}
 // The header row of a downloaded sheet must be the one the interpretation was recorded for: the first row (of the first 100)
 // equal to the snapshot headers after NFKC/trim, with nothing beyond them. A bank that renamed or reordered its export
@@ -92,6 +95,7 @@ async function planCapture(ownerId:string,doc:any,account:any,frozen:any,provena
  const bytes=await readFile(location(ownerId,doc.hash));if(digest(bytes)!==doc.hash)fail(500,'Original file integrity mismatch');
  const wb=readWorkbook(bytes),sheet=wb.SheetNames[0],offset=XLSX.utils.decode_range(wb.Sheets[sheet]['!ref']||'A1').s.r,rows=sheetRows(wb,sheet),headerRow=headerRowOf(rows,frozen.headers,offset);
  const hold=(reason:string,s:any={doc,sheet,headerRow,headers:[],data:[]},mapping:any=null)=>({...s,account,mapping,amountSign:frozen.amountSign,rows:[],existing:[],pairs:[],held:true,reason});
+ if(frozen.unmapped)return hold(MAPPING_REQUIRED);
  if(headerRow===null)return hold('見出し行が取得時の設定と一致しません。');
  const headers=rows[headerRow-offset-1],s={doc,sheet,headerRow,headers,data:rows.slice(headerRow-offset)};
  let mapping:any;try{mapping=mappingOf(frozen.mapping,headers)}catch(e:any){if(e?.statusCode)return hold('列の割り当てが取得時の設定と一致しません。',s);throw e}

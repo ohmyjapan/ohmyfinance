@@ -1,0 +1,241 @@
+// collector/test/paypay-guided-capture.test.mjs — the guided first capture of a PayPay銀行 標準ログイン account (plan
+// omf-paypay-four-accounts-20261021): observeFromPage with a page-less guided ui on a virtual clock and a fictional saved login
+// (the shape index.mjs bankLoginFor hands over), index.mjs bankLoginFor over an in-memory sealed-entry store for four separate
+// accounts, and runBankJob's hand-over. The saved login is opened at most once per job, journalled and marked pending before the one
+// possible submission, never inferred to have worked (plan P1): neither navigation nor any captured file — CSV-shaped or not — clears
+// the pending marker; the captured file is kept for native mapping, an adapter-observed refusal is marked 'refused', and only the owner's
+// explicit protected retry (index.mjs retryBankLogin, uncertain only) or a re-save lifts the block. The Chrome legs (real recorder, intercepted fake portal) run in
+// scripts/zoomer-fixtures/omf-paypay-four-accounts.mjs and scripts/finance-paypay-onboarding-integration.cjs. Fictional values only.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-paypay-guided-test-'));
+process.env.OMF_COLLECTOR_DIR = path.join(temp, 'collector-dir');
+const bank = await import('../bank.mjs');
+const paypay = await import('../banks/paypay.mjs');
+const rakuten = await import('../banks/rakuten.mjs');
+const index = await import('../index.mjs');
+const { aadOf } = await import('../vault.mjs');
+test.after(async () => { if (path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)) await rm(temp, { recursive: true, force: true }); });
+
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+const exists = p => access(p).then(() => true, () => false);
+const OWNER = 'd4d4d4d4d4d4d4d4d4d4d4d4', ORIGIN = 'https://omf.example';
+const ACCOUNTS = ['b1b1b1b1b1b1b1b1b1b1b1b1', 'b2b2b2b2b2b2b2b2b2b2b2b2', 'b3b3b3b3b3b3b3b3b3b3b3b3', 'b4b4b4b4b4b4b4b4b4b4b4b4'].map((id, i) => ({ _id: id, ownerId: OWNER, name: 'PayPay ' + (i + 1) }));
+const ACCOUNT = ACCOUNTS[0];
+const SECRET = Object.freeze({ branch: '012', account: '0012345', password: ' Fictional Pw/1 ' });
+const CSV = Buffer.from('日付,内容,出金金額,入金金額,残高\r\n2026/10/01,振込 カクウ,,50000,150000\r\n');
+const unmapped = (variant = 'standard', provider = 'paypay') => ({ templateId: null, templateRevision: 0, headers: [], mapping: {}, amountSign: 'outflow-positive', transactionIdConfirmed: false, parserVersion: 'bank-template-1', currency: 'JPY', provider, accountLabel: null, variant, coverage: null, interpretation: 'unmapped' });
+const jobOf = ({ kind = 'observe', variant = 'standard', provider = 'paypay' } = {}) => { const s = unmapped(variant, provider); return { jobId: randomUUID(), kind, snapshot: s, snapshotHash: sha256(JSON.stringify(s)), provider }; };
+const boundOf = (job, account = ACCOUNT) => ({ bankAccountId: account._id, ownerId: OWNER, origin: ORIGIN, jobId: job.jobId, snapshotHash: job.snapshotHash, provider: 'paypay' });
+
+// A page-less guided ui: the exact login form, its one submission, the person's export on their own time (the clock's polls).
+function guidedUi({ form = true, outcome = 'submitted', deliver = 'csv', host = 'login.paypay-bank.co.jp', at = 3, loginError = null } = {}) {
+  const clock = { t: 1_800_000_000_000 }, calls = { open: 0, show: 0, loginForm: 0, login: 0, secrets: [], atLogin: [] };
+  let handlers = {}, jobDir = null, polls = 0;
+  const emit = (event, value) => { for (const h of handlers[event] || []) h(value); };
+  const ui = {
+    calls, clock, now: () => clock.t,
+    async wait(ms) { clock.t += ms; if (++polls === at) await ui.deliver(); },
+    async open() { calls.open++; }, async state() { return { kind: 'unknown' }; }, async show() { calls.show++; },
+    async loginForm() { calls.loginForm++; return form ? { ok: true, document: 'doc-1' } : { ok: false, reason: 'form' }; },
+    async document() { return 'doc-1'; },
+    async login(secret, { signal } = {}) {
+      calls.login++; calls.secrets.push({ ...secret }); calls.atLogin.push({ journal: jobDir ? await exists(path.join(jobDir, 'login.json')) : null, pending: ui.pending?.() ?? null });
+      signal?.throwIfAborted(); if (loginError) throw loginError; return { outcome, document: 'doc-1' };
+    },
+    downloadSession(dir) { jobDir = dir; handlers = {}; return { on(event, handler) { (handlers[event] ||= []).push(handler); }, async close() { handlers = {}; } }; },
+    async deliver() {
+      if (!deliver) return;
+      const one = async (bytes, name) => { const guid = randomUUID(); await writeFile(path.join(jobDir, guid), bytes); emit('Browser.downloadWillBegin', { guid, url: 'https://' + host + '/wctx/download', suggestedFilename: name }); emit('Browser.downloadProgress', { guid, state: 'completed', totalBytes: bytes.length }); };
+      if (deliver === 'csv') await one(CSV, 'meisai.csv');
+      if (deliver === 'pdf') await one(Buffer.from('%PDF-1.7\n%fictional\n'), 'meisai.pdf');
+      if (deliver === 'two') { await one(CSV, 'a.csv'); await one(Buffer.from(CSV.toString() + 'x\r\n'), 'b.csv'); }
+    },
+    get jobDir() { return jobDir; }
+  };
+  return ui;
+}
+// A fictional saved login with the interface bank.mjs expects (state/open/rejected/accepted), counting every call.
+function savedLogin({ state = 'ready', openError = null, onOpen = null } = {}) {
+  const calls = { state: 0, open: 0, rejected: 0, accepted: 0, kinds: [] }; let current = state;
+  return { calls, async state() { calls.state++; return current; }, async open() { calls.open++; await onOpen?.(); if (openError) throw openError; return { ...SECRET }; }, async rejected(kind) { calls.rejected++; calls.kinds.push(kind ?? null); current = kind === 'refused' ? 'refused' : 'blocked'; }, async accepted() { calls.accepted++; current = 'ready'; }, get current() { return current; } };
+}
+const root = async () => { const dir = path.join(temp, randomUUID().slice(0, 8)); await mkdir(dir, { recursive: true }); return dir; };
+const statuses = () => { const list = []; const fn = async (state, text) => { list.push([state, text]); }; fn.list = list; return fn; };
+async function observe(ui, job, login, { adapter = paypay.standard, account = ACCOUNT, dir = null, signal = null, timeoutMs = 10000 } = {}) {
+  dir ||= await root(); const status = statuses(); if (login) ui.pending = () => login.current === 'blocked';
+  let result = null, error = null;
+  try { result = await bank.observeFromPage(null, null, adapter, boundOf(job, account), job, dir, status, { ui, login, now: ui.now, wait: ui.wait, pollMs: 1000, timeoutMs, signal }); } catch (e) { error = e; }
+  return { dir, status, result, error, jobDir: path.join(dir, 'outbox', 'bank', account._id, job.jobId + '-observe') };
+}
+const attention = r => r.status.list.filter(([s]) => s === 'verification_required').map(([, t]) => t);
+const noSecret = (label, ...values) => { const text = JSON.stringify(values); for (const v of [SECRET.account, SECRET.password, SECRET.password.trim()]) assert.ok(!text.includes(v), 'paypay-guided:no-secret ' + label); };
+
+test('guidedAdapterFor: only a job frozen for PayPay銀行 標準 resolves the guided adapter; every other observe keeps its provider adapter', () => {
+  assert.equal(bank.guidedAdapterFor(jobOf()), paypay.standard, 'paypay-guided:adapter-standard');
+  for (const [label, job] of [['baplus', jobOf({ variant: 'baplus' })], ['no variant', jobOf({ variant: null })], ['rakuten standard', jobOf({ provider: 'rakuten' })], ['no snapshot', { jobId: 'x', kind: 'observe', provider: 'paypay' }], ['claim provider only', { ...jobOf({ provider: 'resona', variant: 'standard' }), provider: 'paypay' }]])
+    assert.equal(bank.guidedAdapterFor(job), null, 'paypay-guided:no-guided-adapter ' + label);
+  assert.equal(rakuten.standard.guided, undefined, 'paypay-guided:rakuten-standard-not-guided');
+});
+
+test('a ready saved login on the exact form: one decryption, journal and uncertain marker before the one submission, the person exports; the kept CSV is NOT proof and the marker stays (plan P1)', async () => {
+  const ui = guidedUi(), login = savedLogin(), r = await observe(ui, jobOf(), login);
+  assert.equal(r.error, null, String(r.error?.stack || r.error));
+  assert.equal(login.calls.open, 1, 'paypay-guided:one-decryption'); assert.equal(ui.calls.login, 1, 'paypay-guided:one-submission');
+  assert.deepEqual(ui.calls.secrets, [SECRET], 'paypay-guided:own-secret-submitted');
+  assert.deepEqual(ui.calls.atLogin, [{ journal: true, pending: true }], 'paypay-guided:journal-and-pending-before-submit');
+  assert.equal(r.result.items.length, 1, 'paypay-guided:csv-retained'); const m = r.result.items[0].manifest;
+  assert.equal(m.channel, 'collector-observe'); assert.equal(m.sourceHost, 'login.paypay-bank.co.jp'); assert.equal(m.jobId, r.result.items[0].manifest.jobId); assert.equal(m.bankAccountId, ACCOUNT._id); assert.equal(m.sha256, sha256(CSV));
+  // Deliberate change (plan P1, parent counterexample): no captured file proves the automatic sign-in.
+  assert.equal(login.calls.accepted, 0, 'paypay-guided:file-not-proof'); assert.equal(login.current, 'blocked', 'paypay-guided:uncertain-kept'); assert.deepEqual(login.calls.kinds, ['uncertain'], 'paypay-guided:marked-uncertain');
+  assert.equal(r.result.failed ?? null, null, 'paypay-guided:complete'); assert.match(String(r.result.notice), /受け取った明細は保存/, 'paypay-guided:kept-notice');
+  const asked = attention(r); assert.equal(asked.length, 1, 'paypay-guided:one-attention'); assert.match(asked[0], /1回だけ送信/, 'paypay-guided:submitted-message'); assert.match(asked[0], /CSV/);
+  assert.ok(ui.calls.show >= 1, 'paypay-guided:window-shown');
+  noSecret('status/result', r.status.list, r.result);
+  for (const name of await readdir(r.jobDir)) if (!/^[a-f\d-]{36}$/.test(name)) noSecret('file ' + name, await readFile(path.join(r.jobDir, name), 'utf8'));
+});
+
+test('submitted but no CSV, a PDF, two downloads or a download from another host: nothing proves the sign-in; the marker stays, the job explains it and the next job submits nothing until the owner re-saves', async () => {
+  for (const [label, options] of [['no csv', { deliver: null }], ['pdf', { deliver: 'pdf' }], ['two downloads', { deliver: 'two' }], ['foreign host', { host: 'cdn.paypay-bank.example' }]]) {
+    const ui = guidedUi(options), login = savedLogin(), r = await observe(ui, jobOf(), login);
+    assert.equal(r.error, null, label + ' ' + String(r.error)); assert.equal(ui.calls.login, 1);
+    assert.equal(login.calls.accepted, 0, 'paypay-guided:not-proof ' + label); assert.equal(login.current, 'blocked', 'paypay-guided:pending-kept ' + label);
+    if (label !== 'pdf') { assert.match(String(r.result.failed), /確認できません/, 'paypay-guided:unconfirmed-explained ' + label); assert.match(String(r.result.failed), /保存し直/, 'paypay-guided:unconfirmed-actionable ' + label); }
+    const next = guidedUi(), r2 = await observe(next, jobOf(), login);
+    assert.equal(next.calls.login, 0, 'paypay-guided:blocked-no-submit ' + label); assert.equal(login.calls.open, 1, 'paypay-guided:blocked-no-decryption ' + label);
+    assert.match(attention(r2)[0] || '', /前回の自動サインインが確認できていない/, 'paypay-guided:blocked-message ' + label);
+  }
+});
+
+test('the bank refuses the saved login: one submission, remembered, a clear failure; a CSV the person then exports is kept but is not proof for the saved login', async () => {
+  const ui = guidedUi({ outcome: 'rejected', deliver: null }), login = savedLogin(), r = await observe(ui, jobOf(), login);
+  assert.equal(r.error, null); assert.equal(ui.calls.login, 1, 'paypay-guided:refusal-one-submit'); assert.equal(login.current, 'refused', 'paypay-guided:refusal-distinguished'); assert.deepEqual(login.calls.kinds, ['uncertain', 'refused'], 'paypay-guided:refusal-marked');
+  assert.match(String(r.result.failed), /受け付けませんでした/, 'paypay-guided:refused-message');
+  const after = guidedUi(), r1 = await observe(after, jobOf(), login);
+  assert.equal(after.calls.login, 0, 'paypay-guided:refused-no-submit'); assert.match(attention(r1)[0] || '', /受け付けませんでした/, 'paypay-guided:refused-next-message');
+  const manual = guidedUi({ outcome: 'rejected' }), l2 = savedLogin(), r2 = await observe(manual, jobOf(), l2);
+  assert.equal(r2.result.items.length, 1, 'paypay-guided:manual-csv-kept'); assert.equal(l2.calls.accepted, 0, 'paypay-guided:refused-not-cleared'); assert.equal(r2.result.failed ?? null, null);
+  assert.match(String(r2.result.notice), /保存し直/, 'paypay-guided:refused-notice');
+});
+
+test('a reclaimed job whose earlier attempt may have submitted never submits again; blocked, unbound, unopenable, absent or non-exact: nothing typed, the person is asked', async () => {
+  const job = jobOf(), dir = await root(), jobDir = path.join(dir, 'outbox', 'bank', ACCOUNT._id, job.jobId + '-observe');
+  await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ jobId: job.jobId }));
+  const ui = guidedUi(), login = savedLogin(), r = await observe(ui, job, login, { dir });
+  assert.equal(ui.calls.login, 0, 'paypay-guided:reclaim-no-resubmit'); assert.equal(login.calls.open, 0); assert.match(attention(r)[0] || '', /もう一度は送信しません/);
+  for (const [label, l, form, pattern, opens] of [
+    ['blocked', savedLogin({ state: 'blocked' }), true, /前回の自動サインインが確認できていない/, 0],
+    ['unbound', savedLogin({ state: 'unbound' }), true, /開けませんでした/, 0],
+    ['none', savedLogin({ state: 'none' }), true, /サインイン/, 0],
+    ['unopenable', savedLogin({ openError: Object.assign(new Error('x'), { code: 'bank-login-unavailable' }) }), true, /開けませんでした/, 1],
+    ['changed form', savedLogin(), false, /確認済みの形と異なる/, 0]
+  ]) {
+    const u = guidedUi({ form }), x = await observe(u, jobOf(), l);
+    assert.equal(u.calls.login, 0, 'paypay-guided:no-submit ' + label); assert.equal(l.calls.open, opens, 'paypay-guided:decryption ' + label);
+    assert.match(attention(x)[0] || '', pattern, 'paypay-guided:attention ' + label); assert.equal(x.result.items.length, 1, 'paypay-guided:manual-capture-still-kept ' + label);
+    assert.equal(l.calls.accepted, 0, 'paypay-guided:manual-not-proof ' + label);
+  }
+});
+
+test('abort and revocation: before the decryption, during it, after the submission; a 401 or an ended session propagates before anything is typed', async () => {
+  const aborted = new AbortController(); aborted.abort();
+  const u1 = guidedUi(), l1 = savedLogin(), r1 = await observe(u1, jobOf(), l1, { signal: aborted.signal });
+  assert.ok(r1.error && (r1.error.name === 'AbortError' || /abort/i.test(r1.error.message)), 'paypay-guided:abort-before'); assert.equal(l1.calls.open, 0, 'paypay-guided:abort-no-decryption'); assert.equal(u1.calls.login, 0);
+  const during = new AbortController(), u2 = guidedUi(), l2 = savedLogin({ onOpen: () => during.abort() }), r2 = await observe(u2, jobOf(), l2, { signal: during.signal });
+  assert.ok(r2.error, 'paypay-guided:abort-during-open'); assert.equal(u2.calls.login, 0, 'paypay-guided:abort-during-open-no-submit');
+  for (const [label, error, check] of [['401', Object.assign(new Error('Collector access expired'), { status: 401 }), e => e?.status === 401], ['session end', Object.assign(new Error('The connection has ended. Reconnect this PC.'), { code: 'forbidden' }), e => e?.code === 'forbidden']]) {
+    const u = guidedUi(), l = savedLogin({ openError: error }), r = await observe(u, jobOf(), l);
+    assert.ok(check(r.error), 'paypay-guided:propagates ' + label + ' ' + r.error); assert.equal(u.calls.login, 0);
+  }
+  const after = new AbortController(), u3 = guidedUi({ deliver: null }), l3 = savedLogin(); u3.wait = async ms => { u3.clock.t += ms; after.abort(); };
+  const r3 = await observe(u3, jobOf(), l3, { signal: after.signal });
+  assert.ok(r3.error, 'paypay-guided:abort-after-submit'); assert.equal(u3.calls.login, 1); assert.equal(l3.current, 'blocked', 'paypay-guided:abort-after-submit-pending-kept');
+});
+
+test('the saved login is never used by a non-guided observe: another provider adapter, a mismatched variant or no login keeps today\'s observe exactly', async () => {
+  for (const [label, adapter, job] of [['rakuten default', rakuten.default, jobOf({ provider: 'rakuten', variant: null })], ['paypay default', paypay.default, jobOf({ variant: null })], ['baplus job', paypay.standard, jobOf({ variant: 'baplus' })]]) {
+    const ui = guidedUi(), login = savedLogin(), r = await observe(ui, job, login, { adapter });
+    assert.equal(r.error, null, label + ' ' + r.error); assert.deepEqual([login.calls.state, login.calls.open, ui.calls.login], [0, 0, 0], 'paypay-guided:not-used ' + label);
+    assert.deepEqual(attention(r), [`${adapter.label}のページをChromeで操作してください（観察取得・準備）。入出金明細のCSVを出力できる場合は出力し、終わったらタブを閉じてください`], 'paypay-guided:observe-message-unchanged ' + label);
+    assert.equal(r.result.failed, undefined, 'paypay-guided:observe-result-unchanged ' + label);
+  }
+});
+
+// ── index.mjs bankLoginFor over an in-memory sealed-entry store, four accounts ──
+function memoryStore() {
+  const entries = new Map(), calls = { has: 0, read: 0, open: [] };
+  const save = (id, aad, value) => { const keyId = randomBytes(32).toString('hex'); entries.set(id, { envelope: { v: 3, keyId, aad: { ...aad, v: 3, generation: 'g'.repeat(64), keyId }, iv: 'i', tag: 't', data: 'd' }, value }); return keyId; };
+  return { entries, calls, save,
+    async has(id) { calls.has++; return entries.has(id); }, async read(id) { calls.read++; const e = entries.get(id); if (!e) throw Object.assign(new Error('missing'), { code: 'ENOENT' }); return e.envelope; },
+    async open(id, aad, broker) { calls.open.push({ id, aad, broker }); const e = entries.get(id); if (!e || JSON.stringify(aadOf(e.envelope.aad)) !== JSON.stringify(aad)) throw Object.assign(new Error('aad'), { code: 'aad' }); return { ...e.value }; },
+    async withLock(fn) { calls.locks = (calls.locks || 0) + 1; return fn(); } };
+}
+const LIVE = { mode: 'protected', installationId: 'f'.repeat(32), broker: { id: 'broker' }, abort: new AbortController() };
+const CONFIG = { baseUrl: ORIGIN, token: 'omfc_' + 'b'.repeat(64), accountInfo: [{ _id: 'a1a1a1a1a1a1a1a1a1a1a1a1', ownerId: OWNER, provider: 'amex' }] };
+const aadFor = account => aadOf({ installationId: LIVE.installationId, origin: ORIGIN, ownerId: OWNER, provider: 'paypay', accountId: account._id });
+
+test('bankLoginFor: a handle only for a protected session\'s claimed PayPay標準 guided observe job of a valid account; never for BA-PLUS, another variant, a retrieve kind, a rakuten snapshot, manual mode or no session', async () => {
+  const store = memoryStore(), dir = await root(), make = (bankJob, live = LIVE) => index.bankLoginFor(bankJob, CONFIG, live, { store, root: dir, assert: () => {} });
+  const h = make({ job: jobOf(), account: ACCOUNT }); assert.ok(h, 'paypay-guided:handle-for-guided-observe'); assert.equal(h.entry, 'paypay-' + ACCOUNT._id, 'paypay-guided:own-entry');
+  for (const [label, bankJob, live] of [['baplus', { job: jobOf({ variant: 'baplus' }), account: ACCOUNT }], ['no variant', { job: jobOf({ variant: null }), account: ACCOUNT }], ['retrieve kind', { job: jobOf({ kind: 'retrieve' }), account: ACCOUNT }], ['rakuten snapshot', { job: { ...jobOf({ provider: 'rakuten', kind: 'observe' }), provider: 'paypay' }, account: ACCOUNT }], ['bad id', { job: jobOf(), account: { ...ACCOUNT, _id: 'x' } }], ['manual mode', { job: jobOf(), account: ACCOUNT }, { ...LIVE, mode: 'manual' }], ['no session', { job: jobOf(), account: ACCOUNT }, null]])
+    assert.equal(make(bankJob, live === undefined ? LIVE : live), null, 'paypay-guided:no-handle ' + label);
+  assert.equal(store.calls.has + store.calls.read + store.calls.open.length, 0, 'paypay-guided:construction-reads-nothing');
+  assert.ok(make({ job: jobOf({ provider: 'rakuten', kind: 'retrieve' }), account: ACCOUNT }), 'paypay-guided:rakuten-retrieve-handle-unchanged');
+});
+
+test('four accounts: each handle opens only its own entry and AAD once; a refusal of account 2 blocks account 2 only; its re-save unblocks it', async () => {
+  const store = memoryStore(), dir = await root();
+  for (const [i, a] of ACCOUNTS.entries()) store.save('paypay-' + a._id, aadFor(a), { ...SECRET, account: '00' + (12345 + i) });
+  const handle = a => index.bankLoginFor({ job: jobOf(), account: a }, CONFIG, LIVE, { store, root: dir, assert: () => {} });
+  for (const [i, a] of ACCOUNTS.entries()) { const h = handle(a); assert.equal(await h.state(), 'ready'); assert.deepEqual(await h.open(), { ...SECRET, account: '00' + (12345 + i) }, 'paypay-guided:own-values ' + i); await assert.rejects(h.open(), 'paypay-guided:open-once ' + i); }
+  assert.deepEqual(store.calls.open.map(c => [c.id, c.aad.accountId, c.aad.provider]), ACCOUNTS.map(a => ['paypay-' + a._id, a._id, 'paypay']), 'paypay-guided:own-entry-own-aad');
+  await handle(ACCOUNTS[1]).rejected();
+  assert.deepEqual(await Promise.all(ACCOUNTS.map(a => handle(a).state())), ['ready', 'blocked', 'ready', 'ready'], 'paypay-guided:refusal-isolated');
+  const marker = path.join(dir, 'bank-login', 'paypay-' + ACCOUNTS[1]._id + '.json'); assert.ok(await exists(marker), 'paypay-guided:own-marker');
+  assert.ok(!(await readFile(marker, 'utf8')).includes(SECRET.password.trim()), 'paypay-guided:marker-no-secret');
+  store.save('paypay-' + ACCOUNTS[1]._id, aadFor(ACCOUNTS[1]), SECRET); assert.equal(await handle(ACCOUNTS[1]).state(), 'ready', 'paypay-guided:resave-unblocks');
+  // a rakuten entry under the same account id is not the PayPay entry, and the PayPay AAD is not the rakuten AAD
+  store.entries.delete('paypay-' + ACCOUNTS[3]._id); store.save('rakuten-' + ACCOUNTS[3]._id, aadOf({ installationId: LIVE.installationId, origin: ORIGIN, ownerId: OWNER, provider: 'rakuten', accountId: ACCOUNTS[3]._id }), { username: 'u', password: 'p' });
+  assert.equal(await handle(ACCOUNTS[3]).state(), 'none', 'paypay-guided:provider-entry-separate');
+  store.save('paypay-' + ACCOUNTS[3]._id, aadOf({ installationId: LIVE.installationId, origin: ORIGIN, ownerId: OWNER, provider: 'rakuten', accountId: ACCOUNTS[3]._id }), SECRET);
+  assert.equal(await handle(ACCOUNTS[3]).state(), 'unbound', 'paypay-guided:provider-aad-separate');
+});
+
+test('end to end through the real handle: an uncertain attempt stays blocked across jobs even with a kept CSV; the owner\'s protected retry (no decryption) allows exactly one new submission; the old journalled job never resubmits', async () => {
+  const store = memoryStore(), dir = await root(); store.save('paypay-' + ACCOUNT._id, aadFor(ACCOUNT), SECRET);
+  const handle = () => index.bankLoginFor({ job: jobOf(), account: ACCOUNT }, CONFIG, LIVE, { store, root: dir, assert: () => {} });
+  const first = guidedUi({ deliver: null }), r1 = await observe(first, jobOf(), handle(), { dir });
+  assert.equal(first.calls.login, 1); assert.equal(await handle().state(), 'blocked', 'paypay-guided:real-marker-pending');
+  const second = guidedUi(), r2 = await observe(second, jobOf(), handle(), { dir });
+  assert.equal(second.calls.login, 0, 'paypay-guided:real-blocked'); void r1; void r2;
+  const kept = guidedUi(), rk = await observe(kept, jobOf(), handle(), { dir });
+  assert.equal(kept.calls.login, 0, 'paypay-guided:real-blocked-with-csv'); assert.equal(rk.result.items.length, 1, 'paypay-guided:manual-csv-kept'); assert.equal(await handle().state(), 'blocked', 'paypay-guided:real-file-not-proof');
+  // the owner allows one more attempt with the SAME saved login: the marker of the current key is removed, nothing is decrypted
+  const opens = store.calls.open.length, banks = async () => [{ _id: ACCOUNT._id, name: 'PayPay 1', ownerId: OWNER, provider: 'paypay', variant: 'standard' }];
+  assert.deepEqual(await index.retryBankLogin({ bankAccountId: ACCOUNT._id }, { live: LIVE, config: CONFIG, banks, store, root: dir, assert: () => {} }), { retry: true }, 'paypay-guided:protected-retry');
+  assert.equal(store.calls.open.length, opens, 'paypay-guided:retry-no-decryption'); assert.equal(await handle().state(), 'ready', 'paypay-guided:retry-rearms');
+  const thirdJob = jobOf(), third = guidedUi({ deliver: null }), r3 = await observe(third, thirdJob, handle(), { dir });
+  assert.equal(third.calls.login, 1, 'paypay-guided:retry-one-new-submission'); assert.equal(await handle().state(), 'blocked', 'paypay-guided:retry-uncertain-again'); void r3;
+  // the same (reclaimed) job after another retry: its journal still forbids a second submission
+  await index.retryBankLogin({ bankAccountId: ACCOUNT._id }, { live: LIVE, config: CONFIG, banks, store, root: dir, assert: () => {} });
+  const reclaimed = guidedUi(), rr = await observe(reclaimed, thirdJob, handle(), { dir });
+  assert.equal(reclaimed.calls.login, 0, 'paypay-guided:old-journal-holds'); assert.match(attention(rr)[0] || '', /もう一度は送信しません/, 'paypay-guided:old-journal-message');
+});
+
+test('runBankJob hands the saved login to a guided PayPay標準 observe job only; another observe, the drain and the uploads never receive it', async () => {
+  const login = savedLogin(), seen = [];
+  const config = { baseUrl: ORIGIN, token: 'omfc_' + 'a'.repeat(64) }, send = async () => ({ id: 'f'.repeat(24) }), pending = async () => [];
+  const run = job => index.runBankJob({ job, account: ACCOUNT }, config, null, { status: async () => {}, pending, upload: send, directory: temp, login, collect: async () => { seen.push(['collect']); return { items: [], failed: null }; }, observe: async (b, j, r, s, options) => { seen.push(['observe', j.snapshot.variant, options.login ?? null]); return { items: [], failed: null, observation: [] }; } });
+  await run(jobOf()); await run(jobOf({ variant: 'baplus' })); await run(jobOf({ variant: null })); await run(jobOf({ provider: 'rakuten', variant: 'standard' }));
+  assert.deepEqual(seen, [['observe', 'standard', login], ['observe', 'baplus', null], ['observe', null, null], ['observe', 'standard', null]], 'paypay-guided:guided-only');
+  assert.equal(login.calls.open + login.calls.state, 0, 'paypay-guided:handover-not-decryption');
+  // a guided observe that could not confirm the sign-in ends failed with its explanation after its artifacts were sent
+  const sent = [], statuses2 = [];
+  const outcome = await index.runBankJob({ job: jobOf(), account: ACCOUNT }, config, null, { status: async (s, t) => { statuses2.push([s, t]); }, pending, upload: async (c, a, item) => { sent.push(item.manifest.kind); return { id: 'f'.repeat(24) }; }, directory: await root(), login, observe: async () => ({ items: [], failed: 'PayPay銀行への自動サインインの完了を確認できませんでした', observation: [{ at: 'x', pathname: '/', title: 't', visibleControls: [], inputs: [], selects: [], downloadEvents: [], clicks: [], typedInto: [], eventsDropped: 0, eventChannel: true }] }) });
+  assert.deepEqual(sent, ['observation'], 'paypay-guided:observation-sent-before-failure'); assert.equal(statuses2.at(-1)[0], 'failed'); assert.match(outcome.failed, /確認できませんでした/);
+});

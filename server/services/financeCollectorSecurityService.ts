@@ -187,7 +187,7 @@ async function activeGrant(token:string,grantToken:string){
 async function binding(context:any,record:any){
   const {grant,device}=context, a=record?.aad
   if(!a||a.v!==3||!hex.test(record.keyId)||a.keyId!==record.keyId||a.generation!==grant.generation||a.installationId!==grant.installationId||a.origin!==grant.origin||a.ownerId!==String(grant.ownerId)||JSON.stringify(Object.keys(a).sort())!==JSON.stringify(['v','installationId','origin','ownerId','provider','accountId','generation','keyId'].sort()))deny('Key binding mismatch.',400)
-  if(a.provider==='rakuten')return bankBinding(context,record)
+  if(BANK_KEY_VARIANTS.has(a.provider))return bankBinding(context,record)
   // Per-account card entries (amex-<id>, aplus-<id>) bind to the grant, the device and the live account; service entries
   // (gmail, the single legacy aplus login, yayoi, check) and archived legacy entries bind by name. Each `// binding:<name>`
   // line is one guard; scripts/collector-security-integration.ts removes each in turn to prove it is load-bearing.
@@ -199,17 +199,20 @@ async function binding(context:any,record:any){
   if(!perAccount&&a.provider==='legacy'&&(!/^legacy-\d+$/.test(record.entryId)||a.accountId!==record.entryId))deny('Invalid archived key entry.',400)
   if(!perAccount&&a.provider!=='legacy'&&(!['gmail','aplus','yayoi','check'].includes(a.provider)||record.entryId!==a.provider||a.accountId!==a.provider))deny('Invalid key entry.',400) // binding:service
 }
-// Bank entries (plan omf-rakuten-auto-login-20261021 §4): rakuten-<bankAccountId>, the saved 楽天銀行 standard login of an owned
-// BankAccount the owner granted to THIS device (FinanceCollector.bankAccountIds, read live with the device by activeGrant). A bank
-// id is never a card id and the grant's card accountIds are not consulted (bank scope is added to an already-paired PC); owner,
-// origin, installation, generation and key id are the common checks above. The account must belong to the grant's owner with a
-// live rakuten/standard connection. putKey/getKey repeat this after their key I/O, so a scope or connection change in between
-// never returns usable material. Each `// binding:<name>` line is one guard the integration removes in turn.
+// Bank entries (plans omf-rakuten-auto-login-20261021 §4, omf-paypay-four-accounts-20261021): <provider>-<bankAccountId>, the saved
+// standard login of an owned BankAccount the owner granted to THIS device (FinanceCollector.bankAccountIds, read live with the device
+// by activeGrant) — exactly the providers and login variant listed here: 楽天銀行 standard (rakuten-) and PayPay銀行 standard (paypay-).
+// A bank id is never a card id and the grant's card accountIds are not consulted (bank scope is added to an already-paired PC); owner,
+// origin, installation, generation and key id are the common checks above. The account must belong to the grant's owner with a live
+// connection of exactly the entry's provider and that standard variant (a PayPay key never opens for a 楽天銀行 account, BA-PLUS or a
+// connection without a login type, and vice versa). putKey/getKey repeat this after their key I/O, so a scope or connection change in
+// between never returns usable material. Each `// binding:<name>` line is one guard the integration removes in turn.
+const BANK_KEY_VARIANTS=new Map<string,string>([['rakuten','standard'],['paypay','standard']])
 async function bankBinding(context:any,record:any){
-  const {grant,device}=context,a=record.aad
-  if(!/^[a-f0-9]{24}$/.test(String(a.accountId))||record.entryId!=='rakuten-'+a.accountId)deny('Bank account is unavailable for this batch.') // binding:bank-entry
+  const {grant,device}=context,a=record.aad,variant=BANK_KEY_VARIANTS.get(String(a.provider))
+  if(!variant||!/^[a-f0-9]{24}$/.test(String(a.accountId))||record.entryId!==a.provider+'-'+a.accountId)deny('Bank account is unavailable for this batch.') // binding:bank-entry
   if(!(device.bankAccountIds||[]).some((v:any)=>String(v)===a.accountId))deny('Bank account is unavailable for this batch.') // binding:bank-scope
-  if(!await BankAccount.exists({_id:a.accountId,ownerId:grant.ownerId,'connection.provider':'rakuten','connection.variant':'standard'}))deny('Bank account is unavailable for this batch.') // binding:bank-live
+  if(!await BankAccount.exists({_id:a.accountId,ownerId:grant.ownerId,'connection.provider':a.provider,'connection.variant':variant}))deny('Bank account is unavailable for this batch.') // binding:bank-live
 }
 export async function putKey(token:string,grantToken:string,body:any){
   const context=await activeGrant(token,grantToken);await binding(context,body)
@@ -223,7 +226,7 @@ export async function putKey(token:string,grantToken:string,body:any){
   }
   // Recheck after I/O; stale writes never confer key-read authority.
   const after=await activeGrant(token,grantToken)
-  if(body.aad.provider==='rakuten')await bankBinding(after,body) // binding:bank-recheck-put
+  if(BANK_KEY_VARIANTS.has(body.aad.provider))await bankBinding(after,body) // binding:bank-recheck-put
   return {keyId:body.keyId,generation:context.grant.generation}
 }
 export async function getKey(token:string,grantToken:string,keyId:string){
@@ -233,7 +236,7 @@ export async function getKey(token:string,grantToken:string,keyId:string){
   if(!record)deny('Saved key is unavailable. Reconnect this bank login.',404)
   await binding(context,record)
   const after=await activeGrant(token,grantToken)
-  if(record.aad?.provider==='rakuten')await bankBinding(after,record) // binding:bank-recheck-get
+  if(BANK_KEY_VARIANTS.has(record.aad?.provider))await bankBinding(after,record) // binding:bank-recheck-get
   return {keyId:record.keyId,generation:record.generation,wrapped:record.wrapped,aad:record.aad}
 }
 export async function endGrant(token:string,grantToken:string){

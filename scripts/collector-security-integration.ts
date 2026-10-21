@@ -373,6 +373,95 @@ async function bankBindingLegs({pass,digest,origin,user,other,service,models}:{p
   pass('each of the '+BANK_BINDINGS.length+' bank binding mutants ('+BANK_BINDINGS.join(', ')+') accepts exactly its own attack (bank-live also the foreign-owner account it checks; bank-recheck-get/-put the races of their own key operation; bank-scope/bank-live also the races their repeated predicate catches) and still refuses every other attack')
 }
 
+// PayPay銀行 標準 entries (plan omf-paypay-four-accounts-20261021): paypay-<bankAccountId> of an owned BankAccount whose live connection
+// is paypay/standard, granted to THIS device after the card-only pairing — four separate accounts on one PC. The same five bank
+// binding lines guard them; this leg proves the positive four-account flow, provider/variant/entry/scope/owner confusion between
+// PayPay and 楽天銀行 entries, after-save changes and post-I/O races per account, and each binding line removed in turn.
+async function paypayBindingLegs({pass,digest,origin,user,other,service,models}:{pass:(name:string)=>void,digest:(v:string)=>string,origin:string,user:any,other:any,service:any,models:any}){
+  const {sealEnvelope}=await import('../collector/vault.mjs')
+  const {BankAccount}=await import('../server/models/FinancePaymentMatch')
+  const fresh:any=await User.findById(user._id).select('+password +twoFactorSecret +twoFactorBackupCodes')
+  const authStamp=service.stamp(fresh),trustToken=randomBytes(32).toString('hex')
+  const pair=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
+  const card:any=await FinancialAccount.create({ownerId:user._id,provider:'amex',name:'PayPay-leg Amex',cardIdentifiers:['67890'],primaryCard:'67890',otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'})
+  const connection=(provider:string,variant:string|null)=>({provider,templateId:null,transactionIdConfirmed:false,accountLabel:null,variant,coverage:null,connectedAt:new Date()})
+  const P:any[]=[];for(let i=1;i<=4;i++)P.push(await BankAccount.create({ownerId:user._id,name:'Fictional PayPay '+i,currency:'JPY',revision:1,connection:connection('paypay','standard')}))
+  const outside:any=await BankAccount.create({ownerId:user._id,name:'Fictional PayPay 5 (not granted)',currency:'JPY',revision:1,connection:connection('paypay','standard')})
+  const baplus:any=await BankAccount.create({ownerId:user._id,name:'Fictional PayPay BA-PLUS',currency:'JPY',revision:1,connection:connection('paypay','baplus')})
+  const plain:any=await BankAccount.create({ownerId:user._id,name:'Fictional PayPay (no login type)',currency:'JPY',revision:1,connection:connection('paypay',null)})
+  const rakuten:any=await BankAccount.create({ownerId:user._id,name:'Fictional Rakuten (PayPay leg)',currency:'JPY',revision:1,connection:connection('rakuten','standard')})
+  const foreign:any=await BankAccount.create({ownerId:other._id,name:'Foreign PayPay',currency:'JPY',revision:1,connection:connection('paypay','standard')})
+  const token='omfc_'+randomBytes(32).toString('hex')
+  const device:any=await FinanceCollector.create({ownerId:user._id,name:'PayPay-leg PC',tokenHash:digest(token),accountIds:[card._id]})
+  const inst={id:randomBytes(16).toString('hex'),generation:randomBytes(32).toString('hex')}
+  await models.CollectorInstallation.create({_id:inst.id,ownerId:user._id,collectorId:device._id,generation:inst.generation,publicKey:pair.publicKey,fingerprint:digest(pair.publicKey),origin,trustHash:digest(trustToken),authStamp,accountIds:[card._id],trustedAt:new Date()})
+  const grantFor=async()=>{const g=randomBytes(32).toString('hex');await models.CollectorGrant.create({_id:digest(g),ownerId:user._id,collectorId:device._id,installationId:inst.id,generation:inst.generation,origin,accountIds:[card._id],authStamp,trustHash:digest(trustToken),expiresAt:new Date(Date.now()+20*60000)});return g}
+  const grant=await grantFor()
+  const SCOPE=[...P.map(a=>a._id),baplus._id,plain._id,rakuten._id,foreign._id]
+  const scope=(ids:any[])=>FinanceCollector.updateOne({_id:device._id},{$set:{bankAccountIds:ids}})
+  await scope(SCOPE)
+  const record=(provider:string,accountId:string,entryId:string,{ownerId=String(user._id)}:{ownerId?:string}={})=>{const keyId=randomBytes(32).toString('hex');const aad={v:3,installationId:inst.id,origin,ownerId,provider,accountId,generation:inst.generation,keyId};return {keyId,entryId,aad,wrapped:sealEnvelope(pair.publicKey,aad,{branch:'001',account:'0000001',password:randomBytes(8).toString('hex')}).wrapped}}
+  const pp=(account:any,entry='paypay-'+String(account._id),extra={})=>record('paypay',String(account._id),entry,extra)
+  const refused=async(attempt:Promise<any>)=>{try{await attempt;return false}catch(error:any){if([400,401,403,404].includes(error?.statusCode))return true;throw error}}
+  // 1. Positive: four separate PayPay keys on one card-only grant, idempotent, read back, distinct key ids; the rakuten key next to them.
+  const keys=P.map(a=>pp(a))
+  for(const k of keys){await service.putKey(token,grant,k);await service.putKey(token,grant,k)}
+  for(const k of keys)assert.equal((await service.getKey(token,grant,k.keyId)).wrapped,k.wrapped,'paypay:read-after-write')
+  const renewed=await grantFor();for(const k of keys)assert.equal((await service.getKey(token,renewed,k.keyId)).aad.accountId,k.aad.accountId,'paypay:renewed-grant-read')
+  assert.equal(new Set(keys.map(k=>k.keyId)).size,4);assert.deepEqual(keys.map(k=>k.entryId),P.map(a=>'paypay-'+String(a._id)))
+  const rk=record('rakuten',String(rakuten._id),'rakuten-'+String(rakuten._id));await service.putKey(token,grant,rk);assert.equal((await service.getKey(token,grant,rk.keyId)).wrapped,rk.wrapped,'paypay:rakuten-key-next-to-paypay')
+  const cardKey=record('amex',String(card._id),'amex-'+String(card._id));await service.putKey(token,grant,cardKey);assert.equal((await service.getKey(token,grant,cardKey.keyId)).wrapped,cardKey.wrapped,'paypay:card-key-unchanged')
+  pass('paypay key: four PayPay標準 accounts granted to one device after its card-only pairing each seal, re-register idempotently and read back their own key (also under a renewed grant); the 楽天銀行 and Amex keys of the same grant are unchanged')
+  // 2. Attacks: `opens` names the binding line whose removal lets the attack through; every other attack stays refused by another line.
+  const otherDevice=await FinanceCollector.create({ownerId:user._id,name:'PayPay-leg other PC',tokenHash:digest('omfc_'+'8'.repeat(64)),accountIds:[card._id],bankAccountIds:SCOPE})
+  const ATTACKS:Record<string,{opens:string[],run:(svc:any)=>Promise<any>}>={
+    'paypay-entry-other-account':{opens:['bank-entry'],run:svc=>svc.putKey(token,grant,pp(P[0],'paypay-'+String(P[1]._id)))},
+    'paypay-entry-as-rakuten':{opens:['bank-entry'],run:svc=>svc.putKey(token,grant,pp(P[0],'rakuten-'+String(P[0]._id)))},
+    'paypay-outside-scope':{opens:['bank-scope'],run:svc=>svc.putKey(token,grant,pp(outside))},
+    'paypay-baplus':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,pp(baplus))},
+    'paypay-no-login-type':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,pp(plain))},
+    'paypay-on-rakuten-account':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,pp(rakuten))},
+    'rakuten-on-paypay-account':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,record('rakuten',String(P[0]._id),'rakuten-'+String(P[0]._id)))},
+    'paypay-other-owner':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,pp(foreign))},
+    'paypay-as-card':{opens:[],run:svc=>svc.putKey(token,grant,record('amex',String(P[0]._id),'amex-'+String(P[0]._id)))},
+    'paypay-as-service':{opens:[],run:svc=>svc.putKey(token,grant,record('paypay','paypay','paypay'))},
+    'paypay-malformed-id':{opens:[],run:svc=>svc.putKey(token,grant,record('paypay','x','paypay-x'))},
+    'paypay-aad-owner':{opens:[],run:svc=>svc.putKey(token,grant,pp(P[0],undefined,{ownerId:String(other._id)}))},
+    'paypay-aad-keyid':{opens:[],run:svc=>{const r=pp(P[0]);return svc.putKey(token,grant,{...r,keyId:randomBytes(32).toString('hex')})}},
+    'paypay-poll-token-as-grant':{opens:[],run:svc=>svc.putKey(token,token.slice(5),pp(P[0]))},
+    'paypay-other-device':{opens:[],run:svc=>svc.getKey('omfc_'+'8'.repeat(64),grant,keys[0].keyId)}
+  }
+  void otherDevice
+  for(const [name,attack] of Object.entries(ATTACKS))assert.equal(await refused(attack.run(service)),true,'the real service accepted the PayPay attack '+name)
+  pass('paypay key attacks refused: another account\'s or a 楽天銀行-named entry, an account outside the device scope, BA-PLUS or no login type, a PayPay AAD on a 楽天銀行 account and a 楽天銀行 AAD on a PayPay account, another owner\'s account, PayPay as a card or service entry, malformed id, owner/key-id mismatch, poll token as grant, another device')
+  // 3. Changes after the save stop that account's release only; restoring them releases it again.
+  const release=(i=0)=>service.getKey(token,grant,keys[i].keyId)
+  await scope(SCOPE.filter(id=>String(id)!==String(P[0]._id)));assert.equal(await refused(release(0)),true,'paypay:removed-scope');assert.equal((await release(1)).wrapped,keys[1].wrapped,'paypay:other-account-unaffected');await scope(SCOPE)
+  for(const change of [{'connection.provider':'rakuten'},{'connection.variant':'baplus'},{'connection.variant':null},{connection:null}]){const saved:any=await BankAccount.findById(P[0]._id).lean();await BankAccount.updateOne({_id:P[0]._id},{$set:change});assert.equal(await refused(release(0)),true,'paypay:changed-connection '+JSON.stringify(change));assert.equal((await release(2)).wrapped,keys[2].wrapped,'paypay:other-account-unaffected');await BankAccount.updateOne({_id:P[0]._id},{$set:{connection:saved.connection}})}
+  await models.CollectorGrant.updateOne({_id:digest(grant)},{$set:{revokedAt:new Date()}});for(const i of [0,1,2,3])assert.equal(await refused(release(i)),true,'paypay:revoked-grant');await models.CollectorGrant.updateOne({_id:digest(grant)},{$unset:{revokedAt:1}})
+  await FinanceCollector.updateOne({_id:device._id},{$set:{revokedAt:new Date()}});assert.equal(await refused(release(3)),true,'paypay:revoked-device');await FinanceCollector.updateOne({_id:device._id},{$unset:{revokedAt:1}})
+  for(const i of [0,1,2,3])assert.equal((await release(i)).wrapped,keys[i].wrapped,'paypay:restored-release')
+  pass('after the save, a removed scope, a provider change to 楽天銀行, a BA-PLUS/no login type change and a cleared connection each stop that PayPay account\'s release while the other accounts keep theirs; a revoked grant or device stops all four; restoring releases again')
+  // 4. Races between the first binding check and the end of the key I/O (the second device read), per operation.
+  const findOne=FinanceCollector.findOne.bind(FinanceCollector)
+  const raced=async(attempt:()=>Promise<any>,change:()=>Promise<any>,undo:()=>Promise<any>)=>{let reads=0,fired=false;(FinanceCollector as any).findOne=(...args:any[])=>{const q:any=(findOne as any)(...args);if(++reads===2&&!fired){fired=true;const lean=q.lean.bind(q);q.lean=async(...l:any[])=>{await change();return lean(...l)}}return q};try{const result=await refused(attempt());assert.equal(fired,true,'the race hook fired (second device read)');return result}finally{(FinanceCollector as any).findOne=findOne;await undo()}}
+  const without0=()=>scope(SCOPE.filter(id=>String(id)!==String(P[0]._id))),restore=()=>scope(SCOPE)
+  const RACES:Record<string,{guard:string,recheck:string,run:(svc:any)=>Promise<boolean>}>={
+    'paypay-get-scope':{guard:'bank-scope',recheck:'bank-recheck-get',run:svc=>raced(()=>svc.getKey(token,grant,keys[0].keyId),without0,restore)},
+    'paypay-get-variant':{guard:'bank-live',recheck:'bank-recheck-get',run:svc=>raced(()=>svc.getKey(token,grant,keys[0].keyId),()=>BankAccount.updateOne({_id:P[0]._id},{$set:{'connection.variant':'baplus'}}),()=>BankAccount.updateOne({_id:P[0]._id},{$set:{'connection.variant':'standard'}}))},
+    'paypay-put-scope':{guard:'bank-scope',recheck:'bank-recheck-put',run:svc=>raced(()=>svc.putKey(token,grant,pp(P[0])),without0,restore)}
+  }
+  for(const [name,race] of Object.entries(RACES))assert.equal(await race.run(service),true,'the real service released a PayPay key across the race '+name)
+  pass('a PayPay scope removal or BA-PLUS change between the first binding check and the end of the key I/O is caught by the post-I/O recheck (get and put)')
+  // 5. Each bank binding line removed in turn: exactly the attacks it opens get through; every other attack and race outcome holds.
+  for(const marker of BANK_BINDINGS)await withMutant(SECURITY_SERVICE,marker,async m=>{
+    for(const [name,attack] of Object.entries(ATTACKS)){const open=attack.opens.includes(marker);assert.equal(await refused(attack.run(m)),!open,`paypay mutant ${marker}: the attack ${name} was ${open?'still refused':'accepted'}`)}
+    for(const [name,race] of Object.entries(RACES)){const open=marker===race.recheck||marker===race.guard;assert.equal(await race.run(m),!open,`paypay mutant ${marker}: the race ${name} was ${open?'still refused':'accepted'}`)}
+    for(const i of [0,1,2,3])assert.equal((await m.getKey(token,grant,keys[i].keyId)).wrapped,keys[i].wrapped,`paypay mutant ${marker}: the legitimate PayPay key ${i}`)
+  })
+  pass('each of the '+BANK_BINDINGS.length+' bank binding mutants lets through exactly the PayPay attacks and races its line guards (bank-entry: entry names; bank-scope: the device scope; bank-live: provider, login type and owner) and still refuses every other attack')
+}
+
 async function main() {
   const service = await import('../server/services/financeCollectorSecurityService')
   const models = await import('../server/models/FinanceCollectorSecurity')
@@ -516,7 +605,8 @@ async function main() {
     await connectLegs({pass,digest,origin,user,other,account,password,secret,legacyToken:token,service,models})
     await securityBindingLegs({pass,digest,origin,user,service,models})
     await bankBindingLegs({pass,digest,origin,user,other,service,models})
-    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,connectMutants:BINDINGS.length,securityMutants:SECURITY_BINDINGS.length,bankMutants:BANK_BINDINGS.length}))
+    await paypayBindingLegs({pass,digest,origin,user,other,service,models})
+    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,connectMutants:BINDINGS.length,securityMutants:SECURITY_BINDINGS.length,bankMutants:BANK_BINDINGS.length,paypayMutants:BANK_BINDINGS.length}))
   } finally {await mongoose.disconnect();await mongo.stop()}
 }
 // authService's import starts the token-blacklist cleanup interval, which would keep this child alive after the receipt.

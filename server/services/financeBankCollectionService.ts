@@ -3,11 +3,17 @@ import { ready, id, fail } from './financeService'
 import { FinanceCollector } from '../models/Finance'
 import { BankAccount, BankStatement, BankTemplate, BankJob, initializePaymentMatching } from '../models/FinancePaymentMatch'
 import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_NATIVE_TEMPLATES, bankCollectionMode, bankCoverageInput, frozenCoverage, jstToday } from '../../shared/finance-payment-match.mjs'
+import * as bankTables from '../../shared/finance-payment-match.mjs'
 import { ownedBankAccount, acceptBankCapture } from './financeBankStatementService'
 // Web-bank collection jobs (plan omf-bank-collection-amended-20261018 A4): the owner's connection and request, the collector's
 // claim/status/upload under its bank scope, and the interpretation frozen on each job at queue time.
 const LEASE_MS=180000,text=(v:any)=>String(v??'').trim(),sid=(v:any)=>String(v??'')
 export const OBSERVE_MESSAGE='取得手順が未確認のため観察取得（準備）になります'
+// Plan omf-paypay-four-accounts-20261021: the variant whose first capture is explicitly unmapped (shared BANK_FIRST_CAPTURE: PayPay銀行
+// 標準 only); its observe jobs are guided (the PC signs in once with the saved login, the person exports). The table is newer than the
+// shared declaration file, so it is read through the module namespace.
+const firstCaptureOf=(provider:any,variant:any):string|null=>{const f=(bankTables as any).bankFirstCapture;return typeof f==='function'?f(provider,variant):null}
+export const guidedMessage=(label:string,unmapped:boolean)=>`${label}の${unmapped?'初回の':''}ガイド付き取得を予約しました。接続したPCのChromeで入出金明細のCSVを出力してください${unmapped?'（列の割り当ては受信後）':''}`
 async function init(){await ready();await initializePaymentMatching()}
 const view=(r:any)=>({...r,id:String(r._id),ownerId:undefined,_id:undefined,__v:undefined})
 const providerOf=(key:any)=>BANK_PROVIDERS.find(([k])=>k===key)||null
@@ -21,6 +27,9 @@ const captureView=(s:any)=>({id:sid(s._id),name:s.name,size:s.size,hash:s.hash,d
 // Plan omf-rakuten-native-shiwake-20261020 §3: a variant with a native statement format (BANK_NATIVE_TEMPLATES, 楽天銀行 標準) needs
 // no uploaded file — without a templateId the owner's native template is created once and reused (an existing same-named template
 // with other contents is never overwritten: 409). The requested period {from, to|null} is validated and saved on the connection.
+// Plan omf-paypay-four-accounts-20261021: a variant whose first capture is explicitly unmapped (PayPay銀行 標準) connects without a
+// templateId as templateId null — its jobs freeze the unmapped interpretation; with a templateId it is an ordinary mapped connection.
+// Every other provider/variant still needs its template (or its native one): no general template bypass.
 async function nativeTemplate(ownerId:string,native:any){
  const write=()=>BankTemplate.findOneAndUpdate({ownerId,name:native.name},{$setOnInsert:{ownerId,name:native.name,headers:[...native.headers],mapping:{...native.mapping},amountSign:native.amountSign,revision:1}},{upsert:true,new:true}).lean()
  let template:any;try{template=await write()}catch(e:any){if(e?.code!==11000)throw e;template=await write()}
@@ -32,18 +41,23 @@ export async function connectionInput(ownerId:string,body:any){
  if(!body||typeof body!=='object'||Array.isArray(body))fail(400,'接続の内容を確認してください。')
  const provider=providerOf(body.provider);if(!provider)fail(400,'銀行を確認してください。')
  const variantKeys:[string,string][]=BANK_LOGIN_VARIANTS[provider![0]]||[],chosen=variantKeys.some(([key])=>key===body.variant)?String(body.variant):null,native=chosen?BANK_NATIVE_TEMPLATES[provider![0]]?.[chosen]||null:null
- const template:any=!text(body.templateId)&&native?await nativeTemplate(ownerId,native):await BankTemplate.findOne({_id:id(body.templateId),ownerId}).lean();if(!template)fail(400,'テンプレートを確認してください。')
+ const templateFree=firstCaptureOf(provider![0],chosen)==='unmapped'&&!native&&!text(body.templateId)
+ const template:any=templateFree?null:!text(body.templateId)&&native?await nativeTemplate(ownerId,native):await BankTemplate.findOne({_id:id(body.templateId),ownerId}).lean();if(!template&&!templateFree)fail(400,'テンプレートを確認してください。')
  let coverage:any=null;if(body.coverage!==undefined&&body.coverage!==null){try{coverage=bankCoverageInput(body.coverage,jstToday())}catch(e:any){fail(400,e.message)}}
- if(text(template.mapping?.transactionId)!==''&&body.transactionIdConfirmed!==true)fail(400,'銀行が発行した取引IDの列であることを確認してください。')
+ if(text(template?.mapping?.transactionId)!==''&&body.transactionIdConfirmed!==true)fail(400,'銀行が発行した取引IDの列であることを確認してください。')
  const accountLabel=text(body.accountLabel);if(accountLabel.length>100||/[\x00-\x1f]/.test(accountLabel))fail(400,'口座の表示名を確認してください。')
  const variants:[string,string][]=BANK_LOGIN_VARIANTS[provider![0]]||[],variant=variants.some(([key])=>key===body.variant)?String(body.variant):null
- return{provider:provider![0],templateId:sid(template._id),transactionIdConfirmed:body.transactionIdConfirmed===true,accountLabel:accountLabel||null,variant,coverage,connectedAt:new Date()}
+ return{provider:provider![0],templateId:template?sid(template._id):null,transactionIdConfirmed:body.transactionIdConfirmed===true,accountLabel:accountLabel||null,variant,coverage,connectedAt:new Date()}
 }
 export async function saveBankConnection(ownerId:string,accountId:string,body:any){await init();const account=await ownedBankAccount(ownerId,accountId),connection=await connectionInput(ownerId,body);await BankAccount.updateOne({_id:account._id,ownerId},{$set:{connection}});return{account:view(await BankAccount.findOne({_id:account._id,ownerId}).lean())}}
 // The interpretation frozen on a job: the connection's template at its current revision, the confirmation, the parser version,
 // the account currency, the provider, label and login variant (null when none). The hash is over this exact JSON, so the same
 // settings give the same hash; the variant key gives a new hash only to jobs queued after it was added.
-function snapshotOf(connection:any,template:any,account:any){const snapshot={templateId:sid(template._id),templateRevision:Number(template.revision||0),headers:[...(template.headers||[])],mapping:{...(template.mapping||{})},amountSign:template.amountSign||'outflow-positive',transactionIdConfirmed:connection.transactionIdConfirmed===true,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,jstToday()):null};return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
+// Plan omf-paypay-four-accounts-20261021: without a template (a template-free first capture) the snapshot freezes an explicit unmapped
+// interpretation — no template, headers or mapping, `interpretation: 'unmapped'` — with the same provider, label, variant, currency and
+// coverage keys; a mapped snapshot keeps exactly its former shape (and hash).
+function snapshotOf(connection:any,template:any,account:any){const snapshot:any=template?{templateId:sid(template._id),templateRevision:Number(template.revision||0),headers:[...(template.headers||[])],mapping:{...(template.mapping||{})},amountSign:template.amountSign||'outflow-positive',transactionIdConfirmed:connection.transactionIdConfirmed===true,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,jstToday()):null}
+ :{templateId:null,templateRevision:0,headers:[],mapping:{},amountSign:'outflow-positive',transactionIdConfirmed:false,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,jstToday()):null,interpretation:'unmapped'};return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
 // GUARD g3 (mirrored from financeService.ts:125-129): an unrevoked PC allowed this account, and no job queued or running on a
 // live lease; a running job whose lease expired no longer blocks (it stays claimable and continues under its own snapshot).
 // GUARD g7 (tolerance): an unverified provider/variant gets an observe job and a message, never a refusal. Plan omf-rakuten-native-
@@ -54,11 +68,13 @@ export async function queueBankSync(ownerId:string,accountId:string){
  await init();const account=await ownedBankAccount(ownerId,accountId),connection=account.connection;if(!connection?.provider)fail(400,'先に銀行の接続を保存してください。')
  if(!await FinanceCollector.exists({ownerId,bankAccountIds:account._id,revokedAt:null}))fail(409,'PC未接続: この口座の取得を許可した接続済みのPCがありません。')
  const now=new Date();if(await BankJob.exists({ownerId,bankAccountId:account._id,$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$gt:now}}]}))fail(409,'取得はすでに予約・実行中です。')
- const template:any=await BankTemplate.findOne({_id:id(connection.templateId),ownerId}).lean();if(!template)fail(409,'接続のテンプレートが見つかりません。接続を保存し直してください。')
+ // A connection without a template is accepted only for the template-free first-capture variant (PayPay銀行 標準); any other is 409 as before.
+ const guided=firstCaptureOf(connection.provider,connection.variant)==='unmapped',unmapped=guided&&connection.templateId===null
+ const template:any=unmapped?null:await BankTemplate.findOne({_id:id(connection.templateId),ownerId}).lean();if(!template&&!unmapped)fail(409,'接続のテンプレートが見つかりません。接続を保存し直してください。')
  const mode=bankCollectionMode(connection.provider,connection.variant),support=providerOf(connection.provider)?.[2]||'contract-pending',kind=mode==='retrieve'?'retrieve':support==='verified'?'retrieve':'observe'
  let frozen:any;try{frozen=snapshotOf(connection,template,account)}catch(e:any){fail(400,e.message)}
  const {snapshot,snapshotHash}=frozen;if(mode==='retrieve'&&!snapshot.coverage)fail(400,'取得期間（開始日）を接続に保存してください。')
- const message=kind==='observe'?OBSERVE_MESSAGE:'取得を予約しました'+(snapshot.coverage?'（'+snapshot.coverage.from+'〜'+snapshot.coverage.to+'）':'')
+ const message=kind==='observe'?(guided?guidedMessage(providerOf(connection.provider)?.[1]||String(connection.provider),unmapped):OBSERVE_MESSAGE):'取得を予約しました'+(snapshot.coverage?'（'+snapshot.coverage.from+'〜'+snapshot.coverage.to+'）':'')
  await BankJob.updateMany({ownerId,bankAccountId:account._id,open:true,state:{$in:['running','verification_required']},leaseUntil:{$lt:now}},{$set:{open:false}})
  let job:any;try{job=(await BankJob.create({ownerId,bankAccountId:account._id,jobId:randomUUID(),kind,state:'queued',open:true,requestedAt:now,lastMessage:message,snapshot,snapshotHash,statementIds:[],observation:null})).toObject()}catch(e:any){if(e.code!==11000)throw e;fail(409,'取得はすでに予約・実行中です。')}
  return{job:jobView(job),message}

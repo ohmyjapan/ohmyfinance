@@ -83,39 +83,82 @@ async function refresh() {
   }
   showBanks(data);
 }
-// Bank logins (plan omf-rakuten-auto-login-20261021 §3): one section per bank account OMF grants to this PC (/status.banks,
-// metadata only — a saved login is never read back). 楽天銀行 標準 gets the one-time ID/password form, saved to /bank/credentials for
-// exactly that account inside a protected connection; both fields are cleared after every attempt.
+// Bank logins (plans omf-rakuten-auto-login-20261021 §3, omf-paypay-four-accounts-20261021): one section per bank account OMF grants
+// to this PC (/status.banks, metadata only — a saved login is never read back). 楽天銀行 標準 gets the one-time ID/password form;
+// PayPay銀行 標準 gets 店番号 (3 digits), 口座番号 (7 digits) and the login password, kept exactly as typed (text fields: leading zeros
+// stay). Each is saved to /bank/credentials for exactly that account inside a protected connection; every field of the section is
+// cleared after every attempt. Sections are keyed by account and re-created only when that account's own state changes, so a refresh
+// after another account's save never erases what the person is typing; the save buttons follow the connection state on every refresh.
+const BANK_FORMS={
+  rakuten:{fields:[['user','楽天銀行 login ID','text',256],['password','楽天銀行 login password','password',256]],body:f=>({username:f.user.value,password:f.password.value}),
+    first:'Enter the 楽天銀行 標準ログイン (法人ビジネス口座) login ID and password once. They are encrypted on this PC and never sent to OMF; downloads then sign in automatically.',
+    saved:'Login saved on this PC. Downloads sign in automatically in the background; if the bank asks for an additional check, the same Chrome window is shown for you. Enter both fields to replace it.',
+    refused:'The previous automatic sign-in was not confirmed. Check the bank window, then enter the current login ID and password to replace it; automatic sign-in stays off until then.'},
+  paypay:{fields:[['branch','PayPay銀行 branch number (店番号, 3 digits)','text',3,'[0-9]{3}'],['account','PayPay銀行 account number (口座番号, 7 digits)','text',7,'[0-9]{7}'],['password','PayPay銀行 login password (ログインパスワード)','password',32]],body:f=>({branch:f.branch.value,account:f.account.value,password:f.password.value}),
+    first:'Enter this PayPay銀行 標準ログイン account\'s branch number, account number and login password once. They are encrypted on this PC and never sent to OMF. Statement downloads are guided: the downloader signs in once in its own Chrome window, and you complete any bank check and export the statement CSV there.',
+    saved:'Login saved on this PC. The next guided download signs in once with it; complete any bank check and export the statement CSV in the Chrome window that is shown. Enter all three fields to replace it.',
+    refused:'The previous automatic sign-in was not confirmed. Check the bank window, then enter the current branch number, account number and password to replace it; automatic sign-in stays off until then.',
+    uncertain:'The previous automatic sign-in was not confirmed: the downloader cannot tell whether the bank accepted it (a downloaded file is not taken as proof). Automatic sign-in stays off for this account. If the saved login is correct, allow one more automatic sign-in with it below (nothing is typed again and no download starts until you request one in OMF); if it changed, enter all three fields to replace it.',
+    refusedByBank:'The bank refused the saved login on the last attempt. Enter the corrected branch number, account number and password to replace it; automatic sign-in stays off until then.'}
+};
+let bankSections=new Map(),bankTimer;
+function bankSection(bank,data) {
+  const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p');
+  section.dataset.bankLogin=bank.bankAccountId;note.dataset.bankLoginNote='';note.setAttribute('role','status');
+  title.textContent=bank.name;
+  const kind=bank.supported?BANK_FORMS[bank.provider]:null;
+  if(!kind){note.textContent='Saved sign-in is not available for this bank or login type. When a download needs it, sign in in the Chrome window the downloader opens.';section.append(title,note);return {section};}
+  // Plan P1: PayPay's block names its kind — an uncertain attempt may be retried with the saved login; a refusal needs corrected values.
+  note.textContent=bank.pending==='uncertain'&&kind.uncertain?kind.uncertain:bank.pending==='refused'&&kind.refusedByBank?kind.refusedByBank:bank.refused?kind.refused:bank.hasCredentials?kind.saved:kind.first;
+  const form=document.createElement('form'),fields={};
+  for(const [name,label,type,max,pattern] of kind.fields) {
+    const el=document.createElement('input'),l=document.createElement('label');el.id='bank-'+bank.bankAccountId+'-'+name;el.type=type;el.required=true;el.autocomplete='off';el.maxLength=max;el.dataset.bankLoginField=name;
+    if(name==='user')el.dataset.bankLoginUser='';if(name==='password')el.dataset.bankLoginPassword='';if(pattern){el.pattern=pattern;el.inputMode='numeric';}
+    l.htmlFor=el.id;l.textContent=label;form.append(l,el);fields[name]=el;
+  }
+  const button=document.createElement('button');button.textContent='Save encrypted login';button.dataset.bankLoginSave='';form.append(button);
+  const clear=()=>{for(const el of Object.values(fields))el.value='';};
+  form.onsubmit=async e=>{
+    e.preventDefault();button.disabled=true;button.dataset.saving='1';let failure=null;
+    try{await call('/bank/credentials',{bankAccountId:bank.bankAccountId,...kind.body(fields)});}catch(error){failure=error;}
+    finally{clear();delete button.dataset.saving;}
+    if(failure){note.textContent=failure.message;button.disabled=false;return;}
+    await refresh().catch(error=>{note.textContent=error.message;});
+  };
+  let retry=null;
+  if(bank.pending==='uncertain'&&kind.uncertain){
+    retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent='Allow one more sign-in with the saved login';retry.dataset.bankLoginRetry='';
+    retry.onclick=async()=>{
+      retry.disabled=true;retry.dataset.saving='1';let failure=null;
+      try{await call('/bank/retry',{bankAccountId:bank.bankAccountId});}catch(error){failure=error;}
+      finally{delete retry.dataset.saving;}
+      if(failure){note.textContent=failure.message;retry.disabled=false;return;}
+      await refresh().catch(error=>{note.textContent=error.message;});
+    };
+  }
+  section.append(title,note,...(retry?[retry]:[]),form);return {section,button,retry};
+}
 function showBanks(data) {
-  const main=$('#banks');main.replaceChildren();
+  const main=$('#banks');
   const banks=Array.isArray(data.banks)?data.banks:[],protectedBatch=!!data.unlocked && data.mode==='protected';
   if(data.protected && !banks.length) {
     const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p');
     title.textContent='Bank logins';note.textContent='No bank account is allowed for this PC yet. In OMF → 支払い照合 → 銀行口座の接続・自動取得, allow this PC for the bank account, then reopen this screen.';
-    section.append(title,note);main.append(section);return;
+    section.append(title,note);main.replaceChildren(section);bankSections=new Map();return;
   }
+  const next=new Map();
   for(const bank of banks) {
-    const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p');
-    section.dataset.bankLogin=bank.bankAccountId;note.dataset.bankLoginNote='';note.setAttribute('role','status');
-    title.textContent=bank.name;
-    if(!bank.supported){note.textContent='Saved sign-in is not available for this bank or login type. When a download needs it, sign in in the Chrome window the downloader opens.';section.append(title,note);main.append(section);continue;}
-    note.textContent=bank.refused?'The previous automatic sign-in was not confirmed. Check the bank window, then enter the current login ID and password to replace it; automatic sign-in stays off until then.'
-      :bank.hasCredentials?'Login saved on this PC. Downloads sign in automatically in the background; if the bank asks for an additional check, the same Chrome window is shown for you. Enter both fields to replace it.'
-      :'Enter the 楽天銀行 標準ログイン (法人ビジネス口座) login ID and password once. They are encrypted on this PC and never sent to OMF; downloads then sign in automatically.';
-    const form=document.createElement('form'),fields={};
-    for(const [name,label,type] of [['user','楽天銀行 login ID','text'],['password','楽天銀行 login password','password']]) {
-      const el=document.createElement('input'),l=document.createElement('label');el.id='bank-'+bank.bankAccountId+'-'+name;el.type=type;el.required=true;el.autocomplete='off';el.maxLength=256;el.dataset['bankLogin'+(name==='user'?'User':'Password')]='';l.htmlFor=el.id;l.textContent=label;form.append(l,el);fields[name]=el;
-    }
-    const button=document.createElement('button');button.textContent='Save encrypted login';button.dataset.bankLoginSave='';button.disabled=!protectedBatch || !!data.busy;form.append(button);
-    form.onsubmit=async e=>{
-      e.preventDefault();button.disabled=true;let failure=null;
-      try{await call('/bank/credentials',{bankAccountId:bank.bankAccountId,username:fields.user.value,password:fields.password.value});}catch(error){failure=error;}
-      finally{fields.password.value='';fields.user.value='';}
-      if(failure){note.textContent=failure.message;button.disabled=false;return;}
-      await refresh().catch(error=>{note.textContent=error.message;});
-    };
-    section.append(title,note,form);main.append(section);
+    const key=JSON.stringify([bank.bankAccountId,bank.name,bank.provider,bank.variant,bank.supported,bank.hasCredentials,bank.refused,bank.pending??null]),kept=bankSections.get(bank.bankAccountId);
+    next.set(bank.bankAccountId,kept&&kept.key===key?kept:{key,...bankSection(bank,data)});
   }
+  for(const entry of next.values())for(const control of [entry.button,entry.retry])if(control)control.disabled=!protectedBatch || !!data.busy || control.dataset.saving==='1';
+  // While the collector is busy the save buttons wait; the bank sections alone are re-read until it is idle (typing is kept).
+  clearTimeout(bankTimer);if(data.busy&&next.size)bankTimer=setTimeout(()=>call('/status').then(showBanks).catch(()=>{}),2000);
+  // Only changed sections are swapped in place; a kept section is never detached (the person's typing and focus stay where they are).
+  const wanted=[...next.values()].map(entry=>entry.section);
+  for(const [i,section] of wanted.entries()){const at=main.children[i];if(at===section)continue;if(at&&!wanted.includes(at))at.replaceWith(section);else main.insertBefore(section,at||null);}
+  while(main.children.length>wanted.length)main.lastElementChild.remove();
+  bankSections=next;
 }
 async function finishProtectionAction(button,failure) {
   try{await refresh();}catch(error){failure ||= error;button.disabled=false;}

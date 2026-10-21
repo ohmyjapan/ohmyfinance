@@ -7,7 +7,9 @@ export const BANK_PROVIDERS=[['rakuten','楽天銀行','contract-pending'],['pay
 // The login variants a provider offers (plan omf-rakuten-bank-connector-amended-20261019 R6): [key, label] per provider; a
 // provider absent here has none. The connection stores the chosen key (else null), the job snapshot freezes it, and the
 // adapter's `starts[variant]` is the matching official login link.
-export const BANK_LOGIN_VARIANTS={rakuten:[['standard','標準ログイン（法人ビジネス口座）'],['plus','口座管理プラス']],resona:[['direct','ビジネスダイレクトへ直接ログイン'],['idlink','ID連携ログイン（りそなグループID）']],ikeda:[['portal','池田泉州ビジネスゲート（法人ポータル）からログイン'],['direct','インターネットEBに直接ログイン']]};
+// PayPay銀行 (plan omf-paypay-four-accounts-20261021): the public 標準ログイン (店番号・口座番号・ログインパスワード) and the separate BA-PLUS
+// 専用ログイン; neither has a verified statement export.
+export const BANK_LOGIN_VARIANTS={rakuten:[['standard','標準ログイン（法人ビジネス口座）'],['plus','口座管理プラス']],paypay:[['standard','標準ログイン（店番号・口座番号・ログインパスワード）'],['baplus','BA-PLUS専用ログイン（手動の観察取得）']],resona:[['direct','ビジネスダイレクトへ直接ログイン'],['idlink','ID連携ログイン（りそなグループID）']],ikeda:[['portal','池田泉州ビジネスゲート（法人ポータル）からログイン'],['direct','インターネットEBに直接ログイン']]};
 // What the person must have in place for a bank whose login runs on installed software (plan omf-bank-software-compatibility-20261019
 // S1): one note per such provider, shown under the connection selects. It explains the bank's 電子証明書発行アプリ and the issuing-Windows-
 // user rule; it promises nothing about the certificate picker under the collector's launch and nothing about required or installed
@@ -22,6 +24,11 @@ export function bankCollectionMode(provider,variant){if(BANK_PROVIDERS.find(p=>p
 // The bank's own statement format a retrieving variant downloads: OMF creates/reuses this owner template for the connection, so no
 // CSV has to be uploaded first (楽天銀行 標準: the four observed columns, outflow negative, no bank transaction ID).
 export const BANK_NATIVE_TEMPLATES={rakuten:{standard:{key:'rakuten-standard-native',name:'楽天銀行 標準フォーマット（自動）',headers:['取引日','入出金(円)','残高(円)','入出金先内容'],mapping:{date:'0',description:'3',amount:'1',outflow:'',inflow:'',balance:'2',reference:'',transactionId:'',currency:'',direction:''},amountSign:'outflow-negative'}}};
+// Plan omf-paypay-four-accounts-20261021: a variant whose FIRST capture needs no uploaded file or template — its guided observe job
+// freezes an explicit unmapped interpretation, the received CSV is kept as needs_review (mapping-required, no rows) and the owner maps it
+// with the existing importer. Only PayPay銀行 標準 is listed; automatic collection stays contract-pending (bankCollectionMode: observe).
+export const BANK_FIRST_CAPTURE={paypay:{standard:'unmapped'}};
+export function bankFirstCapture(provider,variant){return BANK_FIRST_CAPTURE[provider]?.[variant]==='unmapped'?'unmapped':null;}
 export function bankCapability(provider,variant){const mode=bankCollectionMode(provider,variant),template=BANK_NATIVE_TEMPLATES[provider]?.[variant]||null;return{mode,steps:mode==='retrieve'?'implemented':'contract-pending',template:template?template.key:null,period:mode==='retrieve'?'required':'portal',liveVerified:false};}
 // The requested period of a connection: an explicit start date and an optional end date (null = the JST date when a job is queued);
 // never after today, never reversed. frozenCoverage turns it into the concrete dates a job freezes in its snapshot.

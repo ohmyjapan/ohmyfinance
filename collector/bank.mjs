@@ -15,6 +15,13 @@
 // input ids and types, select sizes, download events; never a typed value, credential, cookie or row) while the person
 // navigates, and keeps one CSV the person exports from the bank's hosts. Imports only packaged files and node built-ins apart
 // from ./browser.mjs, loaded lazily by the two launchers (so the staged copy loads without an install, like aplus.mjs).
+// Plan omf-paypay-four-accounts-20261021: a `guided` variant adapter (PayPay銀行 `standard`, banks/paypay.mjs) is chosen for an observe job
+// frozen with that provider and variant (guidedAdapterFor); its observe job may carry the claimed account's saved login (index.mjs
+// bankLoginFor), which guidedSignIn submits at most ONCE on the exact observed form — journalled in the job folder and marked pending for
+// that saved key BEFORE the possible submission. Nothing the collector sees afterwards proves that sign-in worked (plan P1): the PayPay
+// adapter has no observed authenticated-page or export contract, so neither navigation nor a downloaded file — CSV-shaped or not — clears
+// the marker. It stays 'uncertain' by default and 'refused' only for an adapter-observed refusal; the owner either allows one more attempt
+// with the already saved login in the protected setup (index.mjs retryBankLogin, uncertain only) or saves corrected values. The window runs in the background and is shown for the person (reveal), who completes any bank check and the export.
 // Lines marked `// guard:<name>` are single predicates the fixture removes in turn from a mutant copy.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { access, link, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
@@ -32,6 +39,9 @@ export const ADAPTERS = Object.freeze({ rakuten, paypay, resona, ikeda });
 // `variants` (楽天銀行: `standard`, the START_CORP corporate login); any other variant, none, or a provider without variants
 // resolves the provider adapter itself — for every shipped provider that is contract-pending (observe stage only).
 export const adapterFor = (provider, variant = null) => { const base = ADAPTERS[provider] || null; return (variant != null && base?.variants?.[variant]) || base; };
+// Plan omf-paypay-four-accounts-20261021: the guided adapter of an observe job, from its FROZEN snapshot provider and variant only (never
+// the claim's current connection); null for every other job, which keeps its provider adapter exactly as before.
+export const guidedAdapterFor = job => { const s = job?.snapshot, a = s ? adapterFor(s.provider, s.variant ?? null) : null; return a?.guided === true && a.provider === s.provider && a.variant === s.variant ? a : null; };
 export const providerLabel = provider => BANK_PROVIDERS.find(([key]) => key === provider)?.[1] || String(provider ?? '');
 const GUID = /^[a-f\d-]{36}$/;
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -132,6 +142,49 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   if (refused) throw coded('login-refused', `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面でIDとパスワードを保存し直してから、再度「取得」を押してください`);
   if (submitted) throw coded('login-refused', LOGIN_TEXT.unconfirmed(label));
   throw new Error(`${label}へのサインインが完了しませんでした。再度「取得」を押してください`);
+}
+
+/** The person-facing texts of a guided first capture (also the job's status in OMF). None carries a credential, a URL or page text. */
+export const GUIDED_TEXT = Object.freeze({
+  submitted: label => `${label}に保存済みのログインを1回だけ送信しました。銀行の追加の確認があればChromeの画面で完了し、入出金明細のCSVを出力してからタブを閉じてください（ガイド付き取得）`,
+  manual: label => `${label}にChromeでサインインし、入出金明細のCSVを出力してからタブを閉じてください（ガイド付き取得）`,
+  blocked: label => `${label}の前回の自動サインインが確認できていないため、保存済みのログインを自動では送信しません。ログインが正しい場合はダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押してから取得してください（変更した場合は保存し直してください）`,
+  unconfirmed: label => `${label}への自動サインインの完了は確認できません（サインイン後の銀行の画面は未確認のため、受け取ったファイルでは判断しません）。保存済みのログインは自動では再送信しません。ログインが正しい場合はダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押してから、もう一度取得してください（変更した場合は保存し直してください）`,
+  kept: label => `受け取った明細は保存しました。${label}への自動サインインの完了は確認できないため、次回の自動送信は止めています（ダウンローダーの設定画面で再試行を許可できます）`,
+  resave: label => `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面で正しいログインを保存し直すまで自動では送信しません`
+});
+/**
+ * The one saved-login step of a guided observe job (ensureBankLogin's lazy order, without inferring authentication): file metadata,
+ * the exact form on the fresh page and the job journal are checked before the single decryption; abort before the decryption, before
+ * the fill and before the click (in ui.login); the journal and the pending marker for this saved key are written before the possible
+ * submission. Returns { submitted, refused, text } — text is what the person is told instead of the default (null: the default).
+ */
+export async function guidedSignIn(ui, { label, login, journal = null, signal = null }) {
+  const none = text => ({ submitted: false, refused: false, text });
+  if (!login || typeof ui.login !== 'function' || typeof ui.loginForm !== 'function') return none(null);
+  const saved = await login.state();
+  if (saved !== 'ready') return none(saved === 'refused' ? LOGIN_TEXT.refused(label) : saved === 'blocked' ? GUIDED_TEXT.blocked(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : null);
+  if (!(await ui.loginForm({ entry: true }))?.ok) return none(LOGIN_TEXT.form(label));
+  if (journal && await journal.seen()) return none(LOGIN_TEXT.retried(label)); // guard:guided-journal
+  signal?.throwIfAborted();
+  let secret = null;
+  try { secret = await login.open(); }
+  catch (error) { if (signal?.aborted || error?.name === 'AbortError' || error?.status === 401 || error?.code === 'forbidden') throw error; return none(LOGIN_TEXT.unavailable(label)); }
+  try {
+    signal?.throwIfAborted();
+    await journal?.mark();
+    await login.rejected('uncertain'); // guard:guided-pending — persisted before the possible submission; never cleared by the job itself
+    const result = await ui.login(secret, { signal });
+    // Only the adapter's own observation (the exact login form again on a new document) is a refusal; it needs corrected values.
+    if (result?.outcome === 'rejected') { await login.rejected('refused'); return { submitted: true, refused: true, text: LOGIN_TEXT.refused(label) }; }
+    return { submitted: true, refused: false, text: GUIDED_TEXT.submitted(label) };
+  } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') throw error;
+    // A refusal by the adapter before its click (form drift, a replaced document, the secret's shape) submitted nothing; anything else
+    // may have. Either way the pending marker stays: the next job asks the person until the owner allows a retry or saves again.
+    const before = ['login-form', 'login-changed', 'manual-login'].includes(error?.code);
+    return { submitted: !before, refused: false, text: before ? LOGIN_TEXT.form(label) : LOGIN_TEXT.failed(label) };
+  } finally { secret = null; }
 }
 
 // A crash after Chrome completed the file but before the manifest: the attempt journal (bound to the job and snapshot) and the
@@ -284,13 +337,25 @@ const pageSnapshot = value => {
  * never enters the fingerprint. A failed channel leaves useful page-only records explicitly marked eventChannel:false.
  * One completed download from the bank's hosts is retained as a statement manifest (channel collector-observe)
  * under the job's frozen snapshot. Returns { observation, items, downloads, closed }.
+ * Guided (plan omf-paypay-four-accounts-20261021): with a `guided` adapter of the job's own frozen provider and variant, `login` (the
+ * claimed account's saved login) is submitted at most once right after the start page opened (guidedSignIn; journal login.json in the
+ * job folder); `reveal` shows the owned background window for the person. After a submission the saved key stays blocked whatever is
+ * captured (plan P1: no file or navigation proves the sign-in): a kept file adds a `notice`, no file makes the job `failed` with the
+ * explanation; a refusal observed by the adapter is marked as such. Without a submission the result is exactly today's.
  */
-export async function observeFromPage(page, browser, adapter, bound, job, root, status, { ui = null, now = Date.now, wait = pause, pollMs = 1000, timeoutMs = 900000, signal = null } = {}) {
+export async function observeFromPage(page, browser, adapter, bound, job, root, status, { ui = null, now = Date.now, wait = pause, pollMs = 1000, timeoutMs = 900000, signal = null, login = null, reveal = null } = {}) {
   if (!adapter) throw new Error('A bank adapter is required');
   if (!/^[a-f\d]{24}$/.test(String(bound?.bankAccountId ?? '')) || typeof bound?.jobId !== 'string' || !bound.jobId) throw new Error('A claimed bank job is required');
+  // The saved login only through a guided adapter of the job's own frozen provider and variant (an injected or stale adapter, another
+  // provider or BA-PLUS never signs in).
+  if (login && !(adapter.guided === true && adapter.provider === job?.snapshot?.provider && adapter.variant === (job?.snapshot?.variant ?? null))) login = null; // guard:guided-variant
   ui ||= adapter.ui(page, browser, job?.snapshot ?? null);
+  if (reveal) { const base = ui; ui = { ...base, async show() { try { await reveal(); } catch { /* the adapter's own show below */ } await base.show(); } }; }
   const stamp = () => new Date(now()).toISOString(), jobDir = path.join(bankOutbox(root, bound.bankAccountId), bound.jobId + '-observe');
   await mkdir(jobDir, { recursive: true });
+  // The job's sign-in journal: written (exclusively, bound to the job, no credential) before the one automatic submission.
+  const journal = login ? { seen: () => exists(path.join(jobDir, 'login.json')), async mark() { await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ ...bound, submittedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error; }); } } : null;
+  let guided = null;
   const records = [], downloads = [], pending = []; let last = null, closed = false;
   const name = observeBindingName(); let eventChannel = false;
   const fresh = snap => ({ at: stamp(), ...snap, downloadEvents: [], clicks: [], typedInto: [], eventsDropped: 0, eventChannel });
@@ -333,7 +398,10 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
   page?.once?.('close', () => { closed = true; }); browser?.once?.('disconnected', () => { closed = true; });
   try {
     await ui.open(); await record();
-    await status('verification_required', `${adapter.label}のページをChromeで操作してください（観察取得・準備）。入出金明細のCSVを出力できる場合は出力し、終わったらタブを閉じてください`);
+    if (login) { guided = await guidedSignIn(ui, { label: adapter.label, login, journal, signal }); await record(); }
+    const ask = !login ? `${adapter.label}のページをChromeで操作してください（観察取得・準備）。入出金明細のCSVを出力できる場合は出力し、終わったらタブを閉じてください`
+      : guided.submitted && !guided.refused ? guided.text : guided.text ? `${guided.text}。サインイン後に入出金明細のCSVを出力し、終わったらタブを閉じてください（ガイド付き取得）` : GUIDED_TEXT.manual(adapter.label);
+    await status('verification_required', ask);
     try { await ui.show(); } catch { /* the person may already have closed the tab: the recording so far stands */ }
     const deadline = now() + timeoutMs;
     while (!closed && now() < deadline) { signal?.throwIfAborted(); await record(); await wait(pollMs); }
@@ -345,7 +413,11 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
     const manifest = { ...bound, kind: 'statement', channel: 'collector-observe', sourceFormat: 'csv', sha256: sha256(bytes), filename: completed[0].guid, bytes: bytes.length, suggestedFilename: completed[0].suggestedFilename || null, sourceHost: completed[0].host, downloadedAt: stamp() };
     await writeManifest(jobDir, manifest); items = [{ directory: jobDir, manifest }];
   }
-  return { observation: records, items, downloads: downloads.map(({ guid, ...d }) => d), closed };
+  const result = { observation: records, items, downloads: downloads.map(({ guid, ...d }) => d), closed };
+  if (!guided?.submitted) return result;
+  // The captured file is the person's statement for native mapping, not proof of the automatic sign-in: the marker stays.
+  if (guided.refused) return items.length ? { ...result, notice: GUIDED_TEXT.resave(adapter.label) } : { ...result, failed: LOGIN_TEXT.refused(adapter.label) };
+  return items.length ? { ...result, notice: GUIDED_TEXT.kept(adapter.label) } : { ...result, failed: GUIDED_TEXT.unconfirmed(adapter.label) };
 }
 
 // An owned, ephemeral, sandboxed Chrome for one bank job: profiles/ephemeral/<owner>-bank-<account>-<batch> (browser.mjs
@@ -374,8 +446,13 @@ export async function collectBankStatement(bound, job, root, status, { adapter =
   if (!adapter) throw new Error('No bank adapter for ' + String(job?.provider ?? bound?.provider));
   return withBankBrowser(bound, root, batch, onLaunch, (page, browser, reveal) => collectBankFromPage(page, browser, adapter, bound, job, root, status, { signal, now, wait, login, reveal, ...rest }), { background: true });
 }
-/** One observe job (preparatory stage) through the provider's adapter (or an injected one) in an owned ephemeral Chrome. */
-export async function observeBankPortal(bound, job, root, status, { adapter = adapterFor(job?.provider ?? bound?.provider), batch = 'batch', onLaunch = null, signal = null, now = Date.now, wait = pause, ...rest } = {}) {
+/**
+ * One observe job (preparatory stage) through the provider's adapter (or an injected one) in an owned ephemeral Chrome. A job frozen for
+ * a guided variant (guidedAdapterFor: PayPay銀行 standard) uses that adapter, runs in the background and is shown for the person
+ * (reveal), and receives `login`; every other observe job keeps the provider adapter, the visible window and no saved login.
+ */
+export async function observeBankPortal(bound, job, root, status, { adapter = guidedAdapterFor(job) || adapterFor(job?.provider ?? bound?.provider), batch = 'batch', onLaunch = null, signal = null, now = Date.now, wait = pause, login = null, ...rest } = {}) {
   if (!adapter) throw new Error('No bank adapter for ' + String(job?.provider ?? bound?.provider));
-  return withBankBrowser(bound, root, batch, onLaunch, (page, browser) => observeFromPage(page, browser, adapter, bound, job, root, status, { signal, now, wait, ...rest }));
+  const guided = adapter.guided === true;
+  return withBankBrowser(bound, root, batch, onLaunch, (page, browser, reveal) => observeFromPage(page, browser, adapter, bound, job, root, status, { signal, now, wait, ...(guided ? { login, reveal } : {}), ...rest }), { background: guided });
 }

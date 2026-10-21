@@ -54,7 +54,8 @@ STANDARD_LOGIN` records exactly this.
   only the wrapped key. The fields are cleared; the screen shows "saved" or "refused", never the values. Saving does not open the
   bank, queue a job or make a payment. Saving again replaces the login (and lifts a remembered unconfirmed attempt).
 - **Use.** A claimed retrieve job frozen for 楽天銀行 standard carries a handle to that account's entry (`collector/index.mjs
-  bankLoginFor`). Idle ticks, status, setup status, the observe stage, retained-file uploads and recovery never open it. When the
+  bankLoginFor`). Idle ticks, status, setup status, the 楽天銀行 observe stage, retained-file uploads and recovery never open it (the
+  only other holder of a handle is a PayPay銀行 標準 guided observe job, for its own `paypay-<id>` entry — docs/paypay-bank-connection.md). When the
   bank shows its login page, the collector checks the exact form on the live document (origin and surface, the form and its
   action/method, both fields — visible, enabled, inside that form, unique by name — no other visible password field, exactly one
   「ログイン」control) and the earlier-attempt marker, decrypts the saved login once, then writes `login.json` and blocks the saved
@@ -79,7 +80,11 @@ STANDARD_LOGIN` records exactly this.
   (`FinanceCollector.bankAccountIds`, which the owner can add after a card-only pairing — no bank field in the grant, no new
   connection, no fake card) and still has a 楽天銀行 standard connection; repeated after the key I/O. A card id is never a bank id;
   removing the bank from the PC, changing the provider/variant, revoking the PC or a foreign owner stops the release. Card and
-  service entries keep their bindings unchanged.
+  service entries keep their bindings unchanged. Plan `omf-paypay-four-accounts-20261021` widened the same binding to an exact
+  provider → variant map (`rakuten`/`paypay` → `standard`): the entry name, the device scope and the live connection must all name
+  the entry's own provider, so a 楽天銀行 key never opens for a PayPay account (or BA-PLUS, or a connection without a login type) and a
+  PayPay key never opens for a 楽天銀行 account; the five `binding:bank-*` lines and their post-I/O rechecks are shared and each is
+  mutated against both providers' attacks (`scripts/collector-security-integration.ts`).
 
 ## Background and attention
 
@@ -88,7 +93,8 @@ transport, no debugging port and the same owned-process/profile checks, started 
 inactive window placed off-screen (DevTools `Target.createTarget` background), so a retrieval does not take the foreground and the
 system cursor is never moved (all input goes through DevTools). When the person is needed, `showWindow` moves that SAME window to
 usable bounds on the primary work area and brings it forward; no second browser is started and no other window is touched. Card,
-service, Yayoi and the observe stage keep the default visible launch.
+service, Yayoi and the observe stage keep the default visible launch — except the PayPay銀行 標準 guided observe job, which uses the
+same background launch and shows its window for the person (docs/paypay-bank-connection.md).
 
 ## Caller map (self-mapped seam)
 
@@ -97,7 +103,9 @@ Owner native UI → bank connection/scope/sync (`financeBankCollectionService`) 
 native export → retained manifest/outbox → `bank/upload` → native rows → existing classifications. Setup: `setup.js` →
 `/bank/credentials` → `saveBankLogin` → `SplitStore.save` → key service `putKey`/`getKey` → `binding`/`bankBinding`. Statement
 source/amount/date/sign interpretation, classification, purchase imports, invoices, calendars and Navi are not changed. RIRI
-Article/Memo/Menu51 paths are a separate project with no import or call into this seam.
+Article/Memo/Menu51 paths are a separate project with no import or call into this seam. The same setup route, `bankLoginFor`,
+`runBankJob` and `bankBinding` now also serve PayPay銀行 標準 (`paypay-<id>` entries, guided observe jobs only); the 楽天銀行 body shape,
+entry name, AAD, marker, retrieve-only hand-over and observe message are unchanged (docs/paypay-bank-connection.md has its map).
 
 ## Not observed / not supported
 
@@ -105,7 +113,8 @@ Article/Memo/Menu51 paths are a separate project with no import or call into thi
 OTP/verification pages, the bank's answer to a wrong password, password-expiry pages, session time-outs, maintenance notices and the
 case where the bank re-uses an export generated earlier the same day are not observed; they surface as `unknown`/
 `verification_required` for the person or as the existing failure messages. A persistent bank session and unattended additional
-verification are not provided. No other bank is changed.
+verification are not provided. No other bank's retrieval is changed (PayPay銀行 標準 gained a guided first capture without automatic
+retrieval: docs/paypay-bank-connection.md).
 
 ## Verification status (honest)
 
