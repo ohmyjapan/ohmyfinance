@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createError } from 'h3'
 import { mkdir, writeFile, readFile, link, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -115,7 +116,9 @@ export async function acceptBankCapture(job:any,account:any,bytes:Buffer,query:a
  const ownerId=String(job.ownerId),channel=query?.channel==='collector-observe'?'collector-observe':'collector',name=safeName(query?.name)||`bank-${String(job.jobId).slice(0,8)}.csv`;
  const doc:any=await retainBankFile(ownerId,name,bytes,String(query?.mimeType||'text/csv'));
  const captureOf=(d:any)=>({id:String(d._id),state:d.capture.state,reason:d.capture.reason||null,rows:d.capture.rows,labelChecked:d.capture.labelChecked===true,snapshotHash:d.capture.snapshotHash,duplicate:true});
- if(doc.capture){if(String(doc.capture.bankAccountId)!==String(account._id))fail(409,'この明細は別の口座で受信済みです。');return captureOf(doc)}
+ // Review fold F3: the one PERMANENT capture 409 (these bytes are already another account's statement) carries the stable code
+ // capture-other-account, so the collector keeps the file and never sends it again; every other 409 carries none (statusMessage as fail()).
+ if(doc.capture){if(String(doc.capture.bankAccountId)!==String(account._id))throw createError({statusCode:409,statusMessage:'Finance request failed',data:{message:'この明細は別の口座で受信済みです。',code:'capture-other-account'}});return captureOf(doc)}
  const frozen=interpretationOf(job.snapshot);
  const finish=async(state:string,reason:string|null,rows:any)=>{const capture={bankAccountId:String(account._id),jobId:job.jobId,kind:job.kind,collectorId:job.collectorId?String(job.collectorId):null,channel,labelChecked:query?.labelChecked==='true'&&job.kind==='retrieve'&&Boolean(text(job.snapshot?.accountLabel)),snapshot:job.snapshot,snapshotHash:job.snapshotHash,sourceHost:text(query?.sourceHost)||null,capturedAt:text(query?.capturedAt)||null,receivedAt:new Date(),state,reason,rows};const saved=await BankStatement.updateOne({_id:doc._id,ownerId,capture:null},{$set:{capture}});if(!saved.matchedCount)return captureOf(await BankStatement.findOne({_id:doc._id,ownerId}).lean());return{id:String(doc._id),state,reason,rows,labelChecked:capture.labelChecked,snapshotHash:job.snapshotHash,duplicate:false}};
  const planned=await planCapture(ownerId,doc,account,frozen,{channel,jobId:job.jobId,snapshotHash:job.snapshotHash});

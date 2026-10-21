@@ -2,17 +2,16 @@ import { randomUUID, createHash } from 'node:crypto'
 import { ready, id, fail } from './financeService'
 import { FinanceCollector } from '../models/Finance'
 import { BankAccount, BankStatement, BankTemplate, BankJob, initializePaymentMatching } from '../models/FinancePaymentMatch'
-import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_NATIVE_TEMPLATES, bankCollectionMode, bankCoverageInput, frozenCoverage, jstToday } from '../../shared/finance-payment-match.mjs'
-import * as bankTables from '../../shared/finance-payment-match.mjs'
+import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_NATIVE_TEMPLATES, bankCollectionMode, bankCoverageInput, frozenCoverage, jstToday, bankFirstCapture } from '../../shared/finance-payment-match.mjs'
 import { ownedBankAccount, acceptBankCapture } from './financeBankStatementService'
 // Web-bank collection jobs (plan omf-bank-collection-amended-20261018 A4): the owner's connection and request, the collector's
 // claim/status/upload under its bank scope, and the interpretation frozen on each job at queue time.
 const LEASE_MS=180000,text=(v:any)=>String(v??'').trim(),sid=(v:any)=>String(v??'')
 export const OBSERVE_MESSAGE='取得手順が未確認のため観察取得（準備）になります'
 // Plan omf-paypay-four-accounts-20261021: the variant whose first capture is explicitly unmapped (shared BANK_FIRST_CAPTURE: PayPay銀行
-// 標準 only); its observe jobs are guided (the PC signs in once with the saved login, the person exports). The table is newer than the
-// shared declaration file, so it is read through the module namespace.
-const firstCaptureOf=(provider:any,variant:any):string|null=>{const f=(bankTables as any).bankFirstCapture;return typeof f==='function'?f(provider,variant):null}
+// 標準 only); its observe jobs are guided (the PC signs in once with the saved login, the person exports). Imported by name: the shared
+// declaration file declares it, so a rename or removal is a type error, never a silent fallback.
+const firstCaptureOf=(provider:any,variant:any):string|null=>bankFirstCapture(provider,variant)
 export const guidedMessage=(label:string,unmapped:boolean)=>`${label}の${unmapped?'初回の':''}ガイド付き取得を予約しました。接続したPCのChromeで入出金明細のCSVを出力してください${unmapped?'（列の割り当ては受信後）':''}`
 async function init(){await ready();await initializePaymentMatching()}
 const view=(r:any)=>({...r,id:String(r._id),ownerId:undefined,_id:undefined,__v:undefined})

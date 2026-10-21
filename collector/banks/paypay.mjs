@@ -79,7 +79,8 @@ export function standardUi(page, browser, adapter = standard, snapshot = null, {
   const bounded = (promise, ms = 5000) => Promise.race([promise, pause(ms).then(() => null)]);
   const current = () => { let url; try { url = new URL(page.url()); } catch { throw new Error(`${label}のページを確認できません`); } if (!onHosts(url.hostname, hosts)) throw new Error(`${label}のページではありません。Chromeを確認して再試行してください`); return url; };
   // After the one submission: the exact login form on a NEW document → 'rejected'; another new document that stays put → 'submitted'
-  // (never 'authenticated': only the person's completed CSV proves the sign-in); no new document within the window → 'attention'.
+  // (never 'authenticated': nothing the collector sees afterwards, no file included, proves the sign-in — plan P1); no new document
+  // within the window → 'attention'.
   const settle = async before => {
     const until = Date.now() + settleMs; let changed = false, last = null, since = 0;
     while (Date.now() < until) {

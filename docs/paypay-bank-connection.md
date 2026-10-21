@@ -67,8 +67,10 @@ the corrected decode):
   confirms the saved login. The parent's counterexample (an unconfirmed attempt followed by a CSV-shaped file from the public
   homepage host) is the permanent regression `scripts/zoomer-fixtures/omf-paypay-login-proof.mjs`. After every submission the
   marker stays: kind `uncertain` (written before the submission) or `refused` (the adapter saw the exact login form again on a new
-  document). A file the person exported is still retained for native mapping and the job completes with a notice; without one the
-  job ends `failed` with the explanation. Later jobs submit nothing while the marker holds. A reclaimed job whose folder holds
+  document). A file the person exported is retained for native mapping — only when it is a readable CSV/text statement by OMF's own
+  text rule (`statementText`: non-empty, at most 10 MiB, no NUL byte, strict UTF-8 or Shift_JIS, not a PDF; an empty-period header-only
+  file passes) — and the job completes with a notice; anything else (PDF, binary, undecodable, empty, oversized) is not sent, stays in
+  the job folder and the job ends `failed` saying so (review fold F3). Without a file the job ends `failed` with the explanation. Later jobs submit nothing while the marker holds. A reclaimed job whose folder holds
   `login.json` never submits again, even after a retry.
 - **Protected per-account retry** (`collector/setup.js` → `POST /bank/retry` → `index.mjs retryBankLogin`): for an `uncertain`
   account the setup section offers "Allow one more sign-in with the saved login". It reserves the collector action slot before its
@@ -77,7 +79,15 @@ the corrected decode):
   the current key); then it removes only that marker file. Nothing is decrypted, read back, re-entered, queued or submitted, and job
   journals stay. The next job the owner requests in OMF submits once. A `refused` marker, a marker of a superseded key, a marker
   without a kind, a missing or unbound entry, another provider/variant/owner or an ungranted account is refused — a refusal needs
-  corrected values saved in the same section. 楽天銀行 markers and their re-save behaviour are unchanged.
+  corrected values saved in the same section. 楽天銀行 markers and their re-save behaviour are unchanged. The route itself is proven in the
+  native walkthrough (review fold F4): while a job holds the slot a retry answers 409 and the marker stays byte-identical; a retry whose
+  body is still arriving already holds the slot, so no tick claims a queued job until it completes; then the slot is released.
+- **Refused statements (review fold F3)** (`index.mjs runBankJob`/`pendingBank`): OMF's permanent refusal of a retained bank statement —
+  415 (not a readable CSV/text statement) or 409 with the stable code `capture-other-account` (the same bytes are already another
+  account's statement, e.g. the identical empty-period export of two accounts; `financeBankStatementService.acceptBankCapture`) — is
+  recorded on that manifest (`refusal`), which is never acknowledged, never sent again and keeps the original on this PC; the job's
+  status in OMF says so and the next job proceeds. Every other failure (409 job/account unavailable, the transient duplicate 409,
+  401/403, 5xx, network) and any observation failure propagates as before. Card/service uploads are unchanged.
 - The observation record keeps its value-free shape. The automatic fill writes properties without `input` events, so the person's
   typing record (`typedInto`) never lists the credential fields filled by the collector; no value is ever recorded.
 - **Key release** (`server/services/financeCollectorSecurityService.ts bankBinding`, shared with 楽天銀行): `paypay-<id>` is released
@@ -90,7 +100,8 @@ the corrected decode):
 Owner UI (`BankConnections.vue`) → `saveBankConnection`/`queueBankSync`/`setCollectorBankScope` (`financeBankCollectionService`) →
 `BankAccount`/`BankJob` → collector tick `claimWork` → `bankLoginFor` (handle, nothing read) → `runBankJob` (login only for
 `guidedBankJob`) → `observeBankPortal` → `observeFromPage` → `guidedSignIn` → `paypay.standardUi loginForm/login` → person export →
-retained manifest → `bank/upload` → `acceptBankJobUpload` → `acceptBankCapture` → `planCapture` (unmapped hold) → importer
+retained manifest (guided: only a readable CSV/text file) → `bank/upload` → `acceptBankJobUpload` → `acceptBankCapture` (a permanent
+415/409 `capture-other-account` → the manifest's `refusal`, skipped by `pendingBank`) → `planCapture` (unmapped hold) → importer
 (`readBankSheet`/`previewBankImport`/`importBankFile`/`saveBankTemplate`) → `BankRow` → existing classification/matching.
 Setup: `setup.js` → `/bank/credentials` → `saveBankLogin` → `SplitStore.save` → key service `putKey`/`getKey` → `binding` →
 `bankBinding`. Unchanged callers re-verified: 楽天銀行 standard retrieval and its saved login, 楽天銀行 and other observe jobs (no saved
@@ -104,9 +115,10 @@ reach it only through the existing native rows.
 The full audit is the build's `7-shared-boundary-audit.md` (hub). Guards changed: the bank key binding (exact provider → variant map,
 same five lines, post-I/O recheck for both providers), the collector's exact PayPay login-form guard
 (`guard:login-surface|login-form|login-action|login-fields|login-password-unique|login-control`), the guided bounds
-(`guard:guided-variant|guided-journal|guided-pending`), the setup/handle bounds (`guard:bank-login-shape|bank-login-kind`, the
-existing `bank-login-blocked`) and the retry bound (`guard:bank-retry-uncertain`); a further edit mutant reintroduces the P1 defect
-(a kept CSV accepted as proof) and must flip the permanent regression's assertion. Each line is removed in turn by a mutant in
+(`guard:guided-variant|guided-journal|guided-pending|guided-text`), the setup/handle bounds (`guard:bank-login-shape|bank-login-kind`,
+the existing `bank-login-blocked`), the retry bound (`guard:bank-retry-uncertain`) and the outbox refusal (`guard:bank-refusal-terminal`);
+further edit mutants reintroduce the P1 defect (a kept CSV accepted as proof), a propagated permanent refusal, the dropped server code
+(`S3-capture-code-dropped`) and — in the daemon's own module, through the real route — a removed or late `/bank/retry` reservation. Each line is removed in turn by a mutant in
 `scripts/zoomer-fixtures/omf-paypay-four-accounts.mjs` or `scripts/collector-security-integration.ts` and caught by a named
 assertion. Model freshness is not applicable (deterministic code). Real historical replay and read-only production observation
 belong to the parent; no PayPay production row or credential exists for this build.

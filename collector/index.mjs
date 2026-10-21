@@ -207,7 +207,8 @@ async function api(config,route,body,query,live,{contentType,base='/api/finance/
   const url=new URL(base+route,config.baseUrl);if(query)url.search=new URLSearchParams(query).toString();
   const csv=Buffer.isBuffer(body);
   const response=await fetch(url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':csv?(contentType||'text/csv'):'application/json'},...(body===undefined?{}:{body:csv?body:JSON.stringify(body)}),redirect:'error',signal:live?AbortSignal.any([live.abort.signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)});
-  const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.statusMessage || 'OMF connection failed'),{status:response.status});return data;
+  // Review fold F3: OMF's stable refusal code (data.code; today only the bank capture's capture-other-account) rides along as serverCode.
+  const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.statusMessage || 'OMF connection failed'),{status:response.status,...(typeof data?.data?.code==='string'?{serverCode:data.data.code}:{})});return data;
 }
 // Pending files are bound to the owner and OMF origin that produced them; a re-pair cannot redirect another pairing's outbox.
 async function pending(account,config) {
@@ -240,11 +241,12 @@ export async function upload(config,account,item,live,{route='upload',query=null
 // ── Bank jobs (plan omf-bank-collection-amended-20261018 A5) ─────────────────────────────────────────────────────────────────
 export const BANK_BASE='/api/finance-payments/collector/';
 // Retained bank manifests of one account, bound to the owner and OMF origin that produced them. Each carries ITS OWN jobId and
-// snapshotHash — the interpretation it was taken under — never the current job's.
+// snapshotHash — the interpretation it was taken under — never the current job's. A manifest OMF refused for good (`refusal`, review fold
+// F3) is never pending again; its original stays on this PC.
 export async function pendingBank(account,config,root=directory) {
   const base=path.join(root,'outbox','bank',String(account._id));let folders=[];try{folders=await readdir(base,{withFileTypes:true});}catch(e){if(e.code!=='ENOENT')throw e;}
   const result=[];
-  for(const folder of folders.filter(f=>f.isDirectory())){const dir=path.join(base,folder.name);try{const m=JSON.parse(await readFile(path.join(dir,'manifest.json'),'utf8'));if(!m.acknowledgedAt && m.bankAccountId===String(account._id) && m.ownerId===String(account.ownerId) && m.origin===config.baseUrl && typeof m.jobId==='string' && typeof m.snapshotHash==='string')result.push({directory:dir,manifest:m});}catch(e){if(e.code!=='ENOENT')throw e;}}
+  for(const folder of folders.filter(f=>f.isDirectory())){const dir=path.join(base,folder.name);try{const m=JSON.parse(await readFile(path.join(dir,'manifest.json'),'utf8'));if(!m.acknowledgedAt && !m.refusal && m.bankAccountId===String(account._id) && m.ownerId===String(account.ownerId) && m.origin===config.baseUrl && typeof m.jobId==='string' && typeof m.snapshotHash==='string')result.push({directory:dir,manifest:m});}catch(e){if(e.code!=='ENOENT')throw e;}}
   return result;
 }
 // The upload query of a retained bank artifact: the job and snapshot it was taken under, its kind, channel, source host and capture time.
@@ -268,11 +270,27 @@ export async function claimWork(config,live) {
 // guidedBankJob) — receives `login` (bankLoginFor: the claimed account's saved login, opened by the adapter's login step only when the
 // bank's exact login form is shown); the drain, every other observe stage, the uploads and the status never touch it. A guided job's
 // `notice` is added to its completion message. `deps` are the fixture's seams.
+// Review fold F3: OMF's PERMANENT refusal of a retained bank STATEMENT — 415 (not a readable CSV/text statement) or 409 with the stable code
+// capture-other-account (the same bytes are already another account's statement) — is final for those bytes: the manifest records it
+// (never acknowledged, never sent again, the original kept on this PC), the job says so and goes on; a job whose own statements were all
+// refused ends failed with that explanation. Every other failure (409 job/account unavailable, the transient duplicate 409, 401/403, 5xx,
+// the network) and any observation failure propagates exactly as before.
+export const bankRefusal=error=>error?.status===415?'unreadable':error?.status===409&&error?.serverCode==='capture-other-account'?'other-account':null;
+const REFUSAL_REASON={unreadable:'CSV・テキストとして読めないファイル','other-account':'別の口座で受信済みの同じファイル'};
+export const bankRefusalText=reasons=>`OMFが受け付けなかった明細ファイル${reasons.length}件（${[...new Set(reasons)].map(r=>REFUSAL_REASON[r]).join('・')}）はこのPCに残し、再送信しません`;
 export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null}={}) {
-  const {job,account}=bank;
-  const sendItem=item=>send(config,account,item,live,{route:'bank/upload',base:BANK_BASE,query:bankUploadQuery(item.manifest)});
+  const {job,account}=bank,refusals=[];
+  const sendItem=async(item,own)=>{
+    try{return await send(config,account,item,live,{route:'bank/upload',base:BANK_BASE,query:bankUploadQuery(item.manifest)});}
+    catch(error){
+      const reason=item.manifest.kind==='observation'?null:bankRefusal(error);
+      if(!reason)throw error;
+      await replaceVaultFile(path.join(item.directory,'manifest.json'),JSON.stringify({...item.manifest,refusal:{status:error.status,reason,at:new Date(now()).toISOString()}},null,2)); // guard:bank-refusal-terminal
+      refusals.push({reason,own});return null;
+    }
+  };
   let drained=0;
-  for(const item of await listPending(account,config,root)){await status('running','保存済みの明細を送信中');await sendItem(item);drained++;}
+  for(const item of await listPending(account,config,root)){await status('running','保存済みの明細を送信中');await sendItem(item,false);drained++;}
   const bound={bankAccountId:String(account._id),ownerId:String(account.ownerId),origin:config.baseUrl,jobId:job.jobId,snapshotHash:job.snapshotHash,provider:job.provider};
   const result=job.kind==='retrieve'?await collect(bound,job,root,status,{batch,onLaunch,signal,now,login}):await observe(bound,job,root,status,{batch,onLaunch,signal,now,...(login&&guidedBankJob(job)?{login}:{})});
   const items=[...(result.items||[])];
@@ -285,12 +303,14 @@ export async function runBankJob(bank,config,live,{status,pending:listPending=pe
     try{await writeFile(temporary,JSON.stringify(manifest,null,2),{flag:'wx',mode:0o600});await link(temporary,file);}finally{await unlink(temporary).catch(error=>{if(error.code!=='ENOENT')throw error;});}
     items.push({directory:dir,manifest});
   }
-  for(const item of items){await status('running',item.manifest.kind==='observation'?'観察記録を送信中':'明細を送信中');await sendItem(item);}
-  if(result.failed){await status('failed',result.failed);return {drained,items:items.length,observation:!!result.observation,failed:result.failed,message:result.failed};}
-  const statements=items.filter(i=>i.manifest.kind!=='observation').length;
-  const message=(job.kind==='observe'?`観察記録を保存${statements?`・明細 ${statements}件を保存`:''}`:statements?`明細 ${statements}件を保存`:'新しい明細はありません')+(typeof result.notice==='string'&&result.notice?`（${result.notice}）`:'');
+  for(const item of items){await status('running',item.manifest.kind==='observation'?'観察記録を送信中':'明細を送信中');await sendItem(item,true);}
+  const refusedNote=refusals.length?bankRefusalText(refusals.map(r=>r.reason)):'',refused=refusals.length?{refused:refusals.length}:{};
+  if(result.failed){const failed=refusedNote?`${refusedNote}。${result.failed}`:result.failed;await status('failed',failed);return {drained,items:items.length,observation:!!result.observation,failed,message:failed,...refused};}
+  const statements=items.filter(i=>i.manifest.kind!=='observation').length-refusals.filter(r=>r.own).length;
+  if(!statements&&refusals.some(r=>r.own)){await status('failed',refusedNote);return {drained,items:items.length,observation:!!result.observation,failed:refusedNote,message:refusedNote,...refused};}
+  const message=(job.kind==='observe'?`観察記録を保存${statements?`・明細 ${statements}件を保存`:''}`:statements?`明細 ${statements}件を保存`:'新しい明細はありません')+(typeof result.notice==='string'&&result.notice?`（${result.notice}）`:'')+(refusedNote?`（${refusedNote}）`:'');
   await status('complete',message);
-  return {drained,items:items.length,observation:!!result.observation,failed:null,message};
+  return {drained,items:items.length,observation:!!result.observation,failed:null,message,...refused};
 }
 // The sealed entry a claimed account's bank login lives in: its own `<provider>-<id>` entry; else, for Aplus, the single
 // legacy `aplus` service entry when exactly one Aplus account is in scope (it can only be that one); else none → manual sign-in.
@@ -305,8 +325,9 @@ export function credentialEntryFor(account,entries,scope=[]) {
 // to this installation, the paired OMF origin, the account's owner, the provider and the account; its wrapped key is released by OMF
 // only for a bank account currently granted to this PC with a live standard connection of exactly that provider
 // (financeCollectorSecurityService bankBinding). A pending automatic attempt is remembered per saved key in bank-login/<entry>.json
-// before submission; a confirmed outcome (楽天銀行: authentication; PayPay銀行: the job's completed official CSV) or an owner re-save
-// clears it, never a failed job. Four PayPay accounts are four entries, four AADs and four markers.
+// before submission. 楽天銀行: a confirmed authentication or an owner re-save clears it. PayPay銀行 (plan P1): positive authentication is
+// never inferred — no navigation and no captured file (CSV or not) clears it; only the owner's re-save, or the owner's explicit retry of an
+// 'uncertain' marker (retryBankLogin), does. A failed job never clears it. Four PayPay accounts are four entries, four AADs and four markers.
 const bankEntry=(provider,id)=>provider+'-'+id;
 const bankMarker=(provider,id,root=directory)=>path.join(root,'bank-login',bankEntry(provider,id)+'.json');
 export const bankLoginSupported=bank=>BANK_LOGIN_PROVIDERS.includes(bank?.provider)&&bank?.variant==='standard';

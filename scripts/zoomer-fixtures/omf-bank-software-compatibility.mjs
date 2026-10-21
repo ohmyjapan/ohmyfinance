@@ -18,7 +18,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { createRequire, registerHooks } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,6 +32,17 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const exists = p => access(p).then(() => true, () => false);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const u = rel => pathToFileURL(path.join(root, rel)).href;
+
+// ── Test-mode control (fixture-only; review fold F1/F5). Every Chrome this test process launches through a collector
+// browser.mjs (the repo module, a mutant sibling importing it, or a staged copy) is forced headless, without a startup
+// window, with external host-name resolution refused — whatever its caller asked (profile-reuse fallback, background/quiet
+// mode, fault paths). The production module on disk is untouched; the hook lives only in this test process from run() start,
+// is proven by the __fixtureHeadless marker before any browser leg (otherwise every browser leg is refused), and is
+// deregistered in finally. Owner browsers are never attached: launch keeps pipe transport and the fixture's own profiles.
+const FIXTURE_LAUNCH = "\n;{const __fixtureLaunch=puppeteer.launch.bind(puppeteer);puppeteer.launch=o=>__fixtureLaunch({...o,headless:true,args:[...(o?.args||[]).filter(a=>a!=='--no-startup-window'),'--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1']});}\nexport const __fixtureHeadless=true;\n";
+const isLauncher = (url, source) => /\/browser\.mjs$/.test(url) && /export const LAUNCH_ARGS/.test(source);
+const fixtureHeadlessControl = () => registerHooks({ load(url, context, next) { const r = next(url, context); return isLauncher(url, String(r.source)) ? { ...r, source: String(r.source) + FIXTURE_LAUNCH } : r; } });
+const headlessProven = m => m instanceof Error || m.__fixtureHeadless === true ? m : new Error('test-mode headless control not applied to collector/browser.mjs; every browser leg refused');
 
 // ── The official entries (recorded 2026-10-19, public GET, nothing submitted) — pinned; every one is answered locally below ──
 const IKEDA = { start: 'https://www.sihd-bk.jp/corporation/internetbanking/', portal: 'https://www.0161.houjinportal.anser.ne.jp/', direct: 'https://www.bizsol.anser.ne.jp/0161c/rblgi01/I1RBLGI01-S01.do',
@@ -96,13 +107,14 @@ const owner = app => { const req = (r, b, m = 'POST') => app.call(api + r, { met
 
 export default { name: 'omf-bank-software-compatibility', covers: ['shared/finance-payment-match.mjs', 'shared/finance-payment-match.d.mts', 'collector/banks/ikeda.mjs', 'collector/banks/resona.mjs', 'collector/banks/contract.mjs', 'collector/bank.mjs', 'collector/browser.mjs', 'collector/package/stage.mjs', 'components/intake/BankConnections.vue', 'server/services/financeBankCollectionService.ts', 'docs/payment-matching.md', 'scripts/finance-bank-collection-integration.cjs', 'scripts/zoomer-fixtures/omf-bank-collection.mjs', 'scripts/zoomer-fixtures/omf-bank-software-compatibility.mjs'], async run() {
   const started = Date.now(), lines = []; let pass = true;
+  const headless = fixtureHeadlessControl(); // test-mode control (see FIXTURE_LAUNCH); deregistered in finally
   const leg = async (name, fn) => { const t = Date.now(); try { lines.push(name + ': ' + await fn() + ` (${Math.round((Date.now() - t) / 1000)}s)`); } catch (e) { pass = false; lines.push(name + ': RED ' + String(e?.message || e).replace(/\s+/g, ' ').slice(0, 1200)); } };
   const assert = (await import('node:assert/strict')).default;
   const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-software-fixture-'));
   process.env.OMF_COLLECTOR_DIR = path.join(temp, 'collector-dir');
   let mongo = null, app = null, executed = false, http = null;
   try {
-    const browserModule = await import(u('collector/browser.mjs')).catch(e => e), bankModule = await import(u('collector/bank.mjs')).catch(e => e), sharedModule = await import(u('shared/finance-payment-match.mjs')).catch(e => e);
+    const browserModule = headlessProven(await import(u('collector/browser.mjs')).catch(e => e)), bankModule = await import(u('collector/bank.mjs')).catch(e => e), sharedModule = await import(u('shared/finance-payment-match.mjs')).catch(e => e);
     const need = (m, what) => { if (m instanceof Error) throw new Error(what + ' missing or broken: ' + m.message); return m; };
     const bm = () => need(browserModule, 'collector/browser.mjs'), bank = () => need(bankModule, 'collector/bank.mjs'), shared = () => need(sharedModule, 'shared/finance-payment-match.mjs');
     const noOwnedChrome = async () => { assert.equal(bm().ownedBrowsers().filter(b => b.connected).length, 0, 'software:browser-closed'); };
@@ -280,6 +292,7 @@ export default { name: 'omf-bank-software-compatibility', covers: ['shared/finan
       return 'pass — ' + message.split('\n')[0] + '; ' + (message.match(/\d+ targeted bank collection checks passed/)?.[0] || '');
     });
   } finally {
+    headless.deregister();
     if (app) await app.close().catch(() => {}); if (mongo) await mongo.stop().catch(() => {});
     await rm(temp, { recursive: true, force: true }).catch(() => {});
   }

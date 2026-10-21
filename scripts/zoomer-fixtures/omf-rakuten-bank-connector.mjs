@@ -17,7 +17,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { createRequire, registerHooks } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,6 +31,17 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const exists = p => access(p).then(() => true, () => false);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const u = rel => pathToFileURL(path.join(root, rel)).href;
+
+// ── Test-mode control (fixture-only; review fold F1/F5). Every Chrome this test process launches through a collector
+// browser.mjs (the repo module, a mutant sibling importing it, or a staged copy) is forced headless, without a startup
+// window, with external host-name resolution refused — whatever its caller asked (profile-reuse fallback, background/quiet
+// mode, fault paths). The production module on disk is untouched; the hook lives only in this test process from run() start,
+// is proven by the __fixtureHeadless marker before any browser leg (otherwise every browser leg is refused), and is
+// deregistered in finally. Owner browsers are never attached: launch keeps pipe transport and the fixture's own profiles.
+const FIXTURE_LAUNCH = "\n;{const __fixtureLaunch=puppeteer.launch.bind(puppeteer);puppeteer.launch=o=>__fixtureLaunch({...o,headless:true,args:[...(o?.args||[]).filter(a=>a!=='--no-startup-window'),'--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1']});}\nexport const __fixtureHeadless=true;\n";
+const isLauncher = (url, source) => /\/browser\.mjs$/.test(url) && /export const LAUNCH_ARGS/.test(source);
+const fixtureHeadlessControl = () => registerHooks({ load(url, context, next) { const r = next(url, context); return isLauncher(url, String(r.source)) ? { ...r, source: String(r.source) + FIXTURE_LAUNCH } : r; } });
+const headlessProven = m => m instanceof Error || m.__fixtureHeadless === true ? m : new Error('test-mode headless control not applied to collector/browser.mjs; every browser leg refused');
 const GUID = /^[a-f\d-]{36}$/;
 
 // ── The fake portal: two documents on the bank's login host, a CSV export, an error page and a wait page ──
@@ -182,13 +193,14 @@ async function httpScenario(app, assert, failedObservation) {
 
 export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/contract.mjs', 'collector/banks/rakuten.mjs', 'collector/bank.mjs', 'server/services/financeBankCollectionService.ts', 'server/api/finance-payments/[...path].ts', 'shared/finance-payment-match.mjs', 'shared/finance-payment-match.d.mts', 'components/intake/BankConnections.vue', 'collector/package/stage.mjs', 'docs/payment-matching.md', 'scripts/finance-bank-collection-integration.cjs', 'scripts/zoomer-fixtures/omf-bank-collection.mjs', 'scripts/zoomer-fixtures/omf-rakuten-bank-connector.mjs'], async run() {
   const started = Date.now(), lines = []; let pass = true;
+  const headless = fixtureHeadlessControl(); // test-mode control (see FIXTURE_LAUNCH); deregistered in finally
   const leg = async (name, fn) => { const t = Date.now(); try { lines.push(name + ': ' + await fn() + ` (${Math.round((Date.now() - t) / 1000)}s)`); } catch (e) { pass = false; lines.push(name + ': RED ' + String(e?.message || e).replace(/\s+/g, ' ').slice(0, 1200)); } };
   const assert = (await import('node:assert/strict')).default;
   const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-rakuten-fixture-'));
   process.env.OMF_COLLECTOR_DIR = path.join(temp, 'collector-dir');
   let mongo = null, app = null, executed = false, failedObservation = null;
   try {
-    const browserModule = await import(u('collector/browser.mjs')).catch(e => e), interaction = await import(u('collector/interaction.mjs')).catch(e => e);
+    const browserModule = headlessProven(await import(u('collector/browser.mjs')).catch(e => e)), interaction = await import(u('collector/interaction.mjs')).catch(e => e);
     const bankModule = await import(u('collector/bank.mjs')).catch(e => e), rakutenModule = await import(u('collector/banks/rakuten.mjs')).catch(e => e), contractModule = await import(u('collector/banks/contract.mjs')).catch(e => e);
     const need = (m, what) => { if (m instanceof Error) throw new Error(what + ' missing or broken: ' + m.message); return m; };
     const rakuten = () => need(rakutenModule, 'collector/banks/rakuten.mjs').default;
@@ -386,10 +398,10 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
     });
     await leg('V real Chrome 390/1440 px on the built app: ログイン方式 select seeded from the saved connection, PayPay standard/BA-PLUS variants, saved variant shown, 観察記録を見る shows the recorded pages, no overflow, no console errors', async () => {
       if (!app || !http) throw new Error('NOT RUN: E5 did not boot the app');
-      const bm = need(browserModule, 'collector/browser.mjs'), profileDir = await mkdtemp(path.join(os.tmpdir(), 'omf-rakuten-browser-')), browser = await bm.browserFor(path.join(profileDir, 'profile'), { headless: true }); let page; const errors = [];
+      const bm = need(browserModule, 'collector/browser.mjs'), profileDir = await mkdtemp(path.join(os.tmpdir(), 'omf-rakuten-browser-')), browser = await bm.browserFor(path.join(profileDir, 'profile'), { headless: true }); let page, atEdge = null; const errors = [];
       try {
         page = await browser.newPage(); await page.setViewport({ width: 390, height: 844 }); page.on('pageerror', e => errors.push(String(e))); page.on('console', m => { if (m.type() === 'error' && !/^Failed to load resource/.test(m.text())) errors.push(m.text()); });
-        const wait = async (f, arg) => { for (let i = 0; i < 250; i++) { if (await page.evaluate(f, arg)) return; await pause(100); } throw Error('rakuten:chrome condition ' + f.toString().slice(0, 160)); };
+        const wait = async (f, arg) => { for (let i = 0; i < 250; i++) { if (await page.evaluate(f, arg)) return; await pause(100); } const state = await page.evaluate(() => ({ buttons: [...document.querySelectorAll('[data-bank-observation-open]')].map(b => b.textContent), views: document.querySelectorAll('[data-bank-observation]').length, alert: document.querySelector('[data-bank-connections] [role=alert]')?.textContent || null, disabled: [...document.querySelectorAll('[data-bank-connect-save]')].map(b => b.disabled) })).catch(e => String(e)); throw Error('rakuten:chrome condition ' + f.toString().slice(0, 160) + ' | page ' + JSON.stringify(state) + ' | errors ' + JSON.stringify(errors).slice(0, 400)); };
         await page.goto(app.origin + '/login', { waitUntil: 'networkidle2' }); await page.type('#email', 'finance-a@example.invalid'); await page.type('#password', 'Synthetic-password-Only1!'); await page.evaluate(() => document.querySelector('button[type="submit"]').click()); await wait(() => location.pathname === '/');
         await page.goto(app.origin + '/intake/payments', { waitUntil: 'networkidle2' }); await wait(() => !!document.querySelector('[data-payment-list]')); await page.click('[data-bank-connections-open]'); await wait(() => !!document.querySelector('[data-bank-connections]')); await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-variant]'), http.accountA);
         const card = id => '[data-bank-connection="' + id + '"] ', overflowing = () => page.evaluate(() => [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(e => e.tagName + '.' + String(e.className).slice(0, 50) + '@' + Math.round(e.getBoundingClientRect().right)));
@@ -402,7 +414,12 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
         assert.equal((await app.call('/api/finance-payments/bank/accounts', { token: app.token })).data.accounts.find(a => a.id === http.accountA).connection.variant, 'standard', 'rakuten:chrome-variant-saved');
         const jobLine = card(http.accountA) + '[data-bank-job="' + http.job.jobId + '"]'; await wait(sel => !!document.querySelector(sel), jobLine);
         assert.match(await page.$eval(jobLine, e => e.textContent), /操作の記録なし/, 'rakuten:channel-failure-job-view');
-        assert.match(await page.$eval(jobLine, e => e.textContent), /観察記録あり/, 'rakuten:chrome-observation-listed'); await page.click(jobLine + ' [data-bank-observation-open]'); await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-observation]'), http.accountA);
+        assert.match(await page.$eval(jobLine, e => e.textContent), /観察記録あり/, 'rakuten:chrome-observation-listed'); const obsButton = jobLine + ' [data-bank-observation-open]';
+        // review fold F1 (harness): at the minimal scroll position a fixed layer can cover the viewport's lower edge — record what is on top there, then
+        // click the button where it is the topmost element (asserted), so the click cannot land on another element
+        atEdge = await page.$eval(obsButton, b => { b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return (hit === b ? 'BUTTON (itself)' : hit ? hit.tagName + '.' + String(hit.className).slice(0, 80) : 'nothing') + ' at y ' + Math.round(r.top + r.height / 2) + '/' + innerHeight; });
+        assert.equal(await page.$eval(obsButton, b => { b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b; }), true, 'rakuten:chrome-observation-button-on-top');
+        await page.click(obsButton); await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-observation]'), http.accountA);
         const view = await page.$eval(card(http.accountA) + '[data-bank-observation]', e => e.textContent); assert.ok(view.includes(ONE_PATH) && view.includes(TWO_PATH) && view.includes('ログイン') && view.includes('meisai.csv'), 'rakuten:chrome-observation-view ' + view.slice(0, 200)); assert.ok(!view.includes('LEAKED'), 'rakuten:chrome-observation-view (no value)');
         assert.ok(view.includes('操作の記録なし'), 'rakuten:channel-failure-observation-view');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'rakuten:chrome-no-overflow (observation open) ' + JSON.stringify(await overflowing()));
@@ -412,7 +429,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
         if (process.env.OMF_TEST_PAYMENT_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.OMF_TEST_PAYMENT_SCREENSHOTS, 'rakuten-connection-desktop-dark.png'), fullPage: true });
         assert.deepEqual(errors, [], 'rakuten:chrome-no-console-errors');
       } finally { if (page) await page.close().catch(() => {}); await browser.close(); if (!path.resolve(profileDir).startsWith(path.resolve(os.tmpdir()) + path.sep)) throw Error('Unsafe owned Chrome cleanup'); await rm(profileDir, { recursive: true, force: true }); }
-      return 'variant select seeded/saved/hidden, 観察記録を見る renders the pages, 390/1440 px without overflow, dark control, no console errors';
+      return 'variant select seeded/saved/hidden, 観察記録を見る renders the pages, 390/1440 px without overflow, dark control, no console errors; at the minimal scroll the button centre showed ' + atEdge;
     });
     // ── E6: the package carries and hashes banks/contract.mjs; the staged graph resolves and loads ──
     await leg('E6 package: banks/contract.mjs staged and hashed, the staged graph resolves (index → bank → banks/rakuten → banks/contract), staged modules load without a live bank; a stage copy without banks/contract fails the named assertion', async () => {
@@ -475,6 +492,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
       return 'pass — ' + String(payload.result.message).split('\n')[0];
     });
   } finally {
+    headless.deregister();
     if (app) await app.close().catch(() => {}); if (mongo) await mongo.stop().catch(() => {});
     await rm(temp, { recursive: true, force: true }).catch(() => {});
   }

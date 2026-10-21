@@ -35,8 +35,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_SOFTWARE, BANK_NATIVE_TEMPLATES, BANK_VARIANT_COLLECTION, bankCapability } from '~/shared/finance-payment-match.mjs'
-import * as bankTables from '~/shared/finance-payment-match.mjs'
+import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_SOFTWARE, BANK_NATIVE_TEMPLATES, BANK_VARIANT_COLLECTION, bankCapability, bankFirstCapture } from '~/shared/finance-payment-match.mjs'
 import { useUserStore } from '~/stores/user'
 const emit=defineEmits<{(e:'map',fileId:string):void;(e:'close'):void;(e:'changed'):void}>(),user=useUserStore(),api='/api/finance-payments/bank/'
 const INPUT='input mt-1 w-full max-w-full rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white'
@@ -50,8 +49,8 @@ const nativeOf=(f:any)=>f?.variant?BANK_NATIVE_TEMPLATES[f.provider]?.[f.variant
 const supportText=(c:any)=>c.steps==='implemented'?'取得手順 実装済み':'取得手順 未確認'
 const providerSupportText=(key:string,support:string)=>support==='verified'?'取得手順 確認済み':Object.keys(BANK_VARIANT_COLLECTION[key]||{}).length?(BANK_LOGIN_VARIANTS[key]||[]).filter(([v])=>BANK_VARIANT_COLLECTION[key][v]==='retrieve').map(([,label])=>label.replace(/（.*$/,'')).join('・')+'は取得手順 実装済み':'取得手順 未確認'
 // Plan omf-paypay-four-accounts-20261021: the template-free first capture (shared BANK_FIRST_CAPTURE, PayPay銀行 標準 only) and its guided
-// observe jobs. Read through the module namespace: the table is newer than the shared declaration file.
-const firstCaptureOf=(provider:any,variant:any)=>{const f=(bankTables as any).bankFirstCapture;return typeof f==='function'?f(provider,variant||null):null}
+// observe jobs. Imported by name from the declared shared module (no silent fallback).
+const firstCaptureOf=(provider:any,variant:any)=>bankFirstCapture(provider,variant||null)
 const templateFreeOf=(f:any)=>!!f?.variant&&firstCaptureOf(f.provider,f.variant)==='unmapped'
 const guidedOf=(c:any)=>!!c?.provider&&firstCaptureOf(c.provider,c.variant??null)==='unmapped'
 const mappingPending=(c:any)=>c?.state==='needs_review'&&/^mapping-required/.test(String(c?.reason||''))

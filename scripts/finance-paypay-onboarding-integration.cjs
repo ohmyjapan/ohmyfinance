@@ -14,7 +14,7 @@
 // accounts and passwords only; no bank, production database or business send. Run by scripts/zoomer-fixtures/omf-paypay-four-accounts.mjs
 // through the hub verifier; prints PASS lines and a final receipt.
 const assert=require('node:assert/strict');
-const fs=require('node:fs'),fsp=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),net=require('node:net'),crypto=require('node:crypto');
+const fs=require('node:fs'),fsp=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),net=require('node:net'),crypto=require('node:crypto'),http=require('node:http');
 const {spawn}=require('node:child_process'),{pathToFileURL}=require('node:url');
 const {MongoMemoryServer}=require('mongodb-memory-server'),{MongoClient,ObjectId}=require('mongodb');
 const root=path.resolve(__dirname,'..'),pause=ms=>new Promise(r=>setTimeout(r,ms)),u=rel=>pathToFileURL(path.join(root,rel)).href;
@@ -23,6 +23,12 @@ const OWNER_PASSWORD='Synthetic-password-Only1!',PUBLIC='https://omf.example.inv
 // Four fictional PayPay standard logins: leading zeros, spaces and symbols in the passwords; each must reach the bank exactly.
 const LOGINS=[{branch:'001',account:'0000101',password:'Fictional-1 '},{branch:'010',account:'0100202',password:' Fictional 2/<>'},{branch:'100',account:'1000303',password:'Fict3-'+'x'.repeat(26)},{branch:'009',account:'0090404',password:'Fict"4&'}];
 const HEAD='日付,内容,出金金額,入金金額,残高';
+// Review fold F4: the route-only mode (the mutant runs) and the two route mutants. Each is a [from,to] edit of the daemon's own module text,
+// applied by the TEST launcher's load hook only (exactly one hit, else the daemon fails to start: a harness fault, never detection).
+const RETRY_MUTANT=process.env.OMF_TEST_PAYPAY_RETRY_MUTANT||'',RETRY_ONLY=!!(process.env.OMF_TEST_PAYPAY_RETRY_ONLY||RETRY_MUTANT);
+const RESERVE='let release;try{release=reserveAction();}catch(error){return reply(409,{error:error.message});}',BODY='\n        try{\n          const input=bankRetryInput(await json(req));';
+const RETRY_MUTANTS={'no-route-reservation':[[RESERVE,'let release=()=>{};/* MUTANT: route reservation removed */']],'reserve-after-body':[[RESERVE+BODY,'let release=()=>{};'+BODY+'try{release=reserveAction();}catch(error){return reply(409,{error:error.message});}/* MUTANT: reserved after the body */']]};
+if(RETRY_MUTANT&&!RETRY_MUTANTS[RETRY_MUTANT])throw Error('FAIL unknown retry mutant '+RETRY_MUTANT);
 
 // ── The fake PayPay site: the public standard login form (PAYPAY-PUBLIC-ENTRY facts), a generated per-document submit handler, an
 // invented post-login page with a statement link and an invented CSV export (the actual authenticated controls are NOT known; these
@@ -56,7 +62,9 @@ function site(scenarioFile,metricFile){
       }
       if(url.pathname===TOP&&s.session!==null)return html(`<!doctype html><html lang="ja"><meta charset="utf-8"><title>PayPay銀行 トップ</title><body><a href="#">ログアウト</a> <a id="meisai" href="${MEISAI}">入出金明細（架空）</a></body></html>`);
       if(url.pathname===MEISAI&&s.session!==null)return html(`<!doctype html><html lang="ja"><meta charset="utf-8"><title>入出金明細（架空）</title><body><a href="#">ログアウト</a> <a id="csv" href="${CSV_PATH}">CSVダウンロード（架空）</a></body></html>`);
-      if(url.pathname===CSV_PATH&&s.session!==null){s.exports++;const i=s.session,n=s.exports,rows=[HEAD,`2026/10/${String(n).padStart(2,'0')},架空取引 PayPay${i+1}-${n},,${1000*(i+1)+n},${100000+n}`];s.downloads.push({index:i,n});
+      if(url.pathname===CSV_PATH&&s.session!==null){s.exports++;const i=s.session,n=s.exports,sc=scenario(),rows=sc.export==='header-only'?[HEAD]:[HEAD,`2026/10/${String(n).padStart(2,'0')},架空取引 PayPay${i+1}-${n},,${1000*(i+1)+n},${100000+n}`];s.downloads.push({index:i,n,export:sc.export||'csv'});
+        // review fold F3: an invented PDF (binary, with NUL bytes) where a CSV was expected
+        if(sc.export==='pdf')return request.respond({status:200,contentType:'application/pdf',headers:{'Content-Disposition':'attachment; filename="meisai.pdf"'},body:Buffer.concat([Buffer.from('%PDF-1.7\n%'),Buffer.from([0xe2,0xe3,0xcf,0xd3,0x0a,0x00,0x01])])});
         return request.respond({status:200,contentType:'text/csv',headers:{'Content-Disposition':'attachment; filename="meisai.csv"'},body:Buffer.from(rows.join('\r\n')+'\r\n')});}
       return request.abort();
     }finally{save();}
@@ -72,6 +80,7 @@ function site(scenarioFile,metricFile){
       else if(p===MEISAI)later(400,async()=>{await page.click('#csv');later(3000,()=>page.close());});
       else if(p===ACTION)later(2500,()=>closeIfStill('form[name="HOST"]'));
       else if((p===ENTRY&&sc.closeAtLogin)||at.startsWith(HOME))later(4000,()=>closeIfStill(null));
+      else if(p===ENTRY&&sc.holdAtLoginMs)later(sc.holdAtLoginMs,()=>closeIfStill(null));
     });
   };
   return s;
@@ -149,6 +158,8 @@ const parsed=new URL(mapped);if(parsed.origin!==localOrigin&&parsed.origin!==${J
 fs.appendFileSync(requestFile,JSON.stringify({path:parsed.pathname,method:init?.method||'GET'})+'\\n');return realFetch(mapped,init);};
 globalThis.__omfFictionalBankLaunch=async(launch,options)=>{const browser=await launch({...options,headless:true,args:(options?.args||[]).filter(a=>a!=='--no-startup-window')});let create=browser.newPage.bind(browser);Object.defineProperty(browser,'newPage',{configurable:true,get(){return async(...args)=>{const page=await create(...args);await page.setRequestInterception(true);page.on('request',request=>fake.respond(request));fake.person(page);return page;};},set(fn){create=fn.bind(browser);}});return browser;};
 registerHooks({load(url,context,next){const result=next(url,context);if(url===${JSON.stringify(u('collector/browser.mjs'))})return {...result,source:String(result.source)+'\\nconst fixtureLaunch=puppeteer.launch.bind(puppeteer);puppeteer.launch=options=>globalThis.__omfFictionalBankLaunch(fixtureLaunch,options);\\n'};return result;}});
+const retryMutant=${JSON.stringify(RETRY_MUTANT?RETRY_MUTANTS[RETRY_MUTANT]:null)};
+if(retryMutant)registerHooks({load(url,context,next){const result=next(url,context);if(url!==${JSON.stringify(u('collector/index.mjs'))})return result;let text=String(result.source).replace(/\\r\\n/g,'\\n');for(const [from,to] of retryMutant){if(text.split(from).length!==2)throw Error('FAIL retry mutant anchor hits '+(text.split(from).length-1));text=text.replace(from,()=>to);}return {...result,source:text};}});
 await import(${JSON.stringify(u('collector/run.mjs'))});`;
     await fsp.writeFile(launcher,script);
     daemon=spawn(process.execPath,[launcher],{cwd:root,windowsHide:true,env:{...process.env,OMF_COLLECTOR_DIR:collectorDir,OMF_COLLECTOR_PORT:String(dport),OMF_COLLECTOR_TICK_MS:'1000'},stdio:['ignore','pipe','pipe']});let output='';for(const stream of [daemon.stdout,daemon.stderr])stream.on('data',v=>{output=(output+v).slice(-6000)});
@@ -221,7 +232,7 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     };
     const secretFree=(label,value)=>{const text=JSON.stringify(value);for(const l of LOGINS)assert.ok(!text.includes(l.account)&&!text.includes(l.password.trim()),'paypay:no-secret '+label);};
     const firsts=[];
-    for(const i of [0,1,2,3]){
+    for(const i of RETRY_ONLY?[0,1]:[0,1,2,3]){
       const r=await runJob(i,'first '+(i+1));firsts.push(r);
       assert.deepEqual(r.posts.map(p=>[p.index,p.ok,p.fresh,p.handler]),[[i,true,true,true]],'paypay:one-submission-own-account '+(i+1));
       assert.deepEqual(r.posts[0].keys,['Chk','KozaNo','Pw','SessionToken','TenNo','login'],'paypay:native-form-fields');
@@ -237,6 +248,7 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
       // Deliberate change (plan P1): the kept CSV does not prove the automatic sign-in; the account stays 'uncertain' (retry offered).
       const b=(await banksOf()).find(x=>x.bankAccountId===P[i]);assert.deepEqual([b.hasCredentials,b.refused,b.pending],[true,true,'uncertain'],'paypay:file-not-proof-stays-uncertain '+(i+1));
     }
+    if(!RETRY_ONLY){
     assert.equal(new Set(firsts.map(f=>f.row.snapshotHash)).size,4,'paypay:four-interpretations');assert.deepEqual(metric().foreign,[],'paypay:no-foreign-request');
     assert.equal(browserModule.ownedBrowsers().filter(b=>b.connected).length,1,'only the setup browser is owned by this process');
     assert.equal(fs.existsSync(path.join(collectorDir,'profiles','ephemeral'))?fs.readdirSync(path.join(collectorDir,'profiles','ephemeral')).length:0,0,'paypay:ephemeral-profiles-removed');
@@ -279,6 +291,63 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     const baRow=await waitFor(async()=>{const r=await db.collection('financebankjobs').findOne({jobId:baJob.jobId});return r&&['complete','failed'].includes(r.state)?r:null},'ba job',120000);
     assert.equal(baRow.state,'complete');assert.equal(keyGets(),keysBefore,'paypay:baplus-no-key');assert.equal(metric().posts.length,postsBefore,'paypay:baplus-no-submission');
     pass('BA-PLUS stays a manual observe: no saved login, no key release, no submission');
+    // ── review fold F3: refused captures at the bank statement outbox boundary (real tick, real OMF, real outbox on this PC) ──
+    const uploads=()=>reads().filter(r=>r.path.endsWith('/collector/bank/upload')&&r.method==='POST').length;
+    // (1) PayPay 2 exports an empty-period file (the header only): retained needs_review with zero rows
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed,export:'header-only'}));
+    await retryLogin(1);const empty2=await runJob(1,'empty period 2');
+    const emptyCap=await db.collection('financebankstatements').find({'capture.jobId':empty2.job.jobId}).toArray();assert.equal(emptyCap.length,1,'paypay:empty-period-retained');assert.equal(emptyCap[0].capture.state,'needs_review','paypay:empty-period-needs-review');
+    // (2) PayPay 4 exports the identical bytes: OMF holds them as PayPay 2's statement and refuses for good → terminal on this PC, explained
+    await retryLogin(3);const empty4=await runJob(3,'empty period 4',{expect:'failed'});
+    assert.match(empty4.row.lastMessage,/別の口座で受信済み/,'paypay:other-account-refusal-explained');assert.match(empty4.row.lastMessage,/このPC/,'paypay:other-account-original-kept-explained');
+    assert.equal(await db.collection('financebankstatements').countDocuments({'capture.jobId':empty4.job.jobId}),0,'paypay:other-account-nothing-imported');
+    const ownerJobs=ok(await ownerReq('bank/accounts/'+P[3]+'/jobs',undefined,'GET'),'jobs 4').jobs;assert.match(String(ownerJobs.find(j=>j.jobId===empty4.job.jobId)?.lastMessage),/別の口座で受信済み/,'paypay:refusal-owner-visible');
+    const folder4=path.join(collectorDir,'outbox','bank',P[3],empty4.job.jobId+'-observe'),man4=JSON.parse(fs.readFileSync(path.join(folder4,'manifest.json'),'utf8'));
+    assert.deepEqual([man4.refusal?.status,man4.refusal?.reason,man4.acknowledgedAt],[409,'other-account',undefined],'paypay:refusal-recorded-on-pc');
+    assert.equal(man4.sha256,emptyCap[0].hash,'paypay:identical-empty-period-bytes');assert.equal(sha256(fs.readFileSync(path.join(folder4,man4.filename))),man4.sha256,'paypay:refused-original-kept');
+    // (3) PayPay 4's next job proceeds and sends only its observation: the refused statement is never sent again
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed,closeAtLogin:true}));
+    const before4=uploads(),next4=await runJob(3,'after refusal 4');assert.equal(next4.row.state,'complete','paypay:next-job-proceeds');assert.equal(uploads()-before4,1,'paypay:refused-capture-not-resent');
+    // (4) PayPay 2 exports a PDF: no statement manifest, nothing but the observation sent, the file stays on this PC, explained
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed,export:'pdf'}));
+    await retryLogin(1);const before2=uploads(),pdf2=await runJob(1,'pdf 2',{expect:'failed'});
+    assert.match(pdf2.row.lastMessage,/CSV・テキストとして読めない/,'paypay:pdf-explained');assert.equal(uploads()-before2,1,'paypay:pdf-not-sent');assert.deepEqual(pdf2.downloads.map(d=>d.export),['pdf']);
+    assert.equal(await db.collection('financebankstatements').countDocuments({'capture.jobId':pdf2.job.jobId}),0,'paypay:pdf-nothing-imported');
+    const folder2=path.join(collectorDir,'outbox','bank',P[1],pdf2.job.jobId+'-observe'),names2=fs.readdirSync(folder2);assert.ok(!names2.includes('manifest.json'),'paypay:pdf-no-manifest');
+    assert.ok(names2.some(n=>/^[a-f\d-]{36}$/.test(n)&&fs.readFileSync(path.join(folder2,n)).subarray(0,5).toString()==='%PDF-'),'paypay:pdf-original-kept');
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed}));
+    pass('refused captures at the bank statement outbox (real tick, real OMF): the identical empty-period export of PayPay 2 retained needs_review, the same bytes from PayPay 4 refused by OMF as another account\'s statement — the job failed with the explanation shown to the owner, the manifest recorded the refusal on this PC with the original kept, never acknowledged; PayPay 4\'s next job proceeded and sent only its observation; a PDF export was never sent, stayed on this PC and was explained');
+    }
+    // ── review fold F4: the ACTUAL /bank/retry route reservation (real daemon HTTP, real tick, real markers) ──
+    const markerOf=i=>path.join(collectorDir,'bank-login','paypay-'+P[i]+'.json'),pendingOf=async i=>(await banksOf()).find(b=>b.bankAccountId===P[i]).pending;
+    const current=JSON.parse(fs.readFileSync(scenarioFile,'utf8')),scenarioBase=current.passwords?{passwords:current.passwords}:{};
+    await waitFor(async()=>!(await status()).busy,'idle before the route leg');
+    assert.deepEqual([await pendingOf(0),await pendingOf(1)],['uncertain','uncertain'],'paypay:route-leg-precondition');
+    // (A) a guided job of PayPay 1 holds the action slot (the person waits at the login page): a retry of PayPay 2 is refused, its marker unchanged
+    await fsp.writeFile(scenarioFile,JSON.stringify({...scenarioBase,holdAtLoginMs:25000}));
+    const holdJob=ok(await ownerReq('bank/accounts/'+P[0]+'/sync',{}),'sync hold').job;
+    await waitFor(async()=>(await db.collection('financebankjobs').findOne({jobId:holdJob.jobId}))?.state==='verification_required','hold job active',120000);
+    const markerBefore=fs.readFileSync(markerOf(1),'utf8'),whileJob=await local('/bank/retry',{bankAccountId:P[1]});
+    assert.equal(whileJob.status,409,'paypay:retry-409-while-job '+JSON.stringify(whileJob.data));assert.match(String(whileJob.data?.error),/Wait for the current collector action/,'paypay:retry-busy-while-job');
+    assert.equal(fs.readFileSync(markerOf(1),'utf8'),markerBefore,'paypay:retry-while-job-marker-unchanged');assert.equal(await pendingOf(1),'uncertain','paypay:retry-while-job-still-uncertain');
+    const held=await waitFor(async()=>{const r=await db.collection('financebankjobs').findOne({jobId:holdJob.jobId});return r&&['complete','failed'].includes(r.state)?r:null},'hold job done',180000);assert.equal(held.state,'complete','paypay:hold-job-complete');
+    await waitFor(async()=>!(await status()).busy,'idle after hold');
+    // (B) a retry whose body is still arriving holds the slot from before the body is read: a job queued meanwhile is not claimed by any tick
+    await fsp.writeFile(scenarioFile,JSON.stringify({...scenarioBase,closeAtLogin:true}));
+    const rawRetry=id=>{const body=Buffer.from(JSON.stringify({bankAccountId:id})),cut=Math.floor(body.length/2);let settled=null;const req=http.request(setup.origin+'/bank/retry',{method:'POST',headers:{'Content-Type':'application/json','Content-Length':body.length,'X-Setup-Key':setup.hash.slice(1),Origin:setup.origin}});
+      const answer=new Promise((resolve,reject)=>{req.on('response',res=>{let t='';res.on('data',d=>{t+=d;});res.on('end',()=>{settled={status:res.statusCode,data:JSON.parse(t||'{}')};resolve(settled);});});req.on('error',reject);});
+      answer.catch(()=>{});/* a reset after a failed assertion must not hide that assertion */req.write(body.subarray(0,cut));return {answer,settled:()=>settled,finish:()=>req.end(body.subarray(cut))};};
+    let slow=null,early=0;for(let attempt=0;attempt<20&&!slow;attempt++){const r=rawRetry(P[1]);await pause(1500);if(r.settled()){assert.equal(r.settled().status,409,'paypay:in-flight-early-answer-is-busy');early++;await pause(700);continue;}slow=r;}
+    assert.ok(slow,'paypay:in-flight-retry-started');
+    const queued=ok(await ownerReq('bank/accounts/'+P[0]+'/sync',{}),'sync while retry in flight').job;await pause(5000);
+    const during=await db.collection('financebankjobs').findOne({jobId:queued.jobId});
+    assert.deepEqual([during.state,during.collectorId??null,slow.settled()],['queued',null,null],'paypay:retry-route-reserves-before-body (no tick claims while the retry is in flight)');assert.equal((await status()).busy,true,'paypay:in-flight-retry-holds-slot');
+    slow.finish();const done=await slow.answer;assert.deepEqual([done.status,done.data],[200,{retry:true}],'paypay:in-flight-retry-completes');assert.equal(await pendingOf(1),null,'paypay:in-flight-retry-rearmed');
+    const resumed=await waitFor(async()=>{const r=await db.collection('financebankjobs').findOne({jobId:queued.jobId});return r&&['complete','failed'].includes(r.state)?r:null},'job after the retry',180000);assert.equal(resumed.state,'complete','paypay:slot-released-work-resumes');
+    await waitFor(async()=>!(await status()).busy,'idle after the route leg');await fsp.writeFile(scenarioFile,JSON.stringify(scenarioBase));
+    const routeReceipt={whileJob:whileJob.status,inFlightEarlyBusy:early,claimedWhileInFlight:during.state!=='queued',afterCompletion:done.status,resumed:resumed.state};
+    pass('the actual /bank/retry route (real daemon HTTP, real tick): while PayPay 1\'s guided job held the action slot a retry of PayPay 2 was refused 409 and its marker stayed byte-identical; a retry whose body was still arriving held the slot from before the body was read — a job queued meanwhile stayed unclaimed across 5 ticks — and once the body completed the retry answered 200, re-armed only PayPay 2, released the slot and the queued job ran');
+    if(RETRY_ONLY){console.log(JSON.stringify({pass:true,checks,mode:'retry-route',mutant:RETRY_MUTANT||null,route:routeReceipt,foreignRequests:metric().foreign.length,bankRequests:0,productionWrites:0}));return;}
     await waitFor(async()=>!(await status()).busy,'idle before pause');
     ok(await local('/pause',{}),'daemon pause');
     // ── after the save: scope, login type and revocation stop the release (in-process, the daemon paused) ──
@@ -298,7 +367,7 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     secretFree('omf jobs',await db.collection('financebankjobs').find({}).toArray());secretFree('omf statements',await db.collection('financebankstatements').find({}).project({capture:1,name:1}).toArray());
     pass('after the saves: a removed bank scope and a BA-PLUS change stop that account\'s release (controlled bank-login failure) while another account still releases; restored, it releases again; a foreign account cannot be granted; a revoked PC releases nothing; no login value is stored by OMF');
     const m=metric();
-    console.log(JSON.stringify({pass:true,checks,accounts:4,retryBusyRefusals:busyRefusals,retryAnswers,loginSubmissions:m.posts.length,exports:m.downloads.length,keyReleases:keyGets(),foreignRequests:m.foreign.length,bankRequests:0,productionWrites:0}));
+    console.log(JSON.stringify({pass:true,checks,accounts:4,route:routeReceipt,retryBusyRefusals:busyRefusals,retryAnswers,loginSubmissions:m.posts.length,exports:m.downloads.length,keyReleases:keyGets(),foreignRequests:m.foreign.length,bankRequests:0,productionWrites:0}));
   }finally{
     if(daemon&&daemon.exitCode===null){const exited=new Promise(r=>daemon.once('exit',r));daemon.kill();await exited;}
     if(setupBrowser)await setupBrowser.close().catch(()=>{});

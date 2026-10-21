@@ -9,6 +9,7 @@
 // Fail-first on b7305e6: bank owner routes answer 404 (finance-payments/[...path].ts:31), collector/bank.mjs is absent,
 // runBankJob/claimWork are not exported, financebankjobs does not exist, the package allowlist lacks the bank modules.
 import { execFile } from 'node:child_process';
+import { registerHooks } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
@@ -26,7 +27,21 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const exists = p => access(p).then(() => true, () => false);
 const GUID = /^[a-f\d-]{36}$/;
 const u = rel => pathToFileURL(path.join(root, rel)).href;
-const run = (args, extra = {}, timeout = 600000, cwd = root) => new Promise(resolve => execFile(process.execPath, args, { cwd, windowsHide: true, timeout, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, MONGO_URI: '', MONGODB_URI: '', NUXT_MONGO_URI: '', ...extra } }, (e, stdout, stderr) => resolve({ code: e ? e.code || 1 : 0, killed: !!e?.killed, stdout: String(stdout), stderr: String(stderr) })));
+
+// ── Test-mode control (fixture-only; review fold F1/F5). Every Chrome this test process launches through a collector
+// browser.mjs (the repo module, a mutant sibling importing it, or a staged copy) is forced headless, without a startup
+// window, with external host-name resolution refused — whatever its caller asked (profile-reuse fallback, background/quiet
+// mode, fault paths). The production module on disk is untouched; the hook lives only in this test process from run() start,
+// is proven by the __fixtureHeadless marker before any browser leg (otherwise every browser leg is refused), and is
+// deregistered in finally. Owner browsers are never attached: launch keeps pipe transport and the fixture's own profiles.
+const FIXTURE_LAUNCH = "\n;{const __fixtureLaunch=puppeteer.launch.bind(puppeteer);puppeteer.launch=o=>__fixtureLaunch({...o,headless:true,args:[...(o?.args||[]).filter(a=>a!=='--no-startup-window'),'--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1']});}\nexport const __fixtureHeadless=true;\n";
+const isLauncher = (url, source) => /\/browser\.mjs$/.test(url) && /export const LAUNCH_ARGS/.test(source);
+const fixtureHeadlessControl = () => registerHooks({ load(url, context, next) { const r = next(url, context); return isLauncher(url, String(r.source)) ? { ...r, source: String(r.source) + FIXTURE_LAUNCH } : r; } });
+const headlessProven = m => m instanceof Error || m.__fixtureHeadless === true ? m : new Error('test-mode headless control not applied to collector/browser.mjs; every browser leg refused');
+// The node subprocesses this fixture runs (HTTP/V leg, server mutants, unit checks) preload the same control; a loaded
+// launcher writes a receipt line to stderr that the HTTP leg requires.
+const FIXTURE_HOOK_IMPORT = 'data:text/javascript,' + encodeURIComponent(`import{registerHooks}from'node:module';registerHooks({load(url,c,n){const r=n(url,c);return /\\/browser\\.mjs$/.test(url)&&/export const LAUNCH_ARGS/.test(String(r.source))?{...r,source:String(r.source)+${JSON.stringify(FIXTURE_LAUNCH + "process.stderr.write('[fixture-headless-control] '+import.meta.url+'\\n');\n")}}:r}});`);
+const run = (args, extra = {}, timeout = 600000, cwd = root) => new Promise(resolve => execFile(process.execPath, ['--import', FIXTURE_HOOK_IMPORT, ...args], { cwd, windowsHide: true, timeout, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, MONGO_URI: '', MONGODB_URI: '', NUXT_MONGO_URI: '', ...extra } }, (e, stdout, stderr) => resolve({ code: e ? e.code || 1 : 0, killed: !!e?.killed, stdout: String(stdout), stderr: String(stderr) })));
 
 // ── Server-side mutants: one anchor each in the built server chunks (shape of omf-payment-match.mjs MUTANTS); the
 // integration run under OMF_TEST_BANK_MUTANT must then fail on the named assertion.
@@ -150,6 +165,7 @@ async function packageClosure(stageModule, into) {
 
 export default { name: 'omf-bank-collection', covers: ['server/models/FinancePaymentMatch.ts', 'server/models/Finance.ts', 'server/api/finance-payments/collector/[...path].ts', 'server/api/finance-payments/[...path].ts', 'server/services/financeBankStatementService.ts', 'server/services/financeBankCollectionService.ts', 'shared/finance-payment-match.mjs', 'shared/finance-payment-match.d.mts', 'collector/index.mjs', 'collector/bank.mjs', 'collector/banks/rakuten.mjs', 'collector/banks/paypay.mjs', 'collector/banks/resona.mjs', 'collector/banks/ikeda.mjs', 'collector/banks/contract.mjs', 'collector/aplus.mjs', 'collector/package/stage.mjs', 'components/intake/BankStatementImporter.vue', 'components/intake/BankConnections.vue', 'pages/intake/payments.vue', 'components/intake/IntakePaymentMatches.vue', 'docs/payment-matching.md', 'scripts/finance-integration.cjs', 'scripts/finance-bank-collection-integration.cjs', 'scripts/zoomer-fixtures/omf-payment-match.mjs', 'scripts/zoomer-fixtures/omf-bank-collection.mjs', 'scripts/zoomer-fixtures/omf-bank-collection-replay.mjs'], async run() {
   const started = Date.now(), lines = []; let pass = true;
+  const headless = fixtureHeadlessControl(); // test-mode control (see FIXTURE_LAUNCH); deregistered in finally
   const leg = async (name, fn) => { const t = Date.now(); try { lines.push(name + ': ' + await fn() + ` (${Math.round((Date.now() - t) / 1000)}s)`); } catch (e) { pass = false; lines.push(name + ': RED ' + String(e?.message || e).replace(/\s+/g, ' ').slice(0, 1200)); } };
   const assert = (await import('node:assert/strict')).default;
   const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-bank-fixture-'));
@@ -163,10 +179,11 @@ export default { name: 'omf-bank-collection', covers: ['server/models/FinancePay
       await writeFile(path.join(root, '.zoomer-bank-integration.txt'), app.stdout + app.stderr);
       if (app.code !== 0) throw Error((app.stdout + app.stderr).slice(-2600));
       if (!app.stdout.includes('V hidden real Chrome')) throw Error('mandatory Chrome leg missing');
+      if (!app.stderr.includes('[fixture-headless-control] ' + u('collector/browser.mjs'))) throw Error('test-mode headless control receipt missing in the HTTP/V subprocess');
       return app.stdout.match(/\d+ targeted bank collection checks passed/)?.[0] || 'missing summary';
     });
     // ── 2. collector: A1/A2 on owned Chrome with the fake page, C1/C3 dispatch, C4 recovery, C8 abort, H1/H2 corpora ──
-    const browserModule = await import(u('collector/browser.mjs')).catch(e => e), interaction = await import(u('collector/interaction.mjs')).catch(e => e);
+    const browserModule = headlessProven(await import(u('collector/browser.mjs')).catch(e => e)), interaction = await import(u('collector/interaction.mjs')).catch(e => e);
     const bankModule = await import(u('collector/bank.mjs')).catch(e => e), index = await import(u('collector/index.mjs')).catch(e => e);
     const need = (m, what) => { if (m instanceof Error) throw new Error(what + ' missing or broken: ' + m.message); return m; };
     const ACCOUNT = { _id: 'c3c3c3c3c3c3c3c3c3c3c3c3', ownerId: 'd4d4d4d4d4d4d4d4d4d4d4d4', name: 'Synthetic bank', currency: 'JPY' }, ORIGIN = 'https://omf.example';
@@ -367,6 +384,6 @@ export default { name: 'omf-bank-collection', covers: ['server/models/FinancePay
     });
     // ── 5. R-lite: the released unit/Vue checks of the shared module and importer stay green ──
     await leg('R unit/Vue checks (scripts/finance-payment-match.test.mjs)', async () => { const r = await run(['--test', 'scripts/finance-payment-match.test.mjs']); await writeFile(path.join(root, '.zoomer-bank-unit.txt'), r.stdout + r.stderr); if (r.code !== 0) throw Error((r.stdout + r.stderr).slice(-1600)); return 'green'; });
-  } finally { await rm(temp, { recursive: true, force: true }).catch(() => {}); }
+  } finally { headless.deregister(); await rm(temp, { recursive: true, force: true }).catch(() => {}); }
   return { pass, databaseCoverage: { executed: !!app && app.code === 0, ownedProcess: !!app && app.code === 0 }, message: `${pass ? 'green' : 'RED'} in ${Math.round((Date.now() - started) / 1000)}s\n` + lines.join('\n') };
 } };

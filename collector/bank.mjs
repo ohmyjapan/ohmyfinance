@@ -67,6 +67,15 @@ async function writeManifest(directory, manifest) {
   try { await writeFile(temporary, JSON.stringify(manifest, null, 2), { flag: 'wx', mode: 0o600 }); await link(temporary, file); }
   finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 }
+// Review fold F3: OMF's text rule for a collector bank statement (server financeBankStatementService.retainBankFile with financeIntakeService
+// decodeText and MAX_BYTES; the collector sends every bank statement as text/csv): non-empty, at most 10 MiB, no NUL byte, strict UTF-8 or
+// strict Shift_JIS. A PDF is refused by its signature even when its bytes happen to decode. Header-only (empty-period) files pass.
+export const STATEMENT_MAX_BYTES = 10 * 1024 * 1024;
+export function statementText(bytes) {
+  if (!bytes?.length || bytes.length > STATEMENT_MAX_BYTES || bytes.includes(0) || bytes.subarray(0, 5).toString('latin1') === '%PDF-') return false;
+  try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); return true; } catch { /* not UTF-8 */ }
+  try { new TextDecoder('shift_jis', { fatal: true }).decode(bytes); return true; } catch { return false; }
+}
 
 const AUTHENTICATED = ['authenticated', 'statements', 'export_ready'];
 /** The person-facing texts of the sign-in step (also the job's status in OMF). None carries a credential, a URL or page text. */
@@ -144,14 +153,19 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   throw new Error(`${label}へのサインインが完了しませんでした。再度「取得」を押してください`);
 }
 
+const stoppedText = label => `${label}への自動サインインの完了は確認できないため、次回の自動送信は止めています（ダウンローダーの設定画面で再試行を許可できます）`;
 /** The person-facing texts of a guided first capture (also the job's status in OMF). None carries a credential, a URL or page text. */
 export const GUIDED_TEXT = Object.freeze({
   submitted: label => `${label}に保存済みのログインを1回だけ送信しました。銀行の追加の確認があればChromeの画面で完了し、入出金明細のCSVを出力してからタブを閉じてください（ガイド付き取得）`,
   manual: label => `${label}にChromeでサインインし、入出金明細のCSVを出力してからタブを閉じてください（ガイド付き取得）`,
   blocked: label => `${label}の前回の自動サインインが確認できていないため、保存済みのログインを自動では送信しません。ログインが正しい場合はダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押してから取得してください（変更した場合は保存し直してください）`,
   unconfirmed: label => `${label}への自動サインインの完了は確認できません（サインイン後の銀行の画面は未確認のため、受け取ったファイルでは判断しません）。保存済みのログインは自動では再送信しません。ログインが正しい場合はダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押してから、もう一度取得してください（変更した場合は保存し直してください）`,
-  kept: label => `受け取った明細は保存しました。${label}への自動サインインの完了は確認できないため、次回の自動送信は止めています（ダウンローダーの設定画面で再試行を許可できます）`,
-  resave: label => `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面で正しいログインを保存し直すまで自動では送信しません`
+  kept: label => `受け取った明細は保存しました。${stoppedText(label)}`,
+  // Review fold F3: a download that is not a readable CSV/text statement (statementText) is not sent; the file stays in the job folder.
+  unreadable: () => '受け取ったファイルはCSV・テキストとして読めないため、明細として送信しません（ファイルはこのPCに残しています）',
+  resave: label => `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面で正しいログインを保存し直すまで自動では送信しません`,
+  // The guided variant's own login fields (PayPay銀行 標準: 店番号・口座番号・パスワード); LOGIN_TEXT.refused keeps 楽天銀行's ID wording.
+  refused: label => `${label}が保存済みのログインを受け付けませんでした。Chromeでサインインするか、ダウンローダーの設定画面で店番号・口座番号・パスワードを保存し直してください（保存し直すまで自動では送信しません）`
 });
 /**
  * The one saved-login step of a guided observe job (ensureBankLogin's lazy order, without inferring authentication): file metadata,
@@ -163,7 +177,7 @@ export async function guidedSignIn(ui, { label, login, journal = null, signal = 
   const none = text => ({ submitted: false, refused: false, text });
   if (!login || typeof ui.login !== 'function' || typeof ui.loginForm !== 'function') return none(null);
   const saved = await login.state();
-  if (saved !== 'ready') return none(saved === 'refused' ? LOGIN_TEXT.refused(label) : saved === 'blocked' ? GUIDED_TEXT.blocked(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : null);
+  if (saved !== 'ready') return none(saved === 'refused' ? GUIDED_TEXT.refused(label) : saved === 'blocked' ? GUIDED_TEXT.blocked(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : null);
   if (!(await ui.loginForm({ entry: true }))?.ok) return none(LOGIN_TEXT.form(label));
   if (journal && await journal.seen()) return none(LOGIN_TEXT.retried(label)); // guard:guided-journal
   signal?.throwIfAborted();
@@ -176,7 +190,7 @@ export async function guidedSignIn(ui, { label, login, journal = null, signal = 
     await login.rejected('uncertain'); // guard:guided-pending — persisted before the possible submission; never cleared by the job itself
     const result = await ui.login(secret, { signal });
     // Only the adapter's own observation (the exact login form again on a new document) is a refusal; it needs corrected values.
-    if (result?.outcome === 'rejected') { await login.rejected('refused'); return { submitted: true, refused: true, text: LOGIN_TEXT.refused(label) }; }
+    if (result?.outcome === 'rejected') { await login.rejected('refused'); return { submitted: true, refused: true, text: GUIDED_TEXT.refused(label) }; }
     return { submitted: true, refused: false, text: GUIDED_TEXT.submitted(label) };
   } catch (error) {
     if (signal?.aborted || error?.name === 'AbortError') throw error;
@@ -406,17 +420,25 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
     const deadline = now() + timeoutMs;
     while (!closed && now() < deadline) { signal?.throwIfAborted(); await record(); await wait(pollMs); }
   } finally { flush(); await cdp?.detach().catch(() => {}); await session?.close?.(); }
-  let items = [];
+  let items = [], unreadable = false;
   const completed = downloads.filter(d => d.completed && GUID.test(d.guid));
   if (completed.length === 1 && hostAllowed(completed[0].host, adapter.hosts) && await exists(path.join(jobDir, completed[0].guid))) {
     const bytes = await readFile(path.join(jobDir, completed[0].guid));
-    const manifest = { ...bound, kind: 'statement', channel: 'collector-observe', sourceFormat: 'csv', sha256: sha256(bytes), filename: completed[0].guid, bytes: bytes.length, suggestedFilename: completed[0].suggestedFilename || null, sourceHost: completed[0].host, downloadedAt: stamp() };
-    await writeManifest(jobDir, manifest); items = [{ directory: jobDir, manifest }];
+    // Review fold F3: a GUIDED capture becomes the statement manifest only when OMF can accept its bytes as a CSV/text statement; otherwise
+    // nothing is sent, the original stays in this job folder and the person is told why. Other observe stages keep their behaviour (a refused
+    // upload of theirs is handled at the outbox boundary, index.mjs runBankJob).
+    let keep = true;
+    if (adapter.guided === true && !statementText(bytes)) keep = false; // guard:guided-text
+    if (keep) {
+      const manifest = { ...bound, kind: 'statement', channel: 'collector-observe', sourceFormat: 'csv', sha256: sha256(bytes), filename: completed[0].guid, bytes: bytes.length, suggestedFilename: completed[0].suggestedFilename || null, sourceHost: completed[0].host, downloadedAt: stamp() };
+      await writeManifest(jobDir, manifest); items = [{ directory: jobDir, manifest }];
+    } else unreadable = true;
   }
   const result = { observation: records, items, downloads: downloads.map(({ guid, ...d }) => d), closed };
+  if (unreadable) return { ...result, failed: `${GUIDED_TEXT.unreadable()}。${!guided?.submitted ? `${adapter.label}の入出金明細をCSVで出力してください` : guided.refused ? GUIDED_TEXT.refused(adapter.label) : stoppedText(adapter.label)}` };
   if (!guided?.submitted) return result;
   // The captured file is the person's statement for native mapping, not proof of the automatic sign-in: the marker stays.
-  if (guided.refused) return items.length ? { ...result, notice: GUIDED_TEXT.resave(adapter.label) } : { ...result, failed: LOGIN_TEXT.refused(adapter.label) };
+  if (guided.refused) return items.length ? { ...result, notice: GUIDED_TEXT.resave(adapter.label) } : { ...result, failed: GUIDED_TEXT.refused(adapter.label) };
   return items.length ? { ...result, notice: GUIDED_TEXT.kept(adapter.label) } : { ...result, failed: GUIDED_TEXT.unconfirmed(adapter.label) };
 }
 

@@ -272,7 +272,14 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
   const doc=await statementDoc(r.id);assert.equal(doc.capture.bankAccountId,pp[i],'bank:paypay-capture-own-account '+i);assert.equal(doc.capture.channel,'collector-observe');assert.equal(doc.capture.snapshot.interpretation,'unmapped');assert.equal(doc.capture.sourceHost,'login.paypay-bank.co.jp');assert.equal(doc.capture.labelChecked,false);
   assert.deepEqual(await fs.readFile(path.join(directory,'bank-statements',String(baseDevice.ownerId),doc.hash)),ppCsv(i),'bank:paypay-original-bytes '+i)}
  const ppAgain=ok(await ppUpload(ppJobs[0],ppCsv(0)),'capture-paypay-again');assert.equal(ppAgain.id,ppCaptures[0].id,'bank:paypay-duplicate-same-capture');assert.equal(ppAgain.duplicate,true);assert.equal(ppAgain.state,'needs_review');
- assert.equal((await ppUpload(ppJobs[1],ppCsv(0))).status,409,'bank:paypay-cross-account-conflict');
+ const conflict=await ppUpload(ppJobs[1],ppCsv(0));assert.equal(conflict.status,409,'bank:paypay-cross-account-conflict');assert.equal(conflict.data?.data?.code,'capture-other-account','bank:paypay-capture-other-account-code');
+ // review fold F3: the same empty-period (header-only) export on two accounts — the first is retained needs_review, the second is the permanent 409
+ const emptyPeriod=Buffer.from('日付,内容,出金金額,入金金額,残高\r\n'),statementsBefore=await db.collection('financebankstatements').countDocuments({});
+ const e1=ok(await ppUpload(ppJobs[2],emptyPeriod),'capture-paypay-empty-period');assert.equal(e1.state,'needs_review','bank:paypay-empty-period-retained');assert.deepEqual(e1.rows,{new:0,existing:0,unchanged:0,differs:0});
+ const e2=await ppUpload(ppJobs[3],emptyPeriod);assert.equal(e2.status,409,'bank:paypay-empty-period-other-account-409');assert.equal(e2.data?.data?.code,'capture-other-account','bank:paypay-empty-period-code');
+ const pdf=await ppUpload(ppJobs[3],Buffer.concat([Buffer.from('%PDF-1.7\n%'),Buffer.from([0xe2,0xe3,0xcf,0xd3,0x0a,0x00,0x01])]));assert.equal(pdf.status,415,'bank:paypay-pdf-415');
+ assert.equal(await db.collection('financebankstatements').countDocuments({}),statementsBefore+1,'bank:paypay-refusals-write-nothing');
+ const gone=await ppUpload({jobId:uuid(),snapshotHash:ppJobs[3].snapshotHash},ppCsv(8));assert.equal(gone.status,409);assert.equal(gone.data?.data?.code,undefined,'bank:paypay-job-unavailable-not-terminal');
  assert.equal((await ppUpload({jobId:ppJobs[2].jobId,snapshotHash:ppJobs[3].snapshotHash},ppCsv(9))).status,400,'bank:paypay-wrong-snapshot-400');
  const ppListed=ok(await get('bank/accounts/'+pp[0]+'/captures'),'captures-paypay').captures;assert.equal(ppListed.length,1);assert.match(String(ppListed[0].reason),/^mapping-required/);assert.equal(ppListed[0].dateRange,null,'bank:paypay-unmapped-no-range');
  for(const j of ppJobs.slice(0,2))ok(await dev('bank/status',{jobId:j.jobId,state:'complete',message:'観察記録を保存・明細 1件を保存'},ppPc.token),'status-paypay');

@@ -10,6 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -55,6 +56,7 @@ function guidedUi({ form = true, outcome = 'submitted', deliver = 'csv', host = 
       if (deliver === 'csv') await one(CSV, 'meisai.csv');
       if (deliver === 'pdf') await one(Buffer.from('%PDF-1.7\n%fictional\n'), 'meisai.pdf');
       if (deliver === 'two') { await one(CSV, 'a.csv'); await one(Buffer.from(CSV.toString() + 'x\r\n'), 'b.csv'); }
+      if (Buffer.isBuffer(deliver)) await one(deliver, 'meisai.csv');
     },
     get jobDir() { return jobDir; }
   };
@@ -100,12 +102,14 @@ test('a ready saved login on the exact form: one decryption, journal and uncerta
   for (const name of await readdir(r.jobDir)) if (!/^[a-f\d-]{36}$/.test(name)) noSecret('file ' + name, await readFile(path.join(r.jobDir, name), 'utf8'));
 });
 
-test('submitted but no CSV, a PDF, two downloads or a download from another host: nothing proves the sign-in; the marker stays, the job explains it and the next job submits nothing until the owner re-saves', async () => {
+test('submitted but no CSV, a PDF, two downloads or a download from another host: nothing proves the sign-in; the marker stays, the job explains it (a PDF is not kept as a statement) and the next job submits nothing until the owner re-saves', async () => {
   for (const [label, options] of [['no csv', { deliver: null }], ['pdf', { deliver: 'pdf' }], ['two downloads', { deliver: 'two' }], ['foreign host', { host: 'cdn.paypay-bank.example' }]]) {
     const ui = guidedUi(options), login = savedLogin(), r = await observe(ui, jobOf(), login);
     assert.equal(r.error, null, label + ' ' + String(r.error)); assert.equal(ui.calls.login, 1);
     assert.equal(login.calls.accepted, 0, 'paypay-guided:not-proof ' + label); assert.equal(login.current, 'blocked', 'paypay-guided:pending-kept ' + label);
-    if (label !== 'pdf') { assert.match(String(r.result.failed), /確認できません/, 'paypay-guided:unconfirmed-explained ' + label); assert.match(String(r.result.failed), /保存し直/, 'paypay-guided:unconfirmed-actionable ' + label); }
+    // Deliberate change (review fold F3): a PDF is no longer kept as the CSV statement; it stays in the job folder, nothing is sent.
+    if (label === 'pdf') { assert.equal(r.result.items.length, 0, 'paypay-guided:pdf-not-statement'); assert.match(String(r.result.failed), /CSV・テキストとして読めない/, 'paypay-guided:pdf-explained'); assert.match(String(r.result.failed), /自動送信は止めています/, 'paypay-guided:pdf-sign-in-state'); }
+    else { assert.match(String(r.result.failed), /確認できません/, 'paypay-guided:unconfirmed-explained ' + label); assert.match(String(r.result.failed), /保存し直/, 'paypay-guided:unconfirmed-actionable ' + label); }
     const next = guidedUi(), r2 = await observe(next, jobOf(), login);
     assert.equal(next.calls.login, 0, 'paypay-guided:blocked-no-submit ' + label); assert.equal(login.calls.open, 1, 'paypay-guided:blocked-no-decryption ' + label);
     assert.match(attention(r2)[0] || '', /前回の自動サインインが確認できていない/, 'paypay-guided:blocked-message ' + label);
@@ -116,8 +120,10 @@ test('the bank refuses the saved login: one submission, remembered, a clear fail
   const ui = guidedUi({ outcome: 'rejected', deliver: null }), login = savedLogin(), r = await observe(ui, jobOf(), login);
   assert.equal(r.error, null); assert.equal(ui.calls.login, 1, 'paypay-guided:refusal-one-submit'); assert.equal(login.current, 'refused', 'paypay-guided:refusal-distinguished'); assert.deepEqual(login.calls.kinds, ['uncertain', 'refused'], 'paypay-guided:refusal-marked');
   assert.match(String(r.result.failed), /受け付けませんでした/, 'paypay-guided:refused-message');
+  assert.match(String(r.result.failed), /店番号・口座番号・パスワードを保存し直/, 'paypay-guided:refused-names-paypay-fields'); assert.doesNotMatch(String(r.result.failed), /IDとパスワード/, 'paypay-guided:refused-no-rakuten-wording');
+  assert.match(bank.LOGIN_TEXT.refused('楽天銀行'), /IDとパスワードを保存し直/, 'paypay-guided:rakuten-refused-wording-unchanged');
   const after = guidedUi(), r1 = await observe(after, jobOf(), login);
-  assert.equal(after.calls.login, 0, 'paypay-guided:refused-no-submit'); assert.match(attention(r1)[0] || '', /受け付けませんでした/, 'paypay-guided:refused-next-message');
+  assert.equal(after.calls.login, 0, 'paypay-guided:refused-no-submit'); assert.match(attention(r1)[0] || '', /受け付けませんでした/, 'paypay-guided:refused-next-message'); assert.match(attention(r1)[0] || '', /店番号・口座番号・パスワード/, 'paypay-guided:refused-next-names-paypay-fields');
   const manual = guidedUi({ outcome: 'rejected' }), l2 = savedLogin(), r2 = await observe(manual, jobOf(), l2);
   assert.equal(r2.result.items.length, 1, 'paypay-guided:manual-csv-kept'); assert.equal(l2.calls.accepted, 0, 'paypay-guided:refused-not-cleared'); assert.equal(r2.result.failed ?? null, null);
   assert.match(String(r2.result.notice), /保存し直/, 'paypay-guided:refused-notice');
@@ -238,4 +244,105 @@ test('runBankJob hands the saved login to a guided PayPay標準 observe job only
   const sent = [], statuses2 = [];
   const outcome = await index.runBankJob({ job: jobOf(), account: ACCOUNT }, config, null, { status: async (s, t) => { statuses2.push([s, t]); }, pending, upload: async (c, a, item) => { sent.push(item.manifest.kind); return { id: 'f'.repeat(24) }; }, directory: await root(), login, observe: async () => ({ items: [], failed: 'PayPay銀行への自動サインインの完了を確認できませんでした', observation: [{ at: 'x', pathname: '/', title: 't', visibleControls: [], inputs: [], selects: [], downloadEvents: [], clicks: [], typedInto: [], eventsDropped: 0, eventChannel: true }] }) });
   assert.deepEqual(sent, ['observation'], 'paypay-guided:observation-sent-before-failure'); assert.equal(statuses2.at(-1)[0], 'failed'); assert.match(outcome.failed, /確認できませんでした/);
+});
+
+// ── Review fold F3: the guided text gate (observeFromPage) — only what OMF accepts as a CSV/text statement becomes a manifest ──
+// Shift_JIS bytes built from the platform decoder itself (no guessed encoding table): every two-byte code decoded once, reversed.
+const SJIS = (() => { const map = new Map(), d = new TextDecoder('shift_jis', { fatal: true }); for (let a = 0x81; a <= 0xfc; a++) for (let b = 0x40; b <= 0xfc; b++) { try { const c = d.decode(Buffer.from([a, b])); if (c.length === 1 && !map.has(c)) map.set(c, [a, b]); } catch {} } return text => Buffer.from([...text].flatMap(c => c.charCodeAt(0) < 0x80 ? [c.charCodeAt(0)] : map.get(c) || (() => { throw new Error('no Shift_JIS code for ' + c); })())); })();
+test('guided text gate: only nonempty, bounded, NUL-free UTF-8 or Shift_JIS text (the server text rule) becomes the statement manifest; a PDF, binary, undecodable, empty or oversized download is not sent, stays on this PC and is explained', async () => {
+  const header = '日付,内容,出金金額,入金金額,残高\r\n';
+  const kept = [['utf-8 csv', CSV], ['utf-8 bom', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), CSV])], ['shift_jis csv', SJIS(header + '2026/10/01,振込 カクウ,,50000,150000\r\n')], ['header only (empty period)', Buffer.from(header)], ['shift_jis header only', SJIS(header)]];
+  const refused = [['pdf (ascii only)', Buffer.from('%PDF-1.4\n1 0 obj << >> endobj\n%%EOF\n')], ['pdf (binary)', Buffer.concat([Buffer.from('%PDF-1.7\n%'), Buffer.from([0xe2, 0xe3, 0xcf, 0xd3, 0x0a, 0x00, 0x01])])], ['binary with NUL', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x14])], ['undecodable', Buffer.from([0x41, 0xff, 0x41, 0xfe, 0x0a])], ['empty', Buffer.alloc(0)], ['over 10 MiB', Buffer.alloc(10 * 1024 * 1024 + 1, 0x61)]];
+  assert.ok(SJIS(header)[0] === 0x93 && (() => { try { new TextDecoder('utf-8', { fatal: true }).decode(SJIS(header)); return false; } catch { return true; } })(), 'paypay-guided:sjis-fixture-is-not-utf8');
+  for (const [label, bytes] of kept) {
+    const ui = guidedUi({ deliver: bytes }), login = savedLogin(), r = await observe(ui, jobOf(), login);
+    assert.equal(r.error, null, label + ' ' + r.error); assert.equal(r.result.items.length, 1, 'paypay-guided:text-kept ' + label);
+    assert.equal(r.result.items[0].manifest.sha256, sha256(bytes), 'paypay-guided:text-kept-exact ' + label); assert.equal(r.result.items[0].manifest.bytes, bytes.length);
+    assert.match(String(r.result.notice), /受け取った明細は保存/, 'paypay-guided:text-kept-notice ' + label); assert.equal(login.current, 'blocked', 'paypay-guided:text-not-proof ' + label);
+  }
+  for (const [label, bytes] of refused) {
+    const ui = guidedUi({ deliver: bytes }), login = savedLogin(), r = await observe(ui, jobOf(), login);
+    assert.equal(r.error, null, label + ' ' + r.error); assert.equal(r.result.items.length, 0, 'paypay-guided:pdf-not-statement ' + label);
+    assert.match(String(r.result.failed), /CSV・テキストとして読めない/, 'paypay-guided:unreadable-explained ' + label); assert.match(String(r.result.failed), /このPCに残しています/, 'paypay-guided:unreadable-kept-locally ' + label);
+    const names = await readdir(r.jobDir); assert.ok(!names.includes('manifest.json'), 'paypay-guided:unreadable-no-manifest ' + label);
+    const file = names.find(n => /^[a-f\d-]{36}$/.test(n)); assert.ok(file, 'paypay-guided:unreadable-original-kept ' + label); assert.equal(sha256(await readFile(path.join(r.jobDir, file))), sha256(bytes), 'paypay-guided:unreadable-original-bytes ' + label);
+    assert.equal(login.calls.accepted, 0); assert.equal(login.current, 'blocked', 'paypay-guided:unreadable-pending-kept ' + label);
+  }
+  // the person signed in by hand (saved login blocked) and exported a PDF: explained, asked for a CSV; a refused login + PDF names the fields
+  const manual = await observe(guidedUi({ deliver: 'pdf' }), jobOf(), savedLogin({ state: 'blocked' }));
+  assert.equal(manual.result.items.length, 0, 'paypay-guided:manual-pdf-not-statement'); assert.match(String(manual.result.failed), /CSV・テキストとして読めない.*CSVで出力/, 'paypay-guided:manual-pdf-asks-csv');
+  const refusedPdf = await observe(guidedUi({ deliver: 'pdf', outcome: 'rejected' }), jobOf(), savedLogin());
+  assert.equal(refusedPdf.result.items.length, 0); assert.match(String(refusedPdf.result.failed), /CSV・テキストとして読めない.*店番号・口座番号・パスワード/, 'paypay-guided:refused-pdf-explained');
+  // not a guided capture (the provider's plain observe stage): unchanged here — a refused upload is handled at the outbox boundary below
+  const plain = await observe(guidedUi({ deliver: 'pdf' }), jobOf({ variant: null }), null, { adapter: paypay.default });
+  assert.equal(plain.result.items.length, 1, 'paypay-guided:plain-observe-unchanged'); assert.equal(plain.result.failed, undefined);
+});
+
+// ── Review fold F3: runBankJob at the bank statement outbox boundary, through the REAL upload()/api() against a local OMF stand-in ──
+// The stand-in answers each bank/upload with the next scripted reply (Nitro's error shape: statusCode/statusMessage/data.message[/code]).
+async function omfStandIn() {
+  const requests = [], replies = [];
+  const server = http.createServer(async (req, res) => {
+    const chunks = []; for await (const c of req) chunks.push(c); const body = Buffer.concat(chunks), url = new URL(req.url, 'http://x');
+    const entry = { path: url.pathname, kind: url.searchParams.get('kind'), jobId: url.searchParams.get('jobId'), sha256: sha256(body) }; requests.push(entry);
+    const reply = replies.shift() || { status: 200, body: { id: 'f'.repeat(24) } };
+    res.writeHead(reply.status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(reply.body));
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  return { requests, replies, origin: 'http://127.0.0.1:' + server.address().port, close: () => new Promise(r => server.close(r)) };
+}
+const OTHER_ACCOUNT = { status: 409, body: { statusCode: 409, statusMessage: 'Finance request failed', data: { message: 'この明細は別の口座で受信済みです。', code: 'capture-other-account' } } };
+const UNREADABLE = { status: 415, body: { statusCode: 415, statusMessage: 'Finance request failed', data: { message: 'Excel・CSVを選択してください。' } } };
+// A captured statement exactly as observeFromPage leaves it: the bytes and the manifest in the job's observe folder.
+async function capturedItem(dir, bound, bytes) {
+  const jobDir = path.join(dir, 'outbox', 'bank', bound.bankAccountId, bound.jobId + '-observe'), filename = randomUUID(); await mkdir(jobDir, { recursive: true });
+  await writeFile(path.join(jobDir, filename), bytes);
+  const manifest = { ...bound, kind: 'statement', channel: 'collector-observe', sourceFormat: 'csv', sha256: sha256(bytes), filename, bytes: bytes.length, suggestedFilename: 'meisai.csv', sourceHost: 'login.paypay-bank.co.jp', downloadedAt: new Date().toISOString() };
+  await writeFile(path.join(jobDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  return { directory: jobDir, manifest };
+}
+const OBSERVATION = [{ at: 'x', pathname: '/', title: 't', visibleControls: [], inputs: [], selects: [], downloadEvents: [], clicks: [], typedInto: [], eventsDropped: 0, eventChannel: true }];
+test('bank outbox refusal: a permanent 409 capture-other-account (the same header-only bytes already another account\'s statement) or 415 refusal is recorded on the retained manifest (never acknowledged, never sent again, original kept), the job explains it and the next job proceeds; a transient 409, 401, 403 or 500 still propagates and keeps the manifest pending', async () => {
+  const omf = await omfStandIn(), dir = await root(), config = { baseUrl: omf.origin, token: 'omfc_' + 'e'.repeat(64) };
+  try {
+    const empty = Buffer.from('日付,内容,出金金額,入金金額,残高\r\n');
+    const job = (account, observe) => { const j = jobOf(), statuses = []; return { j, statuses, run: () => index.runBankJob({ job: j, account }, config, null, { status: async (s, t) => { statuses.push([s, t]); }, directory: dir, observe: async (bound) => observe(bound), collect: async () => { throw new Error('no retrieve'); } }) }; };
+    // 1. PayPay 2 and PayPay 4 exported the identical header-only file; OMF already holds it as PayPay 2's statement → PayPay 4's is refused
+    const a = ACCOUNTS[3], first = job(a, async bound => ({ items: [await capturedItem(dir, bound, empty)], observation: OBSERVATION, notice: bank.GUIDED_TEXT.kept('PayPay銀行') }));
+    omf.replies.push(OTHER_ACCOUNT);
+    const r1 = await first.run();
+    assert.equal(first.statuses.at(-1)[0], 'failed', 'bank-refusal:own-refusal-fails-the-job'); assert.match(first.statuses.at(-1)[1], /別の口座で受信済み/, 'bank-refusal:job-explains'); assert.match(first.statuses.at(-1)[1], /このPC/, 'bank-refusal:original-kept-explained'); assert.doesNotMatch(first.statuses.at(-1)[1], /受け取った明細は保存しました/, 'bank-refusal:no-saved-claim');
+    assert.ok(first.statuses.at(-1)[1].length <= 200, 'bank-refusal:fits-omf-message');
+    const folder = path.join(dir, 'outbox', 'bank', a._id, first.j.jobId + '-observe'), m1 = JSON.parse(await readFile(path.join(folder, 'manifest.json'), 'utf8'));
+    assert.equal(m1.acknowledgedAt, undefined, 'bank-refusal:never-acknowledged'); assert.deepEqual([m1.refusal?.status, m1.refusal?.reason], [409, 'other-account'], 'bank-refusal:recorded');
+    assert.equal(sha256(await readFile(path.join(folder, m1.filename))), sha256(empty), 'bank-refusal:original-bytes-kept'); assert.equal(r1.failed, first.statuses.at(-1)[1]);
+    assert.deepEqual(omf.requests.map(x => x.kind), ['statement', 'observation'], 'bank-refusal:observation-still-sent');
+    // 2. the next job of PayPay 4 proceeds: the refused manifest is not sent again
+    const before = omf.requests.length, second = job(a, async () => ({ items: [], observation: OBSERVATION }));
+    await second.run();
+    assert.deepEqual(omf.requests.slice(before).map(x => x.kind), ['observation'], 'bank-refusal:no-resend'); assert.equal(second.statuses.at(-1)[0], 'complete', 'bank-refusal:next-job-proceeds');
+    assert.deepEqual(await index.pendingBank(a, config, dir), [], 'bank-refusal:not-pending');
+    // 3. a 415 for an older retained manifest found by the drain: recorded, and the job's own new statement is still sent and saved
+    const b = ACCOUNTS[2], oldJob = jobOf(), old = await capturedItem(dir, { bankAccountId: b._id, ownerId: OWNER, origin: omf.origin, jobId: oldJob.jobId, snapshotHash: oldJob.snapshotHash, provider: 'paypay' }, Buffer.from('%PDF-1.7\n'));
+    const third = job(b, async bound => ({ items: [await capturedItem(dir, bound, CSV)], observation: OBSERVATION })); omf.replies.push(UNREADABLE);
+    const at3 = omf.requests.length; await third.run();
+    assert.deepEqual(omf.requests.slice(at3).map(x => [x.kind, x.jobId === oldJob.jobId]), [['statement', true], ['statement', false], ['observation', false]], 'bank-refusal:drain-then-own');
+    assert.equal(third.statuses.at(-1)[0], 'complete', 'bank-refusal:drained-refusal-job-proceeds'); assert.match(third.statuses.at(-1)[1], /明細 1件を保存/); assert.match(third.statuses.at(-1)[1], /CSV・テキストとして読めない/, 'bank-refusal:drained-refusal-explained');
+    const m3 = JSON.parse(await readFile(path.join(old.directory, 'manifest.json'), 'utf8')); assert.deepEqual([m3.refusal?.status, m3.refusal?.reason, m3.acknowledgedAt], [415, 'unreadable', undefined], 'bank-refusal:415-recorded');
+    const at4 = omf.requests.length; await job(b, async () => ({ items: [], observation: OBSERVATION })).run(); assert.deepEqual(omf.requests.slice(at4).map(x => x.kind), ['observation'], 'bank-refusal:415-no-resend');
+    // 4. transient or authorization failures are not refusals: they propagate, the manifest stays pending and is sent by a later job
+    const c = ACCOUNTS[1], retained = await capturedItem(dir, { bankAccountId: c._id, ownerId: OWNER, origin: omf.origin, jobId: randomUUID(), snapshotHash: 'a'.repeat(64), provider: 'paypay' }, CSV);
+    for (const [label, reply] of [['duplicate 409', { status: 409, body: { statusCode: 409, statusMessage: 'Finance request failed', data: { message: '同じ明細があります。再試行してください。' } } }], ['job unavailable 409', { status: 409, body: { statusCode: 409, statusMessage: 'Job is unavailable for this collector', data: { message: 'Job is unavailable for this collector' } } }], ['401', { status: 401, body: { statusCode: 401, statusMessage: 'Collector authorization required' } }], ['403', { status: 403, body: { statusCode: 403, statusMessage: 'Forbidden' } }], ['500', { status: 500, body: { statusCode: 500, statusMessage: 'Finance request failed', data: { message: '銀行明細の受付を完了できません。' } } }]]) {
+      omf.replies.push(reply); let error = null; try { await job(c, async () => ({ items: [], observation: OBSERVATION })).run(); } catch (e) { error = e; }
+      assert.equal(error?.status, reply.status, 'bank-refusal:transient-propagates ' + label);
+      const m = JSON.parse(await readFile(path.join(retained.directory, 'manifest.json'), 'utf8')); assert.deepEqual([m.refusal, m.acknowledgedAt], [undefined, undefined], 'bank-refusal:transient-not-terminal ' + label);
+      assert.equal((await index.pendingBank(c, config, dir)).length, 1, 'bank-refusal:transient-still-pending ' + label);
+    }
+    await job(c, async () => ({ items: [], observation: OBSERVATION })).run();
+    assert.ok(JSON.parse(await readFile(path.join(retained.directory, 'manifest.json'), 'utf8')).acknowledgedAt, 'bank-refusal:transient-later-acknowledged');
+    // 5. an observation refused by OMF is not a statement refusal: it propagates (the boundary is the bank STATEMENT outbox)
+    omf.replies.push({ status: 200, body: { id: 'f'.repeat(24) } }, UNREADABLE); let obsError = null;
+    try { await job(ACCOUNTS[0], async bound => ({ items: [await capturedItem(dir, bound, CSV)], observation: OBSERVATION })).run(); } catch (e) { obsError = e; }
+    assert.equal(obsError?.status, 415, 'bank-refusal:observation-refusal-propagates');
+  } finally { await omf.close(); }
 });
