@@ -6,6 +6,8 @@ export const BANK_SOFTWARE: Record<string,string>;
 export type BankCollectionMode='retrieve'|'observe';
 export const BANK_VARIANT_COLLECTION: Record<string,Record<string,BankCollectionMode>>;
 export function bankCollectionMode(provider:any,variant:any):BankCollectionMode;
+export const BANK_FIRST_CAPTURE: Record<string,Record<string,'unmapped'>>;
+export function bankFirstCapture(provider:any,variant:any):'unmapped'|null;
 export type BankNativeTemplate={key:string;name:string;headers:string[];mapping:Record<string,string>;amountSign:'outflow-positive'|'outflow-negative'};
 export const BANK_NATIVE_TEMPLATES: Record<string,Record<string,BankNativeTemplate>>;
 export function bankCapability(provider:any,variant:any):{mode:BankCollectionMode;steps:'implemented'|'contract-pending';template:string|null;period:'required'|'portal';liveVerified:false};

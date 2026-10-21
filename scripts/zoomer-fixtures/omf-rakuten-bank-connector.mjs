@@ -384,7 +384,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
       assert.equal(http.second.eventsDropped, 0, 'rakuten:observation-bounds (non-integer → 0)'); assert.equal(http.second.clicks.length, 60, 'rakuten:observation-bounds (clicks ≤ 60)'); assert.equal(http.second.typedInto.length, 100, 'rakuten:observation-bounds (typedInto ≤ 100)');
       return `variant plus stored and frozen (hash ${http.job.snapshotHash.slice(0, 8)}), unknown → null, observation sanitized (2 pages), read owner-scoped`;
     });
-    await leg('V real Chrome 390/1440 px on the built app: ログイン方式 select seeded from the saved connection, hidden for a provider without variants, saved variant shown, 観察記録を見る shows the recorded pages, no overflow, no console errors', async () => {
+    await leg('V real Chrome 390/1440 px on the built app: ログイン方式 select seeded from the saved connection, PayPay standard/BA-PLUS variants, saved variant shown, 観察記録を見る shows the recorded pages, no overflow, no console errors', async () => {
       if (!app || !http) throw new Error('NOT RUN: E5 did not boot the app');
       const bm = need(browserModule, 'collector/browser.mjs'), profileDir = await mkdtemp(path.join(os.tmpdir(), 'omf-rakuten-browser-')), browser = await bm.browserFor(path.join(profileDir, 'profile'), { headless: true }); let page; const errors = [];
       try {
@@ -395,7 +395,7 @@ export default { name: 'omf-rakuten-bank-connector', covers: ['collector/banks/c
         const card = id => '[data-bank-connection="' + id + '"] ', overflowing = () => page.evaluate(() => [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(e => e.tagName + '.' + String(e.className).slice(0, 50) + '@' + Math.round(e.getBoundingClientRect().right)));
         assert.equal(await page.$eval(card(http.accountA) + '[data-bank-variant]', e => e.value), 'plus', 'rakuten:chrome-variant-select (seeded from the saved connection)');
         assert.match(await page.$eval(card(http.accountA) + '[data-bank-connection-state]', e => e.textContent), /口座管理プラス/, 'rakuten:chrome-variant-shown');
-        assert.equal(await page.$(card(http.accountB) + '[data-bank-variant]'), null, 'rakuten:chrome-variant-hidden (PayPay銀行 has no login variants)');
+        assert.deepEqual(await page.$$eval(card(http.accountB) + '[data-bank-variant] option', es => es.map(e => e.value).filter(Boolean)), ['standard', 'baplus'], 'rakuten:chrome-paypay-variant-select (standard and BA-PLUS)');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'rakuten:chrome-no-overflow ' + JSON.stringify(await overflowing()));
         await page.select(card(http.accountA) + '[data-bank-variant]', 'standard'); await page.click(card(http.accountA) + '[data-bank-connect-save]');
         await wait(id => /標準ログイン/.test(document.querySelector('[data-bank-connection="' + id + '"] [data-bank-connection-state]')?.textContent || ''), http.accountA);
