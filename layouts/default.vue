@@ -13,7 +13,7 @@
         </div>
       </main>
 
-      <AppFooter />
+      <AppFooter class="navi-host" />
     </div>
 
     <AssistantPanel />

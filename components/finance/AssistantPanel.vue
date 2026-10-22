@@ -83,7 +83,7 @@ async function loadDraft(){const current=++ticket;loadedDraft.value=null;error.v
 function receive(d:any){if(assistant.target.kind==='draft'&&assistant.target.importId===d.importId&&assistant.target.line===d.line)loadedDraft.value=d;assistant.receive(d)}
 function keyboard(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();if(sizeMenu.value){sizeMenu.value=false;nextTick(()=>document.querySelector<HTMLElement>('[data-navi-size-toggle]')?.focus({preventScroll:true}))}else if(compactSheet.value){const selector=compactSheet.value==='context'?'[data-assistant-context-menu]':'[data-assistant-support-menu]';compactSheet.value='';nextTick(()=>document.querySelector<HTMLElement>(selector)?.focus({preventScroll:true}))}else close()}}
 watch(compactViewport,()=>{compactSheet.value=''})
-watch(()=>assistant.open,async open=>{if(open){activated.value=true;await nextTick();panel.value?.focus({preventScroll:true});if(assistant.target.kind==='draft')loadDraft()}},{immediate:true})
+watch(()=>assistant.open,async open=>{if(open){sizeMenu.value=false;activated.value=true;await nextTick();panel.value?.focus({preventScroll:true});if(assistant.target.kind==='draft')loadDraft()}},{immediate:true})
 watch(targetPath,()=>{ticket++;loadedDraft.value=null;if(assistant.open)loadDraft()})
 watch(()=>user.user?.id,id=>{assistant.identify(user.isAuthenticated&&id?id:'');activated.value=assistant.open},{immediate:true})
 watch(()=>scope.value.key,()=>{ticket++;loadedDraft.value=null;error.value='';if(scope.value.company)assistant.select({kind:'workspace'})})
@@ -105,7 +105,7 @@ onBeforeUnmount(()=>{ticket++;clearTimeout(motionTimer);window.removeEventListen
 .navi-size-medium { --navi-size:11rem;--navi-size-mobile:9rem; }
 .navi-size-small { --navi-size:6rem;--navi-size-mobile:6rem; }
 @media(max-width:1399px) { .navi-layout { --navi-chat-width:20rem; } }
-/* The page makes the gutter at >=768px: the main column keeps the character's (or the open rail's) width plus the edge gap free on its right; nothing while locked or signed out. */
+/* The main column and footer share the gutter at >=768px: keep the character's (or the open rail's) width plus the edge gap free on the right; nothing while locked or signed out. */
 @media(min-width:768px) {
  .navi-layout .navi-host { padding-right:calc(1.5rem + var(--navi-launcher-width) + var(--navi-edge-gap)); }
  .navi-layout.navi-open .navi-host { padding-right:calc(1.5rem + var(--navi-chat-width) + var(--navi-edge-gap)); }
