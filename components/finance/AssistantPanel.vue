@@ -2,7 +2,7 @@
  <div v-if="user.isAuthenticated && !isLocked" data-assistant-dock class="navi-dock" :class="{'navi-dock-open':assistant.open,'navi-dock-compact':compactViewport}" :style="viewportStyle" @keydown="keyboard">
   <aside v-show="assistant.open" id="omf-assistant" ref="panel" tabindex="-1" aria-label="OMFアシスタント" class="assistant-panel navi-dialog flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-gray-900 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-gray-100" @scroll.capture="trackReading">
    <header class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3 dark:border-white/10">
-    <NaviAvatar size="sm" />
+    <NaviAvatar :size="compactViewport?'sm':'md'" />
     <div class="min-w-0 flex-1"><h2 class="truncate text-sm font-semibold" :title="pageName">OMF Navi</h2><p class="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-400">会計の相談・操作をお手伝いします</p></div>
     <button v-if="compactViewport" type="button" data-assistant-context-menu aria-controls="omf-assistant-context-settings" :aria-expanded="compactSheet==='context'" class="shrink-0 rounded-lg px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10" @click="compactSheet=compactSheet==='context'?'':'context'">対象</button>
     <button v-if="compactViewport" type="button" data-assistant-support-menu aria-label="接続診断" title="接続診断" aria-controls="omf-assistant-support" :aria-expanded="compactSheet==='support'" class="shrink-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10" @click="compactSheet=compactSheet==='support'?'':'support'"><MoreHorizontal class="h-4 w-4" /></button>
@@ -24,8 +24,16 @@
    <div id="omf-assistant-support" class="navi-support" :class="{'navi-sheet-open':compactSheet==='support'}"><SupportReport :key="user.user?.id" /></div>
   </aside>
   <button type="button" data-assistant-toggle class="navi-launcher" aria-controls="omf-assistant" :aria-expanded="assistant.open" :aria-label="assistant.open ? 'Naviを小さくする' : 'OMF Naviに相談する'" @click="assistant.open ? close() : summon()">
-   <img data-navi-character class="navi-character" src="/images/omf-navi-character.png" alt="" aria-hidden="true" width="1156" height="1361" decoding="async">
+   <img data-navi-character class="navi-character" :class="{'navi-character-motion':motion}" src="/images/omf-navi-character.png" alt="" aria-hidden="true" width="1156" height="1361" decoding="async" @animationend="motion=false">
   </button>
+  <div v-if="!assistant.open" class="navi-size">
+   <button type="button" data-navi-size-toggle class="navi-size-toggle" aria-controls="omf-navi-size-menu" :aria-expanded="sizeMenu" aria-label="Naviの大きさを変更" title="Naviの大きさ" @click="sizeMenu=!sizeMenu">大きさ</button>
+   <div v-show="sizeMenu" id="omf-navi-size-menu" data-navi-size-menu role="group" aria-label="Naviの大きさ" class="navi-size-menu">
+    <button type="button" data-navi-size="small" :aria-pressed="assistant.size==='small'" @click="pickSize('small')">小</button>
+    <button type="button" data-navi-size="medium" :aria-pressed="assistant.size==='medium'" @click="pickSize('medium')">中</button>
+    <button type="button" data-navi-size="large" :aria-pressed="assistant.size==='large'" @click="pickSize('large')">大<small>今のサイズ・最大</small></button>
+   </div>
+  </div>
  </div>
 </template>
 <script setup lang="ts">
@@ -42,7 +50,7 @@ import CompanyAssistantScope from './CompanyAssistantScope.vue'
 import {tokenClaims} from '~/utils/auth-session'
 const user=useUserStore(),assistant=useAssistantStore(),route=useRoute(),{isLocked}=useActivityTracker()
 const panel=ref<HTMLElement|null>(null),activated=ref(false),loadedDraft=ref<any>(null),error=ref('')
-const viewportHeight=ref<number|null>(null),keyboardOffset=ref(0),headerClearance=ref(0),compactSheet=ref('')
+const viewportHeight=ref<number|null>(null),keyboardOffset=ref(0),headerClearance=ref(0),compactSheet=ref(''),sizeMenu=ref(false),motion=ref(false)
 const compactViewport=computed(()=>viewportHeight.value!==null&&viewportHeight.value<=640)
 const viewportStyle=computed(()=>viewportHeight.value===null?{}:{'--navi-viewport-height':viewportHeight.value+'px','--navi-keyboard-offset':keyboardOffset.value+'px','--navi-top-clearance':headerClearance.value+'px'})
 const readingPositions=new WeakMap<HTMLElement,boolean>()
@@ -68,11 +76,12 @@ const pageDraft=computed(()=>assistant.draftPage?.path===targetPath.value?assist
 const draft=computed(()=>pageDraft.value?.draft||loadedDraft.value),draftDirty=computed(()=>!!(pageDraft.value?.dirty||pageDraft.value?.busy))
 let ticket=0,previousFocus:HTMLElement|null=null
 function summon(){previousFocus=document.activeElement as HTMLElement;assistant.show(workspaceView.value&&currentDraftTarget.value?currentDraftTarget.value:undefined)}
-function close(){compactSheet.value='';assistant.close();nextTick(()=>{const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-assistant-toggle]') as HTMLElement;target?.focus()})}
+function close(){compactSheet.value='';sizeMenu.value=false;assistant.close();nextTick(()=>{const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-assistant-toggle]') as HTMLElement;target?.focus()})}
+function pickSize(size:string){assistant.resize(size);sizeMenu.value=false}
 function selectCurrent(){if(currentDraftTarget.value)assistant.select(currentDraftTarget.value)}
 async function loadDraft(){const current=++ticket;loadedDraft.value=null;error.value='';if(scope.value.company||assistant.target.kind!=='draft'||!user.isAuthenticated)return;const target={...assistant.target};try{const d=await $fetch('/api/finance/imports/'+target.importId+'/drafts/'+target.line,{headers:user.authHeader});if(current===ticket)loadedDraft.value=d}catch(e:any){if(current===ticket)error.value=e.data?.data?.message||'明細を取得できませんでした。'}}
 function receive(d:any){if(assistant.target.kind==='draft'&&assistant.target.importId===d.importId&&assistant.target.line===d.line)loadedDraft.value=d;assistant.receive(d)}
-function keyboard(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();if(compactSheet.value){const selector=compactSheet.value==='context'?'[data-assistant-context-menu]':'[data-assistant-support-menu]';compactSheet.value='';nextTick(()=>document.querySelector<HTMLElement>(selector)?.focus({preventScroll:true}))}else close()}}
+function keyboard(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();if(sizeMenu.value){sizeMenu.value=false;nextTick(()=>document.querySelector<HTMLElement>('[data-navi-size-toggle]')?.focus({preventScroll:true}))}else if(compactSheet.value){const selector=compactSheet.value==='context'?'[data-assistant-context-menu]':'[data-assistant-support-menu]';compactSheet.value='';nextTick(()=>document.querySelector<HTMLElement>(selector)?.focus({preventScroll:true}))}else close()}}
 watch(compactViewport,()=>{compactSheet.value=''})
 watch(()=>assistant.open,async open=>{if(open){activated.value=true;await nextTick();panel.value?.focus({preventScroll:true});if(assistant.target.kind==='draft')loadDraft()}},{immediate:true})
 watch(targetPath,()=>{ticket++;loadedDraft.value=null;if(assistant.open)loadDraft()})
@@ -81,32 +90,64 @@ watch(()=>scope.value.key,()=>{ticket++;loadedDraft.value=null;error.value='';if
 watch(()=>scope.value.organizationId,()=>{ticket++;loadedDraft.value=null;error.value='';assistant.select({kind:'workspace'})})
 watch(()=>user.isAuthenticated,value=>{if(!value){ticket++;loadedDraft.value=null;assistant.identify('');activated.value=false}})
 watch(isLocked,value=>{if(value)ticket++;else if(assistant.open&&assistant.target.kind==='draft')loadDraft()})
-onMounted(()=>{syncViewport();window.addEventListener('resize',syncViewport);window.visualViewport?.addEventListener('resize',syncViewport);window.visualViewport?.addEventListener('scroll',syncViewport)})
-onBeforeUnmount(()=>{ticket++;window.removeEventListener('resize',syncViewport);window.visualViewport?.removeEventListener('resize',syncViewport);window.visualViewport?.removeEventListener('scroll',syncViewport)})
+// Occasional motion: every 45 s the closed character may greet once (transform only), never while the chat is open, the tab is hidden or
+// reduced motion is on; the character's own animationend clears the class. The timer dies with the panel.
+let motionTimer:ReturnType<typeof setTimeout>|undefined
+function scheduleMotion(){motionTimer=setTimeout(()=>{if(!assistant.open&&document.visibilityState==='visible'&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches)motion.value=true;scheduleMotion()},45000)}
+onMounted(()=>{syncViewport();window.addEventListener('resize',syncViewport);window.visualViewport?.addEventListener('resize',syncViewport);window.visualViewport?.addEventListener('scroll',syncViewport);scheduleMotion()})
+onBeforeUnmount(()=>{ticket++;clearTimeout(motionTimer);window.removeEventListener('resize',syncViewport);window.visualViewport?.removeEventListener('resize',syncViewport);window.visualViewport?.removeEventListener('scroll',syncViewport)})
 </script>
 <style>
 .assistant-input { @apply block w-full min-w-0 resize-y rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-800 placeholder:text-gray-400 focus:border-primary-main focus:outline-none focus:ring-1 focus:ring-primary-main disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:text-gray-100; max-height:180px; }
-:root { --navi-launcher-size:min(18rem,40dvh);--navi-launcher-width:calc(var(--navi-launcher-size) * .85);--navi-edge-gap:2rem;--navi-bottom-gap:2rem; }
-[data-page-content] { padding-bottom:var(--navi-launcher-size); }
-.navi-dock { position:fixed;z-index:20;right:max(var(--navi-edge-gap),calc((100vw - 99rem) / 2 + var(--navi-edge-gap)),env(safe-area-inset-right));bottom:calc(max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px));width:var(--navi-launcher-width); }
+/* The layout root carries Navi's tokens: the chosen size (large = today's 18rem maximum), the launcher box, the gaps and the open rail width. */
+.navi-layout { --navi-launcher-size:min(var(--navi-size),40dvh);--navi-launcher-width:calc(var(--navi-launcher-size) * .85);--navi-edge-gap:2rem;--navi-bottom-gap:2rem;--navi-chat-width:22rem; }
+.navi-size-large { --navi-size:18rem;--navi-size-mobile:13rem; }
+.navi-size-medium { --navi-size:11rem;--navi-size-mobile:9rem; }
+.navi-size-small { --navi-size:6rem;--navi-size-mobile:6rem; }
+@media(max-width:1399px) { .navi-layout { --navi-chat-width:20rem; } }
+/* The page makes the gutter at >=768px: the main column keeps the character's (or the open rail's) width plus the edge gap free on its right; nothing while locked or signed out. */
+@media(min-width:768px) {
+ .navi-layout .navi-host { padding-right:calc(1.5rem + var(--navi-launcher-width) + var(--navi-edge-gap)); }
+ .navi-layout.navi-open .navi-host { padding-right:calc(1.5rem + var(--navi-chat-width) + var(--navi-edge-gap)); }
+ .navi-layout.navi-off .navi-host { padding-right:1.5rem; }
+}
+.navi-dock { position:fixed;z-index:20;right:max(var(--navi-edge-gap),env(safe-area-inset-right));bottom:calc(max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px));width:var(--navi-launcher-width); }
 .navi-launcher { position:relative;display:flex;align-items:center;justify-content:center;width:var(--navi-launcher-width);height:var(--navi-launcher-size);padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline-offset:4px; }
 .navi-character { display:block;width:100%;height:100%;object-fit:contain;object-position:bottom;pointer-events:none; }
 .navi-launcher:focus-visible { outline:2px solid #93402b; }
+/* Size choice under the closed character; the menu opens above her and the dock. */
+.navi-size { display:flex;justify-content:center;margin-top:.25rem; }
+.navi-size-toggle { font-size:11px;line-height:1;padding:.375rem .625rem;border:1px solid rgb(147 64 43 / 25%);border-radius:999px;background:rgb(255 255 255 / 85%);color:#93402b; }
+.navi-size-toggle:focus-visible { outline:2px solid #93402b;outline-offset:2px; }
+.navi-size-menu { @apply rounded-xl border border-gray-200 bg-white p-2 shadow-lg dark:border-white/10 dark:bg-slate-800;position:absolute;bottom:calc(100% + .5rem);right:0;display:grid;grid-template-columns:1fr 1fr 2fr;gap:.25rem;width:14rem;max-width:calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap)); }
+.navi-size-menu button { @apply rounded-lg px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/10; }
+.navi-size-menu button[aria-pressed=true] { @apply bg-primary-main/10 font-medium text-primary-main; }
+.navi-size-menu small { display:block;margin-top:.125rem;font-size:9px;line-height:1.2;white-space:nowrap;opacity:.8; }
+/* Occasional greet: transform only (<=3px, <=1.3deg), so neither the dock nor the page moves; off under reduced motion. */
+.navi-character-motion { animation:navi-greet 2.6s ease-in-out 1;transform-origin:50% 90%; }
+@keyframes navi-greet { 0%,100% { transform:translateY(0) rotate(0); } 25% { transform:translateY(-3px) rotate(-1.3deg); } 55% { transform:translateY(-1px) rotate(1deg); } 78% { transform:translateY(-2px) rotate(-.4deg); } }
+@media(prefers-reduced-motion:reduce) { .navi-character-motion { animation:none; } }
 .navi-dialog { position:absolute;right:calc(100% + 1rem);bottom:0;width:min(29rem,calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap) - var(--navi-launcher-width) - 1rem));height:min(44rem,calc(var(--navi-viewport-height,100dvh) - max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) - .875rem - var(--navi-top-clearance,0px)));box-shadow:0 12px 48px rgb(61 42 32 / 16%); }
 .navi-dialog > div:first-of-type { max-height:35%;overflow-y:auto; }
 .navi-dialog > section > form { padding:.75rem; }
 .navi-dialog textarea.assistant-input { height:4rem;min-height:4rem;max-height:7rem; }
 .navi-support { flex-shrink:0;max-height:25%;overflow-y:auto; }
 .assistant-panel > section { width:100%;max-width:56rem;align-self:center; }
-@media(max-width:639px) {
- :root { --navi-launcher-size:min(13rem,40dvh);--navi-edge-gap:1rem;--navi-bottom-gap:1rem; }
+/* Open at >=768px on a normal height: a tall rail on the right, below the measured header, inside the gutter the page reserves. Compact (short, <=640px) viewports keep their own geometry below; the height term keeps the rail out of the layout the viewport sync reads before the compact class lands. */
+@media(min-width:768px) and (min-height:641px) {
+ .navi-dock-open:not(.navi-dock-compact) { top:calc(var(--navi-top-clearance,0px) + .875rem);bottom:calc(max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) + var(--navi-keyboard-offset,0px));width:var(--navi-chat-width); }
+ .navi-dock-open:not(.navi-dock-compact) .navi-dialog { position:absolute;inset:0;width:auto;height:auto; }
+}
+/* While the chat is open the character and the size control are gone at every width; they return at the chosen size on close. */
+.navi-dock-open > .navi-launcher, .navi-dock-open .navi-size { display:none; }
+@media(max-width:767px) {
+ .navi-layout { --navi-launcher-size:min(var(--navi-size-mobile),40dvh);--navi-edge-gap:1rem;--navi-bottom-gap:1rem; }
+ [data-page-content] { padding-bottom:var(--navi-launcher-size); }
  .navi-dialog { right:0;width:calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap)); }
- .navi-dock-open > .navi-launcher { visibility:hidden; }
  .navi-dialog .assistant-input { max-height:7rem; }
 }
 .navi-dock-compact.navi-dock-open { --navi-bottom-gap:1rem; }
 .navi-dock-compact .navi-dialog { right:0;width:min(29rem,calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap)));height:calc(var(--navi-viewport-height,100dvh) - max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) - .5rem - var(--navi-top-clearance,0px));bottom:0; }
-.navi-dock-compact.navi-dock-open > .navi-launcher { visibility:hidden; }
 .navi-dock-compact .navi-dialog header { padding-top:.5rem;padding-bottom:.5rem; }
 .navi-dock-compact .navi-dialog header p { display:none; }
 .navi-dock-compact .navi-dialog textarea.assistant-input,.navi-dock-compact .navi-dialog textarea.chat-input { height:3rem;min-height:3rem;max-height:7rem; }
