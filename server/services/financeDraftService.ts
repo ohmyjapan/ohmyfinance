@@ -87,6 +87,9 @@ async function context(ownerId: string, importId: string, line: number) {
   if (saved && (saved.key !== row.key || saved.sourceHash !== batch.hash)) fail(409, '下書きと元ファイルが一致しません。')
   return { ownerId, importId, line, batch, account, row, mapped, saved }
 }
+// The same owned import/account/line/source checks every draft read makes, reads only (no proposal, references or save): the closed
+// Navi status uses it as the purchase conversation's authority without the full draft view (financeNaviStatusService).
+export const readDraftSourceContext = context
 const sourceEvidence = (source: string, reason: string, extra = {}) => ({ state: 'suggested', source, reason, ...extra })
 async function propose(ctx: any, references: any) {
   const { row, mapped, ownerId, account } = ctx

@@ -28,7 +28,7 @@
     <p v-if="turn.withheld" data-chat-withheld class="text-xs text-gray-500">{{ withheldText }}</p>
     <div v-else class="ml-6 rounded-2xl rounded-tr-sm bg-gray-100 px-4 py-3 dark:bg-white/10"><p class="mb-1 text-[11px] font-medium text-gray-500">あなた</p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-200">{{ turn.text }}</p></div>
     <ul v-if="turn.actions?.length" data-chat-actions class="mr-2 space-y-1 text-xs"><li v-for="a in turn.actions" :key="a.operationId" :data-chat-action-state="a.state" class="flex items-start gap-2" :class="a.state==='failed' || a.state==='unresolved' ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'"><Loader2 v-if="a.state==='working'" class="mt-0.5 h-3 w-3 shrink-0 animate-spin text-primary-main" /><span>{{ actionLabel(a) }}</span></li></ul>
-    <div v-if="turn.proposal" class="mr-2"><p class="mb-2 flex items-center gap-2 text-[11px] font-semibold text-primary-main"><NaviAvatar size="sm" /><span>OMF Navi</span></p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ turn.proposal.summary }}</p>
+    <div v-if="turn.proposal" class="mr-2"><p class="mb-2 flex items-center gap-2 text-[11px] font-semibold text-primary-main"><NaviAvatar size="sm" /><span>OMF Navi</span></p><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300" v-bind="replyMark(turn)">{{ turn.proposal.summary }}</p>
      <p v-if="turn.research" data-chat-research :data-chat-research-status="turn.id===conversation?.currentId ? '' : undefined" class="mt-2 text-xs" :class="turn.research.requestId ? 'text-gray-500' : turn.research.unavailable ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500'">{{ researchStatus(turn) }}</p>
      <div v-if="turn.proposal.kind==='proposal'" class="mt-3 rounded-xl border border-gray-200 p-3 dark:border-white/10">
       <p class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ turn.confirmedAt ? '確認した内容' : '反映する内容の提案' }}</p>
@@ -46,7 +46,7 @@
     <p class="flex items-center gap-2 text-[11px] font-semibold text-primary-main"><NaviAvatar size="sm" /><span>OMF Navi · {{ korean ? '조사 결과' : '調査結果' }}</span></p>
     <p v-if="researchView.research.state==='applied'" data-chat-research-record class="text-xs leading-relaxed text-gray-500">{{ korean ? '선택한 후보를 이전에 반영한 조사 기록이에요. 현재 입력값은 거래의 하단 항목에서 확인할 수 있어요.' : '選択した候補を反映した際の調査記録です。現在の入力値は取引の項目で確認できます。' }}</p>
     <p v-else-if="researchView.stale" data-chat-research-stale class="rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ korean ? '조사 후 거래 내용이 바뀌었어요. 아래는 이전 조사 기록이며, 현재 거래에 적용할 후보는 다시 확인해야 해요.' : '調査後に下書きが変わりました。以下は以前の調査記録です。現在の候補は再確認が必要です。' }}</p>
-    <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">{{ researchView.research.report.summary }}</p>
+    <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300" v-bind="researchMark(researchView.research,turns)">{{ researchView.research.report.summary }}</p>
     <dl v-if="!researchView.stale && researchView.research.state!=='applied'" class="divide-y divide-gray-100 rounded-xl border border-gray-200 px-3 dark:divide-white/10 dark:border-white/10">
      <div v-for="field in resultFields" :key="field.key" :data-chat-research-finding="field.candidate ? field.key : undefined" class="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-3 py-2.5 text-xs"><dt class="text-gray-500">{{ field.label }}<span v-if="field.status" class="mt-0.5 block text-[10px]">{{ field.status }}</span></dt><dd class="min-w-0 whitespace-pre-wrap break-words font-medium text-gray-800 dark:text-gray-200">{{ field.value }}</dd></div>
     </dl>
@@ -58,6 +58,8 @@
    <p v-if="waiting" role="status" class="flex items-center gap-2 text-xs text-gray-500"><Loader2 class="h-3.5 w-3.5 shrink-0 animate-spin text-primary-main" />{{ conversation?.state==='confirming'?'下書きへの反映を確認しています…':!data?.connected?'メッセージは保存済みです。AIへの接続が戻ると続けます。':conversation?.state==='queued'?'メッセージは保存済みです。AIの受付を待っています…':'元の明細と過去の判断を確認しています…' }}</p>
    <p v-if="turns.length>=(conversation?.turnLimit||100)" data-chat-turn-limit class="text-xs text-amber-700 dark:text-amber-400">この会話は{{ conversation?.turnLimit||100 }}件に達しました。「新しい会話」で続けてください。これまでの会話と提案は「履歴」に残ります。</p>
    <div v-if="conversation?.state==='failed'" class="text-xs text-amber-700 dark:text-amber-400"><p>回答を取得できませんでした。メッセージは保存されています。</p><button type="button" class="mt-2 text-primary-main underline" :disabled="busy || unavailable" @click="retry">もう一度回答を取得</button></div>
+   <!-- A reply or research result that arrived while the reader was further up: the place is kept, this jumps to it only when asked. -->
+   <div v-if="jump" class="pointer-events-none sticky bottom-0 z-[1] flex justify-end"><button type="button" data-navi-reply-jump class="pointer-events-auto rounded-full border border-primary-main/40 bg-white px-3 py-1 text-xs font-medium text-primary-main shadow-sm hover:bg-primary-main/10 dark:bg-slate-800" @click="reveal">新しい回答 <span aria-hidden="true">↓</span></button></div>
   </div>
   <form v-show="view==='chat'" class="shrink-0 border-t border-gray-100 px-4 py-4 dark:border-white/10 sm:px-6" @submit.prevent="send">
    <p v-if="error" role="alert" class="mb-3 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
@@ -81,6 +83,7 @@ import { useAssistantStore } from '~/stores/assistant'
 import { purchaseQuestions } from '~/shared/finance-answers.mjs'
 import { reusableClassification } from '~/shared/finance-chat.mjs'
 import { researchFields } from '~/shared/finance-research.mjs'
+import { useNaviReplyVisibility } from '~/composables/useNaviReplyVisibility'
 const props=withDefaults(defineProps<{draft:any,dirty:boolean,panel?:boolean,compact?:boolean,active?:boolean}>(),{panel:false,compact:false,active:true}),emit=defineEmits<{saved:[draft:any]}>(),user=useUserStore()
 const assistant=useAssistantStore(),bufferKey='draft:'+props.draft.importId+':'+props.draft.line
 const text=computed({get:()=>assistant.buffers[bufferKey]||'',set:v=>assistant.buffers[bufferKey]=v})
@@ -141,7 +144,7 @@ let resetRequest=''
 async function loadHistory(page=1){const org=selectedOrg();try{const r:any=await $fetch(endpoint.value+'/history',{headers:user.authHeader,query:{page}});if(disposed||org!==selectedOrg())return;archives.value=page===1?r.archives:[...archives.value,...r.archives];historyPage.value=r.page;historyMore.value=r.hasMore;historyLoaded.value=true}catch(e){if(!disposed)error.value=message(e)}}
 function openHistory(){view.value='history';archive.value=null;loadHistory(1)}
 async function openArchive(id:string){const org=selectedOrg();try{const r:any=await $fetch(endpoint.value+'/history/'+id,{headers:user.authHeader});if(!disposed&&org===selectedOrg()&&view.value==='history')archive.value=r.archive}catch(e){if(!disposed)error.value=message(e)}}
-async function newChat(){if(busy.value||waiting.value||!conversation.value)return;if(!resetRequest)resetRequest=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');await act(async()=>{try{data.value=await $fetch(endpoint.value+'/new',{method:'POST',headers:user.authHeader,body:{chatRevision:conversation.value.revision,requestId:resetRequest}});resetRequest='';view.value='chat';archive.value=null;archives.value=[];historyLoaded.value=false;request=null}catch(e:any){if(e?.statusCode||e?.status)resetRequest='';throw e}})}
+async function newChat(){if(busy.value||waiting.value||!conversation.value)return;if(!resetRequest)resetRequest=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');await act(async()=>{try{data.value=await $fetch(endpoint.value+'/new',{method:'POST',headers:user.authHeader,body:{chatRevision:conversation.value.revision,requestId:resetRequest}});resetRequest='';assistant.clearNaviStatus();view.value='chat';archive.value=null;archives.value=[];historyLoaded.value=false;request=null}catch(e:any){if(e?.statusCode||e?.status)resetRequest='';throw e}})}
 const actionNames:Record<string,string>={remember_company_knowledge:'会社の記憶を保存',correct_company_knowledge:'会社の記憶を訂正',set_company_knowledge_status:'会社の記憶の適用を変更',save_draft_fields:'下書きを保存',apply_referenced_proposal:'提案を下書きに反映',remember_accounting_fields:'科目を記憶',remember_customer_purpose:'顧客・用途を記憶',set_memory_status:'記憶の適用を変更',approve_draft:'下書きを確認',post_selected_approved_rows:'帳簿に登録',start_purchase_research:'調査を依頼'}
 const actionStates:Record<string,string>={done:'完了',queued:'受付済み',working:'処理中…',failed:'できませんでした',unresolved:'結果の確認が必要です'}
 const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.state]||a.state)+(a.acceptedRevision?'（下書き改訂 '+a.acceptedRevision+'）':'')+(a.requestedFields?.length&&a.state==='done'?' · '+a.requestedFields.map((f:string)=>fieldLabels[f]||labels[f]||f).join('・'):'')+(a.safeError?' · '+a.safeError:'')
@@ -154,9 +157,12 @@ let timer:ReturnType<typeof setTimeout>|undefined,disposed=false,request:{id:str
 // The view depends on the selected company (posting destination and company-teaching masking): a response requested under one
 // selection is dropped when the selection changed before it arrived.
 const selectedOrg=()=>String(tokenClaims(user.token)?.organizationId||'')
-async function load(){const ticket=++loadTicket,org=selectedOrg();try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadTicket&&org===selectedOrg()){data.value=result;await refreshAfterActions()}}catch(e){if(!disposed&&ticket===loadTicket)error.value=message(e)}}
+// The actor and selection the shown data was loaded under: replies are acknowledged only while both are still current.
+const actorId=String(tokenClaims(user.token)?.userId||''),dataOrg=ref('')
+async function load(){const ticket=++loadTicket,org=selectedOrg();try{const result=await $fetch(endpoint.value,{headers:user.authHeader});if(!disposed&&ticket===loadTicket&&org===selectedOrg()){data.value=result;dataOrg.value=org;await refreshAfterActions()}}catch(e){if(!disposed&&ticket===loadTicket)error.value=message(e)}}
 function schedule(){timer=setTimeout(async()=>{if(disposed)return;if(props.active&&!busy.value)await load();if(!disposed)schedule()},4000)}
-async function act(action:()=>Promise<void>){busy.value=true;loadTicket++;error.value='';try{await action();await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})}catch(e){error.value=message(e)}finally{busy.value=false}}
+// Explicit send, confirmation, retry and new chat still scroll to the latest (the reader asked for it).
+async function act(action:()=>Promise<void>){busy.value=true;loadTicket++;error.value='';const org=selectedOrg();try{await action();dataOrg.value=org;follow()}catch(e){error.value=message(e)}finally{busy.value=false}}
 async function send(){if(!text.value.trim()||unavailable.value||waiting.value||busy.value)return;await act(async()=>{if(!request||request.text!==text.value.trim())request={id:Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join(''),text:text.value.trim(),references:displayedReferences()};data.value=await $fetch(endpoint.value,{method:'POST',headers:user.authHeader,body:{...bind(),text:request.text,requestId:request.id,references:request.references}});text.value='';request=null;remember.value=false})}
 async function confirm(){await act(async()=>{const result:any=await $fetch(endpoint.value+'/confirm',{method:'POST',headers:user.authHeader,body:{...bind(),turnId:current.value.id,remember:remember.value}});data.value=result;emit('saved',result.draft);remember.value=false})}
 async function retry(){await act(async()=>{data.value=await $fetch(endpoint.value+'/retry',{method:'POST',headers:user.authHeader,body:bind()})})}
@@ -164,8 +170,15 @@ onMounted(async()=>{await load();if(!disposed)schedule()});onBeforeUnmount(()=>{
 watch(()=>props.active,value=>{if(value)load()})
 watch(()=>tokenClaims(user.token)?.organizationId,()=>{if(disposed)return;loadTicket++;archive.value=null;archives.value=[];historyLoaded.value=false;if(view.value==='history')loadHistory(1);load()})
 watch(()=>props.draft.revision,()=>{remember.value=false;load()})
-watch(()=>current.value?.answeredAt,async()=>{await nextTick();transcript.value?.scrollTo({top:transcript.value.scrollHeight,behavior:'smooth'})})
-watch(()=>researchView.value?.research?.report?[researchView.value.research.id,researchView.value.research.revision,!!researchView.value.stale].join(':'):'',async value=>{if(!value||!props.active)return;await nextTick();const target=researchReply.value,log=transcript.value;if(target&&log)log.scrollTo({top:log.scrollTop+target.getBoundingClientRect().top-log.getBoundingClientRect().top,behavior:'smooth'})})
+// Exact read state of the live replies and the linked research result actually visible in this open chat view
+// (useNaviReplyVisibility), for the actor, selection and purchase this transcript was loaded for. A reply or a research completion that
+// arrives on its own follows only a reader already at the latest (the research result is brought to its start as before); an older
+// reader keeps the place and gets the jump control.
+const {jump,follow,arrived,reveal,replyMark,researchMark}=useNaviReplyVisibility({log:transcript,allowed:()=>!disposed&&props.active&&view.value==='chat'&&user.isAuthenticated&&String(tokenClaims(user.token)?.userId||'')===actorId&&!!conversation.value&&dataOrg.value===selectedOrg(),
+ target:()=>({realm:'purchase',actorId,organizationId:selectedOrg(),importId:props.draft.importId,line:props.draft.line,endpoint:endpoint.value}),
+ conversation:()=>conversation.value?{id:String(conversation.value.id),segment:conversation.value.segment||0}:null,changes:()=>[data.value,researchView.value]})
+watch(()=>current.value?.answeredAt,()=>arrived())
+watch(()=>researchView.value?.research?.report?[researchView.value.research.id,researchView.value.research.revision,!!researchView.value.stale].join(':'):'',value=>{if(!value||!props.active)return;arrived(()=>researchReply.value)})
 </script>
 <style scoped>
 .chat-input { @apply block w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-800 placeholder:text-gray-400 focus:border-primary-main focus:outline-none focus:ring-1 focus:ring-primary-main disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:text-gray-100; min-height:82px; }

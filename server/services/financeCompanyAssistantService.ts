@@ -199,7 +199,8 @@ export async function finishCompanyAssistant(agent: any, chatId: string, body: a
   if (proposal && !await recordPointer(c.organizationId, proposal.navigation)) fail(400, 'Invalid company assistant reply')
   // Citations become the server's own records of captured sources of this conversation (literal quote checked), or the reply fails.
   if (proposal?.citations) proposal.citations = await resolveCompanyCitations(c, proposal.citations)
-  const changed = await Conversation.updateOne(jobFilter(agent, chatId, body.lease), { $set: { state: proposal ? 'ready' : 'failed', 'turns.$[turn].answeredAt': new Date(), ...(proposal ? { 'turns.$[turn].proposal': proposal } : {}) }, $inc: { revision: 1 }, $unset: { lease: '', leaseUntil: '' } }, { arrayFilters: [{ 'turn.id': c.currentId }] })
+  // A saved readable reply advances this turn's replyVersion in the same lease-checked write (closed Navi status); a failure does not.
+  const changed = await Conversation.updateOne(jobFilter(agent, chatId, body.lease), { $set: { state: proposal ? 'ready' : 'failed', 'turns.$[turn].answeredAt': new Date(), ...(proposal ? { 'turns.$[turn].proposal': proposal } : {}) }, $inc: { revision: 1, ...(proposal ? { 'turns.$[turn].replyVersion': 1 } : {}) }, $unset: { lease: '', leaseUntil: '' } }, { arrayFilters: [{ 'turn.id': c.currentId }] })
   if (!changed.matchedCount) fail(409, 'Company conversation job changed')
   return { success: true }
 }

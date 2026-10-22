@@ -129,9 +129,10 @@ export async function finishAssistant(agent:any,chatId:string,body:any){
  // A turn that used a company's teachings keeps no reply when that company can no longer be confirmed now (it settles as failed).
  if(proposal&&await companyContextLost(agent,c.ownerId,c.turns.find((t:any)=>t.id===c.currentId)))proposal=undefined
  // Only this turn's fields are set (never the whole array from this read); the receipts come from the journal, so a failed final
- // response keeps every completed action.
+ // response keeps every completed action. A saved readable reply also advances this turn's replyVersion in the same lease-checked
+ // write (closed Navi status); a failure does not.
  const receipts=await actionReceipts('workspace',chatId,c.currentId)
- const r=await Conversation.updateOne(filter,{$set:{state:proposal?'ready':'failed','turns.$[turn].answeredAt':new Date(),...(proposal?{'turns.$[turn].proposal':proposal}:{}),'turns.$[turn].actions':receipts},$inc:{revision:1},$unset:{lease:'',leaseUntil:''}},{arrayFilters:[{'turn.id':c.currentId}]})
+ const r=await Conversation.updateOne(filter,{$set:{state:proposal?'ready':'failed','turns.$[turn].answeredAt':new Date(),...(proposal?{'turns.$[turn].proposal':proposal}:{}),'turns.$[turn].actions':receipts},$inc:{revision:1,...(proposal?{'turns.$[turn].replyVersion':1}:{})},$unset:{lease:'',leaseUntil:''}},{arrayFilters:[{'turn.id':c.currentId}]})
  if(!r.matchedCount)fail(409,'Conversation job changed');return {success:true}
 }
 // A named Navi action on this worker's claimed workspace conversation (lease-bound; see financeActionService).

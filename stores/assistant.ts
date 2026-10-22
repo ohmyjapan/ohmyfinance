@@ -9,7 +9,10 @@ export const useAssistantStore=defineStore('assistant',{
   // A done/queued owner native Navi receipt (ids only); the open native page of the same owner refetches that record from the server.
   ownerNative:null as any,ownerNativeSequence:0,
   // The archived owner conversation the user explicitly chose to discuss (ids and dates only, memory only, never browser storage).
-  discussion:null as null|{scopeKey:string,archiveId:string,label:string}}),
+  discussion:null as null|{scopeKey:string,archiveId:string,label:string},
+  // Closed Navi status of the conversation the launcher opens (counts, states and versions only; memory only, never browser storage),
+  // keyed by realm/actor/company/purchase. Every write advances the sequence, so a status read started before it is dropped.
+  naviStatus:null as null|{key:string,status:any,unknown:boolean},naviStatusSequence:0}),
  actions:{
   identify(owner:string){if(owner===this.owner)return;this.$reset();this.owner=owner;if(!owner||typeof window==='undefined')return;try{const saved=JSON.parse(sessionStorage.getItem('omf-assistant:'+owner)||'null');if(saved){this.target=assistantTarget(saved.target);this.open=saved.open===true}}catch{}try{this.size=naviSize(localStorage.getItem('omf-navi-size:'+owner))}catch{}},
   // A display choice only: the size token is kept per owner in browser localStorage, never sent to the server.
@@ -28,6 +31,12 @@ export const useAssistantStore=defineStore('assistant',{
   postingFor(scopeKey:string,company:any){this.workspacePosting={scopeKey,company:company||null}},
   // A done company business receipt: actor, company, which native page kinds to reload, the record id and the effect. Ids only, never
   // record contents; each page reloads from its own native endpoint only when the actor and company are still the current ones.
-  receiveCompanyResource(signal:{actorId:string,organizationId:string,kinds:string[],id:string,effect:string}){this.companyResource={actorId:String(signal.actorId||''),organizationId:String(signal.organizationId||''),kinds:[...(signal.kinds||[])].map(String),id:String(signal.id||''),effect:String(signal.effect||'')};this.companyResourceSequence++}
+  receiveCompanyResource(signal:{actorId:string,organizationId:string,kinds:string[],id:string,effect:string}){this.companyResource={actorId:String(signal.actorId||''),organizationId:String(signal.organizationId||''),kinds:[...(signal.kinds||[])].map(String),id:String(signal.id||''),effect:String(signal.effect||'')};this.companyResourceSequence++},
+  // A status (from the parent read or an acknowledgement's reply) for its own key; an older server observation of the same key loses.
+  receiveNaviStatus(key:string,status:any){const current=this.naviStatus;if(current?.key===key&&current.status&&Number(current.status.observedAt)>Number(status?.observedAt))return false;this.naviStatus={key,status,unknown:false};this.naviStatusSequence++;return true},
+  // A failed status read: the last known facts stay, marked as not currently confirmed.
+  unknownNaviStatus(key:string){this.naviStatus={key,status:this.naviStatus?.key===key?this.naviStatus.status:null,unknown:true};this.naviStatusSequence++},
+  // Scope change, revoked access or a new chat: that status is dropped and every older in-flight read with it.
+  clearNaviStatus(key?:string){if(!key||this.naviStatus?.key===key)this.naviStatus=null;this.naviStatusSequence++}
  }
 })

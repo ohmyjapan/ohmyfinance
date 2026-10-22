@@ -23,9 +23,11 @@
    </template>
    <div id="omf-assistant-support" class="navi-support" :class="{'navi-sheet-open':compactSheet==='support'}"><SupportReport :key="user.user?.id" /></div>
   </aside>
-  <button type="button" data-assistant-toggle class="navi-launcher" aria-controls="omf-assistant" :aria-expanded="assistant.open" :aria-label="assistant.open ? 'Naviを小さくする' : 'OMF Naviに相談する'" @click="assistant.open ? close() : summon()">
+  <button type="button" data-assistant-toggle class="navi-launcher" aria-controls="omf-assistant" :aria-expanded="assistant.open" :aria-label="launcherLabel" @click="assistant.open ? close() : summon()">
    <img data-navi-character class="navi-character" :class="{'navi-character-motion':motion}" src="/images/omf-navi-character.png" alt="" aria-hidden="true" width="1156" height="1361" decoding="async" @animationend="motion=false">
+   <span v-if="indicator&&!assistant.open" data-navi-status :data-navi-status-kind="indicator.kind" :data-navi-status-count="indicator.count||undefined" class="navi-status" aria-hidden="true"><span class="navi-status-dot"></span>{{ indicator.short }}</span>
   </button>
+  <p data-navi-status-live class="sr-only" role="status" aria-live="polite">{{ assistant.open ? '' : statusText }}</p>
   <div v-if="!assistant.open" class="navi-size">
    <button type="button" data-navi-size-toggle class="navi-size-toggle" aria-controls="omf-navi-size-menu" :aria-expanded="sizeMenu" aria-label="Naviの大きさを変更" title="Naviの大きさ" @click="sizeMenu=!sizeMenu">大きさ</button>
    <div v-show="sizeMenu" id="omf-navi-size-menu" data-navi-size-menu role="group" aria-label="Naviの大きさ" class="navi-size-menu">
@@ -48,6 +50,7 @@ import AssistantConversation from './AssistantConversation.vue'
 import SupportReport from './SupportReport.vue'
 import CompanyAssistantScope from './CompanyAssistantScope.vue'
 import {tokenClaims} from '~/utils/auth-session'
+import {useNaviStatus,type NaviStatusTarget} from '~/composables/useNaviStatus'
 const user=useUserStore(),assistant=useAssistantStore(),route=useRoute(),{isLocked}=useActivityTracker()
 const panel=ref<HTMLElement|null>(null),activated=ref(false),loadedDraft=ref<any>(null),error=ref('')
 const viewportHeight=ref<number|null>(null),keyboardOffset=ref(0),headerClearance=ref(0),compactSheet=ref(''),sizeMenu=ref(false),motion=ref(false)
@@ -74,6 +77,15 @@ const currentDraftTarget=computed(()=>new RegExp('^/mapping-draft/[a-f0-9]{24}/[
 const targetPath=computed(()=>assistant.target.kind==='draft'?'/mapping-draft/'+assistant.target.importId+'/'+assistant.target.line:'')
 const pageDraft=computed(()=>assistant.draftPage?.path===targetPath.value?assistant.draftPage:null)
 const draft=computed(()=>pageDraft.value?.draft||loadedDraft.value),draftDirty=computed(()=>!!(pageDraft.value?.dirty||pageDraft.value?.busy))
+// Closed status of the conversation the launcher opens (summon below): the checked company's conversation on company pages, the
+// purchase it would select (the target, or this page's purchase while the target is the workspace), otherwise the owner workspace.
+// This parent reads it before any transcript mounts; paused while open, locked or signed out (and on a hidden tab). It names that one
+// conversation, never other companies or pages; nothing is persisted in the browser.
+const statusTarget=computed<NaviStatusTarget|null>(()=>{const s=scope.value;if(!user.isAuthenticated||!s.actorId)return null;if(s.company)return s.organizationId?{realm:'company',actorId:s.actorId,organizationId:s.organizationId,endpoint:'/api/finance-chat/company-workspace'}:null;const d=assistant.target.kind==='draft'?assistant.target:currentDraftTarget.value;return d?{realm:'purchase',actorId:s.actorId,organizationId:s.organizationId,importId:d.importId,line:d.line,endpoint:'/api/finance-chat/imports/'+d.importId+'/drafts/'+d.line}:{realm:'workspace',actorId:s.actorId,organizationId:s.organizationId,endpoint:'/api/finance-chat/workspace'}})
+const {status:naviStatus,indicator}=useNaviStatus(statusTarget,computed(()=>assistant.open||isLocked.value||!user.isAuthenticated))
+const statusConversation=computed(()=>statusTarget.value?.realm==='company'?(naviStatus.value?.status?.company?.name||'会社')+'の会話':statusTarget.value?.realm==='purchase'?'この購入の会話':'画面についての会話')
+const statusText=computed(()=>indicator.value?statusConversation.value+'：'+indicator.value.label:'')
+const launcherLabel=computed(()=>assistant.open?'Naviを小さくする':'OMF Naviに相談する'+(statusText.value?'（'+statusText.value+'）':''))
 let ticket=0,previousFocus:HTMLElement|null=null
 function summon(){previousFocus=document.activeElement as HTMLElement;assistant.show(workspaceView.value&&currentDraftTarget.value?currentDraftTarget.value:undefined)}
 function close(){compactSheet.value='';sizeMenu.value=false;assistant.close();nextTick(()=>{const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-assistant-toggle]') as HTMLElement;target?.focus()})}
@@ -115,6 +127,14 @@ onBeforeUnmount(()=>{ticket++;clearTimeout(motionTimer);window.removeEventListen
 .navi-launcher { position:relative;display:flex;align-items:center;justify-content:center;width:var(--navi-launcher-width);height:var(--navi-launcher-size);padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline-offset:4px; }
 .navi-character { display:block;width:100%;height:100%;object-fit:contain;object-position:bottom;pointer-events:none; }
 .navi-launcher:focus-visible { outline:2px solid #93402b; }
+/* Closed status: a small static pill in the launcher box's own top-right corner (no frame around her, nothing over the page); hidden
+   with the launcher while open. Text comes from server facts only; no motion, so reduced motion has nothing to suppress. */
+.navi-status { position:absolute;top:.25rem;right:0;display:inline-flex;align-items:center;gap:.25rem;max-width:100%;padding:.125rem .5rem;border:1px solid rgb(147 64 43 / 25%);border-radius:999px;background:rgb(255 255 255 / 92%);color:#93402b;font-size:11px;line-height:1.3;white-space:nowrap;overflow:hidden;pointer-events:none;box-shadow:0 1px 4px rgb(61 42 32 / 12%); }
+.navi-status-dot { flex-shrink:0;width:.4375rem;height:.4375rem;border-radius:999px;background:currentColor; }
+.navi-status[data-navi-status-kind=new] { border-color:#93402b;background:#93402b;color:#fff; }
+.navi-status[data-navi-status-kind=failed],.navi-status[data-navi-status-kind=reconnect],.navi-status[data-navi-status-kind=interrupted],.navi-status[data-navi-status-kind=unknown] { border-color:rgb(180 83 9 / 35%);color:#b45309; }
+.dark .navi-status { border-color:rgb(255 255 255 / 15%);background:rgb(30 41 59 / 92%);color:#f3c9bb; }
+.dark .navi-status[data-navi-status-kind=new] { border-color:#93402b;background:#93402b;color:#fff; }
 /* Size choice under the closed character; the menu opens above her and the dock. */
 .navi-size { display:flex;justify-content:center;margin-top:.25rem; }
 .navi-size-toggle { font-size:11px;line-height:1;padding:.375rem .625rem;border:1px solid rgb(147 64 43 / 25%);border-radius:999px;background:rgb(255 255 255 / 85%);color:#93402b; }

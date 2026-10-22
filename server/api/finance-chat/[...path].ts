@@ -7,6 +7,7 @@ import { boundedBody } from '../../services/financeDraftService'
 import { FinanceChatAgent } from '../../models/FinanceChat'
 import { chatAgent,chatHeartbeat,createChatAgent,getChat,sendChat,retryChat,claimChat,finishChat,confirmChat,actionChat,newChat,chatHistory,chatArchive } from '../../services/financeChatService'
 import { selectedPostingCompany } from '../../services/financeNaviPostingService'
+import { workspaceNaviStatus, workspaceNaviRead, companyNaviStatus, companyNaviRead, purchaseNaviStatus, purchaseNaviRead } from '../../services/financeNaviStatusService'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  const parts=(event.path.split('?')[0].split('/api/finance-chat/')[1]||'').split('/').filter(Boolean)
@@ -41,6 +42,9 @@ export default defineEventHandler(async event=>{
    if(parts.length===3&&parts[1]==='history'&&event.method==='GET')return await companyConversationArchive(ownerId,organizationId,parts[2])
    if(parts.length===3&&parts[1]==='sources'&&event.method==='GET')return await companyPublicSource(ownerId,organizationId,parts[2])
    if(parts.length===2&&parts[1]==='knowledge'&&event.method==='GET'){const q=getQuery(event);return await companyKnowledgeInspection(ownerId,organizationId,{status:typeof q.status==='string'?q.status:undefined,page:typeof q.page==='string'?q.page:undefined,query:typeof q.query==='string'?q.query:undefined})}
+   // Closed Navi status (a pure read) and the exact read acknowledgement of this actor's checked company conversation.
+   if(parts.length===2&&parts[1]==='status'&&event.method==='GET')return await companyNaviStatus(ownerId,organizationId)
+   if(parts.length===2&&parts[1]==='read'&&event.method==='POST')return await companyNaviRead(ownerId,organizationId,await body())
    fail(404,'Company conversation endpoint not found')
   }
   // Owner workspace and purchase chats: the token-selected company, checked now (current active membership), is the ledger posting
@@ -51,6 +55,9 @@ export default defineEventHandler(async event=>{
   // Named owner continuations only: explicit new chat and archived history (read-only), each masked for the company checked now.
   if(parts[0]==='workspace'&&parts.length===2&&parts[1]==='new'&&event.method==='POST')return await newAssistant(ownerId,await body(),await posting())
   if(parts[0]==='workspace'&&parts[1]==='history'&&event.method==='GET'){if(parts.length===2){const q=getQuery(event);return await assistantHistory(ownerId,{page:typeof q.page==='string'?q.page:undefined},await posting())}if(parts.length===3)return await assistantArchive(ownerId,parts[2],await posting())}
+  // Closed Navi status (a pure read) and the exact read acknowledgement, masked for the company checked now.
+  if(parts[0]==='workspace'&&parts.length===2&&parts[1]==='status'&&event.method==='GET')return await workspaceNaviStatus(ownerId,await posting())
+  if(parts[0]==='workspace'&&parts.length===2&&parts[1]==='read'&&event.method==='POST')return await workspaceNaviRead(ownerId,await body(),await posting())
   if(parts[0]==='agents'&&parts.length===1&&event.method==='POST')return await createChatAgent(ownerId,await body())
   if(parts[0]==='agents'&&parts.length===2&&event.method==='DELETE'){
    const r=await FinanceChatAgent.updateOne({_id:id(parts[1]),ownerId},{$set:{enabled:false,revokedAt:new Date()}})
@@ -63,6 +70,9 @@ export default defineEventHandler(async event=>{
    if(parts.length===5&&event.method==='POST'&&parts[4]==='confirm')return await confirmChat(ownerId,parts[1],line,await body(),await posting())
    if(parts.length===5&&event.method==='POST'&&parts[4]==='retry')return await retryChat(ownerId,parts[1],line,await body(),await posting())
    if(parts.length===5&&event.method==='POST'&&parts[4]==='new')return await newChat(ownerId,parts[1],line,await body(),await posting())
+   // Closed Navi status of this owned purchase line (a pure read, no draft recovery) and its exact read acknowledgement.
+   if(parts.length===5&&event.method==='GET'&&parts[4]==='status')return await purchaseNaviStatus(ownerId,parts[1],line,await posting())
+   if(parts.length===5&&event.method==='POST'&&parts[4]==='read')return await purchaseNaviRead(ownerId,parts[1],line,await body(),await posting())
    if(parts[4]==='history'&&event.method==='GET'){if(parts.length===5){const q=getQuery(event);return await chatHistory(ownerId,parts[1],line,{page:typeof q.page==='string'?q.page:undefined},await posting())}if(parts.length===6)return await chatArchive(ownerId,parts[1],line,parts[5],await posting())}
   }
   fail(404,'Conversation endpoint not found')

@@ -201,7 +201,8 @@ export async function finishChat(agent:any,chatId:string,body:any){
  // keeps every completed action). Only this turn's fields are set, never the whole array from this read.
  const reference=proposal?.kind==='proposal'?chatProposalReference(c,{...turn,proposal},c.context.revision):null
  const set:any={state:proposal?'ready':'failed','turns.$[turn].answeredAt':new Date(),...(proposal?{'turns.$[turn].proposal':proposal}:{}),...(research?{'turns.$[turn].research':research}:{}),...(reference?{'turns.$[turn].reference':reference}:{}),'turns.$[turn].actions':actions}
- const result=await Chat.updateOne(filter,{$set:set,$unset:{lease:'',leaseUntil:''},$inc:{revision:1}},{arrayFilters:[{'turn.id':turn.id}]})
+ // A saved readable reply advances this turn's replyVersion in the same lease-checked write (closed Navi status); a failure does not.
+ const result=await Chat.updateOne(filter,{$set:set,$unset:{lease:'',leaseUntil:''},$inc:{revision:1,...(proposal?{'turns.$[turn].replyVersion':1}:{})}},{arrayFilters:[{'turn.id':turn.id}]})
  if(!result.matchedCount)fail(409,'Teaching job changed');return {success:true}
 }
 // Explicit new chat and archived history of one purchase conversation: the purchase must be the owner's (readDraft refuses otherwise);

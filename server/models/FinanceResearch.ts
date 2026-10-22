@@ -6,7 +6,10 @@ const schema=new Schema({
  context:Schema.Types.Mixed,sources:{type:[Schema.Types.Mixed],default:[]},report:Schema.Types.Mixed,
  registry:Schema.Types.Mixed,events:{type:[Schema.Types.Mixed],default:[]},history:{type:[Schema.Types.Mixed],default:[]},
  agentId:Schema.Types.ObjectId,lease:String,leaseUntil:Date,attempts:{type:Number,default:0},
- artifacts:{type:[Schema.Types.Mixed],default:[]},applied:Schema.Types.Mixed,supplierId:Schema.Types.ObjectId
+ artifacts:{type:[Schema.Types.Mixed],default:[]},applied:Schema.Types.Mixed,supplierId:Schema.Types.ObjectId,
+ // Delivered report version: advanced only when a validated report is saved (finishResearch). Queue, failure, apply and supplier
+ // writes keep it; a row saved before this field reads as 0 (legacy, never a new chat arrival). No migration.
+ reportVersion:{type:Number,default:0}
 },{timestamps:true})
 schema.index({ownerId:1,importId:1,line:1},{unique:true})
 schema.index({ownerId:1,accountId:1,state:1,updatedAt:1})

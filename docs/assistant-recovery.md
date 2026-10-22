@@ -2,6 +2,8 @@
 
 Scope: purchase replies, workspace replies, their worker liveness, and the shared assistant presentation. The repair starts at `70798b6`. It does not change ledger posting or purchase confirmation.
 
+Closed Navi status 2026-10-23: a separate pure read reports the selected conversation's delivery and work state (queued, working, interrupted, reconnect, failed final reply, linked research, delivered reply versions) and exact read evidence; work counts as in progress only while its own native deadline is ahead (an expired, exhausted or deadline-less claim, confirmation or apply is shown as interrupted, never as progress, and status never recovers it). It never runs the recovery the full getters run, and it is not confirmation of any money effect — write receipts and the native records stay the truth. Details: [status and read state](navi-status-read-state.md).
+
 Current behaviour 2026-10-22: owner workspace and company turns are assigned at claim, not at send. The worker recorded at send is a hint; any live workspace worker of the same owner claims queued or expired work, the claim sets the assigned worker atomically, and only that worker's lease can act, renew or answer. "Only the assigned agent can answer" below now means the worker the claim assigned. Exhausted work fails for the owner and keeps the explicit retry. Details: [turn continuity](navi-turn-continuity.md). The rest of this document is the dated `70798b6` evidence.
 
 ## Request and worker lanes
