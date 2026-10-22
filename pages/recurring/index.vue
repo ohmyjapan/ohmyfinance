@@ -17,7 +17,7 @@
             {{ t('recurring.processDue') }}
           </button>
           <button
-            @click="showCreateModal = true"
+            @click="openCreate"
             class="inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
           >
             <Plus class="mr-2 h-4 w-4" />
@@ -108,7 +108,7 @@
         <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">{{ t('recurring.noPayments') }}</h3>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('recurring.noPaymentsDesc') }}</p>
         <button
-          @click="showCreateModal = true"
+          @click="openCreate"
           class="inline-flex items-center px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-primary-main to-primary-dark hover:from-primary-dark hover:to-primary-main shadow-lg shadow-primary-main/25 transition-all duration-300 touch-manipulation"
         >
           <Plus class="mr-2 h-4 w-4" />
@@ -136,6 +136,7 @@
             <td class="px-6 py-4">
               <div class="text-sm font-medium text-gray-900 dark:text-white">{{ payment.name }}</div>
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ payment.customer?.name }}</div>
+              <NaviConsultButton class="mt-1.5" kind="recurring" :record-id="String(payment.id)" :label="recurringLabel(payment)" :disabled="!navi.available.value" @consult="navi.consult({ id: String(payment.id), label: recurringLabel(payment) })" />
             </td>
             <td class="px-6 py-4 text-sm font-mono font-bold text-gray-900 dark:text-white">
               {{ formatCurrency(payment.amount, payment.currency) }}
@@ -308,10 +309,15 @@ import {
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
 import { tokenClaims } from '~/utils/auth-session'
+import NaviConsultButton from '~/components/finance/NaviConsultButton.vue'
+import { useNaviRecordSelection } from '~/composables/useNaviRecordSelection'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
 const assistant = useAssistantStore()
+// Consulting Navi about one saved recurring payment (pointer only; the editor and its values are never published).
+const navi = useNaviRecordSelection('recurring')
+const recurringLabel = (payment: any) => String(payment.name || '')
 
 const isLoading = ref(false)
 const isSaving = ref(false)
@@ -370,6 +376,8 @@ const form = reactive({
 })
 
 const loadPayments = async () => {
+  // The rows answer the actor/company the request started under; a reply after that identity changed is not shown as the new one's.
+  const rows = navi.loading()
   isLoading.value = true
   try {
     const params = new URLSearchParams()
@@ -377,7 +385,8 @@ const loadPayments = async () => {
     if (filters.frequency) params.set('frequency', filters.frequency)
     if (filters.search) params.set('search', filters.search)
 
-    payments.value = await $fetch(`/api/recurring?${params.toString()}`, { headers: userStore.authHeader })
+    const data: any[] = await $fetch(`/api/recurring?${params.toString()}`, { headers: userStore.authHeader })
+    if (navi.loading() === rows) { payments.value = data; navi.loaded(rows) }
   } catch (error) {
     console.error('Failed to load payments:', error)
   } finally {
@@ -438,7 +447,13 @@ const savePayment = async () => {
   }
 }
 
+const openCreate = () => {
+  navi.clear()
+  showCreateModal.value = true
+}
+
 const editPayment = (payment: any) => {
+  navi.clear()
   editingId.value = payment.id
   form.name = payment.name
   form.description = payment.description || ''
@@ -459,6 +474,7 @@ const deletePayment = async (payment: any) => {
   if (!confirm(`Delete "${payment.name}"?`)) return
   try {
     await $fetch(`/api/recurring/${payment.id}`, { method: 'DELETE', headers: userStore.authHeader })
+    navi.deleted(String(payment.id))
     await loadPayments()
     await loadStats()
   } catch (error) {

@@ -46,8 +46,10 @@
         <!-- Upcoming Payments -->
         <UpcomingPayments
           :payments="calendarStore.upcomingPayments"
+          :consult-disabled="!navi.available.value"
           @select="openEditModal"
           @mark-completed="handleMarkCompleted"
+          @consult="consultPayment"
         />
 
         <!-- Overdue Payments Alert -->
@@ -128,10 +130,12 @@
       :is-open="isDayDetailOpen"
       :date-string="dayDetailDate"
       :payments="dayDetailPayments"
+      :consult-disabled="!navi.available.value"
       @close="isDayDetailOpen = false"
       @mark-completed="handleDayDetailMarkCompleted"
       @edit-payment="handleDayDetailEdit"
       @add-payment="handleDayDetailAdd"
+      @consult="handleDayDetailConsult"
     />
 
     <!-- Payment Modal -->
@@ -155,14 +159,25 @@ import { useUserStore } from '~/stores/user'
 import { tokenClaims } from '~/utils/auth-session'
 import type { Payment, PaymentFormData } from '~/types/calendar'
 import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
+import { useNaviRecordSelection } from '~/composables/useNaviRecordSelection'
 
 const { t, locale } = useI18n()
 const calendarStore = useCalendarStore()
 const assistant = useAssistantStore(), userStore = useUserStore()
+// Consulting Navi about one saved calendar entry from the upcoming list or the read-only day list (pointer only; the payment editor
+// and its values are never published, and a dirty editor is never closed).
+const navi = useNaviRecordSelection('calendar')
+const consultPayment = (payment: Payment) => { const day = String(payment.dueDate || '').slice(0, 10).split('-'); navi.consult({ id: String(payment.id), label: String(payment.title || '') + (day.length === 3 ? '（' + Number(day[1]) + '/' + Number(day[2]) + '）' : '') }) }
+// The calendar's own native load; its entries are consultable once a load succeeded for the actor/company it started under.
+const loadCalendar = async () => {
+  const rows = navi.loading()
+  await calendarStore.fetchPayments()
+  if (!calendarStore.error) navi.loaded(rows)
+}
 // Navi added or removed a calendar entry of this same actor and company: reload the calendar (issuer bills it suppressed stay hidden).
 watch(() => assistant.companyResourceSequence, () => {
   const saved = assistant.companyResource, scope = tokenClaims(userStore.token)
-  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('payment') && saved.effect !== 'update') calendarStore.fetchPayments()
+  if (saved && saved.actorId === scope?.userId && saved.organizationId === scope?.organizationId && saved.kinds.includes('payment') && saved.effect !== 'update') loadCalendar()
 })
 
 // Format date to YYYY-MM-DD in local timezone (JST)
@@ -201,6 +216,12 @@ const handleDayDetailAdd = () => {
   openAddModal(dayDetailDate.value)
 }
 
+// The day list is read only (it holds no unsaved values), so it closes for the consultation; no editor opens.
+const handleDayDetailConsult = (payment: Payment) => {
+  isDayDetailOpen.value = false
+  consultPayment(payment)
+}
+
 // Modal state
 const isModalOpen = ref(false)
 const selectedPayment = ref<Payment | null>(null)
@@ -209,16 +230,18 @@ const quickAddType = ref<'expense' | 'income'>('expense')
 const quickAddCategory = ref<string>('')
 
 onMounted(() => {
-  calendarStore.fetchPayments()
+  loadCalendar()
 })
 
 const openAddModal = (dateString?: string) => {
+  navi.clear()
   selectedPayment.value = null
   selectedDate.value = dateString || formatLocalDate(new Date())
   isModalOpen.value = true
 }
 
 const openEditModal = (payment: Payment) => {
+  navi.clear()
   selectedPayment.value = payment
   selectedDate.value = ''
   isModalOpen.value = true

@@ -105,6 +105,10 @@
                     {{ t(`recurring.frequencies.${payment.recurringFrequency || 'monthly'}`) }}
                   </span>
                 </div>
+                <!-- Consult Navi about this saved entry; never the row's edit. This read-only list may close for it. -->
+                <div class="mt-1">
+                  <NaviConsultButton kind="payment" :record-id="String(payment.id)" :label="payment.title" :disabled="consultDisabled" @consult="$emit('consult', payment)" />
+                </div>
               </div>
 
               <!-- Amount -->
@@ -154,6 +158,7 @@ import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
 import { computed } from 'vue'
 import { X, Check, Plus } from 'lucide-vue-next'
 import type { Payment } from '~/types/calendar'
+import NaviConsultButton from '~/components/finance/NaviConsultButton.vue'
 
 const { t, te, locale } = useI18n()
 
@@ -161,6 +166,7 @@ const props = defineProps<{
   isOpen: boolean
   dateString: string
   payments: Payment[]
+  consultDisabled?: boolean
 }>()
 
 defineEmits<{
@@ -168,6 +174,7 @@ defineEmits<{
   (e: 'mark-completed', payment: Payment): void
   (e: 'edit-payment', payment: Payment): void
   (e: 'add-payment'): void
+  (e: 'consult', payment: Payment): void
 }>()
 
 const formattedDate = computed(() => {

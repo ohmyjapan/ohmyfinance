@@ -81,7 +81,7 @@ import {tokenClaims} from '~/utils/auth-session'
 import {naviFeature,naviFeatureRoute} from '~/shared/finance-navi-features.mjs'
 import {refreshKinds} from '~/shared/finance-navi-business.mjs'
 import {useNaviReplyVisibility} from '~/composables/useNaviReplyVisibility'
-const props=defineProps<{context:any,active:boolean,scope:{key:string,company:boolean,actorId:string,organizationId:string}}>(),user=useUserStore(),assistant=useAssistantStore()
+const props=defineProps<{context:any,active:boolean,consultation?:string,scope:{key:string,company:boolean,actorId:string,organizationId:string}}>(),user=useUserStore(),assistant=useAssistantStore()
 const data=ref<any>(null),error=ref(''),busy=ref(false),transcript=ref<HTMLElement|null>(null)
 // Company-only views. History and teachings stay in component memory; nothing financial goes to browser storage.
 const view=ref<'chat'|'history'|'knowledge'>('chat'),archives=ref<any[]>([]),archive=ref<any>(null),historyLoaded=ref(false),historyPage=ref(1),historyMore=ref(false),knowledge=ref<any[]>([]),knowledgeLoaded=ref(false)
@@ -148,10 +148,16 @@ const dataOrg=ref('')
 function accept(result:any,org:string=selectedOrg()){if(!current()||org!==selectedOrg())return;if(scope.company&&(result.company?.id!==scope.organizationId||(result.conversation&&(result.conversation.scope?.actorId!==scope.actorId||result.conversation.scope?.organizationId!==scope.organizationId))))throw Error('Company conversation changed');data.value=result;dataOrg.value=org;error.value='';if(!scope.company)assistant.postingFor(scope.key+'|'+org,result.postingCompany);const pending=assistant.pending[bufferKey];if(pending&&result.conversation?.turns?.some((t:any)=>t.id===pending.id&&t.text===pending.text)){if(text.value===pending.rawText)text.value='';delete assistant.pending[bufferKey]}}
 async function load(){if(scope.company&&!scope.organizationId)return;const stamp=++ticket,org=selectedOrg();try{const result=await $fetch(endpoint,{headers:user.authHeader});if(current()&&stamp===ticket&&org===selectedOrg()){accept(result,org);await refreshAfterActions()}}catch(e){if(current()&&stamp===ticket)failed(e)}}
 function schedule(){timer=setTimeout(async()=>{if(!current())return;if(props.active&&!busy.value)await load();if(current())schedule()},4000)}
-async function send(){if(!current()||busy.value||waiting.value||(!text.value.trim()&&!assistant.pending[bufferKey])||!data.value?.connected)return;busy.value=true;error.value='';ticket++;follow();try{
- if(!assistant.pending[bufferKey])assistant.pending[bufferKey]={id:randomId(),text:text.value.trim(),rawText:text.value,context:{...JSON.parse(JSON.stringify(props.context)),...(!scope.company&&discussing.value?{archiveId:discussing.value.archiveId}:{}),...(scope.company&&pinned.value?{inspected:{kind:pinned.value.kind,id:pinned.value.id}}:{})}}
- const request=assistant.pending[bufferKey],org=selectedOrg();const result=await $fetch(endpoint,{method:'POST',headers:user.authHeader,body:{text:request.text,requestId:request.id,context:request.context,chatRevision:data.value?.conversation?.revision||0}});if(current())accept(result,org)
-}catch(e){if(current())failed(e)}finally{busy.value=false}}
+async function send(){if(!current()||busy.value||waiting.value||(!text.value.trim()&&!assistant.pending[bufferKey])||!data.value?.connected)return;busy.value=true;error.value='';ticket++;follow();let request:any=null,fresh=false;try{
+ if(!assistant.pending[bufferKey]){fresh=true;assistant.pending[bufferKey]={id:randomId(),text:text.value.trim(),rawText:text.value,context:{...JSON.parse(JSON.stringify(props.context)),...(!scope.company&&discussing.value?{archiveId:discussing.value.archiveId}:{}),...(scope.company&&pinned.value?{inspected:{kind:pinned.value.kind,id:pinned.value.id}}:{})}}}
+ request=assistant.pending[bufferKey];const org=selectedOrg();const result=await $fetch(endpoint,{method:'POST',headers:user.authHeader,body:{text:request.text,requestId:request.id,context:request.context,chatRevision:data.value?.conversation?.revision||0}});if(current())accept(result,org)
+}catch(e:any){if(current()){
+ // The company server refused this attempt before storing anything because its selected or pinned record is not in this company (a
+ // marked refusal). Only a request created by this press and refused on this, its first and only attempt, is released; the typed text
+ // stays for the next send. A request that was already sent once (its earlier reply may have been lost, so it may still be accepted)
+ // stays the same pending request until its outcome is seen, as after a conflict, access or network error.
+ if(fresh&&scope.company&&request&&assistant.pending[bufferKey]===request&&(e?.statusCode||e?.status)===404&&e?.data?.data?.selectedRecordMissing===true)delete assistant.pending[bufferKey]
+ failed(e)}}finally{busy.value=false}}
 async function retry(){if(!current()||busy.value)return;busy.value=true;error.value='';ticket++;follow();const org=selectedOrg();try{const result=await $fetch(endpoint+'/retry',{method:'POST',headers:user.authHeader,body:{chatRevision:data.value.conversation.revision}});if(current())accept(result,org)}catch(e){if(current())failed(e)}finally{busy.value=false}}
 // Explicit new chat: the server archives the current segment with its receipts. The same request id is reused after a lost reply,
 // so a retry is recognised instead of archiving twice; a refused request (busy, changed) is dropped.
@@ -163,6 +169,10 @@ async function loadKnowledge(){try{const r:any=await $fetch(endpoint+'/knowledge
 function openKnowledge(){view.value='knowledge';loadKnowledge()}
 watch(()=>tokenClaims(user.token)?.organizationId,()=>{if(scope.company||disposed)return;ticket++;archive.value=null;archives.value=[];historyLoaded.value=false;if(view.value==='history')loadHistory(1);load()})
 watch(()=>assistant.companyKnowledgeSequence,()=>{if(view.value==='knowledge'&&assistant.companyKnowledgeSaved?.organizationId===scope.organizationId)loadKnowledge()})
+// An explicit consultation of a saved company record (each publication its own stamp, the same record again included) shows the live
+// chat from History or Memory; the unsent text and any pinned evidence stay. A plain close/reopen, a page change or an equal recomputed
+// context is not a consultation and keeps the current view.
+watch(()=>props.consultation,value=>{if(value&&scope.company&&!disposed){view.value='chat';archive.value=null}})
 // The owner workspace stays mounted across a company switch: drop the old destination at once and read the new one.
 onMounted(async()=>{await load();if(!disposed)schedule()});onBeforeUnmount(()=>{disposed=true;ticket++;clearTimeout(timer)});watch(()=>props.active,v=>{if(v)load()})
 // Exact read state of the live replies actually visible in this open chat view (useNaviReplyVisibility), under the scope and selection

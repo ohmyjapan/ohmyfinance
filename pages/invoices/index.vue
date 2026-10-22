@@ -109,6 +109,7 @@
           >
             <td class="px-6 py-4">
               <div class="font-medium font-mono text-gray-900 dark:text-gray-100">{{ invoice.invoiceNumber }}</div>
+              <NaviConsultButton class="mt-1.5" kind="invoice" :record-id="String(invoice.id)" :label="invoiceLabel(invoice)" :disabled="!navi.available.value" @consult="navi.consult({ id: String(invoice.id), label: invoiceLabel(invoice) })" />
             </td>
             <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">{{ invoice.to?.name }}</td>
             <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{{ formatDate(invoice.issueDate) }}</td>
@@ -241,11 +242,16 @@ import {
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
 import { tokenClaims } from '~/utils/auth-session'
+import NaviConsultButton from '~/components/finance/NaviConsultButton.vue'
+import { useNaviRecordSelection } from '~/composables/useNaviRecordSelection'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
 const assistant = useAssistantStore()
 const getAuthHeaders = () => userStore.authHeader
+// Consulting Navi about one saved invoice (pointer only; the editor and its values are never published).
+const navi = useNaviRecordSelection('invoices')
+const invoiceLabel = (invoice: any) => String(invoice.invoiceNumber || '') + (invoice.to?.name ? '（' + invoice.to.name + '）' : '')
 
 const isLoading = ref(false)
 const showModal = ref(false)
@@ -271,14 +277,14 @@ const form = reactive({
 
 let loadTicket = 0
 const loadInvoices = async () => {
-  const ticket = ++loadTicket, scope = tokenClaims(userStore.token)
+  const ticket = ++loadTicket, scope = tokenClaims(userStore.token), rows = navi.loading()
   isLoading.value = true
   try {
     const params = new URLSearchParams()
     if (statusFilter.value) params.set('status', statusFilter.value)
     const data = await $fetch(`/api/invoices?${params.toString()}`, { headers: getAuthHeaders() })
     const current = tokenClaims(userStore.token)
-    if (ticket === loadTicket && scope?.userId === current?.userId && scope?.organizationId === current?.organizationId) invoices.value = data.invoices
+    if (ticket === loadTicket && scope?.userId === current?.userId && scope?.organizationId === current?.organizationId) { invoices.value = data.invoices; navi.loaded(rows) }
   } catch (error) {
     console.error('Failed to load invoices:', error)
   } finally {
@@ -287,6 +293,7 @@ const loadInvoices = async () => {
 }
 
 const openModal = (invoice?: any) => {
+  navi.clear()
   if (invoice) {
     editingInvoice.value = invoice
     form.issueDate = new Date(invoice.issueDate).toISOString().split('T')[0]
@@ -350,6 +357,7 @@ const deleteInvoice = async (id: string) => {
   if (!confirm(t('admin.confirmDelete'))) return
   try {
     await $fetch(`/api/invoices/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
+    navi.deleted(id)
     loadInvoices()
   } catch (error) {
     console.error('Failed to delete:', error)

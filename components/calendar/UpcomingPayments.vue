@@ -47,6 +47,10 @@
             </p>
           </div>
         </div>
+        <!-- Consult Navi about this saved entry: separate from opening it and from marking it complete -->
+        <div class="mt-1.5 flex justify-end">
+          <NaviConsultButton kind="payment" :record-id="String(payment.id)" :label="payment.title" :disabled="consultDisabled" @consult="$emit('consult', payment)" />
+        </div>
       </div>
 
       <div v-if="payments.length === 0" class="px-4 py-8 text-center">
@@ -61,16 +65,19 @@
 import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
 import { Calendar, Check } from 'lucide-vue-next'
 import type { Payment } from '~/types/calendar'
+import NaviConsultButton from '~/components/finance/NaviConsultButton.vue'
 
 const { t, locale } = useI18n()
 
 defineProps<{
   payments: Payment[]
+  consultDisabled?: boolean
 }>()
 
 defineEmits<{
   (e: 'select', payment: Payment): void
   (e: 'mark-completed', payment: Payment): void
+  (e: 'consult', payment: Payment): void
 }>()
 
 // Parse date string to local date (avoid timezone issues)

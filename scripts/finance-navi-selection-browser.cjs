@@ -1,0 +1,480 @@
+'use strict';
+// Saved-record consultation in actual installed Google Chrome (headless, own temporary profile) against the owned native app of
+// scripts/finance-navi-selection-integration.cjs. Activation is a real touch tap at 390 px, a real Tab and Enter at 768 px and a real
+// mouse click at 1365 px; another tab of the same origin switches company through its own store (Chrome delivers the storage event to
+// this tab); a lost reply is a real request the test forwards to the server itself before failing the browser's copy; a slow poll is a
+// held real request. Worker claims and replies are simulated through the native worker routes. Labels starting with gui: name the
+// behaviour a defect must break; SETUP is preparation. Store state is read only where the pointer itself is the subject (the newer
+// publisher). Each group starts from a fresh navigation and owns its records.
+const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
+const {createRequire}=require('node:module'),{existsSync}=require('node:fs');
+const root=path.resolve(__dirname,'..');let preparedBrowser;
+function prepareBrowser(){
+ if(preparedBrowser)return preparedBrowser;
+ try{preparedBrowser=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core')}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;preparedBrowser=createRequire(path.resolve(root,'../collector/package.json'))('rebrowser-puppeteer-core')}
+ return preparedBrowser;
+}
+const GUI=['gui-consult','gui-lifecycle','gui-view','gui-delete','gui-missing'];
+module.exports=async ctx=>{
+ const {origin,call,ok,register,company,switchTo,card,workerOf,beat,claim,answered,act,send,conversation,invoice,budget,recurring,payment,issuerBill,localDay,pause,hex32,pass,seen,wants,group,orgs,member,COMPANY,timing,SETUP_READY_MS,db}=ctx;
+ if(!GUI.some(wants))return;
+ const puppeteer=prepareBrowser();
+ const executablePath=[path.join(process.env.ProgramFiles||'C:/Program Files','Google/Chrome/Application/chrome.exe'),path.join(process.env['ProgramFiles(x86)']||'C:/Program Files (x86)','Google/Chrome/Application/chrome.exe')].find(existsSync);
+ assert.ok(executablePath,'SETUP installed Chrome');
+ const shots=process.env.OMF_NAVI_SELECTION_SCREENSHOTS;let directory,browser,page,keepAlive,dialogAnswer='accept',failure=null;const errors=[],writes=[];
+ const shot=async name=>{if(shots){await fs.mkdir(shots,{recursive:true});await page.screenshot({path:path.join(shots,name+'.png'),captureBeyondViewport:false})}};
+ // People: G owns companies GA and GB; M is another member of GA (who removes a record G has selected).
+ const G=await register('gui','Synthetic selection GUI owner'),M=await register('gui-member','Synthetic selection GUI member');
+ const GA=await company('gui-a','Synthetic selection GUI A',[]),GB=await company('gui-b','Synthetic selection GUI B',[]);
+ await orgs.updateOne({_id:GA},{$set:{members:[member(G,'owner'),member(M,'member')]}});await orgs.updateOne({_id:GB},{$set:{members:[member(G,'owner')]}});
+ const WG=await workerOf(G,[await card(G,'91111')],{workspaceEnabled:true});await beat(WG);
+ // SETUP fresh native tokens for each group (an access token lives 30 minutes; a slow host can run longer).
+ const renew=async u=>{const r=await ok('/api/auth/login',null,'POST',{email:u.email,password:u.password});u.token=r.tokens.accessToken};
+ const tokens=async()=>{await renew(G);await renew(M);return{ga:await switchTo(G,GA),gb:await switchTo(G,GB),ma:await switchTo(M,GA)}};
+ const until=async(probe,label,ms=20000,describe=null)=>{const end=Date.now()+ms;let last;for(;;){const v=await probe();if(v)return v;if(Date.now()>end)assert.fail(label+' (timed out after '+ms+' ms)'+(describe?' last '+await describe():''));await pause(200)}};
+ const waitFor=(fn,args,label,ms=20000)=>until(()=>page.evaluate(fn,...args),label,ms);
+ // What a person sees of Navi: open state, view, the selected-record label and its clear action, composer, send label, error, pinned evidence.
+ const naviOf=p=>p.evaluate(()=>{const q=s=>document.querySelector(s),t=q('[data-assistant-toggle]'),panel=q('#omf-assistant'),log=panel?.querySelector('[role=log]'),shown=e=>!!e&&e.getClientRects().length>0;
+  const view=panel?.querySelector('[data-assistant-history]')?'history':panel?.querySelector('[data-assistant-knowledge]')?'knowledge':shown(log)?'chat':null;
+  const chip=panel?.querySelector('[data-assistant-selection]'),button=panel?.querySelector('[data-assistant-send]'),alert=panel?.querySelector('form [role=alert]'),composer=panel?.querySelector('#assistant-message'),pinned=panel?.querySelector('[data-assistant-pinned]');
+  return{open:t?.getAttribute('aria-expanded')==='true',view,chip:chip?chip.textContent.trim():null,clear:!!panel?.querySelector('[data-assistant-selection-clear]'),send:button?button.textContent.trim():null,sendDisabled:!!button?.disabled,error:alert?alert.textContent.trim():'',composer:shown(composer)?composer.value:null,composerDisabled:!!composer?.disabled,pinned:pinned?pinned.textContent.trim():null,focusInPanel:!!panel&&panel.contains(document.activeElement),company:panel?.querySelector('[data-assistant-company-status]')?.textContent.trim()||''}});
+ const navi=()=>naviOf(page);
+ // SETUP a Navi control is pressed once it is rendered and visible (a conversation that just mounted shows its view controls after its
+ // first read); the press itself is a real click.
+ const press=async selector=>{await page.waitForSelector(selector,{visible:true,timeout:20000});await page.click(selector)};
+ const describeNavi=async()=>JSON.stringify(await navi().catch(e=>String(e)));
+ const pointer=()=>page.evaluate(()=>{const s=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('assistant').pageSelection;return s?JSON.parse(JSON.stringify(s)):null});
+ const consultOf=(kind,id,within='')=>(within?within+' ':'')+'[data-navi-consult="'+kind+'"][data-navi-consult-id="'+id+'"]';
+ const visit=async route=>{await page.goto(origin+route,{waitUntil:'networkidle2',timeout:SETUP_READY_MS});await waitFor(()=>!!document.querySelector('[data-assistant-toggle]'),[],'SETUP page '+route,SETUP_READY_MS)};
+ const push=route=>page.evaluate(route=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.push(route),route);
+ const openNavi=async()=>{if(!(await navi()).open)await page.click('[data-assistant-toggle]');await waitFor(()=>document.querySelector('#omf-assistant')?.getBoundingClientRect().width>0,[],'SETUP Navi open')};
+ const closeNavi=async()=>{if((await navi()).open)await press('#omf-assistant [data-assistant-close]');await waitFor(()=>document.querySelector('[data-assistant-toggle]')?.getAttribute('aria-expanded')==='false',[],'SETUP Navi closed')};
+ // The browser session's company through the native switch and profile (the store's own acceptSession; a page load follows).
+ const adopt=organizationId=>page.evaluate(async organizationId=>{const user=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user');const r=await fetch('/api/auth/switch-organization',{method:'POST',headers:{...user.authHeader,'Content-Type':'application/json'},body:JSON.stringify({organizationId})});if(!r.ok)throw Error('Synthetic company switch '+r.status);const s=await r.json();const p=await fetch('/api/auth/me',{headers:{Authorization:'Bearer '+s.tokens.accessToken}});if(!p.ok)throw Error('Synthetic company profile');user.acceptSession({...await p.json(),tokens:s.tokens},false)},String(organizationId));
+ const viewport=async vp=>{await page.setViewport({width:vp.width,height:vp.height,isMobile:!!vp.isMobile,hasTouch:!!vp.hasTouch});await pause(200)};
+ // A consultation action as a person meets it: scrolled into view, its effective opacity (ancestors included, so a hover-only group
+ // fails), the element actually hit at its centre, size, name and the native small-button style.
+ const shown=selector=>page.evaluate(selector=>{const e=document.querySelector(selector);if(!e)return{exists:false};e.scrollIntoView({block:'center',inline:'nearest'});const r=e.getBoundingClientRect(),s=getComputedStyle(e),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);let opacity=1;for(let p=e;p&&p.nodeType===1;p=p.parentElement)opacity*=Number(getComputedStyle(p).opacity);
+  return{exists:true,tag:e.tagName,width:Math.round(r.width),height:Math.round(r.height),inViewport:r.left>=0&&r.right<=innerWidth+0.5&&r.top>=0&&r.bottom<=innerHeight+0.5,opacity,visibility:s.visibility,hit:!!hit&&(hit===e||e.contains(hit)),hitBy:hit?hit.tagName+'.'+String(hit.className).slice(0,60):null,disabled:e.disabled||e.getAttribute('aria-disabled')==='true',name:e.getAttribute('aria-label')||'',text:e.textContent.trim(),fontSize:s.fontSize,radius:s.borderRadius}},selector);
+ let lastActivation=null;
+ const activate=async(selector,mode)=>{
+  // SETUP the action is present when used (a list that is reloading re-renders its rows for a moment).
+  let box=null;for(let i=0;i<40&&!box;i++){box=await page.evaluate(s=>{const e=document.querySelector(s);if(!e)return null;e.scrollIntoView({block:'center',inline:'nearest'});const r=e.getBoundingClientRect(),v=window.visualViewport,x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return{x,y,hit:hit?hit.tagName+'.'+String(hit.className).slice(0,30):null,scale:v?.scale,offsetLeft:v?.offsetLeft,offsetTop:v?.offsetTop,scrollWidth:document.documentElement.scrollWidth,innerWidth}},selector);if(!box)await pause(250)}
+  if(!box){await shot('missing-action-'+Date.now()).catch(()=>{});assert.fail('SETUP consultation action present '+selector+' '+await scene())}
+  lastActivation={selector,mode,...box};
+  // A touch lands in the visual viewport (a mobile page can be scrolled within a wider layout viewport); element boxes are layout ones.
+  if(mode==='tap'){await page.touchscreen.tap((box.x-(box.offsetLeft||0))*(box.scale||1),(box.y-(box.offsetTop||0))*(box.scale||1));return}
+  if(mode==='mouse'){await page.mouse.click(box.x,box.y);return}
+  // Keyboard: the focusable element just before the action in document order, then a real Tab to the action and a real Enter.
+  await page.evaluate(selector=>{const target=document.querySelector(selector),all=[...document.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'),i=all.indexOf(target);if(i<1)throw Error('SETUP no focusable element before the action');all[i-1].focus({preventScroll:false})},selector);
+  await page.keyboard.press('Tab');
+  const focused=await page.evaluate(selector=>{const e=document.querySelector(selector);return{active:document.activeElement===e,visible:e.matches(':focus-visible'),outline:getComputedStyle(e).outlineStyle}},selector);
+  assert.ok(focused.active,'gui:keyboard-reachable '+selector);assert.ok(focused.visible&&focused.outline!=='none','gui:keyboard-focus-visible '+JSON.stringify(focused));
+  await page.keyboard.press('Enter')};
+ // The page around a failed expectation (diagnosis only: what had focus, which consultation actions exist); a screenshot when kept.
+ const scene=async()=>{const s=await page.evaluate(()=>{const a=document.activeElement;return{path:location.pathname,active:a?a.tagName+(a.getAttribute('data-navi-consult')?'[consult '+a.getAttribute('data-navi-consult-id')+']':'')+'.'+String(a.className).slice(0,40):null,actions:[...document.querySelectorAll('[data-navi-consult]')].map(e=>e.getAttribute('data-navi-consult')+':'+e.getAttribute('data-navi-consult-id').slice(-6)+(e.getAttribute('aria-disabled')?'(disabled)':'')).slice(0,12),pointer:JSON.parse(JSON.stringify(document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('assistant').pageSelection||null))}}).catch(e=>String(e));await shot('failure-'+Date.now()).catch(()=>{});return JSON.stringify({navi:await navi().catch(e=>String(e)),page:s,lastActivation})};
+ const chip=(text,label='gui:consult-opens-with-label')=>until(async()=>{const n=await navi();return n.open&&n.chip?.includes(text)?n:null},label+' '+text,20000,scene);
+ const setComposer=async text=>{await until(async()=>{const n=await navi();return n.composer!==null&&!n.composerDisabled},'SETUP composer ready',30000,describeNavi);await page.$eval('#assistant-message',(e,v)=>{e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}))},text)};
+ const turnsWith=async(org,text)=>((await conversation(G,org))?.turns||[]).filter(t=>t.text===text).length;
+ // A person types a question and sends it: accepted (stored once) and acknowledged in the composer. A press that met a send button the
+ // latest conversation read had just disabled is pressed again once it is enabled (the same pending request, never a second one).
+ const say=async(text,org=GA)=>{await beat(WG);await setComposer(text);const end=Date.now()+30000;
+  while(await turnsWith(org,text)===0){assert.ok(Date.now()<end,'SETUP message accepted '+text+' '+await describeNavi());const n=await navi();if(!n.sendDisabled)await press('#omf-assistant [data-assistant-send]');await until(async()=>await turnsWith(org,text)>0||!(await navi()).sendDisabled,'SETUP send settled',30000,describeNavi);if(await turnsWith(org,text)===0)await pause(1500)}
+  assert.equal(await turnsWith(org,text),1,'SETUP message stored once '+text);await until(async()=>(await navi()).composer==='','SETUP composer acknowledged',30000,describeNavi)};
+ const consultedJob=async(expected,label)=>{const job=await claim(WG,'SETUP gui claim');assert.deepEqual({...job.target},expected,label+' '+JSON.stringify(job.target));await answered(WG,job,'GUI synthetic reply');return job};
+ const openDay=async day=>{const box=await page.$eval('[data-calendar-day="'+day+'"] span',e=>{e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2}});await page.mouse.click(box.x,box.y);await waitFor(()=>!!document.querySelector('[data-calendar-day-detail]'),[],'SETUP day detail open')};
+ const rowButton=async(consultSelector,index)=>{const handle=await page.evaluateHandle((s,i)=>document.querySelector(s)?.closest('tr')?.querySelectorAll('td:last-child button')[i],consultSelector,index);const el=handle.asElement();assert.ok(el,'SETUP row action '+index);await page.hover(consultSelector);return el};
+ const login=async()=>{await page.goto(origin+'/login',{waitUntil:'networkidle2',timeout:SETUP_READY_MS});await page.waitForSelector('#email',{visible:true,timeout:SETUP_READY_MS});await page.type('#email',G.email);await page.type('#password',G.password);await page.$eval('button[type=submit]',e=>e.click());await waitFor(()=>location.pathname==='/'&&!!document.querySelector('[data-assistant-toggle]'),[],'SETUP login',SETUP_READY_MS)};
+ try{
+  directory=await fs.mkdtemp(path.join(os.tmpdir(),'omf-navi-selection-chrome-'));
+  let started=Date.now();
+  browser=await puppeteer.launch({executablePath,headless:true,pipe:true,timeout:SETUP_READY_MS,userDataDir:path.join(directory,'profile'),args:['--lang=ja-JP,ja','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-sync']});
+  page=await browser.newPage();page.on('pageerror',e=>errors.push(String(e)));page.on('dialog',d=>{(dialogAnswer==='accept'?d.accept():d.dismiss()).catch(()=>{})});
+  page.on('request',r=>{try{const u=new URL(r.url());if(['POST','PUT','PATCH','DELETE'].includes(r.method())&&/^\/api\/(invoices|budgets|recurring|payments)(\/|$)/.test(u.pathname))writes.push({method:r.method(),path:u.pathname,at:Date.now()})}catch{}});
+  await page.setViewport({width:1365,height:900});timing.chromeMs=Date.now()-started;
+  keepAlive=setInterval(()=>{beat(WG).catch(()=>{})},20000);
+  started=Date.now();await login();timing.loginMs=Date.now()-started;console.log('TIMING '+JSON.stringify(timing));
+
+  // 2. Four saved-record consultations (invoice, budget, recurring payment, calendar upcoming and day-detail entries) at 390 (touch),
+  //    768 (keyboard) and 1365 (mouse): the action is visible without hover, reachable and named; it opens Navi with the record's label
+  //    and a clear action, focuses the rail, writes no record, closes only the read-only day modal, and the sent turn's claimed job has
+  //    exactly that saved record as its target. The closed status and exact read state of a consulted reply still work.
+  await group('gui-consult',async()=>{
+   const t=await tokens();
+   // Ordinary breakable names (a single unbreakable synthetic word would widen these existing rows by itself at 390 px).
+   const inv=await invoice(t.ga,'SEL-GUI-INV-1'),bud=await budget(t.ga,'SELECTION GUI BUDGET'),rec=await recurring(t.ga,'SELECTION GUI RECURRING'),pay=await payment(t.ga,'SELECTION GUI PAYMENT'),day=await payment(t.ga,'SELECTION GUI DAY');
+   await viewport({width:1365,height:900});await adopt(GA);
+   const specs=[
+    {name:'invoice',route:'/invoices',kind:'invoice',id:inv,text:'SEL-GUI-INV-1',target:{page:'invoices',invoiceId:inv}},
+    {name:'budget',route:'/budgets',kind:'budget',id:bud,text:'SELECTION GUI BUDGET',target:{page:'budgets',budgetId:bud}},
+    {name:'recurring',route:'/recurring',kind:'recurring',id:rec,text:'SELECTION GUI RECURRING',target:{page:'recurring',recurringPaymentId:rec}},
+    {name:'upcoming',route:'/calendar',kind:'payment',id:pay,text:'SELECTION GUI PAYMENT',within:'[data-calendar-upcoming="'+pay+'"]',target:{page:'calendar',paymentId:pay}},
+    {name:'day-detail',route:'/calendar',kind:'payment',id:day,text:'SELECTION GUI DAY',within:'[data-calendar-day-detail]',day:true,target:{page:'calendar',paymentId:day}}];
+   for(const vp of[{width:390,height:844,isMobile:true,hasTouch:true,mode:'tap'},{width:768,height:1024,mode:'keyboard'},{width:1365,height:900,mode:'mouse'}]){
+    await viewport(vp);
+    for(const spec of specs){
+     const where=spec.name+' '+vp.width;await visit(spec.route);await closeNavi();
+     if(spec.day)await openDay(localDay());
+     const selector=consultOf(spec.kind,spec.id,spec.within);
+     await waitFor(s=>!!document.querySelector(s),[selector],'gui:consult-action '+where);
+     await page.mouse.move(1,1);await pause(300);
+     const v=await shown(selector);
+     assert.ok(v.exists&&v.tag==='BUTTON'&&!v.disabled,'gui:consult-action '+where+' '+JSON.stringify(v));
+     assert.ok(v.inViewport&&v.hit&&v.opacity===1&&v.visibility==='visible','gui:consult-visible-without-hover '+where+' '+JSON.stringify(v));
+     assert.ok(v.width>=24&&v.height>=24,'gui:consult-target-size '+where+' '+JSON.stringify(v));
+     assert.ok(v.name.includes(spec.text)&&v.text.includes('Naviに相談'),'gui:consult-accessible-name '+where+' '+JSON.stringify(v));
+     assert.ok(v.fontSize==='12px'&&v.radius==='8px','gui:native-small-button '+where+' '+JSON.stringify(v));
+     const writesBefore=writes.length;
+     await activate(selector,vp.mode);
+     const n=await chip(spec.text,'gui:consult-opens-with-label '+where);
+     if(spec.day){assert.equal(await page.$('[data-calendar-day-detail]'),null,'gui:day-detail-closes '+where);assert.equal(await page.$('[data-calendar-payment-form]'),null,'gui:day-consult-read-only '+where)}
+     assert.ok(n.clear,'gui:clearable-label '+where);assert.ok(n.focusInPanel,'gui:consult-focuses-rail '+where);
+     assert.equal(writes.length,writesBefore,'gui:consult-no-record-write '+where+' '+JSON.stringify(writes.slice(writesBefore)));
+     await shot('consult-'+spec.name+'-'+vp.width);
+     const text='GUI consult '+where;await say(text);
+     const job=await consultedJob(spec.target,'gui:claim-target '+where);assert.equal(job.text,text,'SETUP the consulted message was claimed');
+     if(spec.day)assert.equal(await page.$('[data-calendar-payment-form]'),null,'gui:day-consult-read-only '+where);
+     assert.equal(writes.length,writesBefore,'gui:consult-no-record-write '+where+' '+JSON.stringify(writes.slice(writesBefore)));
+     await closeNavi();
+    }
+    seen('gui|consult-'+vp.mode+'-'+vp.width);
+   }
+   // The closed status and exact read state of a consulted reply on a company page (the existing lane): the reply arrives while closed,
+   // the launcher shows it, opening shows it and it is acknowledged.
+   await viewport({width:1365,height:900});await visit('/invoices');await closeNavi();
+   await activate(consultOf('invoice',inv),'mouse');await chip('SEL-GUI-INV-1');
+   const text='GUI consult status lane';await say(text);await closeNavi();
+   const job=await claim(WG,'SETUP status claim');assert.deepEqual({...job.target},{page:'invoices',invoiceId:inv},'gui:claim-target status');await answered(WG,job,'GUI_STATUS_LANE_REPLY');
+   await until(()=>page.evaluate(()=>document.querySelector('[data-assistant-toggle] [data-navi-status]')?.getAttribute('data-navi-status-kind')==='new'),'gui:status-lane-new',30000);
+   await openNavi();await until(async()=>(await conversation(G,GA))?.turns?.find(t=>t.text===text)?.seenReplyVersion===1,'gui:status-lane-read',20000);
+   await closeNavi();seen('gui|status-lane');
+   pass('four saved-record consultations at 390 touch, 768 keyboard and 1365 mouse: visible without hover, named, clearable label, rail focus, no record write, read-only day modal closes, exact claimed target; closed status and read state kept');
+  });
+
+  // 3. Lifecycle: an explicit clear, opening an editor or a new-record form and leaving the page clear only this page's pointer (the
+  //    mapping page's newer one survives); a dirty editor keeps its values while a Navi change reloads the list underneath; another tab's
+  //    company switch clears the pointer, leaves the old rows unconsultable and is never reinterpreted on the way back; a same-identity
+  //    token refresh keeps the selection and the History view until an explicit consultation of the same record returns to chat.
+  await group('gui-lifecycle',async()=>{
+   const t=await tokens();
+   const i1=await invoice(t.ga,'SEL-LIFE-INV-1'),i2=await invoice(t.ga,'SEL-LIFE-INV-2'),i3=await invoice(t.ga,'SEL-LIFE-INV-3'),b1=await budget(t.ga,'SELECTION_LIFE_BUDGET');
+   await viewport({width:1365,height:900});await adopt(GA);
+   const one=consultOf('invoice',i1);
+   await visit('/invoices');await closeNavi();await waitFor(s=>!!document.querySelector(s),[one],'SETUP invoice rows');
+   // (a) explicit clear
+   await activate(one,'mouse');await chip('SEL-LIFE-INV-1');
+   await press('#omf-assistant [data-assistant-selection-clear]');await until(async()=>(await navi()).chip===null,'gui:explicit-clear',10000,describeNavi);
+   await say('GUI lifecycle cleared');await consultedJob({page:'invoices'},'gui:clear-sends-no-target');seen('gui|clear');
+   // (b) an editor clears the page's own pointer; its dirty values stay while a Navi deletion of another invoice reloads the list
+   await activate(one,'mouse');await chip('SEL-LIFE-INV-1');
+   const other=await send(t.ga,'GUI lifecycle another tab asks to delete',{page:'invoices'});assert.equal(other.r.status,200,'SETUP other question '+other.r.raw.slice(0,200));
+   const writesBefore=writes.length;
+   await (await rowButton(consultOf('invoice',i2),1)).click();
+   await waitFor(()=>!!document.querySelector('.fixed.inset-0.z-50 form textarea'),[],'SETUP invoice editor open');
+   await until(async()=>(await navi()).chip===null,'gui:editor-clears',10000,describeNavi);
+   await page.type('.fixed.inset-0.z-50 form textarea','GUI_DIRTY_NOTE');
+   const job=await claim(WG,'SETUP delete claim');const read=await act(WG,job,'get_company_invoice',{invoiceId:i3},1);assert.equal(read.status,200,'SETUP read '+read.raw.slice(0,200));
+   const del=await act(WG,job,'delete_company_invoice',{invoiceId:i3,expectedUpdatedAt:read.data.result.invoice.updatedAt},2);assert.equal(del.status,200,'SETUP navi delete '+del.raw.slice(0,200));await answered(WG,job,'GUI deleted another invoice');
+   await waitFor(s=>!document.querySelector(s),[consultOf('invoice',i3)],'gui:native-refresh-kept',30000);
+   const editor=await page.evaluate(()=>({open:!!document.querySelector('.fixed.inset-0.z-50 form'),note:document.querySelector('.fixed.inset-0.z-50 form textarea')?.value}));
+   assert.deepEqual(editor,{open:true,note:'GUI_DIRTY_NOTE'},'gui:dirty-editor-kept '+JSON.stringify(editor));assert.equal((await navi()).chip,null,'gui:editor-clears');
+   const cancelEditor=()=>page.evaluate(()=>[...document.querySelectorAll('.fixed.inset-0.z-50 form button[type=button]')].find(b=>b.textContent.trim()==='キャンセル')?.click());
+   await cancelEditor();await waitFor(()=>!document.querySelector('.fixed.inset-0.z-50 form'),[],'SETUP editor cancelled');
+   assert.deepEqual(writes.slice(writesBefore),[],'gui:editor-no-write');seen('gui|editor');
+   // (c) a new-record form clears it too
+   await activate(one,'mouse');await chip('SEL-LIFE-INV-1');
+   await page.evaluate(()=>[...document.querySelectorAll('[data-page-content] button')].find(b=>b.textContent.trim()==='新規請求書')?.click());
+   await waitFor(()=>!!document.querySelector('.fixed.inset-0.z-50 form'),[],'SETUP new invoice form open');
+   await until(async()=>(await navi()).chip===null,'gui:create-clears',10000,describeNavi);
+   await cancelEditor();await waitFor(()=>!document.querySelector('.fixed.inset-0.z-50 form'),[],'SETUP form cancelled');seen('gui|create');
+   // (d) leaving the page clears only this page's pointer: the mapping page publishes its own while the invoices page unmounts
+   await activate(one,'mouse');await chip('SEL-LIFE-INV-1');
+   await push('/mapping');await waitFor(()=>location.pathname==='/mapping',[],'SETUP mapping page');await pause(1500);
+   const mapped=await pointer();assert.equal(mapped?.path,'/mapping','gui:newer-publisher-kept '+JSON.stringify(mapped));assert.equal(mapped?.invoiceId,undefined,'gui:unmount-clears '+JSON.stringify(mapped));
+   await push('/invoices');await waitFor(s=>!!document.querySelector(s),[one],'SETUP back on invoices');await pause(500);assert.equal((await navi()).chip,null,'gui:unmount-clears');
+   // a pointer never reaches another company page
+   await activate(one,'mouse');await chip('SEL-LIFE-INV-1');
+   await push('/budgets');await waitFor(()=>location.pathname==='/budgets',[],'SETUP budgets page');await pause(800);assert.equal((await navi()).chip,null,'gui:wrong-page-no-label');
+   await say('GUI lifecycle another page');await consultedJob({page:'budgets'},'gui:wrong-page-no-target');seen('gui|page');
+   // (e) another tab switches the company: this tab's pointer is cleared, the old rows are not consultable as the new company's records,
+   //     and switching back does not reinterpret the old pointer.
+   await visit('/invoices');await closeNavi();await waitFor(s=>!!document.querySelector(s),[one],'SETUP invoice rows');
+   await activate(one,'mouse');await chip('SEL-LIFE-INV-1');
+   // Another real tab of the same origin and session switches the company through its own store (Chrome delivers the storage event here).
+   const otherTab=async()=>{const tab=await browser.newPage();await tab.goto(origin+'/budgets',{waitUntil:'networkidle2',timeout:SETUP_READY_MS});await tab.waitForFunction(()=>!!document.querySelector('[data-assistant-toggle]'),{timeout:SETUP_READY_MS});await page.bringToFront();return tab};
+   const switchIn=async(tab,org)=>{await tab.evaluate(async organizationId=>{const user=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user');const r=await fetch('/api/auth/switch-organization',{method:'POST',headers:{...user.authHeader,'Content-Type':'application/json'},body:JSON.stringify({organizationId})});if(!r.ok)throw Error('Synthetic switch '+r.status);const s=await r.json();const p=await fetch('/api/auth/me',{headers:{Authorization:'Bearer '+s.tokens.accessToken}});user.acceptSession({...await p.json(),tokens:s.tokens},false)},String(org))};
+   const tokenOrg=()=>page.evaluate(()=>{const t=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user').token;try{return JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).organizationId||''}catch{return ''}});
+   const tab=await otherTab();
+   try{
+    await switchIn(tab,GB);
+    await until(async()=>(await navi()).company.includes('Synthetic selection GUI B'),'SETUP this tab follows the other tab to company B',20000,describeNavi);
+    assert.equal((await navi()).chip,null,'gui:company-switch-clears');
+    const stale=await shown(one);assert.ok(stale.exists&&stale.disabled,'gui:stale-rows-not-published '+JSON.stringify(stale));
+    await page.$eval(one,e=>e.click());await pause(800);assert.equal((await navi()).chip,null,'gui:stale-rows-not-published');
+    await openNavi();await say('GUI lifecycle under company B',GB);await consultedJob({page:'invoices'},'gui:switch-sends-no-target');
+    await switchIn(tab,GA);
+    await until(async()=>(await navi()).company.includes('Synthetic selection GUI A'),'SETUP this tab follows the other tab back to company A',20000,describeNavi);
+    await pause(800);assert.equal((await navi()).chip,null,'gui:switch-back-no-reinterpretation');
+    await say('GUI lifecycle back in company A');await consultedJob({page:'invoices'},'gui:switch-back-no-reinterpretation');seen('gui|company-switch');
+   }finally{await tab.close().catch(()=>{})}
+   // (g) A legitimate reload for the new company on the same page instance: after another tab switched to B, a real Navi budget creation
+   //     in B reloads the budgets list through the existing scoped signal; those B rows are consultable without a full reload, the reload
+   //     itself publishes nothing and leaves the History view, and the typed message stays.
+   await visit('/budgets');await closeNavi();await waitFor(s=>!!document.querySelector(s),[consultOf('budget',b1)],'SETUP budget rows (company A)');
+   await openNavi();const tab2=await otherTab();
+   try{
+    await switchIn(tab2,GB);
+    await until(async()=>(await navi()).company.includes('Synthetic selection GUI B'),'SETUP this tab follows the other tab to company B',20000,describeNavi);
+    const old=await shown(consultOf('budget',b1));assert.ok(old.exists&&old.disabled,'gui:stale-rows-not-published '+JSON.stringify(old));
+    await setComposer('UNSENT_REFRESH_TEXT');
+    await press('#omf-assistant [data-assistant-history-toggle]');await until(async()=>(await navi()).view==='history','SETUP history view (company B)',10000,describeNavi);
+    const asked=await send(t.gb,'GUI lifecycle create a company B budget',{page:'budgets'});assert.equal(asked.r.status,200,'SETUP company B question '+asked.r.raw.slice(0,200));
+    const bj=await claim(WG,'SETUP company B claim'),made=await act(WG,bj,'create_company_budget',{name:'SELECTION LIFE B BUDGET',amount:30000,currency:'JPY',period:'monthly'},1);
+    assert.equal(made.status,200,'SETUP company B budget '+made.raw.slice(0,200));const newB=String(made.data.receipt.nativeResourceIds.budgetId);await answered(WG,bj,'GUI company B budget created');
+    const fresh=consultOf('budget',newB);
+    await waitFor(s=>!!document.querySelector(s),[fresh],'gui:refreshed-row-visible',30000);
+    await until(async()=>{const v=await shown(fresh);return v.exists&&!v.disabled},'gui:refreshed-rows-consultable',20000,scene);
+    let v=await navi();assert.equal(v.view,'history','gui:ready-no-publication '+JSON.stringify(v));assert.equal(v.chip,null,'gui:ready-no-publication '+JSON.stringify(v));
+    await activate(fresh,'mouse');await chip('SELECTION LIFE B BUDGET');
+    v=await navi();assert.equal(v.view,'chat','gui:same-record-consult-live');assert.equal(v.composer,'UNSENT_REFRESH_TEXT','gui:refresh-keeps-text '+JSON.stringify(v));
+    await say('UNSENT_REFRESH_TEXT',GB);await consultedJob({page:'budgets',budgetId:newB},'gui:refreshed-row-target');seen('gui|refreshed-rows');
+    await switchIn(tab2,GA);await until(async()=>await tokenOrg()===String(GA),'SETUP back to company A',20000);
+   }finally{await tab2.close().catch(()=>{})}
+   await closeNavi();
+   // (h) A calendar list reply requested for company A that arrives after another tab switched to B is never acknowledged for B: the
+   //     company A entries it shows stay unconsultable (the calendar store keeps its own rows; only the page's acknowledgement decides).
+   const p1=await payment(t.ga,'SELECTION LIFE DELAYED PAYMENT');const tab3=await otherTab();
+   try{
+    await page.setRequestInterception(true);let held=null;
+    const onHeld=r=>{let x;try{x=new URL(r.url())}catch{}if(!held&&r.method()==='GET'&&x?.pathname==='/api/payments'){held=r;return}r.continue().catch(()=>{})};
+    page.on('request',onHeld);
+    try{
+     await page.goto(origin+'/calendar',{waitUntil:'domcontentloaded',timeout:SETUP_READY_MS});
+     await until(async()=>!!held,'SETUP held company A calendar reply',30000);
+     await switchIn(tab3,GB);await until(async()=>await tokenOrg()===String(GB),'SETUP this tab follows the other tab to company B',20000);
+     const release=held;held={done:true};await release.continue().catch(()=>{});
+     const delayed=consultOf('payment',p1,'[data-calendar-upcoming="'+p1+'"]');
+     await waitFor(s=>!!document.querySelector(s),[delayed],'SETUP the delayed company A entry rendered',30000);await pause(1500);
+     const d=await shown(delayed);assert.ok(d.exists&&d.disabled,'gui:delayed-old-response-not-acknowledged '+JSON.stringify(d));
+     await page.$eval(delayed,e=>e.click());await pause(800);assert.equal(await pointer(),null,'gui:delayed-old-response-not-acknowledged');seen('gui|delayed-old-response');
+    }finally{page.off('request',onHeld);if(held&&!held.done)await held.continue().catch(()=>{});await page.setRequestInterception(false)}
+    await switchIn(tab3,GA);await until(async()=>await tokenOrg()===String(GA),'SETUP back to company A',20000);
+   }finally{await tab3.close().catch(()=>{})}
+   // (f) a same-identity token refresh keeps the selection and the History view; consulting the same record again returns to chat
+   await visit('/budgets');await closeNavi();const b=consultOf('budget',b1);await waitFor(s=>!!document.querySelector(s),[b],'SETUP budget rows');
+   await activate(b,'mouse');await chip('SELECTION_LIFE_BUDGET');
+   await press('#omf-assistant [data-assistant-history-toggle]');await until(async()=>(await navi()).view==='history','SETUP history view',10000,describeNavi);
+   const refreshed=await page.evaluate(async()=>{const user=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user'),claims=t=>JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))),before=user.token,result=await user.refreshAuthToken();return{result,changed:before!==user.token,same:claims(before).userId===claims(user.token).userId&&claims(before).organizationId===claims(user.token).organizationId}});
+   assert.deepEqual(refreshed,{result:'refreshed',changed:true,same:true},'SETUP same-identity token refresh '+JSON.stringify(refreshed));await pause(1500);
+   let n=await navi();assert.ok(n.chip?.includes('SELECTION_LIFE_BUDGET'),'gui:refresh-keeps-selection '+JSON.stringify(n));assert.equal(n.view,'history','gui:refresh-keeps-history');
+   await activate(b,'mouse');await until(async()=>(await navi()).view==='chat','gui:same-record-consult-live',10000,describeNavi);
+   await say('GUI lifecycle after refresh');await consultedJob({page:'budgets',budgetId:b1},'gui:refresh-send-target');seen('gui|token-refresh');
+   await closeNavi();
+   pass('lifecycle: explicit clear, editor and new form, unmount (a newer mapping pointer kept), other page, another tab\'s company switch (old rows not consultable, no reinterpretation) and a same-identity token refresh (selection and History kept)');
+  });
+
+  // 4. Views and focus: from History and from Memory an explicit consultation (the same record again included) returns to the live chat
+  //    with the unsent text and the pinned evidence kept and the rail focused; closing returns focus to the initiating row's action without
+  //    moving the document; a plain close/reopen and an ordinary page change keep the current view.
+  await group('gui-view',async()=>{
+   const t=await tokens();
+   const recs=[];for(let i=0;i<12;i++)recs.push(await recurring(t.ga,'SELECTION_VIEW_RECURRING_'+String(i).padStart(2,'0')));
+   // SETUP an archived conversation to pin (an answered turn, then an explicit new chat through the native route)
+   const s=await send(t.ga,'GUI view archived question',{page:'recurring'});assert.equal(s.r.status,200,'SETUP archived send '+s.r.raw.slice(0,200));const archived=await claim(WG,'SETUP archived claim');await answered(WG,archived,'GUI_VIEW_ARCHIVED_REPLY');
+   const live=await ok(COMPANY,t.ga);await ok(COMPANY+'/new',t.ga,'POST',{chatRevision:live.conversation.revision,requestId:hex32()});
+   await viewport({width:1365,height:760});await adopt(GA);await visit('/recurring');await closeNavi();
+   const first=await until(()=>page.evaluate(ids=>[...document.querySelectorAll('[data-navi-consult="recurring"]')].map(e=>e.getAttribute('data-navi-consult-id')).find(id=>ids.includes(id))||null,recs),'SETUP recurring rows');
+   const target=consultOf('recurring',first);
+   await openNavi();await setComposer('UNSENT_VIEW_TEXT');
+   await press('#omf-assistant [data-assistant-history-toggle]');await waitFor(()=>!!document.querySelector('#omf-assistant [data-archive-item]'),[],'SETUP archive listed');
+   await press('#omf-assistant [data-archive-item]');await waitFor(()=>!!document.querySelector('#omf-assistant [data-assistant-discuss="archive"]'),[],'SETUP archive open');
+   await press('#omf-assistant [data-assistant-discuss="archive"]');await until(async()=>{const n=await navi();return n.view==='chat'&&!!n.pinned},'SETUP archive pinned',10000,describeNavi);
+   // History -> consultation
+   await press('#omf-assistant [data-assistant-history-toggle]');await until(async()=>(await navi()).view==='history','SETUP history view',10000,describeNavi);
+   await activate(target,'mouse');
+   let n=await until(async()=>{const v=await navi();return v.view==='chat'?v:null},'gui:history-consult-live-chat',10000,describeNavi);
+   assert.ok(n.chip?.includes('SELECTION_VIEW_RECURRING_'),'gui:consult-opens-with-label '+JSON.stringify(n));assert.equal(n.composer,'UNSENT_VIEW_TEXT','gui:unsent-kept');assert.ok(n.pinned,'gui:pinned-kept '+JSON.stringify(n));assert.ok(n.focusInPanel,'gui:consult-focuses-rail');
+   // Memory -> the same record again
+   await press('#omf-assistant [data-assistant-knowledge-toggle]');await until(async()=>(await navi()).view==='knowledge','SETUP memory view',10000,describeNavi);
+   await activate(target,'mouse');n=await until(async()=>{const v=await navi();return v.view==='chat'?v:null},'gui:memory-consult-live-chat',10000,describeNavi);
+   assert.equal(n.composer,'UNSENT_VIEW_TEXT','gui:unsent-kept');assert.ok(n.pinned,'gui:pinned-kept');
+   // Close: focus back on the initiating action, the document not moved (scrolled away from the action first)
+   await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));await pause(500);
+   const away=await page.evaluate(s=>{const r=document.querySelector(s).getBoundingClientRect();return{y:scrollY,outside:r.bottom<0||r.top>innerHeight}},target);assert.ok(away.y>0&&away.outside,'SETUP scrolled away from the action '+JSON.stringify(away));
+   await press('#omf-assistant [data-assistant-close]');await until(async()=>!(await navi()).open,'SETUP closed');await pause(300);
+   const back=await page.evaluate(s=>({focused:document.activeElement===document.querySelector(s),y:scrollY}),target);
+   assert.ok(back.focused,'gui:focus-returns-to-row '+JSON.stringify(back));assert.equal(back.y,away.y,'gui:close-no-scroll '+JSON.stringify({before:away.y,after:back.y}));seen('gui|focus');
+   // A plain close/reopen keeps the view; an ordinary page change keeps it
+   await page.evaluate(()=>window.scrollTo(0,0));await openNavi();await press('#omf-assistant [data-assistant-history-toggle]');await until(async()=>(await navi()).view==='history','SETUP history view');
+   await closeNavi();await openNavi();assert.equal((await navi()).view,'history','gui:reopen-keeps-view');
+   await push('/budgets');await waitFor(()=>location.pathname==='/budgets',[],'SETUP budgets page');await pause(1500);
+   assert.equal((await navi()).view,'history','gui:page-change-keeps-history '+await describeNavi());assert.equal((await navi()).composer,null,'SETUP history shows no composer');
+   await press('#omf-assistant [data-assistant-view="chat"]');await until(async()=>(await navi()).composer==='UNSENT_VIEW_TEXT','gui:unsent-kept',10000,describeNavi);
+   await closeNavi();seen('gui|views');
+   pass('views: History and Memory return to the live chat on an explicit consultation (same record included) with unsent text and pinned evidence kept and the rail focused; close returns focus to the initiating action without moving the document; reopen and page changes keep the view');
+  });
+
+  // 5. Deletion: only the exact successful deletion of the selected record clears its pointer (a Navi deletion's done receipt through the
+  //    company-resource signal, the page's own successful native delete, and an issuer bill's suppression whose facts stay); a different
+  //    record's deletion, a refused Navi deletion, a cancelled or failed native delete keep it; the following send has no stale id.
+  await group('gui-delete',async()=>{
+   const t=await tokens();
+   const b1=await budget(t.ga,'SELECTION_DEL_BUDGET_1'),b2=await budget(t.ga,'SELECTION_DEL_BUDGET_2'),b3=await budget(t.ga,'SELECTION_DEL_BUDGET_3');
+   const i1=await invoice(t.ga,'SEL-DEL-INV-1'),i2=await invoice(t.ga,'SEL-DEL-INV-2'),i3=await invoice(t.ga,'SEL-DEL-INV-3'),bill=await issuerBill(GA,'SELECTION_DEL_ISSUER_BILL');
+   await viewport({width:1365,height:900});await adopt(GA);
+   const bud=id=>consultOf('budget',id),inv=id=>consultOf('invoice',id);
+   await visit('/budgets');await closeNavi();await waitFor(s=>!!document.querySelector(s),[bud(b1)],'SETUP budget rows');
+   // (a) Navi deletes the consulted budget
+   await activate(bud(b1),'mouse');await chip('SELECTION_DEL_BUDGET_1');
+   await say('この予算を削除して。');let job=await claim(WG,'SETUP delete claim');assert.deepEqual({...job.target},{page:'budgets',budgetId:b1},'gui:claim-target delete');
+   let read=await act(WG,job,'get_company_budget',{budgetId:b1},1);assert.equal(read.status,200,'SETUP read '+read.raw.slice(0,200));
+   let r=await act(WG,job,'delete_company_budget',{budgetId:b1,expectedUpdatedAt:read.data.result.budget.updatedAt},2);assert.equal(r.status,200,'SETUP navi delete '+r.raw.slice(0,200));assert.equal(r.data.receipt.state,'done','SETUP done receipt');
+   await answered(WG,job,'GUI deleted the budget');
+   await until(async()=>(await navi()).chip===null,'gui:matched-delete-clears',30000,describeNavi);
+   await waitFor(s=>!document.querySelector(s),[bud(b1)],'gui:native-refresh-after-delete',30000);
+   await say('削除した予算について確認して。');await consultedJob({page:'budgets'},'gui:following-send-ok');seen('gui|navi-delete');
+   // (b) a different record's deletion keeps the pointer (the list still reloads)
+   await activate(bud(b2),'mouse');await chip('SELECTION_DEL_BUDGET_2');
+   await say('別の予算を削除して。');job=await claim(WG,'SETUP other delete claim');
+   read=await act(WG,job,'get_company_budget',{budgetId:b3},1);r=await act(WG,job,'delete_company_budget',{budgetId:b3,expectedUpdatedAt:read.data.result.budget.updatedAt},2);assert.equal(r.status,200,'SETUP other delete '+r.raw.slice(0,200));
+   await answered(WG,job,'GUI deleted another budget');
+   await waitFor(s=>!document.querySelector(s),[bud(b3)],'SETUP list reloaded after the other deletion',30000);await pause(1000);
+   assert.ok((await navi()).chip?.includes('SELECTION_DEL_BUDGET_2'),'gui:other-delete-keeps '+await describeNavi());seen('gui|other-delete');
+   // (c) a refused Navi deletion of the consulted budget keeps it
+   await say('この予算を削除して（古い読み取り）。');job=await claim(WG,'SETUP refused delete claim');
+   r=await act(WG,job,'delete_company_budget',{budgetId:b2,expectedUpdatedAt:'2020-01-01T00:00:00.000Z'},1);assert.equal(r.status,409,'SETUP refused delete '+r.status);
+   await answered(WG,job,'GUI_REFUSED_DELETE_REPLY');await until(()=>page.evaluate(()=>document.querySelector('#omf-assistant [role=log]')?.textContent.includes('GUI_REFUSED_DELETE_REPLY')),'SETUP reply rendered',30000);await pause(1000);
+   assert.ok((await navi()).chip?.includes('SELECTION_DEL_BUDGET_2'),'gui:failed-delete-keeps '+await describeNavi());seen('gui|refused-delete');
+   // (d) the page's own native delete: successful clears, cancelled or failed keeps
+   await visit('/invoices');await closeNavi();await waitFor(s=>!!document.querySelector(s),[inv(i1)],'SETUP invoice rows');
+   await activate(inv(i1),'mouse');await chip('SEL-DEL-INV-1');
+   dialogAnswer='accept';await (await rowButton(inv(i1),2)).click();
+   await until(async()=>(await navi()).chip===null,'gui:page-delete-clears',20000,describeNavi);await waitFor(s=>!document.querySelector(s),[inv(i1)],'SETUP deleted row gone',20000);
+   await activate(inv(i2),'mouse');await chip('SEL-DEL-INV-2');
+   dialogAnswer='dismiss';await (await rowButton(inv(i2),2)).click();await pause(1500);
+   assert.ok((await navi()).chip?.includes('SEL-DEL-INV-2'),'gui:cancelled-delete-keeps '+await describeNavi());
+   await activate(inv(i3),'mouse');await chip('SEL-DEL-INV-3');
+   await ok('/api/invoices/'+i3,t.ma,'DELETE');// another member removes it first (native route)
+   dialogAnswer='accept';await (await rowButton(inv(i3),2)).click();await pause(2000);
+   assert.ok((await navi()).chip?.includes('SEL-DEL-INV-3'),'gui:failed-delete-keeps-pointer '+await describeNavi());dialogAnswer='accept';seen('gui|page-delete');
+   await press('#omf-assistant [data-assistant-selection-clear]');await closeNavi();
+   // (e) an issuer bill's suppression clears the selected displayed entry; its saved facts stay
+   await visit('/calendar');await closeNavi();const billAction=consultOf('payment',bill,'[data-calendar-upcoming="'+bill+'"]');await waitFor(s=>!!document.querySelector(s),[billAction],'SETUP issuer bill listed');
+   await activate(billAction,'mouse');await chip('SELECTION_DEL_ISSUER_BILL');
+   await say('このカードの請求予定を削除して。');job=await claim(WG,'SETUP suppression claim');assert.deepEqual({...job.target},{page:'calendar',paymentId:bill},'gui:claim-target suppression');
+   read=await act(WG,job,'get_company_calendar_entry',{paymentId:bill},1);assert.equal(read.status,200,'SETUP read entry '+read.raw.slice(0,200));
+   r=await act(WG,job,'delete_company_calendar_entry',{paymentId:bill,expectedUpdatedAt:read.data.result.entry.updatedAt},2);assert.equal(r.status,200,'SETUP suppression '+r.raw.slice(0,200));assert.equal(r.data.result.suppressed,true,'SETUP issuer bill suppressed');
+   await answered(WG,job,'GUI suppressed the bill');
+   await until(async()=>(await navi()).chip===null,'gui:suppression-clears',30000,describeNavi);
+   await waitFor(id=>!document.querySelector('[data-calendar-upcoming="'+id+'"]'),[bill],'SETUP suppressed entry hidden',30000);
+   const kept=await db.collection('payments').findOne({_id:new ctx.ObjectId(bill)});assert.ok(kept&&kept.suppressedAt&&kept.amount===4321,'gui:issuer-facts-kept');seen('gui|suppression');
+   await closeNavi();
+   pass('deletion: a Navi deletion (exact done receipt), the page\'s own successful delete and an issuer bill suppression clear only that pointer; other-record, refused, cancelled and failed deletions keep it; the following send has no stale id');
+  });
+
+  // 6. A selected record removed before the first send: the definite marked refusal releases only that frozen request, the typed text
+  //    stays, clearing the target lets the next send through once, without a reload or sign-out. A lost reply, another tab's pending
+  //    question and another tab's new chat keep the request and text; the request is then recognised or accepted exactly once.
+  await group('gui-missing',async()=>{
+   const t=await tokens();
+   const gone=await recurring(t.ga,'SELECTION_MISSING_RECURRING'),tx=await ok('/api/transactions',t.ga,'POST',{date:localDay(),amount:2400,productName:'SELECTION_MISSING_TRANSACTION'}),txId=String(tx._id||tx.id);
+   await viewport({width:1365,height:900});await adopt(GA);
+   // (0) The existing transaction-detail selection (route-derived, present before this change): another member removes the transaction
+   //     before the first send. Only that marked refusal releases the frozen request; the text stays; leaving the record page lets the
+   //     next send through once.
+   await visit('/transactions/'+txId);await waitFor(()=>document.querySelector('[data-page-content]')?.textContent.includes('SELECTION_MISSING_TRANSACTION'),[],'SETUP transaction detail');
+   await openNavi();await ok('/api/transactions/'+txId,t.ma,'DELETE');// another member removes it (native route)
+   let before=((await conversation(G,GA))?.turns||[]).length;
+   await setComposer('MISSING_TRANSACTION_TEXT');await until(async()=>!(await navi()).sendDisabled,'SETUP send enabled',30000,describeNavi);await press('#omf-assistant [data-assistant-send]');
+   let n=await until(async()=>{const v=await navi();return v.error?v:null},'SETUP refusal shown',20000,describeNavi);
+   assert.equal(n.send,'送信','gui:missing-target-released '+JSON.stringify(n));assert.equal(n.composer,'MISSING_TRANSACTION_TEXT','gui:missing-text-kept');assert.ok(n.error.includes('見つかりません'),'gui:missing-target-message '+n.error);
+   await push('/transactions');await waitFor(()=>location.pathname==='/transactions',[],'SETUP transaction list');await pause(800);
+   await press('#omf-assistant [data-assistant-send]');
+   await until(async()=>await turnsWith(GA,'MISSING_TRANSACTION_TEXT')===1,'gui:missing-target-recovers',20000,describeNavi);
+   await consultedJob({page:'transactions'},'gui:missing-target-recovers');assert.equal(((await conversation(G,GA)).turns||[]).length,before+1,'gui:missing-single-turn');seen('gui|missing-transaction');
+   await closeNavi();await visit('/recurring');await closeNavi();
+   const action=consultOf('recurring',gone);await waitFor(s=>!!document.querySelector(s),[action],'SETUP recurring rows');
+   // (a) the consulted saved record removed before the first send
+   await activate(action,'mouse');await chip('SELECTION_MISSING_RECURRING');
+   await ok('/api/recurring/'+gone,t.ma,'DELETE');// another member removes it (native route)
+   before=((await conversation(G,GA))?.turns||[]).length;
+   await setComposer('MISSING_TARGET_TEXT');await press('#omf-assistant [data-assistant-send]');
+   n=await until(async()=>{const v=await navi();return v.error?v:null},'SETUP refusal shown',20000,describeNavi);
+   assert.equal(n.send,'送信','gui:missing-target-released '+JSON.stringify(n));assert.equal(n.composer,'MISSING_TARGET_TEXT','gui:missing-text-kept');assert.ok(n.error.includes('見つかりません'),'gui:missing-target-message '+n.error);
+   await press('#omf-assistant [data-assistant-selection-clear]');await until(async()=>(await navi()).chip===null,'SETUP target cleared');
+   await press('#omf-assistant [data-assistant-send]');
+   await until(async()=>await turnsWith(GA,'MISSING_TARGET_TEXT')===1,'gui:missing-target-recovers',20000,describeNavi);
+   await consultedJob({page:'recurring'},'gui:missing-target-recovers');assert.equal(((await conversation(G,GA)).turns||[]).length,before+1,'gui:missing-single-turn');seen('gui|missing-target');
+   // (b) a lost reply: the server accepted, the browser's copy failed
+   await page.setRequestInterception(true);let lose=true,lost=null;
+   const onLost=async r=>{let u;try{u=new URL(r.url())}catch{}if(lose&&r.method()==='POST'&&u?.pathname===COMPANY){lose=false;const h=r.headers();const f=await fetch(r.url(),{method:'POST',headers:{'content-type':'application/json',authorization:h.authorization},body:r.postData()});lost=f.status;await r.abort('failed').catch(()=>{});return}r.continue().catch(()=>{})};
+   page.on('request',onLost);
+   try{
+    await setComposer('LOST_REPLY_TEXT');await until(async()=>!(await navi()).sendDisabled,'SETUP send enabled',30000,describeNavi);await press('#omf-assistant [data-assistant-send]');
+    n=await until(async()=>{const v=await navi();return v.error&&lost?v:null},'SETUP lost reply failed in the browser',20000,describeNavi);
+    assert.equal(lost,200,'SETUP the server accepted the lost request');assert.equal(await turnsWith(GA,'LOST_REPLY_TEXT'),1,'SETUP stored once');
+    assert.equal(n.send,'送信結果を確認','gui:lost-response-pending-kept '+JSON.stringify(n));assert.equal(n.composer,'LOST_REPLY_TEXT','gui:lost-response-pending-kept');
+   }finally{page.off('request',onLost);await page.setRequestInterception(false)}
+   await press('#omf-assistant [data-assistant-send]');
+   await until(async()=>(await navi()).composer==='','gui:lost-response-single-turn',20000,describeNavi);assert.equal(await turnsWith(GA,'LOST_REPLY_TEXT'),1,'gui:lost-response-single-turn');
+   await consultedJob({page:'recurring'},'SETUP lost reply claim');seen('gui|lost-reply');
+   // (c) another tab's pending question: this send is refused unmarked (this tab's poll is slow: its reads are held), kept, then accepted once
+   await until(async()=>{const v=await navi();return v.composer!==null&&!v.composerDisabled},'SETUP composer ready',30000,describeNavi);
+   await page.setRequestInterception(true);const held=[];let hold=true;
+   const onHold=r=>{let u;try{u=new URL(r.url())}catch{}if(hold&&r.method()==='GET'&&u?.pathname===COMPANY){held.push(r);return}r.continue().catch(()=>{})};
+   page.on('request',onHold);
+   try{
+    await setComposer('CONFLICT_TEXT');
+    const other=await send(t.ga,'GUI other tab pending question',{page:'recurring'});assert.equal(other.r.status,200,'SETUP other tab question '+other.r.raw.slice(0,200));
+    await press('#omf-assistant [data-assistant-send]');
+    n=await until(async()=>{const v=await navi();return v.error?v:null},'SETUP conflict refusal shown',20000,describeNavi);
+    assert.equal(n.send,'送信結果を確認','gui:conflict-pending-kept '+JSON.stringify(n));assert.equal(n.composer,'CONFLICT_TEXT','gui:conflict-pending-kept');assert.equal(await turnsWith(GA,'CONFLICT_TEXT'),0,'SETUP refused');
+   }finally{hold=false;page.off('request',onHold);for(const r of held)await r.continue().catch(()=>{});await page.setRequestInterception(false)}
+   const otherJob=await claim(WG,'SETUP other tab claim');await answered(WG,otherJob,'GUI_OTHER_TAB_REPLY');
+   await until(async()=>{const v=await navi();return !v.sendDisabled&&!v.composerDisabled&&await page.evaluate(()=>document.querySelector('#omf-assistant [role=log]')?.textContent.includes('GUI_OTHER_TAB_REPLY'))},'SETUP this tab sees the answer',30000,describeNavi);
+   await press('#omf-assistant [data-assistant-send]');await until(async()=>(await navi()).composer==='','gui:conflict-resend-once',20000,describeNavi);
+   assert.equal(await turnsWith(GA,'CONFLICT_TEXT'),1,'gui:conflict-resend-once');await consultedJob({page:'recurring'},'SETUP conflict claim');seen('gui|conflict');
+   // (d) another tab's new chat keeps this tab's unsent text; the next send lands once in the new segment
+   await setComposer('RESET_TEXT');const segment=(await conversation(G,GA)).segment||0;
+   const live=await ok(COMPANY,t.ga);await ok(COMPANY+'/new',t.ga,'POST',{chatRevision:live.conversation.revision,requestId:hex32()});
+   await until(()=>page.evaluate(()=>document.querySelectorAll('#omf-assistant [data-workspace-turn]').length===0),'SETUP this tab shows the new chat',30000);
+   assert.equal((await navi()).composer,'RESET_TEXT','gui:reset-keeps-text');
+   await press('#omf-assistant [data-assistant-send]');await until(async()=>(await navi()).composer==='','gui:reset-send-once',20000,describeNavi);
+   const after=await conversation(G,GA);assert.equal(after.segment,segment+1,'gui:reset-send-once');assert.equal(after.turns.filter(x=>x.text==='RESET_TEXT').length,1,'gui:reset-send-once');
+   await consultedJob({page:'recurring'},'SETUP reset claim');seen('gui|reset');
+   // (e) A request that was already sent once with an unknown outcome stays the same request when a later attempt meets the marked refusal
+   //     of its removed record (an earlier attempt could still be accepted). The test fails the browser's FIRST copy before it reaches the
+   //     server: an induced network failure, not a production one, and no duplicate is claimed. Same pending id, check label, text kept.
+   const unknownGone=await recurring(t.ga,'SELECTION UNKNOWN RECURRING');
+   await closeNavi();await visit('/recurring');await closeNavi();const u=consultOf('recurring',unknownGone);await waitFor(s=>!!document.querySelector(s),[u],'SETUP recurring rows');
+   await activate(u,'mouse');await chip('SELECTION UNKNOWN RECURRING');await setComposer('UNKNOWN_THEN_MISSING_TEXT');
+   const pendingIds=()=>page.evaluate(()=>Object.values(document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('assistant').pending).map(p=>p.id));
+   await page.setRequestInterception(true);let drop=true;
+   const onDrop=r=>{let x;try{x=new URL(r.url())}catch{}if(drop&&r.method()==='POST'&&x?.pathname===COMPANY){drop=false;r.abort('failed').catch(()=>{});return}r.continue().catch(()=>{})};
+   page.on('request',onDrop);
+   try{await until(async()=>!(await navi()).sendDisabled,'SETUP send enabled',30000,describeNavi);await press('#omf-assistant [data-assistant-send]');n=await until(async()=>{const v=await navi();return v.error&&!drop?v:null},'SETUP induced lost first send',20000,describeNavi)}
+   finally{page.off('request',onDrop);await page.setRequestInterception(false)}
+   assert.equal(await turnsWith(GA,'UNKNOWN_THEN_MISSING_TEXT'),0,'SETUP the dropped first copy never reached the server');
+   const first=await pendingIds();assert.equal(first.length,1,'SETUP one pending request '+JSON.stringify(first));assert.equal(n.send,'送信結果を確認','SETUP the unknown request is kept');
+   await ok('/api/recurring/'+unknownGone,t.ma,'DELETE');// another member removes it (native route)
+   await press('#omf-assistant [data-assistant-send]');
+   n=await until(async()=>{const v=await navi();return v.error.includes('見つかりません')?v:null},'SETUP the retried request meets the marked refusal',20000,describeNavi);
+   const later=await pendingIds();assert.deepEqual(later,first,'gui:unknown-then-missing-kept '+JSON.stringify({first,later}));assert.equal(n.send,'送信結果を確認','gui:unknown-then-missing-kept '+JSON.stringify(n));
+   assert.equal(n.composer,'UNKNOWN_THEN_MISSING_TEXT','gui:unknown-then-missing-kept');assert.equal(await turnsWith(GA,'UNKNOWN_THEN_MISSING_TEXT'),0,'SETUP still never stored');seen('gui|unknown-then-missing');
+   await closeNavi();
+   pass('missing target: one marked refusal of a first attempt releases only that request with the text kept and the next send accepted once; a lost reply, another tab\'s pending question and new chat, and an unknown earlier attempt keep the request');
+  });
+  assert.deepEqual(errors,[],'gui:no-runtime-errors');
+ }catch(error){failure=error}
+ // Owned cleanup (Chrome closed, its own profile removed): every step runs, each problem is printed (CLEANUP) and none can replace the
+ // run's own result.
+ const problems=[],step=async(name,fn)=>{try{await fn()}catch(e){problems.push(name+': '+String(e?.message||e).slice(0,300))}};
+ clearInterval(keepAlive);
+ await step('chrome',async()=>{if(browser)await browser.close()});
+ await step('profile',async()=>{if(!directory)return;assert.equal(path.dirname(directory),os.tmpdir());assert.ok(path.basename(directory).startsWith('omf-navi-selection-chrome-'));await fs.rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:500})});
+ for(const p of problems)console.log('CLEANUP '+p);
+ if(failure)throw failure;
+ if(problems.length)throw Error('SETUP owned Chrome cleanup failed: '+problems.join(' | '));
+};
+// The integration loads the heavy dependency before starting its app/HTTP setup.
+module.exports.prepare=prepareBrowser;

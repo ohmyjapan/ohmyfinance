@@ -63,6 +63,7 @@
                   {{ budget.category || t('budgets.allCategories') }} · {{ budget.period }}
                   <span v-if="budget.spending?.range"> · {{ budget.spending.range.start }} – {{ budget.spending.range.end }} ({{ budget.spending.timezone }})</span>
                 </p>
+                <NaviConsultButton class="mt-1.5" kind="budget" :record-id="String(budget.id)" :label="budgetLabel(budget)" :disabled="!navi.available.value" @consult="navi.consult({ id: String(budget.id), label: budgetLabel(budget) })" />
               </div>
             </div>
             <div class="flex items-center space-x-4">
@@ -236,10 +237,15 @@ import { Plus, Wallet, Edit, Trash2, AlertTriangle } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
 import { tokenClaims } from '~/utils/auth-session'
+import NaviConsultButton from '~/components/finance/NaviConsultButton.vue'
+import { useNaviRecordSelection } from '~/composables/useNaviRecordSelection'
 
 const { t, locale } = useI18n()
 const userStore = useUserStore()
 const assistant = useAssistantStore()
+// Consulting Navi about one saved budget (pointer only; the editor and its values are never published).
+const navi = useNaviRecordSelection('budgets')
+const budgetLabel = (budget: any) => String(budget.name || '')
 
 const isLoading = ref(false)
 const showModal = ref(false)
@@ -312,13 +318,14 @@ const evidenceNotes = (budget: any) => {
 
 let loadTicket = 0
 const loadBudgets = async () => {
-  const ticket = ++loadTicket, scope = tokenClaims(userStore.token)
+  const ticket = ++loadTicket, scope = tokenClaims(userStore.token), rows = navi.loading()
   isLoading.value = true
   try {
     const data = await $fetch('/api/budgets?active=true', { headers: userStore.authHeader })
     const current = tokenClaims(userStore.token)
     if (ticket !== loadTicket || scope?.userId !== current?.userId || scope?.organizationId !== current?.organizationId) return
     budgets.value = data.budgets
+    navi.loaded(rows)
   } catch (error) {
     console.error('Failed to load budgets:', error)
   } finally {
@@ -327,6 +334,7 @@ const loadBudgets = async () => {
 }
 
 const openModal = (budget?: any) => {
+  navi.clear()
   if (budget) {
     editingBudget.value = budget
     form.name = budget.name
@@ -375,6 +383,7 @@ const deleteBudget = async (id: string) => {
   if (!confirm('Are you sure you want to delete this budget?')) return
   try {
     await $fetch(`/api/budgets/${id}`, { method: 'DELETE', headers: userStore.authHeader })
+    navi.deleted(id)
     loadBudgets()
   } catch (error) {
     console.error('Failed to delete budget:', error)

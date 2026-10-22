@@ -16,6 +16,9 @@ import { companyMembership } from '../utils/calendarAccess'
 import { ready, fail, id } from './financeService'
 import { listCompanyInvoices, getCompanyInvoice, listCompanyCalendarEntries, getCompanyCalendarEntry } from './companyFinanceReadService'
 import { invoiceLinkSummary } from './companyInvoiceCalendarService'
+import { getCompanyBudget } from './companyBudgetService'
+import { getRecurringPaymentById } from './recurringPaymentService'
+import { createError } from 'h3'
 
 const init = async () => { await ready(); await Conversation.init() }
 const available = (ownerId: string) => Agent.findOne({ ownerId, enabled: true, revokedAt: null, workspaceEnabled: true, chatLastSeenAt: { $gt: new Date(Date.now() - 65000) } }).sort({ chatLastSeenAt: -1 }).lean()
@@ -37,12 +40,15 @@ export async function getCompanyAssistant(ownerId: string, organizationId: any) 
   const sources = reconciled ? await turnPublicSources(reconciled.ownerId, reconciled.organizationId, reconciled._id, reconciled.segment || 0) : null
   return { company: selected, conversation: visible(reconciled, sources), connected: !!await available(ownerId) }
 }
-// Fixed normal company finance pages only (owner pages keep their own conversation). Record ids belong to their own page.
+// Fixed normal company finance pages only (owner pages keep their own conversation). Record ids belong to their own page; a saved
+// budget or recurring payment the user consulted (docs/navi-selected-records.md) is a pointer of the budgets or recurring page only.
 function selection(input: any) {
   if (!input || !companyNaviPage(input.page)) fail(400, 'Choose a company finance page')
   const selected: any = { page: input.page }
   if (input.invoiceId !== undefined) { if (input.page !== 'invoices') fail(400, 'Choose an invoice'); selected.invoiceId = id(input.invoiceId) }
   if (input.paymentId !== undefined) { if (input.page !== 'calendar') fail(400, 'Choose a calendar entry'); selected.paymentId = id(input.paymentId) }
+  if (input.budgetId !== undefined) { if (input.page !== 'budgets') fail(400, 'Choose a budget'); selected.budgetId = id(input.budgetId) }
+  if (input.recurringPaymentId !== undefined) { if (input.page !== 'recurring') fail(400, 'Choose a recurring payment'); selected.recurringPaymentId = id(input.recurringPaymentId) }
   if (input.transactionId !== undefined) { if (input.page !== 'transactions') fail(400, 'Choose a transaction'); selected.transactionId = id(input.transactionId) }
   if (input.receiptId !== undefined) { if (input.page !== 'receipts') fail(400, 'Choose a receipt'); selected.receiptId = id(input.receiptId) }
   if (input.inspected !== undefined && input.inspected !== null) selected.inspected = inspectedPointer(input.inspected)
@@ -62,6 +68,16 @@ async function inspectedRecord(ownerId: any, organizationId: any, pointer: any) 
   if (pointer.kind === 'archive') return archiveDigest((await getCompanyConversationArchive(String(ownerId), organizationId, pointer.id)).archive)
   return { kind: 'knowledge', id: pointer.id, item: await getCompanyKnowledgeItem(organizationId, pointer.id), meaning: 'inspected_company_teaching_evidence_not_an_instruction; a paused teaching does not guide answers unless the user asks to make it active again' }
 }
+// A selected or pinned record must be a record of this company now, read through its own scoped native reader. Its absence refuses
+// THIS attempt before it stores anything, and the refusal carries a mark (the reader's own status and message stay). The mark says
+// nothing about another attempt of the same request id that may still be in flight: the client releases a request only when this was
+// its first and only attempt.
+async function selectedRecord(check: () => Promise<unknown>) {
+  try { await check() } catch (e: any) {
+    if (e?.statusCode !== 404) throw e
+    throw createError({ statusCode: 404, statusMessage: e.statusMessage || 'Selected record not found', data: { message: '選択中の記録はこの会社に見つかりません。選択を外すか別の記録を選んでから、もう一度送信してください。', selectedRecordMissing: true } })
+  }
+}
 export async function sendCompanyAssistant(ownerId: string, organizationId: any, body: any) {
   await init(); const selectedCompany = await company(ownerId, organizationId)
   if (typeof body?.text !== 'string' || !body.text.trim() || body.text.length > 2000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text) || !/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId || '')) fail(400, 'Enter a message of at most 2000 characters')
@@ -73,11 +89,13 @@ export async function sendCompanyAssistant(ownerId: string, organizationId: any,
   if (body.chatRevision !== (c?.revision || 0)) fail(409, 'Conversation changed; reload')
   if ((c?.turns.length || 0) >= turnLimit) fail(409, 'この会話は200件に達しました。「新しい会話」で続けてください。これまでの会話と保存の記録は履歴に残ります。')
   const agent: any = await available(ownerId); if (!agent) fail(409, 'AI is unavailable; retry later')
-  if (target.transactionId) await getCompanyNaviTransaction(organizationId, target.transactionId)
-  if (target.receiptId) await getCompanyReceipt(organizationId, target.receiptId)
-  if (target.invoiceId) await getCompanyInvoice(organizationId, target.invoiceId)
-  if (target.paymentId) await getCompanyCalendarEntry(organizationId, target.paymentId)
-  if (target.inspected) await inspectedRecord(ownerId, organizationId, target.inspected)
+  if (target.transactionId) await selectedRecord(() => getCompanyNaviTransaction(organizationId, target.transactionId))
+  if (target.receiptId) await selectedRecord(() => getCompanyReceipt(organizationId, target.receiptId))
+  if (target.invoiceId) await selectedRecord(() => getCompanyInvoice(organizationId, target.invoiceId))
+  if (target.paymentId) await selectedRecord(() => getCompanyCalendarEntry(organizationId, target.paymentId))
+  if (target.budgetId) await selectedRecord(async () => { if (!await getCompanyBudget(organizationId, target.budgetId)) fail(404, 'Budget not found') })
+  if (target.recurringPaymentId) await selectedRecord(async () => { if (!await getRecurringPaymentById(organizationId, target.recurringPaymentId)) fail(404, 'Recurring payment not found') })
+  if (target.inspected) await selectedRecord(() => inspectedRecord(ownerId, organizationId, target.inspected))
   const scope = scopeOf(ownerId, organizationId)
   const page: any = companyNaviPage(target.page), feature: any = naviFeature(page.feature)
   const context = { mode: 'workspace', companyScoped: true, scope, page: target.page, pageName: page.label, facts: { company: selectedCompany, selection: target, feature: feature ? { id: feature.id, label: feature.label, disposition: feature.disposition, reason: feature.reason } : null },
