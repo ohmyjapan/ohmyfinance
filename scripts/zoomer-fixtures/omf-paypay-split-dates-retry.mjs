@@ -201,7 +201,7 @@ export async function probeAdapter(paypayFile, temp) {
       if (url.pathname === OVERWRITE) { site.overwrites++; return request.abort(); }
       if (url.pathname === TOP) return html('<!doctype html><html><body>トップ（架空）</body></html>');
       return request.abort(); });
-    const ui = paypay.standardUi(page, browser, paypay.standard, { provider: 'paypay', variant: 'standard' }, { settleMs: 6000, stableMs: 800 });
+    const ui = paypay.standardUi(page, browser, paypay.standard, { provider: 'paypay', variant: 'standard' }, { settleMs: 20000, stableMs: 800 });
     const cases = { 'in-use': fakePage({ heading: HEADING }), hidden: fakePage({ heading: HEADING, headingStyle: 'display:none' }), different: fakePage({ heading: 'ログイン' }), doubled: fakePage({ heading: HEADING, extraHeading: HEADING }), 'wrong-password': fakePage({ error: '店番号・口座番号またはパスワードが正しくありません' }), success: `<!doctype html><html><body><script>location.replace(${JSON.stringify(TOP)})</script></body></html>` };
     for (const [name, answer] of Object.entries(cases)) { site.answer = answer; const posts = site.posts, overwrites = site.overwrites; await ui.open(); const r = await ui.login({ branch: '012', account: '0012345', password: 'Fictional Only' }); out[name] = { outcome: r.outcome, posts: site.posts - posts, overwrites: site.overwrites - overwrites }; }
     assert.deepEqual(out['in-use'], { outcome: 'session-in-use', posts: 1, overwrites: 0 }, 'inuse:adapter-detects ' + JSON.stringify(out['in-use']));

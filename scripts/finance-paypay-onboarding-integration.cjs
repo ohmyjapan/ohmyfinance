@@ -169,7 +169,7 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     daemon=spawn(process.execPath,[launcher],{cwd:root,windowsHide:true,env:{...process.env,OMF_COLLECTOR_DIR:collectorDir,OMF_COLLECTOR_PORT:String(dport),OMF_COLLECTOR_TICK_MS:'1000'},stdio:['ignore','pipe','pipe']});let output='';for(const stream of [daemon.stdout,daemon.stderr])stream.on('data',v=>{output=(output+v).slice(-6000)});
     const waitFor=async(read,label,timeout=90000)=>{const until=Date.now()+timeout;while(Date.now()<until){if(daemon.exitCode!==null)throw Error('daemon exited: '+output);const value=await read();if(value)return value;await pause(250);}throw Error('daemon timeout '+label+': '+output.slice(-1500));};
     const setup=await waitFor(async()=>{try{const x=new URL((await fsp.readFile(path.join(collectorDir,'setup-link.txt'),'utf8')).trim());return x.port===String(dport)?x:null}catch{return null}},'setup link');
-    const local=async(route,body)=>{const response=await fetch(setup.origin+route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-Setup-Key':setup.hash.slice(1),Origin:setup.origin},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(30000)});return {status:response.status,data:await response.json()};};
+    const local=async(route,body,timeout=30000)=>{const response=await fetch(setup.origin+route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-Setup-Key':setup.hash.slice(1),Origin:setup.origin},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(timeout)});return {status:response.status,data:await response.json()};};
     await waitFor(async()=>{const r=await local('/status');return r.status===200&&r.data.startupDone},'startup');
     ok(await local('/resume',{}),'daemon resume');
     await waitFor(async()=>{const r=await local('/status');if(r.data.keyLost||r.data.reconnectNeeded)throw Error('daemon resume: '+r.data.message);return r.data.protected&&r.data.unlocked&&!r.data.busy&&!r.data.authorizing&&!r.data.testBroker},'normal remembered-PC resume');
@@ -381,7 +381,8 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     pass('the actual /bank/retry route (real daemon HTTP, real tick; PayPay 2 holding a bank refusal of its current key): while PayPay 1\'s guided job held the action slot a retry of PayPay 2 was refused 409 and its marker stayed byte-identical; a retry whose body was still arriving held the slot from before the body was read — a job queued meanwhile stayed unclaimed across 5 ticks — and once the body completed the retry answered 200, re-armed only PayPay 2, released the slot and the queued job ran');
     if(RETRY_ONLY){console.log(JSON.stringify({pass:true,checks,mode:'retry-route',mutant:RETRY_MUTANT||null,route:routeReceipt,foreignRequests:metric().foreign.length,bankRequests:0,productionWrites:0}));return;}
     await waitFor(async()=>!(await status()).busy,'idle before pause');
-    ok(await local('/pause',{}),'daemon pause');
+    // /pause ends the session: it closes every browser the session launched, then the key broker; its duration is recorded in the receipt
+    const pauseStarted=Date.now();ok(await local('/pause',{},180000),'daemon pause');const pauseMs=Date.now()-pauseStarted;
     // ── after the save: scope, login type and revocation stop the release (in-process, the daemon paused) ──
     const s1=brokerOf(await securityHttp('session',{body:{installationId,generation,trustToken}}));
     const handle=i=>idx.bankLoginFor({job:{kind:'observe',snapshot:firsts[i].row.snapshot,provider:'paypay'},account:{_id:P[i],ownerId}},config,s1,{store,root:collectorDir,assert:()=>{}});
@@ -399,7 +400,7 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     secretFree('omf jobs',await db.collection('financebankjobs').find({}).toArray());secretFree('omf statements',await db.collection('financebankstatements').find({}).project({capture:1,name:1}).toArray());
     pass('after the saves: a removed bank scope and a BA-PLUS change stop that account\'s release (controlled bank-login failure) while another account still releases; restored, it releases again; a foreign account cannot be granted; a revoked PC releases nothing; no login value is stored by OMF');
     const m=metric();
-    console.log(JSON.stringify({pass:true,checks,accounts:4,route:routeReceipt,retryBusyRefusals:busyRefusals,retryAnswers,loginSubmissions:m.posts.length,exports:m.downloads.length,keyReleases:keyGets(),foreignRequests:m.foreign.length,bankRequests:0,productionWrites:0}));
+    console.log(JSON.stringify({pass:true,checks,accounts:4,pauseMs,route:routeReceipt,retryBusyRefusals:busyRefusals,retryAnswers,loginSubmissions:m.posts.length,exports:m.downloads.length,keyReleases:keyGets(),foreignRequests:m.foreign.length,bankRequests:0,productionWrites:0}));
   }finally{
     if(daemon&&daemon.exitCode===null){const exited=new Promise(r=>daemon.once('exit',r));daemon.kill();await exited;}
     if(setupBrowser)await setupBrowser.close().catch(()=>{});

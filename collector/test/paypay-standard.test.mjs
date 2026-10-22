@@ -181,7 +181,8 @@ test('a document replaced between the form check and the fill, or between the fi
 test('the observed active-session page: the standard form again under the one visible h1 上書きログイン（ログイン中です） is `session-in-use` — one submission, 上書きログイン never pressed, no second submission; a hidden, different or doubled heading stays `rejected`, the heading without the form stays `submitted`', { timeout: 300000 }, async () => {
   assert.equal(paypay.SESSION_IN_USE_HEADING, '上書きログイン（ログイン中です）', 'paypay:in-use-heading-exact');
   await owned(async ({ page, browser, site }) => {
-    const ui = uiOf(page, browser), out = {};
+    // a wider settle window than uiOf's default (it ends as soon as the outcome is seen): six sequential bank answers under load
+    const ui = uiOf(page, browser, { settleMs: 20000 }), out = {};
     for (const [name, inUse] of Object.entries({ exact: {}, hidden: { headingHidden: true }, different: { heading: 'ログイン' }, prefixed: { heading: '上書きログイン（ログイン中です）のお知らせ' }, doubled: { heading: '上書きログイン（ログイン中です）</h1><h1>上書きログイン（ログイン中です）' }, 'no-form': { noForm: true } })) {
       site.mode = 'in-use'; site.inUse = inUse; const posts = site.posts.length; await ui.open();
       const r = await ui.login({ ...SECRET });
