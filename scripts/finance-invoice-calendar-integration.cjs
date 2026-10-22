@@ -114,7 +114,7 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   // ---- 6. Navi read and explicit schedule through the same service
   const inv6=await invoice({dueDate:'2026-12-01'});
   let job=await turn(tokenA,'この請求書の入金予定をカレンダーに追加して。',{page:'invoices',invoiceId:String(inv6._id)});const names=job.tools.map(t=>t.name);
-  assert.ok(names.includes('get_company_invoice_calendar')&&names.includes('schedule_company_invoice_payment'),'invoice-calendar:catalogue');assert.equal(job.tools.length,44,'invoice-calendar:catalogue');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
+  assert.ok(names.includes('get_company_invoice_calendar')&&names.includes('schedule_company_invoice_payment'),'invoice-calendar:catalogue');assert.equal(job.tools.length,45,'invoice-calendar:catalogue');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
   const scheduleTool=job.tools.find(t=>t.name==='schedule_company_invoice_payment');assert.deepEqual(Object.keys(scheduleTool.inputSchema.properties).sort(),['expectedUpdatedAt','invoiceId'],'invoice-calendar:finite-arguments');assert.deepEqual(scheduleTool.inputSchema.required.slice().sort(),['expectedUpdatedAt','invoiceId']);
   r=await actOk(job,'get_company_invoice_calendar',{invoiceId:String(inv6._id)});assert.equal(r.effect,'read');assert.equal(r.result.state,'not_linked');assert.equal(r.result.invoice.updatedAt,inv6.updatedAt.toISOString());assert.notEqual(r.result.calendarInvoiceLink,'not_established','invoice-calendar:read-flag-truthful');
   const args6={invoiceId:String(inv6._id),expectedUpdatedAt:r.result.invoice.updatedAt};

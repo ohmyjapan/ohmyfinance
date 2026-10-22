@@ -2,6 +2,8 @@
 
 Scope: purchase replies, workspace replies, their worker liveness, and the shared assistant presentation. The repair starts at `70798b6`. It does not change ledger posting or purchase confirmation.
 
+Current behaviour 2026-10-22: owner workspace and company turns are assigned at claim, not at send. The worker recorded at send is a hint; any live workspace worker of the same owner claims queued or expired work, the claim sets the assigned worker atomically, and only that worker's lease can act, renew or answer. "Only the assigned agent can answer" below now means the worker the claim assigned. Exhausted work fails for the owner and keeps the explicit retry. Details: [turn continuity](navi-turn-continuity.md). The rest of this document is the dated `70798b6` evidence.
+
 ## Request and worker lanes
 
 | Lane | Entry and owner | Behavior and verification |

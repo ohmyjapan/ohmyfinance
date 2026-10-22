@@ -46,6 +46,18 @@ export async function companyActionReceipts(c: any, turnId: string, operationId?
   const fresh: any = await reconcileCompanyActions(c)
   return (fresh?.turns.find((t: any) => t.id === turnId)?.actions || []).filter((a: any) => !operationId || a.operationId === operationId).map(companyActionReceipt)
 }
+// Read-only action status of the live conversation segment: the turns the live conversation holds now ("new chat" moves earlier
+// segments to the archive, which this never reads). It reconciles like the claim and never repeats an effect. With an operationId:
+// that operation from any live turn, or nothing (unknown, archived, another actor/company/conversation). Without one: this turn's
+// receipts as before plus a bounded newest-first list of earlier turns' receipts. Claims keep the current-turn reader above.
+const liveSegmentReceiptLimit = 30
+export async function companyConversationActionReceipts(c: any, operationId?: string) {
+  const fresh: any = await reconcileCompanyActions(c), turns: any[] = fresh?.turns || []
+  const current: any[] = turns.find((t: any) => t.id === c.currentId)?.actions || []
+  const earlier: any[] = turns.filter((t: any) => t.id !== c.currentId).reverse().flatMap((t: any) => (t.actions || []).slice().reverse())
+  if (operationId) return { receipts: [...current, ...earlier].filter((a: any) => a.operationId === operationId).slice(0, 1).map(companyActionReceipt) }
+  return { receipts: current.map(companyActionReceipt), earlierReceipts: earlier.slice(0, liveSegmentReceiptLimit).map(companyActionReceipt), earlierReceiptTotal: earlier.length, earlierReceiptsTruncated: earlier.length > liveSegmentReceiptLimit }
+}
 const response = (op: any, result?: any) => ({ name: op.name, effect: 'write', receipt: companyActionReceipt(op), ...(result ? { result } : {}) })
 export async function updateCompanyCalendarAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) { return updateCompanyAction(c, body, args, verifyJob, 'calendar') }
 export async function updateCompanyInvoiceAction(c: any, body: any, args: any, verifyJob: () => Promise<any>) { return updateCompanyAction(c, body, args, verifyJob, 'invoice') }

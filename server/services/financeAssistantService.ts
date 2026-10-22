@@ -104,9 +104,12 @@ export async function retryAssistant(ownerId:string,body:any,postingCompany:Post
 }
 export async function claimAssistant(agent:any){
  if(!agent.workspaceEnabled)return {job:null};await Conversation.init()
- const scope={ownerId:agent.ownerId,agentId:agent._id}
+ // The worker recorded at send is only a hint: any live workspace worker of this owner claims the queued turn, and the claim assigns it
+ // atomically (the purchase chat's pattern). A live lease is never taken; exhausted work fails for the owner. Actions still run with the
+ // claiming worker's own account grants and lease (financeActionService).
+ const scope={ownerId:agent.ownerId}
  await Conversation.updateMany({...scope,state:'working',leaseUntil:{$lte:new Date()},attempts:{$gte:2}},{$set:{state:'failed'},$inc:{revision:1},$unset:{lease:'',leaseUntil:''}})
- const lease=randomUUID(),c:any=await Conversation.findOneAndUpdate({...scope,$or:[{state:'queued'},{state:'working',leaseUntil:{$lte:new Date()},attempts:{$lt:2}}]},{$set:{state:'working',lease,leaseUntil:new Date(Date.now()+120000)},$inc:{attempts:1,revision:1}},{new:true}).lean()
+ const lease=randomUUID(),c:any=await Conversation.findOneAndUpdate({...scope,$or:[{state:'queued'},{state:'working',leaseUntil:{$lte:new Date()},attempts:{$lt:2}}]},{$set:{state:'working',lease,leaseUntil:new Date(Date.now()+120000),agentId:agent._id},$inc:{attempts:1,revision:1}},{new:true}).lean()
  if(!c)return claimCompanyAssistant(agent);const turn=c.turns.find((t:any)=>t.id===c.currentId)
  // A reclaim reconciles the previous attempt's claimed operations before the model runs again; the job carries their receipts,
  // the next free slot, the frozen statement selection and the named tools it may call.
