@@ -3,8 +3,10 @@ import { defineEventHandler, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import User from '../../../models/User'
 import Organization from '../../../models/Organization'
+import { rejectLegacyPlatformAdmin } from '../../../utils/legacyAdminAccess'
 
 export default defineEventHandler(async (event) => {
+  rejectLegacyPlatformAdmin(event)
   try {
     await ensureConnection()
 

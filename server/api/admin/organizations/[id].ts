@@ -3,8 +3,10 @@ import { defineEventHandler, getRouterParam, readBody, createError } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import Organization from '../../../models/Organization'
 import User from '../../../models/User'
+import { rejectLegacyPlatformAdmin } from '../../../utils/legacyAdminAccess'
 
 export default defineEventHandler(async (event) => {
+  rejectLegacyPlatformAdmin(event)
   const id = getRouterParam(event, 'id')
 
   if (!id) {

@@ -45,7 +45,7 @@ export const naviFeatures=Object.freeze([
  f('research-evaluation','purchase','AI調査の評価','AI 조사 평가','/research-evaluation','page_handoff','AI 調査結果の評価は画面で行います。','pages/research-evaluation.vue'),
  f('audit','audit','監査ログ','감사 로그','/audit','page_handoff','操作の記録は画面で確認します。','pages/audit/index.vue'),
  f('support-report','audit','問題の報告（診断）','문제 보고(진단)',null,'page_handoff','OMF Navi パネル下部の「診断を作成」で診断 JSON を作成します。移動先の画面はありません。','components/finance/SupportReport.vue'),
- f('admin','admin','システム管理','시스템 관리','/admin/users','page_handoff','システム管理者だけが使う画面です。権限は画面側で確認されます。','pages/admin/users/index.vue, pages/admin/organizations/index.vue',{sensitive:true}),
+ f('admin','admin','システム管理','시스템 관리',null,'unsupported','全ユーザー・全会社をまとめて扱う旧システム管理は利用できません。会社のオーナー・管理者の役割は、他の会社やユーザーへの権限になりません。自分の会社のメンバーと権限は組織設定で管理します。','pages/admin/users/index.vue, pages/admin/organizations/index.vue',{sensitive:true}),
  f('test-uploads','admin','アップロード試験画面','업로드 테스트 화면',null,'unsupported','開発用の試験画面です。業務には使いません。','pages/upload-test.vue, pages/file-upload.vue'),
  f('authentication','admin','ログイン・登録','로그인·가입',null,'unsupported','認証の画面です。Navi は本人確認や別アカウントへの切替をしません。','pages/login.vue, pages/auth/login.vue, pages/auth/register.vue, pages/auth/accept-invite.vue',{sensitive:true})
 ]);
