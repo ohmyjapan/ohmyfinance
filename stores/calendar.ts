@@ -3,6 +3,14 @@ import { defineStore } from 'pinia'
 import type { Payment, PaymentFormData, MonthlyStats } from '~/types/calendar'
 import { useUserStore } from '~/stores/user'
 import { calendarCurrencyTotals } from '~/shared/finance-calendar-money.mjs'
+import { tokenClaims } from '~/utils/auth-session'
+
+// Calendar list reads of this tab (client stale-response guard). Only the latest read, still for the actor/company it was requested for,
+// may replace the rows: a reply that a newer read superseded, or that answers a previous actor/company (another tab switched the
+// company, a sign-out), is dropped before it touches the rows, so it can never overwrite fresher rows. A same-identity token refresh
+// keeps the identity. fetchPayments reports whether its rows were applied; only an applied read may vouch for the listed rows.
+let latestListRead = 0
+const listIdentity = () => { const claims = tokenClaims(useUserStore().token); return claims?.userId ? String(claims.userId) + '|' + String(claims.organizationId || '') : '' }
 
 // Format date to YYYY-MM-DD in local timezone (JST)
 const formatLocalDate = (date: Date): string => {
@@ -97,19 +105,23 @@ export const useCalendarStore = defineStore('calendar', {
       return userStore.authHeader
     },
 
-    // Fetch all payments
-    async fetchPayments() {
+    // Fetch all payments (true only when this read's rows were applied)
+    async fetchPayments(): Promise<boolean> {
+      const read = ++latestListRead, identity = listIdentity()
       this.isLoading = true
       this.error = null
       try {
         const response = await $fetch<Payment[]>('/api/payments', {
           headers: this._getAuthHeaders()
         })
+        if (read !== latestListRead || listIdentity() !== identity) return false
         this.payments = response
         this.updateOverdueStatus()
+        return true
       } catch (error: any) {
         this.error = error.message || 'Failed to fetch payments'
         console.error('Error fetching payments:', error)
+        return false
       } finally {
         this.isLoading = false
       }

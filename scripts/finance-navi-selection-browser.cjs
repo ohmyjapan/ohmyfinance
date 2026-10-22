@@ -241,25 +241,6 @@ module.exports=async ctx=>{
     await switchIn(tab2,GA);await until(async()=>await tokenOrg()===String(GA),'SETUP back to company A',20000);
    }finally{await tab2.close().catch(()=>{})}
    await closeNavi();
-   // (h) A calendar list reply requested for company A that arrives after another tab switched to B is never acknowledged for B: the
-   //     company A entries it shows stay unconsultable (the calendar store keeps its own rows; only the page's acknowledgement decides).
-   const p1=await payment(t.ga,'SELECTION LIFE DELAYED PAYMENT');const tab3=await otherTab();
-   try{
-    await page.setRequestInterception(true);let held=null;
-    const onHeld=r=>{let x;try{x=new URL(r.url())}catch{}if(!held&&r.method()==='GET'&&x?.pathname==='/api/payments'){held=r;return}r.continue().catch(()=>{})};
-    page.on('request',onHeld);
-    try{
-     await page.goto(origin+'/calendar',{waitUntil:'domcontentloaded',timeout:SETUP_READY_MS});
-     await until(async()=>!!held,'SETUP held company A calendar reply',30000);
-     await switchIn(tab3,GB);await until(async()=>await tokenOrg()===String(GB),'SETUP this tab follows the other tab to company B',20000);
-     const release=held;held={done:true};await release.continue().catch(()=>{});
-     const delayed=consultOf('payment',p1,'[data-calendar-upcoming="'+p1+'"]');
-     await waitFor(s=>!!document.querySelector(s),[delayed],'SETUP the delayed company A entry rendered',30000);await pause(1500);
-     const d=await shown(delayed);assert.ok(d.exists&&d.disabled,'gui:delayed-old-response-not-acknowledged '+JSON.stringify(d));
-     await page.$eval(delayed,e=>e.click());await pause(800);assert.equal(await pointer(),null,'gui:delayed-old-response-not-acknowledged');seen('gui|delayed-old-response');
-    }finally{page.off('request',onHeld);if(held&&!held.done)await held.continue().catch(()=>{});await page.setRequestInterception(false)}
-    await switchIn(tab3,GA);await until(async()=>await tokenOrg()===String(GA),'SETUP back to company A',20000);
-   }finally{await tab3.close().catch(()=>{})}
    // (f) a same-identity token refresh keeps the selection and the History view; consulting the same record again returns to chat
    await visit('/budgets');await closeNavi();const b=consultOf('budget',b1);await waitFor(s=>!!document.querySelector(s),[b],'SETUP budget rows');
    await activate(b,'mouse');await chip('SELECTION_LIFE_BUDGET');
@@ -270,7 +251,90 @@ module.exports=async ctx=>{
    await activate(b,'mouse');await until(async()=>(await navi()).view==='chat','gui:same-record-consult-live',10000,describeNavi);
    await say('GUI lifecycle after refresh');await consultedJob({page:'budgets',budgetId:b1},'gui:refresh-send-target');seen('gui|token-refresh');
    await closeNavi();
-   pass('lifecycle: explicit clear, editor and new form, unmount (a newer mapping pointer kept), other page, another tab\'s company switch (old rows not consultable, no reinterpretation) and a same-identity token refresh (selection and History kept)');
+   // (h) Calendar list reads can be answered out of order: another tab switches the company while a read is in flight, or a newer read
+   //     of the same company is answered first. Only the latest read, still for the actor/company it was requested for, may write the
+   //     calendar store's rows, and only an applied read acknowledges the selected-record identity. Held reads are real requests released
+   //     later, or a real server reply captured when requested and delivered later (an induced network delay); rows are never fabricated.
+   //     Every store write is observed with a synchronous store subscription: an unacknowledged stale write is still a stale write.
+   const calendarEntry=async(title,token)=>{const asked=await send(token,'GUI calendar order: create '+title,{page:'calendar'});assert.equal(asked.r.status,200,'SETUP calendar question '+asked.r.raw.slice(0,200));const job=await claim(WG,'SETUP calendar claim');const made=await act(WG,job,'create_company_calendar_entry',{title,amount:2300,currency:'JPY',dueDate:localDay(),type:'expense',category:'Utilities'},1);assert.equal(made.status,200,'SETUP calendar action '+made.raw.slice(0,200));await answered(WG,job,'GUI calendar entry created');return String(made.data.receipt.nativeResourceIds.paymentId)};
+   const watchRows=()=>page.evaluate(()=>{const s=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar');window.__calendarRowsStop?.();window.__calendarRows=[s.payments.map(p=>String(p.id))];window.__calendarRowsStop=s.$subscribe((_m,state)=>window.__calendarRows.push(state.payments.map(p=>String(p.id))),{flush:'sync',detached:true})});
+   const rowWrites=()=>page.evaluate(()=>({writes:window.__calendarRows||[],now:document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar').payments.map(p=>String(p.id))}));
+   const stopRows=()=>page.evaluate(()=>{window.__calendarRowsStop?.();window.__calendarRowsStop=null}).catch(()=>{});
+   const upcomingOf=id=>consultOf('payment',id,'[data-calendar-upcoming="'+id+'"]');
+   const oldA=await payment(t.ga,'SELECTION CAL OLD A PAYMENT');let freshB='';
+   // (h1) A late company-A read released after a fresh company-B load applied: never written; the fresh B entry and its exact pointer stay.
+   {const tab3=await otherTab();let held=null,onHeld=null;
+    try{
+     await page.setRequestInterception(true);
+     onHeld=r=>{let x;try{x=new URL(r.url())}catch{}if(!held&&r.method()==='GET'&&x?.pathname==='/api/payments'){held=r;return}r.continue().catch(()=>{})};page.on('request',onHeld);
+     await page.goto(origin+'/calendar',{waitUntil:'domcontentloaded',timeout:SETUP_READY_MS});
+     await until(async()=>!!held,'SETUP held company A calendar read',30000);
+     await switchIn(tab3,GB);await until(async()=>await tokenOrg()===String(GB),'SETUP this tab follows the other tab to company B',20000);
+     await openNavi();freshB=await calendarEntry('SELECTION CAL FRESH B PAYMENT',t.gb);
+     await waitFor(s=>!!document.querySelector(s),[upcomingOf(freshB)],'SETUP the fresh company B entry rendered',30000);
+     await until(async()=>{const d=await shown(upcomingOf(freshB));return d.exists&&!d.disabled},'SETUP the fresh company B entry consultable',20000,scene);
+     await watchRows();
+     const release=held;held={done:true};const answer=page.waitForResponse(r=>r.request()===release,{timeout:30000});await release.continue();
+     const response=await answer;assert.equal(response.status(),200,'SETUP the late company A read completed');assert.ok((await response.json()).some(p=>String(p.id)===oldA),'SETUP the late read carries the company A entry');
+     await pause(1500);
+     const w=await rowWrites();assert.ok(!w.writes.some(ids=>ids.includes(oldA))&&w.now.includes(freshB),'gui:late-A-must-not-replace-refreshed-B '+JSON.stringify({oldId:oldA,newId:freshB,...w}));
+     assert.equal(await page.$('[data-calendar-upcoming="'+oldA+'"]'),null,'gui:late-A-must-not-replace-refreshed-B rendered');
+     const d=await shown(upcomingOf(freshB));assert.ok(d.exists&&!d.disabled,'gui:late-A-current-B-consultable '+JSON.stringify(d));
+     await activate(upcomingOf(freshB),'mouse');await chip('SELECTION CAL FRESH B PAYMENT');await say('GUI calendar current B pointer',GB);await consultedJob({page:'calendar',paymentId:freshB},'gui:late-A-current-B-pointer');seen('gui|calendar-late-reply');
+    }finally{await stopRows();if(onHeld)page.off('request',onHeld);if(held&&!held.done)await held.continue().catch(()=>{});await page.setRequestInterception(false);await tab3.close().catch(()=>{})}}
+   // (h2) A company-A read that is still the latest read, answered after another tab switched to B: never written (no A entry under B).
+   //      Navi stays closed, so no company-B conversation mounts and replays an earlier calendar receipt into a newer read: the held read
+   //      must remain the latest one (checked), so only the actor/company check decides.
+   {await closeNavi();await adopt(GA);const tab3=await otherTab();let held=null,onHeld=null,laterReads=0;
+    try{
+     await page.setRequestInterception(true);
+     onHeld=r=>{let x;try{x=new URL(r.url())}catch{}if(r.method()==='GET'&&x?.pathname==='/api/payments'){if(!held){held=r;return}laterReads++}r.continue().catch(()=>{})};page.on('request',onHeld);
+     await page.goto(origin+'/calendar',{waitUntil:'domcontentloaded',timeout:SETUP_READY_MS});
+     await until(async()=>!!held,'SETUP held company A calendar read',30000);
+     await switchIn(tab3,GB);await until(async()=>await tokenOrg()===String(GB),'SETUP this tab follows the other tab to company B',20000);
+     await pause(1500);assert.equal(laterReads,0,'SETUP the held company A read is still the latest calendar read');
+     await watchRows();
+     const release=held;held={done:true};const answer=page.waitForResponse(r=>r.request()===release,{timeout:30000});await release.continue();
+     const response=await answer;assert.equal(response.status(),200,'SETUP the company A read completed');assert.ok((await response.json()).some(p=>String(p.id)===oldA),'SETUP the read carries the company A entry');
+     await pause(1500);
+     const w=await rowWrites();assert.ok(!w.writes.some(ids=>ids.includes(oldA)),'gui:stale-company-calendar-reply-dropped '+JSON.stringify(w));
+     assert.equal(await page.$('[data-calendar-upcoming="'+oldA+'"]'),null,'gui:stale-company-calendar-reply-dropped rendered');seen('gui|calendar-stale-company');
+    }finally{await stopRows();if(onHeld)page.off('request',onHeld);if(held&&!held.done)await held.continue().catch(()=>{});await page.setRequestInterception(false);await tab3.close().catch(()=>{})}}
+   // (h3) A company-B read answered after a newer company-B read already applied: never written (the newer rows stay). Its reply is the
+   //      server's real answer captured when the read was made, delivered after the newer read.
+   {let captured=null,body=null,onCapture=null;
+    try{
+     // SETUP opening Navi mounts the company-B conversation, which replays its earlier calendar receipt into one B read: let that read
+     // apply first, so the captured read is the one the new entry causes.
+     await openNavi();await waitFor(s=>!!document.querySelector(s),[upcomingOf(freshB)],'SETUP the company B calendar read applied',30000);await pause(1500);
+     await page.setRequestInterception(true);
+     onCapture=r=>{let x;try{x=new URL(r.url())}catch{}if(!captured&&r.method()==='GET'&&x?.pathname==='/api/payments'){captured=r;body=fetch(r.url(),{headers:{authorization:r.headers().authorization}}).then(async f=>({status:f.status,text:await f.text()}));return}r.continue().catch(()=>{})};page.on('request',onCapture);
+     const firstB=await calendarEntry('SELECTION CAL B FIRST',t.gb);
+     await until(async()=>!!captured,'SETUP the first company B read captured',30000);const older=await body;assert.equal(older.status,200,'SETUP the captured reply');assert.ok(JSON.parse(older.text).some(p=>String(p.id)===firstB),'SETUP the captured reply has the first entry');
+     const secondB=await calendarEntry('SELECTION CAL B SECOND',t.gb);
+     await waitFor(s=>!!document.querySelector(s),[upcomingOf(secondB)],'SETUP the newer company B read applied',30000);
+     await watchRows();
+     const late=captured;captured={done:true};const answer=page.waitForResponse(r=>r.request()===late,{timeout:30000});await late.respond({status:200,contentType:'application/json',body:older.text});await answer;
+     await pause(1500);
+     const w=await rowWrites();assert.ok(!w.writes.some(ids=>!ids.includes(secondB))&&w.now.includes(secondB),'gui:superseded-calendar-reply-dropped '+JSON.stringify({firstB,secondB,...w}));
+     assert.ok(await page.$(upcomingOf(secondB)),'gui:superseded-calendar-reply-dropped rendered');seen('gui|calendar-superseded');
+    }finally{await stopRows();if(onCapture)page.off('request',onCapture);if(captured&&!captured.done)await captured.continue().catch(()=>{});await page.setRequestInterception(false)}}
+   // (h4) A company-B read held across a same-identity token refresh is still applied and its entry consultable (legitimate replies stay).
+   {let held=null,onHeld=null;
+    try{
+     await page.setRequestInterception(true);
+     onHeld=r=>{let x;try{x=new URL(r.url())}catch{}if(!held&&r.method()==='GET'&&x?.pathname==='/api/payments'){held=r;return}r.continue().catch(()=>{})};page.on('request',onHeld);
+     const afterRefresh=await calendarEntry('SELECTION CAL B AFTER REFRESH',t.gb);
+     await until(async()=>!!held,'SETUP the company B read held',30000);
+     const refreshed=await page.evaluate(async()=>{const user=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user'),claims=t=>JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))),before=user.token,result=await user.refreshAuthToken();return{result,changed:before!==user.token,same:claims(before).userId===claims(user.token).userId&&claims(before).organizationId===claims(user.token).organizationId}});
+     assert.deepEqual(refreshed,{result:'refreshed',changed:true,same:true},'SETUP same-identity token refresh '+JSON.stringify(refreshed));
+     const release=held;held={done:true};const answer=page.waitForResponse(r=>r.request()===release,{timeout:30000});await release.continue();assert.equal((await answer).status(),200,'SETUP the held company B read completed');
+     await waitFor(s=>!!document.querySelector(s),[upcomingOf(afterRefresh)],'gui:same-identity-calendar-refresh-applies',20000);
+     await until(async()=>{const d=await shown(upcomingOf(afterRefresh));return d.exists&&!d.disabled},'gui:same-identity-calendar-refresh-applies consultable',20000,scene);
+     await activate(upcomingOf(afterRefresh),'mouse');await chip('SELECTION CAL B AFTER REFRESH');await say('GUI calendar after refresh',GB);await consultedJob({page:'calendar',paymentId:afterRefresh},'gui:same-identity-calendar-refresh-target');seen('gui|calendar-same-identity-refresh');
+    }finally{if(onHeld)page.off('request',onHeld);if(held&&!held.done)await held.continue().catch(()=>{});await page.setRequestInterception(false)}}
+   await closeNavi();await adopt(GA);
+   pass('lifecycle: explicit clear, editor and new form, unmount (a newer mapping pointer kept), other page, another tab\'s company switch (old rows not consultable, no reinterpretation), a same-identity token refresh (selection and History kept), and calendar reads applied only when latest and still for their company (late A after fresh B, stale A, superseded B dropped; B across a token refresh applied)');
   });
 
   // 4. Views and focus: from History and from Memory an explicit consultation (the same record again included) returns to the live chat

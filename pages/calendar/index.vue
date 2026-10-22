@@ -168,11 +168,11 @@ const assistant = useAssistantStore(), userStore = useUserStore()
 // and its values are never published, and a dirty editor is never closed).
 const navi = useNaviRecordSelection('calendar')
 const consultPayment = (payment: Payment) => { const day = String(payment.dueDate || '').slice(0, 10).split('-'); navi.consult({ id: String(payment.id), label: String(payment.title || '') + (day.length === 3 ? '（' + Number(day[1]) + '/' + Number(day[2]) + '）' : '') }) }
-// The calendar's own native load; its entries are consultable once a load succeeded for the actor/company it started under.
+// The calendar's own native load; its entries are consultable once the store actually applied a read for the actor/company it started
+// under (the store drops a superseded or other-identity reply before it touches the rows, and such a read never vouches for them).
 const loadCalendar = async () => {
   const rows = navi.loading()
-  await calendarStore.fetchPayments()
-  if (!calendarStore.error) navi.loaded(rows)
+  if (await calendarStore.fetchPayments()) navi.loaded(rows)
 }
 // Navi added or removed a calendar entry of this same actor and company: reload the calendar (issuer bills it suppressed stay hidden).
 watch(() => assistant.companyResourceSequence, () => {

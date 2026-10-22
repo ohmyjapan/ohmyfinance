@@ -48,8 +48,13 @@ export const DEFECTS=[
  {name:'stale-rows-consult',only:'gui-lifecycle',assertion:'gui:stale-rows-not-published',kind:'client',edits:[['f=m(()=>!!a.value&&p.value===a.value&&','f=m(()=>!!a.value&&']]},
  // Composable: only the first list load is acknowledged (the original permanent hold): a legitimate reload for the new company stays unconsultable.
  {name:'sticky-row-hold',only:'gui-lifecycle',assertion:'gui:refreshed-rows-consultable',kind:'client',edits:[['function I(e){e&&e===a.value&&(p.value=e)}','function I(e){e&&e===a.value&&!p.value&&(p.value=e)}']]},
- // Composable: a load is acknowledged for whatever identity is current when it ends (a delayed previous-company reply counts).
- {name:'ack-any-identity',only:'gui-lifecycle',assertion:'gui:delayed-old-response-not-acknowledged',kind:'client',edits:[['function I(e){e&&e===a.value&&(p.value=e)}','function I(e){a.value&&(p.value=a.value)}']]},
+ // Retired 2026-10-23 with the calendar store guard (not counted): ack-any-identity, the composable acknowledging whatever identity is
+ // current instead of the load's own (anchor 'function I(e){e&&e===a.value&&(p.value=e)}' -> 'function I(e){a.value&&(p.value=a.value)}').
+ // Added after the original 20 faults, it was detected in full-03 and full-04 at gui:delayed-old-response-not-acknowledged only because the
+ // calendar store then wrote a stale company-A reply and the page asked to acknowledge it. Now every native loaded() caller passes the
+ // identity it is still in (invoices and budgets compare the request's claims with the current ones, recurring compares loading(), the
+ // calendar acknowledges only a read the store applied), so the mutant is identical on every reachable path. Replaced by
+ // calendar-guard-removed (the real pre-assignment condition), caught by the new native ordering assertion.
  // Invoices page: opening an editor keeps the consulted pointer.
  {name:'editor-keeps-pointer',only:'gui-lifecycle',assertion:'gui:editor-clears',kind:'client',edits:[['V=a=>{h.clear(),a?(v.value=a,','V=a=>{a?(v.value=a,']]},
  // Composable: any deletion signal of the same kind clears the pointer (another record's deletion included).
@@ -73,10 +78,18 @@ export const DEFECTS=[
  // Conversation: a request already sent once is released by a later marked refusal (an earlier attempt could still be accepted).
  {name:'unknown-retry-releases',only:'gui-missing',assertion:'gui:unknown-then-missing-kept',kind:'client',edits:[['(w&&I.company&&o&&i.pending[Z]===o&&','(I.company&&o&&i.pending[Z]===o&&']]},
  // Calendar page: a day-list consultation also opens the payment editor.
- {name:'day-consult-edits',only:'gui-consult',assertion:'gui:day-consult-read-only',kind:'client',edits:[['s=g=>{S.value=!1,_(g)}','s=g=>{S.value=!1,_(g),P.value=g,l.value=!0}']]}
+ {name:'day-consult-edits',only:'gui-consult',assertion:'gui:day-consult-read-only',kind:'client',edits:[['s=g=>{S.value=!1,_(g)}','s=g=>{S.value=!1,_(g),P.value=g,l.value=!0}']]},
+ // Calendar store: the pre-assignment stale-response guard removed (every reply writes the rows; a late company-A reply replaces fresh B rows).
+ {name:'calendar-guard-removed',only:'gui-lifecycle',assertion:'gui:late-A-must-not-replace-refreshed-B',kind:'client',edits:[['return t!==u||c()!==n?!1:(this.payments=e,this.updateOverdueStatus(),!0)','return(this.payments=e,this.updateOverdueStatus(),!0)']]},
+ // Calendar store: only the latest-read check kept (a still-latest reply for the previous company is written).
+ {name:'calendar-identity-unchecked',only:'gui-lifecycle',assertion:'gui:stale-company-calendar-reply-dropped',kind:'client',edits:[['return t!==u||c()!==n?!1:','return t!==u?!1:']]},
+ // Calendar store: only the identity check kept (an older same-company reply answered after a newer one is written).
+ {name:'calendar-superseded-unchecked',only:'gui-lifecycle',assertion:'gui:superseded-calendar-reply-dropped',kind:'client',edits:[['return t!==u||c()!==n?!1:','return c()!==n?!1:']]},
+ // Calendar store: the read identity includes the token (a same-identity token refresh drops a legitimate reply).
+ {name:'calendar-token-compare',only:'gui-lifecycle',assertion:'gui:same-identity-calendar-refresh-applies',kind:'client',edits:[['return t?.userId?String(t.userId)+"|"+String(t.organizationId||""):""}','return t?.userId?String(t.userId)+"|"+String(t.organizationId||"")+d().token:""}']]}
 ];
 async function filesOf(dir,ext){const out=[];if(!existsSync(dir))return out;for(const e of await readdir(dir,{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())out.push(...await filesOf(f,ext));else if(f.endsWith(ext))out.push(f)}return out}
-export default {name:'omf-navi-selection',covers:['server/services/financeCompanyAssistantService.ts','components/finance/AssistantPanel.vue','components/finance/AssistantConversation.vue','components/finance/NaviConsultButton.vue','composables/useNaviRecordSelection.ts','pages/invoices/index.vue','pages/budgets/index.vue','pages/recurring/index.vue','pages/calendar/index.vue','components/calendar/UpcomingPayments.vue','components/calendar/DayDetailModal.vue','scripts/finance-navi-selection-integration.cjs','scripts/finance-navi-selection-browser.cjs','scripts/zoomer-fixtures/omf-navi-selection.mjs'],async run(){
+export default {name:'omf-navi-selection',covers:['server/services/financeCompanyAssistantService.ts','components/finance/AssistantPanel.vue','components/finance/AssistantConversation.vue','components/finance/NaviConsultButton.vue','composables/useNaviRecordSelection.ts','pages/invoices/index.vue','pages/budgets/index.vue','pages/recurring/index.vue','pages/calendar/index.vue','stores/calendar.ts','components/calendar/UpcomingPayments.vue','components/calendar/DayDetailModal.vue','scripts/finance-navi-selection-integration.cjs','scripts/finance-navi-selection-browser.cjs','scripts/zoomer-fixtures/omf-navi-selection.mjs'],async run(){
  const app=process.env.OMF_NAVI_SELECTION_APP_ROOT||root,built=path.join(app,'.output/server/index.mjs');
  if(!existsSync(built))return{pass:false,message:'omf-navi-selection: built app missing at '+built+' (build the tree first); no coverage granted'};
  const primaryOf=text=>{const lines=text.split(/\r?\n/),i=lines.findIndex(l=>/^(\S*Error\b|\s*\[?Error|.*\b(ECONNRESET|ECONNREFUSED|EADDRINUSE|ETIMEDOUT)\b)/.test(l)&&!/^(PASS|TIMING|APP_LOG|SUMMARY|CLEANUP|FAIL) /.test(l));return i<0?null:lines.slice(i,i+40).join('\n').slice(0,6000)};
