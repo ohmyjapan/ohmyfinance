@@ -6,7 +6,8 @@
 // (index.mjs bankLoginFor), fills the publicly observed login form once and activates its one submit control so the page's own,
 // per-document generated onSubmit handler runs (output/plan/omf-rakuten-auto-login-20261021/PAYPAY-PUBLIC-ENTRY-1792555450347.json and
 // PAYPAY-PUBLIC-NAVIGATION-1792555549500.json: form HOST POST NBCW2101.do; idTenNo/TenNo tel 3, idKozaNo/KozaNo tel 7, idPw/Pw password
-// 32; one submit `login`). Nothing after the submission is classified: the authenticated pages, the statement controls and the export
+// 32; one submit `login`). After the submission only the form again (a refusal, or the observed active-session heading: session in use)
+// is classified; nothing else is: the authenticated pages, the statement controls and the export
 // are the person's steps in the same owned window until the actual export is observed. The generated handler name is never pinned, no
 // POST is rebuilt or replayed, no value is read back, no keyboard or pointer input is used. BA-PLUS (専用ログイン) is not a saved-login
 // variant: its observe job opens the provider default. Imports only ../interaction.mjs, so the staged copy loads without node_modules.
@@ -67,6 +68,17 @@ const LOGIN_FORM = ({ c, entry = false, expectedDocument = null, fill = null, su
   if (submit) submits[0].click();
   return found;
 };
+/**
+ * The observed active-session page (plan omf-paypay-split-dates-retry-20261022; the real bank answered a correct saved login, while
+ * another session of the account was signed in, with the standard form again under this visible heading and a separate 上書きログイン
+ * control). Read-only: true only for exactly one visible h1 whose text is exactly this heading. Nothing is clicked.
+ */
+export const SESSION_IN_USE_HEADING = '上書きログイン（ログイン中です）';
+const SESSION_IN_USE = heading => {
+  const visible = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const shown = [...document.querySelectorAll('h1')].filter(visible);
+  return shown.length === 1 && shown[0].textContent.trim() === heading;
+};
 
 /**
  * The ui of the guided standard login (the shape of contractUi). Nothing is read from the page at construction (the staged-package
@@ -78,16 +90,17 @@ export function standardUi(page, browser, adapter = standard, snapshot = null, {
   const label = adapter?.label || 'PayPay銀行', hosts = adapter?.hosts || HOSTS, start = adapter?.start || STANDARD_ENTRY;
   const bounded = (promise, ms = 5000) => Promise.race([promise, pause(ms).then(() => null)]);
   const current = () => { let url; try { url = new URL(page.url()); } catch { throw new Error(`${label}のページを確認できません`); } if (!onHosts(url.hostname, hosts)) throw new Error(`${label}のページではありません。Chromeを確認して再試行してください`); return url; };
-  // After the one submission: the exact login form on a NEW document → 'rejected'; another new document that stays put → 'submitted'
-  // (never 'authenticated': nothing the collector sees afterwards, no file included, proves the sign-in — plan P1); no new document
-  // within the window → 'attention'.
+  // After the one submission: the exact login form on a NEW document → 'rejected', unless that document carries the observed
+  // active-session heading → 'session-in-use' (another session is signed in; neither a refusal nor a sign-in, and 上書きログイン is never
+  // pressed); another new document that stays put → 'submitted' (never 'authenticated': nothing the collector sees afterwards, no file
+  // included, proves the sign-in — plan P1); no new document within the window → 'attention'.
   const settle = async before => {
     const until = Date.now() + settleMs; let changed = false, last = null, since = 0;
     while (Date.now() < until) {
       await pause(250);
       const doc = await ui.document(); if (doc && doc !== before) changed = true;
       if (!changed) continue;
-      if ((await ui.loginForm()).ok) return 'rejected';
+      if ((await ui.loginForm()).ok) return (await ui.sessionInUse()) ? 'session-in-use' : 'rejected';
       const key = String(doc) + ':' + (() => { try { return new URL(page.url()).pathname; } catch { return ''; } })();
       if (key !== last) { last = key; since = Date.now(); } else if (Date.now() - since >= stableMs) return 'submitted';
     }
@@ -103,6 +116,8 @@ export function standardUi(page, browser, adapter = standard, snapshot = null, {
       if (url.origin !== STANDARD_LOGIN.origin) return { ok: false, reason: 'surface' };
       try { return (await bounded(page.evaluate(LOGIN_FORM, { c: STANDARD_LOGIN, entry }))) || { ok: false, reason: 'unreadable' }; } catch { return { ok: false, reason: 'unreadable' }; }
     },
+    /** Whether the current page shows the observed active-session heading (read-only; an unreadable page is false). */
+    async sessionInUse() { try { return (await bounded(page.evaluate(SESSION_IN_USE, SESSION_IN_USE_HEADING))) === true; } catch { return false; } },
     /** The identity of the current document (its time origin): a submission is judged on a NEW document only. */
     async document() { try { return (await bounded(page.evaluate(() => String(performance.timeOrigin)))) ?? null; } catch { return null; } },
     /**

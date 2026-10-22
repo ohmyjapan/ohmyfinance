@@ -86,7 +86,7 @@ async function stubCollector(state) {
     let body = ''; for await (const chunk of req) body += chunk;
     if (req.method === 'GET' && req.url === '/status') { state.statusCalls++; return send(200, 'application/json', JSON.stringify(state.status())); }
     if (req.method === 'GET' && ['/aplus/status', '/yayoi/status'].includes(req.url)) return send(200, 'application/json', JSON.stringify({ busy: false, unlocked: true, aplus: { hasCredentials: false }, yayoi: { state: 'idle', message: '', hasCredentials: false } }));
-    if (req.method === 'POST' && req.url === '/bank/retry') { const parsed = JSON.parse(body); state.retries.push(parsed); if (state.retryFail) return send(409, 'application/json', JSON.stringify({ error: 'There is no uncertain automatic sign-in to retry for the current saved login.' })); state.pending.delete(parsed.bankAccountId); return send(200, 'application/json', JSON.stringify({ retry: true })); }
+    if (req.method === 'POST' && req.url === '/bank/retry') { const parsed = JSON.parse(body); state.retries.push(parsed); if (state.retryFail) return send(409, 'application/json', JSON.stringify({ error: 'There is no unconfirmed or refused automatic sign-in to retry for the current saved login.' })); state.pending.delete(parsed.bankAccountId); return send(200, 'application/json', JSON.stringify({ retry: true })); }
     if (req.method === 'POST' && req.url === '/bank/credentials') { const parsed = JSON.parse(body); posts.push(parsed); if (state.fail) return send(400, 'application/json', JSON.stringify({ error: 'Saved sign-in is available only for 楽天銀行 and PayPay銀行 標準ログイン.' })); state.saved.add(parsed.bankAccountId); return send(200, 'application/json', JSON.stringify({ saved: true })); }
     return send(404, 'application/json', JSON.stringify({ error: 'Unknown setup endpoint' }));
   });
@@ -163,7 +163,8 @@ test('the real collector process refuses a malformed or mixed PayPay body (400) 
   } finally { await collector.stop(); await removeOwnedTemp(directory, { tmpdir: os.tmpdir() }).catch(() => {}); await removeOwnedTemp(brokerDir, { tmpdir: os.tmpdir() }).catch(() => {}); }
 });
 
-// ── Plan P1: the owner's explicit protected retry with the ALREADY saved login after an uncertain attempt ──
+// ── Plan P1: the owner's explicit protected retry with the ALREADY saved login after an uncertain attempt or, since plan
+// omf-paypay-split-dates-retry-20261022, a bank refusal of the current saved login ──
 function retryStore() {
   const entries = new Map(), calls = { open: 0, locks: 0 };
   const save = (id, aad, value) => { const keyId = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', ''); entries.set(id, { envelope: { v: 3, keyId, aad: { ...aad, v: 3, generation: 'g'.repeat(64), keyId } }, value }); return keyId; };
@@ -174,7 +175,7 @@ const ppAad = (id, owner = OWNER) => aadOf({ installationId: LIVE.installationId
 const markerFile = (dir, provider, id) => path.join(dir, 'bank-login', provider + '-' + id + '.json');
 const writeMarker = async (dir, provider, id, value) => { await mkdir(path.join(dir, 'bank-login'), { recursive: true }); await writeFile(markerFile(dir, provider, id), JSON.stringify(value)); };
 
-test('retryBankLogin: only the current key\'s uncertain marker of the exact granted PayPay標準 account is removed, under the store lock, without any decryption; refused, legacy, superseded, missing, unbound, foreign, ungranted and other-provider requests change nothing', async () => {
+test('retryBankLogin: only the current key\'s uncertain or refused marker of the exact granted PayPay標準 account is removed, under the store lock, without any decryption; legacy, superseded (uncertain or refused), misnamed, missing, unbound, foreign, ungranted and other-provider requests change nothing', async () => {
   const dir = path.join(temp, 'retry'), store = retryStore(), keys = {}, banks = async () => GRANTED;
   for (const id of P) keys[id] = store.save('paypay-' + id, ppAad(id), { branch: '001', account: '0000001', password: 'p' });
   keys.R = store.save('rakuten-' + RAKUTEN, aadOf({ installationId: LIVE.installationId, origin: ORIGIN, ownerId: OWNER, provider: 'rakuten', accountId: RAKUTEN }), { username: 'u', password: 'p' });
@@ -189,10 +190,13 @@ test('retryBankLogin: only the current key\'s uncertain marker of the exact gran
   for (const bad of [null, [], {}, { bankAccountId: 'x' }, { bankAccountId: P[0], force: true }]) assert.throws(() => index.bankRetryInput(bad), Error, 'paypay-retry:bad-body ' + JSON.stringify(bad));
   assert.deepEqual(await retry(P[0]), { retry: true }, 'paypay-retry:uncertain-allowed');
   assert.deepEqual(await markers(), [false, true, true, true, true], 'paypay-retry:only-own-marker-removed');
+  // a bank refusal of the CURRENT saved login: the owner says it is still correct — one explicit retry, no re-entry
+  assert.deepEqual(await retry(P[1]), { retry: true }, 'paypay-retry:current-refused-allowed');
+  assert.deepEqual(await markers(), [false, false, true, true, true], 'paypay-retry:refused-own-marker-removed');
   assert.equal(store.calls.open, 0, 'paypay-retry:no-decryption'); assert.ok(store.calls.locks >= 1, 'paypay-retry:under-store-lock'); assert.equal(await exists(journal), true, 'paypay-retry:journal-kept');
   const refusedWith = async (id, code, label, extra) => { await assert.rejects(retry(id, extra), e => e?.code === code, 'paypay-retry:' + label); };
   await refusedWith(P[0], 'conflict', 'nothing-left-to-retry');
-  await refusedWith(P[1], 'conflict', 'refusal-needs-corrected-values');
+  await refusedWith(P[1], 'conflict', 'refused-nothing-left-to-retry');
   await refusedWith(P[2], 'conflict', 'legacy-marker-not-guessed');
   await refusedWith(P[3], 'conflict', 'superseded-key-marker');
   await refusedWith(RAKUTEN, 'unsupported', 'rakuten-keeps-resave');
@@ -200,7 +204,11 @@ test('retryBankLogin: only the current key\'s uncertain marker of the exact gran
   await refusedWith('e1e1e1e1e1e1e1e1e1e1e1e1', 'forbidden', 'ungranted');
   await refusedWith(P[1], 'forbidden', 'other-owner', { banks: async () => [{ ...GRANTED[1], ownerId: 'e2e2e2e2e2e2e2e2e2e2e2e2' }] });
   await assert.rejects(retry(P[1], { banks: async () => { throw Object.assign(new Error('Collector unavailable'), { status: 401 }); } }), e => e.status === 401, 'paypay-retry:omf-refusal-propagates');
-  assert.deepEqual(await markers(), [false, true, true, true, true], 'paypay-retry:refusals-change-nothing');
+  assert.deepEqual(await markers(), [false, false, true, true, true], 'paypay-retry:refusals-change-nothing');
+  // a refusal remembered for a superseded key, or under another entry name, is never this saved login's refusal
+  await writeMarker(dir, 'paypay', P[3], { entry: 'paypay-' + P[3], keyId: 'f'.repeat(64), refusedAt: 'x', kind: 'refused' }); await refusedWith(P[3], 'conflict', 'superseded-refused-marker');
+  await writeMarker(dir, 'paypay', P[1], { entry: 'paypay-' + P[0], keyId: keys[P[1]], refusedAt: 'x', kind: 'refused' }); await refusedWith(P[1], 'conflict', 'misnamed-refused-marker');
+  assert.deepEqual(await markers(), [false, true, true, true, true], 'paypay-retry:superseded-misnamed-change-nothing');
   // missing and unbound entries
   await writeMarker(dir, 'paypay', P[2], { entry: 'paypay-' + P[2], keyId: keys[P[2]], refusedAt: 'x', kind: 'uncertain' });
   store.entries.delete('paypay-' + P[2]); await refusedWith(P[2], 'conflict', 'missing-entry');
@@ -209,7 +217,7 @@ test('retryBankLogin: only the current key\'s uncertain marker of the exact gran
   assert.equal(store.calls.open, 0, 'paypay-retry:never-decrypts');
 });
 
-test('retryBankLogin races: a session ending before or after the checks, a newer key saved meanwhile and the marker turning into a refusal meanwhile each leave the marker; the action slot is reserved synchronously and released once', async () => {
+test('retryBankLogin races: a session ending before or after the checks, a newer key saved meanwhile and the marker losing its kind meanwhile each leave the marker; a refusal of the current key written meanwhile is read under the lock and retried; the action slot is reserved synchronously and released once', async () => {
   const dir = path.join(temp, 'retry-race'), store = retryStore(), id = P[0];
   const key = () => store.entries.get('paypay-' + id).envelope.keyId, fresh = async () => { store.save('paypay-' + id, ppAad(id), { branch: '001', account: '0000001', password: 'p' }); await writeMarker(dir, 'paypay', id, { entry: 'paypay-' + id, keyId: key(), refusedAt: 'x', kind: 'uncertain' }); };
   const retry = extra => index.retryBankLogin({ bankAccountId: id }, { live: LIVE, config: CONFIG, banks: async () => GRANTED, store, root: dir, assert: () => {}, ...extra });
@@ -218,13 +226,15 @@ test('retryBankLogin races: a session ending before or after the checks, a newer
     ['session-ended-first', { assert: () => { throw ended(); } }],
     ['session-ended-before-mutation', (() => { let n = 0; return { assert: () => { if (++n === 2) throw ended(); } }; })()],
     ['newer-key-meanwhile', { banks: async () => { store.save('paypay-' + id, ppAad(id), { branch: '001', account: '0000002', password: 'q' }); return GRANTED; } }],
-    ['marker-refused-meanwhile', { banks: async () => { await writeMarker(dir, 'paypay', id, { entry: 'paypay-' + id, keyId: key(), refusedAt: 'y', kind: 'refused' }); return GRANTED; } }],
+    ['marker-kind-lost-meanwhile', { banks: async () => { await writeMarker(dir, 'paypay', id, { entry: 'paypay-' + id, keyId: key(), refusedAt: 'y' }); return GRANTED; } }],
     ['scope-removed-meanwhile', { banks: async () => GRANTED.filter(b => b._id !== id) }]
   ]) {
     await fresh();
     await assert.rejects(retry(extra), Error, 'paypay-retry:race ' + label);
     assert.equal(await exists(markerFile(dir, 'paypay', id)), true, 'paypay-retry:race-keeps-marker ' + label);
   }
+  await fresh(); assert.deepEqual(await retry({ banks: async () => { await writeMarker(dir, 'paypay', id, { entry: 'paypay-' + id, keyId: key(), refusedAt: 'y', kind: 'refused' }); return GRANTED; } }), { retry: true }, 'paypay-retry:race-refused-current-key');
+  assert.equal(await exists(markerFile(dir, 'paypay', id)), false, 'paypay-retry:race-refused-current-key-removed');
   await fresh(); assert.deepEqual(await retry({}), { retry: true }, 'paypay-retry:race-control');
   const release = index.reserveAction();
   assert.throws(() => index.reserveAction(), e => e?.code === 'conflict', 'paypay-retry:slot-busy');
@@ -232,7 +242,7 @@ test('retryBankLogin races: a session ending before or after the checks, a newer
   const again = index.reserveAction(); again();
 });
 
-test('the real setup page: an uncertain PayPay account offers "Allow one more sign-in with the saved login" (posting only its id), a refused one asks for corrected values instead, inputs stay empty, nothing is read back', { timeout: 240000 }, async () => {
+test('the real setup page: an uncertain or refused PayPay account offers "Allow one more sign-in with the saved login" (posting only its id), a refused one also explains that changed values are entered instead, inputs stay empty, nothing is read back', { timeout: 240000 }, async () => {
   const { browserFor } = await import('../browser.mjs');
   const state = { unlocked: true, saved: new Set(P), refused: new Set(), pending: new Map([[P[0], 'uncertain'], [P[1], 'refused'], [P[2], 'uncertain']]), retries: [], fail: false, retryFail: false, statusCalls: 0 }; state.status = () => statusOf(state);
   const collector = await stubCollector(state), profileDir = await mkdtemp(path.join(os.tmpdir(), 'omf-paypay-retry-chrome-'));
@@ -244,8 +254,9 @@ test('the real setup page: an uncertain PayPay account offers "Allow one more si
     const card = id => '[data-bank-login="' + id + '"] ';
     await open(); await wait(sel => { const e = document.querySelector(sel); return !!e && !e.disabled; }, card(P[0]) + '[data-bank-login-retry]', 'retry button');
     assert.match(await page.$eval(card(P[0]) + '[data-bank-login-note]', e => e.textContent), /cannot tell whether the bank accepted it/, 'paypay-retry:uncertain-explained');
-    assert.equal(await page.$(card(P[1]) + '[data-bank-login-retry]'), null, 'paypay-retry:refused-no-retry');
-    assert.match(await page.$eval(card(P[1]) + '[data-bank-login-note]', e => e.textContent), /bank refused the saved login/, 'paypay-retry:refused-explained');
+    assert.notEqual(await page.$(card(P[1]) + '[data-bank-login-retry]'), null, 'paypay-retry:refused-offers-retry');
+    const refusedNote = await page.$eval(card(P[1]) + '[data-bank-login-note]', e => e.textContent);
+    assert.match(refusedNote, /bank refused the saved login/, 'paypay-retry:refused-explained'); assert.match(refusedNote, /If you changed .* enter all three to replace it/, 'paypay-retry:refused-changed-values-replace'); assert.match(refusedNote, /still current, allow one more automatic sign-in/, 'paypay-retry:refused-current-retry');
     assert.equal(await page.$(card(P[3]) + '[data-bank-login-retry]'), null, 'paypay-retry:ready-no-retry');
     await page.type(card(P[2]) + '[data-bank-login-field="branch"]', '01');
     await page.click(card(P[0]) + '[data-bank-login-retry]');
@@ -255,8 +266,12 @@ test('the real setup page: an uncertain PayPay account offers "Allow one more si
     assert.equal(await page.$(card(P[0]) + '[data-bank-login-retry]'), null, 'paypay-retry:button-gone-after-rearm');
     assert.deepEqual(await page.$$eval(card(P[0]) + 'input', l => l.map(e => e.value)), ['', '', ''], 'paypay-retry:inputs-empty');
     assert.equal(await page.$eval(card(P[2]) + '[data-bank-login-field="branch"]', e => e.value), '01', 'paypay-retry:other-section-typing-kept');
+    await page.click(card(P[1]) + '[data-bank-login-retry]');
+    await wait(sel => /saved on this PC/i.test(document.querySelector(sel)?.textContent || ''), card(P[1]) + '[data-bank-login-note]', 'refused rearmed note');
+    assert.deepEqual(state.retries, [{ bankAccountId: P[0] }, { bankAccountId: P[1] }], 'paypay-retry:refused-posts-only-the-id');
+    assert.deepEqual(collector.posts, [], 'paypay-retry:refused-no-login-posted'); assert.deepEqual(await page.$$eval(card(P[1]) + 'input', l => l.map(e => e.value)), ['', '', ''], 'paypay-retry:refused-inputs-empty');
     state.retryFail = true; await page.click(card(P[2]) + '[data-bank-login-retry]');
-    await wait(sel => /no uncertain automatic sign-in/i.test(document.querySelector(sel)?.textContent || ''), card(P[2]) + '[data-bank-login-note]', 'retry failure shown');
+    await wait(sel => /no unconfirmed or refused automatic sign-in/i.test(document.querySelector(sel)?.textContent || ''), card(P[2]) + '[data-bank-login-note]', 'retry failure shown');
     state.unlocked = false; await open(); await wait(sel => !!document.querySelector(sel), card(P[2]) + '[data-bank-login-retry]', 'locked');
     assert.equal(await page.$eval(card(P[2]) + '[data-bank-login-retry]', e => e.disabled), true, 'paypay-retry:needs-protected-session');
     assert.equal(await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage) + document.cookie), '{}{}', 'paypay-retry:no-browser-storage');

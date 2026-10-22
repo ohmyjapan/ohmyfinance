@@ -20,8 +20,9 @@
 // bankLoginFor), which guidedSignIn submits at most ONCE on the exact observed form — journalled in the job folder and marked pending for
 // that saved key BEFORE the possible submission. Nothing the collector sees afterwards proves that sign-in worked (plan P1): the PayPay
 // adapter has no observed authenticated-page or export contract, so neither navigation nor a downloaded file — CSV-shaped or not — clears
-// the marker. It stays 'uncertain' by default and 'refused' only for an adapter-observed refusal; the owner either allows one more attempt
-// with the already saved login in the protected setup (index.mjs retryBankLogin, uncertain only) or saves corrected values. The window runs in the background and is shown for the person (reveal), who completes any bank check and the export.
+// the marker. It stays 'uncertain' by default and 'refused' only for an adapter-observed refusal; the observed active-session page (another
+// session signed in) is neither: it stays 'uncertain', nothing is sent again and 上書きログイン is never pressed. The owner either allows one
+// more attempt with the already saved login in the protected setup (index.mjs retryBankLogin, uncertain or refused) or saves changed values. The window runs in the background and is shown for the person (reveal), who completes any bank check and the export.
 // Lines marked `// guard:<name>` are single predicates the fixture removes in turn from a mutant copy.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { access, link, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
@@ -163,9 +164,13 @@ export const GUIDED_TEXT = Object.freeze({
   kept: label => `受け取った明細は保存しました。${stoppedText(label)}`,
   // Review fold F3: a download that is not a readable CSV/text statement (statementText) is not sent; the file stays in the job folder.
   unreadable: () => '受け取ったファイルはCSV・テキストとして読めないため、明細として送信しません（ファイルはこのPCに残しています）',
-  resave: label => `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面で正しいログインを保存し直すまで自動では送信しません`,
+  resave: label => `${label}が保存済みのログインを受け付けませんでした。ログインを変更した場合はダウンローダーの設定画面で正しいログインを保存し直してください。変更していない場合は同じ画面で「保存済みのログインでもう一度試す」を押せます（どちらかを行うまで自動では送信しません）`,
   // The guided variant's own login fields (PayPay銀行 標準: 店番号・口座番号・パスワード); LOGIN_TEXT.refused keeps 楽天銀行's ID wording.
-  refused: label => `${label}が保存済みのログインを受け付けませんでした。Chromeでサインインするか、ダウンローダーの設定画面で店番号・口座番号・パスワードを保存し直してください（保存し直すまで自動では送信しません）`
+  refused: label => `${label}が保存済みのログインを受け付けませんでした。Chromeでサインインするか、ダウンローダーの設定画面で店番号・口座番号・パスワードを保存し直してください（変更していない場合は同じ画面の「保存済みのログインでもう一度試す」で1回だけ再試行できます。どちらかを行うまで自動では送信しません）`,
+  // The observed active-session page (plan omf-paypay-split-dates-retry-20261022): another session of the account is signed in. Not a
+  // refusal and not a sign-in; the collector never presses 上書きログイン and never submits again.
+  inUse: label => `${label}は別のブラウザーやアプリでログイン中のため、保存済みのログインを1回送信したところで止めました（「上書きログイン」は自動では押しません）。ほかのログインを終えるか、上書きしてよい場合は表示中のChromeの画面でご自身で操作し、入出金明細のCSVを出力してからタブを閉じてください（ガイド付き取得）`,
+  inUseStopped: label => `${label}は別のブラウザーやアプリでログイン中だったため、サインインは完了していません（「上書きログイン」は自動では押していません）。ほかのログインを終えてから、保存済みのログインが正しければダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押し、もう一度取得してください（ログインを変更した場合は保存し直してください）`
 });
 /**
  * The one saved-login step of a guided observe job (ensureBankLogin's lazy order, without inferring authentication): file metadata,
@@ -191,6 +196,8 @@ export async function guidedSignIn(ui, { label, login, journal = null, signal = 
     const result = await ui.login(secret, { signal });
     // Only the adapter's own observation (the exact login form again on a new document) is a refusal; it needs corrected values.
     if (result?.outcome === 'rejected') { await login.rejected('refused'); return { submitted: true, refused: true, text: GUIDED_TEXT.refused(label) }; }
+    // The observed active-session page: the uncertain marker written above stays (no refusal, no sign-in inferred).
+    if (result?.outcome === 'session-in-use') return { submitted: true, refused: false, inUse: true, text: GUIDED_TEXT.inUse(label) };
     return { submitted: true, refused: false, text: GUIDED_TEXT.submitted(label) };
   } catch (error) {
     if (signal?.aborted || error?.name === 'AbortError') throw error;
@@ -439,7 +446,7 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
   if (!guided?.submitted) return result;
   // The captured file is the person's statement for native mapping, not proof of the automatic sign-in: the marker stays.
   if (guided.refused) return items.length ? { ...result, notice: GUIDED_TEXT.resave(adapter.label) } : { ...result, failed: GUIDED_TEXT.refused(adapter.label) };
-  return items.length ? { ...result, notice: GUIDED_TEXT.kept(adapter.label) } : { ...result, failed: GUIDED_TEXT.unconfirmed(adapter.label) };
+  return items.length ? { ...result, notice: GUIDED_TEXT.kept(adapter.label) } : { ...result, failed: guided.inUse ? GUIDED_TEXT.inUseStopped(adapter.label) : GUIDED_TEXT.unconfirmed(adapter.label) };
 }
 
 // An owned, ephemeral, sandboxed Chrome for one bank job: profiles/ephemeral/<owner>-bank-<account>-<batch> (browser.mjs

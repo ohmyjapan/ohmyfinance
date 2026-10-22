@@ -31,8 +31,9 @@ function loginDoc(v = {}, error = '') {
   ].join(' ');
   const submits = v.submits === 0 ? '' : Array.from({ length: v.submits ?? 1 }, () => '<input type="submit" name="login" value="ログイン">').join(' ');
   const form = name => `<form method="${v.method || 'post'}" action="${v.action || 'NBCW2101.do'}" name="${name}" onSubmit="return ${fn}(document.${name})" target="_self"><input type="hidden" name="SessionToken" value="${token}">${fields} ${submits}</form>`;
-  return { fn, token, html: `<!doctype html><html lang="ja"><meta charset="utf-8"><title>ログイン｜PayPay銀行</title><body>${error ? `<p class="err">${error}</p>` : ''}
-${form('HOST')}${v.twoForms ? form('HOST') : ''}${v.secondPassword ? '<label>第2暗証 <input type="password" name="Pw2" maxlength="4"></label>' : ''}
+  const heading = v.heading ? `<h1${v.headingHidden ? ' style="display:none"' : ''}>${v.heading}</h1>` : '', overwrite = v.overwrite ? '<a href="#" id="overwrite" onclick="window.__overwrite=(window.__overwrite||0)+1;return false;">上書きログイン</a>' : '';
+  return { fn, token, html: `<!doctype html><html lang="ja"><meta charset="utf-8"><title>ログイン｜PayPay銀行</title><body>${heading}${error ? `<p class="err">${error}</p>` : ''}
+${v.noForm ? '' : form('HOST')}${v.twoForms ? form('HOST') : ''}${overwrite}${v.secondPassword ? '<label>第2暗証 <input type="password" name="Pw2" maxlength="4"></label>' : ''}
 <a href="https://www.paypay-bank.co.jp/cn_login.html">ログインできません</a> <a href="${BA}">BA-PLUS専用ログイン</a>
 <script>window.__changes=0;document.addEventListener('change',()=>{window.__changes++;},true);window.__inputs=0;document.addEventListener('input',()=>{window.__inputs++;},true);
 function ${fn}(f){window.__handler=(window.__handler||0)+1;${v.refuseSubmit ? 'return false;' : ''}var h=document.createElement('input');h.type='hidden';h.name='Chk';h.value='gen-${token}-'+f.TenNo.value.length+'-'+f.KozaNo.value.length;f.appendChild(h);return true;}</script></body></html>` };
@@ -46,7 +47,9 @@ const VARIANTS = {
 
 // The fake bank: one state for every page of the owned browser; every request is recorded, foreign ones aborted.
 function bankSite() {
-  const s = { mode: 'ok', variant: {}, docs: [], posts: [], foreign: [], requests: 0 };
+  // inUse: the page the bank answers in mode 'in-use' (plan omf-paypay-split-dates-retry-20261022: the observed active-session page —
+  // the standard form again under a visible h1 and a separate 上書きログイン control; a deviation per field).
+  const s = { mode: 'ok', variant: {}, docs: [], posts: [], foreign: [], requests: 0, inUse: {} };
   s.respond = request => {
     s.requests++; let url; try { url = new URL(request.url()); } catch { return request.abort(); }
     if (url.origin !== ORIGIN) { s.foreign.push(url.origin); return request.abort(); }
@@ -64,6 +67,7 @@ function bankSite() {
       const body = new URLSearchParams(request.postData() || ''), doc = s.docs.find(d => d.token === body.get('SessionToken'));
       s.posts.push({ keys: [...body.keys()].sort(), branch: body.get('TenNo'), account: body.get('KozaNo'), password: body.get('Pw'), chk: body.get('Chk'), fresh: !!doc && doc === s.docs.at(-1), handlerRan: !!doc && body.get('Chk') === `gen-${doc.token}-${String(body.get('TenNo') || '').length}-${String(body.get('KozaNo') || '').length}` });
       if (s.mode === 'reject') { const d = loginDoc({}, '店番号・口座番号またはパスワードが正しくありません'); s.docs.push(d); return html(d.html); }
+      if (s.mode === 'in-use') { const d = loginDoc({ heading: '上書きログイン（ログイン中です）', overwrite: true, ...s.inUse }); s.docs.push(d); return html(d.html); }
       return html('<!doctype html><html lang="ja"><meta charset="utf-8"><title>ログイン中</title><body><script>location.replace(' + JSON.stringify(TOP) + ')</script></body></html>');
     }
     if (url.pathname === TOP) return html('<!doctype html><html lang="ja"><meta charset="utf-8"><title>PayPay銀行</title><body><a href="#">ログアウト</a> <a href="#">入出金明細</a></body></html>');
@@ -171,5 +175,25 @@ test('a document replaced between the form check and the fill, or between the fi
     await assert.rejects(ui.login({ ...SECRET }, { signal: abort.signal }), e => e?.name === 'AbortError' || /abort/i.test(String(e?.message)), 'paypay:abort-after-fill');
     page.evaluate = evaluate;
     assert.equal(site.posts.length, 0, 'paypay:abort-no-submit'); assert.deepEqual(await fieldValues(page), ['', '', ''], 'paypay:abort-clears-fields');
+  });
+});
+
+test('the observed active-session page: the standard form again under the one visible h1 上書きログイン（ログイン中です） is `session-in-use` — one submission, 上書きログイン never pressed, no second submission; a hidden, different or doubled heading stays `rejected`, the heading without the form stays `submitted`', { timeout: 300000 }, async () => {
+  assert.equal(paypay.SESSION_IN_USE_HEADING, '上書きログイン（ログイン中です）', 'paypay:in-use-heading-exact');
+  await owned(async ({ page, browser, site }) => {
+    const ui = uiOf(page, browser), out = {};
+    for (const [name, inUse] of Object.entries({ exact: {}, hidden: { headingHidden: true }, different: { heading: 'ログイン' }, prefixed: { heading: '上書きログイン（ログイン中です）のお知らせ' }, doubled: { heading: '上書きログイン（ログイン中です）</h1><h1>上書きログイン（ログイン中です）' }, 'no-form': { noForm: true } })) {
+      site.mode = 'in-use'; site.inUse = inUse; const posts = site.posts.length; await ui.open();
+      const r = await ui.login({ ...SECRET });
+      out[name] = { outcome: r.outcome, posts: site.posts.length - posts, overwrite: await page.evaluate(() => window.__overwrite || 0), inUseNow: await ui.sessionInUse() };
+    }
+    assert.deepEqual(out.exact, { outcome: 'session-in-use', posts: 1, overwrite: 0, inUseNow: true }, 'paypay:in-use-detected ' + JSON.stringify(out.exact));
+    for (const name of ['hidden', 'different', 'prefixed', 'doubled']) assert.deepEqual([out[name].outcome, out[name].posts, out[name].overwrite], ['rejected', 1, 0], 'paypay:in-use-near-miss-stays-refusal ' + name + ' ' + JSON.stringify(out[name]));
+    assert.deepEqual([out['no-form'].outcome, out['no-form'].posts, out['no-form'].overwrite], ['submitted', 1, 0], 'paypay:in-use-heading-alone-not-classified ' + JSON.stringify(out['no-form']));
+    // the ordinary wrong-login refusal is unchanged and distinct
+    site.mode = 'reject'; await ui.open(); const refused = await ui.login({ ...SECRET });
+    assert.equal(refused.outcome, 'rejected', 'paypay:wrong-login-still-rejected'); assert.equal(await ui.sessionInUse(), false, 'paypay:refusal-page-not-in-use');
+    assert.equal((await ui.state()).kind, 'unknown', 'paypay:in-use-not-authenticated');
+    assert.deepEqual(site.foreign, [], 'paypay:in-use-no-foreign');
   });
 });

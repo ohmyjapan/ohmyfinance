@@ -327,7 +327,7 @@ export function credentialEntryFor(account,entries,scope=[]) {
 // (financeCollectorSecurityService bankBinding). A pending automatic attempt is remembered per saved key in bank-login/<entry>.json
 // before submission. 楽天銀行: a confirmed authentication or an owner re-save clears it. PayPay銀行 (plan P1): positive authentication is
 // never inferred — no navigation and no captured file (CSV or not) clears it; only the owner's re-save, or the owner's explicit retry of an
-// 'uncertain' marker (retryBankLogin), does. A failed job never clears it. Four PayPay accounts are four entries, four AADs and four markers.
+// 'uncertain' or 'refused' marker of the current key (retryBankLogin), does. A failed job never clears it. Four PayPay accounts are four entries, four AADs and four markers.
 const bankEntry=(provider,id)=>provider+'-'+id;
 const bankMarker=(provider,id,root=directory)=>path.join(root,'bank-login',bankEntry(provider,id)+'.json');
 export const bankLoginSupported=bank=>BANK_LOGIN_PROVIDERS.includes(bank?.provider)&&bank?.variant==='standard';
@@ -415,11 +415,12 @@ export function bankRetryInput(body){
 }
 /**
  * Plan P1 — the owner's explicit "try once more with the saved login" for ONE PayPay銀行 標準 account whose last automatic attempt is
- * uncertain. Under the store's writer lock: the live session, the account as OMF grants it to this PC now (this pairing's owner,
- * provider paypay, variant standard), the current sealed entry bound to that account and that entry's own marker — kind 'uncertain' for
- * the CURRENT key — are re-checked; only that one marker file is removed. Nothing is decrypted, read back, queued or submitted, and job
- * journals stay (a reclaimed job still never resubmits). A refusal (corrected values must be saved), a marker of another key, a marker
- * without a kind, no marker, an unbound or missing entry, another provider/variant/owner or an ungranted account is refused.
+ * uncertain or, since plan omf-paypay-split-dates-retry-20261022, was refused by the bank (the owner says the saved login is still
+ * current; changed values are saved instead). Under the store's writer lock: the live session, the account as OMF grants it to this PC
+ * now (this pairing's owner, provider paypay, variant standard), the current sealed entry bound to that account and that entry's own
+ * marker — kind 'uncertain' or 'refused' for the CURRENT key — are re-checked; only that one marker file is removed. Nothing is
+ * decrypted, read back, queued or submitted, and job journals stay (a reclaimed job still never resubmits). A marker of another key, a
+ * marker without a kind, no marker, an unbound or missing entry, another provider/variant/owner or an ungranted account is refused.
  */
 export async function retryBankLogin(input,{live,config,banks,store=secrets,root=directory,assert=assertSession}){
   return store.withLock(async()=>{
@@ -434,8 +435,7 @@ export async function retryBankLogin(input,{live,config,banks,store=secrets,root
     if(envelope===null)throw coded('conflict','No login is saved on this PC for this account. Enter it first.');
     if(envelope===false)throw coded('conflict','The saved login on this PC belongs to another connection. Save it again.');
     const marker=await bankMarkerOf(file),pending=pendingOf('paypay',marker,envelope);
-    if(pending==='refused')throw coded('conflict','The bank refused the saved login. Enter the corrected branch number, account number and password instead.');
-    if(pending!=='uncertain'||marker.entry!==entry)throw coded('conflict','There is no uncertain automatic sign-in to retry for the current saved login.'); // guard:bank-retry-uncertain
+    if(!['uncertain','refused'].includes(pending)||marker.entry!==entry)throw coded('conflict','There is no unconfirmed or refused automatic sign-in to retry for the current saved login.'); // guard:bank-retry-uncertain
     assert(live);
     await unlink(file).catch(error=>{if(error.code!=='ENOENT')throw error;});
     return {retry:true};
@@ -961,7 +961,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         return reply(200,await saveBankLogin(input,{live,config,banks:async()=>(await api(config,'bank/accounts',undefined,undefined,live,{base:BANK_BASE})).accounts,write:(id,aad,value)=>writeSecret(live,id,aad,value)}));
       }
       if(req.method==='POST' && req.url==='/bank/retry') {
-        // Plan P1: allow one more automatic sign-in with the ALREADY saved PayPay login after an uncertain attempt. The action slot is
+        // Plan P1: allow one more automatic sign-in with the ALREADY saved PayPay login after an uncertain or refused attempt. The action slot is
         // reserved before the first await and released in finally; then body (400), protected session (403), OMF's live bank scope and the
         // current key/marker under the store lock (retryBankLogin). Nothing is decrypted, queued or submitted here.
         let release;try{release=reserveAction();}catch(error){return reply(409,{error:error.message});}

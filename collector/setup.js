@@ -98,8 +98,8 @@ const BANK_FORMS={
     first:'Enter this PayPay銀行 標準ログイン account\'s branch number, account number and login password once. They are encrypted on this PC and never sent to OMF. Statement downloads are guided: the downloader signs in once in its own Chrome window, and you complete any bank check and export the statement CSV there.',
     saved:'Login saved on this PC. The next guided download signs in once with it; complete any bank check and export the statement CSV in the Chrome window that is shown. Enter all three fields to replace it.',
     refused:'The previous automatic sign-in was not confirmed. Check the bank window, then enter the current branch number, account number and password to replace it; automatic sign-in stays off until then.',
-    uncertain:'The previous automatic sign-in was not confirmed: the downloader cannot tell whether the bank accepted it (a downloaded file is not taken as proof). Automatic sign-in stays off for this account. If the saved login is correct, allow one more automatic sign-in with it below (nothing is typed again and no download starts until you request one in OMF); if it changed, enter all three fields to replace it.',
-    refusedByBank:'The bank refused the saved login on the last attempt. Enter the corrected branch number, account number and password to replace it; automatic sign-in stays off until then.'}
+    uncertain:'The previous automatic sign-in was not confirmed: the downloader cannot tell whether the bank accepted it (a downloaded file is not taken as proof; the bank may also have said that the account was signed in elsewhere). Automatic sign-in stays off for this account. If the saved login is correct, allow one more automatic sign-in with it below (nothing is typed again and no download starts until you request one in OMF); if it changed, enter all three fields to replace it.',
+    refusedByBank:'The bank refused the saved login on the last attempt. If you changed the branch number, account number or password, enter all three to replace it. If the saved login is still current, allow one more automatic sign-in with it below instead of typing it again (nothing is typed again and no download starts until you request one in OMF). Automatic sign-in stays off until you do one of these.'}
 };
 let bankSections=new Map(),bankTimer;
 function bankSection(bank,data) {
@@ -108,7 +108,8 @@ function bankSection(bank,data) {
   title.textContent=bank.name;
   const kind=bank.supported?BANK_FORMS[bank.provider]:null;
   if(!kind){note.textContent='Saved sign-in is not available for this bank or login type. When a download needs it, sign in in the Chrome window the downloader opens.';section.append(title,note);return {section};}
-  // Plan P1: PayPay's block names its kind — an uncertain attempt may be retried with the saved login; a refusal needs corrected values.
+  // Plan P1: PayPay's block names its kind. An uncertain attempt or a bank refusal of the current saved login may be retried once with
+  // that saved login on the owner's explicit request (plan omf-paypay-split-dates-retry-20261022); changed values are saved instead.
   note.textContent=bank.pending==='uncertain'&&kind.uncertain?kind.uncertain:bank.pending==='refused'&&kind.refusedByBank?kind.refusedByBank:bank.refused?kind.refused:bank.hasCredentials?kind.saved:kind.first;
   const form=document.createElement('form'),fields={};
   for(const [name,label,type,max,pattern] of kind.fields) {
@@ -126,7 +127,7 @@ function bankSection(bank,data) {
     await refresh().catch(error=>{note.textContent=error.message;});
   };
   let retry=null;
-  if(bank.pending==='uncertain'&&kind.uncertain){
+  if((bank.pending==='uncertain'||bank.pending==='refused')&&kind.uncertain){
     retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent='Allow one more sign-in with the saved login';retry.dataset.bankLoginRetry='';
     retry.onclick=async()=>{
       retry.disabled=true;retry.dataset.saving='1';let failure=null;

@@ -4,7 +4,8 @@
 // accounts, and runBankJob's hand-over. The saved login is opened at most once per job, journalled and marked pending before the one
 // possible submission, never inferred to have worked (plan P1): neither navigation nor any captured file — CSV-shaped or not — clears
 // the pending marker; the captured file is kept for native mapping, an adapter-observed refusal is marked 'refused', and only the owner's
-// explicit protected retry (index.mjs retryBankLogin, uncertain only) or a re-save lifts the block. The Chrome legs (real recorder, intercepted fake portal) run in
+// explicit protected retry (index.mjs retryBankLogin, uncertain or refused for the current key) or a re-save lifts the block; the observed
+// active-session page (session-in-use) keeps the uncertain marker and is never a refusal. The Chrome legs (real recorder, intercepted fake portal) run in
 // scripts/zoomer-fixtures/omf-paypay-four-accounts.mjs and scripts/finance-paypay-onboarding-integration.cjs. Fictional values only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -231,6 +232,44 @@ test('end to end through the real handle: an uncertain attempt stays blocked acr
   await index.retryBankLogin({ bankAccountId: ACCOUNT._id }, { live: LIVE, config: CONFIG, banks, store, root: dir, assert: () => {} });
   const reclaimed = guidedUi(), rr = await observe(reclaimed, thirdJob, handle(), { dir });
   assert.equal(reclaimed.calls.login, 0, 'paypay-guided:old-journal-holds'); assert.match(attention(rr)[0] || '', /もう一度は送信しません/, 'paypay-guided:old-journal-message');
+});
+
+test('the observed active-session page (session-in-use, plan omf-paypay-split-dates-retry-20261022): one submission, the uncertain marker stays — not refused, not accepted —, the person is told why and that 上書きログイン is never pressed, nothing is sent again; a kept CSV is still no proof; the explicit retry then allows exactly one new submission', async () => {
+  const store = memoryStore(), dir = await root(); store.save('paypay-' + ACCOUNT._id, aadFor(ACCOUNT), SECRET);
+  const handle = () => index.bankLoginFor({ job: jobOf(), account: ACCOUNT }, CONFIG, LIVE, { store, root: dir, assert: () => {} });
+  const marker = async () => JSON.parse(await readFile(path.join(dir, 'bank-login', 'paypay-' + ACCOUNT._id + '.json'), 'utf8'));
+  const inUseJob = jobOf(), ui = guidedUi({ outcome: 'session-in-use', deliver: null }), r = await observe(ui, inUseJob, handle(), { dir });
+  assert.equal(r.error, null); assert.equal(ui.calls.login, 1, 'paypay-guided:in-use-one-submit'); assert.equal(store.calls.open.length, 1, 'paypay-guided:in-use-one-decryption');
+  assert.equal(await handle().state(), 'blocked', 'paypay-guided:in-use-stays-uncertain'); assert.equal((await marker()).kind, 'uncertain', 'paypay-guided:in-use-not-refused');
+  assert.match(attention(r)[0] || '', /ログイン中/, 'paypay-guided:in-use-asked'); assert.match(attention(r)[0] || '', /「上書きログイン」は自動では押しません/, 'paypay-guided:in-use-no-overwrite-said');
+  assert.match(String(r.result.failed), /ログイン中だった.*サインインは完了していません/, 'paypay-guided:in-use-failed-explained'); assert.match(String(r.result.failed), /もう一度試す/, 'paypay-guided:in-use-retry-named');
+  assert.doesNotMatch(String(r.result.failed), /受け付けませんでした/, 'paypay-guided:in-use-not-wrong-password'); noSecret('in-use', r.status.list, r.result);
+  // the fake handle: exactly one marker write ('uncertain'), never 'refused', never accepted, even with a kept CSV
+  const fake = savedLogin(), kept = guidedUi({ outcome: 'session-in-use' }), rk = await observe(kept, jobOf(), fake);
+  assert.deepEqual(fake.calls.kinds, ['uncertain'], 'paypay-guided:in-use-marked-uncertain-only'); assert.equal(fake.calls.accepted, 0, 'paypay-guided:in-use-csv-not-proof');
+  assert.equal(rk.result.items.length, 1, 'paypay-guided:in-use-csv-kept'); assert.match(String(rk.result.notice), /受け取った明細は保存/, 'paypay-guided:in-use-kept-notice');
+  // the same job reclaimed: its journal forbids another submission; the next job is blocked until the owner retries
+  const reclaimed = guidedUi(), rr = await observe(reclaimed, inUseJob, handle(), { dir }); assert.equal(reclaimed.calls.login, 0, 'paypay-guided:in-use-no-second-submit'); void rr;
+  const next = guidedUi(), rn = await observe(next, jobOf(), handle(), { dir }); assert.equal(next.calls.login, 0, 'paypay-guided:in-use-next-blocked'); void rn;
+  const banks = async () => [{ _id: ACCOUNT._id, name: 'PayPay 1', ownerId: OWNER, provider: 'paypay', variant: 'standard' }], opens = store.calls.open.length;
+  assert.deepEqual(await index.retryBankLogin({ bankAccountId: ACCOUNT._id }, { live: LIVE, config: CONFIG, banks, store, root: dir, assert: () => {} }), { retry: true }, 'paypay-guided:in-use-retry');
+  assert.equal(store.calls.open.length, opens, 'paypay-guided:in-use-retry-no-decryption');
+  const after = guidedUi({ deliver: null }), ra = await observe(after, jobOf(), handle(), { dir }); assert.equal(after.calls.login, 1, 'paypay-guided:in-use-retry-one-submission'); void ra;
+});
+
+test('a bank refusal of the current saved login: the owner\'s explicit protected retry (no re-entry, no decryption) allows exactly one new submission; the refused job\'s journal never resubmits; a re-save still also unblocks', async () => {
+  const store = memoryStore(), dir = await root(); store.save('paypay-' + ACCOUNT._id, aadFor(ACCOUNT), SECRET);
+  const handle = () => index.bankLoginFor({ job: jobOf(), account: ACCOUNT }, CONFIG, LIVE, { store, root: dir, assert: () => {} });
+  const refusedJob = jobOf(), ui = guidedUi({ outcome: 'rejected', deliver: null }), r = await observe(ui, refusedJob, handle(), { dir });
+  assert.equal(ui.calls.login, 1); assert.equal(await handle().state(), 'refused', 'paypay-guided:refused-real-marker');
+  assert.match(String(r.result.failed), /受け付けませんでした/, 'paypay-guided:refused-still-wrong-password'); assert.match(String(r.result.failed), /もう一度試す/, 'paypay-guided:refused-retry-named');
+  const blocked = guidedUi(), rb = await observe(blocked, jobOf(), handle(), { dir }); assert.equal(blocked.calls.login, 0, 'paypay-guided:refused-blocks-next'); void rb;
+  const banks = async () => [{ _id: ACCOUNT._id, name: 'PayPay 1', ownerId: OWNER, provider: 'paypay', variant: 'standard' }], opens = store.calls.open.length;
+  assert.deepEqual(await index.retryBankLogin({ bankAccountId: ACCOUNT._id }, { live: LIVE, config: CONFIG, banks, store, root: dir, assert: () => {} }), { retry: true }, 'paypay-guided:refused-protected-retry');
+  assert.equal(store.calls.open.length, opens, 'paypay-guided:refused-retry-no-decryption'); assert.equal(await handle().state(), 'ready', 'paypay-guided:refused-retry-rearms');
+  const old = guidedUi(), ro = await observe(old, refusedJob, handle(), { dir }); assert.equal(old.calls.login, 0, 'paypay-guided:refused-old-journal-holds'); void ro;
+  const fresh = guidedUi({ deliver: null }), rf = await observe(fresh, jobOf(), handle(), { dir }); assert.equal(fresh.calls.login, 1, 'paypay-guided:refused-retry-one-submission'); void rf;
+  await assert.rejects(index.retryBankLogin({ bankAccountId: ACCOUNT._id }, { live: LIVE, config: CONFIG, banks: async () => [{ _id: ACCOUNT._id, name: 'PayPay 1', ownerId: OWNER, provider: 'paypay', variant: 'baplus' }], store, root: dir, assert: () => {} }), e => e?.code === 'unsupported', 'paypay-guided:refused-retry-variant-bound');
 });
 
 test('runBankJob hands the saved login to a guided PayPay標準 observe job only; another observe, the drain and the uploads never receive it', async () => {

@@ -9,7 +9,9 @@
 // the "person" acting inside the owned page; the unmapped captures retained needs_review; native mapping with the existing importer; a
 // mapped later capture imported (plan P1: no captured file proves the automatic sign-in, so each account stays 'uncertain' until the owner
 // presses the real setup page's per-account retry — no decryption, no job — and the next requested job submits once); the bank refusing
-// one account's changed password, that account blocked as 'refused' (no retry offered) until it is saved again; scope,
+// one account's changed password, that account blocked as 'refused' until it is saved again (plan omf-paypay-split-dates-retry-20261022:
+// or, when the saved login is still current, until the owner's explicit retry — no re-entry); the observed active-session page (the
+// form again under 上書きログイン（ログイン中です）) kept 'uncertain', 上書きログイン never requested, no second submission; scope,
 // login type and revocation stopping the key release. Only the subprocess transport and Chrome network are intercepted. Fictional people,
 // accounts and passwords only; no bank, production database or business send. Run by scripts/zoomer-fixtures/omf-paypay-four-accounts.mjs
 // through the hub verifier; prints PASS lines and a final receipt.
@@ -33,19 +35,19 @@ if(RETRY_MUTANT&&!RETRY_MUTANTS[RETRY_MUTANT])throw Error('FAIL unknown retry mu
 // ── The fake PayPay site: the public standard login form (PAYPAY-PUBLIC-ENTRY facts), a generated per-document submit handler, an
 // invented post-login page with a statement link and an invented CSV export (the actual authenticated controls are NOT known; these
 // fictional pages only give the person something to export). The scenario file sets the bank's accepted passwords and the person. ──
-const LOGIN_ORIGIN='https://login.paypay-bank.co.jp',HOME='https://www.paypay-bank.co.jp',ENTRY='/wctx/1D1DFxFDg.do',ACTION='/wctx/NBCW2101.do',TOP='/wctx/NBG000Top.do',MEISAI='/wctx/NBG777Meisai.do',CSV_PATH='/wctx/NBG777Csv.do';
-function loginDoc(error=''){
+const OVERWRITE='/wctx/NBCW2101Overwrite.do',LOGIN_ORIGIN='https://login.paypay-bank.co.jp',HOME='https://www.paypay-bank.co.jp',ENTRY='/wctx/1D1DFxFDg.do',ACTION='/wctx/NBCW2101.do',TOP='/wctx/NBG000Top.do',MEISAI='/wctx/NBG777Meisai.do',CSV_PATH='/wctx/NBG777Csv.do';
+function loginDoc(error='',heading=''){
   const fn='j'+hex(8),token=hex(8);
-  return {token,html:`<!doctype html><html lang="ja"><meta charset="utf-8"><title>ログイン｜PayPay銀行</title><body>${error?`<p class="err">${error}</p>`:''}
+  return {token,html:`<!doctype html><html lang="ja"><meta charset="utf-8"><title>ログイン｜PayPay銀行</title><body>${heading?`<h1>${heading}</h1>`:''}${error?`<p class="err">${error}</p>`:''}
 <form method="post" action="NBCW2101.do" name="HOST" onSubmit="return ${fn}(document.HOST)" target="_self"><input type="hidden" name="SessionToken" value="${token}">
 店番号 <input type="tel" name="TenNo" id="idTenNo" maxlength="3"> 口座番号 <input type="tel" name="KozaNo" id="idKozaNo" maxlength="7"> ログインパスワード <input type="password" name="Pw" id="idPw" maxlength="32"> <input type="submit" name="login" value="ログイン"></form>
-<a href="${HOME}/cn_login.html">ログインできません</a> <a href="/balogin_L.html">BA-PLUS専用ログイン</a>
+${heading?'<a id="overwrite" href="'+OVERWRITE+'">上書きログイン</a> ':''}<a href="${HOME}/cn_login.html">ログインできません</a> <a href="/balogin_L.html">BA-PLUS専用ログイン</a>
 <script>function ${fn}(f){var h=document.createElement('input');h.type='hidden';h.name='Chk';h.value='gen-${token}';f.appendChild(h);return true;}</script></body></html>`};
 }
 function site(scenarioFile,metricFile){
-  const s={docs:[],posts:[],downloads:[],foreign:[],requests:0,session:null,exports:0};
+  const s={docs:[],posts:[],downloads:[],foreign:[],overwrites:0,requests:0,session:null,exports:0};
   const scenario=()=>{try{return JSON.parse(fs.readFileSync(scenarioFile,'utf8'));}catch{return {};}};
-  const save=()=>fs.writeFileSync(metricFile,JSON.stringify({posts:s.posts,downloads:s.downloads,foreign:s.foreign,requests:s.requests}));
+  const save=()=>fs.writeFileSync(metricFile,JSON.stringify({posts:s.posts,downloads:s.downloads,foreign:s.foreign,overwrites:s.overwrites,requests:s.requests}));
   s.respond=request=>{
     s.requests++;let url;try{url=new URL(request.url());}catch{save();return request.abort();}
     const html=body=>request.respond({status:200,contentType:'text/html; charset=utf-8',body});
@@ -53,11 +55,13 @@ function site(scenarioFile,metricFile){
       if(url.origin===HOME){if(url.pathname==='/')return html('<!doctype html><html lang="ja"><meta charset="utf-8"><title>PayPay銀行</title><body><a href="javascript:void(0)">ログイン</a></body></html>');return request.abort();}
       if(url.origin!==LOGIN_ORIGIN){s.foreign.push(url.origin);return request.abort();}
       if(url.pathname===ENTRY){const d=loginDoc();s.docs.push(d);return html(d.html);}
+      if(url.pathname===OVERWRITE){s.overwrites++;return request.abort();}
       if(url.pathname===ACTION&&request.method()==='POST'){
         const body=new URLSearchParams(request.postData()||''),doc=s.docs.find(d=>d.token===body.get('SessionToken')),sc=scenario();
         const passwords=sc.passwords||LOGINS.map(l=>l.password),index=LOGINS.findIndex((l,i)=>l.branch===body.get('TenNo')&&l.account===body.get('KozaNo')&&passwords[i]===body.get('Pw'));
         s.posts.push({index,ok:index>=0,keys:[...body.keys()].sort(),fresh:!!doc&&doc===s.docs.at(-1),handler:!!doc&&body.get('Chk')==='gen-'+doc.token});
         if(index<0){const d=loginDoc('店番号・口座番号またはパスワードが正しくありません');s.docs.push(d);return html(d.html);}
+        if(sc.inUse){const d=loginDoc('','上書きログイン（ログイン中です）');s.docs.push(d);return html(d.html);}
         s.session=index;return html('<!doctype html><html lang="ja"><meta charset="utf-8"><title>ログイン中</title><body><script>location.replace('+JSON.stringify(TOP)+')</script></body></html>');
       }
       if(url.pathname===TOP&&s.session!==null)return html(`<!doctype html><html lang="ja"><meta charset="utf-8"><title>PayPay銀行 トップ</title><body><a href="#">ログアウト</a> <a id="meisai" href="${MEISAI}">入出金明細（架空）</a></body></html>`);
@@ -280,11 +284,35 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed,closeAtLogin:true}));
     const blocked=await runJob(2,'blocked 3');assert.equal(blocked.posts.length,0,'paypay:blocked-no-submission');assert.equal(blocked.keys,0,'paypay:blocked-no-key-release');
     await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed}));
-    await openSetup();assert.match(await page.$eval(section(P[2])+'[data-bank-login-note]',e=>e.textContent),/bank refused the saved login/i,'paypay:setup-shows-refusal');assert.equal(await page.$(section(P[2])+'[data-bank-login-retry]'),null,'paypay:refusal-offers-no-retry');
+    await openSetup();assert.match(await page.$eval(section(P[2])+'[data-bank-login-note]',e=>e.textContent),/bank refused the saved login.*If you changed/i,'paypay:setup-shows-refusal');assert.notEqual(await page.$(section(P[2])+'[data-bank-login-retry]'),null,'paypay:refusal-offers-explicit-retry');
     await saveLogin(2,{...LOGINS[2],password:changed[2]});
     const resaved=await runJob(2,'resaved 3');assert.deepEqual(resaved.posts.map(p=>[p.index,p.ok]),[[2,true]],'paypay:resave-then-success');
     assert.deepEqual((await banksOf()).filter(b=>b.supported).map(b=>b.pending),['uncertain','uncertain','uncertain','uncertain'],'paypay:resave-then-uncertain-again');
-    pass('the bank refused PayPay 3\'s changed password (after its retry): one submission, the job failed with re-save guidance, only PayPay 3 marked refused and offered no retry; its next job submitted nothing and released no key; re-saved through the setup page, the next job signed in once and captured (and is uncertain again)');
+    pass('the bank refused PayPay 3\'s changed password (after its retry): one submission, the job failed with re-save guidance, only PayPay 3 marked refused (the explicit retry offered beside the re-save); its next job submitted nothing and released no key; re-saved through the setup page, the next job signed in once and captured (and is uncertain again)');
+    // ── plan omf-paypay-split-dates-retry-20261022: a refusal of the CURRENT saved login — the owner's explicit retry, no re-entry ──
+    const sealedOf=i=>fs.readFileSync(path.join(collectorDir,'secrets','paypay-'+P[i]+'.sealed'),'utf8'),pending3=async()=>(await banksOf()).find(b=>b.bankAccountId===P[2]).pending;
+    await retryLogin(2);const sealed3=sealedOf(2),refusedFor=[...changed];refusedFor[2]='Fict3-refused-for-a-while';
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:refusedFor}));
+    const refusedCurrent=await runJob(2,'refused current 3',{expect:'failed'});assert.deepEqual(refusedCurrent.posts.map(p=>[p.index,p.ok]),[[-1,false]],'paypay:refused-current-one-submission');assert.equal(await pending3(),'refused','paypay:refused-current-marked');
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed}));
+    await openSetup();assert.match(await page.$eval(section(P[2])+'[data-bank-login-note]',e=>e.textContent),/still current, allow one more automatic sign-in/,'paypay:refused-current-retry-explained');
+    await retryLogin(2);
+    const retriedRefusal=await runJob(2,'retried refusal 3');assert.deepEqual(retriedRefusal.posts.map(p=>[p.index,p.ok]),[[2,true]],'paypay:refused-current-retry-one-submission');assert.equal(retriedRefusal.keys,1,'paypay:refused-current-retry-one-release');
+    assert.equal(sealedOf(2),sealed3,'paypay:refused-current-no-reentry (the sealed entry is unchanged)');assert.equal(await pending3(),'uncertain','paypay:refused-current-retry-uncertain-again');
+    pass('a bank refusal of PayPay 3\'s CURRENT saved login (real daemon, real setup page): one submission marked refused; the owner\'s explicit retry in the setup page (no key release, no job, no re-entry: the sealed entry is byte-identical) let the next job sign in once with the same saved login');
+    // ── the observed active-session page: the standard form again under 上書きログイン（ログイン中です） ──
+    await retryLogin(2);const overwritesBefore=metric().overwrites||0;
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed,inUse:true}));
+    const inUse=await runJob(2,'in use 3',{expect:'failed'});
+    assert.deepEqual(inUse.posts.map(p=>[p.index,p.ok]),[[2,true]],'paypay:in-use-one-submission');assert.equal(inUse.keys,1,'paypay:in-use-one-release');
+    assert.match(inUse.row.lastMessage,/ログイン中だった/,'paypay:in-use-message');assert.doesNotMatch(inUse.row.lastMessage,/受け付けませんでした/,'paypay:in-use-not-wrong-password');
+    assert.equal((metric().overwrites||0)-overwritesBefore,0,'paypay:in-use-overwrite-never-requested');assert.equal(await pending3(),'uncertain','paypay:in-use-stays-uncertain');
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed,closeAtLogin:true}));
+    const afterInUse=await runJob(2,'after in use 3');assert.equal(afterInUse.posts.length,0,'paypay:in-use-no-second-submission');assert.equal(afterInUse.keys,0,'paypay:in-use-next-no-release');
+    await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed}));
+    await retryLogin(2);const freed=await runJob(2,'after in-use retry 3');assert.deepEqual(freed.posts.map(p=>[p.index,p.ok]),[[2,true]],'paypay:in-use-retry-one-submission');assert.equal(await pending3(),'uncertain');
+    secretFree('in-use job',[inUse.row,afterInUse.row,freed.row]);
+    pass('the observed active-session page for PayPay 3 (real daemon): one submission, kept uncertain (not refused), the job explained the other session, 上書きログイン never requested; the next job submitted nothing until the owner\'s explicit retry, then signed in once');
     // ── BA-PLUS: a plain observe (no saved login, no key) ──
     await fsp.writeFile(scenarioFile,JSON.stringify({passwords:changed,closeAtLogin:true}));
     const keysBefore=keyGets(),postsBefore=metric().posts.length,baJob=ok(await ownerReq('bank/accounts/'+BA+'/sync',{}),'sync ba').job;
@@ -323,13 +351,17 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     const current=JSON.parse(fs.readFileSync(scenarioFile,'utf8')),scenarioBase=current.passwords?{passwords:current.passwords}:{};
     await waitFor(async()=>!(await status()).busy,'idle before the route leg');
     assert.deepEqual([await pendingOf(0),await pendingOf(1)],['uncertain','uncertain'],'paypay:route-leg-precondition');
+    // plan omf-paypay-split-dates-retry-20261022: PayPay 2's marker becomes a bank refusal of its CURRENT key (same entry and keyId), so the
+    // busy and in-flight checks below exercise the widened refused retry through the real daemon HTTP
+    {const m=JSON.parse(fs.readFileSync(markerOf(1),'utf8'));fs.writeFileSync(markerOf(1),JSON.stringify({...m,kind:'refused'}));}
+    assert.equal(await pendingOf(1),'refused','paypay:route-leg-refused-current-key');
     // (A) a guided job of PayPay 1 holds the action slot (the person waits at the login page): a retry of PayPay 2 is refused, its marker unchanged
     await fsp.writeFile(scenarioFile,JSON.stringify({...scenarioBase,holdAtLoginMs:25000}));
     const holdJob=ok(await ownerReq('bank/accounts/'+P[0]+'/sync',{}),'sync hold').job;
     await waitFor(async()=>(await db.collection('financebankjobs').findOne({jobId:holdJob.jobId}))?.state==='verification_required','hold job active',120000);
     const markerBefore=fs.readFileSync(markerOf(1),'utf8'),whileJob=await local('/bank/retry',{bankAccountId:P[1]});
     assert.equal(whileJob.status,409,'paypay:retry-409-while-job '+JSON.stringify(whileJob.data));assert.match(String(whileJob.data?.error),/Wait for the current collector action/,'paypay:retry-busy-while-job');
-    assert.equal(fs.readFileSync(markerOf(1),'utf8'),markerBefore,'paypay:retry-while-job-marker-unchanged');assert.equal(await pendingOf(1),'uncertain','paypay:retry-while-job-still-uncertain');
+    assert.equal(fs.readFileSync(markerOf(1),'utf8'),markerBefore,'paypay:retry-while-job-marker-unchanged');assert.equal(await pendingOf(1),'refused','paypay:retry-while-job-still-refused');
     const held=await waitFor(async()=>{const r=await db.collection('financebankjobs').findOne({jobId:holdJob.jobId});return r&&['complete','failed'].includes(r.state)?r:null},'hold job done',180000);assert.equal(held.state,'complete','paypay:hold-job-complete');
     await waitFor(async()=>!(await status()).busy,'idle after hold');
     // (B) a retry whose body is still arriving holds the slot from before the body is read: a job queued meanwhile is not claimed by any tick
@@ -343,10 +375,10 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     const during=await db.collection('financebankjobs').findOne({jobId:queued.jobId});
     assert.deepEqual([during.state,during.collectorId??null,slow.settled()],['queued',null,null],'paypay:retry-route-reserves-before-body (no tick claims while the retry is in flight)');assert.equal((await status()).busy,true,'paypay:in-flight-retry-holds-slot');
     slow.finish();const done=await slow.answer;assert.deepEqual([done.status,done.data],[200,{retry:true}],'paypay:in-flight-retry-completes');assert.equal(await pendingOf(1),null,'paypay:in-flight-retry-rearmed');
-    const resumed=await waitFor(async()=>{const r=await db.collection('financebankjobs').findOne({jobId:queued.jobId});return r&&['complete','failed'].includes(r.state)?r:null},'job after the retry',180000);assert.equal(resumed.state,'complete','paypay:slot-released-work-resumes');
+    const resumed=await waitFor(async()=>{const r=await db.collection('financebankjobs').findOne({jobId:queued.jobId});return r&&['complete','failed'].includes(r.state)?r:null},'job after the retry',180000);assert.equal(resumed.state,'complete','paypay:slot-released-work-resumes '+JSON.stringify(resumed.lastMessage||null));
     await waitFor(async()=>!(await status()).busy,'idle after the route leg');await fsp.writeFile(scenarioFile,JSON.stringify(scenarioBase));
     const routeReceipt={whileJob:whileJob.status,inFlightEarlyBusy:early,claimedWhileInFlight:during.state!=='queued',afterCompletion:done.status,resumed:resumed.state};
-    pass('the actual /bank/retry route (real daemon HTTP, real tick): while PayPay 1\'s guided job held the action slot a retry of PayPay 2 was refused 409 and its marker stayed byte-identical; a retry whose body was still arriving held the slot from before the body was read — a job queued meanwhile stayed unclaimed across 5 ticks — and once the body completed the retry answered 200, re-armed only PayPay 2, released the slot and the queued job ran');
+    pass('the actual /bank/retry route (real daemon HTTP, real tick; PayPay 2 holding a bank refusal of its current key): while PayPay 1\'s guided job held the action slot a retry of PayPay 2 was refused 409 and its marker stayed byte-identical; a retry whose body was still arriving held the slot from before the body was read — a job queued meanwhile stayed unclaimed across 5 ticks — and once the body completed the retry answered 200, re-armed only PayPay 2, released the slot and the queued job ran');
     if(RETRY_ONLY){console.log(JSON.stringify({pass:true,checks,mode:'retry-route',mutant:RETRY_MUTANT||null,route:routeReceipt,foreignRequests:metric().foreign.length,bankRequests:0,productionWrites:0}));return;}
     await waitFor(async()=>!(await status()).busy,'idle before pause');
     ok(await local('/pause',{}),'daemon pause');

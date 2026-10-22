@@ -46,6 +46,12 @@ export async function probeLoginProof(bankFile = path.join(root, 'collector/bank
       assert.equal(r.state, 'blocked', 'Unconfirmed saved login must remain blocked (' + label + ')');
       assert.equal(r.capturedItems, 1, 'The person\'s captured file is still retained for native mapping (' + label + ')');
     }
+    // Plan omf-paypay-split-dates-retry-20261022: the observed active-session page (session-in-use) is no sign-in either — a CSV the person
+    // then exports is kept for mapping, the saved login stays blocked (uncertain), nothing is accepted.
+    const inUse = await capture('session-in-use-csv', { outcome: 'session-in-use', host: 'login.paypay-bank.co.jp', name: 'meisai.csv', bytes: Buffer.from('日付,内容\r\n2026/10/01,x\r\n') }); observed.push(inUse);
+    assert.equal(inUse.accepted, 0, 'The active-session page and a later file must not confirm the saved bank login');
+    assert.equal(inUse.rejected, 1, 'The active-session page writes only the pending marker, never a refusal');
+    assert.equal(inUse.state, 'blocked', 'Unconfirmed saved login must remain blocked (session-in-use)'); assert.equal(inUse.capturedItems, 1);
     // An adapter-observed refusal is recorded as the refusal it is (and also stays blocked).
     const refused = await capture('refused', { outcome: 'rejected' }); observed.push(refused);
     assert.equal(refused.accepted, 0); assert.equal(refused.state, 'blocked', 'A refused saved login stays blocked');
