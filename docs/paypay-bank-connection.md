@@ -181,12 +181,23 @@ blocked, and both server date exits unwidened) and requires the named assertion 
 
 ## Not observed / not supported / pending
 
+Cleanup continuation (`omf-bank-cleanup-maint-20261022`): `closeEntry` in `collector/browser.mjs` is shared by Amex, Aplus and
+`closeOwnedBrowsers`; the collector's pause, lock and expiry paths await that owned-browser cleanup before ending the broker
+session. `withBankBrowser` in `collector/bank.mjs` performs the corresponding bank-job cleanup in `finally`. An already-signalled
+child has `exitCode === null` after its exit event, so both existing liveness tests also require no `signalCode`; they no longer
+kill or wait for a second exit of that ended child. A live owned child still gets stopped. `removeEphemeral`, also used by startup
+recovery, retries transient Windows file locks for up to twelve seconds instead of four. Owned-profile containment, link checks,
+ephemeral-only removal and persistent/software-certificate profiles are unchanged. Headless actual-child probes cover ended and
+live children, the bank wrapper and a seven-second exclusive file lock; named mutants restore each defect. This changes shared
+cleanup guards and requires independent review. The native four-account walkthrough retains its original thirty-second pause
+bound; its earlier 81,810 ms result under an extended test bound is retained as a failure to meet that original bound.
+
 - **Automatic routine collection stays contract-pending.** The export's header shape is now observed (above), but the authenticated
   controls, limits, sign facts across accounts and account identity are not a reviewed contract; no automatic export, no native PayPay
   template and no new sign-in proof is claimed. The actual 12-row replay of the owner's capture belongs to the parent.
 - **BA-PLUS** stays a manual observe job (homepage start, no saved login, template required).
-- The actual first guided capture with the owner's real logins has not happened; it follows review, the separate deployment
-  approval and the owner's one-time save in the reviewed installed downloader.
+- A real first guided capture has now been received and retained in OMF. Account-by-account download coverage, column mapping/import,
+  duplicate replay and classification remain live acceptance work; routine automatic collection is not yet verified.
 - No real PayPay login, export, replay or production observation is part of this build.
 
 ## Live checklist (owner, after review and the separate deployment approval)

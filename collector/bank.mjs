@@ -461,7 +461,7 @@ async function withBankBrowser(bound, root, batch, onLaunch, fn, { background = 
   finally {
     const child = browser.process();
     try { if (browser.connected) await Promise.race([browser.close(), pause(5000)]); } catch { /* closing */ }
-    if (child && child.exitCode === null) { try { child.kill(); } catch { /* gone */ } await Promise.race([new Promise(resolve => child.once('exit', resolve)), pause(5000)]); }
+    if (child && child.exitCode === null && !child.signalCode) { try { child.kill(); } catch { /* gone */ } await Promise.race([new Promise(resolve => child.once('exit', resolve)), pause(5000)]); }
     await removeEphemeral(profile, root).catch(() => {});
   }
 }

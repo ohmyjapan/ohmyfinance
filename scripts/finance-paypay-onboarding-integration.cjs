@@ -76,16 +76,31 @@ function site(scenarioFile,metricFile){
   // The person, acting inside the owned page on their own time: opens the statement page, exports once, closes the tab; on a refused
   // login (the form again after the submission) or when told to, closes the tab without exporting.
   s.person=page=>{
-    page.on('load',()=>{let p='',at='';try{at=page.url();p=new URL(at).pathname;}catch{return;}const sc=scenario();
-      const later=(ms,fn)=>setTimeout(()=>Promise.resolve().then(fn).catch(()=>{}),ms);
-      // closes only when the page is still where the person decided to close it (a success passes through the action path)
-      const closeIfStill=async(check)=>{if(page.isClosed()||page.url()!==at)return;if(check&&!(await page.$(check)))return;await page.close();};
-      if(p===TOP)later(400,()=>page.click('#meisai'));
-      else if(p===MEISAI)later(400,async()=>{await page.click('#csv');later(3000,()=>page.close());});
-      else if(p===ACTION)later(2500,()=>closeIfStill('form[name="HOST"]'));
-      else if((p===ENTRY&&sc.closeAtLogin)||at.startsWith(HOME))later(4000,()=>closeIfStill(null));
-      else if(p===ENTRY&&sc.holdAtLoginMs)later(sc.holdAtLoginMs,()=>closeIfStill(null));
-    });
+    // A one-shot load callback swallowed a navigation/click failure and left a
+    // successfully signed-in fictional page idle forever. Drive the same human
+    // actions from the visible page state; never submit the login or infer proof.
+    const downloadsBefore=s.downloads.length;let busy=false,at='',since=Date.now(),exportStarted=false,exportedAt=0;
+    s.personActions=s.personActions||[];s.personErrors=s.personErrors||[];
+    const tick=async()=>{
+      if(busy||page.isClosed())return;busy=true;
+      try{
+        const now=Date.now(),current=page.url(),p=new URL(current).pathname,sc=scenario();
+        if(current!==at){at=current;since=now;}
+        if(p===TOP&&await page.$('#meisai')){s.personActions.push({kind:'statements',path:p});save();await page.click('#meisai');}
+        else if(p===MEISAI){
+          if(s.downloads.length>downloadsBefore){exportedAt=exportedAt||now;if(now-exportedAt>=3000)await page.close();}
+          else if(!exportStarted&&await page.$('#csv')){
+            exportStarted=true;s.personActions.push({kind:'csv',path:p});save();
+            try{await page.click('#csv');}catch(error){if(s.downloads.length===downloadsBefore)exportStarted=false;throw error;}
+          }
+        }
+        else if(p===ACTION&&now-since>=2500&&await page.$('form[name="HOST"]'))await page.close();
+        else if(((p===ENTRY&&sc.closeAtLogin)||current.startsWith(HOME))&&now-since>=4000)await page.close();
+        else if(p===ENTRY&&sc.holdAtLoginMs&&now-since>=sc.holdAtLoginMs)await page.close();
+      }catch(error){if(!page.isClosed()){s.personErrors.push({path:(()=>{try{return new URL(page.url()).pathname}catch{return ''}})(),error:String(error.message||error).slice(0,200)});save();}}
+      finally{busy=false;}
+    };
+    const timer=setInterval(()=>void tick(),250);page.once('close',()=>clearInterval(timer));page.on('load',()=>void tick());
   };
   return s;
 }
@@ -382,7 +397,7 @@ await import(${JSON.stringify(u('collector/run.mjs'))});`;
     if(RETRY_ONLY){console.log(JSON.stringify({pass:true,checks,mode:'retry-route',mutant:RETRY_MUTANT||null,route:routeReceipt,foreignRequests:metric().foreign.length,bankRequests:0,productionWrites:0}));return;}
     await waitFor(async()=>!(await status()).busy,'idle before pause');
     // /pause ends the session: it closes every browser the session launched, then the key broker; its duration is recorded in the receipt
-    const pauseStarted=Date.now();ok(await local('/pause',{},180000),'daemon pause');const pauseMs=Date.now()-pauseStarted;
+    const pauseStarted=Date.now();ok(await local('/pause',{},30000),'daemon pause');const pauseMs=Date.now()-pauseStarted;
     // ── after the save: scope, login type and revocation stop the release (in-process, the daemon paused) ──
     const s1=brokerOf(await securityHttp('session',{body:{installationId,generation,trustToken}}));
     const handle=i=>idx.bankLoginFor({job:{kind:'observe',snapshot:firsts[i].row.snapshot,provider:'paypay'},account:{_id:P[i],ownerId}},config,s1,{store,root:collectorDir,assert:()=>{}});

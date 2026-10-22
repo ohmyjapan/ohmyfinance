@@ -10,7 +10,7 @@
 // Chrome · L the permanent no-file-as-proof regression · U the PayPay collector unit files · H the HTTP split-date integration (built app)
 // · R the real daemon /bank/retry route on a refused current key (busy and incomplete-body slot) · M named semantic mutants.
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
@@ -19,7 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const timeoutMs = 900000;
+export const timeoutMs = 1200000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const u = rel => pathToFileURL(path.join(root, rel)).href;
 const MONGOD = [path.join(root, 'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe'), path.join(root, '..', 'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe')].find(p => existsSync(p)) || null;
@@ -213,8 +213,90 @@ export async function probeAdapter(paypayFile, temp) {
   return JSON.stringify(out);
 }
 
+// The cleanup continuation runs the real helpers against real, probe-owned
+// headless Chrome. No ordinary browser or bank page is opened.
+const boundedCleanup = async (promise, ms, label) => { let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(label)), ms); })]); } finally { clearTimeout(timer); } };
+function watchCleanupChild(browser) {
+  const child = browser.process(), calls = { killAfterExit: 0, exitListenerAfterExit: 0 }; let ended = child.exitCode !== null || !!child.signalCode;
+  const kill = child.kill.bind(child), once = child.once.bind(child);
+  child.kill = (...args) => { if (ended) calls.killAfterExit++; return kill(...args); };
+  child.once = (event, ...args) => { if (ended && event === 'exit') calls.exitListenerAfterExit++; return once(event, ...args); };
+  const exit = new Promise(resolve => once('exit', (code, signal) => { ended = true; resolve({ code, signal }); }));
+  const disconnected = browser.connected ? new Promise(resolve => browser.once('disconnected', resolve)) : Promise.resolve();
+  return { child, calls, async terminate() { const before = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }, killed = child.kill('SIGKILL'); let result; try { result = await boundedCleanup(exit, 60000, 'cleanup:owned-child-exit'); } catch (error) { throw Error(error.message + ' ' + JSON.stringify({ before, killed, after: { exitCode: child.exitCode, signalCode: child.signalCode }, ended })); } await boundedCleanup(disconnected, 10000, 'cleanup:owned-browser-disconnect'); assert.deepEqual([result.code, result.signal, child.exitCode, child.signalCode], [null, 'SIGKILL', null, 'SIGKILL'], 'cleanup:actual-signalled-child'); } };
+}
+export async function probeBrowserCleanup(browserFile, temp) {
+  const probeUrl = pathToFileURL(browserFile).href + '?cleanup=' + randomUUID();
+  const expose = registerHooks({ load(url, context, next) { const r = next(url, context); return url === probeUrl ? { ...r, source: String(r.source) + '\nexport { closeEntry as __fixtureCloseEntry };\n' } : r; } });
+  let mod; try { mod = await import(probeUrl); } finally { expose.deregister(); }
+  const rootDir = await mkdtemp(path.join(temp, 'close-owned-'));
+  let browser, fallbackChild;
+  try {
+    const profile = mod.ephemeralProfile(rootDir, 'diagnostic', 'bank', 'fictional', randomUUID());
+    browser = await mod.browserFor(profile, { ephemeral: true, root: rootDir, headless: true });
+    const watched = watchCleanupChild(browser); assert.ok(mod.ownedBrowsers().some(b => b.pid === watched.child.pid && path.resolve(b.profile) === path.resolve(profile)), 'cleanup:owned-only');
+    await watched.terminate(); await mod.closeOwnedBrowsers();
+    assert.deepEqual(watched.calls, { killAfterExit: 0, exitListenerAfterExit: 0 }, 'cleanup:no-rekill-ended-child');
+    assert.equal(existsSync(profile), false, 'cleanup:ended-profile-removed'); assert.equal(mod.ownedBrowsers().length, 0, 'cleanup:ended-registry-cleared');
+    // Actual live Chrome control uses its real transport and graceful closure.
+    // A disconnected Chrome normally belongs to the broker's Windows job object;
+    // faking connected=false without that broker left renderer file handles alive.
+    const liveProfile = mod.ephemeralProfile(rootDir, 'diagnostic', 'bank', 'live', randomUUID());
+    browser = await mod.browserFor(liveProfile, { ephemeral: true, root: rootDir, headless: true });
+    const child = browser.process(), exit = new Promise(resolve => child.once('exit', resolve));
+    assert.deepEqual([child.exitCode, child.signalCode], [null, null], 'cleanup:live-control-started');
+    await mod.closeOwnedBrowsers(); await boundedCleanup(exit, 10000, 'cleanup:live-owned-child-stopped');
+    assert.ok(child.exitCode !== null || child.signalCode !== null, 'cleanup:live-owned-child-stopped');
+    assert.equal(existsSync(liveProfile), false, 'cleanup:live-profile-removed'); assert.equal(mod.ownedBrowsers().length, 0, 'cleanup:live-registry-cleared');
+    // Exercise the unchanged live-child kill fallback in the actual private helper,
+    // exposed by a test-only load hook. This real owned Node child has no renderer
+    // descendants and uses a separate, fictional, contained ephemeral profile.
+    const fallbackProfile = mod.ephemeralProfile(rootDir, 'diagnostic', 'bank', 'live-fallback', randomUUID());
+    await mkdir(fallbackProfile, { recursive: true });
+    fallbackChild = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' });
+    const fallbackExit = new Promise(resolve => fallbackChild.once('exit', resolve));
+    await new Promise((resolve, reject) => { fallbackChild.once('spawn', resolve); fallbackChild.once('error', reject); });
+    assert.deepEqual([fallbackChild.exitCode, fallbackChild.signalCode], [null, null], 'cleanup:live-fallback-started');
+    await mod.__fixtureCloseEntry({ browser: { connected: false }, child: fallbackChild, pid: fallbackChild.pid, profile: fallbackProfile, ephemeral: true, root: rootDir });
+    await boundedCleanup(fallbackExit, 10000, 'cleanup:live-fallback-stopped');
+    assert.ok(fallbackChild.exitCode !== null || fallbackChild.signalCode !== null, 'cleanup:live-fallback-stopped');
+    assert.equal(existsSync(fallbackProfile), false, 'cleanup:live-fallback-profile-removed');
+    return 'already-ended Chrome: no re-kill or post-exit listener; live owned Chrome closes; real live ChildProcess kill fallback stops; all profiles removed';
+  } finally { if (fallbackChild?.exitCode === null && !fallbackChild.signalCode) fallbackChild.kill(); await mod.closeOwnedBrowsers().catch(() => {}); if (browser?.connected) await browser.close().catch(() => {}); }
+}
+export async function probeProfileLock(browserFile, temp) {
+  assert.equal(process.platform, 'win32', 'cleanup:windows-file-lock-required');
+  const mod = await fresh(browserFile), rootDir = await mkdtemp(path.join(temp, 'file-lock-'));
+  const profile = mod.ephemeralProfile(rootDir, 'diagnostic', 'bank', 'locked', randomUUID()), heldFile = path.join(profile, 'fictional.txt'), script = path.join(rootDir, 'hold-file.ps1');
+  await mkdir(profile, { recursive: true }); await writeFile(heldFile, 'fictional');
+  await writeFile(script, `param([string]$TaskProfileFile)\n$ErrorActionPreference='Stop'\n$held=[IO.File]::Open($TaskProfileFile,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)\ntry { Write-Output 'LOCKED'; [Console]::Out.Flush(); Start-Sleep -Milliseconds 7000 } finally { $held.Dispose() }\n`);
+  const holder = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script, '-TaskProfileFile', heldFile], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const exit = new Promise(resolve => holder.once('exit', code => resolve(code))); let text = '', failure;
+  try {
+    await boundedCleanup(new Promise((resolve, reject) => { holder.once('error', reject); holder.stdout.on('data', bytes => { text += bytes; if (text.includes('LOCKED')) resolve(); }); }), 20000, 'cleanup:file-lock-not-established');
+    try { await mod.removeEphemeral(profile, rootDir); } catch (error) { failure = error; }
+    assert.equal(await boundedCleanup(exit, 20000, 'cleanup:file-holder-exit'), 0, 'cleanup:file-holder-exit');
+    assert.equal(failure?.code || null, null, 'cleanup:transient-profile-lock');
+    assert.equal(existsSync(profile), false, 'cleanup:locked-profile-removed');
+    return 'seven-second Windows FileShare.None lock: real removeEphemeral waited for release and removed the profile';
+  } finally { if (holder.exitCode === null && !holder.signalCode) holder.kill(); await boundedCleanup(exit, 20000, 'cleanup:holder-final-exit').catch(() => {}); if (existsSync(profile)) await mod.removeEphemeral(profile, rootDir).catch(() => {}); }
+}
+export async function probeBankCleanup(bankFile, temp) {
+  const bank = await fresh(bankFile), browserModule = await import(u('collector/browser.mjs')), rootDir = await mkdtemp(path.join(temp, 'bank-ended-')); let watched;
+  const job = { jobId: randomUUID(), kind: 'observe', provider: 'paypay', snapshot: { provider: 'paypay', variant: null, interpretation: 'unmapped', headers: [], mapping: {} } };
+  const bound = { bankAccountId: P[0], ownerId: OWNER, origin: ORIGIN, jobId: job.jobId, provider: 'paypay', snapshotHash: sha256(JSON.stringify(job.snapshot)) };
+  const adapter = { provider: 'paypay', label: 'Fictional cleanup', support: 'contract-pending', hosts: ['bank.example.invalid'], ui(page, browser) { return { async open() { watched = watchCleanupChild(browser); await watched.terminate(); throw Error('fixture deliberate ended-bank'); } }; } };
+  try {
+    let stopped; try { await bank.observeBankPortal(bound, job, rootDir, async () => {}, { adapter, batch: 'cleanup' }); } catch (error) { stopped = error; }
+    assert.match(String(stopped?.message), /fixture deliberate ended-bank/, 'cleanup:bank-control-reached ' + String(stopped?.message));
+    assert.ok(watched, 'cleanup:bank-child-observed'); assert.deepEqual(watched.calls, { killAfterExit: 0, exitListenerAfterExit: 0 }, 'cleanup:bank-no-rekill-ended-child');
+    const folder = path.join(rootDir, 'profiles', 'ephemeral'); assert.equal(existsSync(folder) ? (await readdir(folder)).length : 0, 0, 'cleanup:bank-profile-removed');
+    return 'real bank wrapper: an already-ended owned child is not killed or awaited again; profile removed';
+  } finally { await browserModule.closeOwnedBrowsers().catch(() => {}); }
+}
+
 // ── M: named semantic mutants — each must flip its named assertion ──
-const SHARED = 'shared/finance-payment-match.mjs', BANK = 'collector/bank.mjs', INDEX = 'collector/index.mjs', PAYPAY = 'collector/banks/paypay.mjs';
+const SHARED = 'shared/finance-payment-match.mjs', BANK = 'collector/bank.mjs', INDEX = 'collector/index.mjs', PAYPAY = 'collector/banks/paypay.mjs', BROWSER = 'collector/browser.mjs';
 export const MUTANTS = [
   { name: 'M1-parts-ignored', file: SHARED, edits: [["const parts=text(values.date)===''&&BANK_DATE_PARTS.some(([k])=>text(values[k])!=='');", 'const parts=false;']], probe: 'shared', expect: 'split:parts-complete' },
   { name: 'M2-day-invented', file: SHARED, edits: [['function dateOfParts(y,m,d){const[a,b,c]=[y,m,d].map(text);', "function dateOfParts(y,m,d){const[a,b,c]=[y,m,text(d)||'1'].map(text);"]], probe: 'shared', expect: 'split:parts-partial-held' },
@@ -229,7 +311,10 @@ export const MUTANTS = [
   { name: 'C5-retry-any-pending', file: INDEX, edits: [["if(!['uncertain','refused'].includes(pending)||marker.entry!==entry)", 'if(!pending||marker.entry!==entry)']], probe: 'retry', expect: 'retry:legacy-not-guessed' },
   { name: 'C6-retry-ignores-key', file: INDEX, edits: [['!envelope||!marker||marker.keyId!==envelope.keyId?null:', '!envelope||!marker?null:']], probe: 'retry', expect: 'retry:superseded-refused-refused' },
   { name: 'C7-retry-refused-still-blocked', file: INDEX, edits: [["if(!['uncertain','refused'].includes(pending)", "if(!['uncertain'].includes(pending)"]], probe: 'retry', expect: 'retry:current-refused-allowed' },
-  { name: 'C8-retry-entry-unchecked', file: INDEX, edits: [["if(!['uncertain','refused'].includes(pending)||marker.entry!==entry)", "if(!['uncertain','refused'].includes(pending))"]], probe: 'retry', expect: 'retry:misnamed-refused' }
+  { name: 'C8-retry-entry-unchecked', file: INDEX, edits: [["if(!['uncertain','refused'].includes(pending)||marker.entry!==entry)", "if(!['uncertain','refused'].includes(pending))"]], probe: 'retry', expect: 'retry:misnamed-refused' },
+  { name: 'CL1-dead-child-wait-restored', file: BROWSER, edits: [['child && child.exitCode === null && !child.signalCode', 'child && child.exitCode === null']], probe: 'cleanup-browser', expect: 'cleanup:no-rekill-ended-child' },
+  { name: 'CL2-short-file-lock-grace-restored', file: BROWSER, edits: [['if (attempt >= 24)', 'if (attempt >= 8)']], probe: 'cleanup-lock', expect: 'cleanup:transient-profile-lock' },
+  { name: 'CL3-bank-dead-child-wait-restored', file: BANK, edits: [['child && child.exitCode === null && !child.signalCode', 'child && child.exitCode === null']], probe: 'cleanup-bank', expect: 'cleanup:bank-no-rekill-ended-child' }
 ];
 // Built-chunk mutants of the server's date-source exits: the HTTP integration under OMF_TEST_BANK_MUTANT must fail on the named assertion.
 export const SERVER_MUTANTS = [
@@ -238,6 +323,7 @@ export const SERVER_MUTANTS = [
 ];
 
 const COVERS = ['shared/finance-payment-match.mjs', 'shared/finance-payment-match.d.mts', 'server/services/financeBankStatementService.ts', 'components/intake/BankStatementImporter.vue', 'collector/banks/paypay.mjs', 'collector/bank.mjs', 'collector/index.mjs', 'collector/setup.js', 'docs/paypay-bank-connection.md', 'collector/test/paypay-standard.test.mjs', 'collector/test/paypay-guided-capture.test.mjs', 'collector/test/paypay-setup.test.mjs', 'scripts/finance-bank-collection-integration.cjs', 'scripts/finance-paypay-onboarding-integration.cjs', 'scripts/zoomer-fixtures/omf-paypay-four-accounts.mjs', 'scripts/zoomer-fixtures/omf-paypay-login-proof.mjs', 'scripts/zoomer-fixtures/omf-bank-collection.mjs', 'scripts/zoomer-fixtures/omf-payment-match.mjs', 'scripts/zoomer-fixtures/omf-paypay-split-dates-retry.mjs'];
+COVERS.push(BROWSER);
 export default { name: 'omf-paypay-split-dates-retry', covers: COVERS, async run() {
   const lines = [], counts = { legs: 0, green: 0, mutants: 0, caught: 0 }; let pass = true, dbExecuted = false;
   const leg = async (name, fn) => { counts.legs++; const t = Date.now(); try { lines.push(name + ': ' + await fn() + ` (${Math.round((Date.now() - t) / 1000)}s)`); counts.green++; } catch (e) { pass = false; lines.push(name + ': RED ' + String(e?.message || e).replace(/\s+/g, ' ').slice(0, 1400)); } };
@@ -247,6 +333,14 @@ export default { name: 'omf-paypay-split-dates-retry', covers: COVERS, async run
   try {
     const browserModule = await import(u('collector/browser.mjs'));
     if (browserModule.__fixtureHeadless !== true) throw new Error('test-mode headless control not applied to collector/browser.mjs; every browser leg refused');
+    if (process.env.OMF_TEST_BANK_CLEANUP_ONLY === '1') {
+      const target = process.env.OMF_TEST_BANK_CLEANUP_TARGET || 'all';
+      assert.ok(['all', 'browser', 'lock', 'bank'].includes(target), 'cleanup:known-focused-target');
+      if (target === 'all' || target === 'browser') await leg('Q owned ended/live browser cleanup', () => probeBrowserCleanup(path.join(root, BROWSER), temp));
+      if (target === 'all' || target === 'lock') await leg('Q Windows transient profile-file lock', () => probeProfileLock(path.join(root, BROWSER), temp));
+      if (target === 'all' || target === 'bank') await leg('Q bank wrapper after owned child exit', () => probeBankCleanup(path.join(root, BANK), temp));
+      return { pass, databaseCoverage: { executed: false, ownedProcess: false }, message: `cleanup-only: ${counts.green}/${counts.legs} cleanup groups; mapping/login/database groups not run\n` + lines.join('\n') };
+    }
     // the server-side HTTP legs run concurrently (each owns its app, MongoDB and temp directories) while the in-process legs run here;
     // the daemon walkthrough (R) runs alone at the end — its tick and owned Chrome are timing-sensitive under load
     const built = existsSync(path.join(root, '.output/server/index.mjs'));
@@ -270,11 +364,12 @@ export default { name: 'omf-paypay-split-dates-retry', covers: COVERS, async run
     await leg('C session-in-use and refusal on the real collector/bank.mjs (page-less guided ui)', () => probeGuided(path.join(root, BANK), temp));
     await leg('A the PayPay adapter on owned headless Chrome (intercepted fake login page; 上書きログイン never requested)', () => probeAdapter(path.join(root, PAYPAY), temp));
     await leg('L permanent no-file-as-proof regression (omf-paypay-login-proof.mjs probe, now with session-in-use)', async () => { const { probeLoginProof } = await import(u('scripts/zoomer-fixtures/omf-paypay-login-proof.mjs')); const observed = []; const r = await probeLoginProof(undefined, observed); assert.ok(observed.some(o => o.label === 'session-in-use-csv' && o.accepted === 0 && o.state === 'blocked'), 'login-proof:session-in-use-case'); return 'source ' + r.sourceHash.slice(0, 12) + ', ' + observed.length + ' cases, none accepted'; });
+    await leg('Q owned browser and bank cleanup plus Windows file lock', async () => [await probeBrowserCleanup(path.join(root, BROWSER), temp), await probeProfileLock(path.join(root, BROWSER), temp), await probeBankCleanup(path.join(root, BANK), temp)].join('; '));
     await leg('M collector and shared semantic mutants', async () => {
       const notes = [];
       for (const m of MUTANTS) {
         counts.mutants++; const mm = await mutantModule(m.file, m.edits); let error = null;
-        try { if (m.probe === 'shared') await probeShared(mm.file); else if (m.probe === 'retry') await probeRetry(mm.file, temp); else if (m.probe === 'guided') await probeGuided(mm.file, temp); else await probeAdapter(mm.file, temp); } catch (e) { error = e; } finally { await mm.dispose(); }
+        try { if (m.probe === 'shared') await probeShared(mm.file); else if (m.probe === 'retry') await probeRetry(mm.file, temp); else if (m.probe === 'guided') await probeGuided(mm.file, temp); else if (m.probe === 'cleanup-browser') await probeBrowserCleanup(mm.file, temp); else if (m.probe === 'cleanup-lock') await probeProfileLock(mm.file, temp); else if (m.probe === 'cleanup-bank') await probeBankCleanup(mm.file, temp); else await probeAdapter(mm.file, temp); } catch (e) { error = e; } finally { await mm.dispose(); }
         const caught = !!error && String(error.message || error).includes(m.expect) && !/^FAIL /.test(String(error.message)); notes.push({ name: m.name, expect: m.expect, caught, got: String(error?.message || 'no failure').split('\n')[0].slice(0, 160) }); if (caught) counts.caught++;
       }
       await evidence('mutants', JSON.stringify(notes, null, 2));
@@ -282,7 +377,7 @@ export default { name: 'omf-paypay-split-dates-retry', covers: COVERS, async run
       return notes.length + '/' + notes.length + ' caught: ' + notes.map(n => n.name).join(', ');
     });
     await leg('U PayPay collector unit files (node --test, TAP; owned headless Chrome legs)', async () => {
-      const r = await run(['--test', '--test-concurrency=1', '--test-reporter=tap', 'collector/test/paypay-standard.test.mjs', 'collector/test/paypay-setup.test.mjs', 'collector/test/paypay-guided-capture.test.mjs'], {}, 840000); await evidence('unit', r.stdout + r.stderr);
+      const r = await run(['--test', '--test-concurrency=1', '--test-reporter=tap', 'collector/test/paypay-standard.test.mjs', 'collector/test/paypay-setup.test.mjs', 'collector/test/paypay-guided-capture.test.mjs', 'collector/test/rakuten-auto-login.test.mjs', 'collector/test/rakuten-setup.test.mjs', 'collector/test/rakuten-standard.test.mjs'], {}, 840000); await evidence('unit', r.stdout + r.stderr);
       const t = tapReport(r.stdout);
       if (r.code !== 0 || t.fail || !(t.pass > 0) || t.skipped || t.todo || t.cancelled || t.pass !== t.tests || t.list.some(x => x.directive)) throw new Error(`node --test exit ${r.code} tests ${t.tests} pass ${t.pass} fail ${t.fail} skipped ${t.skipped}; failing: ` + t.list.filter(x => !x.ok).map(x => x.name.slice(0, 120)).join(' | ') + ' :: ' + r.stdout.split('\n').filter(l => /AssertionError|paypay[-:]|Error:/.test(l)).slice(0, 8).join(' | '));
       for (const want of [/the observed active-session page: the standard form again under the one visible h1/, /the observed active-session page \(session-in-use, plan omf-paypay-split-dates-retry-20261022\)/, /a bank refusal of the current saved login: the owner's explicit protected retry/, /retryBankLogin: only the current key's uncertain or refused marker/, /an uncertain or refused PayPay account offers/]) assert.ok(t.list.some(x => x.ok && want.test(x.name)), 'unit:named-test-present ' + want.source);

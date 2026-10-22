@@ -118,7 +118,9 @@ export async function browserFor(profile, { ephemeral = false, root = /** @type 
 async function closeEntry(entry) {
   const { browser, child } = entry;
   try { if (browser.connected) await Promise.race([browser.close(), new Promise(resolve => setTimeout(resolve, 5000))]); } catch { /* closing */ }
-  if (child && child.exitCode === null) {
+  // A signalled child retains exitCode=null after its exit event. It is already
+  // stopped; registering another exit listener would wait the full timeout.
+  if (child && child.exitCode === null && !child.signalCode) {
     try { child.kill(); } catch { /* gone */ }
     await Promise.race([new Promise(resolve => child.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5000))]);
   }
@@ -140,7 +142,7 @@ export async function removeEphemeral(profile, root) {
   if (keyOf(await realpathNative(profile)) !== keyOf(profile)) throw new Error('Refusing to remove a profile path that resolves elsewhere');
   for (let attempt = 0; ; attempt += 1) {
     try { await rm(profile, { recursive: true, force: true }); return true; }
-    catch (error) { if (attempt >= 8) throw error; await new Promise(resolve => setTimeout(resolve, 500)); }
+    catch (error) { if (attempt >= 24) throw error; await new Promise(resolve => setTimeout(resolve, 500)); }
   }
 }
 /** Startup crash recovery: ends leftover Chrome processes on ephemeral profiles (exact identity) and removes their folders. */
