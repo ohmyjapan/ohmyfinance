@@ -100,8 +100,15 @@ export const LOGIN_TEXT = Object.freeze({
  * only confirmed authentication (login.accepted()) or an owner re-save clears it, including after an uncertain end or a crash.
  * an error page or the deadline throws (a remembered refusal with code login-refused).
  */
-export async function ensureBankLogin(ui, status, { label, login = null, journal = null, now = Date.now, wait = pause, timeoutMs = 300000, pollMs = 1500, signal = null } = {}) {
-  const deadline = now() + timeoutMs; let manual = false, submitted = false, declined = false, refused = false, reclaimed = null, sent = null;
+// Plan omf-paypay-routine-20261022 Phase C: `exits` are the adapter's declared login continuations (adapter.loginExits; PayPay銀行
+// 標準 only, 楽天銀行 declares none and every line below behaves as before for it): `inUse` — the adapter's observed active-session
+// answer is neither a refusal nor a sign-in (the later login form is not taken for a refusal; 上書きログイン is never pressed; the job
+// ends with texts.inUseStopped); `markRefused` — an observed refusal marks the saved key 'refused'; `acceptDirectOnly` — the pending
+// marker is cleared only when the one submission itself reached the adapter's authenticated page (ui.login outcome `authenticated`)
+// before anyone was asked; `texts` — the adapter's wording. The result adds `direct`.
+export async function ensureBankLogin(ui, status, { label, login = null, journal = null, now = Date.now, wait = pause, timeoutMs = 300000, pollMs = 1500, signal = null, exits = null } = {}) {
+  const deadline = now() + timeoutMs; let manual = false, submitted = false, declined = false, refused = false, reclaimed = null, sent = null, direct = false, inUse = false;
+  const T = exits?.texts || null;
   const attention = async text => { if (manual) return; manual = true; await status('verification_required', text); await ui.show(); };
   const automatic = !!login && typeof ui.login === 'function' && typeof ui.loginForm === 'function';
   const refuse = async () => {
@@ -111,7 +118,7 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   const loginAgain = async () => { if (!sent) return false; const doc = await ui.document?.(); return !!doc && doc !== sent && !!(await ui.loginForm())?.ok; };
   const signIn = async () => {
     const saved = await login.state();
-    if (saved !== 'ready') { declined = true; return saved === 'blocked' ? LOGIN_TEXT.blocked(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : LOGIN_TEXT.manual(label); }
+    if (saved !== 'ready') { declined = true; return saved === 'blocked' ? (T?.blocked ? T.blocked(label) : LOGIN_TEXT.blocked(label)) : saved === 'refused' && T?.refusedSaved ? T.refusedSaved(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : LOGIN_TEXT.manual(label); }
     if (!(await ui.loginForm())?.ok) { declined = true; return LOGIN_TEXT.form(label); }
     reclaimed ??= journal ? await journal.seen() : false;
     if (reclaimed) { declined = true; return LOGIN_TEXT.retried(label); } // guard:login-journal
@@ -127,8 +134,9 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
       await status('running', `${label}に保存済みのログインでサインイン`);
       const result = await ui.login(secret, { signal });
       sent = result?.document || false;
-      if (result?.outcome === 'authenticated') return null;
-      if (result?.outcome === 'rejected') { await refuse(); return LOGIN_TEXT.refused(label); }
+      if (result?.outcome === 'authenticated') { direct = !manual; return null; }
+      if (result?.outcome === 'rejected') { await refuse(); if (exits?.markRefused) await login.rejected('refused'); return T?.refused ? T.refused(label) : LOGIN_TEXT.refused(label); }
+      if (exits?.inUse && result?.outcome === 'session-in-use') { inUse = true; return T?.inUse ? T.inUse(label) : LOGIN_TEXT.verify(label); }
       return LOGIN_TEXT.verify(label);
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') throw error;
@@ -139,18 +147,19 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   while (now() < deadline) {
     signal?.throwIfAborted();
     const kind = (await ui.state())?.kind;
-    if (AUTHENTICATED.includes(kind)) { if (submitted && !refused) await Promise.resolve(login.accepted?.()).catch(() => {}); return { submitted, refused }; }
+    if (AUTHENTICATED.includes(kind)) { if (submitted && !refused && (!exits?.acceptDirectOnly || direct)) await Promise.resolve(login.accepted?.()).catch(() => {}); return { submitted, refused, direct }; } // guard:login-accept-direct
     if (kind === 'error_page') throw submitted ? coded('login-refused', LOGIN_TEXT.unconfirmed(label)) : new Error(`${label}のページでエラーが表示されました。Chromeを確認して再試行してください`);
     let auto = kind === 'login' && automatic && !declined;
     if (submitted) auto = false; // guard:login-once
-    if (kind === 'login' && submitted && !refused && await loginAgain()) { await refuse(); await attention(LOGIN_TEXT.refused(label)); }
+    if (kind === 'login' && submitted && !refused && !inUse && await loginAgain()) { await refuse(); await attention(T?.refused ? T.refused(label) : LOGIN_TEXT.refused(label)); } // guard:login-in-use-not-refused
     else if (auto) { const text = await signIn(); if (text) await attention(text); }
     else if (['login', 'verification', 'unknown'].includes(kind)) await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
     await wait(pollMs);
   }
   await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
-  if (refused) throw coded('login-refused', `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面でIDとパスワードを保存し直してから、再度「取得」を押してください`);
-  if (submitted) throw coded('login-refused', LOGIN_TEXT.unconfirmed(label));
+  if (refused) throw coded('login-refused', T?.refused ? T.refused(label) : `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面でIDとパスワードを保存し直してから、再度「取得」を押してください`);
+  if (inUse) throw coded('login-refused', T?.inUseStopped ? T.inUseStopped(label) : LOGIN_TEXT.unconfirmed(label));
+  if (submitted) throw coded('login-refused', T?.unconfirmed ? T.unconfirmed(label) : LOGIN_TEXT.unconfirmed(label));
   throw new Error(`${label}へのサインインが完了しませんでした。再度「取得」を押してください`);
 }
 
@@ -252,8 +261,11 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   }
   // The job's sign-in journal: written (exclusively, bound to the job, no credential) before the one automatic submission.
   const journal = { seen: () => exists(path.join(jobDir, 'login.json')), async mark() { await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ ...bound, submittedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error; }); } };
-  try { await ensureBankLogin(ui, status, { label: adapter.label, login, journal: login ? journal : null, now, wait, timeoutMs: loginTimeoutMs, signal }); }
+  try { await ensureBankLogin(ui, status, { label: adapter.label, login, journal: login ? journal : null, now, wait, timeoutMs: loginTimeoutMs, signal, exits: adapter.loginExits ?? null }); }
   catch (error) { if (error?.code === 'login-refused') return { items: [], failed: error.message }; throw error; }
+  // Plan omf-paypay-routine-20261022 Phase C: once signed in, an adapter's `finish` (PayPay銀行: close its download tab, ログアウト) runs
+  // after the steps below whatever their outcome — bounded, errors ignored, never changing the result (楽天銀行 declares none).
+  try {
   signal?.throwIfAborted();
   await status('running', '入出金明細を開く');
   await ui.openStatements();
@@ -287,6 +299,9 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   await writeManifest(jobDir, manifest);
   await status('running', '明細を保存');
   return { items: [{ directory: jobDir, manifest }], failed: null };
+  } finally {
+    if (typeof ui.finish === 'function') await Promise.race([Promise.resolve().then(() => ui.finish()).catch(() => {}), pause(15000)]); // guard:finish-after-login
+  }
 }
 
 // What the observe recorder reads from a page: the path (no query or hash), the title, the texts of visible buttons and links,

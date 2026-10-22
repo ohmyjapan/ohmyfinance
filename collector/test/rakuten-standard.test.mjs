@@ -25,7 +25,10 @@ test('per-variant resolution: only the frozen standard variant gets the retrieve
     assert.equal(pending.contract, null, 'rakuten-standard:pending-kept ' + variant);
   }
   assert.equal(bankModule.adapterFor('rakuten').support, 'contract-pending', 'rakuten-standard:provider-default-pending');
-  assert.equal(bankModule.adapterFor('paypay', 'standard').support, 'contract-pending', 'rakuten-standard:other-provider-unaffected');
+  // Deliberate change (plan omf-paypay-routine-20261022): PayPay銀行 標準 has its own routine adapter now; its provider default (BA-PLUS,
+  // no or unknown variant) stays contract-pending, and the PayPay adapter is not the 楽天銀行 one.
+  assert.equal(bankModule.adapterFor('paypay', 'baplus').support, 'contract-pending', 'rakuten-standard:other-provider-unaffected');
+  assert.notEqual(bankModule.adapterFor('paypay', 'standard'), bankModule.adapterFor('rakuten', 'standard'), 'rakuten-standard:other-provider-unaffected');
   assert.equal(bankModule.adapterFor('nope', 'standard'), null);
   assert.equal(rakutenModule.default.starts.standard, START_CORP, 'rakuten-standard:observe-start-corp');
   assert.equal(rakutenModule.default.starts.plus, PLUS, 'rakuten-standard:plus-link-unchanged');

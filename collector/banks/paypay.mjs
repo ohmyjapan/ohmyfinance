@@ -11,6 +11,9 @@
 // are the person's steps in the same owned window until the actual export is observed. The generated handler name is never pinned, no
 // POST is rebuilt or replayed, no value is read back, no keyboard or pointer input is used. BA-PLUS (専用ログイン) is not a saved-login
 // variant: its observe job opens the provider default. Imports only ../interaction.mjs, so the staged copy loads without node_modules.
+// Plan omf-paypay-routine-20261022 Phase C: `standard` now also retrieves (routineUi below): the observed Welcome/statement pages,
+// 期間選択, the six named date selects, 照会, CSV and ログアウト drive a retrieve job; the guided first-capture behaviour above is kept
+// for observe jobs queued before (historical snapshots). The provider default (BA-PLUS, no or unknown variant) is unchanged.
 import { pause } from '../interaction.mjs';
 
 const coded = (code, message) => Object.assign(new Error(message), { code });
@@ -156,11 +159,193 @@ export function standardUi(page, browser, adapter = standard, snapshot = null, {
   return ui;
 }
 
-/** The standard login (店番号・口座番号): resolved only for a job frozen with variant `standard`; guided, still contract-pending. */
+// ── Routine retrieval (plan omf-paypay-routine-20261022 Phase C) ────────────────────────────────────────────────────────────────
+// The observed authenticated pages and statement steps (value-free records of actual jobs 2ac7e506/792d829e/a7272a5b and the
+// reviewed operator's executed sequence: output/plan/omf-paypay-routine-20261022/2-readiness-review.md §2). Every post-login page
+// shares /wctx/NBCW2101.do, so no pathname is used; a page is identified by its exact title and visible controls on the top document
+// of the official login origin. Not observed (O1-O9): account identity on the page, export limits, additional verification, expiry,
+// maintenance, empty periods, dialogs and the tab's foreground behaviour — each of those leaves the page `unknown` (the person is asked).
+export const STANDARD_PAGES = Object.freeze({
+  origin: 'https://login.paypay-bank.co.jp',
+  welcome: Object.freeze({ title: 'Welcome Page - PayPay銀行', controls: Object.freeze(['ログアウト', '普通預金取引明細照会']) }),
+  statements: Object.freeze({ title: '普通預金取引明細照会 - PayPay銀行', controls: Object.freeze(['期間選択', 'CSV', 'ログアウト']) }),
+  open: '普通預金取引明細照会', period: '期間選択', panelOpen: '閉じる', query: '照会', export: 'CSV', logout: 'ログアウト',
+  downloading: 'ダウンロード中 - PayPay銀行',
+  periodFields: Object.freeze(['ShokaiStartDateNenIn', 'ShokaiStartDateTsukiIn', 'ShokaiStartDateHiIn', 'ShokaiEndDateNenIn', 'ShokaiEndDateTsukiIn', 'ShokaiEndDateHiIn'])
+});
+// The person-facing texts of a routine PayPay sign-in (bank.mjs ensureBankLogin `exits.texts`; no credential, URL or page text).
+export const ROUTINE_TEXT = Object.freeze({
+  refused: label => `${label}が保存済みのログインを受け付けませんでした。ログインを変更した場合はダウンローダーの設定画面で店番号・口座番号・パスワードを保存し直してください。変更していない場合は同じ画面の「保存済みのログインでもう一度試す」で1回だけ再試行できます（どちらかを行うまで自動では送信しません）`,
+  refusedSaved: label => `${label}の前回の自動サインインは銀行に受け付けられませんでした。ダウンローダーの設定画面で、ログインを変更した場合は保存し直し、変更していない場合は「保存済みのログインでもう一度試す」を押してから、もう一度「取得」を押してください`,
+  blocked: label => `${label}の前回の自動サインインが確認できていないため、保存済みのログインを自動では送信しません。ログインが正しい場合はダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押してから、もう一度「取得」を押してください`,
+  inUse: label => `${label}は別のブラウザーやアプリでログイン中のため、保存済みのログインを1回送信したところで止めました（「上書きログイン」は自動では押しません）。ほかのログインを終えてから、もう一度「取得」を押してください`,
+  inUseStopped: label => `${label}は別のブラウザーやアプリでログイン中だったため、明細は取得していません（「上書きログイン」は押していません）。ほかのログインを終え、ダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押してから、もう一度「取得」を押してください`,
+  unconfirmed: label => `${label}への自動サインインの完了を確認できませんでした（サインイン後の画面が確認済みの形と異なります）。明細は取得していません。Chromeの画面を確認し、ダウンローダーの設定画面で「保存済みのログインでもう一度試す」を押してから、もう一度「取得」を押してください`
+});
+const ROUTINE_CONTROLS = 'a,button,input[type="submit"],input[type="button"],input[type="image"],[role="button"]';
+// In-page readers (serialized; they use only their argument; no field value of a credential is read). The control label rule is the
+// reviewed operator's actually executed one: inner text, the value of a submit/button input, an image's alt, aria-label or title.
+const ROUTINE_PAGE = ({ selector }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const label = e => (e.innerText || (e instanceof HTMLInputElement && ['submit', 'button', 'image'].includes(e.type) ? (e.value || e.alt) : '') || e.getAttribute('aria-label') || e.querySelector?.('img[alt]')?.alt || e.getAttribute('alt') || e.title || '').replace(/\s+/g, ' ').trim();
+  return { origin: location.origin, top: window.top === window, title: document.title, document: String(performance.timeOrigin),
+    controls: [...document.querySelectorAll(selector)].filter(e => visible(e) && !e.disabled).map(label).filter(Boolean),
+    password: [...document.querySelectorAll('input[type="password"]')].some(visible) };
+};
+/**
+ * GUARD — the state of a routine page (pure): another origin or a frame → unknown; a visible password field → login (the entry,
+ * a refusal or the in-use page); the exact Welcome title with both observed controls → authenticated; the exact statement title
+ * with its three observed controls → export_ready when the period panel is closed, statements while it is open; anything else →
+ * unknown. A page that only shows ログアウト, a similar title or the shared pathname is never authenticated.
+ */
+export function classifyRoutinePage(read, c = STANDARD_PAGES) {
+  if (!read || read.origin !== c.origin || read.top !== true) return 'unknown';
+  if (read.password) return 'login';
+  const controls = Array.isArray(read.controls) ? read.controls : [];
+  if (read.title === c.welcome.title && c.welcome.controls.every(t => controls.includes(t))) return 'authenticated'; // guard:routine-welcome
+  if (read.title === c.statements.title && c.statements.controls.every(t => controls.includes(t))) return controls.includes(c.panelOpen) ? 'statements' : 'export_ready'; // guard:routine-statements
+  return 'unknown';
+}
+// GUARD (serialized) — activate exactly one control on the expected document: `link` = an <a> whose text is exactly `text`; `control`
+// = the operator's label rule over buttons/inputs/links. The page must be the official top document with the expected title. The
+// click is scheduled after this task returns, so a dialog it opens never blocks the collector (state() then reports verification).
+const PRESS = ({ c, selector, kind, text, titles, expectedDocument }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const label = e => (e.innerText || (e instanceof HTMLInputElement && ['submit', 'button', 'image'].includes(e.type) ? (e.value || e.alt) : '') || e.getAttribute('aria-label') || e.querySelector?.('img[alt]')?.alt || e.getAttribute('alt') || e.title || '').replace(/\s+/g, ' ').trim();
+  if (location.origin !== c.origin || window.top !== window || !titles.includes(document.title) || (expectedDocument && String(performance.timeOrigin) !== expectedDocument)) return { error: 'surface' };
+  const list = kind === 'link' ? [...document.querySelectorAll('a')].filter(e => visible(e) && String(e.innerText || '').replace(/\s+/g, ' ').trim() === text) : [...document.querySelectorAll(selector)].filter(e => visible(e) && !e.disabled && label(e) === text); // guard:routine-exact-control
+  if (list.length !== 1) return { error: list.length ? 'ambiguous' : 'missing', count: list.length }; // guard:routine-single-control
+  const target = list[0]; setTimeout(() => target.click(), 0);
+  return { ok: true };
+};
+// The six observed period fields (serialized; one resolver for validation, assignment and read-back, so all three act on the SAME
+// element): for each recorded identifier, every input/select/textarea carrying it as name or id; exactly one of them must be visible,
+// and that one must be an enabled <select>. Hidden copies are ignored by all three (a hidden duplicate is never set, read or taken for
+// the field); a second visible one, a visible non-select or none is not the observed form. Build-resume-03 (parent finding
+// PARENT-PERIOD-FINDING.md): validation used the visible field while assignment and read-back took the first select of that name, so a
+// hidden duplicate could be set and read back while the bank's query used the unchanged visible field.
+// op 'check' → 'ok' | 'other' | 'missing' per field; op 'set' → {ok} or {missing: id} (GUARD: the one option whose number — its value,
+// else the digits of its text — equals the wanted number; none or two → nothing is chosen for that field); op 'read' → the numbers shown.
+const PERIOD = ({ op, ids, wanted = [] }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const toNumber = o => { const v = String(o.value).trim(); if (/^\d+$/.test(v)) return Number(v); const d = String(o.textContent).replace(/[^0-9]/g, ''); return d ? Number(d) : null; };
+  const field = id => { const all = [...document.querySelectorAll('input,select,textarea')].filter(e => (e.name === id || e.id === id) && visible(e)); return all.length === 1 && all[0] instanceof HTMLSelectElement && !all[0].disabled ? { el: all[0] } : { status: all.length ? 'other' : 'missing' }; }; // guard:routine-period-field
+  if (op === 'check') return ids.map(id => field(id).el ? 'ok' : field(id).status);
+  if (op === 'read') return ids.map(id => { const o = field(id).el?.selectedOptions?.[0]; return o ? toNumber(o) : null; });
+  for (let i = 0; i < ids.length; i++) {
+    const e = field(ids[i]).el; if (!e) return { missing: ids[i] };
+    const options = [...e.options].filter(o => toNumber(o) === wanted[i]); if (options.length !== 1) return { missing: ids[i] }; // guard:routine-period-option
+    e.value = options[0].value; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  return { ok: true };
+};
+/** The six numbers of the job's frozen explicit period {from,to}; anything else throws period-required before any page is touched. */
+export function routinePeriodValues(coverage) {
+  const day = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
+  if (!coverage || typeof coverage !== 'object' || !day(coverage.from) || !day(coverage.to) || coverage.from > coverage.to) throw coded('period-required', 'PayPay銀行の取得期間（開始日・終了日）が取得時の設定にありません。接続の取得期間を保存して、もう一度「取得」を押してください');
+  return [...coverage.from.split('-'), ...coverage.to.split('-')].map(Number);
+}
+
+/**
+ * The ui of a routine PayPay retrieval: a superset of the unchanged guided standardUi (open/show/loginForm/login/document/
+ * sessionInUse/downloadSession stay its own), adding the observed page state and statement steps. login() keeps the one native
+ * submission; its outcome becomes `authenticated` (D1) only when that submission, within the settle window and with no dialog open,
+ * reached a NEW top document of the official origin classified as the exact Welcome page — never from a pathname, a file, a similar
+ * title, an older document or a page after the person was asked. An already-queued guided observe job uses the same ui and still
+ * treats that outcome as merely submitted (bank.mjs guidedSignIn: P1). JS dialogs are never accepted: while one is open state() is
+ * `verification` and the person decides. snapshot() refuses to export unless the sign-in was direct or the connection carries an
+ * account label (verified on the page by bank.mjs). finish() closes the download tab this job's CSV press opened (no other page),
+ * then presses ログアウト once;
+ * it is bounded and never changes the job's result. `options` are the test seams for the settle and step windows.
+ */
+export function routineUi(page, browser, adapter = standard, snapshot = null, { settleMs = 30000, stableMs = 2500, stepMs = 45000, finishMs = 10000 } = {}) {
+  const c = STANDARD_PAGES, label = adapter?.label || 'PayPay銀行', base = standardUi(page, browser, adapter, snapshot, { settleMs, stableMs });
+  const bounded = (promise, ms = 5000) => Promise.race([promise, pause(ms).then(() => null)]);
+  const fields = c.periodFields;
+  // `known`: the page targets of this browser just before this job's CSV press (null until then); only a tab opened after it counts.
+  let direct = false, dialogs = null, waiting = false, queried = false, period = null, known = null;
+  const watch = async () => { if (dialogs) return; try { dialogs = await page.createCDPSession(); await dialogs.send('Page.enable'); dialogs.on('Page.javascriptDialogOpening', () => { waiting = true; }); dialogs.on('Page.javascriptDialogClosed', () => { waiting = false; }); } catch { dialogs = null; } };
+  const read = async () => { try { return (await bounded(page.evaluate(ROUTINE_PAGE, { selector: ROUTINE_CONTROLS }))) || null; } catch { return null; } };
+  const kind = async () => waiting ? 'verification' : classifyRoutinePage(await read(), c);
+  const reach = async (kinds, code, message) => { const until = Date.now() + stepMs; while (Date.now() < until) { const k = await kind(); if (kinds.includes(k)) return k; await pause(250); } throw coded(code, message); };
+  const press = async (pressKind, text, titles, error) => { const doc = (await read())?.document || null; let r = null; try { r = await bounded(page.evaluate(PRESS, { c, selector: ROUTINE_CONTROLS, kind: pressKind, text, titles, expectedDocument: doc })); } catch { r = null; } if (!r?.ok) throw coded(error, `${label}の「${text}」を特定できません（${r?.error || '画面が変わりました'}）。Chromeを確認してください`); };
+  const ui = {
+    ...base,
+    async open() { await watch(); await base.open(); },
+    async state() { return { kind: await kind() }; },
+    async login(secret, options = {}) {
+      const result = await base.login(secret, options);
+      if (result?.outcome !== 'submitted' || waiting) return result;
+      const now = await read();
+      if (now && now.document !== result.document && classifyRoutinePage(now, c) === 'authenticated') { direct = true; return { ...result, outcome: 'authenticated' }; } // guard:routine-direct
+      return result;
+    },
+    async openStatements() {
+      const k = await kind(); if (k === 'statements' || k === 'export_ready') return;
+      if (k !== 'authenticated') throw coded('statements-unidentified', `${label}のサインイン後の画面が確認済みの形と異なるため、入出金明細を開きません。Chromeを確認してください`);
+      await press('link', c.open, [c.welcome.title], 'statements-unidentified');
+      await reach(['statements', 'export_ready'], 'statements-unidentified', `${label}の入出金明細が開きませんでした。Chromeを確認してください`);
+    },
+    async selectPeriod(coverage) {
+      const wanted = routinePeriodValues(coverage), k = await kind();
+      if (k !== 'statements' && k !== 'export_ready') throw coded('period-unidentified', `${label}の入出金明細の画面ではありません。Chromeを確認してください`);
+      let found = await bounded(page.evaluate(PERIOD, { op: 'check', ids: fields }));
+      if (!found?.every(f => f === 'ok')) {
+        if (found?.some(f => f === 'other')) throw coded('period-unidentified', `${label}の期間の項目が確認済みの形と異なります。Chromeを確認してください`);
+        await press('link', c.period, [c.statements.title], 'period-unidentified');
+        const until = Date.now() + 15000; while (Date.now() < until) { found = await bounded(page.evaluate(PERIOD, { op: 'check', ids: fields })); if (found?.every(f => f === 'ok')) break; await pause(250); }
+        if (!found?.every(f => f === 'ok')) throw coded('period-unidentified', `${label}の期間の項目が表示されませんでした（${(found || []).join('/')}）。Chromeを確認してください`);
+      }
+      const set = await page.evaluate(PERIOD, { op: 'set', ids: fields, wanted });
+      if (!set?.ok) throw coded('period-mismatch', `${label}の期間の項目（${set?.missing || '日付'}）に${coverage.from}〜${coverage.to}を選べません（銀行で選べる範囲外の可能性があります）。Chromeを確認してください`);
+      for (const delay of [0, 600]) { if (delay) await pause(delay); const values = await page.evaluate(PERIOD, { op: 'read', ids: fields }); if (!(values.length === wanted.length && values.every((v, i) => v === wanted[i]))) throw coded('period-mismatch', `${label}の期間を${coverage.from}〜${coverage.to}に設定できませんでした。Chromeを確認してください`); } // guard:routine-period-readback
+      await press('control', c.query, [c.statements.title], 'period-query');
+      await reach(['export_ready'], 'period-query', `${label}の照会が完了しませんでした。Chromeを確認してください`);
+      queried = true; period = coverage.from + '〜' + coverage.to;
+    },
+    async snapshot() {
+      if (!direct && !String(snapshot?.accountLabel ?? '').trim()) throw coded('identity-unconfirmed', `${label}へのサインインを、この取得で保存済みのログインを1回送信した直後に確認できなかったため、明細は出力しません。ほかのログインを終えてから、もう一度「取得」を押してください（口座の表示名を接続に保存すると、その表示で口座を確認して出力できます）`); // guard:routine-identity
+      return { accountLabel: (await bounded(page.evaluate(() => String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 4000)))) || '', period };
+    },
+    async exportCsv() {
+      if (!queried) throw coded('period-query', `${label}の照会をこの取得で行っていないため、CSVは出力しません`); // guard:routine-query-before-export
+      if ((await kind()) !== 'export_ready') throw coded('export-unidentified', `${label}のCSV出力の画面ではありません。Chromeを確認してください`);
+      await watch(); known = new Set(page.browser().targets()); await press('link', c.export, [c.statements.title], 'export-unidentified');
+    },
+    async finish() {
+      const until = Date.now() + finishMs, left = () => Math.max(0, until - Date.now()), result = { downloadTabsClosed: 0, loggedOut: false };
+      try {
+        // this job's download tab only: a page target that appeared after its CSV press, was opened by this job's page (the observed
+        // tab is a script-opened about:blank document titled ダウンロード中, worker-logs/R2-opener-probe.txt), still shows the exact
+        // title, and is about:blank or the official origin. The initial blank tab, a sibling or older tab, a foreign page and a page
+        // opened any other way stay open; an unrecognized tab is only left open (the owned browser ends with the job).
+        for (const target of known ? page.browser().targets() : []) { // guard:routine-own-download-tab
+          if (known.has(target) || target.type() !== 'page' || target === page.target() || target.opener() !== page.target()) continue;
+          let other = null, origin = '', title = ''; try { other = await bounded(target.page(), Math.max(1000, left())); if (!other) continue; origin = other.url() === 'about:blank' ? c.origin : new URL(other.url()).origin; title = (await bounded(other.title(), Math.max(1000, left()))) || ''; } catch { continue; }
+          if (origin === c.origin && title === c.downloading) { await bounded(other.close(), 2000); result.downloadTabsClosed++; }
+        }
+        if (waiting) return { ...result, reason: 'dialog' };
+        const k = await kind(); if (k !== 'authenticated' && k !== 'statements' && k !== 'export_ready') return { ...result, reason: 'not-signed-in' };
+        await press('link', c.logout, [c.welcome.title, c.statements.title], 'logout');
+        while (left() > 0) { const r = await read(); if (r && (r.password || classifyRoutinePage(r, c) === 'unknown')) return { ...result, loggedOut: true }; await pause(250); }
+        return { ...result, reason: 'timeout' };
+      } catch (error) { return { ...result, reason: String(error?.code || 'error') }; }
+    },
+    direct: () => direct
+  };
+  return ui;
+}
+
+/**
+ * The standard login (店番号・口座番号), resolved only for a job frozen with variant `standard`. Plan omf-paypay-routine-20261022:
+ * a retrieve job runs the routine steps (support 'verified' = steps implemented; live acceptance is separate); an observe job queued
+ * before (a historical guided snapshot) still runs the guided first capture through the same ui (guided stays true).
+ */
 export const standard = Object.freeze({
-  provider: 'paypay', label: 'PayPay銀行', variant: 'standard', support: 'contract-pending', contract: null, guided: true,
+  provider: 'paypay', label: 'PayPay銀行', variant: 'standard', support: 'verified', contract: STANDARD_PAGES, guided: true,
   start: STANDARD_ENTRY, hosts: [...HOSTS], loginHosts: [...LOGIN_HOSTS],
-  ui(page, browser, snapshot = null) { return standardUi(page, browser, this, snapshot); }
+  loginExits: Object.freeze({ inUse: true, markRefused: true, acceptDirectOnly: true, texts: ROUTINE_TEXT }),
+  ui(page, browser, snapshot = null) { return routineUi(page, browser, this, snapshot); }
 });
 export default {
   provider: 'paypay', label: 'PayPay銀行', support: 'contract-pending', contract: null,

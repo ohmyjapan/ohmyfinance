@@ -38,7 +38,27 @@ connection — for a job frozen with 楽天銀行 variant `standard`; collected 
    manifest (job id, snapshot hash, period, label check) are retained, uploaded under the job's own snapshot and acknowledged only
    after OMF answered; a crash after the download recovers the same file without a second export.
 
+## Overlapping captures (plan `omf-paypay-routine-20261022` Phase S)
+
+A 楽天銀行 retrieve capture (frozen period, the native template's mapped balance column `残高(円)`) that overlaps rows already in OMF —
+a refreshed or longer export of the same account — is no longer imported again: `shared/finance-payment-match.mjs bankOverlapPlan`
+resolves each row to its canonical row by key, recorded source, or an unambiguous anchor (the same date, direction, amount, currency,
+description, reference and running balance, unique on both sides); an anchored row keeps its id, key, revision, allocations and
+classification and only gains the new source in its provenance. A row outside the frozen period, a row without a balance, an ambiguous
+tuple and an existing in-period row missing before the period's final day hold the capture (`needs_review`, nothing written); the same
+rule and the account lease / canonical reservation (`BankAccount.rowLock`, `BankRow.canonicalKey` with its reservation-history ordinal)
+are described in docs/paypay-bank-connection.md "Overlapping captures". Mappings without a balance and observe captures keep the old
+per-file behaviour. The parent's private pure overlap check of the owner's actual files (269 rows) is a separate, pending replay.
+Anchors use each row's current balance (`BankRow.balance`); an owner's corrected balance-column mapping on the same file updates it as a
+revisioned reinterpretation, with provenance and `canonicalKey` unchanged (docs/paypay-bank-connection.md "Owner balance correction").
+
 ## Saved login (plan `omf-rakuten-auto-login-20261021`)
+
+Plan `omf-paypay-routine-20261022`: `ensureBankLogin` gained optional adapter `exits` (PayPay銀行 標準's in-use, refused-marker and
+direct-only acceptance continuations). The 楽天銀行 adapter declares none, so every outcome, marker and acceptance below is unchanged
+(proved by the unchanged `collector/test/rakuten-auto-login.test.mjs`, and by mutant C-M16 of `omf-paypay-routine.mjs`, which applies the
+PayPay exits by default and must flip its refusal-memory count). `collectBankFromPage` now runs an adapter's `finish` after a
+successful sign-in; 楽天銀行 declares none.
 
 The public login form was read on 2026-10-20 without a credential or a submission (hub `output/plan/omf-rakuten-auto-login-20261021/
 LIVE-LOGIN-CONTRACT.json`, `LIVE-LOGIN-CONTROLS.json`): official origin `https://fes.rakuten-bank.co.jp`, surface `/XMS/security/RbS`
@@ -104,8 +124,12 @@ native export → retained manifest/outbox → `bank/upload` → native rows →
 `/bank/credentials` → `saveBankLogin` → `SplitStore.save` → key service `putKey`/`getKey` → `binding`/`bankBinding`. Statement
 source/amount/date/sign interpretation, classification, purchase imports, invoices, calendars and Navi are not changed. RIRI
 Article/Memo/Menu51 paths are a separate project with no import or call into this seam. The same setup route, `bankLoginFor`,
-`runBankJob` and `bankBinding` now also serve PayPay銀行 標準 (`paypay-<id>` entries, guided observe jobs only); the 楽天銀行 body shape,
-entry name, AAD, marker, retrieve-only hand-over and observe message are unchanged (docs/paypay-bank-connection.md has its map).
+`runBankJob` and `bankBinding` now also serve PayPay銀行 標準 (`paypay-<id>` entries; since plan `omf-paypay-routine-20261022` its retrieve
+jobs and historical guided observe jobs); the 楽天銀行 body shape, entry name, AAD, marker, retrieve-only hand-over and observe message are
+unchanged (docs/paypay-bank-connection.md has its map). Plan `omf-paypay-routine-20261022`: `bank/upload` → `acceptBankCapture` →
+`withAccountRows` (account lease) → `planCapture` (`capture` mode for a retrieve job with a frozen period and a balance column) →
+`planRows` → `bankOverlapPlan` → `saveRows` (anchor append / create with `canonicalKey`); the owner importer (`importBankFile`) runs under
+the same lease.
 
 ## Not observed / not supported
 
@@ -113,8 +137,8 @@ entry name, AAD, marker, retrieve-only hand-over and observe message are unchang
 OTP/verification pages, the bank's answer to a wrong password, password-expiry pages, session time-outs, maintenance notices and the
 case where the bank re-uses an export generated earlier the same day are not observed; they surface as `unknown`/
 `verification_required` for the person or as the existing failure messages. A persistent bank session and unattended additional
-verification are not provided. No other bank's retrieval is changed (PayPay銀行 標準 gained a guided first capture without automatic
-retrieval: docs/paypay-bank-connection.md).
+verification are not provided. No other bank's retrieval steps are changed (PayPay銀行 標準 gained its own routine retrieval in plan
+`omf-paypay-routine-20261022`: docs/paypay-bank-connection.md).
 
 ## Verification status (honest)
 
@@ -155,6 +179,9 @@ A capture with zero rows is flagged; a date range starting after the requested s
 - Verify: date read-back, the 楽天銀行フォーマット CSV (not Zengin), the warning accepted once, one completed download from
   `fes.rakuten-bank.co.jp`, the retained original and manifest, the upload/import receipt; reconcile the requested period with the
   file's first/last dates; compare each saved date/sign/amount/balance/raw row with the original; repeat delivery creates nothing.
+- Plan `omf-paypay-routine-20261022`: one more retrieve whose period overlaps rows already imported must anchor them (their ids,
+  revisions, allocations and classifications unchanged; only the new source added) and import only the new rows; a hold
+  (`period-mismatch`, `overlap-mismatch`, `overlap-ambiguous`, `balance-missing`) writes nothing and names its reason.
 - Then 銀行仕訳 (docs/bank-classification.md) with the company actually selected. Record actual counts and every limitation; keep
   unresolved rows visible. A draft made while another company was selected is moved with「この会社で仕訳する」; a mistaken link or a
   registration whose Transaction was deleted is released with「紐付けを解除」/「登録を解除」; an undetected own-company holder is

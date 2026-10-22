@@ -30,6 +30,12 @@ export function settlementCandidates(bank:any,cardRows:any[],batches:any[],bills
 export function residuals(payment:any):{allocated:number;remaining:number;state:string};
 export function recordTotals(record:any,allocations:any[]):any;
 export function changedSince(snapshot:any,current:any):any[];
+export const BANK_COLLECTOR_CHANNELS:string[];
+export type BankOverlapHold='period-mismatch'|'balance-missing'|'overlap-ambiguous'|'overlap-mismatch';
+export function bankOverlapPlan(existing:any[],planned:any[],options?:{mode?:'capture'|'owner'|'resolve';coverage?:{from:string;to:string}|null;reserved?:(identity:string)=>boolean}):{held:boolean;code:BankOverlapHold|null;reason:string|null;targets:(string|null)[];via:('key'|'source'|'anchor'|null)[];identities:(string|null)[];anchored:number};
+export function bankRowBalance(row:any):number|null;
+export function bankRowTuple(row:any,balance:number|null):string;
+export function bankCurrentIdentity(row:any,balance:number|null,reserved?:((identity:string)=>boolean)|null):string|null;
 export function correctionPairs(existing:any[],incoming:any[]):any[];
 export function repaymentSettlement(card:any,bankPayments:any[]):{settled:number;remaining:number;state:'unmatched'|'partial'|'matched'|'review'};
 export const PURCHASE_PAYMENT_STATES:string[];

@@ -237,14 +237,16 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  const nativeAfter=await rows(bankN);assert.equal(nativeAfter.length,6,'bank:native-identical-reimport');assert.deepEqual(nativeAfter.map(r=>[String(r._id),r.revision,r.provenance.length,r.history.map(h=>h.action).join()]).sort(),nativeStored.map(r=>[String(r._id),1,1,'imported']).sort(),'bank:native-identical-reimport');
  assert.equal(ok(await all(),'native-payments').payments.filter(p=>p.kind==='bank'&&p.accountId===bankN).length,6,'bank:native-payments-listed');
  pass('N native statement format: Shift_JIS four-column file read with its headers, columns guessed, compact dates and signed amounts previewed and imported (incoming negative/in, outgoing positive/out), duplicate-looking rows kept as two file rows, raw rows and original bytes retained, template saved, identical reimport changes nothing');
- // ── G (plan omf-paypay-four-accounts-20261021): PayPay銀行 標準 connects without an uploaded template; its guided observe job freezes an
- // explicit unmapped interpretation; the first capture is retained as needs_review (mapping-required, zero rows); the owner maps it with
- // the existing importer; a mapped connection imports later captures. Four accounts stay separate. Fictional CSV columns only (the
- // actual PayPay export has not been observed).
+ // ── G (plan omf-paypay-four-accounts-20261021): PayPay銀行 標準 connects without an uploaded template; its job freezes an explicit
+ // unmapped interpretation; the first capture is retained as needs_review (mapping-required, zero rows); the owner maps it with the existing
+ // importer; a mapped connection imports later captures. Four accounts stay separate. Deliberate change (plan omf-paypay-routine-20261022
+ // Phase C): the job is a RETRIEVE job with the connection's frozen period (400 without one) and its captures arrive on the collector
+ // channel; a job queued before (a historical guided observe job) keeps its own label. Fictional CSV columns only.
  const templatesBefore=ok(await get('bank/templates'),'templates-before-paypay').templates.length;
  const pp=[];for(let i=1;i<=4;i++)pp.push(await account('PayPay '+i));
  const ppBa=await account('PayPay BA-PLUS'),ppPc=await collector('PayPay PC');
- for(const [i,id] of pp.entries()){const c=ok(await req('bank/accounts/'+id+'/connection',{provider:'paypay',variant:'standard',accountLabel:'PayPay '+(i+1)},'PUT'),'paypay-template-free-connection '+i).account.connection;assert.deepEqual([c.provider,c.variant,c.templateId],['paypay','standard',null],'bank:paypay-template-free '+i)}
+ const ppPeriod={from:'2026-10-01',to:'2026-10-20'};
+ for(const [i,id] of pp.entries()){const c=ok(await req('bank/accounts/'+id+'/connection',{provider:'paypay',variant:'standard',accountLabel:'PayPay '+(i+1),coverage:ppPeriod},'PUT'),'paypay-template-free-connection '+i).account.connection;assert.deepEqual([c.provider,c.variant,c.templateId],['paypay','standard',null],'bank:paypay-template-free '+i)}
  assert.equal((await req('bank/accounts/'+ppBa+'/connection',{provider:'paypay',variant:'baplus'},'PUT')).status,400,'bank:paypay-baplus-template-required');
  assert.equal((await req('bank/accounts/'+ppBa+'/connection',{provider:'paypay'},'PUT')).status,400,'bank:paypay-no-variant-template-required');
  assert.equal((await req('bank/accounts/'+ppBa+'/connection',{provider:'resona',variant:'direct'},'PUT')).status,400,'bank:template-required-other-provider');
@@ -253,10 +255,14 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  assert.equal(ok(await get('bank/templates'),'templates-after-paypay').templates.length,templatesBefore,'bank:paypay-no-template-created');
  assert.equal((await req('bank/accounts/'+pp[0]+'/sync',{})).status,409,'bank:sync-409-no-device');
  ok(await req('bank/collectors/'+ppPc.id,{bankAccountIds:[...pp,ppBa]},'PUT'),'collector-scope-paypay');
+ // a retrieve job needs the period on the connection (the bank's period is chosen from it)
+ ok(await req('bank/accounts/'+pp[3]+'/connection',{provider:'paypay',variant:'standard',accountLabel:'PayPay 4'},'PUT'),'paypay-connection-without-period');
+ const noPeriod=await req('bank/accounts/'+pp[3]+'/sync',{});assert.equal(noPeriod.status,400,'bank:paypay-retrieve-needs-period');assert.match(JSON.stringify(noPeriod.data),/取得期間/,'bank:paypay-retrieve-needs-period');
+ ok(await req('bank/accounts/'+pp[3]+'/connection',{provider:'paypay',variant:'standard',accountLabel:'PayPay 4',coverage:ppPeriod},'PUT'),'paypay-connection-period-restored');
  const ppJobs=[];
  for(const [i,id] of pp.entries()){const q=ok(await req('bank/accounts/'+id+'/sync',{}),'sync-paypay-'+i);const j=q.job;ppJobs.push(j);
-  assert.equal(j.kind,'observe','bank:paypay-guided-observe');assert.equal(q.message,'PayPay銀行の初回のガイド付き取得を予約しました。接続したPCのChromeで入出金明細のCSVを出力してください（列の割り当ては受信後）','bank:paypay-guided-message');
-  assert.deepEqual([j.snapshot.interpretation,j.snapshot.templateId,j.snapshot.templateRevision,j.snapshot.headers,j.snapshot.mapping,j.snapshot.provider,j.snapshot.variant,j.snapshot.currency,j.snapshot.accountLabel,j.snapshot.coverage],['unmapped',null,0,[],{},'paypay','standard','JPY','PayPay '+(i+1),null],'bank:paypay-unmapped-snapshot '+i)}
+  assert.equal(j.kind,'retrieve','bank:paypay-routine-retrieve');assert.equal(q.message,'取得を予約しました（2026-10-01〜2026-10-20）','bank:paypay-retrieve-message');
+  assert.deepEqual([j.snapshot.interpretation,j.snapshot.templateId,j.snapshot.templateRevision,j.snapshot.headers,j.snapshot.mapping,j.snapshot.provider,j.snapshot.variant,j.snapshot.currency,j.snapshot.accountLabel,j.snapshot.coverage],['unmapped',null,0,[],{},'paypay','standard','JPY','PayPay '+(i+1),ppPeriod],'bank:paypay-unmapped-snapshot '+i)}
  assert.equal(new Set(ppJobs.map(j=>j.snapshotHash)).size,4,'bank:paypay-four-snapshots');
  const baJob=ok(await req('bank/accounts/'+ppBa+'/sync',{}),'sync-paypay-baplus').job;assert.equal(baJob.kind,'observe');assert.equal(baJob.snapshot.interpretation,undefined,'bank:paypay-baplus-mapped-snapshot');assert.equal(baJob.snapshot.templateId,signedMap.id);
  const ppClaims=[];for(let n=0;n<5;n++){const c=ok(await dev('bank/claim',{},ppPc.token),'claim-paypay-'+n);assert.ok(c.job,'bank:paypay-claimed '+n);ppClaims.push(c)}
@@ -264,12 +270,12 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  for(const [i,j] of ppJobs.entries()){const c=ppClaims.find(x=>x.job.jobId===j.jobId);assert.ok(c,'bank:paypay-claim-own-job '+i);assert.equal(c.account._id,pp[i],'bank:paypay-claim-own-account '+i);assert.equal(c.job.snapshotHash,j.snapshotHash);assert.equal(c.job.provider,'paypay');assert.equal(c.account.connection.templateId,null)}
  ok(await dev('bank/status',{jobId:baJob.jobId,state:'complete',message:'BA-PLUS manual'},ppPc.token),'status-paypay-baplus');
  const ppCsv=i=>Buffer.from('日付,内容,出金金額,入金金額,残高\r\n2026/10/0'+(i+1)+',振込 架空商事'+(i+1)+',,'+(10000*(i+1))+','+(100000+10000*(i+1))+'\r\n2026/10/1'+(i+1)+',架空ストア,'+(330*(i+1))+',,'+(100000+10000*(i+1)-330*(i+1))+'\r\n');
- const ppUpload=(job,bytes,extra={})=>send(capi+'bank/upload?'+query({jobId:job.jobId,snapshotHash:job.snapshotHash,kind:'statement',channel:'collector-observe',name:'paypay-'+job.jobId.slice(0,4)+'.csv',sourceHost:'login.paypay-bank.co.jp',capturedAt:new Date().toISOString(),...extra}),bytes,'text/csv',ppPc.token);
+ const ppUpload=(job,bytes,extra={})=>send(capi+'bank/upload?'+query({jobId:job.jobId,snapshotHash:job.snapshotHash,kind:'statement',channel:'collector',name:'paypay-'+job.jobId.slice(0,4)+'.csv',sourceHost:'login.paypay-bank.co.jp',capturedAt:new Date().toISOString(),labelChecked:'true',...extra}),bytes,'text/csv',ppPc.token);
  const ppCaptures=[];
  for(const [i,j] of ppJobs.entries()){const r=ok(await ppUpload(j,ppCsv(i)),'capture-paypay-'+i);ppCaptures.push(r);
   assert.equal(r.state,'needs_review','bank:paypay-unmapped-needs-review '+i);assert.match(String(r.reason),/^mapping-required: /,'bank:paypay-mapping-required-reason '+i);assert.deepEqual(r.rows,{new:0,existing:0,unchanged:0,differs:0},'bank:paypay-zero-rows '+i);assert.equal(r.duplicate,false);
   assert.equal(await db.collection('financebankrows').countDocuments({bankAccountId:new ObjectId(pp[i])}),0,'bank:paypay-no-rows-written '+i);
-  const doc=await statementDoc(r.id);assert.equal(doc.capture.bankAccountId,pp[i],'bank:paypay-capture-own-account '+i);assert.equal(doc.capture.channel,'collector-observe');assert.equal(doc.capture.snapshot.interpretation,'unmapped');assert.equal(doc.capture.sourceHost,'login.paypay-bank.co.jp');assert.equal(doc.capture.labelChecked,false);
+  const doc=await statementDoc(r.id);assert.equal(doc.capture.bankAccountId,pp[i],'bank:paypay-capture-own-account '+i);assert.equal(doc.capture.channel,'collector');assert.equal(doc.capture.snapshot.interpretation,'unmapped');assert.equal(doc.capture.sourceHost,'login.paypay-bank.co.jp');assert.equal(doc.capture.labelChecked,true,'bank:paypay-label-checked '+i);
   assert.deepEqual(await fs.readFile(path.join(directory,'bank-statements',String(baseDevice.ownerId),doc.hash)),ppCsv(i),'bank:paypay-original-bytes '+i)}
  const ppAgain=ok(await ppUpload(ppJobs[0],ppCsv(0)),'capture-paypay-again');assert.equal(ppAgain.id,ppCaptures[0].id,'bank:paypay-duplicate-same-capture');assert.equal(ppAgain.duplicate,true);assert.equal(ppAgain.state,'needs_review');
  const conflict=await ppUpload(ppJobs[1],ppCsv(0));assert.equal(conflict.status,409,'bank:paypay-cross-account-conflict');assert.equal(conflict.data?.data?.code,'capture-other-account','bank:paypay-capture-other-account-code');
@@ -282,7 +288,7 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  const gone=await ppUpload({jobId:uuid(),snapshotHash:ppJobs[3].snapshotHash},ppCsv(8));assert.equal(gone.status,409);assert.equal(gone.data?.data?.code,undefined,'bank:paypay-job-unavailable-not-terminal');
  assert.equal((await ppUpload({jobId:ppJobs[2].jobId,snapshotHash:ppJobs[3].snapshotHash},ppCsv(9))).status,400,'bank:paypay-wrong-snapshot-400');
  const ppListed=ok(await get('bank/accounts/'+pp[0]+'/captures'),'captures-paypay').captures;assert.equal(ppListed.length,1);assert.match(String(ppListed[0].reason),/^mapping-required/);assert.equal(ppListed[0].dateRange,null,'bank:paypay-unmapped-no-range');
- for(const j of ppJobs.slice(0,2))ok(await dev('bank/status',{jobId:j.jobId,state:'complete',message:'観察記録を保存・明細 1件を保存'},ppPc.token),'status-paypay');
+ for(const j of ppJobs.slice(0,2))ok(await dev('bank/status',{jobId:j.jobId,state:'complete',message:'明細を保存'},ppPc.token),'status-paypay');
  ok(await dev('bank/status',{jobId:ppJobs[2].jobId,state:'failed',message:'PayPay銀行への自動サインインの完了を確認できませんでした'},ppPc.token),'status-paypay-failed');
  ok(await dev('bank/status',{jobId:ppJobs[3].jobId,state:'complete',message:'done'},ppPc.token),'status-paypay-4');
  // retry isolation: account 3's failure blocks nothing; it can be requested again, account 4's completed job is untouched
@@ -295,13 +301,18 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  assert.deepEqual((await rows(pp[0])).map(r=>[r.date,r.amount,r.direction]).sort(),[['2026-10-01',-10000,'in'],['2026-10-11',330,'out']],'bank:paypay-mapped-values');assert.equal((await rows(pp[1])).length,0,'bank:paypay-mapping-own-account');
  assert.deepEqual((await statementDoc(ppCaptures[0].id)).capture.state,'needs_review','bank:paypay-capture-receipt-immutable');assert.deepEqual((await statementDoc(ppCaptures[0].id)).dateRange,{min:'2026-10-01',max:'2026-10-11'},'bank:paypay-mapped-range');
  const ppTpl=ok(await get('bank/templates'),'templates-paypay').templates.find(t=>t.name==='PayPay 架空マップ');assert.ok(ppTpl,'bank:paypay-template-saved');
- const mapped=ok(await req('bank/accounts/'+pp[0]+'/connection',{provider:'paypay',variant:'standard',templateId:ppTpl.id,accountLabel:'PayPay 1'},'PUT'),'connection-paypay-mapped').account.connection;assert.equal(mapped.templateId,ppTpl.id,'bank:paypay-mapped-connection');
- const mappedJob=ok(await req('bank/accounts/'+pp[0]+'/sync',{}),'sync-paypay-mapped').job;assert.equal(mappedJob.kind,'observe');assert.equal(mappedJob.snapshot.interpretation,undefined,'bank:paypay-mapped-snapshot');assert.equal(mappedJob.snapshot.templateId,ppTpl.id);
+ const mapped=ok(await req('bank/accounts/'+pp[0]+'/connection',{provider:'paypay',variant:'standard',templateId:ppTpl.id,accountLabel:'PayPay 1',coverage:ppPeriod},'PUT'),'connection-paypay-mapped').account.connection;assert.equal(mapped.templateId,ppTpl.id,'bank:paypay-mapped-connection');
+ const mappedJob=ok(await req('bank/accounts/'+pp[0]+'/sync',{}),'sync-paypay-mapped').job;assert.equal(mappedJob.kind,'retrieve');assert.equal(mappedJob.snapshot.interpretation,undefined,'bank:paypay-mapped-snapshot');assert.equal(mappedJob.snapshot.templateId,ppTpl.id);
  const mappedClaim=ok(await dev('bank/claim',{},ppPc.token),'claim-paypay-mapped');assert.ok([mappedJob.jobId,retry3.jobId].includes(mappedClaim.job.jobId));const mappedClaim2=ok(await dev('bank/claim',{},ppPc.token),'claim-paypay-mapped-2');assert.ok([mappedJob.jobId,retry3.jobId].includes(mappedClaim2.job.jobId));
- const later=ok(await ppUpload(mappedJob,Buffer.from('日付,内容,出金金額,入金金額,残高\r\n2026/10/20,架空リース,5500,,94170\r\n')),'capture-paypay-mapped');assert.equal(later.state,'imported','bank:paypay-mapped-capture-imported');assert.deepEqual(later.rows,{new:1,existing:0,unchanged:0,differs:0});assert.equal((await rows(pp[0])).length,3);
+ const later=ok(await ppUpload(mappedJob,Buffer.concat([ppCsv(0),Buffer.from('2026/10/20,架空リース,5500,,104170\r\n')])),'capture-paypay-mapped');assert.equal(later.state,'imported','bank:paypay-mapped-capture-imported');assert.deepEqual(later.rows,{new:1,existing:2,unchanged:0,differs:0},'bank:paypay-mapped-overlap-anchored');assert.equal((await rows(pp[0])).length,3);
+ // a job queued before plan omf-paypay-routine-20261022 (a historical guided observe job, inserted with the shape the 12cf98c queue froze)
+ // keeps its own kind and label in the owner's job list
+ const histSnapshot={templateId:null,templateRevision:0,headers:[],mapping:{},amountSign:'outflow-positive',transactionIdConfirmed:false,parserVersion:'bank-template-1',currency:'JPY',provider:'paypay',accountLabel:'PayPay 2',variant:'standard',coverage:null,interpretation:'unmapped'},histJobId=uuid();
+ await db.collection('financebankjobs').insertOne({ownerId:new ObjectId(String(baseDevice.ownerId)),bankAccountId:new ObjectId(pp[1]),jobId:histJobId,kind:'observe',state:'complete',open:false,requestedAt:new Date(Date.now()-86400000),completedAt:new Date(Date.now()-86000000),lastMessage:'観察記録を保存・明細 1件を保存',snapshot:histSnapshot,snapshotHash:require('node:crypto').createHash('sha256').update(JSON.stringify(histSnapshot)).digest('hex'),statementIds:[],observation:null,createdAt:new Date(Date.now()-86400000),updatedAt:new Date(Date.now()-86000000)});
+ assert.deepEqual(ok(await get('bank/accounts/'+pp[1]+'/jobs'),'jobs-paypay-2').jobs.map(j=>j.kind).sort(),['observe','retrieve'],'bank:paypay-historical-job-listed');
  for(const j of [mappedJob,retry3])ok(await dev('bank/status',{jobId:j.jobId,state:'complete',message:'done'},ppPc.token),'status-paypay-final');
  assert.deepEqual(await Promise.all(pp.slice(1).map(id=>rows(id).then(r=>r.length))),[0,0,0],'bank:paypay-other-accounts-untouched');
- pass('G PayPay銀行 標準: template-free connection (BA-PLUS, no login type and other providers still need a template), four guided observe jobs with frozen unmapped interpretations and separate claims, first captures retained needs_review/mapping-required with zero rows and original bytes, duplicate replay, cross-account 409, retry isolation, native mapping through the importer, mapped connection imports the next capture');
+ pass('G PayPay銀行 標準: template-free connection (BA-PLUS, no login type and other providers still need a template), four retrieve jobs with their frozen period (none without one) and frozen unmapped interpretations and separate claims, first captures retained needs_review/mapping-required with zero rows and original bytes, duplicate replay, cross-account 409, retry isolation, native mapping through the importer, the mapped connection\'s next whole-period capture anchors the imported rows and adds only the new one; a historical guided job keeps its kind');
  // ── P (plan omf-paypay-split-dates-retry-20261022): PayPay銀行's actual statement shape — the transaction date in three columns
  // 操作日(年)/(月)/(日), plus 操作時刻 and 取引順番号 (a sequence number, not a bank transaction ID). Fictional Shift_JIS rows under the exact
  // observed headers. The template-free first capture stays mapping-required; the owner maps year/month/day in the importer on the ORIGINAL
@@ -311,10 +322,10 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  const splitRows=[['2026','10','1','9','15','2','1','振込 カクウショウジ','','50000','150000',''],['2026','10','2','12','0','45','2','カード引落 カクウカード','3300','','146700','引落'],['2026','10','2','12','0','45','3','カード引落 カクウカード','3300','','143400','引落']];
  const splitBytes=ppSplit(splitRows);assert.throws(()=>new TextDecoder('utf-8',{fatal:true}).decode(splitBytes),'bank:split-fixture-is-shift-jis');
  const psAcc=await account('PayPay split'),psPc=await collector('PayPay split PC');
- assert.equal(ok(await req('bank/accounts/'+psAcc+'/connection',{provider:'paypay',variant:'standard',accountLabel:'PayPay split'},'PUT'),'connection-split').account.connection.templateId,null);
+ assert.equal(ok(await req('bank/accounts/'+psAcc+'/connection',{provider:'paypay',variant:'standard',accountLabel:'PayPay split',coverage:{from:'2026-10-01',to:'2026-10-02'}},'PUT'),'connection-split').account.connection.templateId,null);
  ok(await req('bank/collectors/'+psPc.id,{bankAccountIds:[psAcc]},'PUT'),'collector-scope-split');
- const psUpload=(job,bytes)=>send(capi+'bank/upload?'+query({jobId:job.jobId,snapshotHash:job.snapshotHash,kind:'statement',channel:'collector-observe',name:'paypay-split-'+job.jobId.slice(0,4)+'.csv',sourceHost:'login.paypay-bank.co.jp',capturedAt:new Date().toISOString()}),bytes,'text/csv',psPc.token);
- const psJob=async label=>{const j=ok(await req('bank/accounts/'+psAcc+'/sync',{}),'sync-'+label).job;assert.equal(ok(await dev('bank/claim',{},psPc.token),'claim-'+label).job.jobId,j.jobId);return j};
+ const psUpload=(job,bytes)=>send(capi+'bank/upload?'+query({jobId:job.jobId,snapshotHash:job.snapshotHash,kind:'statement',channel:'collector',name:'paypay-split-'+job.jobId.slice(0,4)+'.csv',sourceHost:'login.paypay-bank.co.jp',capturedAt:new Date().toISOString()}),bytes,'text/csv',psPc.token);
+ const psJob=async label=>{const j=ok(await req('bank/accounts/'+psAcc+'/sync',{}),'sync-'+label).job;assert.equal(j.kind,'retrieve','bank:split-retrieve '+label);assert.equal(ok(await dev('bank/claim',{},psPc.token),'claim-'+label).job.jobId,j.jobId);return j};
  const psDone=j=>dev('bank/status',{jobId:j.jobId,state:'complete',message:'done'},psPc.token);
  // the current unknown capture stays unmapped (mapping-required, no rows) until the owner maps it
  const ps1=await psJob('split-1'),cap1=ok(await psUpload(ps1,splitBytes),'capture-split-1');
@@ -343,12 +354,12 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  assert.deepEqual(Object.keys(tpls.find(t=>t.id===bankMap.id).mapping),legacyKeys,'bank:legacy-template-unchanged');
  const legacySaved=await template('Legacy single date (split leg)',HEAD,{date:'0',description:'1',outflow:'2',inflow:'3',balance:'4',reference:'5'});assert.deepEqual(Object.keys(legacySaved.mapping),legacyKeys,'bank:legacy-template-save-unchanged');assert.deepEqual(Object.keys(ok(await get('bank/templates'),'templates-legacy').templates.find(t=>t.id===legacySaved.id).mapping),legacyKeys,'bank:legacy-template-roundtrip-unchanged');
  // the mapped connection: the job freezes the parts, a later capture is imported through the frozen snapshot, an identical replay is the same capture
- assert.equal(ok(await req('bank/accounts/'+psAcc+'/connection',{provider:'paypay',variant:'standard',templateId:psTpl.id,accountLabel:'PayPay split'},'PUT'),'connection-split-mapped').account.connection.templateId,psTpl.id);
+ assert.equal(ok(await req('bank/accounts/'+psAcc+'/connection',{provider:'paypay',variant:'standard',templateId:psTpl.id,accountLabel:'PayPay split',coverage:{from:'2026-10-20',to:'2026-10-21'}},'PUT'),'connection-split-mapped').account.connection.templateId,psTpl.id);
  const ps2=await psJob('split-2');assert.deepEqual([ps2.snapshot.mapping.dateYear,ps2.snapshot.mapping.dateMonth,ps2.snapshot.mapping.dateDay,ps2.snapshot.mapping.date],['0','1','2',''],'bank:split-frozen-mapping');assert.deepEqual(ps2.snapshot.headers,PP_HEAD);
  const laterBytes=ppSplit([['2026','10','20','8','30','0','4','カクウリース','5500','','137900','リース'],['2026','10','21','10','5','9','5','振込 カクウ取引先','','12000','149900','']]);
  const cap2=ok(await psUpload(ps2,laterBytes),'capture-split-2');assert.deepEqual([cap2.state,cap2.reason,cap2.rows],['imported',null,{new:2,existing:0,unchanged:0,differs:0}],'bank:split-frozen-capture-imported');
  const cap2Rows=(await rows(psAcc)).filter(r=>r.provenance[0].statementId===cap2.id).sort((a,b)=>a.date.localeCompare(b.date));
- assert.deepEqual(cap2Rows.map(r=>[r.date,r.amount,r.direction,r.provenance[0].channel,r.provenance[0].jobId,r.provenance[0].snapshotHash]),[['2026-10-20',5500,'out','collector-observe',ps2.jobId,ps2.snapshotHash],['2026-10-21',-12000,'in','collector-observe',ps2.jobId,ps2.snapshotHash]],'bank:split-frozen-capture-values');
+ assert.deepEqual(cap2Rows.map(r=>[r.date,r.amount,r.direction,r.provenance[0].channel,r.provenance[0].jobId,r.provenance[0].snapshotHash]),[['2026-10-20',5500,'out','collector',ps2.jobId,ps2.snapshotHash],['2026-10-21',-12000,'in','collector',ps2.jobId,ps2.snapshotHash]],'bank:split-frozen-capture-values');
  const replay=ok(await psUpload(ps2,laterBytes),'capture-split-replay');assert.deepEqual([replay.id,replay.duplicate,replay.state],[cap2.id,true,'imported'],'bank:split-replay-duplicate');assert.equal((await rows(psAcc)).length,5,'bank:split-replay-no-new-rows');ok(await psDone(ps2),'status-split-2');
  // holds: an impossible calendar day and an empty part are held with the row number; nothing is written and no day is invented
  for(const [label,bad] of [['invalid-day',['2026','2','30','9','0','0','6','カクウ不正日','100','','149800','']],['non-leap',['2027','2','29','9','0','0','7','カクウ非うるう','100','','149700','']],['partial',['2026','10','','9','0','0','8','カクウ日なし','100','','149600','']],['two-digit-year',['26','10','22','9','0','0','9','カクウ年2桁','100','','149500','']]]){
@@ -391,15 +402,21 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
    await settledClick(card(bankU)+'[data-bank-sync]');
    await wait(id=>!!document.querySelector('[data-bank-connection="'+id+'"] [data-bank-job]'),bankU).catch(async error=>{throw Error(error.message+' — panel: '+JSON.stringify(await page.evaluate(id=>{const c=document.querySelector('[data-bank-connection="'+id+'"]'),b=c?.querySelector('[data-bank-sync]');return {alert:document.querySelector('[data-bank-connections] [role="alert"]')?.textContent||null,message:c?.querySelector('[data-bank-sync-message]')?.textContent||null,sync:b?{text:b.textContent.trim(),disabled:b.disabled}:null,jobs:c?.querySelectorAll('[data-bank-job]').length}},bankU).catch(e=>String(e))))});
    const jobText=await page.$eval(card(bankU)+'[data-bank-job]',e=>e.textContent);assert.match(jobText,/観察取得/,'bank:chrome-job-kind');assert.match(jobText,/予約/,'bank:chrome-job-state');assert.match(await page.$eval(card(bankU)+'[data-bank-sync-message]',e=>e.textContent),/観察取得（準備）/,'bank:chrome-observe-message');
-   // G in Chrome: a guided PayPay標準 account without a template shows the guided capability and label, saves without a template, and its first capture waits for mapping
+   // G in Chrome (plan omf-paypay-routine-20261022): a PayPay標準 account without a template shows the routine capability (period, one CSV,
+   // single sign-in, never 上書きログイン, ログアウト, the unverified export limit) and 取得, saves without a template, and its first capture waits
+   // for mapping; the connection test reports the retrieve job; a historical guided job keeps its label; the guidance claims no live proof
    await wait(id=>!!document.querySelector('[data-bank-connection="'+id+'"] [data-bank-capture-mapping]'),pp[1]);
-   assert.match(await page.$eval(card(pp[1])+'[data-bank-capability]',e=>e.textContent),/ガイド付き/,'bank:chrome-paypay-guided-capability');
-   assert.equal(await page.$eval(card(pp[1])+'[data-bank-sync]',e=>e.textContent.trim()),'ガイド付き取得','bank:chrome-paypay-guided-sync');
+   const ppCapability=await page.$eval(card(pp[1])+'[data-bank-capability]',e=>e.textContent);
+   assert.match(ppCapability,/取得手順 実装済み（自動取得）/,'bank:chrome-paypay-routine-capability');for(const want of [/店番号・口座番号・ログインパスワード/,/1回だけ自動でサインイン/,/普通預金取引明細照会/,/CSVを1回だけ出力/,/ログアウト/,/上書きせずに止めて/,/まだ確認していません/])assert.match(ppCapability,want,'bank:chrome-paypay-routine-capability '+want.source);
+   assert.doesNotMatch(ppCapability,/ガイド付き|楽天銀行フォーマット/,'bank:chrome-paypay-routine-capability (no guided or Rakuten wording)');
+   assert.equal(await page.$eval(card(pp[1])+'[data-bank-sync]',e=>e.textContent.trim()),'取得','bank:chrome-paypay-routine-sync');
+   const ppJobTexts=await page.$$eval(card(pp[1])+'[data-bank-job]',es=>es.map(e=>e.textContent));assert.ok(ppJobTexts.some(t=>/自動取得/.test(t))&&ppJobTexts.some(t=>/ガイド付き取得/.test(t)),'bank:chrome-paypay-historical-guided-label '+JSON.stringify(ppJobTexts).slice(0,300));
+   const guidance=await page.$eval('[data-bank-login-guidance]',e=>e.textContent);assert.doesNotMatch(guidance,/PayPay銀行[^。]*利用できません/,'bank:chrome-guidance-paypay-implemented');assert.match(guidance,/実際の接続テストが成功するまでは確認済みではありません/,'bank:chrome-guidance-not-live-verified');
    assert.match(await page.$eval(card(pp[1])+'[data-bank-connection-state]',e=>e.textContent),/未割り当て/,'bank:chrome-paypay-unmapped-state');
    assert.equal(await page.$eval(card(pp[1])+'[data-bank-connect-save]',e=>e.disabled),false,'bank:chrome-paypay-guided-save-without-template');
    assert.match(await page.$eval(card(pp[1])+'[data-bank-capture-mapping]',e=>e.textContent),/列の割り当て待ち/,'bank:chrome-paypay-mapping-pending');
    assert.match(await page.$eval(card(pp[0])+'[data-bank-capture-mapping]',e=>e.textContent),/割り当て済み/,'bank:chrome-paypay-mapped-capture');
-   assert.match(await page.$eval(card(pp[1])+'[data-bank-test-state]',e=>e.textContent),/対象外/,'bank:chrome-paypay-no-automatic-claim');
+   const ppTest=await page.$eval(card(pp[1])+'[data-bank-test-state]',e=>e.textContent);assert.match(ppTest,/接続テスト: 完了（取り込んだ明細なし・要確認）/,'bank:chrome-paypay-test-state');assert.doesNotMatch(ppTest,/対象外|成功/,'bank:chrome-paypay-test-state (no success claimed)');
    await wait(id=>!!document.querySelector('[data-bank-connection="'+id+'"] [data-bank-capture-map]'),bankA);const captureText=await page.$eval(card(bankA)+'[data-bank-capture]',e=>e.textContent);assert.ok(/要確認|取込済み/.test(captureText),'bank:chrome-capture-state');assert.match(captureText,/口座照合 未確認/,'bank:chrome-label-unchecked');
    await settledClick(card(bankA)+'[data-bank-capture="'+held.id+'"] [data-bank-capture-map]');await wait(()=>!!document.querySelector('[data-bank-importer]')&&!document.querySelector('[data-bank-file]').disabled&&/原本を保存済み/.test(document.querySelector('[data-bank-importer]').textContent));
    assert.ok(await page.evaluate(id=>document.querySelector('[data-bank-file-picker]')?.value===id,held.id),'bank:chrome-picker-selected');assert.match(await page.$eval('[data-bank-file-picker] option:checked',e=>e.textContent),/口座照合 未確認/,'bank:chrome-picker-label-unchecked');

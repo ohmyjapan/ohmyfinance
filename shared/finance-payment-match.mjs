@@ -24,14 +24,17 @@ export const BANK_SOFTWARE={resona:'りそなビジネスダイレクトの電�
 // support in BANK_PROVIDERS stays honest (every bank contract-pending); a variant listed here has an implemented retrieval path in
 // the collector (collector/banks/<provider>.mjs `variants`). Implemented steps are not a successful connection test: liveVerified
 // stays false until an owner-run job proves the connection. Every other provider/variant keeps the preparatory observe stage.
-export const BANK_VARIANT_COLLECTION={rakuten:{standard:'retrieve'}};
+// Plan omf-paypay-routine-20261022 Phase C: PayPay銀行 標準 retrieves too (the observed statement steps in collector/banks/paypay.mjs);
+// its BA-PLUS and no-variant connections keep the observe stage. Jobs queued earlier keep the kind they were queued with.
+export const BANK_VARIANT_COLLECTION={rakuten:{standard:'retrieve'},paypay:{standard:'retrieve'}};
 export function bankCollectionMode(provider,variant){if(BANK_PROVIDERS.find(p=>p[0]===provider)?.[2]==='verified')return 'retrieve';return BANK_VARIANT_COLLECTION[provider]?.[variant]==='retrieve'?'retrieve':'observe';}
 // The bank's own statement format a retrieving variant downloads: OMF creates/reuses this owner template for the connection, so no
 // CSV has to be uploaded first (楽天銀行 標準: the four observed columns, outflow negative, no bank transaction ID).
 export const BANK_NATIVE_TEMPLATES={rakuten:{standard:{key:'rakuten-standard-native',name:'楽天銀行 標準フォーマット（自動）',headers:['取引日','入出金(円)','残高(円)','入出金先内容'],mapping:{date:'0',description:'3',amount:'1',outflow:'',inflow:'',balance:'2',reference:'',transactionId:'',currency:'',direction:''},amountSign:'outflow-negative'}}};
 // Plan omf-paypay-four-accounts-20261021: a variant whose FIRST capture needs no uploaded file or template — its guided observe job
 // freezes an explicit unmapped interpretation, the received CSV is kept as needs_review (mapping-required, no rows) and the owner maps it
-// with the existing importer. Only PayPay銀行 標準 is listed; automatic collection stays contract-pending (bankCollectionMode: observe).
+// with the existing importer. Only PayPay銀行 標準 is listed. Plan omf-paypay-routine-20261022: its jobs now retrieve; a connection
+// without a template still freezes the unmapped interpretation, so its first routine capture is kept for the owner's one mapping.
 export const BANK_FIRST_CAPTURE={paypay:{standard:'unmapped'}};
 export function bankFirstCapture(provider,variant){return BANK_FIRST_CAPTURE[provider]?.[variant]==='unmapped'?'unmapped':null;}
 export function bankCapability(provider,variant){const mode=bankCollectionMode(provider,variant),template=BANK_NATIVE_TEMPLATES[provider]?.[variant]||null;return{mode,steps:mode==='retrieve'?'implemented':'contract-pending',template:template?template.key:null,period:mode==='retrieve'?'required':'portal',liveVerified:false};}
@@ -90,6 +93,77 @@ export function recordTotals(record,allocations){const v=vals(record),currency=v
   const amount=different?Number(a.recordAmount??a.amount):Number(a.amount);if(amount>=0)paid=round(paid+amount);else refunded=round(refunded-amount);
  }const net=round(paid-refunded),remaining=total===null?null:round(total-net);return{total,currency,paid,refunded,net,remaining,otherCurrency,state:remaining===null?'unknown':remaining < 0 ? 'overpaid':remaining===0?'settled':net?'partial':'unpaid'};}
 export function changedSince(snapshot,current){return ['amount','itemPrice','tax','shippingFee','otherFee','currency','supplierName','invoiceNumber'].filter(k=>(snapshot?.[k]??'')!==(current?.[k]??'')).map(field=>({field,before:snapshot?.[field]??'',after:current?.[field]??''}));}
+// Plan omf-paypay-routine-20261022 Phase S (D2): the canonical row of each planned statement row when the same transactions arrive
+// again in another file (a refreshed or overlapping export). Pure. In order: the same source row already recorded — its `file:` key,
+// else its source (hash/sheet/row) recorded on one canonical row (an earlier alias). Then, only in `capture` mode (a retrieve job's
+// capture with a frozen period and a mapped balance column) or `owner` mode (an owner import whose mapping has a balance column), a
+// row is anchored to an existing file-row with exactly the same date, direction, amount, currency, description, reference and
+// running balance — and only when that tuple is unique on BOTH sides (genuine same-day twins differ by their running balance; two
+// indistinguishable copies are never paired arbitrarily). `owner` mode links only to rows a collector captured, so owner-to-owner
+// cross-file copies keep the existing explicit review. `capture` mode also holds (needs_review, nothing written): a row outside the
+// frozen period, a row without a balance when there is anything to anchor, an ambiguous tuple, and an existing in-period row of the
+// account that the capture lacks before the period's final day (another account's statement, a truncated export or a bank-side
+// change; the final day may legitimately be partial). `resolve` mode (observe captures, mappings without a balance) only resolves.
+export const BANK_COLLECTOR_CHANNELS=['collector','collector-observe'];
+const rowIdOf=e=>String(e?._id??e?.id??'');
+const sameSource=(p,s)=>!!p&&!!s&&p.hash===s.hash&&p.sheet===s.sheet&&p.row===s.row;
+// The running balance a canonical row is anchored by (build-resume-04, parent finding PARENT-BALANCE-CORRECTION-FINDING.md): the owner's
+// CURRENT reviewed balance (BankRow.balance, written at creation and changed only by a revisioned owner reinterpretation of the same
+// source row) when recorded; else — rows written before it existed — the one balance its provenance carries. Provenance balances stay
+// the immutable record of what each source said; an owner's corrected balance-column mapping therefore takes effect for later anchors.
+export function bankRowBalance(e){if(typeof e?.balance==='number'&&Number.isFinite(e.balance))return e.balance;const b=[...new Set((e?.provenance||[]).map(p=>p?.balance).filter(v=>typeof v==='number'&&Number.isFinite(v)))];return b.length===1?b[0]:null}
+const balanceOf=bankRowBalance;
+const tupleOf=(r,balance)=>JSON.stringify([r.date,r.direction,String(r.amount),r.currency,r.description,r.reference,r.transactionId||'',String(balance)]);
+const OVERLAP_TEXT={
+ 'period-mismatch':(n,c)=>`取得期間（${c.from}〜${c.to}）の外の日付の取引が${n}件含まれているため、取り込んでいません。銀行の画面の期間を確認して、もう一度「取得」を押してください`,
+ 'balance-missing':n=>`残高のない取引が${n}件あり、取り込み済みの明細と照合できないため、取り込んでいません。「取込で割り当て」から内容を確認してください`,
+ 'overlap-ambiguous':()=>'取り込み済みの明細に、日付・金額・内容・残高がすべて同じ取引が複数あり、どれと同じ取引かを決められないため、取り込んでいません。支払い照合で「重複の可能性」がある明細を確認してから、もう一度「取得」を押してください',
+ 'overlap-mismatch':n=>`この口座に取り込み済みの取引のうち${n}件が今回の明細にありません（別の口座の明細、または途中までの明細の可能性があります）。取り込んでいません。接続している口座とログイン、取得期間を確認してください`
+};
+// Build-resume-05: the balance tuple of a row's current interpretation, and the identity a reinterpretation reserves for it — the first
+// ordinal of that tuple not yet reserved in the planning snapshot (the same rule a created row's identity follows), or null for a row that
+// takes no identity (not a file-row, or no balance). Pure.
+export function bankRowTuple(row,balance){return tupleOf(row,balance)}
+export function bankCurrentIdentity(row,balance,reserved=null){if(row?.idKind!=='file-row'||typeof balance!=='number'||!Number.isFinite(balance))return null;const t=tupleOf(row,balance),isReserved=typeof reserved==='function'?reserved:()=>false;let k=1;while(isReserved(t+'#'+k))k++;return t+'#'+k}
+export function bankOverlapPlan(existing,planned,{mode='resolve',coverage=null,reserved=null}={}){
+ const list=Array.isArray(existing)?existing:[],rows=Array.isArray(planned)?planned:[],capture=mode==='capture'&&!!coverage,anchoring=capture||mode==='owner';
+ const targets=rows.map(()=>null),via=rows.map(()=>null),used=new Set();
+ const hold=(code,n)=>({held:true,code,reason:code+': '+OVERLAP_TEXT[code](n,coverage),targets:rows.map(()=>null),via:rows.map(()=>null),identities:rows.map(()=>null),anchored:0});
+ // Canonical identity of each row this plan will CREATE (capture/owner mode, file-row with a numeric balance): the balance tuple and
+ // an ordinal — the first ordinals of that tuple not yet reserved in this planning snapshot, one per created row in file order.
+ // `reserved(identity)` answers from the account's immutable reservation history (the caller stores a digest as BankRow.canonicalKey,
+ // unique per account, and never rewrites it when the owner later reinterprets the row), NOT from the rows' current values: a row
+ // whose memo or other field was reinterpreted keeps its original reservation, and a later copy of its original tuple takes the next
+ // free ordinal instead of colliding with it forever. Reservations only grow, so two writers planning from the same snapshot derive
+ // the same identity (the database lets only one publish it), a writer with an older snapshot collides with what a newer one
+ // published, and a writer that re-plans always gets an identity it can publish. Genuine repeats in one file, later owner copies and
+ // rows after a superseded one get the next ordinals.
+ const identities=rows.map(()=>null),isReserved=typeof reserved==='function'?reserved:()=>false;
+ const done=n=>{if(anchoring){const next=new Map();
+  rows.forEach((r,i)=>{if(targets[i]!==null||r.idKind!=='file-row'||typeof r.balance!=='number'||!Number.isFinite(r.balance))return;const t=tupleOf(r,r.balance);let k=next.get(t)||1;while(isReserved(t+'#'+k))k++;identities[i]=t+'#'+k;next.set(t,k+1)})}
+  return{held:false,code:null,reason:null,targets,via,identities,anchored:n}};
+ for(let i=0;i<rows.length;i++){const r=rows[i],byKey=list.find(e=>e.key===r.key);if(byKey){targets[i]=rowIdOf(byKey);via[i]='key';used.add(targets[i]);continue}
+  // Build-resume-06 (parent finding PARENT-BANK-ID-FINDING.md): a recorded-source alias links a FILE-ROW to a file-row only (the alias an
+  // anchor or an owner link recorded). A confirmed bank ID keeps its key-only identity as on 12cf98c: a changed ID mapping on the same
+  // source creates the other ID's row and never rewrites the original one, and a file-row and a bank-ID row of one source stay distinct.
+  const source=r.provenance?.[0],bySource=r.idKind==='file-row'?list.filter(e=>e.idKind==='file-row'&&(e.provenance||[]).some(p=>sameSource(p,source))):[];
+  if(bySource.length===1){targets[i]=rowIdOf(bySource[0]);via[i]='source';used.add(targets[i])}else if(bySource.length>1&&capture)return hold('overlap-ambiguous',bySource.length)}
+ if(capture){const outside=rows.filter(r=>r.date<coverage.from||r.date>coverage.to);if(outside.length)return hold('period-mismatch',outside.length)}
+ if(!anchoring)return done(0);
+ const candidates=list.filter(e=>!used.has(rowIdOf(e))&&e.state!=='superseded'&&e.idKind==='file-row'&&(capture?e.date>=coverage.from&&e.date<=coverage.to:(e.provenance||[]).some(p=>BANK_COLLECTOR_CHANNELS.includes(p?.channel))));
+ if(!candidates.length)return done(0);
+ const open=rows.map((r,i)=>i).filter(i=>targets[i]===null&&rows[i].idKind==='file-row'),numeric=v=>typeof v==='number'&&Number.isFinite(v);
+ const unbalanced=open.filter(i=>!numeric(rows[i].balance));if(capture&&unbalanced.length)return hold('balance-missing',unbalanced.length);
+ const byTuple=new Map(),byPlanned=new Map();
+ for(const e of candidates){const b=balanceOf(e);if(b===null)continue;const t=tupleOf(e,b);byTuple.set(t,[...(byTuple.get(t)||[]),e])}
+ for(const i of open){if(!numeric(rows[i].balance))continue;const t=tupleOf(rows[i],rows[i].balance);byPlanned.set(t,[...(byPlanned.get(t)||[]),i])}
+ const anchored=new Set();
+ for(const [t,group] of byPlanned){const matches=byTuple.get(t);if(!matches)continue;
+  if(group.length!==1||matches.length!==1){if(capture)return hold('overlap-ambiguous',group.length);continue}
+  targets[group[0]]=rowIdOf(matches[0]);via[group[0]]='anchor';anchored.add(targets[group[0]])}
+ if(capture){const missing=candidates.filter(e=>!anchored.has(rowIdOf(e))&&e.date<coverage.to);if(missing.length)return hold('overlap-mismatch',missing.length)}
+ return done(anchored.size);
+}
 export function correctionPairs(existing,incoming){const pairs=[];for(const row of incoming)for(const old of existing){if(old.key===row.key||old.state==='superseded'||old.date!==row.date||old.direction!==row.direction||old.amount!==row.amount||old.currency!==row.currency)continue;if(old.idKind==='bank-id'&&row.idKind==='bank-id')continue;if(old.idKind==='file-row'&&row.idKind==='file-row'&&old.key.split(':')[1]===row.key.split(':')[1])continue;pairs.push({oldId:rid(old),oldKey:old.key,newKey:row.key,newId:rid(row),kind:old.fingerprint===row.fingerprint?'duplicate':'correction',label:old.fingerprint===row.fingerprint?'重複の可能性':'訂正の可能性'});}return pairs;}
 export function settlementCandidates(bank,cardRows,batches,bills){const result=[];if(bank.amount<=0)return result;
  for(const card of cardRows){if(card.sourceKind!=='repayment'||card.amount>=0||Math.abs(card.amount)!==bank.amount||(card.currency||'JPY')!==(bank.currency||'JPY')||days(card.date,bank.date)>5)continue;
