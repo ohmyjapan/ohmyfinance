@@ -22,6 +22,38 @@ the corrected decode):
   control, the CSV's encoding, headers, sign convention, date format, record identifiers and how the account is identified on the
   page; the bank's answer to a wrong password, additional verification, password expiry, session time-outs and maintenance pages.
 
+## Observed facts (actual, 2026-10-22, plan `omf-paypay-split-dates-retry-20261022`)
+
+Recorded by the parent from the owner's own guided capture and bank window; no transaction value, credential or private row is kept
+here or in any test (hub `output/plan/omf-paypay-self-operated-20261022/ACTUAL-PAYPAY2-CSV-SHAPE.json`, job `a7272a5b…`, and the
+observation of job `4ad1dcef…`):
+
+- The official statement export is a Shift_JIS CSV with 12 columns and this exact header row: `操作日(年)`, `操作日(月)`, `操作日(日)`,
+  `操作時刻(時)`, `操作時刻(分)`, `操作時刻(秒)`, `取引順番号`, `摘要`, `お支払金額`, `お預り金額`, `残高`, `メモ`. The transaction date is
+  three columns; `取引順番号` is a sequence number of the export, **not** a bank-issued transaction ID (it is never guessed as one).
+- After a correct saved login while another session of the account was signed in, the bank answered on `/wctx/NBCW2101.do` with the
+  standard login form again under the visible heading `上書きログイン（ログイン中です）` and a separate public control `上書きログイン`. The
+  build before this plan took that page for a refusal (marker `refused`) and the owner then had to type the unchanged login again.
+
+## Split transaction dates (year / month / day columns)
+
+- `shared/finance-payment-match.mjs BANK_DATE_PARTS` adds three OPTIONAL mapping keys `dateYear`, `dateMonth`, `dateDay` (labels
+  取引日（年）/（月）/（日）, aliases: the observed headers only, compared after NFKC so （） and () are the same). They are kept out of
+  `BANK_FIELDS`, so every existing mapping — saved templates, frozen job snapshots, 楽天銀行's native template — keeps exactly its ten keys
+  and its bytes (`mappingOf` carries a part key only when it is assigned).
+- The date source of a mapping (`bankDateSource`): the direct `date` column when assigned (it always wins), else all three parts, else
+  none. Preview/import (`planned`), template save and the frozen capture (`planCapture`) accept either; a mapping with neither keeps the
+  existing 400 / `needs_review` hold.
+- `normalizeBankRow`: with a direct date (or no part value at all) the direct-date path is byte-for-byte the old one. Otherwise the row's
+  date is built from a 4-digit year and a 1-2 digit month and day (digits only after NFKC) and must be a real calendar day; an empty or
+  malformed part is the same `取引日を確認してください。` error, so the row is held with its row number — no day, month or year is invented.
+- Raw provenance is unchanged: the original bytes are retained and hashed, each row keeps the sheet's raw cell array (all 12 columns),
+  `file:<hash>:<sheet>:<row>` keys, duplicates/corrections and holds as before. No compatibility copy or rewritten row is created.
+- The importer (`components/intake/BankStatementImporter.vue`) shows a 「取引日が年・月・日の3列に分かれている場合」 group with the three
+  selects (guessed from the exact headers, cleared when another file is picked) and explains that 取引日 must stay unassigned.
+- A first guided capture still arrives unmapped (`mapping-required`, zero rows) until the owner maps it once; that template then makes
+  later captures of the account import through the frozen mapping.
+
 ## What the software does
 
 ### OMF (native)
@@ -67,19 +99,25 @@ the corrected decode):
   confirms the saved login. The parent's counterexample (an unconfirmed attempt followed by a CSV-shaped file from the public
   homepage host) is the permanent regression `scripts/zoomer-fixtures/omf-paypay-login-proof.mjs`. After every submission the
   marker stays: kind `uncertain` (written before the submission) or `refused` (the adapter saw the exact login form again on a new
-  document). A file the person exported is retained for native mapping — only when it is a readable CSV/text statement by OMF's own
+  document). **Session in use** (plan `omf-paypay-split-dates-retry-20261022`): when that new document also shows exactly one visible
+  h1 whose text is exactly `上書きログイン（ログイン中です）` (`banks/paypay.mjs SESSION_IN_USE_HEADING`, read-only), the outcome is
+  `session-in-use` — not a refusal and not a sign-in: the marker stays `uncertain`, nothing is submitted again, `上書きログイン` is never
+  pressed (the person may do so in the shown window), and the job explains the other session and the explicit retry. A hidden, different,
+  longer or doubled heading stays an ordinary refusal; the heading without the form is not classified. A file the person exported is retained for native mapping — only when it is a readable CSV/text statement by OMF's own
   text rule (`statementText`: non-empty, at most 10 MiB, no NUL byte, strict UTF-8 or Shift_JIS, not a PDF; an empty-period header-only
   file passes) — and the job completes with a notice; anything else (PDF, binary, undecodable, empty, oversized) is not sent, stays in
   the job folder and the job ends `failed` saying so (review fold F3). Without a file the job ends `failed` with the explanation. Later jobs submit nothing while the marker holds. A reclaimed job whose folder holds
   `login.json` never submits again, even after a retry.
-- **Protected per-account retry** (`collector/setup.js` → `POST /bank/retry` → `index.mjs retryBankLogin`): for an `uncertain`
-  account the setup section offers "Allow one more sign-in with the saved login". It reserves the collector action slot before its
-  first await (`reserveAction`, released in `finally`), needs the protected session, and under the store lock re-checks the session,
-  the account as OMF grants it now (owner, PayPay, 標準), the current sealed entry and that entry's own marker (kind `uncertain` for
-  the current key); then it removes only that marker file. Nothing is decrypted, read back, re-entered, queued or submitted, and job
-  journals stay. The next job the owner requests in OMF submits once. A `refused` marker, a marker of a superseded key, a marker
-  without a kind, a missing or unbound entry, another provider/variant/owner or an ungranted account is refused — a refusal needs
-  corrected values saved in the same section. 楽天銀行 markers and their re-save behaviour are unchanged. The route itself is proven in the
+- **Protected per-account retry** (`collector/setup.js` → `POST /bank/retry` → `index.mjs retryBankLogin`): for an `uncertain` or
+  (plan `omf-paypay-split-dates-retry-20261022`) `refused` account the setup section offers "Allow one more sign-in with the saved
+  login"; the refused note says to enter all three fields only if they changed, otherwise to retry with the saved login instead of
+  typing it again. It reserves the collector action slot before its first await (`reserveAction`, released in `finally`), needs the
+  protected session, and under the store lock re-checks the session, the account as OMF grants it now (owner, PayPay, 標準), the current
+  sealed entry and that entry's own marker (kind `uncertain` or `refused` for the current key, the entry's own name); then it removes only
+  that marker file. Nothing is decrypted, read back, re-entered, queued or submitted, and job journals stay. The next job the owner
+  requests in OMF submits once. Never automatic: only the owner's click. A marker of a superseded key (uncertain or refused), a marker
+  without a kind, a marker naming another entry, a missing or unbound entry, another provider/variant/owner or an ungranted account is
+  refused. Changed values are still saved in the same section. 楽天銀行 markers and their re-save behaviour are unchanged. The route itself is proven in the
   native walkthrough (review fold F4): while a job holds the slot a retry answers 409 and the marker stays byte-identical; a retry whose
   body is still arriving already holds the slot, so no tick claims a queued job until it completes; then the slot is released.
 - **Refused statements (review fold F3)** (`index.mjs runBankJob`/`pendingBank`): OMF's permanent refusal of a retained bank statement —
@@ -103,6 +141,15 @@ Owner UI (`BankConnections.vue`) → `saveBankConnection`/`queueBankSync`/`setCo
 retained manifest (guided: only a readable CSV/text file) → `bank/upload` → `acceptBankJobUpload` → `acceptBankCapture` (a permanent
 415/409 `capture-other-account` → the manifest's `refusal`, skipped by `pendingBank`) → `planCapture` (unmapped hold) → importer
 (`readBankSheet`/`previewBankImport`/`importBankFile`/`saveBankTemplate`) → `BankRow` → existing classification/matching.
+Split dates (plan `omf-paypay-split-dates-retry-20261022`): `BANK_DATE_PARTS` → `guessBankMapping` (`readBankSheet`) → importer
+selects → `mappingOf` (preview/import/`saveBankTemplate`; `planCapture` on the frozen `snapshot.mapping` copied by `snapshotOf`) →
+`bankDateSource` (owner 400 / capture hold) → `planRows` (part cells only when no direct date) → `normalizeBankRow` → `BankRow` (raw cell
+array, `file:` key, fingerprint) → unchanged matching. Other `BANK_FIELDS` callers inspected and unchanged: `BankConnections.vue`
+(native template lookup), `financeBankCollectionService` (`nativeTemplate` compares only the native keys; `snapshotOf` copies the
+template mapping as stored), `BankTemplate.mapping` (Mixed: optional keys round-trip), `scripts/finance-payment-match.test.mjs` (the
+ten legacy keys, guesses and native template unchanged). Session in use / retry: `standardUi.settle` → `sessionInUse` →
+`guidedSignIn` (`inUse`, marker stays `uncertain`) → `observeFromPage` (ask/failed texts) → `runBankJob` status; setup `/status`
+`pendingOf` → `setup.js` retry button → `/bank/retry` (`reserveAction` before the body) → `retryBankLogin`.
 Setup: `setup.js` → `/bank/credentials` → `saveBankLogin` → `SplitStore.save` → key service `putKey`/`getKey` → `binding` →
 `bankBinding`. Unchanged callers re-verified: 楽天銀行 standard retrieval and its saved login, 楽天銀行 and other observe jobs (no saved
 login, visible window, same message), Amex/Aplus per-account and legacy Aplus keys, Gmail/Yayoi/check/legacy entries, idle ticks,
@@ -123,10 +170,20 @@ further edit mutants reintroduce the P1 defect (a kept CSV accepted as proof), a
 assertion. Model freshness is not applicable (deterministic code). Real historical replay and read-only production observation
 belong to the parent; no PayPay production row or credential exists for this build.
 
+Plan `omf-paypay-split-dates-retry-20261022` widened existing exits instead of adding guards: the owner/capture required-date checks
+(`bankDateSource`), the normalizer's date source, the adapter's refusal exit (`session-in-use` before `rejected`), the guided outcome and
+the retry bound (`guard:bank-retry-uncertain` now admits `uncertain` or `refused` of the current key and entry). Its fixture
+`scripts/zoomer-fixtures/omf-paypay-split-dates-retry.mjs` reintroduces each defect by name (parts ignored, invented day, parts over a
+direct date, unchecked calendar, loose header guess, 取引順番号 as a bank ID, active session taken for a refusal, a loose heading, the
+active session marked refused or taken as a sign-in, retry of any pending kind, of a superseded key, of a misnamed marker, refused still
+blocked, and both server date exits unwidened) and requires the named assertion to fail. The full audit is the build's
+`7-shared-boundary-audit.md` (hub).
+
 ## Not observed / not supported / pending
 
-- **Automatic routine collection stays contract-pending** until an actual authenticated export is observed (controls, limits,
-  headers, signs, account identity). Only then can a contract and a mapped native template be written, reviewed and released.
+- **Automatic routine collection stays contract-pending.** The export's header shape is now observed (above), but the authenticated
+  controls, limits, sign facts across accounts and account identity are not a reviewed contract; no automatic export, no native PayPay
+  template and no new sign-in proof is claimed. The actual 12-row replay of the owner's capture belongs to the parent.
 - **BA-PLUS** stays a manual observe job (homepage start, no saved login, template required).
 - The actual first guided capture with the owner's real logins has not happened; it follows review, the separate deployment
   approval and the owner's one-time save in the reviewed installed downloader.
@@ -141,5 +198,6 @@ belong to the parent; no PayPay production row or credential exists for this bui
    the setup section now reads "not confirmed" (uncertain) — the file is not taken as proof.
 4. Map it in 取込で割り当て, import, save the template, choose it on the connection; repeat for PayPay 2-4 (their own files). Before
    each later job of an account, press "Allow one more sign-in with the saved login" in its setup section if the saved login is right
-   (or save corrected values after a refusal).
+   — also after a refusal or a 上書きログイン（ログイン中です） page when nothing changed — or save the changed values. Map the actual
+   export with the 年・月・日 selects (取引日 unassigned).
 5. Record the actual export facts (headers, encoding, signs, limits, account identity) for the later automatic-collection plan.
