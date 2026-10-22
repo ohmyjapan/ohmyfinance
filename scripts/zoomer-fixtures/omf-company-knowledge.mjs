@@ -26,7 +26,7 @@ export default{name:'omf-company-knowledge',covers:['server/models/FinanceCompan
    await test('ignore-teaching-revision','const revisionScope = (organizationId, knowledgeId, expectedRevision) => ({ ...knowledgeScope(organizationId, knowledgeId), revision: expectedRevision });','const revisionScope = (organizationId, knowledgeId, expectedRevision) => ({ ...knowledgeScope(organizationId, knowledgeId) });','knowledge:stale-revision');
    await test('unscoped-archive-read','const archiveScope = (ownerId, organizationId, archiveId) => ({ _id: archiveId, ownerId, organizationId });','const archiveScope = (ownerId, organizationId, archiveId) => ({ _id: archiveId });','knowledge:history-foreign');
    await test('regex-merchant-pattern','const literalPattern = (value) => value.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");','const literalPattern = (value) => value;','knowledge:pattern-literal');
-   await test('unchecked-record-navigation','if (!navigation?.transactionId) return true;','return true;','knowledge:foreign-record-navigation');
+   await test('unchecked-record-navigation','if (navigation?.transactionId) await getCompanyNaviTransaction(organizationId, navigation.transactionId);','/* deliberately skip transaction navigation verification */','knowledge:foreign-record-navigation');
    await test('global-teaching-list','const companyKnowledge = (organizationId) => ({ organizationId });','const companyKnowledge = (organizationId) => ({});','knowledge:company-separation');
   }catch(e){pass=false;mutants.push({setupError:String(e.message),detected:false})}finally{await rm(directory,{recursive:true,force:true})}
  }

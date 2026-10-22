@@ -19,7 +19,11 @@ module.exports=async({root,origin,ok,token,ask,action,done,heartbeat,pause,pass}
   await patch(record.id,{description:'Navi clean refresh',notes:'Clean note'},job);assert.equal((await done(job,'테스트 응답: 요청한 내용을 저장했어요.')).status,200);
   await wait(()=>document.querySelector('#intake-description')?.value==='Navi clean refresh',[],'clean-refresh');assert.equal(await page.$eval('#intake-notes',e=>e.value),'Clean note','navi-intake:chrome-clean-state');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'navi-intake:chrome-mobile-overflow');
+  // The mobile rail covers this input while open: minimize it, make a real native edit, then reopen it for refresh checks.
+  await page.click('[data-assistant-close]');await wait(()=>document.querySelector('#omf-assistant')?.getClientRects().length===0,[],'minimized-before-form-edit');
   await page.click('#intake-description',{clickCount:3});await page.keyboard.type('Unsaved owner edit');
+  assert.equal(await page.$eval('#intake-description',e=>e.value),'Unsaved owner edit','navi-intake:chrome-owner-edit-reached-input');
+  await page.click('[data-assistant-toggle]');await wait(()=>!!document.querySelector('#assistant-message')?.getClientRects().length,[],'reopened-after-form-edit');
   await heartbeat();job=await ask({page:'intake',recordId:record.id},'メモだけを更新してください。');await patch(record.id,{notes:'Newer saved note'},job);assert.equal((await done(job,'테스트 응답: 메모를 저장했어요.')).status,200);
   await wait(()=>[...document.querySelectorAll('[role=alert]')].some(e=>e.textContent.includes('編集中の内容は保持')),[],'dirty-warning');
   assert.equal(await page.$eval('#intake-description',e=>e.value),'Unsaved owner edit','navi-intake:chrome-dirty-preserved');assert.equal(await page.$eval('#intake-notes',e=>e.value),'Clean note','navi-intake:chrome-dirty-baseline-kept');

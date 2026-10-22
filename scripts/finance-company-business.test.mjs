@@ -6,7 +6,7 @@ import { assistantConversationScope, assistantPage } from '../shared/finance-ass
 import { naviFeature } from '../shared/finance-navi-features.mjs';
 
 const writes = ['create_company_transaction', 'delete_company_transaction', 'create_company_invoice', 'delete_company_invoice', 'create_company_calendar_entry', 'delete_company_calendar_entry', 'create_company_budget', 'update_company_budget', 'delete_company_budget', 'create_company_recurring_payment', 'update_company_recurring_payment', 'delete_company_recurring_payment', 'generate_company_recurring_forecast', 'schedule_company_invoice_payment'];
-const reads = ['get_company_invoice_calendar','get_company_profile', 'get_company_finance_summary', 'list_company_receipts', 'get_company_receipt', 'list_company_budgets', 'get_company_budget', 'list_company_recurring_payments', 'get_company_recurring_payment', 'list_company_conversation_history', 'get_company_conversation_archive', 'get_company_knowledge'];
+const reads = ['find_company_receipt_matches','get_company_invoice_calendar','get_company_profile', 'get_company_finance_summary', 'list_company_receipts', 'get_company_receipt', 'list_company_budgets', 'get_company_budget', 'list_company_recurring_payments', 'get_company_recurring_payment', 'list_company_conversation_history', 'get_company_conversation_archive', 'get_company_knowledge'];
 
 test('the business catalogue is a finite set of named native adapters, never a generic endpoint', () => {
  assert.deepEqual(companyBusinessTools.map(t => t.name).sort(), [...writes, ...reads].sort(), 'business:catalogue');

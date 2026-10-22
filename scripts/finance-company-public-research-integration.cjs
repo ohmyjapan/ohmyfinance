@@ -37,7 +37,7 @@ async function main(){let mongo,child,client,directory,vaultDirectory,logs='',ch
 
   // 1. Capability: validated, stored without scope expansion; only capable claims get public research; catalogue unchanged.
   assert.equal((await worker('workspace-claim',{capabilities:{publicResearch:{...capability,mailbox:true}}})).status,400,'public-research:capability-validated');
-  await ask(tokenA,'まだ調べない質問です');let job=await claim(false);assert.ok(job);assert.equal(job.publicResearch,undefined,'public-research:not-capable-no-tools');const plainTools=job.tools.map(t=>t.name);assert.deepEqual(plainTools.slice().sort(),[...require('./finance-company-business-integration.cjs').companyToolNames].sort(),'public-research:server-catalogue');assert.equal(plainTools.length,43);
+  await ask(tokenA,'まだ調べない質問です');let job=await claim(false);assert.ok(job);assert.equal(job.publicResearch,undefined,'public-research:not-capable-no-tools');const plainTools=job.tools.map(t=>t.name);assert.deepEqual(plainTools.slice().sort(),[...require('./finance-company-business-integration.cjs').companyToolNames].sort(),'public-research:server-catalogue');assert.equal(plainTools.length,44);
   assert.equal((await src(job,{op:'list'})).status,409,'public-research:capability-required');assert.equal((await finish(job)).status,200);
   const stored=await db.collection('financechatagents').findOne({_id:new ObjectId(agent.id)});assert.equal(stored.publicResearch,undefined,'public-research:report-cleared-when-absent');
   const text1='SYNTH_SUPPLIER の登録番号を調べて、取引日 2026-09-30 時点も確認して。';const t1=await ask(tokenA,text1);job=await claim();
