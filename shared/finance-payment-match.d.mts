@@ -1,3 +1,4 @@
+export const BANK_DATE_PARTS: [string,string,string[]][];
 export const BANK_FIELDS: [string,string,string[]][];
 export type BankProviderSupport='contract-pending'|'verified';
 export const BANK_PROVIDERS: [string,string,BankProviderSupport][];
@@ -20,6 +21,7 @@ export type BankAmountSign='outflow-positive'|'outflow-negative';
 export const BANK_AMOUNT_SIGNS: [BankAmountSign,string][];
 export function round(n:number):number;
 export function money(value:any):number|null;
+export function bankDateSource(mapping:any):'date'|'parts'|null;
 export function guessBankMapping(headers:string[]):Record<string,string>;
 export function bankRowKey(row:any,source:any):Promise<string>;
 export function normalizeBankRow(values:any,source:any,options?:{amountSign?:BankAmountSign}):Promise<any>;

@@ -1,4 +1,9 @@
 // Matching proposes evidence; only the owner's confirmation creates an allocation. Portable browser/Node module.
+// Plan omf-paypay-split-dates-retry-20261022: a statement whose transaction date is three columns (PayPay銀行's actual export:
+// 操作日(年), 操作日(月), 操作日(日)) maps them here instead of `date`. These optional keys are kept out of BANK_FIELDS so every mapping
+// without them — saved templates, frozen job snapshots, BANK_NATIVE_TEMPLATES — stays exactly as before; a mapping carries them only
+// when they are assigned. Aliases are the observed headers only (compared after NFKC); 取引順番号 is no bank transaction ID.
+export const BANK_DATE_PARTS=[['dateYear','取引日（年）',['操作日(年)']],['dateMonth','取引日（月）',['操作日(月)']],['dateDay','取引日（日）',['操作日(日)']]];
 export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日','date']],['description','摘要',['摘要','取引内容','内容','入出金先内容','description','merchant']],['amount','金額',['金額','入出金(円)','amount']],['outflow','出金',['出金','出金額','お支払金額','withdrawal','debit']],['inflow','入金',['入金','入金額','お預り金額','deposit','credit']],['balance','残高',['残高','差引残高','残高(円)','balance']],['reference','メモ・参照番号',['メモ','参照番号','reference','memo']],['transactionId','銀行の取引ID（任意）',['取引番号','明細番号','取引id','transactionid','transaction_id']],['currency','通貨',['通貨','currency']],['direction','入出金区分',['入出金区分','区分','direction']]];
 // Web banks a bank account can be connected to: [key, label, support]. `support` stays 'contract-pending' until a release ships
 // the recorded portal contract and adapter for that bank; only a 'verified' provider runs automatic retrieval, the others run
@@ -49,7 +54,12 @@ const text=v=>String(v??'').normalize('NFKC').trim(),norm=v=>text(v).toLowerCase
 export function money(v){if(v===null||v===undefined||text(v)==='')return null;const s=text(v).replace(/[¥￥,$\s]/g,'');if(!/^-?\d+(?:\.\d{1,2})?$/.test(s)||!Number.isFinite(Number(s))||Math.abs(Number(s))>1e12)throw Error('金額を確認してください。');return Number(s);}
 const sha=async s=>Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),b=>b.toString(16).padStart(2,'0')).join('');
 function dateOf(v){const s=text(v).replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3').replace(/年|\//g,'-').replace(/月/g,'-').replace(/日/g,'');const m=/^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);if(!m)throw Error('取引日を確認してください。');const d=m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');if(!Number.isFinite(Date.parse(d))||new Date(d).toISOString().slice(0,10)!==d)throw Error('取引日を確認してください。');return d;}
-export function guessBankMapping(headers){return Object.fromEntries(BANK_FIELDS.map(([k,,names])=>{const i=headers.findIndex(h=>names.some(n=>norm(n)===norm(h)));return[k,i<0?'':String(i)];}));}
+// The date of a row read from three cells: a 4-digit year, a 1-2 digit month and day, digits only, a real calendar day. Any part
+// empty or malformed is the same error as a bad direct date (the row is held) — no day, month or year is ever filled in.
+function dateOfParts(y,m,d){const[a,b,c]=[y,m,d].map(text);if(!/^\d{4}$/.test(a)||!/^\d{1,2}$/.test(b)||!/^\d{1,2}$/.test(c))throw Error('取引日を確認してください。');return dateOf(a+'-'+b+'-'+c);}
+// The date source of a mapping: the direct `date` column when assigned (it always wins), else all three parts, else none.
+export function bankDateSource(mapping){if(mapping?.date!==undefined&&mapping.date!=='')return 'date';return BANK_DATE_PARTS.every(([k])=>mapping?.[k]!==undefined&&mapping[k]!=='')?'parts':null;}
+export function guessBankMapping(headers){const at=names=>headers.findIndex(h=>names.some(n=>norm(n)===norm(h)));const guess=Object.fromEntries(BANK_FIELDS.map(([k,,names])=>{const i=at(names);return[k,i<0?'':String(i)];}));for(const[k,,names]of BANK_DATE_PARTS){const i=at(names);if(i>=0)guess[k]=String(i);}return guess;}
 export async function bankRowKey(row,source){if(text(row.transactionId))return 'id:'+text(row.transactionId);if(!/^[a-f0-9]{64}$/.test(source?.hash)||typeof source.sheet!=='string'||!Number.isSafeInteger(source.row)||source.row<1)throw Error('元ファイルの行を確認できません。');return 'file:' + source.hash + ':' + encodeURIComponent(source.sheet) + ':' + source.row;}
 export const BANK_AMOUNT_SIGNS=[['outflow-positive','出金がプラス・入金がマイナス'],['outflow-negative','出金がマイナス・入金がプラス']];
 export async function normalizeBankRow(values,source,options={}){
@@ -57,7 +67,8 @@ export async function normalizeBankRow(values,source,options={}){
  if(out!==null||incoming!==null){if((out??0)<0||(incoming??0)<0||out&&incoming)throw Error('出金・入金の列を確認してください。');amount=round((out??0)-(incoming??0));}
  if(amount===null)throw Error('金額の列を割り当ててください。');
  if(signed!==null&&out===null&&incoming===null){const direction=text(values.direction);amount=/^(入金|in|credit)$/i.test(direction)?-Math.abs(signed):/^(出金|out|debit)$/i.test(direction)?Math.abs(signed):signed*(options.amountSign==='outflow-negative'?-1:1);}
- const r={date:dateOf(values.date),description:text(values.description),reference:text(values.reference),transactionId:text(values.transactionId),currency:text(values.currency||'JPY').toUpperCase(),amount,direction:amount<0?'in':'out',balance:money(values.balance)};
+ const parts=text(values.date)===''&&BANK_DATE_PARTS.some(([k])=>text(values[k])!=='');
+ const r={date:parts?dateOfParts(values.dateYear,values.dateMonth,values.dateDay):dateOf(values.date),description:text(values.description),reference:text(values.reference),transactionId:text(values.transactionId),currency:text(values.currency||'JPY').toUpperCase(),amount,direction:amount<0?'in':'out',balance:money(values.balance)};
  if(r.description.length>2000||r.reference.length>1000||r.transactionId.length>300||!r.description||!/^[A-Z]{3}$/.test(r.currency))throw Error('摘要・通貨・取引IDを確認してください。');
  r.fingerprint=await sha(JSON.stringify([r.date,r.direction,String(r.amount),r.description.replace(/\s+/g,' '),r.reference]));r.key=await bankRowKey(r,source);r.idKind=r.transactionId?'bank-id':'file-row';return r;
 }

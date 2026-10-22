@@ -7,9 +7,9 @@ import * as XLSX from 'xlsx'
 import { ready, id, fail } from './financeService'
 import { readWorkbook, sheetRows, decodeText, MAX_BYTES } from './financeIntakeService'
 import { digest } from '../../shared/amex.mjs'
-import { BANK_FIELDS, BANK_AMOUNT_SIGNS, type BankAmountSign, guessBankMapping, normalizeBankRow, correctionPairs } from '../../shared/finance-payment-match.mjs'
+import { BANK_FIELDS, BANK_DATE_PARTS, BANK_AMOUNT_SIGNS, type BankAmountSign, bankDateSource, guessBankMapping, normalizeBankRow, correctionPairs } from '../../shared/finance-payment-match.mjs'
 import { BankAccount, BankStatement, BankRow, BankTemplate, initializePaymentMatching } from '../models/FinancePaymentMatch'
-const keys=BANK_FIELDS.map(f=>f[0]),text=(v:any)=>String(v??'').trim()
+const keys=BANK_FIELDS.map(f=>f[0]),parts=BANK_DATE_PARTS.map(f=>f[0]),text=(v:any)=>String(v??'').trim()
 async function init(){await ready();await initializePaymentMatching()}
 const view=(r:any)=>({...r,id:String(r._id),ownerId:undefined,_id:undefined,__v:undefined})
 const location=(ownerId:string,hash:string)=>{if(!/^[a-f0-9]{64}$/.test(hash))fail(400,'Invalid file hash');return path.join(process.env.OMF_DATA_DIR||path.join(os.homedir(),'.ohmyfinance'),'bank-statements',id(ownerId),hash)}
@@ -33,7 +33,9 @@ export async function uploadBankFile(ownerId:string,name:string,bytes:Buffer,mim
 async function sheetOf(ownerId:string,fileId:string,sheet:any,headerRow:any){const doc=await ownedFile(ownerId,fileId),bytes=await readFile(location(ownerId,doc.hash));if(digest(bytes)!==doc.hash)fail(500,'Original file integrity mismatch');const wb=readWorkbook(bytes),name=text(sheet)||wb.SheetNames[0];if(!wb.SheetNames.includes(name))fail(400,'シートを確認してください。');const offset=XLSX.utils.decode_range(wb.Sheets[name]['!ref']||'A1').s.r,header=headerRow===undefined||headerRow===''?offset+1:Number(headerRow),rows=sheetRows(wb,name);if(!Number.isSafeInteger(header)||header<offset+1||header>offset+100||!rows[header-offset-1]?.length)fail(400,'見出し行を確認してください。');return{doc,sheet:name,headerRow:header,headers:rows[header-offset-1],data:rows.slice(header-offset)}}
 export async function readBankSheet(ownerId:string,fileId:string,sheet:any,headerRow:any){await init();const s=await sheetOf(ownerId,fileId,sheet,headerRow);return{document:view(s.doc),sheet:s.sheet,headerRow:s.headerRow,headers:s.headers,rows:s.data.filter(r=>r.some(Boolean)).slice(0,20),rowCount:s.data.filter(r=>r.some(Boolean)).length,mapping:guessBankMapping(s.headers)}}
 export async function listBankFiles(ownerId:string){await init();return{files:(await BankStatement.find({ownerId}).sort({createdAt:-1,_id:-1}).limit(200).lean()).map(view)}}
-function mappingOf(input:any,headers:string[]){if(!input||typeof input!=='object'||Array.isArray(input))fail(400,'列の割り当てを確認してください。');const mapping:any={};for(const k of Object.keys(input))if(!keys.includes(k))fail(400,'不明な列の割り当てです。');for(const k of keys){const v=input[k];if(v===undefined||v===''){mapping[k]='';continue}if(!/^\d{1,4}$/.test(String(v))||Number(v)>=headers.length)fail(400,'列の割り当てを確認してください。');mapping[k]=String(Number(v))}return mapping}
+// The optional year/month/day keys (BANK_DATE_PARTS) are validated like any column but kept only when assigned, so a mapping without
+// them (every saved template, frozen snapshot and native template so far) comes back exactly as before.
+function mappingOf(input:any,headers:string[]){if(!input||typeof input!=='object'||Array.isArray(input))fail(400,'列の割り当てを確認してください。');const mapping:any={};for(const k of Object.keys(input))if(!keys.includes(k)&&!parts.includes(k))fail(400,'不明な列の割り当てです。');for(const k of [...keys,...parts]){const v=input[k];if(v===undefined||v===''){if(keys.includes(k))mapping[k]='';continue}if(!/^\d{1,4}$/.test(String(v))||Number(v)>=headers.length)fail(400,'列の割り当てを確認してください。');mapping[k]=String(Number(v))}return mapping}
 function amountSignOf(value:any):BankAmountSign{if(value===undefined||value==='')return 'outflow-positive';if(!BANK_AMOUNT_SIGNS.some(([key])=>key===value))fail(400,'金額の符号を確認してください。');return value}
 type Provenance={channel:string,jobId?:string,snapshotHash?:string}
 // A3: the per-row normalization of the owner preview/import; every provenance entry names its channel (upload | collector |
@@ -42,7 +44,7 @@ type Provenance={channel:string,jobId?:string,snapshotHash?:string}
 // so a caller that ignored the hold would be seen writing them — the owner path turns the hold into its 400.
 async function planRows(ownerId:string,s:any,account:any,mapping:any,amountSign:BankAmountSign,provenance:Provenance):Promise<{rows:any[],existing:any[],pairs:any[],held:boolean,reason:string|null}>{
  const rows:any[]=[],counts=new Map<string,number>(),ids=new Map<string,any>();let reason:string|null=null;
- for(let i=0;i<s.data.length;i++){const raw=s.data[i];if(!raw.some(Boolean))continue;const values:any=Object.fromEntries(keys.map(k=>[k,mapping[k]===''?'':raw[Number(mapping[k])]||'']));values.currency=values.currency||account.currency;const source={statementId:String(s.doc._id),hash:s.doc.hash,sheet:s.sheet,row:s.headerRow+i+1,raw};let row:any;
+ for(let i=0;i<s.data.length;i++){const raw=s.data[i];if(!raw.some(Boolean))continue;const values:any=Object.fromEntries(keys.map(k=>[k,mapping[k]===''?'':raw[Number(mapping[k])]||'']));if(bankDateSource(mapping)==='parts')for(const k of parts)values[k]=raw[Number(mapping[k])]||'';values.currency=values.currency||account.currency;const source={statementId:String(s.doc._id),hash:s.doc.hash,sheet:s.sheet,row:s.headerRow+i+1,raw};let row:any;
   try{row=await normalizeBankRow(values,source,{amountSign})}catch(e:any){reason=source.row+'行目: '+e.message;break}
   const previous=ids.get(row.key);if(previous&&(previous.date!==row.date||previous.amount!==row.amount||previous.direction!==row.direction)){reason='取引番号の列が一意ではありません。列の割り当てを見直してください。';break}ids.set(row.key,row);
   const occurrence=(counts.get(row.fingerprint)||0)+1;counts.set(row.fingerprint,occurrence);rows.push({...row,occurrence,provenance:[{...source,balance:row.balance,amountSign,...provenance}],state:'active'});
@@ -52,7 +54,7 @@ async function planRows(ownerId:string,s:any,account:any,mapping:any,amountSign:
 }
 async function planned(ownerId:string,fileId:string,body:any){
  const s=await sheetOf(ownerId,fileId,body?.sheet,body?.headerRow),account=await ownedBankAccount(ownerId,body?.bankAccountId),mapping=mappingOf(body?.mapping,s.headers);
- if(mapping.date===''||mapping.description===''||mapping.amount===''&&mapping.outflow===''&&mapping.inflow==='')fail(400,'取引日・摘要・金額（または出金／入金）を割り当ててください。');
+ if(!bankDateSource(mapping)||mapping.description===''||mapping.amount===''&&mapping.outflow===''&&mapping.inflow==='')fail(400,'取引日（または年・月・日の3列）・摘要・金額（または出金／入金）を割り当ててください。');
  if(mapping.transactionId!==''&&body?.transactionIdConfirmed!==true)fail(400,'銀行が発行した取引IDの列であることを確認してください。');
  const amountSign=amountSignOf(body?.amountSign);
  const plan=await planRows(ownerId,s,account,mapping,amountSign,{channel:'upload'});if(plan.held)fail(400,plan.reason!);
@@ -100,7 +102,7 @@ async function planCapture(ownerId:string,doc:any,account:any,frozen:any,provena
  if(headerRow===null)return hold('見出し行が取得時の設定と一致しません。');
  const headers=rows[headerRow-offset-1],s={doc,sheet,headerRow,headers,data:rows.slice(headerRow-offset)};
  let mapping:any;try{mapping=mappingOf(frozen.mapping,headers)}catch(e:any){if(e?.statusCode)return hold('列の割り当てが取得時の設定と一致しません。',s);throw e}
- if(mapping.date===''||mapping.description===''||mapping.amount===''&&mapping.outflow===''&&mapping.inflow==='')return hold('取引日・摘要・金額の割り当てが取得時の設定にありません。',s,mapping);
+ if(!bankDateSource(mapping)||mapping.description===''||mapping.amount===''&&mapping.outflow===''&&mapping.inflow==='')return hold('取引日・摘要・金額の割り当てが取得時の設定にありません。',s,mapping);
  if(mapping.transactionId!==''&&!frozen.transactionIdConfirmed)return hold('取引IDの列が取得時に確認されていません。',s,mapping);
  const planAccount={...account,currency:frozen.currency||account.currency};
  return{...s,account,mapping,amountSign:frozen.amountSign,...await planRows(ownerId,s,planAccount,mapping,frozen.amountSign,provenance)};

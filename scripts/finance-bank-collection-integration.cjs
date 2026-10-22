@@ -302,6 +302,65 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  for(const j of [mappedJob,retry3])ok(await dev('bank/status',{jobId:j.jobId,state:'complete',message:'done'},ppPc.token),'status-paypay-final');
  assert.deepEqual(await Promise.all(pp.slice(1).map(id=>rows(id).then(r=>r.length))),[0,0,0],'bank:paypay-other-accounts-untouched');
  pass('G PayPay銀行 標準: template-free connection (BA-PLUS, no login type and other providers still need a template), four guided observe jobs with frozen unmapped interpretations and separate claims, first captures retained needs_review/mapping-required with zero rows and original bytes, duplicate replay, cross-account 409, retry isolation, native mapping through the importer, mapped connection imports the next capture');
+ // ── P (plan omf-paypay-split-dates-retry-20261022): PayPay銀行's actual statement shape — the transaction date in three columns
+ // 操作日(年)/(月)/(日), plus 操作時刻 and 取引順番号 (a sequence number, not a bank transaction ID). Fictional Shift_JIS rows under the exact
+ // observed headers. The template-free first capture stays mapping-required; the owner maps year/month/day in the importer on the ORIGINAL
+ // file (no transformed copy); the template and the frozen job snapshot carry the parts; legacy single-date mappings are unchanged.
+ const PP_HEAD=['操作日(年)','操作日(月)','操作日(日)','操作時刻(時)','操作時刻(分)','操作時刻(秒)','取引順番号','摘要','お支払金額','お預り金額','残高','メモ'];
+ const ppSplit=rows=>sjis([PP_HEAD,...rows].map(r=>r.join(',')).join('\r\n')+'\r\n');
+ const splitRows=[['2026','10','1','9','15','2','1','振込 カクウショウジ','','50000','150000',''],['2026','10','2','12','0','45','2','カード引落 カクウカード','3300','','146700','引落'],['2026','10','2','12','0','45','3','カード引落 カクウカード','3300','','143400','引落']];
+ const splitBytes=ppSplit(splitRows);assert.throws(()=>new TextDecoder('utf-8',{fatal:true}).decode(splitBytes),'bank:split-fixture-is-shift-jis');
+ const psAcc=await account('PayPay split'),psPc=await collector('PayPay split PC');
+ assert.equal(ok(await req('bank/accounts/'+psAcc+'/connection',{provider:'paypay',variant:'standard',accountLabel:'PayPay split'},'PUT'),'connection-split').account.connection.templateId,null);
+ ok(await req('bank/collectors/'+psPc.id,{bankAccountIds:[psAcc]},'PUT'),'collector-scope-split');
+ const psUpload=(job,bytes)=>send(capi+'bank/upload?'+query({jobId:job.jobId,snapshotHash:job.snapshotHash,kind:'statement',channel:'collector-observe',name:'paypay-split-'+job.jobId.slice(0,4)+'.csv',sourceHost:'login.paypay-bank.co.jp',capturedAt:new Date().toISOString()}),bytes,'text/csv',psPc.token);
+ const psJob=async label=>{const j=ok(await req('bank/accounts/'+psAcc+'/sync',{}),'sync-'+label).job;assert.equal(ok(await dev('bank/claim',{},psPc.token),'claim-'+label).job.jobId,j.jobId);return j};
+ const psDone=j=>dev('bank/status',{jobId:j.jobId,state:'complete',message:'done'},psPc.token);
+ // the current unknown capture stays unmapped (mapping-required, no rows) until the owner maps it
+ const ps1=await psJob('split-1'),cap1=ok(await psUpload(ps1,splitBytes),'capture-split-1');
+ assert.deepEqual([cap1.state,/^mapping-required: /.test(String(cap1.reason)),cap1.rows],['needs_review',true,{new:0,existing:0,unchanged:0,differs:0}],'bank:split-first-capture-unmapped');ok(await psDone(ps1),'status-split-1');
+ const psSheet=ok(await get('bank/files/'+cap1.id+'/sheet'),'split-sheet');assert.deepEqual(psSheet.headers,PP_HEAD,'bank:split-headers-exact');assert.equal(psSheet.rowCount,3);
+ assert.deepEqual(psSheet.mapping,{date:'',description:'7',amount:'',outflow:'8',inflow:'9',balance:'10',reference:'11',transactionId:'',currency:'',direction:'',dateYear:'0',dateMonth:'1',dateDay:'2'},'bank:split-guess-exact-headers');
+ const psBody={sheet:psSheet.sheet,headerRow:psSheet.headerRow,mapping:psSheet.mapping,bankAccountId:psAcc,transactionIdConfirmed:false,confirm:true};
+ // the owner path: an incomplete date source, an out-of-range part and an unknown key are refused before anything is read
+ const without=k=>({...psSheet.mapping,[k]:''});
+ for(const k of ['dateYear','dateMonth','dateDay']){const r=await req('bank/files/'+cap1.id+'/preview',{...psBody,mapping:without(k)});assert.equal(r.status,400,'bank:split-partial-mapping-400 '+k);assert.match(JSON.stringify(r.data),/年・月・日の3列/,'bank:split-partial-mapping-message '+k)}
+ assert.equal((await req('bank/files/'+cap1.id+'/preview',{...psBody,mapping:{...psSheet.mapping,dateDay:'12'}})).status,400,'bank:split-part-range-400');
+ assert.equal((await req('bank/files/'+cap1.id+'/preview',{...psBody,mapping:{...psSheet.mapping,dateHour:'3'}})).status,400,'bank:split-unknown-key-400');
+ const psPreview=ok(await req('bank/files/'+cap1.id+'/preview',psBody),'split-preview');
+ assert.deepEqual(psPreview.rows.map(r=>[r.date,r.amount,r.direction,r.description,r.transactionId,r.idKind]),[['2026-10-01',-50000,'in','振込 カクウショウジ','','file-row'],['2026-10-02',3300,'out','カード引落 カクウカード','','file-row'],['2026-10-02',3300,'out','カード引落 カクウカード','','file-row']],'bank:split-preview-dates');
+ assert.equal((await rows(psAcc)).length,0,'bank:split-preview-writes-nothing');
+ const psImported=ok(await req('bank/files/'+cap1.id+'/import',{...psBody,templateName:'PayPay 年月日（架空）'}),'split-import');assert.equal(psImported.rows.length,3,'bank:split-imported-rows');
+ const psDoc=await statementDoc(cap1.id),psStored=(await rows(psAcc)).sort((a,b)=>a.provenance[0].row-b.provenance[0].row);
+ assert.deepEqual(await fs.readFile(path.join(directory,'bank-statements',String(baseDevice.ownerId),psDoc.hash)),splitBytes,'bank:split-original-bytes');
+ for(const [i,r] of psStored.entries()){assert.deepEqual(r.provenance[0].raw,psSheet.rows[i],'bank:split-raw-row '+i);assert.equal(r.provenance[0].raw.length,12,'bank:split-raw-row-all-columns '+i);assert.equal(r.provenance[0].hash,psDoc.hash,'bank:split-provenance-hash');assert.equal(r.key,'file:'+psDoc.hash+':'+encodeURIComponent(psSheet.sheet)+':'+(psSheet.headerRow+1+i),'bank:split-file-row-key '+i);assert.equal(r.transactionId,'','bank:split-sequence-not-bank-id')}
+ assert.deepEqual(psDoc.dateRange,{min:'2026-10-01',max:'2026-10-02'},'bank:split-date-range');assert.equal(psDoc.capture.state,'needs_review','bank:split-capture-receipt-immutable');
+ const psAgain=ok(await req('bank/files/'+cap1.id+'/import',psBody),'split-reimport');assert.deepEqual(psAgain.rows.map(r=>[r.id,r.revision]).sort(),psImported.rows.map(r=>[r.id,1]).sort(),'bank:split-idempotent');
+ // templates: the split template round-trips its parts; a legacy single-date template keeps exactly its ten keys after a re-save
+ const tpls=ok(await get('bank/templates'),'templates-split').templates,psTpl=tpls.find(t=>t.name==='PayPay 年月日（架空）');assert.ok(psTpl,'bank:split-template-saved');
+ assert.deepEqual(psTpl.mapping,psSheet.mapping,'bank:split-template-roundtrip');assert.deepEqual(psTpl.headers,PP_HEAD);
+ const legacyKeys=['date','description','amount','outflow','inflow','balance','reference','transactionId','currency','direction'];
+ assert.deepEqual(Object.keys(tpls.find(t=>t.id===bankMap.id).mapping),legacyKeys,'bank:legacy-template-unchanged');
+ const legacySaved=await template('Legacy single date (split leg)',HEAD,{date:'0',description:'1',outflow:'2',inflow:'3',balance:'4',reference:'5'});assert.deepEqual(Object.keys(legacySaved.mapping),legacyKeys,'bank:legacy-template-save-unchanged');assert.deepEqual(Object.keys(ok(await get('bank/templates'),'templates-legacy').templates.find(t=>t.id===legacySaved.id).mapping),legacyKeys,'bank:legacy-template-roundtrip-unchanged');
+ // the mapped connection: the job freezes the parts, a later capture is imported through the frozen snapshot, an identical replay is the same capture
+ assert.equal(ok(await req('bank/accounts/'+psAcc+'/connection',{provider:'paypay',variant:'standard',templateId:psTpl.id,accountLabel:'PayPay split'},'PUT'),'connection-split-mapped').account.connection.templateId,psTpl.id);
+ const ps2=await psJob('split-2');assert.deepEqual([ps2.snapshot.mapping.dateYear,ps2.snapshot.mapping.dateMonth,ps2.snapshot.mapping.dateDay,ps2.snapshot.mapping.date],['0','1','2',''],'bank:split-frozen-mapping');assert.deepEqual(ps2.snapshot.headers,PP_HEAD);
+ const laterBytes=ppSplit([['2026','10','20','8','30','0','4','カクウリース','5500','','137900','リース'],['2026','10','21','10','5','9','5','振込 カクウ取引先','','12000','149900','']]);
+ const cap2=ok(await psUpload(ps2,laterBytes),'capture-split-2');assert.deepEqual([cap2.state,cap2.reason,cap2.rows],['imported',null,{new:2,existing:0,unchanged:0,differs:0}],'bank:split-frozen-capture-imported');
+ const cap2Rows=(await rows(psAcc)).filter(r=>r.provenance[0].statementId===cap2.id).sort((a,b)=>a.date.localeCompare(b.date));
+ assert.deepEqual(cap2Rows.map(r=>[r.date,r.amount,r.direction,r.provenance[0].channel,r.provenance[0].jobId,r.provenance[0].snapshotHash]),[['2026-10-20',5500,'out','collector-observe',ps2.jobId,ps2.snapshotHash],['2026-10-21',-12000,'in','collector-observe',ps2.jobId,ps2.snapshotHash]],'bank:split-frozen-capture-values');
+ const replay=ok(await psUpload(ps2,laterBytes),'capture-split-replay');assert.deepEqual([replay.id,replay.duplicate,replay.state],[cap2.id,true,'imported'],'bank:split-replay-duplicate');assert.equal((await rows(psAcc)).length,5,'bank:split-replay-no-new-rows');ok(await psDone(ps2),'status-split-2');
+ // holds: an impossible calendar day and an empty part are held with the row number; nothing is written and no day is invented
+ for(const [label,bad] of [['invalid-day',['2026','2','30','9','0','0','6','カクウ不正日','100','','149800','']],['non-leap',['2027','2','29','9','0','0','7','カクウ非うるう','100','','149700','']],['partial',['2026','10','','9','0','0','8','カクウ日なし','100','','149600','']],['two-digit-year',['26','10','22','9','0','0','9','カクウ年2桁','100','','149500','']]]){
+  const before=(await rows(psAcc)).length,j=await psJob('split-'+label),r=ok(await psUpload(j,ppSplit([bad])),'capture-split-'+label);
+  assert.deepEqual([r.state,r.rows.new],['needs_review',0],'bank:split-'+label+'-held');assert.match(String(r.reason),/^2行目: 取引日を確認してください/,'bank:split-'+label+'-reason');assert.equal((await rows(psAcc)).length,before,'bank:split-'+label+'-writes-nothing');ok(await psDone(j),'status-split-'+label)}
+ // a real leap day is a date; the direct date column, when also assigned, wins over the parts
+ const leapAcc=await account('Split leap'),leap=await bankFile(ppSplit([['2028','2','29','0','0','0','1','カクウうるう日','100','','100','']]),'split-leap.csv',leapAcc,{transactionIdConfirmed:false});
+ assert.deepEqual(ok(await req('bank/files/'+leap.doc.id+'/preview',leap.body),'split-leap').rows.map(r=>r.date),['2028-02-29'],'bank:split-leap-day');
+ const PREC_HEAD=['取引日','操作日(年)','操作日(月)','操作日(日)','摘要','お支払金額'],prec=await bankFile(sjis([PREC_HEAD,['2026/10/05','2026','1','1','カクウ優先','100']].map(r=>r.join(',')).join('\r\n')+'\r\n'),'split-precedence.csv',leapAcc,{transactionIdConfirmed:false});
+ assert.deepEqual([prec.body.mapping.date,prec.body.mapping.dateYear],['0','1'],'bank:split-precedence-guess');
+ assert.deepEqual(ok(await req('bank/files/'+prec.doc.id+'/preview',prec.body),'split-precedence').rows.map(r=>r.date),['2026-10-05'],'bank:split-direct-date-precedence');
+ pass('P PayPay銀行 split dates: the exact observed Shift_JIS header shape is retained mapping-required first, guessed (year/month/day, 取引順番号 not a bank ID), refused when incomplete, previewed and imported from the original bytes with raw rows and file-row keys, idempotent, saved as a template that round-trips (legacy templates keep their ten keys), frozen into the next job and imported from the capture, replayed as the same capture; impossible, non-leap, partial and two-digit-year rows held; a leap day accepted; the direct date wins');
  // ── V: real Chrome at 390 px and 1440 px ──
  if(!mutant){
   const {browserFor}=await import(pathToFileURL(path.join(root,'collector/browser.mjs')).href),profileDir=await fs.mkdtemp(path.join(os.tmpdir(),'omf-bank-browser-')),browser=await browserFor(path.join(profileDir,'profile'),{headless:true});let page;const errors=[];
@@ -346,12 +405,23 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
    assert.ok(await page.evaluate(id=>document.querySelector('[data-bank-file-picker]')?.value===id,held.id),'bank:chrome-picker-selected');assert.match(await page.$eval('[data-bank-file-picker] option:checked',e=>e.textContent),/口座照合 未確認/,'bank:chrome-picker-label-unchecked');
    assert.ok((await page.$$eval('[data-bank-file-picker] option',es=>es.map(e=>e.value))).includes(capture.id),'bank:chrome-picker-lists-files');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'bank:chrome-importer-no-overflow');
+   // P in Chrome (plan omf-paypay-split-dates-retry-20261022): the actual PayPay shape in the importer — the year/month/day selects are
+   // guessed from the exact headers, the full-date select stays unassigned, the explanation is shown and the preview carries the dates
+   await page.select('[data-bank-file-picker]',cap1.id);await wait(()=>document.querySelector('[data-bank-field="dateYear"]')?.value==='0');
+   assert.deepEqual(await page.$$eval('[data-bank-field]',es=>Object.fromEntries(es.filter(e=>['date','dateYear','dateMonth','dateDay','transactionId'].includes(e.dataset.bankField)).map(e=>[e.dataset.bankField,e.value]))),{date:'',transactionId:'',dateYear:'0',dateMonth:'1',dateDay:'2'},'bank:chrome-split-guessed-selects');
+   assert.match(await page.$eval('[data-bank-date-parts]',e=>e.textContent),/年・月・日の3列/,'bank:chrome-split-explained');assert.equal(await page.$eval('[data-bank-account]',e=>e.value),psAcc,'bank:chrome-split-account-preselected');
+   await settledClick('[data-bank-preview]');await wait(()=>document.querySelectorAll('[data-bank-preview-row]').length===3);
+   assert.deepEqual(await page.$$eval('[data-bank-preview-row]',es=>es.map(e=>e.textContent.trim().slice(0,10))),['2026-10-01','2026-10-02','2026-10-02'],'bank:chrome-split-preview-dates');
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'bank:chrome-split-importer-no-overflow '+JSON.stringify(await overflowing()));
+   // a legacy single-date file picked next: the year/month/day selects are cleared (nothing stale carried over)
+   await page.select('[data-bank-file-picker]',held.id);await wait(()=>document.querySelector('[data-bank-field="date"]')?.value==='0');
+   assert.deepEqual(await page.$$eval('[data-bank-date-parts] select',es=>es.map(e=>e.value)),['','',''],'bank:chrome-split-cleared-for-legacy');
    if(process.env.OMF_TEST_PAYMENT_SCREENSHOTS){await fs.mkdir(process.env.OMF_TEST_PAYMENT_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.OMF_TEST_PAYMENT_SCREENSHOTS,'bank-connections-mobile.png'),fullPage:true});}
    await page.setViewport({width:1440,height:1000});await pause(300);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'bank:chrome-desktop-no-overflow');
    await page.evaluate(()=>document.documentElement.classList.add('dark'));assert.equal(await page.$eval(card(bankU)+'[data-bank-account-label]',e=>getComputedStyle(e).backgroundColor),'rgb(30, 41, 59)','bank:chrome-dark-control');
    if(process.env.OMF_TEST_PAYMENT_SCREENSHOTS)await page.screenshot({path:path.join(process.env.OMF_TEST_PAYMENT_SCREENSHOTS,'bank-connections-desktop-dark.png'),fullPage:true});
    assert.deepEqual(errors,[],'bank:chrome-no-console-errors');
   }finally{if(page)await page.close();await browser.close();if(!path.resolve(profileDir).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe owned Chrome cleanup');await fs.rm(profileDir,{recursive:true,force:true})}
-  pass('V hidden real Chrome: connect (provider, template, label), support label, device scope, 観察取得（準備）, job listing, capture → importer picker, 390/1440 px without overflow, dark controls, no console errors');
+  pass('V hidden real Chrome: connect (provider, template, label), support label, device scope, 観察取得（準備）, job listing, capture → importer picker, split year/month/day selects guessed and previewed, cleared for a single-date file, 390/1440 px without overflow, dark controls, no console errors');
  }
 };

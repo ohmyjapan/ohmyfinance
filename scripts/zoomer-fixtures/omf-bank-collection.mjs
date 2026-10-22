@@ -179,6 +179,8 @@ export default { name: 'omf-bank-collection', covers: ['server/models/FinancePay
       await writeFile(path.join(root, '.zoomer-bank-integration.txt'), app.stdout + app.stderr);
       if (app.code !== 0) throw Error((app.stdout + app.stderr).slice(-2600));
       if (!app.stdout.includes('V hidden real Chrome')) throw Error('mandatory Chrome leg missing');
+      // plan omf-paypay-split-dates-retry-20261022: the actual PayPay split-date statement shape (year/month/day columns) is a required leg
+      if (!/^PASS P PayPay銀行 split dates/m.test(app.stdout)) throw Error('mandatory split-date leg missing');
       if (!app.stderr.includes('[fixture-headless-control] ' + u('collector/browser.mjs'))) throw Error('test-mode headless control receipt missing in the HTTP/V subprocess');
       return app.stdout.match(/\d+ targeted bank collection checks passed/)?.[0] || 'missing summary';
     });
