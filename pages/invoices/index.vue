@@ -5,7 +5,7 @@
       <div class="bg-gradient-to-r from-primary-main to-primary-dark dark:from-primary-dark dark:to-primary-dark/80 rounded-2xl p-6 text-white relative overflow-hidden">
         <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
         <div class="absolute -bottom-8 -left-8 w-32 h-32 bg-white/5 rounded-full blur-2xl"></div>
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between relative z-10">
+        <div class="navi-page-header relative z-10">
           <div>
             <h1 class="text-2xl font-bold mb-1">{{ t('invoices.title') }}</h1>
             <p class="text-primary-light">{{ t('invoices.description') }}</p>
@@ -24,7 +24,7 @@
     <p v-if="printError" role="alert" data-invoice-print-error class="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-900/10 dark:text-red-300">{{ printError }}</p>
 
     <!-- Stat Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="navi-summary-grid gap-6 mb-8">
       <StatCard
         :title="t('common.total')"
         :value="invoices.length.toString()"
@@ -89,7 +89,8 @@
           {{ t('invoices.newInvoice') }}
         </button>
       </div>
-      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+      <div v-else class="navi-table-scroll" tabindex="0" role="region" :aria-label="t('invoices.title')">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
         <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('invoices.invoiceNumber') }}</th>
@@ -149,6 +150,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <!-- Modal -->

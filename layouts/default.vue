@@ -2,11 +2,11 @@
   <div class="min-h-screen bg-background-default dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 text-gray-900 dark:text-gray-100" :class="naviClass">
     <AppSidebar :is-open="isSidebarOpen" @close="isSidebarOpen = false" />
 
-    <div class="lg:pl-64 flex flex-col flex-1">
+    <div class="lg:pl-64 flex min-w-0 flex-col flex-1">
       <AppHeader data-app-header class="!z-30" @toggle-sidebar="isSidebarOpen = !isSidebarOpen" />
 
-      <main class="navi-host flex-1 p-4 md:p-6">
-        <div class="max-w-7xl mx-auto">
+      <main class="navi-host min-w-0 flex-1 p-4 md:p-6">
+        <div class="navi-page-frame min-w-0 max-w-7xl mx-auto">
           <div data-page-content>
             <slot />
           </div>

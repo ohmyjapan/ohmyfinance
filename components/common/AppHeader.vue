@@ -1,7 +1,7 @@
 <template>
   <header class="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-b border-gray-200 dark:border-white/10 sticky top-0 z-10">
     <div class="flex items-center justify-between px-4 py-3 md:py-4">
-      <div class="flex items-center">
+      <div class="flex min-w-0 flex-1 items-center">
         <button
             @click="$emit('toggleSidebar')"
             class="text-gray-500 dark:text-gray-400 focus:outline-none focus:text-gray-700 dark:focus:text-gray-300 lg:hidden"
@@ -9,12 +9,12 @@
           <Menu class="h-6 w-6" />
         </button>
 
-        <div class="mx-4 md:block hidden w-80">
+        <div class="mx-4 hidden min-w-0 max-w-xs flex-1 md:block">
           <GlobalSearch />
         </div>
       </div>
 
-      <div class="flex items-center gap-2 md:gap-4">
+      <div class="flex shrink-0 items-center gap-2 md:gap-4">
         <!-- Language Switcher -->
         <LangSwitcher />
 
@@ -30,9 +30,9 @@
               @click="isProfileOpen = !isProfileOpen"
               class="flex items-center cursor-pointer"
           >
-            <div class="mr-2 text-right">
-              <p class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ userStore.user?.name || t('header.adminUser') }}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">{{ userStore.user?.email || '' }}</p>
+            <div class="mr-2 min-w-0 max-w-40 text-right">
+              <p :title="userStore.user?.name || t('header.adminUser')" class="truncate text-sm font-medium text-gray-700 dark:text-gray-200">{{ userStore.user?.name || t('header.adminUser') }}</p>
+              <p :title="userStore.user?.email || ''" class="truncate text-xs text-gray-500 dark:text-gray-400">{{ userStore.user?.email || '' }}</p>
             </div>
             <div class="h-8 w-8 rounded-xl bg-gradient-to-br from-primary-main to-primary-dark flex items-center justify-center text-white text-sm font-medium shadow-sm">
               {{ userStore.user?.name?.charAt(0)?.toUpperCase() || 'U' }}

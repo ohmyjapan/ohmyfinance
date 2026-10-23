@@ -82,6 +82,39 @@ textarea:focus {
     @apply text-3xl font-bold font-mono;
 }
 
+/* Financial pages respond to their available column, after sidebar and Navi space is reserved. */
+.navi-page-frame { container:omf-page / inline-size; }
+/* Keep icon space requested by the field utility above the generic input[type=text] padding. */
+.navi-layout input.pl-10 { padding-left:2.5rem; }
+.navi-summary-grid,.navi-detail-grid { display:grid;grid-template-columns:minmax(0,1fr); }
+.navi-summary-grid > *,.navi-detail-grid > * { min-width:0; }
+.navi-action-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr)); }
+.navi-page-header { display:flex;flex-direction:column;align-items:stretch;justify-content:space-between;gap:1rem; }
+.navi-page-header > * { min-width:0;max-width:100%; }
+.navi-page-actions { display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;min-width:0; }
+.navi-page-actions > * { max-width:100%; }
+.navi-hero-stats { display:none;flex-shrink:0; }
+.navi-table-scroll { max-width:100%;overflow-x:auto; }
+.navi-table-scroll > table { width:100%;min-width:42rem; }
+.navi-filter-bar { display:flex;flex-direction:column;align-items:stretch;gap:1rem; }
+.navi-filter-group { display:flex;flex-wrap:wrap;gap:.75rem;min-width:0; }
+.navi-filter-group > * { min-width:min(100%,10rem);max-width:100%;flex:1 1 10rem; }
+@container omf-page (min-width:36rem) {
+    .navi-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@container omf-page (min-width:48rem) {
+    .navi-page-header { flex-direction:row;align-items:center; }
+    .navi-hero-stats { display:block; }
+    .navi-action-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+@container omf-page (min-width:52rem) {
+    .navi-detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .navi-filter-bar { flex-direction:row;align-items:center;justify-content:space-between; }
+}
+@container omf-page (min-width:76rem) {
+    .navi-summary-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+
 /* Badge status */
 .badge-status {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;

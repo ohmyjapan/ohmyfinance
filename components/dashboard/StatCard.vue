@@ -1,12 +1,12 @@
 <template>
-  <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+  <div data-stat-card class="stat-card min-w-0 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
     <div class="flex items-center gap-4">
       <div :class="[iconContainerClasses]" class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0">
         <component :is="resolvedIcon" :size="24" />
       </div>
       <div class="flex-1 min-w-0">
-        <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ title }}</p>
-        <p class="text-2xl font-bold font-mono text-gray-900 dark:text-white">{{ value }}</p>
+        <p class="break-words text-sm font-medium text-gray-500 dark:text-gray-400">{{ title }}</p>
+        <p class="stat-card-value font-bold font-mono text-gray-900 dark:text-white">{{ value }}</p>
       </div>
     </div>
     <div v-if="showTrend" class="mt-3 flex items-center gap-1">
@@ -125,3 +125,8 @@ const trendColorClass = computed(() => {
   }
 })
 </script>
+
+<style scoped>
+.stat-card { container:omf-stat / inline-size; }
+.stat-card-value { font-size:clamp(1.125rem,6cqw,1.5rem);line-height:1.4;overflow-wrap:anywhere; }
+</style>

@@ -29,6 +29,16 @@ The company browser leg waits for the actual accepted server turn and cleared in
 
 Self-mapped UI seam. Existing account-registration commit/review evidence is preserved separately. Synthetic UI checks are not production reliability measurements. This increment does not close the broader G1–G4 feature/privacy/official registry/observation limitations and adds no access/action guard.
 
+## Responsive financial content — 2026-10-23
+
+The right reserve made the page narrower while older summary grids still used the browser width to choose four columns. Native Chrome screenshots at1024px showed full amounts spilling outside their cards. The page frame now provides a named inline-size container. Explicit summary grids use one column below36rem of available page width, two from36rem, and four from76rem. Action grids and header/filter rows also respond to available space. This creates no separate page scroller and does not hide page overflow.
+
+The dashboard, transactions, invoices, recurring payments, receipt library, tax report and mapping use this presentation. StatCard labels wrap and values scale within a bounded font range while retaining the original full value. Wide native tables on the dashboard, transactions, invoices and recurring pages have labelled, keyboard-focusable horizontal regions that preserve final columns and actions. The header search can shrink beside its controls; profile name/email alone use truncation with full text retained as titles. Compact desktop chat uses the same width token as the reserved gutter. The selected character sizes and conversation behavior are preserved. No financial calculation, classification, tax rule, API or action authority changes here.
+
+The maintained `omf-navi-layout` fixture uses an owned native app/database, installed Chrome, large synthetic JPY/USD amounts and long names. Its declared population is seven rendered pages at320/390/768/900/1024/1280/1440/1920 widths, normal/short heights, three closed sizes and open chat. Additional groups check same-page breakpoint changes with typed search/unsent chat/focus, table-column/control reachability, native modal bounds and Korean labels. It measures actual text ranges and clipping as well as rectangles. The original right-rail fixture remains separate. This is synthetic layout verification, with no model, physical-device or production reliability claim.
+
+Explicit limits: Analytics returned a preexisting SSR500 reading `labels`; general Reports rendered no data because its request lacks the current session auth header. Those page sources remain unchanged and are excluded from this layout proof. Native tax classification is displayed verbatim and is not certified by a readability test. Earlier partial runs and setup failures are retained. Whole-agent model acceptance and independent review are separate release requirements.
+
 ## Right rail — 2026-10-22
 
 Owner direction (selected base `output/ohmyfinance-navi-right-rail-20261021/navi/base`): the character sits in the gutter between the content and the browser's right edge instead of over the fields; she can be shrunk, the maximum being the 2026-10-20 size; the dialogue opens as a tall rail on the right rather than over the page; she disappears while the chat is open and the circle portrait appears in the chat header; she moves occasionally.

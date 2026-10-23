@@ -1,12 +1,12 @@
 <template>
   <div>
-    <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
+    <header class="navi-page-header mb-6">
       <div>
         <h1 class="text-xl font-semibold text-gray-800 dark:text-gray-100">{{ t('transactions.title') }}</h1>
         <p class="text-gray-600 dark:text-gray-400">{{ t('transactions.transactionDetails') }}</p>
       </div>
 
-      <div class="mt-4 md:mt-0 flex space-x-3">
+      <div class="navi-page-actions">
         <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
           <FileText class="mr-2 h-4 w-4 text-gray-500" />
           {{ t('common.export') }} CSV
@@ -29,7 +29,7 @@
     </header>
 
     <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+    <div class="navi-summary-grid gap-6 mb-6">
       <StatCard
           :title="t('transactions.expenseTotal')"
           :value="formatCurrency(transactionStats.expense?.amount || 0)"
@@ -61,8 +61,8 @@
 
     <!-- Filter & Search Bar -->
     <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm mb-6">
-      <div class="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div class="flex flex-1 flex-col sm:flex-row gap-3">
+      <div class="navi-filter-bar p-4">
+        <div class="navi-filter-group flex-1">
           <div class="relative flex-1">
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Search class="h-5 w-5 text-gray-400" />
@@ -204,7 +204,8 @@
         </div>
       </div>
 
-      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+      <div v-else class="navi-table-scroll" tabindex="0" role="region" :aria-label="t('transactions.title')">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
         <thead class="bg-gray-50 dark:bg-white/5">
         <tr>
           <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('transactions.date') }}</th>
@@ -323,6 +324,7 @@
         </tr>
         </tbody>
       </table>
+      </div>
 
       <!-- Pagination -->
       <div v-if="filteredTransactions.length > 0" class="bg-white dark:bg-white/5 px-4 py-3 border-t border-gray-200 dark:border-white/10 sm:px-6">

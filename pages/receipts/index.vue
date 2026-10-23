@@ -1,6 +1,6 @@
 <template>
   <div data-receipt-library>
-    <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
+    <header class="navi-page-header mb-6">
       <div>
         <h1 class="text-xl font-semibold text-gray-800">{{ t('nav.receiptManagement') }}</h1>
         <p class="text-gray-600">{{ t('receipts.description') }}</p>
@@ -23,7 +23,7 @@
     </header>
 
     <!-- Stats Cards -->
-    <div data-library-stats class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-3">
+    <div data-library-stats class="navi-summary-grid gap-4 mb-3">
       <StatCard
           :title="t('receipts.title')"
           :value="stats?String(stats.total):'—'"

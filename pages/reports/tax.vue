@@ -5,12 +5,12 @@
       <div class="bg-gradient-to-r from-primary-main to-primary-dark dark:from-primary-dark dark:to-primary-dark/80 rounded-2xl p-6 text-white relative overflow-hidden">
         <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
         <div class="absolute -bottom-8 -left-8 w-32 h-32 bg-white/5 rounded-full blur-2xl"></div>
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between relative z-10">
+        <div class="navi-page-header relative z-10">
           <div>
             <h1 class="text-2xl font-bold mb-1">{{ t('taxReport.title') }}</h1>
             <p class="text-primary-light">{{ t('taxReport.description') }}</p>
           </div>
-          <div class="mt-4 md:mt-0 flex items-center gap-3">
+          <div class="navi-page-actions">
             <select
               v-model="selectedYear"
               @change="loadReport"
@@ -36,7 +36,7 @@
 
     <div v-else-if="report">
       <!-- Summary Cards -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div class="navi-summary-grid gap-6 mb-8">
         <div class="rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
           <div class="flex items-center gap-4">
             <div class="w-12 h-12 rounded-xl bg-green-500/10 dark:bg-green-500/20 flex items-center justify-center">
@@ -95,7 +95,7 @@
           <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">{{ t('taxReport.quarterlySummary') }}</h2>
         </div>
         <div class="p-6">
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="navi-summary-grid gap-4">
             <div
               v-for="q in report.quarterlyData"
               :key="q.quarter"

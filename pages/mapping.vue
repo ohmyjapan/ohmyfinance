@@ -1,6 +1,6 @@
 <template>
   <div class="mapping">
-    <header class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <header class="navi-page-header mb-6">
       <div>
         <h1 class="text-xl font-semibold text-gray-800 dark:text-gray-100">明細マッピング</h1>
         <p class="text-gray-600 dark:text-gray-400">顧客・区分の根拠と、会計項目・消費税・インボイスの確認状況を整理します。</p>
@@ -29,7 +29,7 @@
         <NuxtLink to="/connections" class="btn btn-primary mt-6 text-sm">カード連携を開く</NuxtLink>
       </div>
       <template v-else>
-        <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 xl:gap-6">
+        <div class="navi-summary-grid mb-6 gap-4 xl:gap-6">
           <StatCard title="顧客購入" :value="String(countFor('customer'))" icon="Users" color="primary" />
           <StatCard title="会社経費" :value="String(countFor('company'))" icon="CreditCard" color="blue" />
           <StatCard title="分類要確認" :value="String(countFor('review'))" icon="FileText" color="amber" />
@@ -68,7 +68,7 @@
         <CardAccounting v-for="batch in batches.filter(b => b.cardAccounting)" :key="batch.id" :card="batch.cardAccounting" :account-name="batch.account.name" />
 
         <section class="card mb-6" aria-label="明細の検索と絞り込み">
-          <div class="grid gap-4 p-4 md:grid-cols-2">
+          <div class="navi-detail-grid gap-4 p-4">
             <label class="block min-w-0 text-sm font-medium text-gray-700 dark:text-gray-300">
               表示する明細
               <select v-model="batchChoice" class="mt-2 block w-full rounded-xl border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm font-normal text-gray-900 focus:border-primary-main focus:ring-primary-main dark:border-white/10 dark:bg-white/5 dark:text-gray-100" @change="loadSelection">
@@ -165,7 +165,7 @@
                     <button v-if="['customer','company','unresolved'].includes(row.purpose)" type="button" data-row-assistant class="mt-3 block text-xs font-medium text-primary-main" @click="assistant.show({kind:'draft',importId:row.importId,line:row.line})">OMFに相談</button><NuxtLink :to="`/mapping-draft/${row.importId}/${row.line}`" class="mt-3 block py-2 text-sm font-medium text-primary-main dark:text-primary-light">{{ ['repayment', 'credit_review', 'statement_review'].includes(row.purpose) ? '明細を確認' : '取引の下書きを開く →' }}</NuxtLink>
                   </div>
                 </div>
-                <div v-if="row.preparation && ['customer','company','unresolved'].includes(row.purpose)" class="mt-4 grid gap-3 rounded-xl bg-gray-50 p-3 text-xs dark:bg-white/5 sm:grid-cols-2 xl:grid-cols-4" data-accounting-review>
+                <div v-if="row.preparation && ['customer','company','unresolved'].includes(row.purpose)" class="navi-summary-grid mt-4 gap-3 rounded-xl bg-gray-50 p-3 text-xs dark:bg-white/5" data-accounting-review>
                   <div><p class="font-medium text-gray-700 dark:text-gray-300">{{ row.preparation.label }}</p><p v-if="row.preparation.missing.length" class="mt-1 leading-relaxed text-amber-700 dark:text-amber-400">未設定・要確認: {{ row.preparation.missing.map((f:any) => f.label).join('、') }}</p><p v-if="row.preparation.conflicts.length" class="mt-1 text-amber-700 dark:text-amber-400">根拠の相違: {{ row.preparation.conflicts.map((f:any) => f.label).join('、') }}</p></div>
                   <div data-purchase-account><p class="text-gray-500 dark:text-gray-400">借方 · 購入科目</p><p class="mt-1 font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.purchaseAccount?.name || '勘定科目 未設定' }}<span v-if="row.preparation.purchaseAccount?.subName"> / {{ row.preparation.purchaseAccount.subName }}</span></p><p v-if="row.preparation.purchaseAccount?.source === 'yayoi_history'" class="mt-1 text-gray-500 dark:text-gray-400">B · 弥生の記帳例からの候補</p><PurchaseAccountEvidence :history="row.preparation.purchaseAccount?.evidence?.examples ? row.preparation.purchaseAccount.evidence : row.preparation.purchaseAccount?.history" /><p v-if="row.preparation.purchaseAccountingReview?.rule" class="mt-2 font-medium" :class="row.preparation.purchaseAccountingReview.needsAttention ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'" data-purchase-assessment-summary>{{ row.preparation.purchaseAccountingReview.label }}</p></div>
                   <div data-tax-review><p class="text-gray-500 dark:text-gray-400">消費税</p><p class="mt-1 font-medium text-gray-800 dark:text-gray-200">{{ row.preparation.tax.category || '税区分 未設定' }} · {{ row.preparation.tax.rateLabel }}</p><p v-if="row.preparation.tax.status === 'conflict'" class="mt-1 text-amber-700 dark:text-amber-400">税区分・税率の根拠を確認</p></div>

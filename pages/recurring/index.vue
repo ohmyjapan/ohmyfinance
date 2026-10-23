@@ -2,12 +2,12 @@
   <div>
     <!-- Page Header -->
     <div class="mb-8">
-      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="navi-page-header">
         <div>
           <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('nav.recurringPayments') }}</h1>
           <p class="mt-1 text-gray-500 dark:text-gray-400">{{ t('recurring.description') }}</p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="navi-page-actions">
           <button
             @click="processPayments"
             :disabled="isProcessing"
@@ -28,7 +28,7 @@
     </div>
 
     <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="navi-summary-grid gap-6 mb-8">
       <StatCard
         :title="t('recurring.active')"
         :value="stats.active.toString()"
@@ -116,7 +116,8 @@
         </button>
       </div>
 
-      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+      <div v-else class="navi-table-scroll" tabindex="0" role="region" :aria-label="t('nav.recurringPayments')">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
         <thead class="bg-gray-50 dark:bg-white/[0.03]">
           <tr>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ t('common.name') }}</th>
@@ -195,6 +196,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <!-- Create/Edit Modal -->

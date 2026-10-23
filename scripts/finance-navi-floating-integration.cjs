@@ -24,7 +24,8 @@ async function main(){
   const csv=Buffer.from([HEADERS,row].map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n'));
   const batch=await ok('/api/finance/accounts/'+account._id+'/imports?kind=statement&start=2026-07-19&end=2026-08-18',token,'POST',csv,true);
   const before=await db.collection('transactions').countDocuments();
-  await require('./finance-navi-floating-browser.cjs')({root,origin,email,password,A:String(A),B:String(B),batchId:batch.id,worker,pause,pass});
+  const browserLeg=process.env.OMF_FLOATING_FOLD_CASE==='layout'?'./finance-navi-layout-browser.cjs':'./finance-navi-floating-browser.cjs';
+  await require(browserLeg)({root,origin,email,password,A:String(A),B:String(B),batchId:batch.id,worker,pause,pass});
   assert.equal(await db.collection('transactions').countDocuments(),before,'floating:no-ledger-write');
   console.log(groups+' Floating Navi groups passed');
  }finally{

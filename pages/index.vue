@@ -7,8 +7,8 @@
         <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
         <div class="absolute -bottom-8 -left-8 w-32 h-32 bg-white/5 rounded-full blur-2xl"></div>
 
-        <div class="flex items-center justify-between relative z-10">
-          <div>
+        <div class="navi-page-header relative z-10">
+          <div class="break-words">
             <h1 class="text-2xl font-bold mb-1">
               {{ dashboardData?.user?.name ? `${t('dashboard.welcome')}, ${dashboardData.user.name}` : t('dashboard.title') }}
             </h1>
@@ -24,7 +24,7 @@
               </span>
             </div>
           </div>
-          <div class="hidden md:block">
+          <div class="navi-hero-stats">
             <div class="flex items-center gap-4">
               <div class="text-right">
                 <p class="text-sm text-primary-light">{{ t('dashboard.totalTransactions') }}</p>
@@ -73,7 +73,7 @@
     </div>
 
     <!-- Quick Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="navi-summary-grid gap-6 mb-8">
       <StatCard
         :title="t('dashboard.expense')"
         :value="formatCurrency(dashboardData?.stats?.expense?.amount || 0)"
@@ -104,7 +104,7 @@
     </div>
 
     <!-- Quick Actions -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div class="navi-action-grid gap-4 mb-8">
       <NuxtLink
         to="/transactions/upload"
         class="flex flex-col items-center gap-3 p-4 rounded-2xl border bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-primary-main/50 dark:hover:border-primary-main/30 touch-manipulation"
@@ -179,7 +179,8 @@
         </NuxtLink>
       </div>
 
-      <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+      <div v-else class="navi-table-scroll" tabindex="0" role="region" :aria-label="t('dashboard.recentTransactions')">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
         <thead class="bg-gray-50 dark:bg-white/5">
           <tr>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{{ t('transactions.date') }}</th>
@@ -221,6 +222,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
 
       <div v-if="recentTransactions && recentTransactions.length > 0" class="p-4 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5">
         <div class="flex items-center justify-between">

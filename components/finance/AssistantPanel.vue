@@ -180,6 +180,8 @@ onBeforeUnmount(()=>{ticket++;clearTimeout(motionTimer);window.removeEventListen
 }
 .navi-dock-compact.navi-dock-open { --navi-bottom-gap:1rem; }
 .navi-dock-compact .navi-dialog { right:0;width:min(29rem,calc(100vw - var(--navi-edge-gap) - var(--navi-edge-gap)));height:calc(var(--navi-viewport-height,100dvh) - max(var(--navi-bottom-gap),env(safe-area-inset-bottom)) - .5rem - var(--navi-top-clearance,0px));bottom:0; }
+/* Short desktop windows use the same width as the space reserved in the page. */
+@media(min-width:768px) { .navi-dock-compact.navi-dock-open { width:var(--navi-chat-width); } .navi-dock-compact .navi-dialog { width:var(--navi-chat-width); } }
 .navi-dock-compact .navi-dialog header { padding-top:.5rem;padding-bottom:.5rem; }
 .navi-dock-compact .navi-dialog header p { display:none; }
 .navi-dock-compact .navi-dialog textarea.assistant-input,.navi-dock-compact .navi-dialog textarea.chat-input { height:3rem;min-height:3rem;max-height:7rem; }
