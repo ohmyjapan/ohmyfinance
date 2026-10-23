@@ -32,6 +32,13 @@ export, lookup and denominator and never enters the original 62, its cohorts or 
 additional attempt with a named reason (prepare and selftest included), alone in its batch (`selection:supplemental-additional-only`,
 `selection:supplemental-separate-batch`), and its denominator says `countsTowardOriginal62: false`. See *Reviewed corrections* below.
 
+**Positive memory control (outside the 62).** `MEM01` (declared 2026-10-24 before any inference; additional independent review F1)
+is an explicit request for a future customer/purpose rule on the O03 setup. It shares the supplemental cohort id and its selection
+rules (additional attempt, named reason, never with an original case) and is a group of its own (`supplementalGroup:
+positive-memory-control`, CAP01's is `capability-question`): never in one batch with CAP01
+(`selection:supplemental-group-separate-batch`) and counted only in its own denominator (`declaredSupplemental: 1`,
+`countsTowardOriginal62: false`). See *Future-rule scope facts and the positive memory control* below.
+
 The declared texts, the historical contexts and the evaluator expectations are pinned by their pre-inference hashes in
 `scripts/finance-navi-agent-model-cases.mjs`. Evaluator expectations (`EVALUATOR_ONLY`), rubrics and answer/source oracles never
 enter a product request: a request is only the declared text (with declared placeholders resolved), the native page/record
@@ -45,7 +52,7 @@ pointers and the declared reconstructed preceding turns.
 | `scripts/finance-navi-agent-model-cases.mjs` | Declared population (verbatim), selection, placeholder resolution, frozen request hashes, deterministic grade, evidence, T-number and outcome helpers. |
 | `scripts/finance-navi-agent-model-company-cases.mjs` | Company-realm designs (R, W, K, C, J, P, D, H): synthetic setup, reconstructed turns, oracles (native quote contract), scripted selftest turns. |
 | `scripts/finance-navi-agent-model-owner-cases.mjs` | Owner/purchase designs (O01–O13): drafts, memories, approval, forecast/final posting, card sync, workflow, intake, allocation, research queue. |
-| `scripts/finance-navi-agent-model-supplemental.mjs` | The one supplemental design (CAP01): reuses O12's native `prepare` unchanged; zero-write oracle, context/claim check, scripted selftest and wrong-allocation turns. Evaluator only; run by the same runner. |
+| `scripts/finance-navi-agent-model-supplemental.mjs` | The supplemental designs. CAP01: reuses O12's native `prepare` unchanged; zero-write oracle, context/claim check, scripted selftest and wrong-allocation turns. MEM01: reuses O03's native `prepare` unchanged; one-future-memory oracle (`memoryControlChecks`, pure), delivered remember-tool catalogue check (selftest), scripted selftest and wrong draft-write turns. Evaluator only; run by the same runner. |
 | `scripts/finance-navi-agent-model-observer.mjs` | Native child observation (passive default JSON; exact native input capture; P01 stream forwarding; connected-auth one-key overlay) and the owned HTTP observer. |
 | `scripts/finance-navi-agent-model-observer.test.mjs` | Default contracts: real disposable children, manifest, evidence, format and grade contracts and nine deliberately seeded defects. |
 | `scripts/zoomer-fixtures/omf-navi-agent-model.mjs` | The only entry: hub verifier fixture mode. Default = contracts; explicit modes by environment. |
@@ -277,6 +284,42 @@ an initial result or grade.
   combined candidate and runs the affected draws (R06, O12, CAP01, O03 and their regressions) as additional attempts. W04 and J03
   keep their partial observations and get no per-sentence prompt change.
 
+### Future-rule scope facts and the positive memory control (2026-10-24)
+
+Plan `omf-navi-scope-facts-20261024`, folding F1 and F2 of the independent review of the 64 additional attempts on candidate
+`416676bc`. Every original-62, CAP01 and O03 text, hash, expectation, evaluator correction and earlier attempt with its grade stays
+exactly as it was; only the descriptions and the returned explanation below changed, plus the separately declared MEM01.
+
+- **F1, remember-tool scope (product text only).** Both `remember_customer_purpose` and `remember_accounting_fields`
+  (`server/services/financeActionService.ts`) now say what they save: a rule for later purchases on this account and merchant
+  (accounting: also purpose and customer), used from this purchase date on until the memory is paused; use it when the user asks for
+  that future scope, and a clear request needs no extra confirmation; it is not a note about this one purchase (no memory covers only
+  one purchase; the purchase's own values are its draft fields). Schemas, explicit values, native validation, the current-instruction
+  rule and the separate save/approval/posting semantics are unchanged; there is no keyword or intent gate, no new confirmation and no
+  one-purchase store. The purchase chat keeps the user's exact text bound to its import line; that is conversation retention, not a
+  learned rule or a saved draft decision. The O03 evaluator (a focused scope question, zero writes) is unchanged.
+- **F2, budget basis (explanation only).** The returned `categoryMatchBasis` (`server/services/companyBudgetService.ts`) and the
+  budget read descriptions (`shared/finance-navi-business.mjs`) also state that no ordinary OMF transaction page, form or import
+  (card statement, bank or file) sets or shows the matched category text, that the transactions page column labelled 勘定科目
+  (카테고리 in Korean) shows the account category (`accountCategoryId`), which the match does not use, and that only a generated
+  recurring-payment forecast copies its recurring payment's category into `metadata.category` (new fields
+  `pagesAndImportsSetOrShowText: false`, `transactionsPageCategoryColumnShows: 'accountCategoryId'`,
+  `textCopiedOnlyBy: 'recurring_payment_forecast'`). Aggregation, totals, setters, classification references, routes, permissions and
+  budget semantics are unchanged. Whether a category budget should match a classification reference instead is the owner's decision.
+- **MEM01 (supplemental positive control).** Verbatim request (hash `f8560d29…b836`): from now on treat purchases with this card at
+  this shop, from this statement's date, as OMJ10's requests; do not change the saved draft, learn accounting fields, approve or post.
+  Product input: that text and O03's native purchase pointer only. Deterministic checks: the distinct saved company-use precondition,
+  one done `remember_customer_purpose`, exactly one new active classification memory for the registered OMJ10 id on the selected
+  account and merchant effective from the purchase date (`effect:one-future-customer-memory`), no accounting memory, the saved draft
+  values unchanged in the native view and the stored document, no draft save, approval or ledger row; in selftest also the delivered
+  job catalogue's remember descriptions stating the future scope (`catalogue:remember-tools-state-future-rule-scope`; a manual draw
+  records tool names only, so this is selftest evidence of the same build). The selftest ideal resolves OMJ10 from the returned
+  registered choices; the defect turn also writes the draft and must flip `protected:saved-draft-values-unchanged`; the contracts run
+  the same pure checks on an omission/refusal (flips `receipts:done-remember_customer_purpose` and
+  `effect:one-future-customer-memory`) and a draft write. Manual grade stays mandatory; results count only in MEM01's denominator.
+- **No actual model evidence here.** These are build-time zero-model controls. The parent freezes a combined candidate and runs
+  fresh O02, O03, R06, W11, W12 (original cohort, additional attempts) and MEM01 (supplemental, its own batch) under that manifest.
+
 ## Contracts and deliberate defects
 
 The default contracts prove, with real disposable node children and a loopback upstream: exact final-payload forwarding before
@@ -287,7 +330,10 @@ spawn seam (node stands in for the CLI and exits on its first unknown option); H
 selection, placeholder and evaluator-text boundaries; the unchanged original-62 declaration hash, `ALL`, O03 text and denominator
 shape; the supplemental CAP01 declaration, its refusal as an initial attempt (prepare, selftest, manual), its separate batch and
 denominator, its exact frozen input without evaluator text, and its place in the source identity and harness files; the corrected
-O03 and the CAP01 zero-write evaluators rejecting a future memory and an allocation; side-effect-free imports; the exact native input retained from a real child
+O03 and the CAP01 zero-write evaluators rejecting a future memory and an allocation; the MEM01 declaration in its own group, batch
+and denominator and its oracle accepting one future memory while rejecting an omission/refusal, a draft write, an accounting,
+paused, wrong-customer or wrong-date memory, an approval and a posting; the budget read descriptions stating that ordinary pages and
+imports neither set nor show the matched text; side-effect-free imports; the exact native input retained from a real child
 (non-canonical JSON kept byte for byte) and withheld when a known marker appears; fail-closed deep redaction; retained source text
 with recomputed hashes and retained affected/selected documents; the native whitespace quote contract (agreeing with the shared
 `literalQuoteIn`); positive and negative T-number formats; and the overall verdict with failed, missing or empty cleanup and secret
@@ -298,7 +344,7 @@ assertion: a reserialized forwarder (`observer:exact-native-forwarding`), an inv
 T prefix (`format:bare-corporation-number-rejected`), a truncated spaced identifier (`format:spaced-longer-identifier-rejected`),
 cleanup ignored (`grade:overall-false-after-cleanup-failure`) and vacuous cleanup evidence
 (`grade:overall-false-without-cleanup-evidence`). The selftest `defects` variant repeats the idea against the built application:
-17 scripted wrong native turns must each flip their named oracle. None of this is product-model, privacy or reliability evidence.
+17 scripted wrong native turns of the original designs and one each for CAP01 and MEM01 must each flip their named oracle. None of this is product-model, privacy or reliability evidence.
 
 ### Implemented but not exercised by these controls
 

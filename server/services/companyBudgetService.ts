@@ -163,12 +163,17 @@ export async function getCompanyBudget(organizationId: mongoose.Types.ObjectId, 
 // How a budget category is matched by budgetSpending below (review F2, plan omf-navi-context-truth-20261024): read-only explanation
 // returned with the list's spending and the detail read, so no reader promises that a classification edit changes budget spending.
 // It describes the unchanged aggregation; it adds no field, setter or matching rule. Null when the budget has no category.
+// Additional review F2 (plan omf-navi-scope-facts-20261024): it also states where that text does NOT exist for the user. No ordinary
+// transaction page, form or import (card statement posting, bank rows, transaction file import) writes or displays category or
+// metadata.category; the transactions page column labelled 勘定科目 (ja) / 카테고리 (ko) displays accountCategoryId; the one
+// writer is recurring-forecast generation (recurringPaymentService copies the recurring payment's category into metadata.category).
 export function categoryMatchBasis(value: unknown) {
   const category = typeof value === 'string' && value ? value : null
   if (!category) return null
   return {
     matchedFields: ['category', 'metadata.category'], exactText: category, classificationReferencesUsed: false, naviTransactionToolsCanSetText: false,
-    explanation: `A transaction counts toward this budget only when its saved category text (category or metadata.category) is exactly ${JSON.stringify(category)}. Registered classification references (accountCategoryId, transactionCategoryId and the other reference ids) are not used for this match. Navi transaction tools cannot set or change that text (only a generated recurring-payment forecast copies its recurring payment's saved category), so changing a transaction's classification through Navi does not make it count toward this budget.`
+    pagesAndImportsSetOrShowText: false, transactionsPageCategoryColumnShows: 'accountCategoryId', textCopiedOnlyBy: 'recurring_payment_forecast',
+    explanation: `A transaction counts toward this budget only when its saved category text (category or metadata.category) is exactly ${JSON.stringify(category)}. Registered classification references (accountCategoryId, transactionCategoryId and the other reference ids) are not used for this match. Navi transaction tools cannot set or change that text, and no ordinary OMF transaction page, form or import (card statement, bank or file) sets or shows it: the transactions page column labelled 勘定科目 (카테고리 in Korean) shows the account category (accountCategoryId), which this match does not use. Only a generated recurring-payment forecast copies its recurring payment's saved category into metadata.category. So an ordinary transaction has no category text the user can check or edit, and changing its classification (through Navi or on a page) does not make it count toward this budget.`
   }
 }
 
