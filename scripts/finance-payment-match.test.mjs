@@ -153,10 +153,15 @@ test('Vue conditional and all new component templates compile',async()=>{
 // facts and the frozen coverage shape — additive; the provider-wide BANK_PROVIDERS table stays contract-pending for every bank.
 import * as bankTables from '../shared/finance-payment-match.mjs';
 const tableFn=name=>{const f=bankTables[name];assert.equal(typeof f,'function','native-bank:export '+name);return f};
-test('per-variant collection mode: only 楽天銀行 standard retrieves; the provider table stays honest',()=>{
+// Deliberate change (plan omf-paypay-routine-20261022 Phase C): PayPay銀行 標準 retrieves too; its BA-PLUS/no-variant connections and
+// every other provider/variant keep the observe stage; no live verification is claimed.
+test('per-variant collection mode: 楽天銀行 standard and PayPay銀行 standard retrieve; the provider table stays honest',()=>{
  const mode=tableFn('bankCollectionMode');
  assert.equal(mode('rakuten','standard'),'retrieve','native-bank:standard-retrieve');
- for(const [p,v] of [['rakuten','plus'],['rakuten',null],['rakuten','x'],['paypay',null],['resona','direct'],['ikeda','portal'],['nope','standard']])assert.equal(mode(p,v),'observe','native-bank:observe-kept '+p+'/'+v);
+ assert.equal(mode('paypay','standard'),'retrieve','native-bank:paypay-standard-retrieve');
+ assert.deepEqual(tableFn('bankCapability')('paypay','standard'),{mode:'retrieve',steps:'implemented',template:null,period:'required',liveVerified:false},'native-bank:paypay-standard-capability');
+ assert.equal(tableFn('bankFirstCapture')('paypay','standard'),'unmapped','native-bank:paypay-first-capture-kept');
+ for(const [p,v] of [['rakuten','plus'],['rakuten',null],['rakuten','x'],['paypay',null],['paypay','baplus'],['resona','direct'],['ikeda','portal'],['nope','standard']])assert.equal(mode(p,v),'observe','native-bank:observe-kept '+p+'/'+v);
  assert.ok(bankTables.BANK_PROVIDERS.every(p=>p[2]==='contract-pending'),'native-bank:provider-table-pending');
  const capability=tableFn('bankCapability');
  assert.deepEqual(capability('rakuten','standard'),{mode:'retrieve',steps:'implemented',template:'rakuten-standard-native',period:'required',liveVerified:false},'native-bank:standard-capability');

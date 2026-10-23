@@ -91,6 +91,13 @@ async function privateAcl({verifyOnly=false}={}) {
 async function probeCapability() { return {ok:true,provider:'CurrentUser DPAPI plus OMF key custody'}; }
 const liveSession=()=>session && !session.closing && Date.now()<session.until ? session : null;
 function assertSession(live) { if(!live || liveSession()!==live)throw coded('forbidden','The connection has ended. Reconnect this PC.'); }
+// Build-resume-06 (native trace R5-routine-N-diagnostic-2): the tick renews the protected session (refresh within its last minute), but
+// the tick does not run while a job runs. A bank job still waiting when the grant window ended (a refused or in-use sign-in keeps the
+// window for up to the 300 s deadline) could not post its own result: OMF kept it open and the next session ran it again. While a bank
+// job runs, its own session is renewed the same way; a refusal of the renewal changes nothing here (the job's next status post fails
+// closed as before and the tick handles the reason).
+const JOB_RENEWAL_MS=15000;
+async function renewJobSession(live){if(live?.mode!=='protected'||typeof live.broker?.remote?.refresh!=='function')return;try{await live.broker.remote.refresh();if(session===live&&!live.closing)live.until=live.broker.remote.until;}catch{/* fail closed as before */}}
 async function authorize(change) {
   if(authorization || closing || session)throw coded('conflict','Pause syncing or wait for the current connection request to finish.');
   let finish=()=>{};
@@ -355,7 +362,9 @@ export function bankLoginFor(bank,config,live,{store=secrets,root=directory,asse
   const provider=job?.snapshot?.provider??job?.provider;
   if(!BANK_LOGIN_PROVIDERS.includes(provider)||job?.snapshot?.variant!=='standard')return null;
   if(provider==='rakuten'&&job.kind!=='retrieve')return null;
-  if(provider==='paypay'&&!guidedBankJob(job))return null; // guard:bank-login-kind
+  // Plan omf-paypay-routine-20261022: a PayPay銀行 標準 job gets the handle when it is a guided observe job (historical first capture) or
+  // a retrieve job (routine retrieval); a claim of any other kind never does.
+  if(provider==='paypay'&&!(guidedBankJob(job)||job?.kind==='retrieve'))return null; // guard:bank-login-kind
   const entry=bankEntry(provider,id),marker=bankMarker(provider,id,root);let opened=false;
   const aad=()=>aadFor(live.installationId,provider,{_id:id,ownerId},config);
   return {
@@ -555,7 +564,8 @@ async function tickWork() {
       let currentState='running',currentMessage='取得を開始',heartbeatFailure;
       const bankStatus=async(state,text)=>{assertSession(live);if(heartbeatFailure)throw heartbeatFailure;currentState=state;currentMessage=text;message=`${bank.account.name}: ${text}`;await api(config,'bank/status',{jobId:bank.job.jobId,state,message:text},undefined,live,{base:BANK_BASE});};
       heartbeat=setInterval(()=>{api(config,'bank/status',{jobId:bank.job.jobId,state:currentState,message:currentMessage},undefined,live,{base:BANK_BASE}).catch(e=>{heartbeatFailure=e;});},45000);
-      await runBankJob(bank,config,live,{status:bankStatus,onLaunch:ownBrowser(live),batch:live.id,signal:live.abort.signal,login:bankLoginFor(bank,config,live)});
+      const renewal=setInterval(()=>{void renewJobSession(live);},JOB_RENEWAL_MS); // guard:bank-job-session-renewal
+      try{await runBankJob(bank,config,live,{status:bankStatus,onLaunch:ownBrowser(live),batch:live.id,signal:live.abort.signal,login:bankLoginFor(bank,config,live)});}finally{clearInterval(renewal);}
       assertSession(live);live.ran=true;
       clearInterval(heartbeat);
       return;

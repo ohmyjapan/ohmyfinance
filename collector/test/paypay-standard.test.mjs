@@ -86,10 +86,13 @@ async function owned(fn) {
 const uiOf = (page, browser, options) => paypay.standardUi(page, browser, paypay.standard, { provider: 'paypay', variant: 'standard' }, { settleMs: 6000, stableMs: 800, ...options });
 const fieldValues = page => page.evaluate(() => [...document.querySelectorAll('input:not([type="hidden"]):not([type="submit"])')].map(e => e.value));
 
-test('the standard adapter: a guided, contract-pending variant of the PayPay銀行 provider, opened on the published standard login link', () => {
+// Deliberate change (plan omf-paypay-routine-20261022 Phase C): the standard variant now implements routine retrieval (support
+// 'verified' = steps implemented; liveVerified stays false in the shared capability) and keeps guided:true for historical observe jobs.
+test('the standard adapter: a routine-retrieving variant that stays guided for historical observe jobs, opened on the published standard login link', () => {
   const s = paypay.standard;
   assert.equal(bank.adapterFor('paypay', 'standard'), s, 'paypay:variant-resolved');
-  assert.equal(s.provider, 'paypay'); assert.equal(s.variant, 'standard'); assert.equal(s.support, 'contract-pending', 'paypay:standard-contract-pending'); assert.equal(s.contract, null); assert.equal(s.guided, true, 'paypay:standard-guided');
+  assert.equal(s.provider, 'paypay'); assert.equal(s.variant, 'standard'); assert.equal(s.support, 'verified', 'paypay:standard-routine-steps'); assert.equal(s.contract, paypay.STANDARD_PAGES); assert.equal(s.guided, true, 'paypay:standard-guided');
+  assert.deepEqual(Object.keys(s.loginExits).sort(), ['acceptDirectOnly', 'inUse', 'markRefused', 'texts'], 'paypay:standard-login-exits');
   assert.equal(s.start, 'https://login.paypay-bank.co.jp/wctx/1D1DFxFDg.do?aatc=ot2411jb05a', 'paypay:published-standard-link');
   assert.deepEqual(s.hosts, ['paypay-bank.co.jp']); assert.deepEqual(s.loginHosts, ['login.paypay-bank.co.jp']);
   const c = paypay.STANDARD_LOGIN; assert.equal(c.origin, ORIGIN); assert.equal(c.form, 'HOST'); assert.equal(c.method, 'post'); assert.equal(c.action, ACTION); assert.equal(c.entry, ENTRY);
