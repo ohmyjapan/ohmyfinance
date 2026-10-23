@@ -15,10 +15,10 @@ import { readDraft, saveDraft, type DraftOperation } from './financeDraftService
 import { reviewContext } from './financeReviewService'
 import { validateChatProposal, reusableClassification } from '../../shared/finance-chat.mjs'
 import { consultationEvidence } from '../../shared/finance-consultation.mjs'
-import { validateProposalReference, sameProposalReference, chatProposalReference, chatProposalContent, proposalHash, researchProposalReference, researchReportContent, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
+import { validateProposalReference, sameProposalReference, chatProposalReference, chatProposalContent, proposalHash, researchProposalReference, researchReportContent, canonicalJson, type ProposalReference } from '../../shared/finance-action-proposal.mjs'
 import { startChatResearch, chatResearchContext } from './financeResearchService'
 import { actionTools, teachingTools, reconcileActions, actionReceipts, conversationReceipts, runAction } from './financeActionService'
-import { startNewOwnerConversation, listOwnerConversationArchives, getOwnerConversationArchive, ownerTurnLimits } from './financeOwnerConversationService'
+import { startNewOwnerConversation, listOwnerConversationArchives, getOwnerConversationArchive, ownerTurnLimits, findOwnerReceivedRequest, sameOwnerRequestId, sameOwnerRequestMeaning } from './financeOwnerConversationService'
 import { companyClaim, companyContextLost, maskTurns } from './financeOwnerCompanyKnowledgeService'
 import { postingCompanyView, type PostingCompany } from './financeNaviPostingService'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
@@ -130,13 +130,29 @@ export async function getChat(ownerId:string,importId:string,line:number,posting
  const produced=!!c&&draftActionRevision(c,c.turns.find((t:any)=>t.id===c.currentId)?.actions||[])===d.revision
  return {conversation:visible(c,postingCompany),connected,stale:!!c?.context&&(c.context.revision!==d.revision||c.context.fingerprint!==fingerprint(d.values))&&c.state!=='confirmed'&&!produced,postingCompany:postingCompanyView(postingCompany)}
 }
+// One request identity for a purchase send and for the uncertain request a New chat names: the existing text and id checks (same
+// refusal), the canonical string id, and the hash of its exact text, the draft binding it was sent against and the displayed proposal
+// references it carried (never the conversation revision or the selected company), so the retry of an accepted request stays the same
+// request even after that request's own completed save moved the draft.
+function purchaseRequestIdentity(body:any){
+ if(typeof body?.text!=='string'||!body.text.trim()||body.text.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text)||!/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId||''))fail(400,'メッセージを入力してください（2000文字以内）。')
+ const text=body.text.trim()
+ return {requestId:String(body.requestId),text,requestHash:hash(canonicalJson({text,draft:{revision:body.revision??null,key:body.key??null,sourceHash:body.sourceHash??null},references:body.references??null}))}
+}
 export async function sendChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){
  await init()
- if(typeof body?.text!=='string'||!body.text.trim()||body.text.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text)||!/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId||''))fail(400,'メッセージを入力してください（2000文字以内）。')
+ // The checked canonical id (its string form) is the one request id for recognition, the queue (currentId) and the stored turn.
+ const {requestId,text,requestHash}=purchaseRequestIdentity(body)
  const scope=identity(ownerId,importId,line),{draft:d,study,customers}=await reviewContext(ownerId,importId,line)
  let c:any=await Chat.findOne(scope).lean()
- const previous=c?.turns.find((t:any)=>t.id===body.requestId)
- if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getChat(ownerId,importId,line,postingCompany)}
+ const previous=c?.turns.find((t:any)=>sameOwnerRequestId(t.id,requestId))
+ if(previous){if(!sameOwnerRequestMeaning(previous,{requestHash,text}))fail(409,'送信IDが既に使用されています。');return getChat(ownerId,importId,line,postingCompany)}
+ // The same id accepted before a New chat moved it to an adopted archive of this purchase's conversation is the same request: answered
+ // with that archived turn and its receipts (masked for the company checked now), never queued or executed again; another meaning keeps
+ // the 409. It precedes the draft binding, editability, worker and conversation checks, so the request's own completed save (which moved
+ // the draft) never turns its retry into a refusal or a new instruction.
+ const archived:any=c?await findOwnerReceivedRequest('purchase',scope,requestId,c,postingCompany?.organizationId||null):null
+ if(archived){if(!sameOwnerRequestMeaning(archived.turn,{requestHash,text}))fail(409,'送信IDが既に使用されています。');return {...await getChat(ownerId,importId,line,postingCompany),received:archived.answer}}
  bound(d,body);editable(d)
  if(!await Agent.exists({ownerId,accountIds:d.source.account.id,enabled:true,revokedAt:null,chatLastSeenAt:{$gt:new Date(Date.now()-65000)}}))fail(409,'AIに接続できません。少し待って再試行してください。')
  if(c&&pending.includes(c.state))fail(409,'前のメッセージの処理が終わるまでお待ちください。')
@@ -151,7 +167,7 @@ export async function sendChat(ownerId:string,importId:string,line:number,body:a
   messages:c.turns.slice(-8).map((t:any)=>({turnId:t.id,text:t.text,response:t.proposal?.summary||'',patch:t.proposal?.patch||{},confirmed:!!t.confirmedAt,actions:t.actions||[],submittedAt:t.at||null,replyRecordedAt:t.proposal?.summary?t.answeredAt||null:null})),
   // Ledger posting destination only, frozen with this turn (null = none selected; the conversation, saves and approval stay available).
   postingCompany:postingCompanyView(postingCompany)}
- const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:body.requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),...(references.length?{references}:{}),...(postingCompany?{postingCompany}:{})}}},{new:true}).lean()
+ const updated=await Chat.findOneAndUpdate({_id:c._id,revision:body.chatRevision,state:{$nin:pending}},{$set:{state:'queued',currentId:requestId,context,attempts:0},$unset:{lease:'',leaseUntil:'',agentId:''},$inc:{revision:1},$push:{turns:{id:requestId,text,requestHash,at:new Date(),...(references.length?{references}:{}),...(postingCompany?{postingCompany}:{})}}},{new:true}).lean()
  if(!updated)fail(409,'会話が更新されました。再読込してください。')
  return getChat(ownerId,importId,line,postingCompany)
 }
@@ -206,8 +222,17 @@ export async function finishChat(agent:any,chatId:string,body:any){
  if(!result.matchedCount)fail(409,'Teaching job changed');return {success:true}
 }
 // Explicit new chat and archived history of one purchase conversation: the purchase must be the owner's (readDraft refuses otherwise);
-// only the chat resets, the draft, research, memories and ledger stay; an archived proposal can never be applied or confirmed.
-export async function newChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){await init();await readDraft(ownerId,importId,line);await startNewOwnerConversation('purchase',identity(ownerId,importId,line),body);return getChat(ownerId,importId,line,postingCompany)}
+// only the chat resets, the draft, research, memories and ledger stay; an archived proposal can never be applied or confirmed. A New chat
+// may name the client's uncertain earlier send (pending: its request id, text, draft binding and references), normalised with the send's
+// own identity rules: context for the answer only. An absent conversation is fenced as its row created from this owned draft's identity
+// and card account. No tool, permission, cancellation or resend; without it New chat is unchanged and the response carries no `reset`.
+export async function newChat(ownerId:string,importId:string,line:number,body:any,postingCompany:PostingCompany|null=null){
+ await init();const d=await readDraft(ownerId,importId,line),scope=identity(ownerId,importId,line)
+ const pending=body?.pending===undefined||body?.pending===null?null:{...purchaseRequestIdentity(body.pending),organizationId:postingCompany?.organizationId||null}
+ const answer=await startNewOwnerConversation('purchase',scope,body,pending,pending?{...scope,accountId:d.source.account.id}:null)
+ const view=await getChat(ownerId,importId,line,postingCompany)
+ return pending?{...view,reset:{requestId:body.requestId,scope:{actorId:String(ownerId),realm:'purchase',importId:String(importId),line},pending:answer}}:view
+}
 export async function chatHistory(ownerId:string,importId:string,line:number,query:any,postingCompany:PostingCompany|null=null){await init();await readDraft(ownerId,importId,line);return listOwnerConversationArchives('purchase',identity(ownerId,importId,line),postingCompany?.organizationId||null,query)}
 export async function chatArchive(ownerId:string,importId:string,line:number,archiveId:string,postingCompany:PostingCompany|null=null){await init();await readDraft(ownerId,importId,line);return getOwnerConversationArchive('purchase',identity(ownerId,importId,line),postingCompany?.organizationId||null,archiveId)}
 // A named Navi action on this worker's claimed conversation (lease-bound; see financeActionService).

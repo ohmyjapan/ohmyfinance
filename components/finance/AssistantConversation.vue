@@ -15,13 +15,13 @@
    <p data-assistant-owner-status class="min-w-0 flex-1 truncate text-gray-500">{{ assistant.discussion?.scopeKey===scope.key ? '過去の会話について相談中' : '画面についての会話' }}</p>
    <button type="button" data-assistant-view="chat" class="shrink-0 rounded-lg px-2 py-1" :class="view==='chat'?'bg-primary-main/10 font-medium text-primary-main':'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10'" @click="view='chat'">会話</button>
    <button type="button" data-assistant-history-toggle class="shrink-0 rounded-lg px-2 py-1" :class="view==='history'?'bg-primary-main/10 font-medium text-primary-main':'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10'" @click="openHistory">履歴</button>
-   <button type="button" data-assistant-new-chat class="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-gray-600 hover:border-primary-main disabled:opacity-50 dark:border-white/10 dark:text-gray-300" :disabled="busy||waiting||!turns.length" :title="waiting?'回答の作成中は新しい会話を始められません':'今の会話を履歴に残して新しく始めます'" @click="newChat">新しい会話</button>
+   <button type="button" data-assistant-new-chat class="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-gray-600 hover:border-primary-main disabled:opacity-50 dark:border-white/10 dark:text-gray-300" :disabled="busy||waiting||!(assistant.pending[bufferKey]||turns.length)" :title="waiting?'回答の作成中は新しい会話を始められません':'今の会話を履歴に残して新しく始めます'" @click="newChat">新しい会話</button>
   </div>
   <div v-if="view==='history'" ref="historyBox" data-assistant-history class="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm">
    <template v-if="archive">
     <button type="button" class="mb-3 text-xs text-primary-main underline" @click="archive=null">← 履歴の一覧</button>
     <p class="mb-2 text-[11px] text-gray-500">{{ formatDate(archive.firstAt) }} – {{ formatDate(archive.lastAt) }} · {{ archive.turnCount }}件（読み取り専用）</p>
-    <p v-if="received&&received.archiveId===archive.id" data-assistant-received role="status" class="mb-3 rounded-lg bg-primary-main/10 px-3 py-2 text-xs text-primary-main">この送信は以前に受け付けられていました。同じ依頼はもう一度送っていません。結果と保存の記録は枠で囲んだやりとりです{{ received.occurrences>1?'（同じ依頼が履歴に'+received.occurrences+'件記録されています）':'' }}。</p>
+    <p v-if="received&&received.archiveId===archive.id" data-assistant-received role="status" class="mb-3 rounded-lg bg-primary-main/10 px-3 py-2 text-xs text-primary-main">この送信は以前に受け付けられていました。同じ依頼はもう一度送っていません。結果と保存の記録は枠で囲んだやりとりです{{ received.occurrences>1?'（同じ依頼が履歴に'+received.occurrences+(received.truncated?'件以上':'件')+'記録されています）':'' }}。</p>
     <button v-if="scope.company" type="button" data-assistant-discuss="archive" class="mb-3 rounded-lg border border-primary-main/40 px-3 py-1.5 text-xs font-medium text-primary-main hover:bg-primary-main/10" @click="discuss({kind:'archive',id:archive.id,label:formatDate(archive.firstAt)+' からの会話'})">この会話について相談する</button>
     <button v-if="!scope.company" type="button" data-archive-discuss class="mb-3 rounded-lg border border-primary-main/40 px-3 py-1.5 text-xs font-medium text-primary-main hover:bg-primary-main/10" @click="discussOwner(archive)">この会話について相談する</button>
     <article v-for="turn in archive.turns" :key="turn.id" data-archived-turn :data-archived-request="received&&received.archiveId===archive.id&&received.requestId===turn.id?'':undefined" class="mb-4 space-y-2" :class="received&&received.archiveId===archive.id&&received.requestId===turn.id?'rounded-xl p-2 ring-2 ring-primary-main/40':''"><p v-if="turn.withheld" data-archived-withheld class="text-xs text-gray-500">{{ withheldText }}</p><p v-else class="whitespace-pre-wrap break-words rounded-2xl bg-gray-100 px-3 py-2 text-gray-800 dark:bg-white/10 dark:text-gray-100">{{ turn.text }}</p><ul v-if="turn.actions?.length" class="space-y-1 text-xs"><li v-for="a in turn.actions" :key="a.operationId" :data-archived-action-state="a.state" :class="a.state==='failed'||a.state==='unresolved'?'text-amber-700 dark:text-amber-400':'text-gray-500'">{{ actionLabel(a) }}</li></ul><p v-if="turn.proposal" class="whitespace-pre-wrap break-words text-gray-700 dark:text-gray-200">{{ turn.proposal.summary }}</p>
@@ -65,11 +65,12 @@
   <!-- History and memory views are read-only inspectors: the composer belongs to the chat view; "相談する" pins the record here. -->
   <form v-show="view==='chat'" class="shrink-0 border-t border-gray-100 p-4 dark:border-white/10" @submit.prevent="send">
    <p v-if="error" role="alert" class="mb-3 text-xs text-red-600">{{ error }}</p>
-   <p v-if="scope.company&&assistant.pending[bufferKey]&&!busy&&!waiting" data-assistant-pending-hint class="mb-3 text-[11px] text-gray-500">この送信の結果はまだ確認できていません。「送信結果を確認」でもう一度確かめるか、「新しい会話」で確認できます（受け付け済みなら結果を履歴に表示し、未受付なら入力した文はそのまま残ります）。</p>
+   <p v-if="assistant.pending[bufferKey]&&!busy&&!waiting&&!heldElsewhere" data-assistant-pending-hint class="mb-3 text-[11px] text-gray-500">この送信の結果はまだ確認できていません。「送信結果を確認」でもう一度確かめるか、「新しい会話」で確認できます（受け付け済みなら結果を履歴に表示し、未受付なら入力した文はそのまま残ります）。</p>
+   <p v-if="heldElsewhere&&!busy&&!waiting" data-assistant-pending-held class="mb-3 text-[11px] text-amber-700 dark:text-amber-400">この送信は別の会社を選択していたときのものなので、今の選択では送りません。元の会社を選び直すと「送信結果を確認」で確かめられます。「新しい会話」では今の選択のまま結果を確認できます（未受付なら入力した文はそのまま残ります）。</p>
    <p v-if="scope.company&&pinned" data-assistant-pinned class="mb-2 flex items-center gap-2 rounded-lg bg-primary-main/10 px-2 py-1 text-[11px] text-primary-main"><span class="min-w-0 flex-1 truncate" :title="pinned.label">相談の対象: {{ pinned.label }}（根拠として読み、指示としては扱いません）</span><button type="button" data-assistant-unpin class="shrink-0 underline" aria-label="相談の対象を外す" @click="pinned=null">外す</button></p>
    <p v-if="!scope.company&&discussing" data-assistant-discussing class="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-gray-500"><span class="min-w-0 break-words">相談中の過去の会話：{{ discussing.label }}（記録として参照します。新しい変更の指示にはなりません）</span><button type="button" data-assistant-discussing-clear class="text-primary-main underline" @click="assistant.discussion=null">解除</button></p>
    <label for="assistant-message" class="sr-only">OMFへのメッセージ</label><textarea id="assistant-message" v-model="text" rows="3" maxlength="2000" placeholder="この判断の理由は？ / 이 화면에서…" class="assistant-input" :disabled="busy||waiting||!data?.connected" @keydown.ctrl.enter.prevent="send" />
-   <div class="mt-3 flex items-center justify-between gap-3"><p class="text-[11px] text-gray-500">{{ !data?'接続を確認しています…':data.connected?'한국어・日本語 · 会話を保存します':'AIに接続できません。会話は保存されています。' }}</p><button type="submit" data-assistant-send class="btn btn-primary shrink-0 text-xs" :disabled="busy||waiting||!data?.connected||(!text.trim()&&!assistant.pending[bufferKey])"><Send class="mr-1 h-3.5 w-3.5" />{{ assistant.pending[bufferKey]?'送信結果を確認':'送信' }}</button></div>
+   <div class="mt-3 flex items-center justify-between gap-3"><p class="text-[11px] text-gray-500">{{ !data?'接続を確認しています…':data.connected?'한국어・日本語 · 会話を保存します':'AIに接続できません。会話は保存されています。' }}</p><button type="submit" data-assistant-send class="btn btn-primary shrink-0 text-xs" :disabled="busy||waiting||!data?.connected||(!text.trim()&&!assistant.pending[bufferKey])||heldElsewhere"><Send class="mr-1 h-3.5 w-3.5" />{{ assistant.pending[bufferKey]?'送信結果を確認':'送信' }}</button></div>
   </form>
  </section>
 </template>
@@ -88,10 +89,12 @@ const data=ref<any>(null),error=ref(''),busy=ref(false),transcript=ref<HTMLEleme
 // Company-only views. History and teachings stay in component memory; nothing financial goes to browser storage.
 const view=ref<'chat'|'history'|'knowledge'>('chat'),archives=ref<any[]>([]),archive=ref<any>(null),historyLoaded=ref(false),historyPage=ref(1),historyMore=ref(false),knowledge=ref<any[]>([]),knowledgeLoaded=ref(false)
 const randomId=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('')
-// The New chat request frozen at its first press: its id and the uncertain request it names (company only), reused after a lost reply.
+// The New chat request frozen at its first press: its id and the uncertain request it names (company and owner workspace), reused after
+// a lost reply.
 let resetRequest:null|{id:string,pending:any}=null
-// History shows the archived conversation that holds an already accepted request, with that turn marked (component memory only).
-const received=ref<{archiveId:string,requestId:string,occurrences:number}|null>(null),historyBox=ref<HTMLElement|null>(null)
+// History shows the archived conversation that holds an already accepted request, with that turn marked (component memory only). The
+// server reads at most a bounded number of archives: a capped count (occurrencesTruncated) is shown as a lower bound, never as exact.
+const received=ref<{archiveId:string,requestId:string,occurrences:number,truncated:boolean}|null>(null),historyBox=ref<HTMLElement|null>(null)
 // A reply link is a fixed catalogue page or a server-checked transaction/receipt; it opens only on the user's click.
 const navigationRoute=(p:any)=>p?.navigation?naviFeatureRoute(p.navigation.feature,p.navigation.transactionId??p.navigation.receiptId)||undefined:undefined
 const navigationLabel=(p:any)=>naviFeature(p?.navigation?.feature)?.label||'画面'
@@ -101,6 +104,9 @@ const conditionText=(k:any)=>[k.conditions?.merchant?'店: '+k.conditions.mercha
 const scope={...props.scope},bufferKey=scope.company?scope.key:'workspace'
 const text=computed({get:()=>assistant.buffers[bufferKey]||'',set:v=>assistant.buffers[bufferKey]=v})
 const turns=computed(()=>data.value?.conversation?.turns||[]),waiting=computed(()=>['queued','working'].includes(data.value?.conversation?.state))
+// An uncertain owner request keeps the company selection it was made under (the posting destination and teaching authority its turn
+// would freeze): it is never sent under another selection. Switching back, or New chat (which sends nothing), resolves it.
+const heldElsewhere=computed(()=>{const p=assistant.pending[bufferKey];return !scope.company&&!!p&&p.org!==String(tokenClaims(user.token)?.organizationId||'')})
 // Public research progress: only reads the server already captured for the turn being answered (never an intention).
 const workingSources=computed(()=>data.value?.conversation?.state==='working'?(turns.value.find((t:any)=>t.id===data.value.conversation.currentId)?.sources||[]).filter((s:any)=>s.status==='captured').length:0)
 // An archive or teaching pinned from the history/memory view as the context of the next messages (pointer only; the server checks
@@ -127,9 +133,10 @@ const actionNames:Record<string,string>={...businessNames,queue_card_sync:'明�
 const actionStates:Record<string,string>={done:'完了',queued:'受付済み',working:'処理中…',failed:'できませんでした',unresolved:'結果の確認が必要です'}
 const actionLabel=(a:any)=>(actionNames[a.name]||a.name)+'：'+(actionStates[a.state]||a.state)+(a.target?.line?'（'+a.target.line+'行目'+(a.acceptedRevision?'・下書き改訂 '+a.acceptedRevision:'')+'）':a.acceptedRevision?'（改訂 '+a.acceptedRevision+'）':'')+(a.safeError?' · '+a.safeError:'')
 // A completed write names its purchase; that purchase is fetched fresh and handed to the store, which refreshes the draft page only if
-// it shows that same purchase and has no unsaved edits (the receipt itself is history, not state). Once per operation.
+// it shows that same purchase and has no unsaved edits (the receipt itself is history, not state). Once per operation: the receipts of
+// the live turns, or (owner) those of an accepted request's archived turn answered from History.
 const refreshed=new Set<string>()
-async function refreshAfterActions(){const intakeReceipts:any[]=[];for(const turn of turns.value)for(const a of turn.actions||[]){
+async function refreshAfterActions(receipts:any[]=turns.value.flatMap((t:any)=>t.actions||[])){const intakeReceipts:any[]=[];for(const a of receipts){
  if(refreshed.has(a.operationId))continue
  // An owner native receipt (queued sync, saved schedule, review or allocation) asks the open native page to refetch that record.
  if(!scope.company&&ownerNative[a.name]&&['done','queued'].includes(a.state)&&a.nativeResourceIds){if(current()){assistant.receiveOwnerNative({kind:ownerNative[a.name],actorId:scope.actorId,operationId:a.operationId,...a.nativeResourceIds});refreshed.add(a.operationId)}continue}
@@ -153,8 +160,8 @@ const dataOrg=ref('')
 function accept(result:any,org:string=selectedOrg()){if(!current()||org!==selectedOrg())return;if(scope.company&&(result.company?.id!==scope.organizationId||(result.conversation&&(result.conversation.scope?.actorId!==scope.actorId||result.conversation.scope?.organizationId!==scope.organizationId))))throw Error('Company conversation changed');data.value=result;dataOrg.value=org;error.value='';if(!scope.company)assistant.postingFor(scope.key+'|'+org,result.postingCompany);const pending=assistant.pending[bufferKey];if(pending&&result.conversation?.turns?.some((t:any)=>t.id===pending.id&&t.text===pending.text)){if(text.value===pending.rawText)text.value='';delete assistant.pending[bufferKey]}}
 async function load(){if(scope.company&&!scope.organizationId)return;const stamp=++ticket,org=selectedOrg();try{const result=await $fetch(endpoint,{headers:user.authHeader});if(current()&&stamp===ticket&&org===selectedOrg()){accept(result,org);await refreshAfterActions()}}catch(e){if(current()&&stamp===ticket)failed(e)}}
 function schedule(){timer=setTimeout(async()=>{if(!current())return;if(props.active&&!busy.value)await load();if(current())schedule()},4000)}
-async function send(){if(!current()||busy.value||waiting.value||(!text.value.trim()&&!assistant.pending[bufferKey])||!data.value?.connected)return;busy.value=true;error.value='';ticket++;follow();let request:any=null,fresh=false;try{
- if(!assistant.pending[bufferKey]){fresh=true;assistant.pending[bufferKey]={id:randomId(),text:text.value.trim(),rawText:text.value,context:{...JSON.parse(JSON.stringify(props.context)),...(!scope.company&&discussing.value?{archiveId:discussing.value.archiveId}:{}),...(scope.company&&pinned.value?{inspected:{kind:pinned.value.kind,id:pinned.value.id}}:{})}}}
+async function send(){if(!current()||busy.value||waiting.value||(!text.value.trim()&&!assistant.pending[bufferKey])||!data.value?.connected||heldElsewhere.value)return;busy.value=true;error.value='';ticket++;follow();let request:any=null,fresh=false;try{
+ if(!assistant.pending[bufferKey]){fresh=true;assistant.pending[bufferKey]={id:randomId(),text:text.value.trim(),rawText:text.value,context:{...JSON.parse(JSON.stringify(props.context)),...(!scope.company&&discussing.value?{archiveId:discussing.value.archiveId}:{}),...(scope.company&&pinned.value?{inspected:{kind:pinned.value.kind,id:pinned.value.id}}:{})},...(!scope.company?{org:selectedOrg()}:{})}}
  request=assistant.pending[bufferKey];const org=selectedOrg();const result:any=await $fetch(endpoint,{method:'POST',headers:user.authHeader,body:{text:request.text,requestId:request.id,context:request.context,chatRevision:data.value?.conversation?.revision||0}});if(current()){accept(result,org);settle(request,result?.received,org)}
 }catch(e:any){if(current()){
  // The company server refused this attempt before storing anything because its selected or pinned record is not in this company (a
@@ -166,17 +173,19 @@ async function send(){if(!current()||busy.value||waiting.value||(!text.value.tri
 async function retry(){if(!current()||busy.value)return;busy.value=true;error.value='';ticket++;follow();const org=selectedOrg();try{const result=await $fetch(endpoint+'/retry',{method:'POST',headers:user.authHeader,body:{chatRevision:data.value.conversation.revision}});if(current())accept(result,org)}catch(e){if(current())failed(e)}finally{busy.value=false}}
 // Explicit new chat: the server archives the current segment with its receipts. The same request (its id and the uncertain request it
 // names) is reused after a lost reply, so a retry is recognised instead of archiving twice; a refused request (busy, changed) is dropped
-// and any uncertain request stays uncertain. In the company conversation an uncertain earlier send keeps New chat available even with
-// no turns or no conversation yet, and the server's answer for exactly that request is applied by settle(). Owner New chat is unchanged.
-async function newChat(){const pending=scope.company?assistant.pending[bufferKey]||null:null;if(!current()||busy.value||waiting.value||(!data.value?.conversation&&!pending))return;busy.value=true;error.value='';ticket++;if(!resetRequest)resetRequest={id:randomId(),pending};const request=resetRequest,org=selectedOrg();try{const result:any=await $fetch(endpoint+'/new',{method:'POST',headers:user.authHeader,body:{chatRevision:data.value?.conversation?.revision||0,requestId:request.id,...(request.pending?{pending:{requestId:request.pending.id,text:request.pending.text,context:request.pending.context}}:{})}});resetRequest=null;if(current()){assistant.clearNaviStatus();follow();accept(result,org);view.value='chat';archive.value=null;archives.value=[];historyLoaded.value=false;if(!scope.company)assistant.discussion=null;if(result?.reset?.requestId===request.id)settle(request.pending,result.reset.pending,org)}}catch(e:any){if(e?.statusCode||e?.status)resetRequest=null;if(current())failed(e)}finally{busy.value=false}}
-// The server's answer about exactly the uncertain request a press named (same id, this actor and company, the selection it was sent
-// under), applied only while that same pending object is still the current one. Accepted: released, its text cleared only if unchanged,
-// and its actual archived turn and receipts shown in History. Not accepted (fenced by this New chat): released, the typed text kept (an
-// emptied composer gets it back) for the person's own next send. Nothing is sent; any other answer changes nothing.
-function settle(request:any,answer:any,org:string){if(!scope.company||!request||!answer||assistant.pending[bufferKey]!==request||answer.requestId!==request.id||answer.scope?.actorId!==scope.actorId||answer.scope?.organizationId!==scope.organizationId||org!==selectedOrg())return
- if(answer.outcome==='accepted'){delete assistant.pending[bufferKey];if(text.value===request.rawText)text.value='';if(answer.where==='archive'&&answer.archive?.id)showReceived(answer)}
+// and any uncertain request stays uncertain. In the company and the owner conversation alike an uncertain earlier send keeps New chat
+// available even with no turns or no conversation yet, and the server's answer for exactly that request is applied by settle().
+async function newChat(){const pending=assistant.pending[bufferKey]||null;if(!current()||busy.value||waiting.value||(!data.value?.conversation&&!pending))return;busy.value=true;error.value='';ticket++;if(!resetRequest)resetRequest={id:randomId(),pending};const request=resetRequest,org=selectedOrg();try{const result:any=await $fetch(endpoint+'/new',{method:'POST',headers:user.authHeader,body:{chatRevision:data.value?.conversation?.revision||0,requestId:request.id,...(request.pending?{pending:{requestId:request.pending.id,text:request.pending.text,context:request.pending.context}}:{})}});resetRequest=null;if(current()){assistant.clearNaviStatus();follow();accept(result,org);view.value='chat';archive.value=null;archives.value=[];historyLoaded.value=false;if(!scope.company)assistant.discussion=null;if(result?.reset?.requestId===request.id)settle(request.pending,result.reset.pending,org)}}catch(e:any){if(e?.statusCode||e?.status)resetRequest=null;if(current())failed(e)}finally{busy.value=false}}
+// The server's answer about exactly the uncertain request a press named (same id, this actor, the company conversation's company or the
+// owner workspace realm and the conversation shown, under the selection it was sent in), applied only while that same pending object is
+// still the current one. Accepted: released, its text cleared only if unchanged, and its actual archived turn and receipts shown in
+// History (owner: the open pages refresh from its completed receipts). Not accepted (fenced by this New chat): released, the typed text
+// kept (an emptied composer gets it back) for the person's own next send. Nothing is sent; any other answer changes nothing.
+function settle(request:any,answer:any,org:string){if(!request||!answer||assistant.pending[bufferKey]!==request||answer.requestId!==request.id||answer.scope?.actorId!==scope.actorId||org!==selectedOrg())return
+ if(scope.company?answer.scope?.organizationId!==scope.organizationId:answer.scope?.realm!=='workspace'||answer.scope?.conversationId!==String(data.value?.conversation?.id||''))return
+ if(answer.outcome==='accepted'){delete assistant.pending[bufferKey];if(text.value===request.rawText)text.value='';if(answer.where==='archive'&&answer.archive?.id){if(!scope.company)refreshAfterActions(answer.turn?.actions||[]);showReceived(answer)}}
  else if(answer.outcome==='not_accepted'){delete assistant.pending[bufferKey];if(!text.value.trim())text.value=request.rawText}}
-function showReceived(answer:any){openHistory();received.value={archiveId:String(answer.archive.id),requestId:String(answer.requestId),occurrences:Number(answer.occurrences)||1};openArchive(String(answer.archive.id))}
+function showReceived(answer:any){openHistory();received.value={archiveId:String(answer.archive.id),requestId:String(answer.requestId),occurrences:Number(answer.occurrences)||1,truncated:answer.occurrencesTruncated===true};openArchive(String(answer.archive.id))}
 // Scrolls only the History list itself to the marked turn (never the page behind the rail).
 function revealReceived(){const box=historyBox.value,turn=box?.querySelector('[data-archived-request]');if(box&&turn)box.scrollTop+=turn.getBoundingClientRect().top-box.getBoundingClientRect().top-8}
 async function loadHistory(page=1){const org=selectedOrg();try{const r:any=await $fetch(endpoint+'/history',{headers:user.authHeader,query:{page}});if(!current()||org!==selectedOrg())return;archives.value=page===1?r.archives:[...archives.value,...r.archives];historyPage.value=r.page;historyMore.value=r.hasMore;historyLoaded.value=true}catch(e){if(current())failed(e)}}

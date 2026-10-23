@@ -1,13 +1,14 @@
 import { claimCompanyAssistant, isCompanyAssistantJob, finishCompanyAssistant, actionCompanyAssistant } from './financeCompanyAssistantService'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,createHash} from 'node:crypto'
 import {FinanceAssistant as Conversation} from '../models/FinanceAssistant'
 import {FinanceChatAgent as Agent} from '../models/FinanceChat'
 import {FinancialAccount,FinanceImport} from '../models/Finance'
 import {learningOverview,learningDetail} from './financeLearningService'
 import {ready,fail,id,ownedImport,reviewMapping} from './financeService'
 import {assistantPages,validateAssistantReply} from '../../shared/finance-assistant.mjs'
+import {canonicalJson} from '../../shared/finance-action-proposal.mjs'
 import {actionTools,teachingTools,reconcileActions,actionReceipts,conversationReceipts,runAction} from './financeActionService'
-import {startNewOwnerConversation,listOwnerConversationArchives,getOwnerConversationArchive,archiveDiscussion,ownerTurnLimits} from './financeOwnerConversationService'
+import {startNewOwnerConversation,listOwnerConversationArchives,getOwnerConversationArchive,archiveDiscussion,ownerTurnLimits,findOwnerReceivedRequest,sameOwnerRequestId,sameOwnerRequestMeaning} from './financeOwnerConversationService'
 import {companyClaim,companyContextLost,maskTurns} from './financeOwnerCompanyKnowledgeService'
 import {readRecord as readIntakeRecord,readSheet as readIntakeSheet} from './financeIntakeService'
 import {paymentView as readOwnedPayment} from './financePaymentMatchService'
@@ -19,8 +20,18 @@ const available=(ownerId:string)=>Agent.findOne({ownerId,enabled:true,revokedAt:
 const withReceipts=(c:any)=>conversationReceipts('workspace',c)
 // postingCompany: the token-selected company checked by the route for this request (display only; a turn keeps the one frozen at its send).
 export async function getAssistant(ownerId:string,postingCompany:PostingCompany|null=null){await init();return {conversation:visible(await withReceipts(await Conversation.findOne({ownerId}).lean()),postingCompany),connected:!!await available(ownerId),postingCompany:postingCompanyView(postingCompany)}}
-// Explicit new chat and archived history of the owner workspace conversation (owner-scoped; see financeOwnerConversationService).
-export async function newAssistant(ownerId:string,body:any,postingCompany:PostingCompany|null=null){await init();await startNewOwnerConversation('workspace',{ownerId},body);return getAssistant(ownerId,postingCompany)}
+// Explicit new chat and archived history of the owner workspace conversation (owner-scoped; see financeOwnerConversationService). A New
+// chat may name the client's uncertain earlier send (pending: its request id, text and context), normalised with the send's own identity
+// rules: context for the answer only (accepted, live or adopted archive, masked for the company checked now; or not accepted after this
+// reset's revision fence, which on an absent conversation is the owner's conversation row itself). No tool, permission, cancellation or
+// resend; without it New chat is unchanged and the response carries no `reset`.
+export async function newAssistant(ownerId:string,body:any,postingCompany:PostingCompany|null=null){
+ await init()
+ const pending=body?.pending===undefined||body?.pending===null?null:{...workspaceRequestIdentity(body.pending),organizationId:postingCompany?.organizationId||null}
+ const answer=await startNewOwnerConversation('workspace',{ownerId},body,pending,pending?{ownerId}:null)
+ const view=await getAssistant(ownerId,postingCompany)
+ return pending?{...view,reset:{requestId:body.requestId,scope:{actorId:String(ownerId),realm:'workspace'},pending:answer}}:view
+}
 export async function assistantHistory(ownerId:string,query:any,postingCompany:PostingCompany|null=null){await init();return listOwnerConversationArchives('workspace',{ownerId},postingCompany?.organizationId||null,query)}
 export async function assistantArchive(ownerId:string,archiveId:string,postingCompany:PostingCompany|null=null){await init();return getOwnerConversationArchive('workspace',{ownerId},postingCompany?.organizationId||null,archiveId)}
 async function pageContext(ownerId:string,input:any,postingCompany:PostingCompany|null=null){
@@ -72,12 +83,27 @@ async function pageContext(ownerId:string,input:any,postingCompany:PostingCompan
  if(input.page==='intake')context.facts.pageGuide='所有者の受付・履歴・原本・会社と登録番号の調査を確認できます。日本の経理担当者として根拠と推測を区別し、韓国語または日本語で自然に説明してください。保存の指示には対応するツールを実行し、保存済みと提案を区別してください。編集・アーカイブ・調査は最新の受付と調査を読み、取得した改訂を使います。取込前にプレビューし、会社とT番号の保存前に根拠を提示して利用者の指示を確認します。調査の受付は完了ではなく、保存は国税庁確認ではありません。一部保存・結果不明は自動で繰り返さず状態を調べます。'
  return context
 }
+// One request identity for a send and for the uncertain request a New chat names: the existing text and id checks (same refusal), the
+// canonical string id, and the hash of its exact text and page context as sent (never the conversation revision or the selected company,
+// which the turn freezes separately), so an uncertain request matches its accepted turn exactly.
+function workspaceRequestIdentity(body:any){
+ if(typeof body?.text!=='string'||!body.text.trim()||body.text.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text)||!/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId||''))fail(400,'メッセージを入力してください（2000文字以内）。')
+ const text=body.text.trim()
+ return {requestId:String(body.requestId),text,requestHash:createHash('sha256').update(canonicalJson({text,context:body.context===undefined?null:body.context})).digest('hex')}
+}
 export async function sendAssistant(ownerId:string,body:any,postingCompany:PostingCompany|null=null){
  await init()
- if(typeof body?.text!=='string'||!body.text.trim()||body.text.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text)||!/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId||''))fail(400,'メッセージを入力してください（2000文字以内）。')
+ // The checked canonical id (its string form) is the one request id for recognition, the queue (currentId) and the stored turn, so a
+ // request accepted with an id sent as a JSON number is claimable and is the same request as its string form.
+ const {requestId,text,requestHash}=workspaceRequestIdentity(body)
  let c:any=await Conversation.findOne({ownerId}).lean()
- const previous=c?.turns.find((t:any)=>t.id===body.requestId)
- if(previous){if(previous.text!==body.text.trim())fail(409,'送信IDが既に使用されています。');return getAssistant(ownerId,postingCompany)}
+ const previous=c?.turns.find((t:any)=>sameOwnerRequestId(t.id,requestId))
+ if(previous){if(!sameOwnerRequestMeaning(previous,{requestHash,text}))fail(409,'送信IDが既に使用されています。');return getAssistant(ownerId,postingCompany)}
+ // The same id accepted before a New chat moved it to an adopted archive of this owner's conversation is the same request: answered with
+ // that archived turn and its receipts (masked for the company checked now), never queued or executed again; another meaning keeps the
+ // 409. Like the live check it precedes every other check, so a later state, page selection or worker absence never hides it.
+ const archived:any=c?await findOwnerReceivedRequest('workspace',{ownerId},requestId,c,postingCompany?.organizationId||null):null
+ if(archived){if(!sameOwnerRequestMeaning(archived.turn,{requestHash,text}))fail(409,'送信IDが既に使用されています。');return {...await getAssistant(ownerId,postingCompany),received:archived.answer}}
  if(c&&['queued','working'].includes(c.state))fail(409,'前の回答をお待ちください。')
  if(body.chatRevision!==(c?.revision||0))fail(409,'会話が更新されました。再読込してください。')
  if((c?.turns.length||0)>=ownerTurnLimits.workspace)fail(409,'この会話は200件に達しました。「新しい会話」で続けてください。これまでの会話と保存の記録は「履歴」に残ります。')
@@ -93,7 +119,7 @@ export async function sendAssistant(ownerId:string,body:any,postingCompany:Posti
  // The statement the page had selected at send is frozen on the turn: a later navigation cannot retarget this turn's actions.
  const target=context.facts.intakeRecord?{recordId:context.facts.intakeRecord.id}:context.facts.intakeSheet?{documentId:context.facts.intakeSheet.document.id,sheet:context.facts.intakeSheet.sheet,headerRow:context.facts.intakeSheet.headerRow}:context.facts.paymentSelection?.kind==='card'?{importId:context.facts.paymentSelection.importId,line:context.facts.paymentSelection.line}:context.facts.paymentSelection?.kind==='bank'?{paymentKind:'bank'}:context.facts.statement?{importId:String(context.facts.statement.id)}:null
  if(!c){try{c=(await Conversation.create({ownerId})).toObject()}catch(e:any){if(e.code===11000)fail(409,'会話が更新されました。再読込してください。');throw e}}
- const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:body.requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:body.requestId,text:body.text.trim(),at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null,...(postingCompany?{postingCompany}:{}),...(target?{target}:{})}}})
+ const r=await Conversation.updateOne({_id:c._id,revision:body.chatRevision,state:{$nin:['queued','working']}},{$set:{state:'queued',currentId:requestId,context,agentId:agent._id,attempts:0},$inc:{revision:1},$unset:{lease:'',leaseUntil:''},$push:{turns:{id:requestId,text,requestHash,at:new Date(),pageName:context.pageName,selection:context.facts.pattern?.merchantLabel||null,...(postingCompany?{postingCompany}:{}),...(target?{target}:{})}}})
  if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId,postingCompany)
 }
 export async function retryAssistant(ownerId:string,body:any,postingCompany:PostingCompany|null=null){
