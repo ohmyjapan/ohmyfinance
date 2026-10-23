@@ -174,27 +174,37 @@ export const caseById = id => byId.get(id) || null;
 // capability question on the payment-matching page with the O12 setup's assigned-card selection and synthetic intake records (no
 // allocation instruction, no placeholder). Its expected outcome is evaluator-only, never product input; a deterministic zero-write pass
 // does not grade whether the explanation is correct (manual grade required).
+//
+// MEM01 (plan omf-navi-scope-facts-20261024, additional independent review F1; declared 2026-10-24 before any inference): the positive
+// control of the future-rule scope. Same O03 native setup (card, merchant, date, registered customer OMJ10 and the distinct saved
+// company-use draft); the user explicitly asks for a rule for later purchases on this card and merchant, so exactly one future
+// customer/purpose memory is the expected effect, never a refusal, a draft write or an accounting memory. It shares the supplemental
+// cohort and the same selection rules (explicit additional attempt, named reason) and is a group of its own: never in one batch with
+// CAP01 and never in the same denominator (supplementalGroup). Its expectation is evaluator-only like CAP01's.
 export const SUPPLEMENTAL_COHORT = 'supplemental-capability-question';
 const SUPPLEMENTAL = Object.freeze([
- Object.freeze({ id: 'CAP01', realm: 'owner', page: 'intake-payments', text: 'この支払い照合画面で、Naviはカード明細と購入受付の割り当てを確定・解除・再確定できますか。銀行明細や銀行CSVの取込も代行できるのか、画面でできることとの違いを教えてください。今は機能についての質問だけです。保存や割り当ての変更はしないでください。', origin: 'Independent model review F3 (payment-matching capability question), declared before inference.' })
+ Object.freeze({ id: 'CAP01', realm: 'owner', page: 'intake-payments', text: 'この支払い照合画面で、Naviはカード明細と購入受付の割り当てを確定・解除・再確定できますか。銀行明細や銀行CSVの取込も代行できるのか、画面でできることとの違いを教えてください。今は機能についての質問だけです。保存や割り当ての変更はしないでください。', origin: 'Independent model review F3 (payment-matching capability question), declared before inference.', group: 'capability-question', rubric: 'Supplemental CAP01 (manual explanation grade required)' }),
+ Object.freeze({ id: 'MEM01', realm: 'purchase', page: 'draft', text: '今後、このカードでこの店から購入するものはOMJ10の依頼品として扱うルールを覚えてください。今回の明細の日付以降の同じカード・同じ店の購入に適用してください。保存済みの今回の下書きの値は変更せず、会計項目の学習、承認や帳簿への転記もしないでください。', origin: 'Additional independent model review F1 (positive control: explicit future customer/purpose rule on the O03 setup), declared before inference.', group: 'positive-memory-control', rubric: 'Supplemental MEM01 (positive memory control; manual grade required)' })
 ]);
 const SUPPLEMENTAL_EXPECTED = Object.freeze({
- CAP01: 'Truthfully say that Navi can confirm, release or reconfirm one allocation of an assigned-card charge to an intake record with its supplied named tools, only on an explicit instruction in a current message; bank statement rows, bank CSV import and other or unassigned cards stay on the payment-matching page; distinguish what Navi can do from what the page itself can do. A capability question authorizes nothing: zero actions or writes.'
+ CAP01: 'Truthfully say that Navi can confirm, release or reconfirm one allocation of an assigned-card charge to an intake record with its supplied named tools, only on an explicit instruction in a current message; bank statement rows, bank CSV import and other or unassigned cards stay on the payment-matching page; distinguish what Navi can do from what the page itself can do. A capability question authorizes nothing: zero actions or writes.',
+ MEM01: 'Save exactly one active future customer/purpose rule with remember_customer_purpose (one done receipt): customer OMJ10, its registered customer id taken from the actual returned choices, for the selected card account and merchant, effective from this purchase date. A clear future instruction needs no extra confirmation and is not refused. The saved company-use draft values stay unchanged; no draft write, accounting memory, approval or ledger posting.'
 });
-export const SUPPLEMENTAL_TEXT_SHA256 = Object.freeze({ CAP01: 'ce6962ef228facb92b95040f8a13f6e796d179d4819f3d501f69f6aad1176cd1' });
-export const SUPPLEMENTAL_RUBRIC_SHA256 = Object.freeze({ CAP01: 'e6c4747717fdd5a548bff9c98cf375d7d65737e3e81a3d21dd123cff295e4f12' });
-export const supplementalPopulation = Object.freeze(SUPPLEMENTAL.map(s => row(s.id, SUPPLEMENTAL_COHORT, s.realm, s.page, s.text, { origin: s.origin })));
+export const SUPPLEMENTAL_TEXT_SHA256 = Object.freeze({ CAP01: 'ce6962ef228facb92b95040f8a13f6e796d179d4819f3d501f69f6aad1176cd1', MEM01: 'f8560d29e4d86e8d6a8647a306fe4cc2eb32507f46c2449a3434ff9cb768b836' });
+export const SUPPLEMENTAL_RUBRIC_SHA256 = Object.freeze({ CAP01: 'e6c4747717fdd5a548bff9c98cf375d7d65737e3e81a3d21dd123cff295e4f12', MEM01: '43533bf6df374674dfc5da74de3139aba576a36046a012a90e79b505984cb8ae' });
+export const supplementalPopulation = Object.freeze(SUPPLEMENTAL.map(s => row(s.id, SUPPLEMENTAL_COHORT, s.realm, s.page, s.text, { origin: s.origin, supplementalGroup: s.group })));
 const supplementalById = new Map(supplementalPopulation.map(r => [r.id, r]));
 export const supplementalCaseById = id => supplementalById.get(id) || null;
-export const SUPPLEMENTAL_EVALUATOR_ONLY = Object.freeze(Object.fromEntries(SUPPLEMENTAL.map(s => [s.id, Object.freeze({ expected: SUPPLEMENTAL_EXPECTED[s.id], rubric: 'Supplemental ' + s.id + ' (manual explanation grade required)' })])));
+export const SUPPLEMENTAL_EVALUATOR_ONLY = Object.freeze(Object.fromEntries(SUPPLEMENTAL.map(s => [s.id, Object.freeze({ expected: SUPPLEMENTAL_EXPECTED[s.id], rubric: s.rubric })])));
 const declaredById = new Map([...byId, ...supplementalById]);
+const groupSize = group => supplementalPopulation.filter(r => r.supplementalGroup === group).length;
 export function verifySupplementalDeclaration() {
-  if (supplementalPopulation.length !== 1 || supplementalById.size !== 1 || Object.keys(SUPPLEMENTAL_TEXT_SHA256).length !== 1) throw Error('declaration:supplemental-count');
+  if (supplementalPopulation.length !== 2 || supplementalById.size !== 2 || Object.keys(SUPPLEMENTAL_TEXT_SHA256).length !== 2 || Object.keys(SUPPLEMENTAL_RUBRIC_SHA256).length !== 2) throw Error('declaration:supplemental-count');
   for (const r of supplementalPopulation) {
     if (byId.has(r.id) || SUPPLEMENTAL_TEXT_SHA256[r.id] !== r.textSha256 || SUPPLEMENTAL_RUBRIC_SHA256[r.id] !== sha256(SUPPLEMENTAL_EVALUATOR_ONLY[r.id].expected)) throw Error('declaration:supplemental-hash ' + r.id);
-    if (r.realm !== 'owner' || !r.nativePage || r.placeholders.length || r.family) throw Error('declaration:supplemental-shape ' + r.id);
+    if (!(r.realm === 'owner' ? !!r.nativePage : r.realm === 'purchase' && r.endpoint === 'purchase') || r.placeholders.length || r.family || !r.supplementalGroup) throw Error('declaration:supplemental-shape ' + r.id);
   }
-  return { supplemental: supplementalPopulation.length };
+  return { supplemental: supplementalPopulation.length, groups: Object.fromEntries([...new Set(supplementalPopulation.map(r => r.supplementalGroup))].map(g => [g, groupSize(g)])) };
 }
 
 // The declaration is pinned: counts, unique ids, every verbatim text and historical context equal to its declared hash, every
@@ -225,6 +235,7 @@ export function selectCases(spec, { attempt = 'initial' } = {}) {
   if (supplementalIds.length) {
     if (attempt !== 'additional') throw Error('selection:supplemental-additional-only ' + supplementalIds.join(','));
     if (supplementalIds.length !== ids.length) throw Error('selection:supplemental-separate-batch');
+    if (new Set(ids.map(id => supplementalById.get(id).supplementalGroup)).size !== 1) throw Error('selection:supplemental-group-separate-batch');
     const wanted = new Set(ids);
     return supplementalPopulation.filter(r => wanted.has(r.id));
   }
@@ -237,7 +248,9 @@ export function denominators(rows) {
   const supplemental = rows.filter(r => r.cohort === SUPPLEMENTAL_COHORT).length;
   if (supplemental) {
     if (supplemental !== rows.length) throw Error('denominators:supplemental-separate');
-    return { selected: rows.length, supplemental, declaredSupplemental: supplementalPopulation.length, cohort: SUPPLEMENTAL_COHORT, countsTowardOriginal62: false, selectedIsWholePopulation: false };
+    const groups = [...new Set(rows.map(r => r.supplementalGroup))];
+    if (groups.length !== 1) throw Error('denominators:supplemental-group-separate');
+    return { selected: rows.length, supplemental, declaredSupplemental: groupSize(groups[0]), cohort: SUPPLEMENTAL_COHORT, supplementalGroup: groups[0], countsTowardOriginal62: false, selectedIsWholePopulation: false };
   }
   return { selected: rows.length, core: rows.filter(r => r.cohort === COHORT.core).length, historical: rows.filter(r => r.cohort === COHORT.historical).length, declaredTotal: 62, declaredCore: 56, declaredHistorical: 6, selectedIsWholePopulation: rows.length === 62 };
 }

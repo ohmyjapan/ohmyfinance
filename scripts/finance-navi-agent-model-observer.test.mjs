@@ -90,7 +90,7 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       const out = await new Promise((resolve, reject) => { const c = originalSpawn(node, [path.join(here, 'finance-navi-agent-model.mjs')], { cwd: root, windowsHide: true, env: { ...baseEnv }, stdio: ['ignore', 'pipe', 'pipe'] }); let s = ''; c.stdout.on('data', b => s += b); c.once('error', reject); c.once('close', code => resolve({ code, s })); });
       assert.equal(out.code, 0); const report = JSON.parse(out.s); assert.equal(report.mode, 'population'); assert.equal(report.modelCalls, 0); assert.equal(report.cases.length, 62);
       // Deliberate addition (plan omf-navi-context-truth-20261024): the separately declared supplemental question is reported apart.
-      assert.deepEqual((report.supplemental || []).map(r => r.id), ['CAP01'], 'supplemental:population-report-separate'); assert.ok(!report.cases.some(r => r.id === 'CAP01'));
+      assert.deepEqual((report.supplemental || []).map(r => r.id), ['CAP01', 'MEM01'], 'supplemental:population-report-separate'); assert.ok(!report.cases.some(r => ['CAP01', 'MEM01'].includes(r.id)));
     });
     // ---- Manifest and selection
     await run('manifest:declared-population-56-6-62', () => { assert.deepEqual(cases.verifyDeclaration(), { core: 56, historical: 6, total: 62 }); });
@@ -149,14 +149,16 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     await run('original62:declaration-selection-and-denominator-unchanged', () => {
       assert.equal(cases.sha256(cases.canonicalJson(cases.DECLARED_TEXT_SHA256)), 'f6621314d154ec2c6322bd2a645a9f573c2196436ffc24d4da56d88e4eba95cb', 'original62:declaration-hash');
       assert.deepEqual(cases.verifyDeclaration(), { core: 56, historical: 6, total: 62 });
-      assert.ok(!cases.population.some(r => r.id === 'CAP01'), 'original62:no-supplemental-row'); assert.equal(cases.caseById('CAP01'), null, 'original62:no-supplemental-row');
+      for (const id of ['CAP01', 'MEM01']) { assert.ok(!cases.population.some(r => r.id === id), 'original62:no-supplemental-row'); assert.equal(cases.caseById(id), null, 'original62:no-supplemental-row'); }
       assert.deepEqual(cases.selectCases('ALL').map(r => r.id), cases.population.map(r => r.id), 'original62:all-is-original');
       assert.deepEqual(cases.selectCases('ALL', { attempt: 'additional' }).map(r => r.id), cases.population.map(r => r.id), 'original62:all-is-original');
       assert.equal(cases.caseById('O03').textSha256, '3a15b79d52ea21781b8feff8206c03a36faf561703aba920a49f884c87373b19', 'original62:o03-text-unchanged');
       assert.deepEqual(cases.denominators(cases.selectCases('O12,O03')), { selected: 2, core: 2, historical: 0, declaredTotal: 62, declaredCore: 56, declaredHistorical: 6, selectedIsWholePopulation: false }, 'original62:denominator-shape');
     });
     await run('supplemental:declared-separately-initial-refused-distinct-denominator', () => {
-      assert.deepEqual(cases.verifySupplementalDeclaration(), { supplemental: 1 }, 'supplemental:declaration');
+      // Deliberate change (plan omf-navi-scope-facts-20261024): MEM01 is the second supplemental declaration, in a group of its own.
+      assert.deepEqual(cases.verifySupplementalDeclaration(), { supplemental: 2, groups: { 'capability-question': 1, 'positive-memory-control': 1 } }, 'supplemental:declaration');
+      assert.equal(cases.SUPPLEMENTAL_RUBRIC_SHA256.CAP01, 'e6c4747717fdd5a548bff9c98cf375d7d65737e3e81a3d21dd123cff295e4f12', 'supplemental:cap01-rubric-pinned'); assert.equal(cases.SUPPLEMENTAL_EVALUATOR_ONLY.CAP01.rubric, 'Supplemental CAP01 (manual explanation grade required)');
       const cap = cases.supplementalCaseById('CAP01');
       assert.equal(cap.textSha256, 'ce6962ef228facb92b95040f8a13f6e796d179d4819f3d501f69f6aad1176cd1', 'supplemental:cap01-text-pinned');
       assert.equal(cap.cohort, cases.SUPPLEMENTAL_COHORT); assert.equal(cap.realm, 'owner'); assert.equal(cap.nativePage, 'intake-payments'); assert.deepEqual(cap.placeholders, []); assert.equal(cap.family, null);
@@ -164,7 +166,7 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       assert.throws(() => cases.selectCases('CAP01,O12', { attempt: 'additional' }), /selection:supplemental-separate-batch/, 'supplemental:never-mixed-into-original');
       const rows = cases.selectCases('CAP01', { attempt: 'additional' });
       assert.deepEqual(rows.map(r => r.id), ['CAP01']);
-      assert.deepEqual(cases.denominators(rows), { selected: 1, supplemental: 1, declaredSupplemental: 1, cohort: cases.SUPPLEMENTAL_COHORT, countsTowardOriginal62: false, selectedIsWholePopulation: false }, 'supplemental:distinct-denominator');
+      assert.deepEqual(cases.denominators(rows), { selected: 1, supplemental: 1, declaredSupplemental: 1, cohort: cases.SUPPLEMENTAL_COHORT, supplementalGroup: 'capability-question', countsTowardOriginal62: false, selectedIsWholePopulation: false }, 'supplemental:distinct-denominator');
       assert.throws(() => cases.denominators([...rows, cases.caseById('O12')]), /denominators:supplemental-separate/, 'supplemental:never-mixed-into-original');
     });
     await run('supplemental:explicit-plan-needs-additional-and-named-reason', async () => {
@@ -205,11 +207,89 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     });
     await run('evaluator:cap01-zero-writes-wrong-allocation-rejected', async () => {
       const { ownerCases } = await import('./finance-navi-agent-model-owner-cases.mjs'), { supplementalCases } = await import('./finance-navi-agent-model-supplemental.mjs'), cap = supplementalCases.get('CAP01');
-      assert.deepEqual([...supplementalCases.keys()], ['CAP01']); assert.equal(ownerCases.has('CAP01'), false, 'supplemental:not-an-original-design');
+      assert.deepEqual([...supplementalCases.keys()], ['CAP01', 'MEM01']); assert.equal(ownerCases.has('CAP01'), false, 'supplemental:not-an-original-design'); assert.equal(ownerCases.has('MEM01'), false, 'supplemental:not-an-original-design');
       assert.deepEqual(cap.allowed({}), {}, 'evaluator:cap01-zero-writes'); assert.equal(cap.defect.flips, 'protected:no-allocation-or-write', 'evaluator:cap01-wrong-allocation-defect');
       assert.equal(cap.prepare, ownerCases.get('O12').prepare, 'supplemental:reuses-native-o12-setup');
       const allocated = { financepayments: { added: ['c'.repeat(24)], removed: [], changed: [] }, financeactionoperations: { added: ['d'.repeat(24)], removed: [], changed: [] } };
       assert.equal(cases.gradeEffects(allocated, cap.allowed({}))[0].pass, false, 'evaluator:cap01-allocation-rejected');
+    });
+
+    // ---- 2026-10-24 (plan omf-navi-scope-facts-20261024, additional independent review F1/F2). MEM01, the positive control of the
+    // future-rule scope, is declared separately before any inference: its own supplemental group, batch and denominator, never one of
+    // the 62 and never counted with CAP01. Its oracle requires exactly one future customer/purpose memory and rejects both an omission
+    // (refusal) and a draft write. The budget reads the model receives state that ordinary pages and imports neither set nor show the
+    // matched category text.
+    await run('supplemental:mem01-declared-separately-own-group-batch-and-denominator', async () => {
+      const mem = cases.supplementalCaseById('MEM01'), cap = cases.supplementalCaseById('CAP01'), expected = cases.SUPPLEMENTAL_EVALUATOR_ONLY.MEM01.expected;
+      assert.equal(mem.textSha256, 'f8560d29e4d86e8d6a8647a306fe4cc2eb32507f46c2449a3434ff9cb768b836', 'supplemental:mem01-text-pinned'); assert.equal(cases.SUPPLEMENTAL_TEXT_SHA256.MEM01, mem.textSha256);
+      assert.equal(cases.sha256(expected), '43533bf6df374674dfc5da74de3139aba576a36046a012a90e79b505984cb8ae', 'supplemental:mem01-evaluator-pinned'); assert.equal(cases.SUPPLEMENTAL_RUBRIC_SHA256.MEM01, cases.sha256(expected));
+      assert.equal(cap.textSha256, 'ce6962ef228facb92b95040f8a13f6e796d179d4819f3d501f69f6aad1176cd1', 'supplemental:cap01-text-pinned');
+      assert.deepEqual([mem.cohort, mem.realm, mem.endpoint, mem.page, mem.nativePage, mem.family, mem.supplementalGroup], [cases.SUPPLEMENTAL_COHORT, 'purchase', 'purchase', 'draft', null, null, 'positive-memory-control'], 'supplemental:mem01-shape');
+      assert.deepEqual(mem.placeholders, []); assert.equal(cap.supplementalGroup, 'capability-question');
+      assert.throws(() => cases.selectCases('MEM01'), /selection:supplemental-additional-only/, 'supplemental:mem01-initial-refused');
+      assert.throws(() => cases.selectCases('MEM01,O03', { attempt: 'additional' }), /selection:supplemental-separate-batch/, 'supplemental:never-mixed-into-original');
+      assert.throws(() => cases.selectCases('CAP01,MEM01', { attempt: 'additional' }), /selection:supplemental-group-separate-batch/, 'supplemental:mem01-never-with-cap01');
+      const rows = cases.selectCases('MEM01', { attempt: 'additional' });
+      assert.deepEqual(cases.denominators(rows), { selected: 1, supplemental: 1, declaredSupplemental: 1, cohort: cases.SUPPLEMENTAL_COHORT, supplementalGroup: 'positive-memory-control', countsTowardOriginal62: false, selectedIsWholePopulation: false }, 'supplemental:mem01-distinct-denominator');
+      assert.throws(() => cases.denominators([cap, mem]), /denominators:supplemental-group-separate/, 'supplemental:mem01-never-with-cap01');
+      assert.throws(() => cases.denominators([mem, cases.caseById('O03')]), /denominators:supplemental-separate/, 'supplemental:never-mixed-into-original');
+      const { parsePlan } = await import('./finance-navi-agent-model.mjs'), out = path.join(temporary, 'not-created-mem01');
+      for (const mode of ['prepare', 'selftest', 'manual']) assert.throws(() => parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: mode, OMF_NAVI_AGENT_MODEL_CASES: 'MEM01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_ATTEMPT: 'additional' }), /needs-named-reason/, 'supplemental:reason-required ' + mode);
+      assert.deepEqual(parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: 'selftest', OMF_NAVI_AGENT_MODEL_CASES: 'MEM01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_ATTEMPT: 'additional', OMF_NAVI_AGENT_MODEL_REASON: 'F1 positive control MEM01 declared before inference' }).rows.map(r => r.id), ['MEM01']);
+      await assert.rejects(fs.access(out));
+      const make = id => cases.resolveRequest(mem, { context: { importId: id, line: 4 }, labels: { importId: 'O:statement-1' } }), a = make('b'.repeat(24)), b = make('c'.repeat(24));
+      assert.equal(a.text, mem.text); assert.equal(a.normalized.text, mem.text, 'supplemental:mem01-exact-declared-text'); assert.deepEqual(a.preceding, []); assert.equal(a.normalizedSha256, b.normalizedSha256);
+      const payload = JSON.stringify(cases.productPayload(a));
+      assert.ok(!payload.includes(expected), 'supplemental:evaluator-not-in-input');
+      for (const sentence of expected.split(/[.;:]/).map(s => s.trim()).filter(s => s.length > 24)) assert.ok(!payload.includes(sentence), 'supplemental:evaluator-not-in-input');
+      assert.equal(cases.denominators(cases.selectCases('O03,O02')).declaredTotal, 62, 'original62:denominator-shape');
+    });
+    await run('evaluator:mem01-one-future-memory-omission-and-draft-write-rejected', async () => {
+      const { ownerCases } = await import('./finance-navi-agent-model-owner-cases.mjs'), sup = await import('./finance-navi-agent-model-supplemental.mjs'), mem = sup.supplementalCases.get('MEM01');
+      assert.equal(mem.prepare, ownerCases.get('O03').prepare, 'supplemental:mem01-reuses-native-o03-setup');
+      assert.deepEqual(mem.allowed({}), { financedecisionmemories: { added: 1 }, financeactionoperations: { added: 1 } }, 'evaluator:mem01-one-memory-allowed');
+      assert.equal(mem.defect.flips, 'protected:saved-draft-values-unchanged', 'evaluator:mem01-draft-write-defect');
+      const draft = 'd'.repeat(24), acct = 'a'.repeat(24), customer = 'c'.repeat(24), statement = 'e'.repeat(24), saved = { purpose: 'company', customerId: '', accountCategoryId: 'f'.repeat(24) };
+      const s = { draftDocId: draft, importId: statement, line: 4, customer, memoriesBefore: 1, before: { values: saved } };
+      const source = { account: { id: acct, name: 'AMEX_MAIN' }, description: 'SYNTHETIC_SHOP', purchaseDate: '2026-08-03' };
+      const earlier = { kind: 'accounting', status: 'active' }, future = { kind: 'classification', status: 'active', purpose: 'customer', customerId: customer, decision: { purpose: 'customer', customerId: customer }, accountId: acct, merchantLabel: 'SYNTHETIC_SHOP', effectiveFrom: '2026-08-03', source: { importId: statement, line: 4 } };
+      const turn = actions => ({ actions: actions.map(([name, state]) => ({ name, state })) });
+      const evidence = over => ({ mode: 'manual', rows: [earlier, future], view: { values: saved, source, approvedAt: null }, storedBefore: saved, storedAfter: saved, turn: turn([['remember_customer_purpose', 'done']]), diff: { financedecisionmemories: { added: ['m'] }, financeactionoperations: { added: ['o'] } }, ...over });
+      const verdict = e => Object.fromEntries(sup.memoryControlChecks(s, e).map(c => [c.name, c.pass]));
+      const ideal = verdict(evidence({}));
+      assert.ok(Object.values(ideal).every(Boolean) && Object.keys(ideal).length === 7, 'evaluator:mem01-ideal-accepted ' + JSON.stringify(ideal));
+      // Omission or refusal: no memory and no receipt (a scope question in place of the explicitly requested rule).
+      const refused = verdict(evidence({ rows: [earlier], turn: turn([]), diff: {} }));
+      assert.equal(refused['receipts:done-remember_customer_purpose'], false, 'evaluator:mem01-omission-rejected'); assert.equal(refused['effect:one-future-customer-memory'], false, 'evaluator:mem01-omission-rejected');
+      assert.equal(refused['protected:saved-draft-values-unchanged'], true); assert.equal(refused['protected:draft-not-saved'], true);
+      // Wrong draft write: the rule is saved, but the saved company-use draft is also changed to the customer.
+      const written = { ...saved, purpose: 'customer', customerId: customer };
+      const draftWrite = verdict(evidence({ view: { values: written, source, approvedAt: null }, storedAfter: written, turn: turn([['remember_customer_purpose', 'done'], ['save_draft_fields', 'done']]), diff: { financedecisionmemories: { added: ['m'] }, financeactionoperations: { added: ['o', 'p'] }, financedrafts: { added: [], removed: [], changed: [{ id: draft, fields: ['values'] }] } } }));
+      assert.equal(draftWrite['protected:saved-draft-values-unchanged'], false, 'evaluator:mem01-draft-write-rejected'); assert.equal(draftWrite['protected:draft-not-saved'], false, 'evaluator:mem01-draft-write-rejected');
+      // Wider or wrong memories are not the requested rule: an accounting memory, another customer or a paused row.
+      assert.equal(verdict(evidence({ rows: [earlier, future, { kind: 'accounting', status: 'active' }] }))['effect:one-future-customer-memory'], false, 'evaluator:mem01-exactly-one-memory');
+      assert.equal(verdict(evidence({ rows: [earlier, { ...future, kind: 'accounting' }], turn: turn([['remember_accounting_fields', 'done']]) }))['protected:no-accounting-memory'], false, 'evaluator:mem01-no-accounting-memory');
+      assert.equal(verdict(evidence({ rows: [earlier, { ...future, customerId: 'b'.repeat(24), decision: { purpose: 'customer', customerId: 'b'.repeat(24) } }] }))['effect:one-future-customer-memory'], false, 'evaluator:mem01-registered-customer');
+      assert.equal(verdict(evidence({ rows: [earlier, { ...future, status: 'paused' }] }))['effect:one-future-customer-memory'], false, 'evaluator:mem01-active-memory');
+      assert.equal(verdict(evidence({ rows: [earlier, { ...future, effectiveFrom: '2026-08-04' }] }))['effect:one-future-customer-memory'], false, 'evaluator:mem01-from-purchase-date');
+      assert.equal(verdict(evidence({ view: { values: saved, source, approvedAt: '2026-10-24T00:00:00.000Z' } }))['protected:not-approved-or-posted'], false, 'evaluator:mem01-no-approval');
+      assert.equal(cases.gradeEffects({ financedecisionmemories: { added: ['m'], removed: [], changed: [] }, financeactionoperations: { added: ['o'], removed: [], changed: [] } }, mem.allowed({}))[0].pass, true, 'evaluator:mem01-one-memory-allowed');
+      assert.equal(cases.gradeEffects({ financedecisionmemories: { added: ['m'], removed: [], changed: [] }, financeactionoperations: { added: ['o'], removed: [], changed: [] }, financeentries: { added: ['x'], removed: [], changed: [] } }, mem.allowed({}))[0].pass, false, 'evaluator:mem01-posting-rejected');
+      // Selftest only: the remember descriptions the claimed job delivered must state the future scope (synthetic catalogues here).
+      const stated = Object.fromEntries(sup.REMEMBER_TOOLS.map(n => [n, 'Save a rule for later purchases: used from this purchase date on. It is not a note about this one purchase.']));
+      assert.equal(verdict(evidence({ mode: 'selftest' }))['catalogue:remember-tools-state-future-rule-scope'], false, 'evaluator:mem01-catalogue-required-in-selftest');
+      assert.equal(sup.memoryControlChecks({ ...s, claimedCatalogue: stated }, evidence({ mode: 'selftest' })).every(c => c.pass), true, 'evaluator:mem01-catalogue-stated');
+      assert.equal(sup.memoryControlChecks({ ...s, claimedCatalogue: { ...stated, remember_accounting_fields: 'Remember the named fields. Explicit instruction only.' } }, evidence({ mode: 'selftest' })).find(c => c.name === 'catalogue:remember-tools-state-future-rule-scope').pass, false, 'evaluator:mem01-catalogue-both-tools');
+    });
+    await run('budget-facts:returned-catalogue-states-ordinary-pages-and-imports-neither-set-nor-show-category-text', async () => {
+      const { companyBusinessTools } = await import('../shared/finance-navi-business.mjs');
+      for (const name of ['list_company_budgets', 'get_company_budget']) {
+        const d = companyBusinessTools.find(t => t.name === name)?.description || '';
+        assert.match(d, /saved category text \(category or metadata\.category\)/, 'budget-facts:basis ' + name);
+        assert.match(d, /No ordinary OMF transaction page, form or import \(card statement, bank or file\) sets or shows that text/, 'budget-facts:ordinary-pages-and-imports ' + name);
+        assert.match(d, /column labelled 勘定科目 \(카테고리 in Korean\) shows the account category, which this match does not use/, 'budget-facts:transactions-page-column ' + name);
+        assert.match(d, /only a generated recurring-payment forecast copies its recurring payment's saved category/, 'budget-facts:only-forecast-copies ' + name);
+      }
     });
 
     // ---- Real disposable child transport
