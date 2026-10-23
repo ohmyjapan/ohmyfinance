@@ -1,9 +1,9 @@
 // Company Navi public research tools, run inside the owned actions MCP child of a company job the server claimed with this
 // worker's actual capability. Reads: public HTTPS pages through research-worker/http.mjs (public DNS pinning, public redirects
-// only, size/time limits), this job's own headless Chrome (GET-only interception, closed after each read) and the official NTA
-// registry API. Every read is captured — literal text, hash, final URL, time — to the job's own lease-bound sources route; a
-// refused or failed read is recorded as activity, never as a finding. No mail, spreadsheet, private archive, account, file,
-// shell, credential or checkout tool exists here. The worker token is only the Authorization header; an NTA application id
+// only, size/time limits; the NTA registry's public website is one of them), this job's own headless Chrome (GET-only
+// interception, closed after each read) and the official NTA registry API. Every read is captured — literal text, hash, final
+// URL, time — to the job's own lease-bound sources route; a refused or failed read is recorded as activity, never as a finding.
+// No mail, spreadsheet, private archive, account, file, shell, credential or checkout tool exists here. The worker token is only the Authorization header; an NTA application id
 // is used only in the registry request itself and never appears in a capture, result or log.
 import { createHash, randomBytes } from 'node:crypto';
 import { publicGet, publicUrl, htmlText } from '../research-worker/http.mjs';
@@ -95,7 +95,7 @@ export class CompanyPublicTools {
       const prepared = await this.post({ op: 'prepare', target });
       if (!this.ntaApplicationId) {
         await this.failed('registry', prepared.canonicalUrl, null, { reason: 'connection_required', target });
-        return { status: 'connection_required', number, asOf: prepared.date, dateAuthority: prepared.dateAuthority, meaning: '国税庁APIの接続設定がないため、公的な照合は行っていません。公表されている番号は「公的に再確認していない」情報として扱ってください。' };
+        return { status: 'connection_required', number, asOf: prepared.date, dateAuthority: prepared.dateAuthority, meaning: '国税庁APIの接続設定がないため、この日付でのAPI照合は行っていません。公表されている番号は「公的に再確認していない」情報として扱ってください。公表サイトなどの公開ページで読んだ内容は、取得時点の公表情報として引用できます。' };
       }
       const query = new URLSearchParams({ id: this.ntaApplicationId, number, day: prepared.date, type: '21' });
       let response;

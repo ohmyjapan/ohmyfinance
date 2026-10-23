@@ -11,6 +11,7 @@ export function validateCompanyCitations(input: any): CompanyCitationInput[];
 export function literalQuoteIn(text: any, quote: any): boolean;
 export function registryUrl(number: string, day: string): string;
 export function isRegistryHost(hostname: any): boolean;
+export function isRegistryWebsiteHost(hostname: any): boolean;
 export type PublicEvidence = 'published_page' | 'official_registry_observation';
 export function evidenceOf(kind: string): PublicEvidence;
 export function publicSourceUrl(value: any): boolean;

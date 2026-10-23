@@ -46,7 +46,7 @@ The worker calls the [official invoice Web-API](https://www.invoice-kohyo.nta.go
 
 Jobs are owner/account scoped and leased to one worker. Expired work retries once. Source text, hashes, timestamps, exact citations, earlier reports, and selected findings remain in MongoDB. Original PDF/image bytes are stored under the existing OMF data directory, checked by hash, and attached only after confirmation. Draft changes are revision and source bound. Repeated confirmation does not duplicate a draft application or attached receipt.
 
-Public fetches permit only HTTPS public IPv4 destinations, pin DNS results, bound sizes/time, and refuse registry scraping. Public browser pages use the same request checks. Browser sign-in expiry, missing connections, rate limits, and ambiguous purchase evidence can still require attention; unsupported fields remain unresolved.
+Public fetches permit only HTTPS public IPv4 destinations, pin DNS results, and bound sizes/time. They refuse the registry Web-API host (and any other registry host) outside the verification above. The NTA invoice-registry public website (`www.invoice-kohyo.nta.go.jp`) is read like any public page (2026-10-24, shared with Company Navi). It yields a published page source only: it never sets the job's registry observation or a verified supplier registration, which come only from the dated API response. Public browser pages use the same request checks. Browser sign-in expiry, missing connections, rate limits, and ambiguous purchase evidence can still require attention; unsupported fields remain unresolved.
 
 ## Purpose proposals and correction
 

@@ -58,9 +58,10 @@ const checkedRegistry = (raw: any, number: string, date: string) => { try { retu
 export const sourceView = (s: any) => ({ id: String(s._id), kind: s.kind, status: s.status, evidence: s.status === 'captured' ? evidenceOf(s.kind) : null, title: s.title || '', url: s.url || null, requestedUrl: s.requestedUrl || null, capturedAt: s.capturedAt || s.createdAt || null, truncated: s.truncated === true, chars: s.chars || 0, hash: s.hash || null, registry: s.registry || null, safeError: s.safeError || null, turnId: s.turnId, segment: s.segment ?? 0 })
 const sameCapture = (existing: any, doc: any) => { if (existing.kind !== doc.kind || existing.status !== doc.status || (existing.hash || '') !== (doc.hash || '') || (existing.requestedUrl || '') !== (doc.requestedUrl || '')) fail(409, 'Capture id has another meaning'); return { source: sourceView(existing), duplicate: true } }
 
-// Stores one capture of the frozen job's current turn. Literal text must match its hash; a public page must be a public HTTPS
-// address other than the registry website; registry evidence must be the canonical API URL of the prepared number/date (never an
-// application id) and parse as that number at that date. A repeated or concurrent delivery of the same capture returns one row.
+// Stores one capture of the frozen job's current turn. Literal text must match its hash; a web or Chrome page must be a public
+// HTTPS address that is not a registry API host (the registry's public website is an ordinary published page and never carries a
+// registry observation); registry evidence must be the canonical API URL of the prepared number/date (never an application id)
+// and parse as that number at that date. A repeated or concurrent delivery of the same capture returns one row.
 export async function capturePublicSource(c: any, input: any, agentId: any) {
   await init()
   let capture: any
@@ -68,7 +69,7 @@ export async function capturePublicSource(c: any, input: any, agentId: any) {
   const doc: any = { ownerId: c.ownerId, organizationId: c.organizationId, conversationId: c._id, segment: c.segment || 0, turnId: c.currentId, agentId, captureId: capture.captureId, kind: capture.kind, requestedUrl: capture.requestedUrl }
   if (capture.failed) {
     doc.status = capture.reason === 'connection_required' ? 'unavailable' : 'failed'
-    doc.safeError = capture.reason === 'connection_required' ? 'NTA registry connection is not configured; published evidence is not officially rechecked' : String(capture.safeError).slice(0, limits.safeErrorChars)
+    doc.safeError = capture.reason === 'connection_required' ? 'NTA registry API connection is not configured: no API check was made at this date; published evidence is not officially rechecked' : String(capture.safeError).slice(0, limits.safeErrorChars)
     if (capture.target) { const prepared = await prepareRegistry(c, capture.target); doc.target = prepared.target; doc.registry = { number: prepared.number, asOf: prepared.date, dateAuthority: prepared.dateAuthority, status: doc.status === 'unavailable' ? 'connection_required' : 'not_checked' } }
   } else {
     if (sha256(capture.text) !== capture.hash) fail(400, 'Captured text does not match its hash')
