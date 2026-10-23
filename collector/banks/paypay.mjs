@@ -14,6 +14,9 @@
 // Plan omf-paypay-routine-20261022 Phase C: `standard` now also retrieves (routineUi below): the observed Welcome/statement pages,
 // 期間選択, the six named date selects, 照会, CSV and ログアウト drive a retrieve job; the guided first-capture behaviour above is kept
 // for observe jobs queued before (historical snapshots). The provider default (BA-PLUS, no or unknown variant) is unchanged.
+// Plan omf-paypay-live-period-20261023: the actual statement page whose default period is empty shows no CSV, so the statement page is
+// recognized from its period/logout navigation (export still needs the one actual CSV after this job's 照会), and routineUi.diagnostic()
+// is the optional value-free failure reader bank.mjs keeps before ログアウト and cleanup.
 import { pause } from '../interaction.mjs';
 
 const coded = (code, message) => Object.assign(new Error(message), { code });
@@ -195,7 +198,8 @@ const ROUTINE_PAGE = ({ selector }) => {
 /**
  * GUARD — the state of a routine page (pure): another origin or a frame → unknown; a visible password field → login (the entry,
  * a refusal or the in-use page); the exact Welcome title with both observed controls → authenticated; the exact statement title
- * with its three observed controls → export_ready when the period panel is closed, statements while it is open; anything else →
+ * with its three observed controls → export_ready when the period panel is closed, statements while it is open; the exact statement
+ * title without CSV but with exactly one 期間選択 and a ログアウト (the actual empty default view) → statements; anything else →
  * unknown. A page that only shows ログアウト, a similar title or the shared pathname is never authenticated.
  */
 export function classifyRoutinePage(read, c = STANDARD_PAGES) {
@@ -204,6 +208,10 @@ export function classifyRoutinePage(read, c = STANDARD_PAGES) {
   const controls = Array.isArray(read.controls) ? read.controls : [];
   if (read.title === c.welcome.title && c.welcome.controls.every(t => controls.includes(t))) return 'authenticated'; // guard:routine-welcome
   if (read.title === c.statements.title && c.statements.controls.every(t => controls.includes(t))) return controls.includes(c.panelOpen) ? 'statements' : 'export_ready'; // guard:routine-statements
+  // Plan omf-paypay-live-period-20261023 (actual PayPay 4 page, hub ACTUAL-BASELINE.md §1): the default view of an empty default period has
+  // no CSV control, only its period/logout navigation. The exact title with exactly one visible 期間選択 and a visible ログアウト is the
+  // statement page for period selection only — never export_ready: export still needs the one actual CSV after this job's 照会.
+  if (read.title === c.statements.title && controls.filter(t => t === c.period).length === 1 && controls.includes(c.logout)) return 'statements'; // guard:routine-statements-navigation
   return 'unknown';
 }
 // GUARD (serialized) — activate exactly one control on the expected document: `link` = an <a> whose text is exactly `text`; `control`
@@ -245,6 +253,23 @@ export function routinePeriodValues(coverage) {
   if (!coverage || typeof coverage !== 'object' || !day(coverage.from) || !day(coverage.to) || coverage.from > coverage.to) throw coded('period-required', 'PayPay銀行の取得期間（開始日・終了日）が取得時の設定にありません。接続の取得期間を保存して、もう一度「取得」を押してください');
   return [...coverage.from.split('-'), ...coverage.to.split('-')].map(Number);
 }
+// Plan omf-paypay-live-period-20261023 (review-slot7 R1): the value-free shape of the page a failed routine step left, read before ログアウト
+// and cleanup (serialized; uses only its argument). Only categories, booleans and counts leave the page — never a title, text, URL, field
+// or option value. `titles` maps each exact known title to its category; the document id is used by routineUi only (never recorded).
+const SHAPE = ({ c, ids, selector, titles }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const label = e => (e.innerText || (e instanceof HTMLInputElement && ['submit', 'button', 'image'].includes(e.type) ? (e.value || e.alt) : '') || e.getAttribute('aria-label') || e.querySelector?.('img[alt]')?.alt || e.getAttribute('alt') || e.title || '').replace(/\s+/g, ' ').trim();
+  const shown = [...document.querySelectorAll(selector)].filter(e => visible(e) && !e.disabled).map(label), count = text => shown.filter(t => t === text).length;
+  const frames = [...document.querySelectorAll('iframe,frame')]; let sameOrigin = 0; for (const f of frames) { try { if (f.contentDocument) sameOrigin++; } catch { /* another origin */ } }
+  const t = document.title;
+  return { document: String(performance.timeOrigin), origin: location.origin === c.origin, top: window.top === window,
+    title: titles[t] || (/ - PayPay銀行$/.test(t) ? 'other-bank' : 'other'),
+    readyState: document.readyState, visibility: document.visibilityState, focus: document.hasFocus(),
+    password: [...document.querySelectorAll('input[type="password"]')].some(visible),
+    controls: { period: count(c.period), logout: count(c.logout), csv: count(c.export), close: count(c.panelOpen), query: count(c.query) },
+    dates: ids.map(id => { const all = [...document.querySelectorAll('input,select,textarea')].filter(e => e.name === id || e.id === id); return { total: all.length, visible: all.filter(visible).length, select: all.filter(e => e instanceof HTMLSelectElement).length, disabled: all.filter(e => e.disabled).length }; }),
+    panelClose: count(c.panelOpen) > 0, frames: { total: frames.length, sameOrigin } };
+};
 
 /**
  * The ui of a routine PayPay retrieval: a superset of the unchanged guided standardUi (open/show/loginForm/login/document/
@@ -264,11 +289,15 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
   const fields = c.periodFields;
   // `known`: the page targets of this browser just before this job's CSV press (null until then); only a tab opened after it counts.
   let direct = false, dialogs = null, waiting = false, queried = false, period = null, known = null;
+  // `pressed`: the step control last activated by this job and the document it was activated on (diagnostic() only; no decision uses it).
+  let pressed = null;
+  const PRESSED = { [c.open]: 'open', [c.period]: 'period', [c.query]: 'query', [c.export]: 'export', [c.logout]: 'logout' };
+  const TITLES = { [c.welcome.title]: 'welcome', [c.statements.title]: 'statements', 'ログイン - PayPay銀行': 'login', [c.downloading]: 'downloading' };
   const watch = async () => { if (dialogs) return; try { dialogs = await page.createCDPSession(); await dialogs.send('Page.enable'); dialogs.on('Page.javascriptDialogOpening', () => { waiting = true; }); dialogs.on('Page.javascriptDialogClosed', () => { waiting = false; }); } catch { dialogs = null; } };
   const read = async () => { try { return (await bounded(page.evaluate(ROUTINE_PAGE, { selector: ROUTINE_CONTROLS }))) || null; } catch { return null; } };
   const kind = async () => waiting ? 'verification' : classifyRoutinePage(await read(), c);
   const reach = async (kinds, code, message) => { const until = Date.now() + stepMs; while (Date.now() < until) { const k = await kind(); if (kinds.includes(k)) return k; await pause(250); } throw coded(code, message); };
-  const press = async (pressKind, text, titles, error) => { const doc = (await read())?.document || null; let r = null; try { r = await bounded(page.evaluate(PRESS, { c, selector: ROUTINE_CONTROLS, kind: pressKind, text, titles, expectedDocument: doc })); } catch { r = null; } if (!r?.ok) throw coded(error, `${label}の「${text}」を特定できません（${r?.error || '画面が変わりました'}）。Chromeを確認してください`); };
+  const press = async (pressKind, text, titles, error) => { const doc = (await read())?.document || null; let r = null; pressed = { what: PRESSED[text] || 'other', doc }; try { r = await bounded(page.evaluate(PRESS, { c, selector: ROUTINE_CONTROLS, kind: pressKind, text, titles, expectedDocument: doc })); } catch { r = null; } if (!r?.ok) throw coded(error, `${label}の「${text}」を特定できません（${r?.error || '画面が変わりました'}）。Chromeを確認してください`); };
   const ui = {
     ...base,
     async open() { await watch(); await base.open(); },
@@ -330,6 +359,20 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
         while (left() > 0) { const r = await read(); if (r && (r.password || classifyRoutinePage(r, c) === 'unknown')) return { ...result, loggedOut: true }; await pause(250); }
         return { ...result, reason: 'timeout' };
       } catch (error) { return { ...result, reason: String(error?.code || 'error') }; }
+    },
+    /**
+     * Plan omf-paypay-live-period-20261023: the optional failure reader bank.mjs calls BEFORE finish() (ログアウト) and cleanup. Value-free:
+     * the page kind, categories, flags and counts of SHAPE, the last step control pressed and whether the document changed since; under an
+     * open JS dialog nothing is evaluated. It never acts on the page and never decides anything; bank.mjs bounds it and whitelists it.
+     */
+    async diagnostic() {
+      const lastPress = pressed?.what ?? null;
+      if (waiting) return { readable: false, dialog: true, lastPress };
+      const k = await kind(); let shape = null;
+      try { shape = await bounded(page.evaluate(SHAPE, { c: { origin: c.origin, period: c.period, logout: c.logout, export: c.export, panelOpen: c.panelOpen, query: c.query }, ids: fields, selector: ROUTINE_CONTROLS, titles: TITLES }), 2500); } catch { shape = null; }
+      if (!shape || typeof shape !== 'object') return { readable: false, dialog: false, kind: k, lastPress };
+      const { document: doc, ...rest } = shape;
+      return { ...rest, readable: true, dialog: false, kind: k, lastPress, changedSincePress: pressed?.doc ? doc !== pressed.doc : null };
     },
     direct: () => direct
   };
