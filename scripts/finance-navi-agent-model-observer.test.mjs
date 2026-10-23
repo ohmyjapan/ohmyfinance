@@ -90,7 +90,7 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       const out = await new Promise((resolve, reject) => { const c = originalSpawn(node, [path.join(here, 'finance-navi-agent-model.mjs')], { cwd: root, windowsHide: true, env: { ...baseEnv }, stdio: ['ignore', 'pipe', 'pipe'] }); let s = ''; c.stdout.on('data', b => s += b); c.once('error', reject); c.once('close', code => resolve({ code, s })); });
       assert.equal(out.code, 0); const report = JSON.parse(out.s); assert.equal(report.mode, 'population'); assert.equal(report.modelCalls, 0); assert.equal(report.cases.length, 62);
       // Deliberate addition (plan omf-navi-context-truth-20261024): the separately declared supplemental question is reported apart.
-      assert.deepEqual((report.supplemental || []).map(r => r.id), ['CAP01', 'MEM01'], 'supplemental:population-report-separate'); assert.ok(!report.cases.some(r => ['CAP01', 'MEM01'].includes(r.id)));
+      assert.deepEqual((report.supplemental || []).map(r => r.id), ['CAP01', 'MEM01', 'MEM02'], 'supplemental:population-report-separate'); assert.ok(!report.cases.some(r => ['CAP01', 'MEM01', 'MEM02'].includes(r.id)));
     });
     // ---- Manifest and selection
     await run('manifest:declared-population-56-6-62', () => { assert.deepEqual(cases.verifyDeclaration(), { core: 56, historical: 6, total: 62 }); });
@@ -149,7 +149,7 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     await run('original62:declaration-selection-and-denominator-unchanged', () => {
       assert.equal(cases.sha256(cases.canonicalJson(cases.DECLARED_TEXT_SHA256)), 'f6621314d154ec2c6322bd2a645a9f573c2196436ffc24d4da56d88e4eba95cb', 'original62:declaration-hash');
       assert.deepEqual(cases.verifyDeclaration(), { core: 56, historical: 6, total: 62 });
-      for (const id of ['CAP01', 'MEM01']) { assert.ok(!cases.population.some(r => r.id === id), 'original62:no-supplemental-row'); assert.equal(cases.caseById(id), null, 'original62:no-supplemental-row'); }
+      for (const id of ['CAP01', 'MEM01', 'MEM02']) { assert.ok(!cases.population.some(r => r.id === id), 'original62:no-supplemental-row'); assert.equal(cases.caseById(id), null, 'original62:no-supplemental-row'); }
       assert.deepEqual(cases.selectCases('ALL').map(r => r.id), cases.population.map(r => r.id), 'original62:all-is-original');
       assert.deepEqual(cases.selectCases('ALL', { attempt: 'additional' }).map(r => r.id), cases.population.map(r => r.id), 'original62:all-is-original');
       assert.equal(cases.caseById('O03').textSha256, '3a15b79d52ea21781b8feff8206c03a36faf561703aba920a49f884c87373b19', 'original62:o03-text-unchanged');
@@ -157,7 +157,7 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     });
     await run('supplemental:declared-separately-initial-refused-distinct-denominator', () => {
       // Deliberate change (plan omf-navi-scope-facts-20261024): MEM01 is the second supplemental declaration, in a group of its own.
-      assert.deepEqual(cases.verifySupplementalDeclaration(), { supplemental: 2, groups: { 'capability-question': 1, 'positive-memory-control': 1 } }, 'supplemental:declaration');
+      assert.deepEqual(cases.verifySupplementalDeclaration(), { supplemental: 3, groups: { 'capability-question': 1, 'positive-memory-control': 1, 'positive-accounting-memory-control': 1 } }, 'supplemental:declaration');
       assert.equal(cases.SUPPLEMENTAL_RUBRIC_SHA256.CAP01, 'e6c4747717fdd5a548bff9c98cf375d7d65737e3e81a3d21dd123cff295e4f12', 'supplemental:cap01-rubric-pinned'); assert.equal(cases.SUPPLEMENTAL_EVALUATOR_ONLY.CAP01.rubric, 'Supplemental CAP01 (manual explanation grade required)');
       const cap = cases.supplementalCaseById('CAP01');
       assert.equal(cap.textSha256, 'ce6962ef228facb92b95040f8a13f6e796d179d4819f3d501f69f6aad1176cd1', 'supplemental:cap01-text-pinned');
@@ -207,7 +207,7 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     });
     await run('evaluator:cap01-zero-writes-wrong-allocation-rejected', async () => {
       const { ownerCases } = await import('./finance-navi-agent-model-owner-cases.mjs'), { supplementalCases } = await import('./finance-navi-agent-model-supplemental.mjs'), cap = supplementalCases.get('CAP01');
-      assert.deepEqual([...supplementalCases.keys()], ['CAP01', 'MEM01']); assert.equal(ownerCases.has('CAP01'), false, 'supplemental:not-an-original-design'); assert.equal(ownerCases.has('MEM01'), false, 'supplemental:not-an-original-design');
+      assert.deepEqual([...supplementalCases.keys()], ['CAP01', 'MEM01', 'MEM02']); assert.equal(ownerCases.has('CAP01'), false, 'supplemental:not-an-original-design'); assert.equal(ownerCases.has('MEM01'), false, 'supplemental:not-an-original-design');
       assert.deepEqual(cap.allowed({}), {}, 'evaluator:cap01-zero-writes'); assert.equal(cap.defect.flips, 'protected:no-allocation-or-write', 'evaluator:cap01-wrong-allocation-defect');
       assert.equal(cap.prepare, ownerCases.get('O12').prepare, 'supplemental:reuses-native-o12-setup');
       const allocated = { financepayments: { added: ['c'.repeat(24)], removed: [], changed: [] }, financeactionoperations: { added: ['d'.repeat(24)], removed: [], changed: [] } };
@@ -281,6 +281,44 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       assert.equal(sup.memoryControlChecks({ ...s, claimedCatalogue: stated }, evidence({ mode: 'selftest' })).every(c => c.pass), true, 'evaluator:mem01-catalogue-stated');
       assert.equal(sup.memoryControlChecks({ ...s, claimedCatalogue: { ...stated, remember_accounting_fields: 'Remember the named fields. Explicit instruction only.' } }, evidence({ mode: 'selftest' })).find(c => c.name === 'catalogue:remember-tools-state-future-rule-scope').pass, false, 'evaluator:mem01-catalogue-both-tools');
     });
+
+    await run('supplemental:mem02-exact-o02-text-known-purpose-control-distinct-denominator', async () => {
+      const mem = cases.supplementalCaseById('MEM02');
+      assert.equal(mem.text, cases.caseById('O02').text);
+      assert.equal(mem.textSha256, '17bb0717c905edbe541d47d9f9fcd9750568d9a7a14b5419be5d9cc9659ab23f');
+      assert.equal(cases.sha256(cases.SUPPLEMENTAL_EVALUATOR_ONLY.MEM02.expected), 'cca13c5d574bb49c3cd1b8950f1af1a222787339ce04d76f61e296be33e2008e');
+      assert.equal(cases.caseById('MEM02'), null);
+      assert.throws(() => cases.selectCases('MEM02'), /selection:supplemental-additional-only/);
+      for (const other of ['O02', 'CAP01', 'MEM01']) assert.throws(() => cases.selectCases('MEM02,' + other, { attempt: 'additional' }), /selection:supplemental-(group-)?separate-batch/);
+      assert.deepEqual(cases.denominators(cases.selectCases('MEM02', { attempt: 'additional' })), { selected: 1, supplemental: 1, declaredSupplemental: 1, cohort: cases.SUPPLEMENTAL_COHORT, supplementalGroup: 'positive-accounting-memory-control', countsTowardOriginal62: false, selectedIsWholePopulation: false });
+      const resolved = cases.resolveRequest(mem, { purchase: { importId: 'a'.repeat(24), line: 3 }, context: { importId: 'a'.repeat(24), line: 3 }, labels: { importId: 'O:statement-1' } });
+      assert.equal(resolved.text, mem.text);
+      assert.ok(!JSON.stringify(cases.productPayload(resolved)).includes(cases.SUPPLEMENTAL_EVALUATOR_ONLY.MEM02.expected));
+    });
+    await run('evaluator:accounting-memory-question-positive-and-wrong-scope-controls', async () => {
+      const { accountingMemoryChecks, ACCOUNTING_SAVED_SCOPE, EVALUATOR_CORRECTIONS } = await import('./finance-navi-agent-model-owner-cases.mjs');
+      assert.equal(EVALUATOR_CORRECTIONS.O02.manualGradeRequired, true);
+      const s = { importId: 'i', line: 3, memoriesBefore: 0, consumables: 'c', before: { values: { purpose: 'company', customerId: '' } } };
+      const source = { account: { id: 'a' }, description: 'SHOP', purchaseDate: '2026-08-02' };
+      const memory = { kind: 'accounting', status: 'active', fields: ['accountCategoryId'], values: { accountCategoryId: 'c' }, purpose: 'company', customerId: '', accountId: 'a', merchantLabel: 'SHOP', effectiveFrom: '2026-08-02', source: { importId: 'i', line: 3 } };
+      const evidence = over => ({ mode: 'manual', rows: [memory], view: { source }, turn: { actions: [{ name: 'remember_accounting_fields', state: 'done' }] }, diff: { financedecisionmemories: { added: ['m'] }, financeactionoperations: { added: ['o'] } }, events: [{ kind: 'action', tool: 'get_registered_choices', status: 200, responseText: 'c' }], ...over });
+      const passes = (e, required = false, state = s) => accountingMemoryChecks(state, e, required).every(c => c.pass);
+      assert.equal(passes(evidence({}), true), true, 'known-purpose-save');
+      const question = evidence({ rows: [], turn: { actions: [] }, diff: {} });
+      assert.equal(passes(question), true, 'o02-focused-question-effects');
+      assert.equal(passes(question, true), false, 'mem02-omission-rejected');
+      const unresolved = { ...s, before: { values: { purpose: 'unresolved', customerId: '' } } };
+      assert.equal(passes(evidence({ rows: [{ ...memory, purpose: 'unresolved' }] }), false, unresolved), true, 'o02-unresolved-save');
+      assert.equal(passes(question, false, unresolved), true, 'o02-unresolved-question');
+      for (const patch of [{ purpose: 'unresolved' }, { customerId: 'wrong' }, { accountId: 'wrong' }, { merchantLabel: 'wrong' }, { effectiveFrom: '2026-08-03' }, { source: { importId: 'other', line: 3 } }, { kind: 'classification' }, { values: { accountCategoryId: 'wrong' } }, { fields: ['accountCategoryId', 'taxRate'] }, { status: 'paused' }]) assert.equal(passes(evidence({ rows: [{ ...memory, ...patch }] }), true), false, 'wrong-scope ' + JSON.stringify(patch));
+      assert.equal(passes(evidence({ events: [] }), true), false, 'registered-read-required');
+      assert.equal(passes(evidence({ turn: { actions: [{ name: 'remember_accounting_fields', state: 'done' }, { name: 'save_draft_fields', state: 'done' }] } }), true), false, 'extra-write');
+      const description = 'Save under the saved purpose and customer, which are not arguments. An unresolved purpose matches only unresolved-purpose purchases. A known purpose must first be saved on the draft.';
+      assert.ok(ACCOUNTING_SAVED_SCOPE.every(p => p.test(description)));
+      assert.equal(passes(evidence({ mode: 'selftest' }), true), false, 'catalogue-missing');
+      assert.equal(passes(evidence({ mode: 'selftest' }), true, { ...s, claimedAccountingDescription: description }), true, 'catalogue-stated');
+    });
+
     await run('budget-facts:returned-catalogue-states-ordinary-pages-and-imports-neither-set-nor-show-category-text', async () => {
       const { companyBusinessTools } = await import('../shared/finance-navi-business.mjs');
       for (const name of ['list_company_budgets', 'get_company_budget']) {

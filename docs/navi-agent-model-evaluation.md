@@ -394,3 +394,12 @@ message (the native settlement held); the manual-mode P01/P02 provenance checks 
 model CLI (only the Node stand-in reaches the manual path in these controls); connected authentication with an actual credential;
 the vault option with an actual credential, the installed CLI's real authentication precedence and routing, and a full manual
 batch on a frozen candidate (the parent's affected additional attempts).
+
+
+### Saved-purpose accounting scope (2026-10-24 final9 F1/F2)
+
+The accounting-memory tool uses the draft’s saved purpose/customer; those are not override arguments. An unresolved-purpose rule matches unresolved purchases only. A known-purpose rule needs that purpose saved first. The returned tool catalogue now says this explicitly; the schema and native write behavior are unchanged.
+
+Original O02 keeps its exact text/hash and unresolved saved 通信費 draft. Its new oracle permits either one correctly scoped, disclosed accounting memory or a focused accurate scope question, with registered choices read and no other write. Explanation quality remains an independent manual grade: zero writes alone never prove a useful answer, and promising a known-purpose rule without first changing the draft fails that grade. Every previous failure, attempt and grade is retained.
+
+MEM02 is a separately predeclared positive accounting control: byte-identical O02 text, but company purpose is first saved through the native route and re-read. It requires one active 消耗品費 accounting memory scoped to that company purpose/empty customer and the same account/merchant/date; the distinct saved 通信費 draft stays unchanged. Its positive-accounting-memory-control group, batch and denominator are separate from the original62, CAP01 and MEM01. Contracts exercise both O02 branches and reject omitted positive memories, wrong scopes and extra writes. The owned native selftests check the actually returned catalogue and preserve the draft-write defect. These are zero-model checks; fresh actual O02/MEM02 draws and independent grading remain required.

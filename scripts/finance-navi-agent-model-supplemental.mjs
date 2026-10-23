@@ -16,7 +16,7 @@
 // the product actually delivered) and check that both state the future scope; a manual draw observes tool names only, so that
 // check is selftest evidence of the same build, never a manual-draw check.
 import { check, receipts, unchangedFields, plainDocument } from './finance-navi-agent-model-cases.mjs';
-import { ownerCases, OWNER_LINES } from './finance-navi-agent-model-owner-cases.mjs';
+import { ownerCases, OWNER_LINES, accountingMemoryChecks } from './finance-navi-agent-model-owner-cases.mjs';
 
 const reply = summary => ({ kind: 'unclear', summary, patch: {}, quotes: {} });
 const O12 = ownerCases.get('O12');
@@ -89,5 +89,20 @@ define({ id: 'MEM01',
     return memoryControlChecks(s, { mode: ev.mode, rows: await memoryRows(ctx), view: await ctx.ownerRealm.draft(s.importId, s.line), storedBefore: ev.beforeDocs?.['financedrafts:' + s.draftDocId]?.values, storedAfter: stored ? plainDocument(stored.values) : null, turn: ev.turn, diff: ev.diff });
   },
   async ideal(ctx, s, j) { s.claimedCatalogue = catalogueOf(j.job); await j.act('get_draft', {}); const customer = await registeredCustomer(j, 'OMJ10'); await j.act('remember_customer_purpose', { purpose: 'customer', customerId: customer }); return reply('このカードとこのお店の、明細の日付以降の購入をOMJ10の依頼品として扱うルールを覚えました。保存済みの下書き、会計項目、承認と帳簿は変更していません。'); } });
+
+// MEM02: exact O02 wording with a known company purpose first saved through the native draft route.
+// It is a separate positive accounting control, never added to the original 62 or MEM01's denominator.
+const O02 = ownerCases.get('O02');
+define({ id: 'MEM02',
+  defect: O02.defect,
+  async prepare(ctx) { const first = await O02.prepare(ctx); await ctx.ownerRealm.saveDraft(first.state.importId, first.state.line, { purpose: 'company', customerId: '' }); return O02.prepare(ctx); },
+  allowed: O02.allowed, protect: O02.protect,
+  async check(ctx, s, ev) { const rows = await memoryRows(ctx), view = await ctx.ownerRealm.draft(s.importId, s.line); return [
+    ...await O02.check(ctx, s, ev),
+    check('prerequisite:known-company-purpose', s.before.values.purpose === 'company' && !s.before.values.customerId, JSON.stringify(s.before.values)),
+    ...accountingMemoryChecks(s, { ...ev, rows, view }, true).filter(c => c.name === 'effect:accounting-memory-saved-scope-or-question').map(c => ({ ...c, name: 'effect:required-accounting-memory' }))
+  ]; },
+  ideal: O02.ideal
+});
 
 export const supplementalCases = Object.freeze(new Map(designs.map(d => [d.id, d])));
