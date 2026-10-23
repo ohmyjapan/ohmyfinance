@@ -7,6 +7,7 @@ import { validateChatProposal } from '../shared/finance-chat.mjs';
 import { accountantRole, accountantModel, accountantEffort } from '../shared/finance-accountant-role.mjs';
 import { naviFeatures, naviFeatureNavigable } from '../shared/finance-navi-features.mjs';
 import { citationSchema } from '../shared/finance-company-public-research.mjs';
+import { applyNativeCliAuth, nativeMcpEnv } from '../shared/finance-native-cli-auth.mjs';
 const fields={purpose:{type:'string',enum:['customer','company','unresolved']},customerId:{type:'string'},productName:{type:'string'}};
 const schema={type:'object',additionalProperties:false,required:['kind','summary','patch','quotes'],properties:{kind:{type:'string',enum:['proposal','unclear','defer']},summary:{type:'string',maxLength:800},patch:{type:'object',additionalProperties:false,properties:fields},quotes:{type:'object',additionalProperties:false,properties:Object.fromEntries(Object.keys(fields).map(k=>[k,{type:'string'}]))},research:{type:'object',additionalProperties:false,required:['instruction'],properties:{instruction:{type:'string',maxLength:2000}}}}};
 export const chatSchema=schema;
@@ -85,6 +86,8 @@ export async function interpretChat(config,job){
  if(tooled&&(!config.directory||typeof job.actionEndpoint!=='string'||typeof job.lease!=='string'))throw Error('Teaching interpreter not configured');
  const env={};for(const key of ['PATH','Path','SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH','LOCALAPPDATA','APPDATA','PROGRAMDATA','ComSpec'])if(process.env[key])env[key]=process.env[key];
  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1';if(config.claudeConfigDirectory)env.CLAUDE_CONFIG_DIR=config.claudeConfigDirectory;
+ // Optional trusted Vault nativeOAuthToken: this native child only; an invalid one is refused here, before any job file or child.
+ applyNativeCliAuth(env,config);
  // The job file holds endpoint, lease, catalogue and next slot — no token; it lives under the private Vault directory and is removed after the child exits.
  let jobDir=null,mcp='{"mcpServers":{}}',allowed=[];
  // A capable company job (research) also gets the built-in WebSearch and the owned public tools of the same MCP server (the job
@@ -94,7 +97,7 @@ export async function interpretChat(config,job){
  if(tooled){
   jobDir=path.join(config.directory,'jobs',randomUUID());await mkdir(jobDir,{recursive:true});
   await writeFile(path.join(jobDir,'job.json'),JSON.stringify({endpoint:job.actionEndpoint,lease:job.lease,tools:job.tools,nextSlot:job.nextSlot||1,timeoutMs:20000,...(research?{publicResearch:{chrome:job.publicResearch.chrome===true,registry:job.publicResearch.registry==='configured'?'configured':'connection_required'}}:{})}),{mode:0o600});
-  mcp=JSON.stringify({mcpServers:{omf_actions:{command:process.execPath,args:[actionsServer],env:{OMF_ACTIONS_DIR:config.directory,OMF_ACTIONS_JOB_FILE:path.join(jobDir,'job.json')}}}});
+  mcp=JSON.stringify({mcpServers:{omf_actions:{command:process.execPath,args:[actionsServer],env:nativeMcpEnv({OMF_ACTIONS_DIR:config.directory,OMF_ACTIONS_JOB_FILE:path.join(jobDir,'job.json')},config)}}});
   allowed=['--allowedTools','mcp__omf_actions__*',...(research?['WebSearch']:[]),'--max-turns',research?'40':'16'];
  }
  const args=['-p','--model',accountantModel,'--effort',accountantEffort,'--output-format','json','--json-schema',JSON.stringify(schemaFor(job)),'--tools',research?'WebSearch':'',...allowed,'--mcp-config',mcp,'--strict-mcp-config','--setting-sources','','--settings','{"disableAllHooks":true}','--no-session-persistence','--system-prompt',systemFor(job)];

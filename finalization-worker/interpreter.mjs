@@ -1,4 +1,5 @@
 import {spawn} from 'node:child_process';
+import {applyNativeCliAuth} from '../shared/finance-native-cli-auth.mjs';
 
 // The application uses its configured local interpreter. Evidence is supplied
 // as data; this process has no browser, shell, network or account tools.
@@ -6,6 +7,7 @@ export async function interpret(config,{system,schema,input,documents=[]},timeou
  if(!config.cliPath||!config.inferenceDirectory)throw Error('Workflow interpreter is not configured');
  const env={};for(const k of ['PATH','Path','SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH','LOCALAPPDATA','APPDATA','PROGRAMDATA','ComSpec'])if(process.env[k])env[k]=process.env[k];
  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1';if(config.claudeConfigDirectory)env.CLAUDE_CONFIG_DIR=config.claudeConfigDirectory;
+ applyNativeCliAuth(env,config); // optional trusted Vault nativeOAuthToken (the research Vault), this native child only
  const content=documents.map(d=>{
   if(!['application/pdf','image/png','image/jpeg','image/webp'].includes(d.mimeType)||!Buffer.isBuffer(d.bytes)||d.bytes.length>10485760)throw Error('Unsupported workflow document');
   return {type:d.mimeType==='application/pdf'?'document':'image',source:{type:'base64',media_type:d.mimeType,data:d.bytes.toString('base64')}};
