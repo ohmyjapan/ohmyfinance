@@ -156,7 +156,20 @@ export async function getCompanyBudget(organizationId: mongoose.Types.ObjectId, 
   requireCompany(organizationId)
   await ensureConnection()
   if (!mongoose.isValidObjectId(id)) return null
-  return publicRecord(await Budget.findOne({ ...budgetScope(organizationId), _id: new mongoose.Types.ObjectId(id) }).lean())
+  const budget: any = publicRecord(await Budget.findOne({ ...budgetScope(organizationId), _id: new mongoose.Types.ObjectId(id) }).lean())
+  return budget ? { ...budget, categoryMatchBasis: categoryMatchBasis(budget.category) } : budget
+}
+
+// How a budget category is matched by budgetSpending below (review F2, plan omf-navi-context-truth-20261024): read-only explanation
+// returned with the list's spending and the detail read, so no reader promises that a classification edit changes budget spending.
+// It describes the unchanged aggregation; it adds no field, setter or matching rule. Null when the budget has no category.
+export function categoryMatchBasis(value: unknown) {
+  const category = typeof value === 'string' && value ? value : null
+  if (!category) return null
+  return {
+    matchedFields: ['category', 'metadata.category'], exactText: category, classificationReferencesUsed: false, naviTransactionToolsCanSetText: false,
+    explanation: `A transaction counts toward this budget only when its saved category text (category or metadata.category) is exactly ${JSON.stringify(category)}. Registered classification references (accountCategoryId, transactionCategoryId and the other reference ids) are not used for this match. Navi transaction tools cannot set or change that text (only a generated recurring-payment forecast copies its recurring payment's saved category), so changing a transaction's classification through Navi does not make it count toward this budget.`
+  }
 }
 
 export async function createCompanyBudget(organizationId: mongoose.Types.ObjectId, createdBy: string, body: any, operation: BudgetOperation = {}, now = new Date()) {
@@ -273,7 +286,7 @@ export async function budgetSpending(organizationId: mongoose.Types.ObjectId, bu
   const spending: any = {
     basis: 'completed_expense', timezone: timeZone, periodLabel: `calendar_${period === 'monthly' ? 'month' : period === 'quarterly' ? 'quarter' : 'year'}`,
     range: start <= end ? { start, end } : null, outsideBudgetDates: start > end,
-    categoryMatch: category ? 'category_text' : 'all_expenses',
+    categoryMatch: category ? 'category_text' : 'all_expenses', categoryMatchBasis: categoryMatchBasis(category),
     pendingForecast: { count: 0, amount: 0 }, otherCurrencies: [] as any[], unknownCurrency: { count: 0, amount: 0 },
     negative: { count: 0, amount: 0 }, unclassified: category ? { count: 0 } : null, complete: !!currency
   }

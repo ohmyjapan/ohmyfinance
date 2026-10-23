@@ -88,6 +88,17 @@ async function main(){
   const q=Math.floor((m-1)/3);b=byName('Synthetic quarter');assert.equal(b.spending.periodLabel,'calendar_quarter');assert.deepEqual(b.spending.range,{start:`${y}-${String(q*3+1).padStart(2,'0')}-01`,end:new Date(Date.UTC(y,q*3+3,0)).toISOString().slice(0,10)},'scheduled:spending-quarter');assert.equal(b.spent,0);
   b=byName('Synthetic year');assert.deepEqual(b.spending.range,{start:`${y}-01-01`,end:`${y}-12-31`},'scheduled:spending-year');
   const bList=(await ok('/api/budgets',tokenB)).budgets,bBudget=bList.find(x=>x.name==='Synthetic B budget');assert.equal(bBudget.spending.timezone,'Asia/Tokyo','scheduled:spending-default-timezone');assert.equal(bBudget.spent,100000,'scheduled:spending-company');
+  // Review F2 (plan omf-navi-context-truth-20261024): list and detail results state the matching basis (saved category text only; registered
+  // classification references unused; no Navi transaction tool sets it). A native edit sending category text changes neither the row's text
+  // nor the totals: the explanation describes the unchanged aggregation, it is not a new setter.
+  const basis=byName('Synthetic supplies').spending.categoryMatchBasis;
+  assert.deepEqual(basis&&{matchedFields:basis.matchedFields,exactText:basis.exactText,classificationReferencesUsed:basis.classificationReferencesUsed,naviTransactionToolsCanSetText:basis.naviTransactionToolsCanSetText},{matchedFields:['category','metadata.category'],exactText:'SYN_CAT',classificationReferencesUsed:false,naviTransactionToolsCanSetText:false},'scheduled:spending-match-explained');
+  assert.ok(typeof basis.explanation==='string'&&basis.explanation.includes('"SYN_CAT"')&&basis.explanation.includes('cannot set or change'),'scheduled:spending-match-explained');
+  assert.equal(byName('Synthetic all spending').spending.categoryMatchBasis,null,'scheduled:spending-match-explained');assert.equal(byName('Synthetic USD tools').spending.categoryMatchBasis.exactText,'SYN_CAT');
+  assert.deepEqual((await ok('/api/budgets/'+budgetId,tokenA)).budget.categoryMatchBasis,basis,'scheduled:budget-detail-match-explained');assert.equal((await ok('/api/budgets/'+allBudget,tokenA)).budget.categoryMatchBasis,null,'scheduled:budget-detail-match-explained');
+  const plainRow=await transactions.findOne({organizationId:A,amount:600});await ok('/api/transactions/'+plainRow._id,tokenA,'PUT',{category:'SYN_CAT',metadata:{category:'SYN_CAT'},notes:'Synthetic classification attempt'});
+  const plainAfter=await transactions.findOne({_id:plainRow._id});assert.equal(plainAfter.notes,'Synthetic classification attempt');assert.equal(plainAfter.category,undefined,'scheduled:edit-cannot-set-category-text');assert.equal(plainAfter.metadata?.category,undefined,'scheduled:edit-cannot-set-category-text');
+  b=(await ok('/api/budgets?active=true',tokenA)).budgets.find(x=>x.name==='Synthetic supplies');assert.equal(b.spent,2500,'scheduled:edit-cannot-set-category-text');assert.deepEqual(b.spending.unclassified,{count:1},'scheduled:edit-cannot-set-category-text');
   pass('spending counts only selected-company completed expenses in the saved-timezone period with its whole last day; pending, other/unknown currency, refunds and unclassified rows are reported, never silently zero');
 
   // 3. Recurring CRUD: explicit type/currency, trusted company/creator, whitelist, scoped list/search/stats/upcoming.

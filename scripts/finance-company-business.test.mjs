@@ -48,6 +48,21 @@ test('invoice calendar tools take only the invoice id and its exact read snapsho
  assert.match(businessTool('schedule_company_invoice_payment').description, /never resynced or overwritten/); assert.match(businessTool('get_company_invoice_calendar').description, /never infer a link/);
 });
 
+// 2026-10-24 (plan omf-navi-context-truth-20261024, independent review F2): a category budget counts only saved category text, which no
+// Navi transaction tool can set; both budget reads say so, so a classification edit is never promised to change budget spending.
+test('budget reads explain the category-text matching basis and that Navi transaction tools cannot set it', () => {
+ for (const name of ['list_company_budgets', 'get_company_budget']) {
+  const d = businessTool(name).description;
+  assert.match(d, /saved category text \(category or metadata\.category\)/, 'budget-match:basis ' + name);
+  assert.match(d, /registered classification references[^.]*are not used/, 'budget-match:references-not-used ' + name);
+  assert.match(d, /Navi transaction tools cannot set or change that text/, 'budget-match:no-navi-setter ' + name);
+ }
+ // The fact the descriptions state: no Navi transaction create field writes category text (the native edit whitelist has none either).
+ for (const name of ['create_company_transaction']) for (const k of ['category', 'metadata']) assert.ok(!businessTool(name).inputSchema.properties[k], 'budget-match:no-navi-setter ' + name + '.' + k);
+ assert.deepEqual(Object.keys(businessTool('get_company_budget').inputSchema.properties), ['budgetId'], 'budget-match:read-arguments-unchanged');
+ assert.deepEqual(businessToolMeta.list_company_budgets, { kind: 'budget', effect: 'read', idKey: undefined }); assert.equal(businessToolMeta.get_company_budget.effect, 'read');
+});
+
 test('company pages are fixed; owner pages keep the separate owner conversation', () => {
  for (const id of ['dashboard', 'transactions', 'invoices', 'calendar', 'receipts', 'budgets', 'recurring', 'analytics', 'reports', 'tax', 'profile', 'settings']) { assert.ok(companyNaviPage(id), 'business:company-page ' + id); assert.ok(naviFeature(companyNaviPage(id).feature), 'business:page-feature ' + id); assert.equal(assistantConversationScope('a', 'A', id).company, true); }
  for (const id of ['mapping', 'draft', 'learning', 'connections', 'intake', 'intake-payments', 'other']) { assert.equal(companyNaviPage(id), null, 'business:owner-page ' + id); assert.equal(assistantConversationScope('a', 'A', id).company, false); }

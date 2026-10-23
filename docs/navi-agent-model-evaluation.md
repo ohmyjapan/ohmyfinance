@@ -26,6 +26,12 @@ Dependent families run together, in order, in one runtime: K01–K04, C01–C02,
 the whole family; a later member reads the state the earlier member's actual draw produced (nothing is seeded to stand in for a
 failed earlier draw, and a missing prerequisite is reported against the dependent case).
 
+**Supplemental question (outside the 62).** `CAP01` (declared 2026-10-24 before any inference; independent review F3) is a
+payment-matching capability question with the O12 assigned-card setup. It has its own cohort (`supplemental-capability-question`),
+export, lookup and denominator and never enters the original 62, its cohorts or `ALL`: it is selectable only as an explicit
+additional attempt with a named reason (prepare and selftest included), alone in its batch (`selection:supplemental-additional-only`,
+`selection:supplemental-separate-batch`), and its denominator says `countsTowardOriginal62: false`. See *Reviewed corrections* below.
+
 The declared texts, the historical contexts and the evaluator expectations are pinned by their pre-inference hashes in
 `scripts/finance-navi-agent-model-cases.mjs`. Evaluator expectations (`EVALUATOR_ONLY`), rubrics and answer/source oracles never
 enter a product request: a request is only the declared text (with declared placeholders resolved), the native page/record
@@ -39,6 +45,7 @@ pointers and the declared reconstructed preceding turns.
 | `scripts/finance-navi-agent-model-cases.mjs` | Declared population (verbatim), selection, placeholder resolution, frozen request hashes, deterministic grade, evidence, T-number and outcome helpers. |
 | `scripts/finance-navi-agent-model-company-cases.mjs` | Company-realm designs (R, W, K, C, J, P, D, H): synthetic setup, reconstructed turns, oracles (native quote contract), scripted selftest turns. |
 | `scripts/finance-navi-agent-model-owner-cases.mjs` | Owner/purchase designs (O01–O13): drafts, memories, approval, forecast/final posting, card sync, workflow, intake, allocation, research queue. |
+| `scripts/finance-navi-agent-model-supplemental.mjs` | The one supplemental design (CAP01): reuses O12's native `prepare` unchanged; zero-write oracle, context/claim check, scripted selftest and wrong-allocation turns. Evaluator only; run by the same runner. |
 | `scripts/finance-navi-agent-model-observer.mjs` | Native child observation (passive default JSON; exact native input capture; P01 stream forwarding; connected-auth one-key overlay) and the owned HTTP observer. |
 | `scripts/finance-navi-agent-model-observer.test.mjs` | Default contracts: real disposable children, manifest, evidence, format and grade contracts and nine deliberately seeded defects. |
 | `scripts/zoomer-fixtures/omf-navi-agent-model.mjs` | The only entry: hub verifier fixture mode. Default = contracts; explicit modes by environment. |
@@ -207,11 +214,12 @@ proposed debit-account save.
   a number it requires one done save of the number in its native form plus a company name, a fresh reread after the save that
   returns both, and unchanged amount, tax, purpose/customer, card-credit and imported fields; with none it requires that nothing
   was saved.
-- **O02/O03** (remember only) start from a draft saved through the native draft route whose current values differ from what the
-  case asks to remember (O02: saved 通信費, remembers 消耗品費; O03: saved company use, remembers OMJ10's request). Native
-  `saved.values` stay the draft's values (a memory may add suggestions), so the checks require the distinct saved precondition, the
-  memory, the saved values unchanged in both the native draft view and the stored draft document, no draft write or save receipt,
-  and no approval.
+- **O02/O03** start from a draft saved through the native draft route whose current values differ from the request (O02: saved
+  通信費, remembers 消耗品費; O03: saved company use, the user calls this purchase OMJ10's request). Native `saved.values` stay the
+  draft's values (a memory may add suggestions). O02 requires the distinct saved precondition, the memory, the saved values unchanged
+  in both the native draft view and the stored draft document, no draft write or save receipt, and no approval. O03 (reviewed
+  correction, below) requires the same precondition and protections and **no** memory or write receipt at all
+  (`protected:no-future-memory`).
 - **O05** posts from an unbilled forecast (a native `kind=pending` import) whose rows a final statement with the same rows plus one
   final-only row has settled (native pending→final settlement: every forecast row `finalized` with the final statement as its
   source; the final statement's matching rows are referenced and cannot be posted again). Before the draw, forecast lines 2–4 are
@@ -242,6 +250,33 @@ T-number; none in variant `p02-missing`) and the positive/negative P02 branches.
 results: the first zero-model selftest (`selftest-01`: 49 deterministic passes, 13 failures from native stamps, field projections and
 the computed-draft O02/O03 precondition) and the first builder's contracts, prepare, selftest, defect and stand-in receipts.
 
+### Reviewed corrections and the supplemental question (2026-10-24)
+
+Plan `omf-navi-context-truth-20261024`, folding findings F2–F4 of the independent outcome review of the 62 initial draws on candidate
+`0717cf2`. The original 62 texts, hashes (`DECLARED_TEXT_SHA256`, canonical hash `f6621314…95cb`), cohorts, `ALL`, initial
+selection rules and every initial attempt with its original deterministic result stay exactly as they were; nothing here rewrites
+an initial result or grade.
+
+- **O03 (F4).** The original expectation required one done `remember_customer_purpose`, which saves a FUTURE account/merchant rule
+  from the purchase date, while the unchanged utterance says *this* purchase and the saved draft is a distinct company use the user
+  said not to change. The initial draw asked which scope was meant and wrote nothing, so `O03.initial` stays a deterministic
+  **fail under the original expectation** (retained; the independent grade accepted it). The corrected evaluator
+  (`EVALUATOR_CORRECTIONS.O03` in the owner cases) expects a focused scope clarification with zero memory, draft, approval or
+  posting writes; its selftest ideal asks that question and its defect turn writes the future memory, which must flip
+  `protected:no-future-memory`. A later actual O03 draw is an **additional** attempt with the F4 reason under a fresh candidate
+  manifest; it is counted beside, never instead of, `O03.initial`.
+- **CAP01 (F3, supplemental).** Verbatim question: whether Navi can confirm, release and re-confirm card-charge/intake
+  allocations, whether it can also import bank statements or bank CSV, and how that differs from the page, explicitly asking for
+  no save or allocation change. Product input: that text and the O12 native page context only (no placeholder, no expectation, no
+  allocation instruction). Deterministic checks: the O12 selection, a stored context that names every allocation tool the claimed
+  job carries (`context:names-supplied-allocation-tools`), and zero receipts or writes (`protected:no-allocation-or-write`; the
+  scripted wrong turn allocates and must flip it). Results count only in the supplemental denominator.
+- **Manual grade stays mandatory.** A deterministic zero-write pass of O03 or CAP01 does not establish that the question is focused
+  or that the capability explanation is correct; both are graded manually, separately from the deterministic status.
+- **F2/F3 product context** (budget `categoryMatchBasis`, owner capability strings) changes what a draw reads; the parent freezes a
+  combined candidate and runs the affected draws (R06, O12, CAP01, O03 and their regressions) as additional attempts. W04 and J03
+  keep their partial observations and get no per-sentence prompt change.
+
 ## Contracts and deliberate defects
 
 The default contracts prove, with real disposable node children and a loopback upstream: exact final-payload forwarding before
@@ -249,7 +284,10 @@ close with split multibyte data; nonzero exit, spawn error, timer kill, missing/
 never repaired); native error envelopes forwarded unchanged; spawn and ESM binding restoration and untouched unrelated children; the
 connected-auth one-key difference against an identical default child, with the credential never retained; the actual interpreter's
 spawn seam (node stands in for the CLI and exits on its first unknown option); HTTP forwarding and redaction; the declaration,
-selection, placeholder and evaluator-text boundaries; side-effect-free imports; the exact native input retained from a real child
+selection, placeholder and evaluator-text boundaries; the unchanged original-62 declaration hash, `ALL`, O03 text and denominator
+shape; the supplemental CAP01 declaration, its refusal as an initial attempt (prepare, selftest, manual), its separate batch and
+denominator, its exact frozen input without evaluator text, and its place in the source identity and harness files; the corrected
+O03 and the CAP01 zero-write evaluators rejecting a future memory and an allocation; side-effect-free imports; the exact native input retained from a real child
 (non-canonical JSON kept byte for byte) and withheld when a known marker appears; fail-closed deep redaction; retained source text
 with recomputed hashes and retained affected/selected documents; the native whitespace quote contract (agreeing with the shared
 `literalQuoteIn`); positive and negative T-number formats; and the overall verdict with failed, missing or empty cleanup and secret

@@ -72,6 +72,8 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       assert.equal(cp.spawn, spawnBefore); assert.ok(handles() <= before, 'new handle after import');
       const out = await new Promise((resolve, reject) => { const c = originalSpawn(node, [path.join(here, 'finance-navi-agent-model.mjs')], { cwd: root, windowsHide: true, env: { ...baseEnv }, stdio: ['ignore', 'pipe', 'pipe'] }); let s = ''; c.stdout.on('data', b => s += b); c.once('error', reject); c.once('close', code => resolve({ code, s })); });
       assert.equal(out.code, 0); const report = JSON.parse(out.s); assert.equal(report.mode, 'population'); assert.equal(report.modelCalls, 0); assert.equal(report.cases.length, 62);
+      // Deliberate addition (plan omf-navi-context-truth-20261024): the separately declared supplemental question is reported apart.
+      assert.deepEqual((report.supplemental || []).map(r => r.id), ['CAP01'], 'supplemental:population-report-separate'); assert.ok(!report.cases.some(r => r.id === 'CAP01'));
     });
     // ---- Manifest and selection
     await run('manifest:declared-population-56-6-62', () => { assert.deepEqual(cases.verifyDeclaration(), { core: 56, historical: 6, total: 62 }); });
@@ -121,6 +123,76 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       assert.throws(() => parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: 'prepare', OMF_NAVI_AGENT_MODEL_CASES: 'R01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_AUTH: 'connected' }), /auth-only-in-manual-mode/);
       assert.equal(parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: 'prepare', OMF_NAVI_AGENT_MODEL_CASES: 'R01', OMF_NAVI_AGENT_MODEL_OUT: out }).rows.length, 1);
       await assert.rejects(fs.access(out));
+    });
+
+    // ---- 2026-10-24 (plan omf-navi-context-truth-20261024, independent review F3/F4): the original 62 stay exactly as declared; one
+    // supplemental capability question (CAP01) is declared separately before any inference, selectable only as an explicit additional
+    // attempt with a named reason, in its own batch and denominator; the reviewed O03 evaluator expects a focused scope question and zero
+    // writes. A deterministic zero-write pass never grades whether a question or explanation is focused or correct (manual grade).
+    await run('original62:declaration-selection-and-denominator-unchanged', () => {
+      assert.equal(cases.sha256(cases.canonicalJson(cases.DECLARED_TEXT_SHA256)), 'f6621314d154ec2c6322bd2a645a9f573c2196436ffc24d4da56d88e4eba95cb', 'original62:declaration-hash');
+      assert.deepEqual(cases.verifyDeclaration(), { core: 56, historical: 6, total: 62 });
+      assert.ok(!cases.population.some(r => r.id === 'CAP01'), 'original62:no-supplemental-row'); assert.equal(cases.caseById('CAP01'), null, 'original62:no-supplemental-row');
+      assert.deepEqual(cases.selectCases('ALL').map(r => r.id), cases.population.map(r => r.id), 'original62:all-is-original');
+      assert.deepEqual(cases.selectCases('ALL', { attempt: 'additional' }).map(r => r.id), cases.population.map(r => r.id), 'original62:all-is-original');
+      assert.equal(cases.caseById('O03').textSha256, '3a15b79d52ea21781b8feff8206c03a36faf561703aba920a49f884c87373b19', 'original62:o03-text-unchanged');
+      assert.deepEqual(cases.denominators(cases.selectCases('O12,O03')), { selected: 2, core: 2, historical: 0, declaredTotal: 62, declaredCore: 56, declaredHistorical: 6, selectedIsWholePopulation: false }, 'original62:denominator-shape');
+    });
+    await run('supplemental:declared-separately-initial-refused-distinct-denominator', () => {
+      assert.deepEqual(cases.verifySupplementalDeclaration(), { supplemental: 1 }, 'supplemental:declaration');
+      const cap = cases.supplementalCaseById('CAP01');
+      assert.equal(cap.textSha256, 'ce6962ef228facb92b95040f8a13f6e796d179d4819f3d501f69f6aad1176cd1', 'supplemental:cap01-text-pinned');
+      assert.equal(cap.cohort, cases.SUPPLEMENTAL_COHORT); assert.equal(cap.realm, 'owner'); assert.equal(cap.nativePage, 'intake-payments'); assert.deepEqual(cap.placeholders, []); assert.equal(cap.family, null);
+      assert.throws(() => cases.selectCases('CAP01'), /selection:supplemental-additional-only/, 'supplemental:initial-refused');
+      assert.throws(() => cases.selectCases('CAP01,O12', { attempt: 'additional' }), /selection:supplemental-separate-batch/, 'supplemental:never-mixed-into-original');
+      const rows = cases.selectCases('CAP01', { attempt: 'additional' });
+      assert.deepEqual(rows.map(r => r.id), ['CAP01']);
+      assert.deepEqual(cases.denominators(rows), { selected: 1, supplemental: 1, declaredSupplemental: 1, cohort: cases.SUPPLEMENTAL_COHORT, countsTowardOriginal62: false, selectedIsWholePopulation: false }, 'supplemental:distinct-denominator');
+      assert.throws(() => cases.denominators([...rows, cases.caseById('O12')]), /denominators:supplemental-separate/, 'supplemental:never-mixed-into-original');
+    });
+    await run('supplemental:explicit-plan-needs-additional-and-named-reason', async () => {
+      const { parsePlan } = await import('./finance-navi-agent-model.mjs'), out = path.join(temporary, 'not-created-supplemental');
+      for (const mode of ['prepare', 'selftest', 'manual']) {
+        assert.throws(() => parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: mode, OMF_NAVI_AGENT_MODEL_CASES: 'CAP01', OMF_NAVI_AGENT_MODEL_OUT: out }), /selection:supplemental-additional-only/, 'supplemental:initial-refused ' + mode);
+        assert.throws(() => parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: mode, OMF_NAVI_AGENT_MODEL_CASES: 'CAP01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_ATTEMPT: 'additional' }), /needs-named-reason/, 'supplemental:reason-required ' + mode);
+      }
+      for (const mode of ['prepare', 'selftest']) assert.deepEqual(parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: mode, OMF_NAVI_AGENT_MODEL_CASES: 'CAP01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_ATTEMPT: 'additional', OMF_NAVI_AGENT_MODEL_REASON: 'F3 capability question CAP01 declared before inference' }).rows.map(r => r.id), ['CAP01']);
+      await assert.rejects(fs.access(out));
+    });
+    await run('supplemental:frozen-input-is-the-declared-text-evaluator-separate', async () => {
+      const cap = cases.supplementalCaseById('CAP01'), expected = cases.SUPPLEMENTAL_EVALUATOR_ONLY.CAP01.expected;
+      assert.equal(cases.sha256(expected), cases.SUPPLEMENTAL_RUBRIC_SHA256.CAP01, 'supplemental:evaluator-pinned');
+      const make = id => cases.resolveRequest(cap, { context: { page: 'intake-payments', paymentKind: 'card', paymentImportId: id, paymentLine: 8 }, labels: { paymentImportId: 'O:statement-1' } });
+      const a = make('b'.repeat(24)), b = make('c'.repeat(24));
+      assert.equal(a.text, cap.text); assert.equal(a.normalized.text, cap.text, 'supplemental:exact-declared-text'); assert.equal(a.declaredTextSha256, cap.textSha256); assert.deepEqual(a.preceding, []);
+      assert.equal(a.normalizedSha256, b.normalizedSha256); assert.notEqual(a.resolvedSha256, b.resolvedSha256);
+      const payload = JSON.stringify(cases.productPayload(a));
+      assert.ok(!payload.includes(expected), 'supplemental:evaluator-not-in-input');
+      for (const sentence of expected.split(/[.;:]/).map(s => s.trim()).filter(s => s.length > 24)) assert.ok(!payload.includes(sentence), 'supplemental:evaluator-not-in-input');
+      assert.throws(() => cases.resolveRequest({ ...cap }, { context: { page: 'intake-payments' } }), /resolve:declared-case-required/);
+      // The declaration is part of the source identity (and so of every frozen manifest), and the new evaluator module is a harness file.
+      const { sourceIdentity, HARNESS_FILES } = await import('./finance-navi-agent-model.mjs'), identity = sourceIdentity(root);
+      assert.ok(HARNESS_FILES.includes('scripts/finance-navi-agent-model-supplemental.mjs'), 'supplemental:harness-file');
+      assert.match(String(identity.harnessSha256['scripts/finance-navi-agent-model-supplemental.mjs']), /^[a-f0-9]{64}$/, 'supplemental:harness-file');
+      assert.equal(identity.declarationSha256, 'f6621314d154ec2c6322bd2a645a9f573c2196436ffc24d4da56d88e4eba95cb', 'original62:declaration-hash');
+      assert.equal(identity.supplementalDeclarationSha256, cases.sha256(cases.canonicalJson({ text: cases.SUPPLEMENTAL_TEXT_SHA256, rubric: cases.SUPPLEMENTAL_RUBRIC_SHA256 })), 'supplemental:source-identity');
+    });
+    await run('evaluator:o03-reviewed-scope-question-zero-writes-future-memory-rejected', async () => {
+      const { ownerCases, EVALUATOR_CORRECTIONS } = await import('./finance-navi-agent-model-owner-cases.mjs'), o03 = ownerCases.get('O03');
+      assert.deepEqual(o03.allowed({}), {}, 'evaluator:o03-zero-writes');
+      assert.equal(o03.defect.flips, 'protected:no-future-memory', 'evaluator:o03-wrong-future-memory-defect');
+      assert.equal(EVALUATOR_CORRECTIONS.O03.finding, 'F4'); assert.equal(EVALUATOR_CORRECTIONS.O03.manualGradeRequired, true, 'evaluator:o03-manual-grade-kept');
+      const memoryWritten = { financedecisionmemories: { added: ['a'.repeat(24)], removed: [], changed: [] }, financeactionoperations: { added: ['b'.repeat(24)], removed: [], changed: [] } };
+      assert.equal(cases.gradeEffects(memoryWritten, o03.allowed({}))[0].pass, false, 'evaluator:o03-future-memory-rejected');
+      assert.equal(cases.gradeEffects({}, o03.allowed({}))[0].pass, true, 'evaluator:o03-zero-write-accepted');
+    });
+    await run('evaluator:cap01-zero-writes-wrong-allocation-rejected', async () => {
+      const { ownerCases } = await import('./finance-navi-agent-model-owner-cases.mjs'), { supplementalCases } = await import('./finance-navi-agent-model-supplemental.mjs'), cap = supplementalCases.get('CAP01');
+      assert.deepEqual([...supplementalCases.keys()], ['CAP01']); assert.equal(ownerCases.has('CAP01'), false, 'supplemental:not-an-original-design');
+      assert.deepEqual(cap.allowed({}), {}, 'evaluator:cap01-zero-writes'); assert.equal(cap.defect.flips, 'protected:no-allocation-or-write', 'evaluator:cap01-wrong-allocation-defect');
+      assert.equal(cap.prepare, ownerCases.get('O12').prepare, 'supplemental:reuses-native-o12-setup');
+      const allocated = { financepayments: { added: ['c'.repeat(24)], removed: [], changed: [] }, financeactionoperations: { added: ['d'.repeat(24)], removed: [], changed: [] } };
+      assert.equal(cases.gradeEffects(allocated, cap.allowed({}))[0].pass, false, 'evaluator:cap01-allocation-rejected');
     });
 
     // ---- Real disposable child transport

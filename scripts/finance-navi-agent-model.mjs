@@ -24,12 +24,13 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { population, selectCases, denominators, resolveRequest, verifyDeclaration, canonicalJson, sha256, plainDocument, diffSnapshots, gradeEffects, check, retainedSource, retainedDocuments, overallPass, EVALUATOR_ONLY, DECLARED_TEXT_SHA256, COHORT } from './finance-navi-agent-model-cases.mjs';
+import { population, selectCases, denominators, resolveRequest, verifyDeclaration, canonicalJson, sha256, plainDocument, diffSnapshots, gradeEffects, check, retainedSource, retainedDocuments, overallPass, EVALUATOR_ONLY, DECLARED_TEXT_SHA256, COHORT, SUPPLEMENTAL_COHORT, supplementalPopulation, verifySupplementalDeclaration, SUPPLEMENTAL_EVALUATOR_ONLY, SUPPLEMENTAL_TEXT_SHA256, SUPPLEMENTAL_RUBRIC_SHA256 } from './finance-navi-agent-model-cases.mjs';
 import { companyCases, FOREIGN_MARKERS } from './finance-navi-agent-model-company-cases.mjs';
 import { ownerCases } from './finance-navi-agent-model-owner-cases.mjs';
+import { supplementalCases } from './finance-navi-agent-model-supplemental.mjs';
 import { installSpawnObserver, openHttpObserver, redact } from './finance-navi-agent-model-observer.mjs';
 
-export const HARNESS_FILES = Object.freeze(['scripts/finance-navi-agent-model.mjs', 'scripts/finance-navi-agent-model-cases.mjs', 'scripts/finance-navi-agent-model-company-cases.mjs', 'scripts/finance-navi-agent-model-owner-cases.mjs', 'scripts/finance-navi-agent-model-observer.mjs', 'scripts/finance-navi-agent-model-observer.test.mjs', 'scripts/zoomer-fixtures/omf-navi-agent-model.mjs', 'docs/navi-agent-model-evaluation.md']);
+export const HARNESS_FILES = Object.freeze(['scripts/finance-navi-agent-model.mjs', 'scripts/finance-navi-agent-model-cases.mjs', 'scripts/finance-navi-agent-model-company-cases.mjs', 'scripts/finance-navi-agent-model-owner-cases.mjs', 'scripts/finance-navi-agent-model-supplemental.mjs', 'scripts/finance-navi-agent-model-observer.mjs', 'scripts/finance-navi-agent-model-observer.test.mjs', 'scripts/zoomer-fixtures/omf-navi-agent-model.mjs', 'docs/navi-agent-model-evaluation.md']);
 export const MODES = Object.freeze(['prepare', 'selftest', 'manual', 'lifecycle']);
 // Selftest variants: 'ideal' (scripted correct turns), 'defects' (scripted WRONG turns that must flip their named oracle) and
 // 'p02-missing' (the scripted P01 source publishes no T-number, so P02 exercises its missing-prerequisite branch).
@@ -44,8 +45,9 @@ const rid = () => randomBytes(16).toString('hex');
 class SetupError extends Error { constructor(message) { super(message); this.layer = 'setup'; } }
 
 export function populationReport() {
-  const counts = verifyDeclaration();
-  return { mode: 'population', declared: counts, cases: population.map(r => ({ id: r.id, cohort: r.cohort, realm: r.realm, page: r.page, nativePage: r.nativePage, transport: r.transport, family: r.family, placeholders: r.placeholders, textSha256: r.textSha256 })), modelCalls: 0, appCalls: 0, providerCalls: 0, note: 'Declared population only. Explicit modes run only through scripts/zoomer-fixtures/omf-navi-agent-model.mjs with OMF_NAVI_AGENT_MODEL_MODE and a declared case list.' };
+  const counts = verifyDeclaration(), extra = verifySupplementalDeclaration();
+  const view = r => ({ id: r.id, cohort: r.cohort, realm: r.realm, page: r.page, nativePage: r.nativePage, transport: r.transport, family: r.family, placeholders: r.placeholders, textSha256: r.textSha256 });
+  return { mode: 'population', declared: counts, cases: population.map(view), supplemental: supplementalPopulation.map(view), supplementalDeclared: { ...extra, countsTowardOriginal62: false, selection: 'explicit additional attempt with a named reason, in its own batch' }, modelCalls: 0, appCalls: 0, providerCalls: 0, note: 'Declared population only. Explicit modes run only through scripts/zoomer-fixtures/omf-navi-agent-model.mjs with OMF_NAVI_AGENT_MODEL_MODE and a declared case list.' };
 }
 
 // Pure validation of an explicit run. Throws a named error before anything starts; never reads a credential value.
@@ -86,7 +88,9 @@ export function parsePlan(env = {}) {
   return plan;
 }
 
-const designFor = row => row.realm === 'company' ? companyCases.get(row.id) : ownerCases.get(row.id);
+// A supplemental question (separately declared, not one of the 62) has its design in the supplemental module; every original row is unchanged.
+const designFor = row => row.cohort === SUPPLEMENTAL_COHORT ? supplementalCases.get(row.id) : row.realm === 'company' ? companyCases.get(row.id) : ownerCases.get(row.id);
+const evaluatorOf = id => EVALUATOR_ONLY[id] || SUPPLEMENTAL_EVALUATOR_ONLY[id] || null;
 const sha256File = file => sha256(fs.readFileSync(file));
 function treeSha256(dir) {
   const files = [], walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else if (e.isFile()) files.push(path.relative(dir, f).split(path.sep).join('/') + ':' + sha256File(f)); } };
@@ -95,7 +99,7 @@ function treeSha256(dir) {
 export function sourceIdentity(root) {
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', windowsHide: true }).trim();
   let revision = null, tracked = null; try { revision = git('rev-parse', 'HEAD'); tracked = git('status', '--porcelain', '--untracked-files=no'); } catch {}
-  return { revision, trackedChanges: tracked === null ? null : tracked.split(/\r?\n/).filter(Boolean), buildSha256: treeSha256(path.join(root, '.output', 'server')), harnessSha256: Object.fromEntries(HARNESS_FILES.map(f => [f, fs.existsSync(path.join(root, f)) ? sha256File(path.join(root, f)) : null])), declarationSha256: sha256(canonicalJson(DECLARED_TEXT_SHA256)) };
+  return { revision, trackedChanges: tracked === null ? null : tracked.split(/\r?\n/).filter(Boolean), buildSha256: treeSha256(path.join(root, '.output', 'server')), harnessSha256: Object.fromEntries(HARNESS_FILES.map(f => [f, fs.existsSync(path.join(root, f)) ? sha256File(path.join(root, f)) : null])), declarationSha256: sha256(canonicalJson(DECLARED_TEXT_SHA256)), supplementalDeclarationSha256: sha256(canonicalJson({ text: SUPPLEMENTAL_TEXT_SHA256, rubric: SUPPLEMENTAL_RUBRIC_SHA256 })) };
 }
 async function writeExclusive(file, value) { await fsp.mkdir(path.dirname(file), { recursive: true }); await fsp.writeFile(file, typeof value === 'string' ? value : JSON.stringify(value, null, 2) + '\n', { flag: 'wx' }); }
 async function writeReplace(file, value) { const tmp = file + '.' + rid() + '.tmp'; await fsp.writeFile(tmp, typeof value === 'string' ? value : JSON.stringify(value, null, 2) + '\n'); await fsp.rename(tmp, file); }
@@ -284,7 +288,7 @@ async function sendDraw(ctx, row, binding, request, requestId) {
   return ctx.ok(route, { token: ctx.owner.companyToken, method: 'POST', body: { requestId, chatRevision: view.conversation?.revision || 0, text: request.text, revision: d.revision, key: d.key, sourceHash: d.sourceHash } });
 }
 // Boundary of the actual native input: computed in memory from the observed stdin bytes; only booleans and key names are kept.
-const boundaryFor = (request, row) => text => { let input; try { input = JSON.parse(text); } catch { return { parsed: false }; } const evaluator = EVALUATOR_ONLY[row.id]; return { parsed: true, currentMessageMatchesFrozen: input.currentMessage === request.text, evaluatorExpectationAbsent: !evaluator || !text.includes(evaluator.expected), rubricLabelAbsent: !text.includes('manual-grading.md'), keys: Object.keys(input).sort() }; };
+const boundaryFor = (request, row) => text => { let input; try { input = JSON.parse(text); } catch { return { parsed: false }; } const evaluator = evaluatorOf(row.id); return { parsed: true, currentMessageMatchesFrozen: input.currentMessage === request.text, evaluatorExpectationAbsent: !evaluator || !text.includes(evaluator.expected), rubricLabelAbsent: !text.includes('manual-grading.md'), keys: Object.keys(input).sort() }; };
 
 // ---- Main explicit-mode entry (called by the fixture with process.env)
 export async function runCorpusFromEnvironment(env, { root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), log = s => process.stderr.write('[navi-agent-model] ' + s + '\n') } = {}) {
@@ -294,14 +298,14 @@ export async function runCorpusFromEnvironment(env, { root = path.resolve(path.d
   // any child starts, so no other child (application, mongod, Vault helper, MCP) can inherit it.
   let connected = null;
   if (plan.mode === 'manual' && plan.auth === 'connected') { connected = { token: env[ENV.token], slot: plan.slot, configDirectory: plan.configDirectory }; delete env[ENV.token]; delete process.env[ENV.token]; }
-  verifyDeclaration();
+  verifyDeclaration(); verifySupplementalDeclaration();
   try { os.setPriority(0, os.constants.priority.PRIORITY_LOW); } catch {}
   await fsp.mkdir(plan.out, { recursive: true });
   const identity = sourceIdentity(root), startedAt = new Date().toISOString();
   let frozen = null;
   if (plan.mode === 'manual') {
     frozen = JSON.parse(await fsp.readFile(plan.frozen, 'utf8'));
-    const mismatch = !identity.revision || identity.trackedChanges?.length ? 'tracked source changes or no revision' : frozen.source?.revision !== identity.revision ? 'source revision' : frozen.source?.buildSha256 !== identity.buildSha256 ? 'built application' : canonicalJson(frozen.source?.harnessSha256) !== canonicalJson(identity.harnessSha256) ? 'harness files' : frozen.declarationSha256 !== identity.declarationSha256 ? 'declaration' : null;
+    const mismatch = !identity.revision || identity.trackedChanges?.length ? 'tracked source changes or no revision' : frozen.source?.revision !== identity.revision ? 'source revision' : frozen.source?.buildSha256 !== identity.buildSha256 ? 'built application' : canonicalJson(frozen.source?.harnessSha256) !== canonicalJson(identity.harnessSha256) ? 'harness files' : frozen.declarationSha256 !== identity.declarationSha256 ? 'declaration' : frozen.source?.supplementalDeclarationSha256 !== identity.supplementalDeclarationSha256 ? 'supplemental declaration' : null;
     if (mismatch) { await writeExclusive(path.join(plan.out, 'batch.json'), { batch: plan.batch, mode: plan.mode, startedAt, refused: 'frozen manifest does not match the current candidate: ' + mismatch, identity, frozenSource: frozen.source }); return { pass: false, summary: { mode: plan.mode, refused: 'frozen-candidate-mismatch: ' + mismatch, nativeCliProcesses: 0, processesReportingModelUsage: 0 } }; }
   }
   const batchRecord = { batch: plan.batch, mode: plan.mode, attempt: plan.attempt, reason: plan.reason, startedAt, selected: plan.rows.map(r => r.id), denominators: denominators(plan.rows), auth: plan.mode === 'manual' ? (connected ? { source: 'connected-resource-overlay', slot: connected.slot, configDirectory: connected.configDirectory, oneKeyOverlay: 'CLAUDE_CODE_OAUTH_TOKEN on the exact matched native CLI spawn only' } : { source: 'unchanged-default-native-login' }) : null, cliPath: plan.mode === 'manual' ? plan.cli : null, identity, frozenManifestSha256: plan.frozen ? sha256File(plan.frozen) : null, processPriority: (() => { try { return os.getPriority(0); } catch { return null; } })(), countingUnit: 'one initial queued native product job and its native CLI process; internal model/tool turns are recorded separately' };
@@ -376,7 +380,7 @@ function selectedDocuments(design, state, context) {
 }
 async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, families, manifest, log, secretValues = null }) {
   const design = designFor(row), attemptId = row.id + '.' + (plan.attempt === 'initial' ? 'initial' : 'additional-' + new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15));
-  const rec = { attemptId, caseId: row.id, cohort: row.cohort, realm: row.realm, endpoint: row.endpoint, page: row.page, nativePage: row.nativePage, transport: row.transport, family: row.family, batch: plan.batch, mode: plan.mode, attemptKind: plan.attempt, reason: plan.reason, startedAt: new Date().toISOString(), rubric: EVALUATOR_ONLY[row.id]?.rubric || null, manualGrade: plan.mode === 'manual' ? 'PENDING' : 'not-applicable' };
+  const rec = { attemptId, caseId: row.id, cohort: row.cohort, realm: row.realm, endpoint: row.endpoint, page: row.page, nativePage: row.nativePage, transport: row.transport, family: row.family, batch: plan.batch, mode: plan.mode, attemptKind: plan.attempt, reason: plan.reason, startedAt: new Date().toISOString(), rubric: evaluatorOf(row.id)?.rubric || null, manualGrade: plan.mode === 'manual' ? 'PENDING' : 'not-applicable' };
   const secrets = () => secretValues ? secretValues() : [ctx.agent.token];
   let binding = null, request = null, state = null;
   try {
@@ -509,12 +513,12 @@ async function finishRecord(plan, rec, secrets) {
 function resultTable(plan, attempts, extra = {}) {
   const statuses = ['deterministic-pass', 'deterministic-fail', 'product-failure', 'native-failure', 'harness-failure', 'setup-failure', 'not-run', 'prepared', 'defect-detected', 'defect-missed'];
   const by = cohort => Object.fromEntries(statuses.map(s => [s, attempts.filter(a => a.status === s && (!cohort || a.cohort === cohort)).length]));
-  return { batch: plan.batch, mode: plan.mode, attemptKind: plan.attempt, reason: plan.reason, denominators: denominators(plan.rows), counts: { total: by(null), core: by(COHORT.core), historical: by(COHORT.historical) }, manualGrades: plan.mode === 'manual' ? 'PENDING' : 'not-applicable', note: 'Every selected case stays in its denominator: a setup, transport, native or product failure is a failed attempt with its layer, never a pass. Additional attempts are separate batches with a named reason and never replace an initial attempt.', attempts, ...extra };
+  return { batch: plan.batch, mode: plan.mode, attemptKind: plan.attempt, reason: plan.reason, denominators: denominators(plan.rows), counts: { total: by(null), core: by(COHORT.core), historical: by(COHORT.historical), ...(plan.rows.some(r => r.cohort === SUPPLEMENTAL_COHORT) ? { supplemental: by(SUPPLEMENTAL_COHORT) } : {}) }, manualGrades: plan.mode === 'manual' ? 'PENDING' : 'not-applicable', note: 'Every selected case stays in its denominator: a setup, transport, native or product failure is a failed attempt with its layer, never a pass. Additional attempts are separate batches with a named reason and never replace an initial attempt.', attempts, ...extra };
 }
 function tableMarkdown(t) {
-  const lines = ['# Navi agent model corpus — ' + t.batch + ' (' + t.mode + ', ' + t.attemptKind + ')', '', 'Selected population: ' + t.denominators.selected + ' (core ' + t.denominators.core + ', historical wording ' + t.denominators.historical + ') of the declared 62 (56 + 6). Manual grades: ' + t.manualGrades + '.', '', '| case | cohort | status | layer | native processes | internal turns | failed checks |', '|---|---|---|---|---|---|---|'];
-  for (const a of t.attempts) lines.push('| ' + a.caseId + ' | ' + (a.cohort === COHORT.core ? 'core' : 'historical') + ' | ' + a.status + ' | ' + (a.layer || '') + ' | ' + (a.processCount ?? '') + ' | ' + (a.internalTurns || []).join(',') + ' | ' + String((a.failed || []).join('; ') || a.error || a.detail || '').replace(/\|/g, '/').slice(0, 300) + ' |');
-  lines.push('', 'Counts (total): ' + JSON.stringify(t.counts.total), 'Counts (core): ' + JSON.stringify(t.counts.core), 'Counts (historical): ' + JSON.stringify(t.counts.historical), '', t.note);
+  const lines = ['# Navi agent model corpus — ' + t.batch + ' (' + t.mode + ', ' + t.attemptKind + ')', '', (t.denominators.supplemental ? 'Selected supplemental questions: ' + t.denominators.selected + ' of the separately declared ' + t.denominators.declaredSupplemental + ' (not part of the original 62 or any of its cohorts)' : 'Selected population: ' + t.denominators.selected + ' (core ' + t.denominators.core + ', historical wording ' + t.denominators.historical + ') of the declared 62 (56 + 6)') + '. Manual grades: ' + t.manualGrades + '.', '', '| case | cohort | status | layer | native processes | internal turns | failed checks |', '|---|---|---|---|---|---|---|'];
+  for (const a of t.attempts) lines.push('| ' + a.caseId + ' | ' + (a.cohort === COHORT.core ? 'core' : a.cohort === SUPPLEMENTAL_COHORT ? 'supplemental' : 'historical') + ' | ' + a.status + ' | ' + (a.layer || '') + ' | ' + (a.processCount ?? '') + ' | ' + (a.internalTurns || []).join(',') + ' | ' + String((a.failed || []).join('; ') || a.error || a.detail || '').replace(/\|/g, '/').slice(0, 300) + ' |');
+  lines.push('', 'Counts (total): ' + JSON.stringify(t.counts.total), 'Counts (core): ' + JSON.stringify(t.counts.core), 'Counts (historical): ' + JSON.stringify(t.counts.historical), ...(t.counts.supplemental ? ['Counts (supplemental): ' + JSON.stringify(t.counts.supplemental)] : []), '', t.note);
   return lines.join('\n') + '\n';
 }
 

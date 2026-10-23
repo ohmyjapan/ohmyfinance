@@ -68,6 +68,11 @@ async function main(){
   // 1 owner workspace: longer explanations with one fixed catalogue link, explicit new chat that archives the segment with every
   // receipt, a recognised lost reset, cap continuation, concurrent resets sharing one copy and a stale unadopted copy keeping its id.
   let t=await wsTurn(plain,'2行目の税率を10にして、カード連携の画面も教えて');
+  // Review F3 (plan omf-navi-context-truth-20261024): the general owner capabilities the claimed job carries match its named actions (posting
+  // and card settings run on an explicit current instruction under their checks) instead of denying every ledger/settings change.
+  const jobToolNames=job=>(job.tools||[]).map(x=>x.name),capabilitiesOf=job=>JSON.stringify(job.context?.capabilities||null);
+  assert.ok(['post_selected_approved_rows','set_card_auto_sync','queue_card_sync'].every(n=>jobToolNames(t.job).includes(n)),'owner-cont:job-carries-named-owner-actions');
+  assert.ok(!capabilitiesOf(t.job).includes('Never change ledger or settings')&&/supplied named tool/.test(capabilitiesOf(t.job))&&/CURRENT message/.test(capabilitiesOf(t.job)),'owner-cont:context-general-actions-truthful '+capabilitiesOf(t.job));
   const saved=await acted(t.job,1,'save_draft_fields',{importId,line:2,fields:{taxRate:10}});assert.equal(saved.receipt.state,'done');
   const long='説明'.repeat(1500);await finished(t.job,long,{navigation:{feature:'connections'}});
   let view=await ok(ws,plain),turn=view.conversation.turns.at(-1);assert.equal(turn.proposal.summary.length,3000,'owner-cont:long-owner-reply');assert.deepEqual(turn.proposal.navigation,{feature:'connections'},'owner-cont:owner-navigation-kept');
@@ -246,6 +251,17 @@ async function main(){
   const record=await ok('/api/finance-intake/records',plain,'POST',{values:{orderId:'OWNER-CONT-01',description:'Bridge shop order',amount:'1104',supplierName:'Synthetic seller'}});
   const bankAccount=(await ok('/api/finance-payments/bank/accounts',plain,'POST',{name:'PRIVATE_BANK_ACCOUNT',currency:'JPY'})).account;assert.ok(bankAccount);
   t=await wsTurn(plain,'4行目の支払いを受付 OWNER-CONT-01 に配分して',{page:'intake-payments',paymentKind:'card',paymentImportId:importId,paymentLine:4});
+  // Review F3: the payment-matching context names the allocation tools this job actually carries (explicit current instruction only) and
+  // keeps bank rows, bank CSV import and other cards on the page; no line still says Navi has no allocation tool.
+  const allocationTools=['confirm_card_allocation','release_card_allocation','reconfirm_card_allocation'];
+  const contextTruth=(job,label)=>{
+   assert.ok(allocationTools.every(n=>jobToolNames(job).includes(n)),'owner-cont:job-carries-allocation-tools '+label);
+   const said=capabilitiesOf(job),all=JSON.stringify([job.context?.capabilities||null,job.context?.facts?.pageFeatures||null,job.context?.facts?.pageGuide||null]);
+   for(const n of allocationTools)assert.ok(said.includes(n),'owner-cont:context-names-allocation-tools '+label+' '+n+' '+said);
+   assert.ok(/CURRENT message/.test(said)&&/bank CSV import/.test(said),'owner-cont:context-allocation-limits '+label+' '+said);
+   assert.ok(!/no payment-allocation|confirm\/release allocations with its present tools|Matching allocation actions are not available/.test(all),'owner-cont:context-no-stale-allocation-denial '+label);
+  };
+  contextTruth(t.job,'intake-payments');assert.match(JSON.stringify(t.job.context.facts.pageGuide),/確定・解除・再確定/,'owner-cont:context-names-allocation-tools intake-payments guide');
   let pm=(await acted(t.job,1,'get_card_payment_match',{})).result;assert.equal(pm.payment.importId,importId);
   let alloc;writes=await profileWrites('financepayments',async()=>{alloc=await acted(t.job,2,'confirm_card_allocation',{importId,line:4,recordId:record.id,amount:1104,paymentRevision:pm.payment.paymentRevision,recordRevision:record.revision,note:'Navi synthetic'})});
   assert.equal(alloc.receipt.state,'done','owner-cont:alloc-saved');const allocRaw=JSON.stringify(alloc);assert.ok(!allocRaw.includes('PRIVATE_BANK_ACCOUNT')&&!allocRaw.includes('PRIVATE_UNASSIGNED'),'owner-cont:alloc-scoped-result');
@@ -263,6 +279,10 @@ async function main(){
   const xp=(await ok('/api/finance-payments/payments',plain)).payments.find(p=>p.description==='PRIVATE_UNASSIGNED_CHARGE');assert.ok(xp,'SETUP owner payment list');
   await ok('/api/finance-payments/'+xp.endpoint+'/allocations',plain,'POST',{confirm:true,requestId:crypto.randomUUID(),paymentRevision:xp.paymentRevision,recordRevision:record.revision,amount:100,target:{kind:'intake',recordId:record.id},note:'owner'});
   assert.equal((await ok('/api/finance-payments/records/'+record.id,plain)).allocations.length>=2,true,'owner-cont:alloc-native-owner-unrestricted');
+  // Review F3: the intake page context says the same about the allocation tools its job carries; a capability question writes nothing.
+  const beforeQuestion=JSON.stringify(await C.matches.find().sort({_id:1}).toArray());
+  t=await wsTurn(plain,'この受付の画面で、Naviは支払いの割り当てを確定できますか',{page:'intake',recordId:record.id});contextTruth(t.job,'intake');
+  await finished(t.job,'割り当てられたカードの明細なら、明示の指示で配分を確定・解除・再確定できます。');assert.equal(JSON.stringify(await C.matches.find().sort({_id:1}).toArray()),beforeQuestion,'owner-cont:capability-question-no-write');
   pass('assigned-card allocation: scoped context before derivation, operation request id, retry, over-allocation and unassigned refusals, reconfirm and release with history markers, marker recovery, owner page unrestricted');
   }
 
