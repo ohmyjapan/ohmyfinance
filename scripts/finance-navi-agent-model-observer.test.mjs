@@ -337,9 +337,9 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     await run('auth:vault-credential-taken-before-any-child-and-batch-record', () => takeExercise(runnerModule));
     // The actual TeachingWorker.cycle() through startManualWorker: owned DPAPI Vault, a loopback stand-in for the OMF worker API, the
     // spawn observer of the corpus and, beneath it, the owned stand-in child for the configured CLI path. No model or provider.
-    const vaultHandoffExercise = async mod => {
+    const vaultHandoffExercise = async (mod, sourceCredential = null) => {
       const { Vault } = await import(pathToFileURL(path.join(root, 'collector/vault.mjs')).href);
-      const token = vaultToken(), agentToken = 'omft_' + createHash('sha256').update(randomUUID()).digest('hex');
+      const token = sourceCredential?.token || vaultToken(), agentToken = 'omft_' + createHash('sha256').update(randomUUID()).digest('hex');
       const dir = await fs.mkdtemp(path.join(temporary, 'vault-handoff-')), vaultDir = path.join(dir, 'vault'), inference = path.join(dir, 'inference'), records = path.join(dir, 'records');
       for (const d of [vaultDir, inference]) await fs.mkdir(d);
       const cli = path.join(dir, 'native-cli-standin.exe'), standin = path.join(dir, 'standin.cjs'); await fs.writeFile(cli, ''); await fs.writeFile(standin, VAULT_STANDIN);
@@ -374,6 +374,40 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       assert.equal(cp.spawn, below, 'auth:vault-spawn-restored');
     };
     await run('auth:vault-owned-worker-handoff-real-child-no-observer-overlay', () => vaultHandoffExercise(runnerModule));
+
+    // Path-only input survives the normal hub verifier bootstrap without carrying a native token in any ancestor environment.
+    // The source is an actual owned DPAPI Vault; only its nativeOAuthToken is eligible for the owned worker configuration.
+    const sourceVaultExercise = async (mod, handoff = false) => {
+      const { Vault } = await import(pathToFileURL(path.join(root, 'collector/vault.mjs')).href);
+      const sourceDir = await fs.mkdtemp(path.join(temporary, 'credential-source-')), source = new Vault(sourceDir), token = vaultToken();
+      await source.update(() => ({ nativeOAuthToken: token, token: 'different-source-server-bearer-' + randomUUID(), cliPath: 'untrusted-source-executable', baseUrl: 'https://source-must-not-be-used.invalid', enabled: false }));
+      const before = await fs.readFile(source.file), frozen = path.join(sourceDir, 'frozen-placeholder.json'); await fs.writeFile(frozen, '{}');
+      const out = path.join(sourceDir, 'no-runtime-started'), env = { OMF_NAVI_AGENT_MODEL_MODE: 'manual', OMF_NAVI_AGENT_MODEL_CASES: 'R01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_BATCH: 'source-vault', OMF_NAVI_AGENT_MODEL_AUTH: 'vault', OMF_NAVI_AGENT_MODEL_CLI: node, OMF_NAVI_AGENT_MODEL_FROZEN: frozen, OMF_NAVI_AGENT_MODEL_AUTH_VAULT: sourceDir, OMF_NAVI_AGENT_MODEL_AUTH_SLOT: 'source-slot' };
+      let plan; assert.doesNotThrow(() => { plan = mod.parsePlan(env); }, 'auth:source-vault-path-accepted');
+      assert.equal(plan.sourceVaultDirectory, sourceDir, 'auth:source-vault-path-accepted');
+      assert.ok(!JSON.stringify(plan).includes(token) && !Object.values(env).some(v => String(v).includes(token)) && !Object.values(process.env).includes(token), 'auth:source-vault-no-environment-token');
+      const taken = mod.takeNativeCredential(env, plan);
+      assert.equal(taken.sourceVaultDirectory, sourceDir, 'auth:source-vault-descriptor'); assert.equal(taken.token, undefined, 'auth:source-vault-no-environment-token');
+      const credential = await mod.resolveNativeCredential(taken, root);
+      assert.deepEqual(credential, { mode: 'vault', token, slot: 'source-slot', configDirectory: null }, 'auth:source-vault-native-token-only');
+      assert.ok(!before.includes(Buffer.from(token)) && !before.includes(Buffer.from(token, 'utf16le')), 'auth:source-vault-encrypted');
+      assert.deepEqual(await fs.readFile(source.file), before, 'auth:source-vault-read-only');
+      assert.throws(() => mod.parsePlan({ ...env, OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH: token }), e => /plan:vault-auth-source-conflict/.test(e.message) && !e.message.includes(token), 'auth:source-vault-conflict');
+      for (const invalid of ['relative-source', path.join(sourceDir, 'absent'), frozen]) assert.throws(() => mod.parsePlan({ ...env, OMF_NAVI_AGENT_MODEL_AUTH_VAULT: invalid }), /plan:vault-auth-source-directory-invalid/, 'auth:source-vault-invalid-directory');
+      for (const auth of ['default', 'connected']) assert.throws(() => mod.parsePlan({ ...env, OMF_NAVI_AGENT_MODEL_AUTH: auth }), /plan:vault-auth-source-mode/, 'auth:source-vault-explicit-mode');
+      assert.equal(await mod.resolveNativeCredential(null, root), null, 'auth:source-vault-default-unchanged');
+      const legacy = { mode: 'connected', token, slot: null, configDirectory: null }; assert.equal(await mod.resolveNativeCredential(legacy, root), legacy, 'auth:source-vault-connected-unchanged');
+      if (handoff) await vaultHandoffExercise(mod, credential);
+      const badDir = await fs.mkdtemp(path.join(temporary, 'invalid-credential-source-')), bad = new Vault(badDir);
+      await bad.update(() => ({ nativeOAuthToken: 'bad token ' + token, token }));
+      const descriptor = { ...taken, sourceVaultDirectory: badDir };
+      await assert.rejects(mod.resolveNativeCredential(descriptor, root), e => /plan:vault-auth-source-token-invalid/.test(e.message) && !e.message.includes(token), 'auth:source-vault-invalid-token');
+      await assert.rejects(mod.runCorpusFromEnvironment({ ...env, OMF_NAVI_AGENT_MODEL_AUTH_VAULT: badDir }, { root, log: () => {} }), /plan:vault-auth-source-token-invalid/, 'auth:source-vault-fails-before-runtime');
+      await assert.rejects(fs.access(out), 'auth:source-vault-no-runtime-directory');
+      await fs.writeFile(bad.file, 'synthetic-not-DPAPI');
+      await assert.rejects(mod.resolveNativeCredential(descriptor, root), /plan:vault-auth-source-unavailable/, 'auth:source-vault-safe-decrypt-error');
+    };
+    await run('auth:path-only-source-vault-real-DPAPI-and-native-handoff', () => sourceVaultExercise(runnerModule, true));
 
     // ---- The actual product interpreter seam: node stands in for the CLI and exits on its first unknown option (no network).
     await run('seam:actual-interpreter-spawn-observed-unchanged', async () => {
@@ -539,6 +573,8 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     await run('defect:vault-credential-not-written-flips-child-credential-assertion', () => defect('vault-credential-not-written', 'finance-navi-agent-model.mjs', '...(vaultAuth ? { nativeOAuthToken: vaultAuth.token } : {})', '...({})', vaultHandoffExercise, 'auth:vault-child-receives-credential'));
     await run('defect:vault-token-left-in-environment-flips-taken-assertion', () => defect('vault-token-left-in-environment', 'finance-navi-agent-model.mjs', 'delete env[ENV.token]; delete process.env[ENV.token];', '', takeExercise, 'auth:vault-credential-taken-before-any-child'));
     await run('defect:vault-plan-accepts-invalid-token-flips-validation-assertion', () => defect('vault-plan-accepts-invalid-token', 'finance-navi-agent-model.mjs', "if (!validNativeCliToken(value)) throw Error('plan:vault-auth-token-invalid');", '', planExercise, 'auth:vault-plan-validation'));
+    await run('defect:source-vault-reads-server-token', () => defect('source-vault-reads-server-token', 'finance-navi-agent-model.mjs', 'const value = saved?.nativeOAuthToken;', 'const value = saved?.token;', sourceVaultExercise, 'auth:source-vault-native-token-only'));
+    await run('defect:source-vault-accepts-invalid-native-token', () => defect('source-vault-accepts-invalid-native-token', 'finance-navi-agent-model.mjs', "if (!validNativeCliToken(value)) throw Error('plan:vault-auth-source-token-invalid');", '', sourceVaultExercise, 'auth:source-vault-invalid-token'));
     // The unmutated observer passes the same exact-byte exercise (control for the defect above).
     await run('defect-control:unmutated-forwarding-passes', async () => { const ob = installSpawnObserver({ cliPath: node }); try { ob.setCase({ caseId: 'P01', attemptId: 'control', transport: 'stream-json' }); const r = await interpreterShaped(esmSpawn, node, argv('stream-ok'), options(), input); assert.equal(r.raw, FINAL_PAYLOAD, 'observer:exact-native-forwarding'); } finally { ob.restore(); } });
     await run('stream-parser:split-utf8-bound-and-invalid-input', () => {
@@ -552,6 +588,6 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     const resolved = await fs.realpath(temporary), base = await fs.realpath(os.tmpdir());
     if (resolved.startsWith(base + path.sep) && path.basename(resolved).startsWith('omf-navi-agent-model-contract-')) await fs.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
   }
-  const expectedDefects = 13;
+  const expectedDefects = 15;
   return { pass: failures.length === 0 && deliberateDefects.length === expectedDefects && deliberateDefects.every(d => d.detected), checks, failures, deliberateDefects, limits: 'Transport/manifest/evidence/format/grade contracts only: owned disposable local node children, loopback HTTP to an owned fake upstream and the actual interpreter spawn seam with node as a stand-in executable. No model, provider, application or database call and no EXTERNAL network (local child processes and loopback HTTP only). Fake model names and messages are synthetic; no product-model, query-privacy or reliability claim.' };
 }

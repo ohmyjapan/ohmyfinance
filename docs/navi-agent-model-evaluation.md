@@ -47,7 +47,7 @@ pointers and the declared reconstructed preceding turns.
 | `scripts/finance-navi-agent-model-owner-cases.mjs` | Owner/purchase designs (O01–O13): drafts, memories, approval, forecast/final posting, card sync, workflow, intake, allocation, research queue. |
 | `scripts/finance-navi-agent-model-supplemental.mjs` | The one supplemental design (CAP01): reuses O12's native `prepare` unchanged; zero-write oracle, context/claim check, scripted selftest and wrong-allocation turns. Evaluator only; run by the same runner. |
 | `scripts/finance-navi-agent-model-observer.mjs` | Native child observation (passive default JSON; exact native input capture; P01 stream forwarding; connected-auth one-key overlay) and the owned HTTP observer. |
-| `scripts/finance-navi-agent-model-observer.test.mjs` | Default contracts: real disposable children, manifest, evidence, format and grade contracts, the vault-auth handoff and thirteen deliberately seeded defects. |
+| `scripts/finance-navi-agent-model-observer.test.mjs` | Default contracts: real disposable children, manifest, evidence, format and grade contracts, the vault-auth handoff and fifteen deliberately seeded defects. |
 | `scripts/zoomer-fixtures/omf-navi-agent-model.mjs` | The only entry: hub verifier fixture mode. Default = contracts; explicit modes by environment. |
 | `docs/navi-agent-model-evaluation.md` | This document. |
 
@@ -88,10 +88,11 @@ node scripts/zoomer-verify.mjs --run-fixture omf-navi-agent-model.mjs --cwd <omf
 | `OMF_NAVI_AGENT_MODEL_ATTEMPT` / `_REASON` | `initial` (default) or `additional` with a named changed/failing thread |
 | `OMF_NAVI_AGENT_MODEL_CLAIMS` | Optional absolute directory: each initial case is claimed once across parallel batches (`<id>.initial`) |
 | `OMF_NAVI_AGENT_MODEL_AUTH` | `default` (unchanged native login, preferred), `connected` or `vault` (manual only; see below) |
+| `OMF_NAVI_AGENT_MODEL_AUTH_VAULT` | For manual `vault`, optional absolute directory of a private encrypted source Vault containing `nativeOAuthToken`; mutually exclusive with the raw token input |
 | `OMF_NAVI_AGENT_MODEL_SELFTEST_VARIANT` | `ideal` (default), `defects` or `p02-missing` (selftest only) |
 
 Manual mode refuses to start, before any runtime, when the frozen manifest does not match the current candidate (source revision,
-tracked changes, built server tree, the eight harness files, the declaration) and, per case before its draw, when the resolved
+tracked changes, built server tree, the listed harness files, the declaration) and, per case before its draw, when the resolved
 request's normalized hash differs from the frozen one. The resolved request is written to `requests/` before the message is sent.
 Parallel batches need separate output directories and runtimes; nothing is shared between them except the read-only frozen manifest
 and the optional claims directory.
@@ -145,19 +146,27 @@ restored afterwards, even on failure.
   the deployed runtime does.
 - **Connected (explicit option, disclosed in `batch.json`):** the parent passes the selected resource's OAuth token in
   `OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH` and its nonsecret configuration directory in `OMF_NAVI_AGENT_MODEL_CONFIG_DIR` (native
-  `claudeConfigDirectory`). The runner moves the token into memory and deletes it from its own environment before any child starts.
+  `claudeConfigDirectory`). The runner moves the token into memory and deletes it before its own children. The unchanged hub
+  verifier's hidden bootstrap and first git call precede the runner: raw env transport reaches those trusted bootstrap children.
+  Actual live vault-mode acceptance uses the encrypted path input below to avoid that inheritance.
   Only the exact matched native CLI spawn receives one added `CLAUDE_CODE_OAUTH_TOKEN`; all other environment entries, arguments,
   input bytes and options stay as the interpreter built them, and unrelated children are untouched. This is an authentication-source
   difference, never "unchanged" authentication, and is never used silently or switched mid-batch.
 - **Vault (explicit manual-only option, disclosed in `batch.json`; plan omf-navi-native-auth-followup-20261024):** the actual
   product path for an explicitly configured native credential (`docs/native-cli-auth.md`).
-  - **Inputs:** the same private inputs as connected. The token is read from `OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH`. An optional
-    nonsecret `OMF_NAVI_AGENT_MODEL_CONFIG_DIR` must be absolute and existing. `OMF_NAVI_AGENT_MODEL_AUTH_SLOT` is optional.
+  - **Inputs:** actual live acceptance supplies only `OMF_NAVI_AGENT_MODEL_AUTH_VAULT`, the absolute directory of a caller-owned
+    temporary DPAPI source Vault. The token stays encrypted through the outer verifier bootstrap. The runner reads only
+    `nativeOAuthToken` through the unchanged Vault class; it imports no source bearer, executable, endpoint or other config.
+    The raw `OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH` input remains for existing synthetic controls; the two inputs cannot be combined.
+    Optional nonsecret `OMF_NAVI_AGENT_MODEL_CONFIG_DIR` must be absolute and existing; `OMF_NAVI_AGENT_MODEL_AUTH_SLOT` is optional.
   - **Validation:** the token is checked against the product's own rule (one line of 20–4096 visible ASCII characters). Errors are
     `plan:vault-auth-token-missing`, `plan:vault-auth-token-invalid` and `plan:vault-auth-config-directory-invalid`. The value
-    is never echoed or kept in the plan. Prepare and selftest refuse the option.
-  - **Handoff:** the runner takes the token into memory and deletes it from its own environment before any child (git, mongod,
-    the application, the Vault helper). It writes the token only into the owned DPAPI worker Vault as `nativeOAuthToken`. It then
+    is never echoed or kept in the plan. Source input adds manual-only guards `plan:vault-auth-source-mode`, `source-conflict`
+    and `source-directory-invalid` (each with the `plan:vault-auth-` prefix). Decryption or missing/invalid native credentials
+    end with safe `source-unavailable` or `source-token-invalid` errors before any application, DB or job starts. The caller owns
+    source-Vault cleanup. Prepare and selftest refuse the auth option.
+  - **Handoff:** after resolving the encrypted input, or removing raw input before its own children, the runner writes the token
+    only into the owned DPAPI worker Vault as `nativeOAuthToken`. It then
     runs the actual TeachingWorker, interpreter and `shared/finance-native-cli-auth.mjs`, which give the native child a clean
     explicit-credential environment and the actions MCP entry a blank value.
   - **Observer:** the spawn observer is installed with `connectedAuth: null`. There is no overlay, custom loader or alternate
@@ -304,7 +313,8 @@ The default contracts prove, with real disposable node children and a loopback u
 close with split multibyte data; nonzero exit, spawn error, timer kill, missing/malformed/duplicate final results (drained, named,
 never repaired); native error envelopes forwarded unchanged; spawn and ESM binding restoration and untouched unrelated children; the
 connected-auth one-key difference against an identical default child, with the credential never retained; the manual-only vault
-option (plan validation that never echoes the value, the credential taken from the environment before any child, the batch record,
+option (plan validation that never echoes the value, raw credential removal before the runner's children, encrypted path-only input,
+read-only actual DPAPI source resolution selecting only the native token, safe setup errors before runtime creation, the batch record,
 and the actual TeachingWorker.cycle() delivering an owned-Vault credential to a real stand-in child with no observer overlay, a
 blank MCP value and the OMF bearer distinct); the actual interpreter's
 spawn seam (node stands in for the CLI and exits on its first unknown option); HTTP forwarding and redaction; the declaration,
@@ -323,7 +333,9 @@ T prefix (`format:bare-corporation-number-rejected`), a truncated spaced identif
 cleanup ignored (`grade:overall-false-after-cleanup-failure`), vacuous cleanup evidence
 (`grade:overall-false-without-cleanup-evidence`), and in the runner the vault token overlaid by the observer
 (`auth:vault-no-observer-overlay`), the vault credential not written (`auth:vault-child-receives-credential`), the token left in
-the environment (`auth:vault-credential-taken-before-any-child`) and an invalid token accepted (`auth:vault-plan-validation`). The selftest `defects` variant repeats the idea against the built application:
+the environment (`auth:vault-credential-taken-before-any-child`), an invalid token accepted (`auth:vault-plan-validation`), a source
+Vault's server bearer selected instead of its native token (`auth:source-vault-native-token-only`) and invalid source token accepted
+(`auth:source-vault-invalid-token`). The selftest `defects` variant repeats the idea against the built application:
 17 scripted wrong native turns must each flip their named oracle. None of this is product-model, privacy or reliability evidence.
 
 ### Implemented but not exercised by these controls

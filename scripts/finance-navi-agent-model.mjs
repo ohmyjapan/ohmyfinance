@@ -39,7 +39,7 @@ export const AUTH_MODES = Object.freeze(['default', 'connected', 'vault']);
 // Selftest variants: 'ideal' (scripted correct turns), 'defects' (scripted WRONG turns that must flip their named oracle) and
 // 'p02-missing' (the scripted P01 source publishes no T-number, so P02 exercises its missing-prerequisite branch).
 export const SELFTEST_VARIANTS = Object.freeze(['ideal', 'defects', 'p02-missing']);
-const ENV = Object.freeze({ mode: 'OMF_NAVI_AGENT_MODEL_MODE', cases: 'OMF_NAVI_AGENT_MODEL_CASES', out: 'OMF_NAVI_AGENT_MODEL_OUT', cli: 'OMF_NAVI_AGENT_MODEL_CLI', frozen: 'OMF_NAVI_AGENT_MODEL_FROZEN', attempt: 'OMF_NAVI_AGENT_MODEL_ATTEMPT', reason: 'OMF_NAVI_AGENT_MODEL_REASON', batch: 'OMF_NAVI_AGENT_MODEL_BATCH', claims: 'OMF_NAVI_AGENT_MODEL_CLAIMS', auth: 'OMF_NAVI_AGENT_MODEL_AUTH', token: 'OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH', configDir: 'OMF_NAVI_AGENT_MODEL_CONFIG_DIR', slot: 'OMF_NAVI_AGENT_MODEL_AUTH_SLOT', variant: 'OMF_NAVI_AGENT_MODEL_SELFTEST_VARIANT' });
+const ENV = Object.freeze({ mode: 'OMF_NAVI_AGENT_MODEL_MODE', cases: 'OMF_NAVI_AGENT_MODEL_CASES', out: 'OMF_NAVI_AGENT_MODEL_OUT', cli: 'OMF_NAVI_AGENT_MODEL_CLI', frozen: 'OMF_NAVI_AGENT_MODEL_FROZEN', attempt: 'OMF_NAVI_AGENT_MODEL_ATTEMPT', reason: 'OMF_NAVI_AGENT_MODEL_REASON', batch: 'OMF_NAVI_AGENT_MODEL_BATCH', claims: 'OMF_NAVI_AGENT_MODEL_CLAIMS', auth: 'OMF_NAVI_AGENT_MODEL_AUTH', token: 'OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH', sourceVault: 'OMF_NAVI_AGENT_MODEL_AUTH_VAULT', configDir: 'OMF_NAVI_AGENT_MODEL_CONFIG_DIR', slot: 'OMF_NAVI_AGENT_MODEL_AUTH_SLOT', variant: 'OMF_NAVI_AGENT_MODEL_SELFTEST_VARIANT' });
 export const ENVIRONMENT = ENV;
 const EXCLUDED = new Set(['financecompanyassistants', 'financeassistants', 'financechats', 'financechatagents', 'financecompanyconversationarchives', 'financeownerconversationarchives', 'financecompanypublicsources', 'users', 'auditlogs', 'usedauthchallenges', 'authverificationattempts', 'sessions']);
 const APP_ENV_KEYS = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'LOCALAPPDATA', 'APPDATA', 'PROGRAMDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles', 'ComSpec', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS'];
@@ -83,15 +83,26 @@ export function parsePlan(env = {}) {
   if (mode === 'manual') {
     if (!plan.cli || !path.isAbsolute(plan.cli) || !fs.existsSync(plan.cli) || !fs.statSync(plan.cli).isFile()) throw Error('plan:native-cli-path-required');
     if (!plan.frozen || !fs.existsSync(plan.frozen)) throw Error('plan:frozen-manifest-required');
+    const sourceVault = env[ENV.sourceVault];
+    if (sourceVault !== undefined && sourceVault !== '' && plan.auth !== 'vault') throw Error('plan:vault-auth-source-mode');
     if (plan.auth === 'connected') {
       if (typeof env[ENV.token] !== 'string' || !env[ENV.token]) throw Error('plan:connected-auth-token-missing');
       const dir = env[ENV.configDir]; if (!dir || !path.isAbsolute(dir) || !fs.existsSync(dir)) throw Error('plan:connected-auth-config-directory-required');
       plan.configDirectory = dir; plan.slot = env[ENV.slot] || null;
     } else if (plan.auth === 'vault') {
-      // The same private inputs as connected; the value is validated by the product's own rule and never echoed or kept in the plan.
+      // Actual secrets can be supplied by path to an owned encrypted source Vault: the outer verifier's bootstrap then inherits
+      // only the path. Raw input stays supported for existing synthetic controls; never combine the two inputs.
       const value = env[ENV.token];
-      if (typeof value !== 'string' || !value) throw Error('plan:vault-auth-token-missing');
-      if (!validNativeCliToken(value)) throw Error('plan:vault-auth-token-invalid');
+      if (sourceVault !== undefined && sourceVault !== '') {
+        if (value !== undefined && value !== '') throw Error('plan:vault-auth-source-conflict');
+        let directoryOk = false;
+        try { directoryOk = typeof sourceVault === 'string' && path.isAbsolute(sourceVault) && fs.statSync(sourceVault).isDirectory(); } catch {}
+        if (!directoryOk) throw Error('plan:vault-auth-source-directory-invalid');
+        plan.sourceVaultDirectory = sourceVault;
+      } else {
+        if (typeof value !== 'string' || !value) throw Error('plan:vault-auth-token-missing');
+        if (!validNativeCliToken(value)) throw Error('plan:vault-auth-token-invalid');
+      }
       const dir = env[ENV.configDir];
       if (dir !== undefined && dir !== '' && (!path.isAbsolute(dir) || !fs.existsSync(dir))) throw Error('plan:vault-auth-config-directory-invalid');
       plan.configDirectory = dir || null; plan.slot = env[ENV.slot] || null;
@@ -304,13 +315,28 @@ const boundaryFor = (request, row) => text => { let input; try { input = JSON.pa
 
 // ---- Manual authentication handoff
 // The connected or vault credential (explicit manual options only) is taken into memory and removed from the given environment and
-// this process environment before any child starts (git, mongod, the application, the Vault helper, the worker's native and MCP
-// children), so no other child can inherit it.
+// this process environment before this runner starts children. The outer hub verifier bootstraps first: actual live acceptance
+// uses the encrypted source path, avoiding a token in its environment as well (see resolveNativeCredential).
 export function takeNativeCredential(env, plan) {
   if (plan?.mode !== 'manual' || !['connected', 'vault'].includes(plan.auth)) return null;
   const taken = { mode: plan.auth, token: env[ENV.token], slot: plan.slot ?? null, configDirectory: plan.configDirectory ?? null };
+  if (plan.auth === 'vault' && plan.sourceVaultDirectory) { delete taken.token; taken.sourceVaultDirectory = plan.sourceVaultDirectory; }
   delete env[ENV.token]; delete process.env[ENV.token];
   return taken;
+}
+// Read only the native field from the explicitly selected private source Vault, before sourceIdentity/runtime creation. Its OMF
+// bearer, endpoint, executable, enabled state and other settings are never imported. Source errors start no application/job/DB;
+// the caller retains ownership of that source Vault. Default/connected/raw-vault descriptors retain identity and behavior.
+export async function resolveNativeCredential(taken, root) {
+  if (!taken?.sourceVaultDirectory) return taken;
+  let saved;
+  try {
+    const { Vault } = await import(pathToFileURL(path.join(root, 'collector/vault.mjs')).href);
+    saved = await new Vault(taken.sourceVaultDirectory).read();
+  } catch { throw Error('plan:vault-auth-source-unavailable'); }
+  const value = saved?.nativeOAuthToken;
+  if (!validNativeCliToken(value)) throw Error('plan:vault-auth-source-token-invalid');
+  return { mode: taken.mode, token: value, slot: taken.slot, configDirectory: taken.configDirectory };
 }
 // The auth source recorded in batch.json: never the credential itself.
 export function authRecord(plan, connected, vaultAuth) {
@@ -341,9 +367,8 @@ export async function startManualWorker({ root, cli, connected = null, vaultAuth
 export async function runCorpusFromEnvironment(env, { root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), log = s => process.stderr.write('[navi-agent-model] ' + s + '\n') } = {}) {
   const plan = parsePlan(env);
   if (plan.mode === 'lifecycle') return runLifecycle(plan, root, log);
-  // The connected or vault credential (explicit manual options only) is taken into memory and removed from this process environment
-  // before any child starts, so no other child (git, application, mongod, Vault helper, MCP) can inherit it.
-  const credential = takeNativeCredential(env, plan);
+  // Remove raw input before this runner's children, or resolve the path-only encrypted input without ever putting a token in env.
+  const credential = await resolveNativeCredential(takeNativeCredential(env, plan), root);
   const connected = credential?.mode === 'connected' ? { token: credential.token, slot: credential.slot, configDirectory: credential.configDirectory } : null;
   const vaultAuth = credential?.mode === 'vault' ? { token: credential.token, slot: credential.slot, configDirectory: credential.configDirectory } : null;
   verifyDeclaration(); verifySupplementalDeclaration();
