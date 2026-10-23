@@ -1,6 +1,7 @@
 // Company Navi public research: the public tool schemas, the worker capability report, capture and citation shapes, shared by
 // the server, the teaching worker and the page. No Node imports: the page bundle loads this through finance-navi-features.mjs.
-//   published_page                — literal text a public page published when it was captured (identity, T-number, address…).
+//   published_page                — literal text a public page published when it was captured (identity, T-number, address…),
+//                                   the NTA invoice-registry public website included.
 //   official_registry_observation — the official NTA registry response for one literal T-number at one server-set date.
 // Neither proves that a purchase belongs to that company, nor a tax treatment. A failed or unavailable read is activity, not a
 // finding. The NTA application id never appears in a URL, capture, citation or reply: the registry URL here is canonical.
@@ -19,9 +20,9 @@ const tool = (name, description, properties, required = []) => ({ name, descript
 // The public tools a capable company job gets in its own actions MCP server, beside the server catalogue. Fixed order.
 export function publicResearchTools({ chrome = false } = {}) {
   return [
-    tool('read_public_page', 'Read one public HTTPS page (the company\'s own site, NTA, e-Gov or another public page found with WebSearch or given by the user) and capture its literal text as a dated source of this conversation. GET only; private, local, login and file addresses are refused, and the invoice registry website is refused (use verify_invoice_registration). Returns a sourceId to cite and the start of the text.', { url }, ['url']),
+    tool('read_public_page', 'Read one public HTTPS page (the company\'s own site, NTA, e-Gov or another public page found with WebSearch or given by the user) and capture its literal text as a dated source of this conversation. GET only; private, local, login and file addresses are refused. The NTA invoice-registry public website (www.invoice-kohyo.nta.go.jp) is an ordinary public page here: its capture is what the page published when read, not a registry check at a date. The registry Web-API address is refused (use verify_invoice_registration). Returns a sourceId to cite and the start of the text.', { url }, ['url']),
     ...(chrome ? [tool('read_public_page_in_chrome', 'Read a public HTTPS page that only shows its content with JavaScript, in this worker\'s own headless Chrome (GET only, no login, closed after the read), and capture the rendered text. Prefer read_public_page for ordinary pages.', { url }, ['url'])] : []),
-    tool('verify_invoice_registration', 'Check one literal T-number (T plus 13 digits exactly as published or saved; never derived from a corporation number) against the official NTA registry API. The server sets the date: the date of a company transaction or invoice you name, a date the user wrote in the current message, otherwise today in Japan. connection_required means the NTA connection is not configured: the published number is then not officially rechecked.', { number: { type: 'string', pattern: '^T[0-9]{13}$' }, transactionId: objectId, invoiceId: objectId, date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } }, ['number']),
+    tool('verify_invoice_registration', 'Check one literal T-number (T plus 13 digits exactly as published or saved; never derived from a corporation number) against the official NTA registry API. The server sets the date: the date of a company transaction or invoice you name, a date the user wrote in the current message, otherwise today in Japan. connection_required means the NTA API connection is not configured on this worker: no API check was made at that date, so a published number is not officially rechecked; public pages, the NTA public website included, can still be read and cited as published text.', { number: { type: 'string', pattern: '^T[0-9]{13}$' }, transactionId: objectId, invoiceId: objectId, date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } }, ['number']),
     tool('list_public_sources', 'List the public sources captured in this company conversation (this message and earlier ones in the current chat): ids, kinds, capture times, final URLs and registry observations. Failed or unavailable reads are listed as activity, not findings.', {}),
     tool('read_public_source', 'Read more of one captured source\'s literal text from an offset, to quote it exactly.', { sourceId: objectId, offset: { type: 'integer', minimum: 0, maximum: 60000 } }, ['sourceId'])
   ];
@@ -48,7 +49,13 @@ const squash = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 export function literalQuoteIn(text, quote) { const q = squash(quote); return q.length > 0 && squash(text).includes(q); }
 
 export const registryUrl = (number, day) => 'https://web-api.invoice-kohyo.nta.go.jp/1/valid?number=' + number + '&day=' + day + '&type=21';
-export const isRegistryHost = hostname => /(^|\.)invoice-kohyo\.nta\.go\.jp$/i.test(String(hostname || ''));
+// A DNS terminal dot names the same host (web-api.….jp. is web-api.….jp): it is removed before either host category is decided.
+const dnsHost = hostname => String(hostname || '').replace(/\.+$/, '');
+export const isRegistryHost = hostname => /(^|\.)invoice-kohyo\.nta\.go\.jp$/i.test(dnsHost(hostname));
+// The registry's anonymous public website (www and the bare origin) is an ordinary published page for the public reader and for
+// web or Chrome captures. Every other registry host (the Web-API among them) is read only by the official verification path.
+export const isRegistryWebsiteHost = hostname => /^(www\.)?invoice-kohyo\.nta\.go\.jp$/i.test(dnsHost(hostname));
+const restrictedRegistryHost = hostname => isRegistryHost(hostname) && !isRegistryWebsiteHost(hostname);
 export const evidenceOf = kind => kind === 'registry' ? 'official_registry_observation' : 'published_page';
 // Syntactic check of a captured public address (the worker's reader already pinned public DNS before reading it).
 export function publicSourceUrl(value) {
@@ -82,6 +89,6 @@ export function validatePublicCapture(input) {
   }
   if (!onlyKeys(input, ['captureId', 'kind', 'requestedUrl', 'url', 'title', 'text', 'hash', 'capturedAt', 'truncated', 'target']) || !publicSourceUrl(input.url) || typeof input.title !== 'string' || input.title.length > publicResearchLimits.titleChars || typeof input.text !== 'string' || !input.text.length || input.text.length > publicResearchLimits.textChars || typeof input.hash !== 'string' || !/^[a-f0-9]{64}$/.test(input.hash) || typeof input.capturedAt !== 'string' || !Number.isFinite(Date.parse(input.capturedAt)) || typeof input.truncated !== 'boolean') throw Error('Invalid capture');
   if (input.kind === 'registry') { if (input.target === undefined) throw Error('Invalid capture'); validateRegistryTarget(input.target); }
-  else if (input.target !== undefined || isRegistryHost(new URL(input.url).hostname) || !publicSourceUrl(input.requestedUrl) || isRegistryHost(new URL(input.requestedUrl).hostname)) throw Error('Invalid capture');
+  else if (input.target !== undefined || restrictedRegistryHost(new URL(input.url).hostname) || !publicSourceUrl(input.requestedUrl) || restrictedRegistryHost(new URL(input.requestedUrl).hostname)) throw Error('Invalid capture');
   return { ...input };
 }

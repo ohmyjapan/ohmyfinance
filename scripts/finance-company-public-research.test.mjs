@@ -1,20 +1,23 @@
-// Company Navi public research: shared evidence/citation rules, the real public HTTPS checks of research-worker/http.mjs,
-// the company public tools (capture transport, registry date/connection, literal T numbers), the worker capability report
-// and an actual owned headless Chrome read with cleanup. Deterministic: DNS/HTTPS are replaced inside this process only,
-// Chrome reads synthetic hosts answered by the interception, and no model, provider, account, mailbox or business send runs.
+// Company Navi public research: shared evidence/citation rules, the real public HTTPS checks of research-worker/http.mjs (the
+// public NTA registry website read as an ordinary page, the registry API host refused for ordinary reads), the company public
+// tools (capture transport, registry date/connection, literal T numbers), the supplier research page reader, the worker
+// capability report and actual owned headless Chrome reads with cleanup. Deterministic: DNS/HTTPS are replaced inside this
+// process only, Chrome requests are answered by the interception through the reader, and no model, provider, account, mailbox
+// or business send runs.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import dnsPromises from 'node:dns/promises';
 import https from 'node:https';
 import path from 'node:path';
 import os from 'node:os';
 import {
   publicResearchTools, publicResearchLimits, validatePublicCapability, validateCompanyCitations, literalQuoteIn,
-  registryUrl, validatePublicCapture, publicSourceUrl, tNumberPattern
+  registryUrl, validatePublicCapture, publicSourceUrl, tNumberPattern, evidenceOf
 } from '../shared/finance-company-public-research.mjs';
+import * as hostRules from '../shared/finance-company-public-research.mjs';
 import { validateCompanyAssistantReply } from '../shared/finance-navi-features.mjs';
 import { validateAssistantReply } from '../shared/finance-assistant.mjs';
 import { publicUrl, publicGet } from '../research-worker/http.mjs';
@@ -24,6 +27,51 @@ import { TeachingWorker, publicResearchCapability } from '../teaching-worker/wor
 const sha = text => createHash('sha256').update(text).digest('hex');
 const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-public-research-'));
 after(async () => { assert.ok(path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep + 'omf-public-research-')); await rm(temp, { recursive: true, force: true }); });
+
+// Controlled public DNS and HTTPS for the real research-worker/http.mjs, inside this process only (documentation addresses;
+// no request leaves the machine). The NTA invoice-registry public website, its bare origin, the registry Web-API host and an
+// unrelated registry subdomain all have public DNS answers, so a refusal can only come from the reader's host policy.
+const siteUrl = 'https://www.invoice-kohyo.nta.go.jp/regno-search/detail?selRegNo=1234567890123';
+const bareSiteUrl = 'https://invoice-kohyo.nta.go.jp/regno-search/';
+const apiUrl = registryUrl('T1234567890123', '2026-08-01');
+// A DNS terminal dot names the same host: the website stays a public page, the API host stays refused.
+const siteDotUrl = 'https://www.invoice-kohyo.nta.go.jp./regno-search/detail?selRegNo=1234567890123';
+const apiDotUrl = 'https://web-api.invoice-kohyo.nta.go.jp./1/valid?number=T1234567890123&day=2026-08-01&type=21';
+const registryRaw = JSON.stringify({ lastUpdateDate: '2026-08-01', count: '1', divideNumber: '1', divideSize: '1', announcement: [{ sequenceNumber: '1', registratedNumber: 'T1234567890123', process: '01', correct: '0', kind: '2', country: '1', latest: '1', registrationDate: '2023-10-01', updateDate: '2023-10-01', disposalDate: '', expireDate: '', address: '東京都千代田区', addressPrefectureCode: '13', addressCityCode: '101', addressRequest: '', addressRequestPrefectureCode: '', addressRequestCityCode: '', kana: '', name: '株式会社サンプル', nameReceived: '', popularName_previousName: '', traditionalName: '', addressInside: '', addressInsidePrefectureCode: '', addressInsideCityCode: '', tradeName: '', popularName: '' }] });
+const siteHtml = '<html><head><meta charset="utf-8"><title>適格請求書発行事業者公表サイト</title><script src="/regno-search/assets/site.js" defer></script></head><body><h1>株式会社サンプルの情報</h1><p>登録番号 T1234567890123</p><p>登録年月日 令和5年10月1日</p><div id="rendered"></div></body></html>';
+const siteScript = 'document.getElementById("rendered").textContent="公表サイトのスクリプト表示";fetch("' + apiUrl + '").catch(()=>{});fetch("/regno-search/beacon",{method:"POST",body:"x"}).catch(()=>{});';
+// A legitimate read that is refused fails as that positive's own labelled assertion, not as an unlabelled thrown error.
+const allowed = (promise, label) => promise.catch(error => assert.fail(label + ' refused: ' + error.message));
+function syntheticNetwork() {
+  const lookup = dnsPromises.lookup, get = https.get, seen = [], resolved = [];
+  const answers = { 'public.synthetic.example': '93.184.216.34', 'final.synthetic.example': '93.184.216.35', 'private.synthetic.example': '10.0.0.5', 'www.invoice-kohyo.nta.go.jp': '203.0.113.10', 'invoice-kohyo.nta.go.jp': '203.0.113.11', 'web-api.invoice-kohyo.nta.go.jp': '203.0.113.12', 'other.invoice-kohyo.nta.go.jp': '203.0.113.13', 'www.invoice-kohyo.nta.go.jp.': '203.0.113.10', 'web-api.invoice-kohyo.nta.go.jp.': '203.0.113.12', 'other.invoice-kohyo.nta.go.jp.': '203.0.113.13' };
+  dnsPromises.lookup = async host => { resolved.push(host); if (!answers[host]) { const e = Error('ENOTFOUND'); e.code = 'ENOTFOUND'; throw e; } return [{ address: answers[host], family: 4 }]; };
+  const routes = {
+    'public.synthetic.example/to-private': { status: 302, location: 'https://private.synthetic.example/secret' },
+    'public.synthetic.example/to-final': { status: 301, location: 'https://final.synthetic.example/company' },
+    'public.synthetic.example/to-registry-site': { status: 302, location: siteUrl },
+    'public.synthetic.example/to-registry-site-dot': { status: 302, location: siteDotUrl },
+    'public.synthetic.example/to-api-dot': { status: 302, location: apiDotUrl },
+    'www.invoice-kohyo.nta.go.jp/regno-search/detail': { type: 'text/html; charset=utf-8', body: siteHtml },
+    'www.invoice-kohyo.nta.go.jp/regno-search/assets/site.js': { type: 'application/javascript', body: siteScript },
+    'www.invoice-kohyo.nta.go.jp/regno-search/to-api': { status: 302, location: apiUrl },
+    'invoice-kohyo.nta.go.jp/regno-search/': { type: 'text/html; charset=utf-8', body: '<html><head><title>公表サイト</title></head><body><p>登録番号を検索</p></body></html>' },
+    'web-api.invoice-kohyo.nta.go.jp/1/valid': { type: 'application/json', body: registryRaw }
+  };
+  https.get = (url, options, callback) => {
+    const req = new EventEmitter(); req.setTimeout = () => req; req.destroy = error => req.emit('error', error);
+    options.lookup(url.hostname, { all: true }, (_e, list) => seen.push({ host: url.hostname, path: url.pathname, query: url.search, pinned: list[0].address }));
+    queueMicrotask(() => {
+      const res = new EventEmitter(), route = routes[url.hostname.replace(/\.$/, '') + url.pathname]; res.resume = () => {};
+      if (route?.location) Object.assign(res, { statusCode: route.status, headers: { location: route.location } });
+      else Object.assign(res, { statusCode: 200, headers: { 'content-type': route?.type || 'text/html; charset=utf-8' } });
+      callback(res);
+      if (res.statusCode === 200) { res.emit('data', Buffer.from(route?.body ?? '<title>T</title>会社概要')); res.emit('end'); }
+    });
+    return req;
+  };
+  return { seen, resolved, restore: () => { dnsPromises.lookup = lookup; https.get = get; } };
+}
 
 test('public tools are a fixed company-only set with strict schemas and no private reach', () => {
   const names = publicResearchTools({ chrome: false }).map(t => t.name);
@@ -75,32 +123,70 @@ test('captures are shape-checked; registry evidence is canonical and never carri
   assert.equal(publicSourceUrl('https://www.nta.go.jp/taxes/'), true);
 });
 
+test('a web or Chrome capture of the public NTA registry website is published evidence; API addresses and forged registry targets are refused', () => {
+  const text = '株式会社サンプルの情報\n登録番号 T1234567890123';
+  const capture = (kind, requestedUrl, url, extra = {}) => ({ captureId: 'e'.repeat(32), kind, requestedUrl, url, title: '適格請求書発行事業者公表サイト', text, hash: sha(text), capturedAt: new Date().toISOString(), truncated: false, ...extra });
+  for (const kind of ['web', 'chrome']) {
+    for (const [requested, final] of [[siteUrl, siteUrl], [bareSiteUrl, bareSiteUrl], ['https://public.synthetic.example/to-registry-site', siteUrl], [siteDotUrl, siteDotUrl], ['https://public.synthetic.example/to-registry-site-dot', siteDotUrl]]) {
+      const c = capture(kind, requested, final);
+      assert.deepEqual(validatePublicCapture(c), c, 'capture:registry-website ' + kind + ' ' + requested);
+    }
+    for (const [requested, final] of [[apiUrl, apiUrl], [siteUrl, apiUrl], [apiUrl, siteUrl], ['https://web-api.invoice-kohyo.nta.go.jp/', siteUrl], [siteUrl, 'https://other.invoice-kohyo.nta.go.jp/x'], [apiDotUrl, apiDotUrl], [siteUrl, apiDotUrl], [apiDotUrl, siteDotUrl], ['https://other.invoice-kohyo.nta.go.jp./x', siteUrl]]) {
+      assert.throws(() => validatePublicCapture(capture(kind, requested, final)), /Invalid capture/, 'capture:api-host-refused ' + kind + ' ' + requested + ' ' + final);
+    }
+    assert.throws(() => validatePublicCapture(capture(kind, siteUrl, siteUrl, { target: { number: 'T1234567890123' } })), /Invalid capture/, 'capture:website-not-registry-evidence ' + kind);
+  }
+  // The exported host predicates canonicalize the DNS terminal dot and keep the same two categories.
+  for (const [host, registry, website] of [['www.invoice-kohyo.nta.go.jp', true, true], ['www.invoice-kohyo.nta.go.jp.', true, true], ['invoice-kohyo.nta.go.jp.', true, true], ['web-api.invoice-kohyo.nta.go.jp', true, false], ['web-api.invoice-kohyo.nta.go.jp.', true, false], ['WEB-API.INVOICE-KOHYO.NTA.GO.JP.', true, false], ['web-api.invoice-kohyo.nta.go.jp..', true, false], ['www.invoice-kohyo.nta.go.jp.evil.example', false, false], ['www.nta.go.jp.', false, false]]) {
+    assert.equal(typeof hostRules.isRegistryWebsiteHost, 'function', 'host:website-predicate-exported');
+    assert.deepEqual([hostRules.isRegistryHost(host), hostRules.isRegistryWebsiteHost(host)], [registry, website], 'host:categories ' + host);
+  }
+  assert.equal(evidenceOf('web'), 'published_page'); assert.equal(evidenceOf('chrome'), 'published_page'); assert.equal(evidenceOf('registry'), 'official_registry_observation');
+  // Registry evidence keeps its own shape: a registry capture still needs its literal target (the server then requires the canonical URL).
+  assert.throws(() => validatePublicCapture(capture('registry', siteUrl, siteUrl)), /Invalid capture/, 'capture:registry-needs-target');
+});
+
 // The real research-worker/http.mjs checks with DNS and HTTPS replaced in this process: public pinning, private redirects.
 test('public HTTPS reads pin public DNS, follow public redirects to the final URL and refuse private targets', async () => {
-  const lookup = dnsPromises.lookup, get = https.get, seen = [];
-  const answers = { 'public.synthetic.example': '93.184.216.34', 'final.synthetic.example': '93.184.216.35', 'private.synthetic.example': '10.0.0.5' };
-  dnsPromises.lookup = async host => { if (!answers[host]) { const e = Error('ENOTFOUND'); e.code = 'ENOTFOUND'; throw e; } return [{ address: answers[host], family: 4 }]; };
-  https.get = (url, options, callback) => {
-    const req = new EventEmitter(); req.setTimeout = () => req; req.destroy = error => req.emit('error', error);
-    options.lookup(url.hostname, { all: true }, (_e, list) => seen.push({ host: url.hostname, pinned: list[0].address }));
-    queueMicrotask(() => {
-      const res = new EventEmitter(); res.resume = () => {};
-      if (url.pathname === '/to-private') Object.assign(res, { statusCode: 302, headers: { location: 'https://private.synthetic.example/secret' } });
-      else if (url.pathname === '/to-final') Object.assign(res, { statusCode: 301, headers: { location: 'https://final.synthetic.example/company' } });
-      else Object.assign(res, { statusCode: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
-      callback(res);
-      if (res.statusCode === 200) { res.emit('data', Buffer.from('<title>T</title>会社概要')); res.emit('end'); }
-    });
-    return req;
-  };
+  const net = syntheticNetwork(), seen = net.seen;
   try {
     for (const bad of ['http://public.synthetic.example/', 'https://localhost/', 'https://127.0.0.1/', 'https://user:pw@public.synthetic.example/', 'https://public.synthetic.example:8443/', 'https://private.synthetic.example/']) await assert.rejects(publicUrl(bad), undefined, 'http:refuse ' + bad);
     const final = await publicGet('https://public.synthetic.example/to-final');
     assert.equal(final.url, 'https://final.synthetic.example/company', 'http:final-url');
     assert.deepEqual(seen.map(s => s.pinned), ['93.184.216.34', '93.184.216.35'], 'http:dns-pinned');
     await assert.rejects(publicGet('https://public.synthetic.example/to-private'), /Private network page rejected/, 'http:private-redirect');
-    await assert.rejects(publicGet('https://invoice-kohyo.nta.go.jp/regno-search/'), /official registry API tool|Private|ENOTFOUND/, 'http:registry-page-refused');
-  } finally { dnsPromises.lookup = lookup; https.get = get; }
+  } finally { net.restore(); }
+});
+
+// The anonymous NTA invoice-registry website is an ordinary public page for the shared reader; the registry Web-API host (with or
+// without an application id) and other registry subdomains stay with the official API path only, including after a redirect.
+test('the shared reader reads the public NTA registry website and still refuses the registry API host for ordinary reads', async () => {
+  const net = syntheticNetwork(), seen = net.seen;
+  try {
+    const site = await allowed(publicGet(siteUrl), 'http:registry-website-readable');
+    assert.equal(site.url, siteUrl, 'http:registry-website-readable'); assert.equal(site.mimeType, 'text/html');
+    assert.ok(site.bytes.toString('utf8').includes('登録番号 T1234567890123'), 'http:registry-website-bytes');
+    assert.deepEqual(seen.at(-1), { host: 'www.invoice-kohyo.nta.go.jp', path: '/regno-search/detail', query: '?selRegNo=1234567890123', pinned: '203.0.113.10' }, 'http:registry-website-dns-pinned');
+    assert.equal((await allowed(publicGet(bareSiteUrl), 'http:registry-website-bare-origin')).url, bareSiteUrl, 'http:registry-website-bare-origin');
+    const redirected = await allowed(publicGet('https://public.synthetic.example/to-registry-site'), 'http:redirect-to-registry-website');
+    assert.equal(redirected.url, siteUrl, 'http:redirect-to-registry-website');
+    // The DNS terminal-dot spelling of the website is the same public page (pinned to the same answer).
+    assert.equal((await allowed(publicGet(siteDotUrl), 'http:registry-website-terminal-dot')).url, siteDotUrl, 'http:registry-website-terminal-dot');
+    assert.equal(seen.at(-1).pinned, '203.0.113.10', 'http:registry-website-terminal-dot');
+    assert.equal((await allowed(publicGet('https://public.synthetic.example/to-registry-site-dot'), 'http:redirect-to-registry-website-terminal-dot')).url, siteDotUrl, 'http:redirect-to-registry-website-terminal-dot');
+    const reached = seen.length;
+    for (const bad of [apiUrl, apiUrl + '&id=SYNTHETICAPPID12345', 'https://web-api.invoice-kohyo.nta.go.jp/', 'https://other.invoice-kohyo.nta.go.jp/regno-search/', apiDotUrl, apiDotUrl + '&id=SYNTHETICAPPID12345', 'https://other.invoice-kohyo.nta.go.jp./regno-search/']) {
+      await assert.rejects(publicGet(bad), /^Error: Use the official registry API tool$/, 'http:api-host-refused ' + bad);
+    }
+    assert.ok(net.resolved.includes('web-api.invoice-kohyo.nta.go.jp') && net.resolved.includes('other.invoice-kohyo.nta.go.jp') && net.resolved.includes('web-api.invoice-kohyo.nta.go.jp.'), 'http:api-host-resolved-publicly');
+    await assert.rejects(publicGet('https://www.invoice-kohyo.nta.go.jp/regno-search/to-api'), /^Error: Use the official registry API tool$/, 'http:redirect-to-api-refused');
+    await assert.rejects(publicGet('https://public.synthetic.example/to-api-dot'), /^Error: Use the official registry API tool$/, 'http:redirect-to-api-terminal-dot-refused');
+    assert.equal(seen.length, reached + 2, 'http:api-host-never-requested'); assert.ok(!seen.some(s => /^(web-api|other)\.invoice-kohyo\.nta\.go\.jp\.?$/.test(s.host)), 'http:api-host-never-requested');
+    // The credentialed verification path itself is unchanged: registry reads reach only the API, without following redirects.
+    const api = await publicGet(apiUrl, { registry: true });
+    assert.equal(JSON.parse(api.bytes.toString('utf8')).announcement[0].registratedNumber, 'T1234567890123', 'http:registry-api-path-kept');
+    await assert.rejects(publicGet('https://www.invoice-kohyo.nta.go.jp/regno-search/to-api', { registry: true }), /Redirect limit reached/, 'http:registry-no-redirects');
+  } finally { net.restore(); }
 });
 
 // A synthetic server stand-in for the trusted same-job route: records every posted body; the token is only a header.
@@ -163,6 +249,31 @@ test('a refused or failed read is recorded as failed activity and is never a fin
   await assert.rejects(tools.call('search_mail', { terms: 'x' }), /Unknown/);
 });
 
+// The company tool with the real shared reader (no injected get): the public website is captured as a published page; an
+// ordinary read of the API address, with or without an id, is refused activity and never a capture.
+test('read_public_page captures the public NTA registry website through the real reader and refuses API addresses', async () => {
+  const net = syntheticNetwork(), s = server();
+  try {
+    const tools = new CompanyPublicTools({ ...base, chrome: false }, { request: s.request, wait: async () => {} });
+    const result = await allowed(tools.call('read_public_page', { url: siteUrl }), 'tools:registry-website-capture');
+    const capture = s.posts[0].capture;
+    assert.deepEqual(validatePublicCapture(capture), capture, 'tools:registry-website-capture-valid');
+    assert.equal(capture.kind, 'web'); assert.equal(capture.url, siteUrl, 'tools:registry-website-final-url'); assert.equal(capture.requestedUrl, siteUrl);
+    assert.equal(capture.target, undefined, 'tools:registry-website-no-target'); assert.equal(capture.hash, sha(capture.text));
+    assert.ok(capture.text.includes('登録番号 T1234567890123') && capture.text.includes('登録年月日 令和5年10月1日'), 'tools:registry-website-literal-text');
+    assert.equal(result.evidence, 'published_page'); assert.equal(result.registry, undefined, 'tools:registry-website-no-registry-state');
+    const viaRedirect = await tools.call('read_public_page', { url: 'https://public.synthetic.example/to-registry-site' });
+    assert.equal(s.posts[1].capture.url, siteUrl, 'tools:redirect-final-website'); assert.equal(viaRedirect.evidence, 'published_page');
+    const before = s.posts.length;
+    for (const bad of [apiUrl, apiUrl + '&id=SYNTHETICAPPID12345', 'https://www.invoice-kohyo.nta.go.jp/regno-search/to-api', apiDotUrl]) {
+      await assert.rejects(tools.call('read_public_page', { url: bad }), /^Error: Use the official registry API tool$/, 'tools:api-address-refused ' + bad);
+    }
+    const refused = s.posts.slice(before).map(p => p.capture);
+    assert.equal(refused.length, 4); assert.ok(refused.every(c => c.failed === true && c.safeError === 'Use the official registry API tool' && c.text === undefined && c.kind === 'web'), 'tools:api-address-failed-activity-only');
+    assert.ok(!net.seen.some(x => /^web-api\.invoice-kohyo\.nta\.go\.jp\.?$/.test(x.host)), 'tools:api-host-never-requested');
+  } finally { net.restore(); }
+});
+
 test('registry verification: literal T numbers only, server-prepared date, no fake green without the NTA connection, canonical evidence without the application id', async () => {
   let s = server(), gets = [];
   const offline = new CompanyPublicTools({ ...base, chrome: false, ntaApplicationId: '' }, { request: s.request, get: async url => { gets.push(url); throw Error('must not be called'); }, wait: async () => {} });
@@ -217,4 +328,61 @@ test('owned headless Chrome reads the final public URL and closes its own proces
   assert.ok(mine.length >= 1); assert.ok(mine.every(b => !b.connected), 'chrome:closed');
   for (const b of mine) assert.throws(() => process.kill(b.pid, 0), undefined, 'chrome:process-ended');
   await rm(profile, { recursive: true, force: true }); assert.ok(!(await readdir(temp)).includes('owned-chrome'), 'chrome:profile-removable');
+});
+
+// The company Chrome tool with the real reader and real check (no injected get/check): every Chrome request of the public NTA
+// registry website — the document and its script — is answered through the shared reader with pinned DNS; the page's own call to
+// the registry API host and its POST are refused; the capture is a published page; the owned browser ends after the read.
+test('owned headless Chrome captures the public NTA registry website as a published page and refuses its API calls', { timeout: 120000 }, async () => {
+  const { ownedBrowsers } = await import('../collector/browser.mjs');
+  const net = syntheticNetwork(), s = server(), profile = path.join(temp, 'owned-chrome-registry-site');
+  try {
+    const tools = new CompanyPublicTools({ ...base, chrome: true, profileDirectory: profile }, { request: s.request, wait: async () => {} });
+    const result = await allowed(tools.call('read_public_page_in_chrome', { url: siteUrl }), 'chrome:registry-website-capture');
+    const capture = s.posts[0].capture;
+    assert.deepEqual(validatePublicCapture(capture), capture, 'chrome:registry-website-capture-valid');
+    assert.equal(capture.kind, 'chrome'); assert.equal(capture.url, siteUrl, 'chrome:registry-website-final-url'); assert.equal(capture.target, undefined);
+    assert.ok(capture.text.includes('登録番号 T1234567890123'), 'chrome:registry-website-literal-text');
+    assert.ok(capture.text.includes('公表サイトのスクリプト表示'), 'chrome:registry-website-script-through-reader');
+    assert.equal(result.evidence, 'published_page'); assert.equal(result.registry, undefined, 'chrome:registry-website-no-registry-state');
+    const site = net.seen.filter(x => x.host === 'www.invoice-kohyo.nta.go.jp');
+    assert.ok(site.some(x => x.path === '/regno-search/detail') && site.some(x => x.path === '/regno-search/assets/site.js'), 'chrome:document-and-script-through-reader');
+    assert.ok(site.every(x => x.pinned === '203.0.113.10'), 'chrome:pinned-dns');
+    assert.ok(!net.seen.some(x => x.host === 'web-api.invoice-kohyo.nta.go.jp'), 'chrome:api-host-refused');
+    assert.ok(!net.seen.some(x => x.path === '/regno-search/beacon'), 'chrome:get-only');
+    const mine = ownedBrowsers().filter(b => path.resolve(b.profile) === path.resolve(profile));
+    assert.ok(mine.length >= 1 && mine.every(b => !b.connected), 'chrome:registry-website-closed');
+    for (const b of mine) assert.throws(() => process.kill(b.pid, 0), undefined, 'chrome:registry-website-process-ended');
+    // An ordinary Chrome read of the API address is refused before any browser starts and is recorded as failed activity only.
+    const before = ownedBrowsers().length;
+    await assert.rejects(tools.call('read_public_page_in_chrome', { url: apiUrl }), /^Error: Use the official registry API tool$/, 'chrome:api-address-refused');
+    assert.equal(s.posts.at(-1).capture.failed, true); assert.equal(s.posts.at(-1).capture.text, undefined); assert.equal(ownedBrowsers().length, before, 'chrome:api-address-no-browser');
+  } finally { net.restore(); }
+  await rm(profile, { recursive: true, force: true });
+});
+
+// The separate supplier research worker uses the same reader: the public website becomes a published 'web' source only; its
+// registry state is set only by the official API tool (unchanged), and without an application id it stays connection_required.
+test('supplier research reads the public NTA registry website as a page source and keeps the API registry state separate', async () => {
+  const { ResearchTools } = await import('../research-worker/tools.mjs');
+  const dir = await mkdtemp(path.join(temp, 'supplier-')), net = syntheticNetwork();
+  try {
+    const job = { sources: [], context: { source: { purchaseDate: '2026-08-01' } } };
+    const tools = new ResearchTools({}, job, dir);
+    const source = await allowed(tools.call('read_page', { url: siteUrl }), 'supplier:registry-website-web-source');
+    assert.equal(source.kind, 'web', 'supplier:registry-website-web-source'); assert.equal(source.url, siteUrl); assert.equal(source.hash, sha(source.text));
+    assert.ok(source.text.includes('登録番号 T1234567890123'), 'supplier:registry-website-literal-text');
+    const evidence = JSON.parse(await readFile(path.join(dir, 'evidence.json'), 'utf8'));
+    assert.equal(tools.registry, null, 'supplier:registry-website-no-registry-state'); assert.equal(evidence.registry, null); assert.deepEqual(evidence.sources, [source]);
+    await assert.rejects(tools.call('read_page', { url: apiUrl }), /^Error: Use the official registry API tool$/, 'supplier:api-address-refused');
+    assert.equal(tools.sources.length, 1, 'supplier:api-address-no-source');
+    assert.equal((await tools.call('verify_invoice', { number: 'T1234567890123' })).status, 'connection_required', 'supplier:no-id-connection-required'); assert.equal(tools.registry, null);
+    const configured = new ResearchTools({ ntaApplicationId: 'SYNTHETICAPPID12345' }, job, await mkdtemp(path.join(temp, 'supplier-api-')));
+    const checked = await configured.call('verify_invoice', { number: 'T1234567890123' });
+    assert.equal(checked.active, true); assert.equal(configured.registry.number, 'T1234567890123', 'supplier:api-registry-path-kept');
+    const registrySource = configured.sources.find(x => x.id === checked.sourceId);
+    assert.equal(registrySource.kind, 'registry'); assert.equal(registrySource.url, 'https://web-api.invoice-kohyo.nta.go.jp/1/valid', 'supplier:api-source-url-without-id');
+    assert.ok(net.seen.some(x => x.host === 'web-api.invoice-kohyo.nta.go.jp' && x.query.includes('id=SYNTHETICAPPID12345')), 'supplier:api-request-carries-id');
+    assert.ok(!JSON.stringify(configured.sources).includes('SYNTHETICAPPID12345'), 'supplier:application-id-not-captured');
+  } finally { net.restore(); }
 });

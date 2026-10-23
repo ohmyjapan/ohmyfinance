@@ -1,6 +1,7 @@
 import https from 'node:https';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import {isRegistryHost,isRegistryWebsiteHost} from '../shared/finance-company-public-research.mjs';
 
 export function publicAddress(address) {
  if(net.isIP(address)!==4)return false;
@@ -16,7 +17,8 @@ export async function publicUrl(value) {
 }
 export async function publicGet(value,{maxBytes=2000000,registry=false}={},redirects=0) {
  const {url,address}=await publicUrl(value);
- if(!registry&&/(^|\.)invoice-kohyo\.nta\.go\.jp$/i.test(url.hostname))throw Error('Use the official registry API tool');
+ // The registry's public website is an ordinary public page; the registry Web-API and other registry hosts only on the official path.
+ if(!registry&&isRegistryHost(url.hostname)&&!isRegistryWebsiteHost(url.hostname))throw Error('Use the official registry API tool');
  const response=await new Promise((resolve,reject)=>{
   const req=https.get(url,{headers:{'User-Agent':'OhMyFinance supplier research','Accept':'text/html,application/json,application/pdf','Accept-Encoding':'identity'},lookup:(_h,options,cb)=>options.all?cb(null,[{address,family:4}]):cb(null,address,4)},res=>{
    if([301,302,303,307,308].includes(res.statusCode)){res.resume();resolve({redirect:res.headers.location});return}
