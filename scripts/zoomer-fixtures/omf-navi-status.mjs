@@ -9,9 +9,13 @@
 // legs named in OMF_NAVI_STATUS_DEBUG_GROUPS (';' between legs, ',' between groups, empty = every group, 'baseline' = the layout
 // baseline) and always reports a failure, so it can never grant coverage.
 // Layout baseline: before the main leg, the same owned integration measures the same synthetic owner page at the same widths,
-// heights and sizes on a prior release (OMF_NAVI_STATUS_LAYOUT_BASELINE_ROOT, default this machine's preserved deployed 12cf98c
-// runtime, read only, run on its own owned database). The layout group compares with it; it has no status and grants no status
-// coverage. With no such release on the machine, no comparison is made (recorded), and any page overflow then fails the layout group.
+// heights and sizes on a reference build (OMF_NAVI_STATUS_LAYOUT_BASELINE_ROOT; read only, run on its own owned database). The layout
+// group compares with it; it has no status and grants no status coverage. With no such build on the machine, no comparison is made
+// (recorded), and any page overflow then fails the layout group. Default since 2026-10-23 (plan omf-navi-agent-replay-20261022): this
+// machine's clean build of the owner-approved responsive source aed09b4 in its own detached worktree, a local approved-source
+// reference, NOT a deployed release. The earlier default, the preserved deployed 12cf98c runtime, predates that approved responsive
+// change (its 390x844 large content box ends 16 px lower; that original failure is retained in the case evidence). The reference's
+// own source revision is read and recorded with every run; the strict full-box, height and loaded-row comparison is unchanged.
 // Every leg prints its own setup readiness (TIMING); the fixture reports them.
 // Run ONLY through the hub verifier: node scripts/zoomer-verify.mjs --run-fixture omf-navi-status.mjs --cwd <worktree>
 import {execFile} from 'node:child_process';
@@ -24,7 +28,10 @@ import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 export const timeoutMs=5400000;
 const EXPECTED=13,BASELINE_GROUP='gui-layout-baseline';
-const baselineRoot=path.resolve(process.env.OMF_NAVI_STATUS_LAYOUT_BASELINE_ROOT||path.join(root,'../../ohmycode/tmp/omf-deployed-12cf98c'));
+const baselineRoot=path.resolve(process.env.OMF_NAVI_STATUS_LAYOUT_BASELINE_ROOT||path.join(root,'../_wt_omf-navi-responsive-baseline-aed09b4_20261023'));
+const baselineLabel=process.env.OMF_NAVI_STATUS_LAYOUT_BASELINE_ROOT?'explicit OMF_NAVI_STATUS_LAYOUT_BASELINE_ROOT':'approved responsive source aed09b4, local clean build (not a deployed release)';
+// The reference's own source revision (read only, recorded, never assumed): its git HEAD, else null.
+const revisionOf=dir=>new Promise(resolve=>execFile('git',['-C',dir,'rev-parse','HEAD'],{windowsHide:true,timeout:30000},(e,stdout)=>resolve(e?null:String(stdout).trim()||null)));
 // A leg's screenshots (OMF_NAVI_STATUS_SCREENSHOTS) go to their own sub-folder; a leg without a name takes none.
 const shotsFor=name=>process.env.OMF_NAVI_STATUS_SCREENSHOTS&&name?path.join(process.env.OMF_NAVI_STATUS_SCREENSHOTS,name):'';
 const run=(app,only='',env={},name='')=>new Promise(resolve=>{const started=Date.now();execFile(process.execPath,[path.join(root,'scripts/finance-navi-status-integration.cjs')],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:'',MONGODB_URI:'',NUXT_MONGO_URI:'',OMF_NAVI_STATUS_APP_ROOT:app,OMF_NAVI_STATUS_ONLY:only,OMF_NAVI_STATUS_SCREENSHOTS:shotsFor(name),...env},timeout:1500000,maxBuffer:32*1024*1024},(e,stdout,stderr)=>resolve({code:e?e.code??1:0,signal:e?.signal||null,text:stdout+stderr,ms:Date.now()-started}))});
@@ -35,6 +42,9 @@ const failureOf=text=>((text.match(/AssertionError[^\n]*/)||[])[0]||text.split(/
 // Each defect: the groups its leg runs, compiled anchors (each must occur exactly once, in exactly one compiled file of its kind),
 // their replacements, and the assertion the integration must then fail with. Client anchors carry the minified names of the current
 // build (refreshed with it); after a rebuild that renames them they fail as a setup error, never as a detection or a pass.
+// 2026-10-23 (plan omf-navi-agent-replay-20261022): the conversation chunk was re-minified by later folds; forced-scroll, covered-ack,
+// stale-scope (both edits), expired-indicator-working and blank-text-rect carry the current minified names with the same edits
+// (refreshed, not new faults; each anchor unique in the combined 885517d build).
 export const DEFECTS=[
  // A failed final reply advances the reply version: a failure would become a new arrival.
  {name:'version-on-failure',only:'workspace',assertion:'status:failure-no-version',kind:'server',edits:[['"turns.$[turn].actions": receipts }, $inc: { revision: 1, ...proposal ? { "turns.$[turn].replyVersion": 1 } : {} }','"turns.$[turn].actions": receipts }, $inc: { revision: 1, "turns.$[turn].replyVersion": 1 }']]},
@@ -55,18 +65,18 @@ export const DEFECTS=[
  // The reply visibility check ignores a hidden tab.
  {name:'hidden-ack',only:'gui-hidden',assertion:'gui:hidden-no-ack',kind:'client',edits:[['document.visibilityState!=="visible"','!1']]},
  // An unsolicited arrival always scrolls to the latest (the original forced scroll), moving an older reader.
- {name:'forced-scroll',only:'gui-reader',assertion:'gui:older-reader-position',kind:'client',edits:[['c.pinned?H(S?.()):i.value=ne().length>0','H(S?.())']]},
+ {name:'forced-scroll',only:'gui-reader',assertion:'gui:older-reader-position',kind:'client',edits:[['u.pinned?W(C?.()):l.value=ve().length>0','W(C?.())']]},
  // Covered reply text counts as seen (no hit test).
- {name:'covered-ack',only:'gui-purchase',assertion:'gui:covered-no-ack',kind:'client',edits:[['return!!he&&(he===S||S.contains(he))','return!0']]},
+ {name:'covered-ack',only:'gui-purchase',assertion:'gui:covered-no-ack',kind:'client',edits:[['return!!S&&(S===C||C.contains(S))','return!0']]},
  // A late status read of the previous company is accepted as the current one (no staleness check, stored under the current key).
- {name:'stale-scope',only:'gui-scope',assertion:'gui:stale-scope-dropped',kind:'client',edits:[['const O=()=>!b&&M.ticket===w&&M.key===c.value&&M.sequence===i.naviStatusSequence;','const O=()=>!0;'],['i.receiveNaviStatus(M.key,V)','i.receiveNaviStatus(c.value,V)']]},
+ {name:'stale-scope',only:'gui-scope',assertion:'gui:stale-scope-dropped',kind:'client',edits:[['const A=()=>!w&&j.ticket===b&&j.key===u.value&&j.sequence===l.naviStatusSequence;','const A=()=>!0;'],['l.receiveNaviStatus(j.key,F)','l.receiveNaviStatus(u.value,F)']]},
  // The status ignores the native deadline: a claim, confirmation, research or apply whose deadline passed is reported in progress.
  {name:'expired-work-active',only:'lease',assertion:'status:expired-not-active',kind:'server',edits:[["if(deadline>now)return 'active'","if(true)return 'active'"]]},
  // The launcher ignores the server's work state: a reply whose deadline passed keeps showing "回答を作成しています" with a fresh worker.
- {name:'expired-indicator-working',only:'gui-closed',assertion:'gui:expired-work-not-active',kind:'client',edits:[['i==="working"?c==="active"?l.connected?','i==="working"?!0?l.connected?']]},
+ {name:'expired-indicator-working',only:'gui-closed',assertion:'gui:expired-work-not-active',kind:'client',edits:[['l==="working"?u==="active"?c.connected?','l==="working"?!0?c.connected?']]},
  // Reply visibility from the reply element's whole block rectangle instead of its text ranges (dwell, scope and hit test kept):
  // exposed blank lines of a reply would count as seen.
- {name:'blank-text-rect',only:'gui-text',assertion:'gui:blank-lines-no-ack',kind:'client',edits:[['for(const ve of ze.getClientRects())if(Se(ve))return!0','for(const ve of[S.getBoundingClientRect()])if(Se(ve))return!0']]}
+ {name:'blank-text-rect',only:'gui-text',assertion:'gui:blank-lines-no-ack',kind:'client',edits:[['for(const be of Me.getClientRects())if(ie(be))return!0','for(const be of[C.getBoundingClientRect()])if(ie(be))return!0']]}
 ];
 async function filesOf(dir,ext){const out=[];if(!existsSync(dir))return out;for(const e of await readdir(dir,{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())out.push(...await filesOf(f,ext));else if(f.endsWith(ext))out.push(f)}return out}
 export default {name:'omf-navi-status',covers:['server/api/finance-chat/[...path].ts','server/services/financeNaviStatusService.ts','server/services/financeAssistantService.ts','server/services/financeCompanyAssistantService.ts','server/services/financeChatService.ts','server/services/financeDraftService.ts','server/models/FinanceResearch.ts','server/services/financeResearchService.ts','shared/finance-navi-status.mjs','composables/useNaviStatus.ts','composables/useNaviReplyVisibility.ts','components/finance/AssistantPanel.vue','components/finance/AssistantConversation.vue','components/finance/PurchaseChat.vue','stores/assistant.ts','scripts/finance-navi-status-integration.cjs','scripts/finance-navi-status-browser.cjs','scripts/zoomer-fixtures/omf-navi-status.mjs'],async run(){
@@ -88,11 +98,11 @@ export default {name:'omf-navi-status',covers:['server/api/finance-chat/[...path
    if(only==='baseline'){legs.push({only,...await baselineLeg(name).catch(e=>({setupError:String(e?.message||e)}))});continue}
    legs.push({only,...legOf(await run(app,only,layoutEnv(),name))});
   }
-  const layoutBaseline={root:baselineRoot,available:baselineAvailable,file:existsSync(layoutFile)?layoutFile:null};
+  const layoutBaseline={root:baselineRoot,label:baselineLabel,revision:await revisionOf(baselineRoot),available:baselineAvailable,file:existsSync(layoutFile)?layoutFile:null};
   if(!process.env.OMF_NAVI_STATUS_LAYOUT_FILE){await rm(layoutFile,{force:true});layoutBaseline.file=null}
   return{pass:false,message:JSON.stringify({diagnostic:'main-only run; never coverage',app,layoutBaseline,legs})};
  }
- let layout={root:baselineRoot,available:baselineAvailable,compared:false},pass=true,setupError=null;
+ let layout={root:baselineRoot,label:baselineLabel,revision:await revisionOf(baselineRoot),available:baselineAvailable,compared:false},pass=true,setupError=null;
  // A prior release on this machine is measured fresh first; a failed baseline run is a failure of this fixture, never skipped.
  if(baselineAvailable){layout={...layout,...await baselineLeg('baseline').catch(e=>({setupError:String(e?.message||e)}))};if(layout.exit!==0||!layout.written){pass=false;setupError='layout baseline run failed: '+JSON.stringify(layout).slice(0,600)}}
  const main=await run(app,'',layoutEnv(),'main'),groups=groupsOf(main.text),summary=summaryOf(main.text),defects=[];
@@ -138,5 +148,5 @@ export default {name:'omf-navi-status',covers:['server/api/finance-chat/[...path
  }
  if(!process.env.OMF_NAVI_STATUS_LAYOUT_FILE)await rm(layoutFile,{force:true});
  return{pass:pass&&defects.length===DEFECTS.length,databaseCoverage:{executed:main.code===0,ownedProcess:main.code===0},message:JSON.stringify({exit:main.code,signal:main.signal,ms:main.ms,timing:timingOf(main.text),groups,expected:EXPECTED,failure:main.code===0?null:failureOf(main.text),passes:main.text.match(/^PASS .*$/gm)||[],summary,layout,inheritedOverflow:inheritedOf(main.text),control,defects,setupError,
-  limits:'Owned synthetic Mongo, loopback native HTTP and installed headless Chrome only; simulated worker replies and research results; no model/provider/mail/bank/Slack calls or production records. Transport, version, read-state, visibility and layout behaviour only: not model quality, not a production reliability rate, no physical phone or Safari. Hidden tabs are genuine Chrome background tabs; occlusion is a real page modal; another tab\'s sign-out is a real same-origin tab clearing the shared local session (no server token revocation is claimed); the screen lock is the app\'s own lock broadcast, not an operating-system lock. Passed work deadlines are synthetic setup writes of the deadline only. The layout baseline is a prior release measured on its own owned database (layout only, no status coverage). The packaged copy is this build byte for byte; only each defect edits its compiled file.'})};
+  limits:'Owned synthetic Mongo, loopback native HTTP and installed headless Chrome only; simulated worker replies and research results; no model/provider/mail/bank/Slack calls or production records. Transport, version, read-state, visibility and layout behaviour only: not model quality, not a production reliability rate, no physical phone or Safari. Hidden tabs are genuine Chrome background tabs; occlusion is a real page modal; another tab\'s sign-out is a real same-origin tab clearing the shared local session (no server token revocation is claimed); the screen lock is the app\'s own lock broadcast, not an operating-system lock. Passed work deadlines are synthetic setup writes of the deadline only. The layout baseline is the recorded reference build (by default the approved responsive source aed09b4, a local clean build and not a deployed release) measured on its own owned database (layout only, no status coverage). The packaged copy is this build byte for byte; only each defect edits its compiled file.'})};
 }};

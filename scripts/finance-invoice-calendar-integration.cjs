@@ -5,12 +5,15 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),fsp=require('no
 const {spawn}=require('node:child_process'),{MongoMemoryServer}=require('mongodb-memory-server'),{MongoClient,ObjectId}=require('mongodb');
 const root=path.resolve(process.env.OMF_INVOICE_CALENDAR_APP_ROOT||path.join(__dirname,'..')),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const INCOME_CATEGORY='売上';
-async function main(){let mongo,child,client,directory,logs='',groups=0;const pass=s=>{groups++;console.log('PASS '+s)};
+// SETUP readiness only, as in finance-navi-status-integration.cjs: the owned throwaway mongod and app get a measured 300 s window instead
+// of the library's 10 s default (which failed before any request ran); each start is printed (TIMING). No assertion uses this window.
+const SETUP_READY_MS=300000;
+async function main(){let mongo,child,client,directory,logs='',groups=0;const pass=s=>{groups++;console.log('PASS '+s)};const timing={};
  try{
-  directory=await fsp.mkdtemp(path.join(os.tmpdir(),'omf-invoice-calendar-'));const binary=path.resolve(__dirname,'../../node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe');mongo=await MongoMemoryServer.create({binary:fs.existsSync(binary)?{systemBinary:binary,version:'8.2.1'}:undefined});
+  directory=await fsp.mkdtemp(path.join(os.tmpdir(),'omf-invoice-calendar-'));const binary=path.resolve(__dirname,'../../node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe');let started=Date.now();mongo=await MongoMemoryServer.create({binary:fs.existsSync(binary)?{systemBinary:binary,version:'8.2.1'}:undefined,instance:{launchTimeout:SETUP_READY_MS}});timing.mongoMs=Date.now()-started;
   const dbName='invoice_calendar_regression',uri=mongo.getUri(dbName),secret=crypto.randomBytes(32).toString('hex'),listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));const origin='http://127.0.0.1:'+port;
   child=spawn(process.execPath,['.output/server/index.mjs'],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:uri,MONGODB_URI:uri,NUXT_MONGO_URI:uri,OMF_DATA_DIR:directory,JWT_SECRET:secret,NODE_ENV:'production',HOST:'127.0.0.1',NITRO_HOST:'127.0.0.1',PORT:String(port),NITRO_PORT:String(port),ANTHROPIC_API_KEY:'disabled-synthetic-test',OPENAI_API_KEY:'disabled-synthetic-test',SLACK_BOT_TOKEN:'disabled-synthetic-test',SMTP_HOST:'',SMTP_USER:'',SMTP_PASS:''},stdio:['ignore','pipe','pipe']});child.closed=new Promise(r=>child.once('close',r));for(const s of[child.stdout,child.stderr])s.on('data',v=>{logs=(logs+v).slice(-20000)});
-  let healthy=false;for(let i=0;i<120;i++){try{const r=await fetch(origin+'/api/health',{signal:AbortSignal.timeout(1000)}),d=await r.json();if(d.database?.connected){assert.equal(d.database.name,dbName);healthy=true;break}}catch{}await pause(200)}assert.ok(healthy,'SETUP owned database '+logs);
+  let healthy=false;started=Date.now();while(!healthy&&Date.now()-started<SETUP_READY_MS){try{const r=await fetch(origin+'/api/health',{signal:AbortSignal.timeout(1000)}),d=await r.json();if(d.database?.connected){assert.equal(d.database.name,dbName);healthy=true;break}}catch(e){if(e?.code==='ERR_ASSERTION')throw e}await pause(200)}timing.appMs=Date.now()-started;assert.ok(healthy,'SETUP owned database after '+timing.appMs+' ms '+logs);console.log('TIMING '+JSON.stringify(timing));
   client=await MongoClient.connect(uri);const db=client.db(dbName),pay=db.collection('payments'),invoices=db.collection('invoices'),chats=db.collection('financecompanyassistants');
   const call=async(route,token,method='GET',body)=>{const r=await fetch(origin+route,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(30000)}),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{}return{status:r.status,data,raw}};
   const ok=async(route,token,method='GET',body,label='positive')=>{const r=await call(route,token,method,body);assert.equal(r.status,200,'invoice-calendar:'+label+' '+method+' '+route+' '+r.raw.slice(0,400));return r.data};
@@ -134,7 +137,7 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   const invN=await invoice();await ok(calendarOf(invN._id),tokenA,'POST',{expectedUpdatedAt:invN.updatedAt.toISOString()});r=await actOk(job,'schedule_company_invoice_payment',{invoiceId:String(invN._id),expectedUpdatedAt:invN.updatedAt.toISOString()},2,'native-then-navi');assert.equal(r.result.outcome,'existing','invoice-calendar:native-then-navi');
   const invM=await invoice();await actOk(job,'schedule_company_invoice_payment',{invoiceId:String(invM._id),expectedUpdatedAt:invM.updatedAt.toISOString()},3,'navi-then-native');assert.equal((await schedule(invM)).data.outcome,'existing','invoice-calendar:navi-then-native');
   const invX=await invoice();const mixed=await Promise.all([schedule(invX),act(job,'schedule_company_invoice_payment',{invoiceId:String(invX._id),expectedUpdatedAt:invX.updatedAt.toISOString()},4),schedule(invX),schedule(invX)]);assert.ok(mixed.every(x=>x.status===200),'invoice-calendar:concurrent-mixed '+mixed.map(x=>x.status+':'+x.raw.slice(0,120)).join(' | '));assert.equal((await linked(invX._id)).length,1,'invoice-calendar:concurrent-mixed');
-  pass('Navi: finite read/schedule tools (43 strict), the same service and exact snapshot, marker on the one created row, same-turn intent coalesced, changed slot refused, forged/link arguments refused, stale and foreign invoices refused with failed receipts, later turns and native/Navi in either order or concurrently meet the same one entry');
+  pass('Navi: finite read/schedule tools within the exact 45-tool strict catalogue, the same service and exact snapshot, marker on the one created row, same-turn intent coalesced, changed slot refused, forged/link arguments refused, stale and foreign invoices refused with failed receipts, later turns and native/Navi in either order or concurrently meet the same one entry');
 
   // ---- 7. Lost replies, unknown outcomes and revoked authority
   await setOp(job,repeatOp,{state:'claimed'});assert.equal((await opOf(job,repeatOp)).state,'working','invoice-calendar:existing-unproven-live');
@@ -169,6 +172,25 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   }
   console.log(groups+' Invoice calendar groups passed');
  }catch(e){console.error(e);if(logs)console.error('APP LOG TAIL\n'+logs.slice(-4000));process.exitCode=1}
- finally{if(client)await client.close().catch(()=>{});if(child&&child.exitCode===null){child.kill();await Promise.race([child.closed,pause(5000)])}if(mongo)await mongo.stop().catch(()=>{});if(directory){const resolved=path.resolve(directory),temp=path.resolve(os.tmpdir());if(resolved.startsWith(temp+path.sep)&&path.basename(resolved).startsWith('omf-invoice-calendar-'))await fsp.rm(resolved,{recursive:true,force:true}).catch(()=>{})}}
+ finally{
+  // Owned cleanup (as in finance-navi-status-integration.cjs): every step runs even when an earlier one fails, each problem is printed
+  // (CLEANUP) after the run's own result above, and a problem still fails the run instead of being swallowed. After the memory server's
+  // own stop attempt, wait for its mongod to disappear and remove only its own temporary dbPath; never send another signal through an old
+  // numeric PID. An app that does not close within the window is reported, never ignored.
+  const problems=[],step=async(name,fn)=>{try{await fn()}catch(e){problems.push(name+': '+String(e?.message||e).slice(0,300))}};
+  const within=(promise,ms,message)=>new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error(message)),ms);promise.then(v=>{clearTimeout(t);resolve(v)},e=>{clearTimeout(t);reject(e)})});
+  await step('client',async()=>{if(client)await client.close()});
+  await step('app',async()=>{if(child&&child.exitCode===null){child.kill();await within(child.closed,SETUP_READY_MS,'owned app still running after '+SETUP_READY_MS+' ms')}});
+  await step('mongod',async()=>{if(!mongo)return;const info=mongo.instanceInfo,pid=info?.instance?.mongodProcess?.pid,dbDir=info?.tmpDir;
+   try{await mongo.stop();return}catch(e){console.error('CLEANUP mongod stop slow: '+String(e?.message||e).slice(0,200))}
+   const alive=()=>{try{process.kill(pid,0);return true}catch{return false}},started=Date.now();
+   while(pid&&alive()&&Date.now()-started<SETUP_READY_MS)await pause(500);
+   if(pid&&alive())throw Error('owned mongod '+pid+' still running after '+(Date.now()-started)+' ms');
+   if(dbDir){assert.equal(path.dirname(dbDir),os.tmpdir());assert.ok(path.basename(dbDir).startsWith('mongo-mem-'));await fsp.rm(dbDir,{recursive:true,force:true,maxRetries:10,retryDelay:500})}
+   console.error('CLEANUP mongod gone after '+(Date.now()-started)+' ms; its dbPath removed')});
+  await step('data',async()=>{if(directory){const resolved=path.resolve(directory),temp=path.resolve(os.tmpdir());if(!(resolved.startsWith(temp+path.sep)&&path.basename(resolved).startsWith('omf-invoice-calendar-')))throw Error('Unsafe test cleanup '+resolved);await fsp.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:500})}});
+  for(const p of problems)console.error('CLEANUP '+p);
+  if(problems.length){console.error('SETUP owned cleanup failed: '+problems.join(' | '));process.exitCode=1}
+ }
 }
 main();

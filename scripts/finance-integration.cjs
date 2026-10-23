@@ -9,24 +9,36 @@ const {spawn}=require('node:child_process');
 const {MongoMemoryServer}=require('mongodb-memory-server');
 const {MongoClient,ObjectId}=require('mongodb');
 const root=path.resolve(__dirname,'..'),pause=ms=>new Promise(r=>setTimeout(r,ms));
+// Assistant-only evaluation (OMF_TEST_ASSISTANT_ONLY: the omf-navi-api-actions fixture and its packaged copies) runs long synthetic
+// worker scenarios. Its owned mongod/app setup, request budget and cleanup get the measured finite tolerance of the sibling owned
+// fixtures (finance-navi-status-integration.cjs): 300 s setup, 60 s per request instead of 20 s, and cleanup that runs every step and
+// keeps the run's own result. Every other mode keeps its current startup, 20 s budget and cleanup. Nothing is ever re-sent: a request
+// over budget fails with its method, path and elapsed time only (no headers or tokens), and a larger budget explains no earlier timeout.
+const ASSISTANT_ONLY=!!process.env.OMF_TEST_ASSISTANT_ONLY,SETUP_READY_MS=300000,REQUEST_BUDGET_MS=ASSISTANT_ONLY?60000:20000;
 async function availablePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 async function main(){
  let mongo,child,client,directory,logs='',checks=0;const pass=name=>{checks++;console.log('PASS '+name);};
+ const setupTiming={},slowest={ms:0,request:null};
  try{
   const {HEADERS,parseAmex}=await import('../shared/amex.mjs');
   const csv=rows=>Buffer.from([HEADERS,...rows].map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n'));
   const row=(changes={})=>Object.assign(['2026/08/01','2026/08/03','Synthetic shop','Test user','12345','1234','',''],changes);
   directory=await fsp.mkdtemp(path.join(os.tmpdir(),'omf-finance-test-'));
   const binary=path.join(root,'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe');
-  mongo=await MongoMemoryServer.create({binary:fs.existsSync(binary)?{systemBinary:binary,version:'8.2.1'}:undefined});
+  const mongoStarted=Date.now();mongo=await MongoMemoryServer.create({binary:fs.existsSync(binary)?{systemBinary:binary,version:'8.2.1'}:undefined,...(ASSISTANT_ONLY?{instance:{launchTimeout:SETUP_READY_MS}}:{})});setupTiming.mongoMs=Date.now()-mongoStarted;
   const uri=mongo.getUri('finance_regression'),port=await availablePort(),origin=`http://127.0.0.1:${port}`;
   child=spawn(process.execPath,['.output/server/index.mjs'],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:uri,NUXT_MONGO_URI:uri,OMF_DATA_DIR:directory,JWT_SECRET:crypto.randomBytes(32).toString('hex'),NODE_ENV:'production',HOST:'127.0.0.1',NITRO_HOST:'127.0.0.1',PORT:String(port),NITRO_PORT:String(port)},stdio:['ignore','pipe','pipe']});
   for(const stream of [child.stdout,child.stderr])stream.on('data',v=>{logs=(logs+v).slice(-15000);});
-  let healthy=false;for(let i=0;i<100;i++){try{const d=await(await fetch(origin+'/api/health',{signal:AbortSignal.timeout(1000)})).json();if(d.database?.connected){assert.equal(d.database.name,'finance_regression');healthy=true;break;}}catch{}await pause(200);}assert.ok(healthy,'Isolated app health: '+logs);
+  let healthy=false;const appStarted=Date.now();for(let i=0;ASSISTANT_ONLY?Date.now()-appStarted<SETUP_READY_MS:i<100;i++){try{const d=await(await fetch(origin+'/api/health',{signal:AbortSignal.timeout(1000)})).json();if(d.database?.connected){assert.equal(d.database.name,'finance_regression');healthy=true;break;}}catch{}await pause(200);}setupTiming.appMs=Date.now()-appStarted;assert.ok(healthy,'Isolated app health: '+logs);
   client=await MongoClient.connect(uri);const db=client.db('finance_regression');
   async function call(route,{method='GET',token,body,raw=false}={}){
-   const response=await fetch(origin+route,{method,headers:{'Content-Type':raw?'text/csv':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:raw?body:JSON.stringify(body)}),signal:AbortSignal.timeout(20000)});
-   const text=await response.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:response.status,data};
+   const started=Date.now();
+   try{
+    const response=await fetch(origin+route,{method,headers:{'Content-Type':raw?'text/csv':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:raw?body:JSON.stringify(body)}),signal:AbortSignal.timeout(REQUEST_BUDGET_MS)});
+    const text=await response.text();let data;try{data=JSON.parse(text);}catch{data=text;}
+    if(ASSISTANT_ONLY&&Date.now()-started>slowest.ms){slowest.ms=Date.now()-started;slowest.request=method+' '+route.split('?')[0];}
+    return {status:response.status,data};
+   }catch(error){if(ASSISTANT_ONLY)console.error('REQUEST_FAILED '+JSON.stringify({method,path:route.split('?')[0],elapsedMs:Date.now()-started,budgetMs:REQUEST_BUDGET_MS,error:String(error?.name||'Error')}));throw error;}
   }
   const register=async email=>{const r=await call('/api/auth/register',{method:'POST',body:{email,password:'Synthetic-password-Only1!',name:'Finance test'}});assert.equal(r.status,200,JSON.stringify(r));return r.data.tokens.accessToken;};
   const token=await register('finance-a@example.invalid'),other=await register('finance-b@example.invalid');
@@ -191,6 +203,28 @@ async function main(){
   await require('./finance-purchase-links-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});
   console.log(`${checks} finance integration checks passed`);
  }catch(error){console.error(error);console.error(logs.slice(-3500));process.exitCode=1;}
- finally{if(child && child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended;}if(client)await client.close();if(mongo)await mongo.stop();if(directory){if(!path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe test cleanup');await fsp.rm(directory,{recursive:true,force:true});}}
+ finally{
+  if(!ASSISTANT_ONLY){if(child && child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended;}if(client)await client.close();if(mongo)await mongo.stop();if(directory){if(!path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe test cleanup');await fsp.rm(directory,{recursive:true,force:true});}}
+  else{
+   // Assistant-only owned cleanup (as in finance-navi-status-integration.cjs): every step runs even when an earlier one fails, each
+   // problem is printed (CLEANUP) and none replaces the run's own result printed above; a problem still fails the run. After the memory
+   // server's own stop attempt, wait for its mongod to disappear and remove only its own temporary dbPath; never send another signal
+   // through an old numeric PID.
+   const problems=[],step=async(name,fn)=>{try{await fn()}catch(e){problems.push(name+': '+String(e?.message||e).slice(0,300))}};
+   await step('app',async()=>{if(child&&child.exitCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended}});
+   await step('client',async()=>{if(client)await client.close()});
+   await step('mongod',async()=>{if(!mongo)return;const info=mongo.instanceInfo,pid=info?.instance?.mongodProcess?.pid,dbDir=info?.tmpDir;
+    try{await mongo.stop();return}catch(e){console.error('CLEANUP mongod stop slow: '+String(e?.message||e).slice(0,200))}
+    const alive=()=>{try{process.kill(pid,0);return true}catch{return false}},started=Date.now();
+    while(pid&&alive()&&Date.now()-started<SETUP_READY_MS)await pause(500);
+    if(pid&&alive())throw Error('owned mongod '+pid+' still running after '+(Date.now()-started)+' ms');
+    if(dbDir){assert.equal(path.dirname(dbDir),os.tmpdir());assert.ok(path.basename(dbDir).startsWith('mongo-mem-'));await fsp.rm(dbDir,{recursive:true,force:true,maxRetries:10,retryDelay:500})}
+    console.error('CLEANUP mongod gone after '+(Date.now()-started)+' ms; its dbPath removed')});
+   await step('data',async()=>{if(directory){if(!path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe test cleanup');await fsp.rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:500})}});
+   console.log('TIMING '+JSON.stringify({...setupTiming,requestBudgetMs:REQUEST_BUDGET_MS,slowestRequestMs:slowest.ms,slowestRequest:slowest.request}));
+   for(const p of problems)console.error('CLEANUP '+p);
+   if(problems.length){console.error('SETUP owned cleanup failed: '+problems.join(' | '));process.exitCode=1}
+  }
+ }
 }
 main();

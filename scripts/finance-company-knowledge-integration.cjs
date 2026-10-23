@@ -3,11 +3,14 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),fsp=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),net=require('node:net'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process'),{MongoMemoryServer}=require('mongodb-memory-server'),{MongoClient,ObjectId}=require('mongodb'),jwt=require('jsonwebtoken');
 const root=path.resolve(process.env.OMF_COMPANY_NAVI_APP_ROOT||path.join(__dirname,'..')),pause=ms=>new Promise(r=>setTimeout(r,ms));
-async function main(){let mongo,child,client,directory,logs='',checks=0;const pass=s=>{checks++;console.log('PASS '+s)};
+// SETUP readiness only, as in finance-navi-status-integration.cjs: the owned throwaway mongod and app get a measured 300 s window instead
+// of the library's 10 s default (which failed before any request ran); each start is printed (TIMING). No assertion uses this window.
+const SETUP_READY_MS=300000;
+async function main(){let mongo,child,client,directory,logs='',checks=0,failure=null;const pass=s=>{checks++;console.log('PASS '+s)};const timing={};
  try{
-  directory=await fsp.mkdtemp(path.join(os.tmpdir(),'omf-company-knowledge-'));const binary=path.resolve(__dirname,'../../node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe');mongo=await MongoMemoryServer.create({binary:fs.existsSync(binary)?{systemBinary:binary,version:'8.2.1'}:undefined});const uri=mongo.getUri('company_knowledge_regression'),secret=crypto.randomBytes(32).toString('hex'),listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));const origin='http://127.0.0.1:'+port;
+  directory=await fsp.mkdtemp(path.join(os.tmpdir(),'omf-company-knowledge-'));const binary=path.resolve(__dirname,'../../node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe');let started=Date.now();mongo=await MongoMemoryServer.create({binary:fs.existsSync(binary)?{systemBinary:binary,version:'8.2.1'}:undefined,instance:{launchTimeout:SETUP_READY_MS}});timing.mongoMs=Date.now()-started;const uri=mongo.getUri('company_knowledge_regression'),secret=crypto.randomBytes(32).toString('hex'),listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));const origin='http://127.0.0.1:'+port;
   child=spawn(process.execPath,['.output/server/index.mjs'],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:uri,MONGODB_URI:uri,NUXT_MONGO_URI:uri,OMF_DATA_DIR:directory,JWT_SECRET:secret,NODE_ENV:'production',HOST:'127.0.0.1',NITRO_HOST:'127.0.0.1',PORT:String(port),NITRO_PORT:String(port)},stdio:['ignore','pipe','pipe']});child.closed=new Promise(r=>child.once('close',r));for(const s of[child.stdout,child.stderr])s.on('data',v=>{logs=(logs+v).slice(-14000)});
-  let healthy=false;for(let i=0;i<100;i++){try{const r=await fetch(origin+'/api/health',{signal:AbortSignal.timeout(1000)}),d=await r.json();if(d.database?.connected){assert.equal(d.database.name,'company_knowledge_regression');healthy=true;break}}catch{}await pause(200)}assert.ok(healthy,'SETUP owned database '+logs);
+  let healthy=false;started=Date.now();while(!healthy&&Date.now()-started<SETUP_READY_MS){try{const r=await fetch(origin+'/api/health',{signal:AbortSignal.timeout(1000)}),d=await r.json();if(d.database?.connected){assert.equal(d.database.name,'company_knowledge_regression');healthy=true;break}}catch(e){if(e?.code==='ERR_ASSERTION')throw e}await pause(200)}timing.appMs=Date.now()-started;assert.ok(healthy,'SETUP owned database after '+timing.appMs+' ms '+logs);console.log('TIMING '+JSON.stringify(timing));
   client=await MongoClient.connect(uri);const db=client.db('company_knowledge_regression');
   const call=async(route,token,method='GET',body)=>{const r=await fetch(origin+route,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(20000)}),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{}return{status:r.status,data,raw}};
   const ok=async(route,token,method='GET',body)=>{const r=await call(route,token,method,body);assert.equal(r.status,200,'knowledge:positive '+method+' '+route+' '+r.raw.slice(0,400));return r.data};
@@ -41,7 +44,7 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   // Deliberate 2026-10-20: business adapters extend the closed catalogue (17 -> 41 exact names; 43 with the two invoice-calendar tools of 2026-10-20); every teaching assertion below is kept.
   assert.equal(job.tools.length,45,'knowledge:catalogue-count');assert.deepEqual(names.slice().sort(),[...require('./finance-company-business-integration.cjs').companyToolNames].sort(),'knowledge:catalogue-count');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
   assert.deepEqual(job.knowledge,[],'knowledge:empty-recall');
-  pass('company job keeps eleven native tools and adds six strict teaching/pattern/feature tools');
+  pass('company job keeps the eleven native tools and the six strict teaching/pattern/feature tools within the exact 45-tool company catalogue');
 
   // 2. Pattern evidence: counts, conflicting examples, exact protected card credit names, receipt flag meaning, company isolation.
   let r=await act(job,'find_company_transaction_patterns',{merchant:'SYNTH_MART'});assert.equal(r.status,200,'knowledge:patterns '+r.raw.slice(0,300));const p=r.data.result;
@@ -139,6 +142,23 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   pass('turn limit points to new chat; existing native calendar save still writes after resets');
   assert.ok(!logs.includes(teachText),'knowledge:no-logged-text');
   console.log(checks+' Company knowledge groups passed');
- }finally{if(child){child.kill();await child.closed}if(client)await client.close();if(mongo)await mongo.stop();if(directory)await fsp.rm(directory,{recursive:true,force:true})}
+ }catch(error){failure=error}
+ // Owned cleanup (as in finance-navi-status-integration.cjs): every step runs even when an earlier one fails, each problem is printed
+ // (CLEANUP) and none can replace the run's own result; a problem still fails the run. After the memory server's own stop attempt, wait
+ // for its mongod to disappear and remove only its own temporary dbPath; never send another signal through an old numeric PID.
+ const problems=[],step=async(name,fn)=>{try{await fn()}catch(e){problems.push(name+': '+String(e?.message||e).slice(0,300))}};
+ await step('app',async()=>{if(child){child.kill();await child.closed}});
+ await step('client',async()=>{if(client)await client.close()});
+ await step('mongod',async()=>{if(!mongo)return;const info=mongo.instanceInfo,pid=info?.instance?.mongodProcess?.pid,dbDir=info?.tmpDir;
+  try{await mongo.stop();return}catch(e){console.log('CLEANUP mongod stop slow: '+String(e?.message||e).slice(0,200))}
+  const alive=()=>{try{process.kill(pid,0);return true}catch{return false}},started=Date.now();
+  while(pid&&alive()&&Date.now()-started<SETUP_READY_MS)await pause(500);
+  if(pid&&alive())throw Error('owned mongod '+pid+' still running after '+(Date.now()-started)+' ms');
+  if(dbDir){assert.equal(path.dirname(dbDir),os.tmpdir());assert.ok(path.basename(dbDir).startsWith('mongo-mem-'));await fsp.rm(dbDir,{recursive:true,force:true,maxRetries:10,retryDelay:500})}
+  console.log('CLEANUP mongod gone after '+(Date.now()-started)+' ms; its dbPath removed')});
+ await step('data',async()=>{if(directory){assert.equal(path.dirname(directory),os.tmpdir());assert.ok(path.basename(directory).startsWith('omf-company-knowledge-'));await fsp.rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:500})}});
+ for(const p of problems)console.log('CLEANUP '+p);
+ if(failure)throw failure;
+ if(problems.length)throw Error('SETUP owned cleanup failed: '+problems.join(' | '));
 }
 main().catch(e=>{console.error(e);process.exitCode=1});

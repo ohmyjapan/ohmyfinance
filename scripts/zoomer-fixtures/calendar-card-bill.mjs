@@ -1431,14 +1431,38 @@ export default {
       return 'confirmation, January, 4 nulls, 2 amount-line cases, Amex 4/5 digits, look-alike sender null, dkim/dmarc pass/fail/none';
     });
     // ── F-P2: the migration route is gone and no unscoped Payment writer remains ──
-    await leg('F-P2 migration route: server/api/migrate-payment-dates.ts absent; no Payment.find( / findById / findByIdAndUpdate / updateOne outside the scoped sites under server/', async () => {
-      if (await exists(path.join(REPO_ROOT, 'server/api/migrate-payment-dates.ts'))) throw new Error('server/api/migrate-payment-dates.ts is still present');
-      const allowed = new Set(['server/api/payments/index.ts', 'server/api/payments/[id].ts', 'server/api/dashboard/stats.ts', 'server/services/financeBillService.ts', 'server/models/Payment.ts']);
+    // Known sites by exact path. The last four (2026-10-23, plan omf-navi-agent-replay-20261022) were each read with their trusted callers:
+    // companyFinanceReadService.ts lists/reads calendar entries with the caller's organizationId in the filter (the native payments
+    // routes take it from calendarCompany's fresh membership check, company Navi from its frozen job company, bank classification from
+    // calendarCompany); companyPaymentWriteService.ts updates/suppresses/deletes only within that organizationId and stamps it on create
+    // (same callers); companyInvoiceCalendarService.ts reads only by organizationId plus the invoice link and its one created entry
+    // carries that company (native route via calendarCompany, company Navi via its frozen company); financePaymentMatchService.ts reads
+    // only card-statement bills of the accounts first read by FinancialAccount.find({ ownerId }), narrowed further by a trusted card read
+    // scope (owner/account scoped, not a company-wide query). A file list is not isolation evidence: the scoped behaviour is held by the
+    // native company, payment and action fixtures. Any other file is still reported, and the same scanner must report an unknown reader
+    // (and a known name at another path) in an owned temporary tree, never a file in the real server/.
+    const PAYMENT_SITES = ['server/api/payments/index.ts', 'server/api/payments/[id].ts', 'server/api/dashboard/stats.ts', 'server/services/financeBillService.ts', 'server/models/Payment.ts', 'server/services/companyFinanceReadService.ts', 'server/services/companyPaymentWriteService.ts', 'server/services/companyInvoiceCalendarService.ts', 'server/services/financePaymentMatchService.ts'];
+    const paymentAccessOutside = async (tree, allowed) => {
       const hits = [];
-      const walk = async dir => { for (const entry of await readdir(dir, { withFileTypes: true })) { const full = path.join(dir, entry.name); if (entry.isDirectory()) { if (entry.name === 'node_modules') continue; await walk(full); } else if (/\.(ts|mjs|js)$/.test(entry.name) && !/\.mutant-/.test(entry.name)) { const text = await readFile(full, 'utf8'); if (/\bPayment\.(find|findById|findByIdAndUpdate|findOneAndUpdate|updateOne|updateMany|create|deleteOne|deleteMany|findByIdAndDelete|findOneAndDelete|countDocuments)\b/.test(text)) { const rel = path.relative(REPO_ROOT, full).split(path.sep).join('/'); if (!allowed.has(rel)) hits.push(rel); } } } };
-      await walk(path.join(REPO_ROOT, 'server'));
+      const walk = async dir => { for (const entry of await readdir(dir, { withFileTypes: true })) { const full = path.join(dir, entry.name); if (entry.isDirectory()) { if (entry.name === 'node_modules') continue; await walk(full); } else if (/\.(ts|mjs|js)$/.test(entry.name) && !/\.mutant-/.test(entry.name)) { const text = await readFile(full, 'utf8'); if (/\bPayment\.(find|findById|findByIdAndUpdate|findOneAndUpdate|updateOne|updateMany|create|deleteOne|deleteMany|findByIdAndDelete|findOneAndDelete|countDocuments)\b/.test(text)) { const rel = path.relative(tree, full).split(path.sep).join('/'); if (!allowed.has(rel)) hits.push(rel); } } } };
+      await walk(path.join(tree, 'server'));
+      return hits.sort();
+    };
+    await leg('F-P2 migration route: server/api/migrate-payment-dates.ts absent; no Payment.find( / findById / findByIdAndUpdate / updateOne outside the exact known sites under server/; an unknown reader in an owned temporary tree is reported', async () => {
+      if (await exists(path.join(REPO_ROOT, 'server/api/migrate-payment-dates.ts'))) throw new Error('server/api/migrate-payment-dates.ts is still present');
+      const allowed = new Set(PAYMENT_SITES);
+      const hits = await paymentAccessOutside(REPO_ROOT, allowed);
       if (hits.length) throw new Error('Payment writers/readers outside the scoped sites: ' + hits.join(', '));
-      return 'absent; Payment access only in ' + [...allowed].length + ' scoped files';
+      const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-payment-scan-'));
+      try {
+        await mkdir(path.join(temp, 'server', 'services', 'nested'), { recursive: true });
+        await writeFile(path.join(temp, 'server', 'services', 'companyFinanceReadService.ts'), 'export const known = (organizationId: unknown) => Payment.find({ organizationId })\n');
+        await writeFile(path.join(temp, 'server', 'services', 'nested', 'companyFinanceReadService.ts'), 'export const sameNameElsewhere = () => Payment.find({})\n');
+        await writeFile(path.join(temp, 'server', 'services', 'unknownPaymentReader.ts'), 'export const unknown = () => Payment.find({})\n');
+        const seen = await paymentAccessOutside(temp, allowed), expected = ['server/services/nested/companyFinanceReadService.ts', 'server/services/unknownPaymentReader.ts'];
+        if (JSON.stringify(seen) !== JSON.stringify(expected)) throw new Error('the scanner did not report exactly the unknown readers of the owned temporary tree: ' + JSON.stringify(seen));
+      } finally { await rm(temp, { recursive: true, force: true }).catch(() => {}); }
+      return 'absent; Payment access only in ' + allowed.size + ' exact known files; an unknown reader and a known name at another path are reported in an owned temporary tree';
     });
     // ── F5: the customer package (continuation 10-plan, S9): the pure mail module is staged, the staged collector imports with the dependencies installed from its lock (a real npm ci into the staged copy, no junction), and removing that module from the staged copy is a specific import failure ──
     await leg('F5 package: ALLOWLIST stages shared/billing-mail.mjs; the staged collector/mail.mjs and collector/index.mjs import with installed dependencies; deleting the staged module breaks the staged mail import with ERR_MODULE_NOT_FOUND naming it', async () => {

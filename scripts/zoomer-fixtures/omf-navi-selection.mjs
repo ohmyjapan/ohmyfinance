@@ -31,6 +31,13 @@ const failureOf=text=>((text.match(/AssertionError[^\n]*/)||[])[0]||failuresOf(t
 // Each defect: the groups its leg runs, compiled anchors (each must occur exactly once, in exactly one compiled file of its kind),
 // their replacements, and the assertion the integration must then fail with. Client anchors carry the minified names of the current
 // build (refreshed with it); after a rebuild that renames them they fail as a setup error, never as a detection or a pass.
+// 2026-10-23 (plan omf-navi-agent-replay-20261022): the invoices page (responsive fold) and the conversation/panel chunk (owner and
+// purchase request fold) were re-minified; the sixteen anchors of editor-keeps-pointer, page-delete-ignored, no-live-view,
+// context-view-reset, focus-not-returned, close-scrolls, missing-pending-kept, any-error-releases, unknown-retry-releases,
+// empty-new-chat-disabled (the company New chat button), fenced-pending-kept, fenced-text-cleared, received-clears-edited,
+// received-history-hidden, reset-identity-not-frozen and other-pending-resolved carry the current minified names with the same edits
+// (refreshed, not new faults; each anchor unique in the combined 885517d build). received-history-hidden now drops only the call that
+// shows the archived result, as before; the owner workspace's own action step beside it is left as built.
 export const DEFECTS=[
  // Server: a budget or recurring pointer accepted on any page.
  {name:'budget-any-page',only:'target',assertion:'selection:budget-page-only',kind:'server',edits:[['if (input.page !== "budgets") fail(400, "Choose a budget");','']]},
@@ -58,29 +65,29 @@ export const DEFECTS=[
  // calendar acknowledges only a read the store applied), so the mutant is identical on every reachable path. Replaced by
  // calendar-guard-removed (the real pre-assignment condition), caught by the new native ordering assertion.
  // Invoices page: opening an editor keeps the consulted pointer.
- {name:'editor-keeps-pointer',only:'gui-lifecycle',assertion:'gui:editor-clears',kind:'client',edits:[['V=a=>{h.clear(),a?(v.value=a,','V=a=>{a?(v.value=a,']]},
+ {name:'editor-keeps-pointer',only:'gui-lifecycle',assertion:'gui:editor-clears',kind:'client',edits:[['V=s=>{h.clear(),s?(v.value=s,','V=s=>{s?(v.value=s,']]},
  // Composable: any deletion signal of the same kind clears the pointer (another record's deletion included).
  {name:'delete-any-id',only:'gui-delete',assertion:'gui:other-delete-keeps',kind:'client',edits:[['e.id===t[s]&&e.actorId===t.actorId','e.actorId===t.actorId']]},
  // Composable: a done Navi deletion of the consulted record leaves its pointer (the next send carries a removed id).
  {name:'delete-ignored',only:'gui-delete',assertion:'gui:matched-delete-clears',kind:'client',edits:[['e.organizationId===t.organizationId&&(n.pageSelection=null)}','e.organizationId===t.organizationId&&!1}']]},
  // Invoices page: its own successful native delete leaves the pointer.
- {name:'page-delete-ignored',only:'gui-delete',assertion:'gui:page-delete-clears',kind:'client',edits:[['h.deleted(a),f()','f()']]},
+ {name:'page-delete-ignored',only:'gui-delete',assertion:'gui:page-delete-clears',kind:'client',edits:[['h.deleted(s),f()','f()']]},
  // Conversation: an explicit consultation does not leave History/Memory.
  // 2026-10-23 (plan omf-navi-agent-pending-exit-20261023): the conversation and panel chunk was re-minified by this fold's own
  // AssistantConversation.vue change; these seven anchors carry the new minified names with the same edits (refreshed, not new faults).
- {name:'no-live-view',only:'gui-view',assertion:'gui:history-consult-live-chat',kind:'client',edits:[['re(()=>l.consultation,i=>{i&&b.company&&!z&&(p.value="chat",y.value=null)})','re(()=>l.consultation,i=>{})']]},
+ {name:'no-live-view',only:'gui-view',assertion:'gui:history-consult-live-chat',kind:'client',edits:[['te(()=>d.consultation,s=>{s&&I.company&&!S&&(v.value="chat",f.value=null)})','te(()=>d.consultation,s=>{})']]},
  // Conversation: the live view follows the recomputed context instead of the publication (an ordinary page change resets History).
- {name:'context-view-reset',only:'gui-view',assertion:'gui:page-change-keeps-history',kind:'client',edits:[['re(()=>l.consultation,i=>{','re(()=>l.context,i=>{']]},
+ {name:'context-view-reset',only:'gui-view',assertion:'gui:page-change-keeps-history',kind:'client',edits:[['te(()=>d.consultation,s=>{','te(()=>d.context,s=>{']]},
  // Panel: the initiating action is not remembered (close returns focus to the launcher instead of the row).
- {name:'focus-not-returned',only:'gui-view',assertion:'gui:focus-returns-to-row',kind:'client',edits:[['!v.value?.contains(R)&&(Me=R),','!v.value?.contains(R)&&!1,']]},
+ {name:'focus-not-returned',only:'gui-view',assertion:'gui:focus-returns-to-row',kind:'client',edits:[['!h.value?.contains(S)&&(Le=S),','!h.value?.contains(S)&&!1,']]},
  // Panel: the close focus scrolls the document back to the initiator.
- {name:'close-scrolls',only:'gui-view',assertion:'gui:close-no-scroll',kind:'client',edits:[['focus({preventScroll:!0})})}function Ie','focus()})}function Ie']]},
+ {name:'close-scrolls',only:'gui-view',assertion:'gui:close-no-scroll',kind:'client',edits:[['focus({preventScroll:!0})})}function fe','focus()})}function fe']]},
  // Conversation: the definite missing-record refusal keeps the frozen request (the reproduced original behaviour).
- {name:'missing-pending-kept',only:'gui-missing',assertion:'gui:missing-target-released',kind:'client',edits:[['selectedRecordMissing===!0&&delete o.pending[H],ge(g)','selectedRecordMissing===!0&&!1,ge(g)']]},
+ {name:'missing-pending-kept',only:'gui-missing',assertion:'gui:missing-target-released',kind:'client',edits:[['selectedRecordMissing===!0&&delete l.pending[H],ie(m)','selectedRecordMissing===!0&&!1,ie(m)']]},
  // Conversation: any refusal or lost reply releases the request (a lost accepted request would be sent again as a new one).
- {name:'any-error-releases',only:'gui-missing',assertion:'gui:lost-response-pending-kept',kind:'client',edits:[['(k&&b.company&&i&&o.pending[H]===i&&(g?.statusCode||g?.status)===404&&g?.data?.data?.selectedRecordMissing===!0&&delete o.pending[H],ge(g))','(b.company&&i&&delete o.pending[H],ge(g))']]},
+ {name:'any-error-releases',only:'gui-missing',assertion:'gui:lost-response-pending-kept',kind:'client',edits:[['(i&&I.company&&s&&l.pending[H]===s&&(m?.statusCode||m?.status)===404&&m?.data?.data?.selectedRecordMissing===!0&&delete l.pending[H],ie(m))','(I.company&&s&&delete l.pending[H],ie(m))']]},
  // Conversation: a request already sent once is released by a later marked refusal (an earlier attempt could still be accepted).
- {name:'unknown-retry-releases',only:'gui-missing',assertion:'gui:unknown-then-missing-kept',kind:'client',edits:[['(k&&b.company&&i&&o.pending[H]===i&&','(b.company&&i&&o.pending[H]===i&&']]},
+ {name:'unknown-retry-releases',only:'gui-missing',assertion:'gui:unknown-then-missing-kept',kind:'client',edits:[['(i&&I.company&&s&&l.pending[H]===s&&','(I.company&&s&&l.pending[H]===s&&']]},
  // Calendar page: a day-list consultation also opens the payment editor.
  {name:'day-consult-edits',only:'gui-consult',assertion:'gui:day-consult-read-only',kind:'client',edits:[['s=g=>{S.value=!1,_(g)}','s=g=>{S.value=!1,_(g),P.value=g,l.value=!0}']]},
  // Calendar store: the pre-assignment stale-response guard removed (every reply writes the rows; a late company-A reply replaces fresh B rows).
@@ -114,19 +121,19 @@ export const DEFECTS=[
  // Server: New chat never looks the named request up (an accepted request is answered "not accepted").
  {name:'reset-pending-unrecognised',only:'request',assertion:'request:reset-recognises-accepted',kind:'server',edits:[['const found = meaning ? await findCompanyReceivedRequest(ownerId, organizationId, meaning.requestId, c) : null;','const found = null;']]},
  // Conversation: New chat needs turns again (an empty conversation with an uncertain request has no entry point).
- {name:'empty-new-chat-disabled',only:'gui-pending',assertion:'gui:empty-new-chat-entry',kind:'client',edits:[['disabled:e(w)||e(P)||!(e(ae).length||e(o).pending[e(H)])','disabled:e(w)||e(P)||!e(ae).length']]},
+ {name:'empty-new-chat-disabled',only:'gui-pending',assertion:'gui:empty-new-chat-entry',kind:'client',edits:[['disabled:e(b)||e(P)||!(e(ee).length||e(l).pending[e(H)])','disabled:e(b)||e(P)||!e(ee).length']]},
  // Conversation: a fenced request is not released (the reproduced original behaviour after a successful New chat).
- {name:'fenced-pending-kept',only:'gui-pending',assertion:'gui:witness-reset-releases',kind:'client',edits:[['k.outcome==="not_accepted"&&(delete o.pending[H],Y.value.trim()||(Y.value=i.rawText))','k.outcome==="not_accepted"&&(Y.value.trim()||(Y.value=i.rawText))']]},
+ {name:'fenced-pending-kept',only:'gui-pending',assertion:'gui:witness-reset-releases',kind:'client',edits:[['i.outcome==="not_accepted"&&(delete l.pending[H],G.value.trim()||(G.value=s.rawText))','i.outcome==="not_accepted"&&(G.value.trim()||(G.value=s.rawText))']]},
  // Conversation: releasing a fenced request clears the typed text.
- {name:'fenced-text-cleared',only:'gui-pending',assertion:'gui:witness-text-kept',kind:'client',edits:[['Y.value.trim()||(Y.value=i.rawText)','Y.value=""']]},
+ {name:'fenced-text-cleared',only:'gui-pending',assertion:'gui:witness-text-kept',kind:'client',edits:[['G.value.trim()||(G.value=s.rawText)','G.value=""']]},
  // Conversation: an accepted request's answer clears whatever the composer holds (the edited text is lost).
- {name:'received-clears-edited',only:'gui-received',assertion:'gui:accepted-edited-text-kept',kind:'client',edits:[['k.outcome==="accepted"?(delete o.pending[H],Y.value===i.rawText&&(Y.value=""),','k.outcome==="accepted"?(delete o.pending[H],Y.value="",']]},
+ {name:'received-clears-edited',only:'gui-received',assertion:'gui:accepted-edited-text-kept',kind:'client',edits:[['i.outcome==="accepted"?(delete l.pending[H],G.value===s.rawText&&(G.value=""),','i.outcome==="accepted"?(delete l.pending[H],G.value="",']]},
  // Conversation: an accepted archived request is released without showing its archived result.
- {name:'received-history-hidden',only:'gui-received',assertion:'gui:accepted-archived-recognised',kind:'client',edits:[['k.where==="archive"&&k.archive?.id&&ot(k)','k.where==="archive"&&k.archive?.id&&!1']]},
+ {name:'received-history-hidden',only:'gui-received',assertion:'gui:accepted-archived-recognised',kind:'client',edits:[['i.where==="archive"&&i.archive?.id&&(I.company||Ce(i.turn?.actions||[]),Je(i))','i.where==="archive"&&i.archive?.id&&(I.company||Ce(i.turn?.actions||[]),!1)']]},
  // Conversation: a lost New chat reply drops the frozen reset request (the next press is a new reset without the same meaning).
- {name:'reset-identity-not-frozen',only:'gui-received',assertion:'gui:lost-reset-same-identity',kind:'client',edits:[['(m?.statusCode||m?.status)&&(j=null),F()&&ge(m)','j=null,F()&&ge(m)']]},
+ {name:'reset-identity-not-frozen',only:'gui-received',assertion:'gui:lost-reset-same-identity',kind:'client',edits:[['(g?.statusCode||g?.status)&&(j=null),O()&&ie(g)','j=null,O()&&ie(g)']]},
  // Conversation: an answer about one request resolves whatever request is pending now.
- {name:'other-pending-resolved',only:'gui-received',assertion:'gui:other-pending-kept',kind:'client',edits:[['o.pending[H]!==i||k.requestId!==i.id||','']]}
+ {name:'other-pending-resolved',only:'gui-received',assertion:'gui:other-pending-kept',kind:'client',edits:[['l.pending[H]!==s||i.requestId!==s.id||','']]}
 ];
 async function filesOf(dir,ext){const out=[];if(!existsSync(dir))return out;for(const e of await readdir(dir,{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())out.push(...await filesOf(f,ext));else if(f.endsWith(ext))out.push(f)}return out}
 export default {name:'omf-navi-selection',covers:['server/services/financeCompanyAssistantService.ts','server/services/companyConversationHistoryService.ts','components/finance/AssistantPanel.vue','components/finance/AssistantConversation.vue','components/finance/NaviConsultButton.vue','composables/useNaviRecordSelection.ts','pages/invoices/index.vue','pages/budgets/index.vue','pages/recurring/index.vue','pages/calendar/index.vue','stores/calendar.ts','components/calendar/UpcomingPayments.vue','components/calendar/DayDetailModal.vue','scripts/finance-navi-selection-integration.cjs','scripts/finance-navi-selection-browser.cjs','scripts/zoomer-fixtures/omf-navi-selection.mjs'],async run(){

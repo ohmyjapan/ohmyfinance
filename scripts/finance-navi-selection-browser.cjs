@@ -339,7 +339,8 @@ module.exports=async ctx=>{
 
   // 4. Views and focus: from History and from Memory an explicit consultation (the same record again included) returns to the live chat
   //    with the unsent text and the pinned evidence kept and the rail focused; closing returns focus to the initiating row's action without
-  //    moving the document; a plain close/reopen and an ordinary page change keep the current view.
+  //    moving the document (from a legal interior position the scroll position is kept exactly; at the document bottom the only movement
+  //    is the browser's clamp to the shorter closed page); a plain close/reopen and an ordinary page change keep the current view.
   await group('gui-view',async()=>{
    const t=await tokens();
    const recs=[];for(let i=0;i<12;i++)recs.push(await recurring(t.ga,'SELECTION_VIEW_RECURRING_'+String(i).padStart(2,'0')));
@@ -362,12 +363,24 @@ module.exports=async ctx=>{
    await press('#omf-assistant [data-assistant-knowledge-toggle]');await until(async()=>(await navi()).view==='knowledge','SETUP memory view',10000,describeNavi);
    await activate(target,'mouse');n=await until(async()=>{const v=await navi();return v.view==='chat'?v:null},'gui:memory-consult-live-chat',10000,describeNavi);
    assert.equal(n.composer,'UNSENT_VIEW_TEXT','gui:unsent-kept');assert.ok(n.pinned,'gui:pinned-kept');
-   // Close: focus back on the initiating action, the document not moved (scrolled away from the action first)
-   await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));await pause(500);
-   const away=await page.evaluate(s=>{const r=document.querySelector(s).getBoundingClientRect();return{y:scrollY,outside:r.bottom<0||r.top>innerHeight}},target);assert.ok(away.y>0&&away.outside,'SETUP scrolled away from the action '+JSON.stringify(away));
-   await press('#omf-assistant [data-assistant-close]');await until(async()=>!(await navi()).open,'SETUP closed');await pause(300);
-   const back=await page.evaluate(s=>({focused:document.activeElement===document.querySelector(s),y:scrollY}),target);
-   assert.ok(back.focused,'gui:focus-returns-to-row '+JSON.stringify(back));assert.equal(back.y,away.y,'gui:close-no-scroll '+JSON.stringify({before:away.y,after:back.y}));seen('gui|focus');
+   // Close: focus back on the initiating action without moving the document, the action scrolled off screen first. Closing the rail
+   // widens the content column, so the closed page is shorter (57 px in the observed runs). From a declared legal interior position (200 px above the
+   // document bottom, still legal on the closed page) the scroll position must stay exactly; from the document bottom the only allowed
+   // movement is the browser's clamp to the closed page's legal maximum, measured from its actual bounds after the close.
+   const place=s=>page.evaluate(s=>{const d=document.scrollingElement,e=document.querySelector(s),r=e.getBoundingClientRect();return{y:scrollY,max:Math.max(0,d.scrollHeight-d.clientHeight),outside:r.bottom<0||r.top>innerHeight,focused:document.activeElement===e}},s);
+   const closeFrom=async position=>{
+    await page.evaluate(bottom=>{const d=document.scrollingElement;window.scrollTo(0,bottom?d.scrollHeight:Math.max(0,d.scrollHeight-d.clientHeight-200))},position==='bottom');await pause(500);
+    const away=await place(target);assert.ok(away.y>0&&away.outside&&(position==='bottom'?away.y===away.max:away.y<away.max),'SETUP scrolled away from the action ('+position+') '+JSON.stringify(away));
+    await press('#omf-assistant [data-assistant-close]');await until(async()=>!(await navi()).open,'SETUP closed');await pause(300);
+    const back=await place(target);
+    assert.ok(back.focused,'gui:focus-returns-to-row '+JSON.stringify({position,...back}));
+    if(position==='interior')assert.ok(back.max>=away.y,'SETUP the interior position stays legal on the closed page '+JSON.stringify({away,back}));
+    assert.equal(back.y,Math.min(away.y,back.max),'gui:close-no-scroll '+JSON.stringify({position,before:away.y,after:back.y,closedMax:back.max}));
+   };
+   await closeFrom('interior');
+   // SETUP reopen from the same initiating action (another explicit consultation of the same record) for the document-bottom close.
+   await activate(target,'mouse');await until(async()=>{const v=await navi();return v.open&&v.view==='chat'},'SETUP consultation reopened',10000,describeNavi);
+   await closeFrom('bottom');seen('gui|focus');
    // A plain close/reopen keeps the view; an ordinary page change keeps it
    await page.evaluate(()=>window.scrollTo(0,0));await openNavi();await press('#omf-assistant [data-assistant-history-toggle]');await until(async()=>(await navi()).view==='history','SETUP history view');
    await closeNavi();await openNavi();assert.equal((await navi()).view,'history','gui:reopen-keeps-view');
@@ -375,7 +388,7 @@ module.exports=async ctx=>{
    assert.equal((await navi()).view,'history','gui:page-change-keeps-history '+await describeNavi());assert.equal((await navi()).composer,null,'SETUP history shows no composer');
    await press('#omf-assistant [data-assistant-view="chat"]');await until(async()=>(await navi()).composer==='UNSENT_VIEW_TEXT','gui:unsent-kept',10000,describeNavi);
    await closeNavi();seen('gui|views');
-   pass('views: History and Memory return to the live chat on an explicit consultation (same record included) with unsent text and pinned evidence kept and the rail focused; close returns focus to the initiating action without moving the document; reopen and page changes keep the view');
+   pass('views: History and Memory return to the live chat on an explicit consultation (same record included) with unsent text and pinned evidence kept and the rail focused; close returns focus to the initiating action without moving the document (an interior position kept exactly, the document bottom only clamped to the shorter closed page); reopen and page changes keep the view');
   });
 
   // 5. Deletion: only the exact successful deletion of the selected record clears its pointer (a Navi deletion's done receipt through the

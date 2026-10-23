@@ -6,12 +6,21 @@
 // Legs: 1 proposal reference helpers (pure) · 2 the owned actions MCP server against a synthetic HTTP service and a private Vault
 // (stdio JSON-RPC, no model) · 3 the built app (scripts/finance-navi-actions-integration.cjs chained by the assistant scope
 // harness on its own ephemeral MongoDB; NOT RUN and red when .output/server/index.mjs is missing) · 4 node --test of the sibling
-// unit tests · 5 the plan's seven mutants, each reintroduced into an isolated copy of the built output and required to flip its
-// named final-state assertion · 6 the native CLI tool-only smoke, which uses the model and runs only with OMF_NAVI_CLI_SMOKE=1;
+// unit tests · 5 an unmutated packaged control, then the plan's seven mutants and the heartbeat-expiry defect (2026-10-23), each
+// reintroduced into an isolated copy of the built output and required to flip its named final-state assertion · 6 the native CLI
+// tool-only smoke, which uses the model and runs only with OMF_NAVI_CLI_SMOKE=1;
 // otherwise it is declared NOT RUN (separate evidence, never counted as coverage). No model, no network and no production
 // database in legs 1-5. `covers` is decided at load: built-app files are listed only when the build exists.
 // Fail-first on acc7d78: leg 3 is the behavioural failure (the existing message/worker/result flow finishes, the requested
 // draft change and its receipt are absent). Legs 1-2 fail on a missing module there; that is setup, not evidence.
+// Maintenance 2026-10-23 (plan omf-navi-agent-replay-20261022): leg 5 first runs an unmutated packaged copy of the build (positive
+// control: it must pass exactly like leg 3 before any defect counts) and gains an eighth defect, the native job heartbeat renewing a
+// job whose deadline already passed (its exact existing navi:purchase-expired-not-resurrected assertion must flip).
+// OMF_NAVI_RENEWAL_TIMING_DIAGNOSTIC=1 is a separately labeled controlled timing diagnostic, never part of a normal run and never
+// coverage (covers [] at load, always reported as a failure): a packaged copy whose native job heartbeat waits a declared 1500 ms
+// before reading its clock runs the same integration and reports whether the positive renewal case still depends on a short
+// scheduling window. The delay is induced; it is not the cause of the original unexplained navi:purchase-renewal-accepted failure,
+// whose timing was never captured.
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -26,6 +35,7 @@ export const timeoutMs = 2400000;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
 const BUILT = existsSync(path.join(REPO_ROOT, '.output', 'server', 'index.mjs'));
+const TIMING_DIAGNOSTIC = process.env.OMF_NAVI_RENEWAL_TIMING_DIAGNOSTIC === '1';
 const PURE_COVERS = ['shared/finance-action-proposal.mjs', 'shared/finance-action-proposal.d.mts', 'shared/finance-research.mjs', 'shared/finance-research.d.mts', 'teaching-worker/actions-mcp.mjs', 'teaching-worker/interpreter.mjs', 'teaching-worker/worker.mjs', 'teaching-worker/run.mjs', 'research-worker/run.mjs', 'scripts/finance-chat.test.mjs', 'scripts/finance-assistant-worker.test.mjs', 'scripts/finance-assistant.test.mjs', 'scripts/finance-research.test.mjs'];
 const APP_COVERS = ['server/services/financeActionService.ts', 'server/services/financeAssistantService.ts', 'server/services/financeChatService.ts', 'server/services/financeDraftService.ts', 'server/services/financeLearningService.ts', 'server/services/financeResearchService.ts', 'server/models/FinanceActionOperation.ts', 'server/models/FinanceDecisionMemory.ts', 'server/api/finance-chat/[...path].ts', 'server/api/finance-learning/[...path].ts', 'components/finance/AssistantConversation.vue', 'components/finance/PurchaseChat.vue', 'pages/learning.vue', 'scripts/finance-navi-actions-integration.cjs', 'scripts/finance-navi-recovery-integration.cjs', 'scripts/finance-assistant-scope-integration.cjs', 'docs/purchase-chat.md'];
 const u = p => pathToFileURL(path.join(REPO_ROOT, p)).href;
@@ -51,8 +61,8 @@ const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', ()
 const body = req => new Promise(resolve => { let t = ''; req.on('data', c => t += c); req.on('end', () => resolve(t)); });
 const safeTemp = async dir => { const resolved = await (await import('node:fs/promises')).realpath(dir), temp = await (await import('node:fs/promises')).realpath(os.tmpdir()); if (!resolved.startsWith(temp + path.sep)) throw new Error('Unsafe temp cleanup'); await rm(resolved, { recursive: true, force: true }); };
 
-// The plan's seven mutants: a whitespace-tolerant anchor in the built nitro chunks (esbuild reprints the services), the
-// defect text, and the `navi:` assertion the integration must then fail with.
+// The plan's seven mutants and the 2026-10-23 heartbeat-expiry defect: a whitespace-tolerant anchor in the built nitro chunks
+// (esbuild reprints the services), the defect text, and the `navi:` assertion the integration must then fail with.
 export const MUTANTS = [
   { name: 'remove-domain-save', anchor: /await saveDraft\(\s*ownerId,\s*importId,\s*line,\s*saveBody,/g, replacement: 'await ((...a) => readDraft(a[0], a[1], a[2]))(ownerId, importId, line, saveBody,', expect: /navi:save-accepted-revision|navi:read-after-write/ },
   { name: 'cached-pre-write-read', anchor: /if \(definition\.effect === ["']read["']\)\s*return \{\s*name: definition\.name,\s*effect: ["']read["'],\s*result: await definition\.run\(scope, args, target, null\)\s*\};?/g, replacement: 'if (definition.effect === "read") { const readHash = sha(canonicalJson({ name: definition.name, args })); const cached = await FinanceActionOperation.findOne({ conversationKind: scope.kind, conversationId: scope.conversation._id, turnId: scope.turnId, payloadHash: readHash, "receipt.cachedResult": { $exists: true } }).lean(); if (cached) return { name: definition.name, effect: "read", result: cached.receipt.cachedResult }; const result = await definition.run(scope, args, target, null); await FinanceActionOperation.updateOne({ conversationKind: scope.kind, conversationId: scope.conversation._id, turnId: scope.turnId, slot: 1000 + body.slot }, { $setOnInsert: { ownerId: scope.agent.ownerId, operationId: sha(["read", scope.conversationId, scope.turnId, body.slot].join(":")).slice(0, 32), name: definition.name, payloadHash: readHash, state: "done", receipt: { cachedResult: result } } }, { upsert: true }); return { name: definition.name, effect: "read", result }; }', expect: /navi:read-after-write/ },
@@ -60,8 +70,14 @@ export const MUTANTS = [
   { name: 'drop-operation-history-marker', anchor: [/\.\.\.\(?\s*operation\s*\?\s*\{\s*operation\s*\}\s*:\s*\{\}\s*\)?/g, /h\.operation\?\.operationId\s*===\s*operation\.operationId/g], replacement: ['...{}', 'false'], expect: /navi:crash-after-write-reconciled|navi:crash-after-write-no-second-write/ },
   { name: 'ignore-lease-scope', anchor: /const lease = \{\s*lease:\s*body\.lease,\s*leaseUntil:\s*\{\s*\$gt:\s*(?:\/\*[^*]*\*\/\s*)?new Date\(\)\s*\}\s*\}/g, replacement: 'const lease = {}', expect: /navi:expired-lease-cannot-act|navi:expired-lease-cannot-replace-receipt/ },
   { name: 'remember-approves-draft', anchor: /const inserted\s*=\s*await insertMemoryEvent\(event\)/g, replacement: 'const inserted = await insertMemoryEvent(event); await FinanceDraft.updateOne({ ownerId, importId, line }, { $set: { approvedAt: new Date() } })', expect: /navi:remember-no-approval/ },
-  { name: 'lose-journal-receipts', anchor: /return \(await recoverRows\(kind, conversationId, rows\)\)\.map\(receiptOf\)/g, replacement: 'return []', expect: /navi:register-receipt/ }
+  { name: 'lose-journal-receipts', anchor: /return \(await recoverRows\(kind, conversationId, rows\)\)\.map\(receiptOf\)/g, replacement: 'return []', expect: /navi:register-receipt/ },
+  // The native job heartbeat drops its own deadline: a working purchase or owner-workspace job whose lease already expired is
+  // renewed (resurrected) by its old worker instead of refused.
+  { name: 'remove-heartbeat-expiry', anchor: /state:\s*["']working["'],\s*lease:\s*job\.lease,\s*leaseUntil:\s*\{\s*\$gt:\s*now\s*\},/g, replacement: 'state: "working", lease: job.lease,', expect: /navi:purchase-expired-not-resurrected/ }
 ];
+// The separately labeled controlled timing diagnostic (header): the copy's native job heartbeat waits a declared interval before it
+// reads the clock that both its deadline check and its renewal use. Applied only to a disposable packaged copy, like a defect.
+export const TIMING_DELAY = { name: 'induced-renewal-delay', delayMs: 1500, anchor: /const now = (?:\/\*[^*]*\*\/\s*)?new Date\(\), leaseUntil = new Date\(now\.getTime\(\) \+ 12e4\), model = job\.mode === ["']purchase["']/g, replacement: 'await new Promise((resolveDelay) => setTimeout(resolveDelay, 1500)); $&' };
 async function chunkFiles(dir) { const out = []; for (const entry of await readdir(dir, { withFileTypes: true })) { const full = path.join(dir, entry.name); if (entry.isDirectory()) out.push(...await chunkFiles(full)); else if (entry.name.endsWith('.mjs')) out.push(full); } return out; }
 async function applyMutant(outputDir, mutant) {
   const anchors = Array.isArray(mutant.anchor) ? mutant.anchor : [mutant.anchor], replacements = Array.isArray(mutant.replacement) ? mutant.replacement : [mutant.replacement];
@@ -78,7 +94,7 @@ async function applyMutant(outputDir, mutant) {
 
 export default {
   name: 'omf-navi-api-actions',
-  covers: BUILT ? [...PURE_COVERS, ...APP_COVERS] : PURE_COVERS,
+  covers: TIMING_DIAGNOSTIC ? [] : BUILT ? [...PURE_COVERS, ...APP_COVERS] : PURE_COVERS,
   async run() {
     const started = Date.now();
     const lines = [], setupFailures = [];
@@ -86,6 +102,24 @@ export default {
     const leg = async (name, fn) => { try { const note = await fn(); lines.push(`${name}: ok${note ? ' (' + note + ')' : ''}`); } catch (error) { pass = false; const text = String(error?.message || error).replace(/\s+/g, ' ').slice(0, 500); if (/^SETUP:|^NOT RUN:|Cannot find module|ERR_MODULE_NOT_FOUND/.test(text)) setupFailures.push(name); lines.push(`${name}: RED — ${text}`); } };
     const assert = (await import('node:assert/strict')).default;
     const env = { ...process.env, MONGO_URI: '', MONGODB_URI: '', NUXT_MONGO_URI: '' };
+
+    // Separately labeled controlled timing diagnostic (header): never a normal run, never coverage, always reported as a failure.
+    if (TIMING_DIAGNOSTIC) {
+      const base = path.join(REPO_ROOT, '.zoomer-renewal-timing');
+      let outcome = { diagnostic: 'controlled timing diagnostic; never a normal run, never coverage', inducedDelayMs: TIMING_DELAY.delayMs };
+      try {
+        if (!BUILT) throw new Error('NOT RUN: .output/server/index.mjs is missing');
+        await rm(base, { recursive: true, force: true }); await mkdir(base, { recursive: true });
+        for (const part of ['scripts', 'shared', 'collector/package.json']) await cp(path.join(REPO_ROOT, part), path.join(base, part), { recursive: true });
+        await cp(path.join(REPO_ROOT, '.output'), path.join(base, '.output'), { recursive: true, dereference: true });
+        const touched = await applyMutant(path.join(base, '.output'), TIMING_DELAY);
+        const r = await run([path.join(base, 'scripts/finance-integration.cjs')], { ...env, OMF_TEST_ASSISTANT_ONLY: '1' }, 900000, base);
+        const output = r.stdout + '\n' + r.stderr, done = r.stdout.match(/(\d+) targeted assistant checks passed/);
+        outcome = { ...outcome, touched, exit: r.killed ? 'timeout' : r.code, ms: r.ms, passes: r.passes.length, reproduced: r.code !== 0 && /navi:purchase-renewal-accepted\s+409 !== 200/.test(output), tolerated: r.code === 0 && !!done && Number(done[1]) === r.passes.length, failure: r.code === 0 ? null : integrationTail(r).slice(0, 1200) };
+      } catch (error) { outcome.setupError = String(error?.message || error).replace(/\s+/g, ' ').slice(0, 500); }
+      finally { await rm(base, { recursive: true, force: true }).catch(() => {}); }
+      return { pass: false, message: JSON.stringify({ ...outcome, limits: 'Induced 1500 ms wait inside the native job heartbeat of a disposable packaged copy only (the worktree build is untouched); owned synthetic app and MongoDB, no model, provider, network or production. Shows whether the positive renewal case depends on a short scheduling window; it is not evidence of the cause of the original unexplained navi:purchase-renewal-accepted failure and grants no coverage.' }) };
+    }
 
     // 1 proposal reference helpers: canonical hash, immutable identity, strict shape, no inferred latest report.
     await leg('1 proposal reference helpers', async () => {
@@ -196,18 +230,27 @@ export default {
       return `${summary[1]} tests, 0 failed`;
     });
 
-    // 5 mutants: each defect reintroduced into an isolated copy of the built output must make its named assertion fail.
+    // 5 mutants: an unmutated packaged copy must pass first (positive control); then each defect reintroduced into an isolated copy
+    // of the built output must make its named assertion fail.
     const mutantNotes = [];
     await leg('5 mutants flip their assertions', async () => {
       if (!integration || integration.code !== 0) throw new Error('NOT RUN: leg 3 is not green, mutants prove nothing');
       const base = path.join(REPO_ROOT, '.zoomer-mutants');
       await rm(base, { recursive: true, force: true }); await mkdir(base, { recursive: true });
       const transcript = [];
+      const packaged = async name => { const dir = path.join(base, name); for (const part of ['scripts', 'shared', 'collector/package.json']) await cp(path.join(REPO_ROOT, part), path.join(dir, part), { recursive: true }); await cp(path.join(REPO_ROOT, '.output'), path.join(dir, '.output'), { recursive: true, dereference: true }); return dir; };
       try {
+        {
+          const dir = await packaged('unmutated-packaged-control');
+          const r = await run([path.join(dir, 'scripts/finance-integration.cjs')], { ...env, OMF_TEST_ASSISTANT_ONLY: '1' }, 600000, dir);
+          const done = r.stdout.match(/(\d+) targeted assistant checks passed/), green = r.code === 0 && !!done && Number(done[1]) === r.passes.length && r.passes.length === integration.passes.length;
+          transcript.push(`=== unmutated-packaged-control exit ${r.code} green=${green} (${r.passes.length}/${integration.passes.length} legs)\n${integrationTail(r).slice(0, 1200)}\n`);
+          mutantNotes.push(`unmutated-packaged-control:${green ? 'green' : 'RED'}`);
+          if (!green) throw new Error(`the unmutated packaged control must pass before defects (exit ${r.code}, ${r.passes.length}/${integration.passes.length} legs): ${integrationTail(r).slice(0, 500)}`);
+          await rm(dir, { recursive: true, force: true });
+        }
         for (const mutant of MUTANTS) {
-          const dir = path.join(base, mutant.name);
-          for (const part of ['scripts', 'shared', 'collector/package.json']) await cp(path.join(REPO_ROOT, part), path.join(dir, part), { recursive: true });
-          await cp(path.join(REPO_ROOT, '.output'), path.join(dir, '.output'), { recursive: true, dereference: true });
+          const dir = await packaged(mutant.name);
           const touched = await applyMutant(path.join(dir, '.output'), mutant);
           const r = await run([path.join(dir, 'scripts/finance-integration.cjs')], { ...env, OMF_TEST_ASSISTANT_ONLY: '1' }, 600000, dir);
           const output = r.stdout + '\n' + r.stderr, flipped = r.code !== 0 && mutant.expect.test(output);
