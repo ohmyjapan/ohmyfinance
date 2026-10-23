@@ -38,7 +38,7 @@ The readiness audit of 2026-10-22 and its feature matrix are dated evidence and 
 | `receipts` | `/receipts`, record `/receipts/:id` | 3 read tools: list, detail, candidates | page, company receipt limits kept | Connected reads; upload, OCR, linking and deletion are a native dependency (B1) | `pages/receipts/index.vue`, `[id].vue`; company-scoped readers `server/api/receipts/index.ts` GET, `[id].ts`, `[id]/matches.ts`, `[id]/evidence.get.ts`, `library.get.ts`, `export.ts` | list filters and CSV of this company's receipts on the page |
 | `receipt-upload` | no link | unsupported | unsupported | Native dependency (B1) | `pages/receipts/upload.vue`; `server/api/receipts/upload.ts:52` writes the file, `:59` creates the receipt without `organizationId` (required, `server/models/Receipt.ts:97`); `[id]/match.ts` links by id without a company check; its delete reaches the read-only `[id].ts` | receipts library and the Navi receipt reads and candidates |
 | `vendors` | no link | unsupported | unsupported | Native dependency (B2) | `pages/vendors/index.vue`; `server/api/vendors/index.ts:20-52` lists every supplier and rebuilds supplier totals from every company's transactions, `:67` creates without a company; `vendors/[id].ts:19-51` unscoped | parties observed in this company's transactions (`list_company_transaction_choices`) |
-| `settings` | `/settings` | page | page | Person-required | `pages/settings/index.vue` | see Open items |
+| `settings` | `/settings` | page | page | Person-required | `pages/settings/index.vue` | display, currency and notification settings on the page |
 | `organization-settings` | `/settings/organization` (sensitive) | page; company profile read only | page | Person-required | `pages/settings/organization.vue` | members and roles per company |
 | `organization-switch` | none | unsupported | unsupported | By design | `pages/settings/organization/new.vue`, `join.vue` | the person switches company |
 | `security` | `/settings/security` (sensitive) | page | page | Person-required | `pages/settings/security.vue` | |
@@ -76,10 +76,14 @@ The readiness audit of 2026-10-22 and its feature matrix are dated evidence and 
 - B9 ambiguous unassigned old rows stay held; no backfill.
 - B5 the Viewer write policy is unchanged and awaits the owner.
 
-## Open items
+## Follow-up wording correction (2026-10-23)
 
-- The `settings` (一般設定) reason still says customer, supplier and category masters are set on that page. The page holds local display, currency and notification settings, browser-local categories, the company backup and restore and the CSV links; it has no customer or supplier master. The entry is a safe company page and was left unchanged here (not one of the five proved native lanes).
-- The Navi panel shows the same short note ("この画面で操作します") for every page that is not a Navi tool, including the five native-dependency pages; the reason is in its tooltip. The panel is unchanged here.
+The source audit in the initial six-path build recorded two misleading labels. This three-path follow-up corrects them without changing a feature disposition, route, tool or UI conditional:
+
+- The general settings reason now describes display, currency and notification settings, matching pages/settings/index.vue. It no longer promises customer or supplier master management.
+- components/finance/AssistantPanel.vue:13 keeps its existing fallback branch and uses the neutral 「この画面の相談」 for non-tool pages, including native dependencies. The full feature reason remains in its tooltip. The label does not claim that an unsupported operation is available.
+
+The original audit and six-path build report remain dated evidence. Their native dependencies, pending model tests and independent final review are still open.
 
 ## Evidence and limits
 
