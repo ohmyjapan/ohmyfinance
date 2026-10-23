@@ -337,8 +337,10 @@ enabled CDP sessions. The fictional confirm text only carries the two categories
 - Hub fixture `scripts/zoomer-fixtures/omf-paypay-logout.mjs`: fail-first on `1284d40`; mutants G-M1…G-M8 plus the legacy C-M1…C-M18
   and L-M1…L-M8; the staged package.
 
-**Live limits.** Not deployed. A positive post-logout page in the real bank, and whether it prevents the next in-use page (O7), are
-unmeasured. The four-account acceptance and the mapping/import of the retained originals are open.
+**Live acceptance.** The source tests do not establish a positive post-logout page in the real bank or whether the next login avoids
+the in-use page (O7); those require a separate operator check after activation. Four-account routine acceptance is also a separate
+deployment check. For current import status, inspect the retained originals in OMF: first-capture receipts keep their frozen original
+interpretation and may still show a review state after their rows have subsequently been imported through the mapping workflow.
 
 ## Overlapping captures (plan `omf-paypay-routine-20261022` Phase S; PayPay銀行 and 楽天銀行)
 
