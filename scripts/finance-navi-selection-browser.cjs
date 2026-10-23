@@ -14,7 +14,7 @@ function prepareBrowser(){
  try{preparedBrowser=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core')}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;preparedBrowser=createRequire(path.resolve(root,'../collector/package.json'))('rebrowser-puppeteer-core')}
  return preparedBrowser;
 }
-const GUI=['gui-consult','gui-lifecycle','gui-view','gui-delete','gui-missing'];
+const GUI=['gui-consult','gui-lifecycle','gui-view','gui-delete','gui-missing','gui-pending','gui-received'];
 module.exports=async ctx=>{
  const {origin,call,ok,register,company,switchTo,card,workerOf,beat,claim,answered,act,send,conversation,invoice,budget,recurring,payment,issuerBill,localDay,pause,hex32,pass,seen,wants,group,orgs,member,COMPANY,timing,SETUP_READY_MS,db}=ctx;
  if(!GUI.some(wants))return;
@@ -527,6 +527,220 @@ module.exports=async ctx=>{
    assert.equal(n.composer,'UNKNOWN_THEN_MISSING_TEXT','gui:unknown-then-missing-kept');assert.equal(await turnsWith(GA,'UNKNOWN_THEN_MISSING_TEXT'),0,'SETUP still never stored');seen('gui|unknown-then-missing');
    await closeNavi();
    pass('missing target: one marked refusal of a first attempt releases only that request with the text kept and the next send accepted once; a lost reply, another tab\'s pending question and new chat, and an unknown earlier attempt keep the request');
+  });
+
+  // Shared by groups 7 and 8 (plan omf-navi-agent-pending-exit-20261023): the store's uncertain request ids, the company New chat
+  // button, the archived turn History marks, another real tab of this session, and an induced lost FIRST copy of a send (the test fails
+  // the browser's request before it reaches the server: a network failure the test causes, so that request was never accepted; no
+  // duplicate or production failure is claimed).
+  const pendingNow=()=>page.evaluate(()=>Object.values(document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('assistant').pending).map(p=>p.id));
+  const newChatButton=()=>page.$eval('#omf-assistant [data-assistant-new-chat]',e=>({disabled:e.disabled}));
+  const pressNewChat=async()=>{await until(async()=>!(await newChatButton()).disabled,'SETUP New chat enabled',20000,describeNavi);await press('#omf-assistant [data-assistant-new-chat]')};
+  const archivedTurnShown=()=>page.evaluate(()=>{const t=document.querySelector('#omf-assistant [data-archived-request]');return t?{text:t.textContent,states:[...t.querySelectorAll('[data-archived-action-state]')].map(e=>e.getAttribute('data-archived-action-state'))}:null});
+  const receivedShown=async()=>{const v=await navi();return v.view==='history'&&await page.$('#omf-assistant [data-assistant-received]')?v:null};
+  const transcriptHas=text=>page.evaluate(text=>!!document.querySelector('#omf-assistant [role=log]')?.textContent.includes(text),text);
+  // SETUP the open conversation's next real read (its 4 s poll) has completed, so the next press carries the current revision.
+  const freshRead=async label=>{await page.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname===COMPANY&&r.status()===200,{timeout:30000}).catch(()=>assert.fail('SETUP conversation read after '+label));await pause(500)};
+  // The failed attempt is over when the send control is usable again with the request kept (its error text can be replaced by the next
+  // successful 4 s read, so the test does not wait for that text).
+  const settledUncertain=async label=>until(async()=>{const v=await navi();return !v.sendDisabled&&v.send==='送信結果を確認'?v:null},label,20000,describeNavi);
+  const dropFirstCopy=async label=>{await beat(WG);await until(async()=>!(await navi()).sendDisabled,'SETUP send enabled '+label,30000,describeNavi);
+   await page.setRequestInterception(true);let drop=true;const onDrop=r=>{let x;try{x=new URL(r.url())}catch{}if(drop&&r.method()==='POST'&&x?.pathname===COMPANY){drop=false;r.abort('failed').catch(()=>{});return}r.continue().catch(()=>{})};page.on('request',onDrop);
+   try{await press('#omf-assistant [data-assistant-send]');await until(async()=>!drop,'SETUP the first copy was failed '+label,20000,describeNavi);return await settledUncertain('SETUP induced lost first copy '+label)}
+   finally{page.off('request',onDrop);await page.setRequestInterception(false)}};
+  const pendingTab=async()=>{const tab=await browser.newPage();await tab.goto(origin+'/budgets',{waitUntil:'networkidle2',timeout:SETUP_READY_MS});await tab.waitForFunction(()=>!!document.querySelector('[data-assistant-toggle]'),{timeout:SETUP_READY_MS});await page.bringToFront();return tab};
+  const switchTab=async(tab,org)=>{await tab.evaluate(async organizationId=>{const user=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user');const r=await fetch('/api/auth/switch-organization',{method:'POST',headers:{...user.authHeader,'Content-Type':'application/json'},body:JSON.stringify({organizationId})});if(!r.ok)throw Error('Synthetic switch '+r.status);const s=await r.json();const p=await fetch('/api/auth/me',{headers:{Authorization:'Bearer '+s.tokens.accessToken}});user.acceptSession({...await p.json(),tokens:s.tokens},false)},String(org))};
+
+  // 7. An uncertain company send recovered through the existing New chat. The first copy of a send is lost before the server (induced),
+  //    another member removes its selected record, and the next attempt meets the marked refusal: the request stays uncertain (the
+  //    original witness). A successful New chat archives the answered conversation AND answers for exactly that request: never accepted,
+  //    fenced, released; the typed text stays and nothing is sent until the person sends. The recovery hint names New chat; an empty
+  //    and an absent conversation keep the New chat entry point for an uncertain request; the closed status stays quiet; a refused New
+  //    chat (busy) keeps the request; an ordinary New chat is unchanged.
+  await group('gui-pending',async()=>{
+   const t=await tokens(),GC=await company('gui-c','Synthetic selection GUI C',[member(G,'owner'),member(M,'member')]),GD=await company('gui-d','Synthetic selection GUI D',[member(G,'owner')]);
+   const gc=await switchTo(G,GC),mc=await switchTo(M,GC),gd=await switchTo(G,GD);
+   const gone1=await recurring(gc,'PENDING WITNESS RECURRING'),gone2=await recurring(gc,'PENDING EMPTY RECURRING');
+   await viewport({width:1365,height:900});await adopt(GC);await visit('/recurring');await closeNavi();await openNavi();
+   await until(async()=>(await navi()).company.includes('Synthetic selection GUI C'),'SETUP company C conversation',20000,describeNavi);
+   // SETUP an answered conversation (the witness had one).
+   await say('PENDING_PRIOR_TEXT',GC);await consultedJob({page:'recurring'},'SETUP prior claim');await until(()=>transcriptHas('GUI synthetic reply'),'SETUP prior reply shown',30000);
+   // An uncertain request of a consulted record: lost first copy, the record removed, the retried attempt refused with the mark.
+   const stuck=async(record,label,text)=>{const action=consultOf('recurring',record);await waitFor(s=>!!document.querySelector(s),[action],'SETUP recurring rows');await activate(action,'mouse');await chip(label);await setComposer(text);
+    await dropFirstCopy(text);assert.equal(await turnsWith(GC,text),0,'SETUP the first copy never reached the server');const first=await pendingNow();assert.equal(first.length,1,'SETUP one uncertain request '+JSON.stringify(first));
+    await ok('/api/recurring/'+record,mc,'DELETE');// another member removes it (native route)
+    const refused=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===COMPANY,{timeout:30000});
+    await press('#omf-assistant [data-assistant-send]');const answer=await refused,marked=await answer.json().catch(()=>null);
+    assert.deepEqual([answer.status(),marked?.data?.selectedRecordMissing],[404,true],'SETUP the retried request meets the marked refusal');
+    const n=await settledUncertain('SETUP the retried request meets the marked refusal');
+    assert.deepEqual(await pendingNow(),first,'SETUP the uncertain request is kept');assert.equal(n.send,'送信結果を確認','SETUP the uncertain request is kept '+JSON.stringify(n));return first[0]};
+   // (a) The witness: New chat on the answered conversation.
+   const witnessId=await stuck(gone1,'PENDING WITNESS RECURRING','PENDING_WITNESS_TEXT');
+   const before=await conversation(G,GC);assert.ok(before.turns.length>0,'SETUP the answered conversation exists');
+   const resetReply=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===COMPANY+'/new',{timeout:30000});
+   await pressNewChat();assert.equal((await resetReply).status(),200,'SETUP the New chat succeeded');
+   await until(async()=>{const c=await conversation(G,GC);return c?.segment===(before.segment||0)+1&&c.turns.length===0},'SETUP archived and emptied',30000);
+   await until(()=>page.evaluate(()=>document.querySelectorAll('#omf-assistant [data-workspace-turn]').length===0),'SETUP this tab shows the new chat',30000);await pause(1000);
+   let n=await navi();const after=await conversation(G,GC),pendingAfter=await pendingNow();
+   console.log('PENDING_EXIT_WITNESS '+JSON.stringify({before:{revision:before.revision,segment:before.segment||0,turns:before.turns.length,pending:[witnessId]},after:{revision:after.revision,segment:after.segment,turns:after.turns.length,pending:pendingAfter,composer:n.composer,send:n.send},newChatDisabled:(await newChatButton()).disabled,witnessTextStored:await turnsWith(GC,'PENDING_WITNESS_TEXT')}));
+   assert.deepEqual(pendingAfter,[],'gui:witness-reset-releases '+JSON.stringify({pendingAfter,send:n.send}));assert.equal(n.send,'送信','gui:witness-reset-releases '+JSON.stringify(n));
+   assert.equal(n.composer,'PENDING_WITNESS_TEXT','gui:witness-text-kept '+JSON.stringify(n));
+   await pause(3000);assert.equal(await turnsWith(GC,'PENDING_WITNESS_TEXT'),0,'gui:no-automatic-resend');assert.equal((await conversation(G,GC)).revision,after.revision,'gui:no-automatic-resend');seen('gui|pending-witness');
+   // (b) An empty live segment: another uncertain request. The recovery hint names New chat, which stays available with no turns, fences
+   //     and releases it; the typed text stays, nothing is sent, the closed status is quiet. Only an explicit send sends it, once.
+   await stuck(gone2,'PENDING EMPTY RECURRING','PENDING_EMPTY_TEXT');
+   const hint=await page.$eval('#omf-assistant',p=>p.querySelector('[data-assistant-pending-hint]')?.textContent||'');assert.ok(hint.includes('新しい会話'),'gui:pending-recovery-hint '+JSON.stringify(hint));
+   const emptyBefore=await conversation(G,GC);assert.equal(emptyBefore.turns.length,0,'SETUP empty live segment');
+   const entry=await newChatButton();assert.equal(entry.disabled,false,'gui:empty-new-chat-entry '+JSON.stringify(entry));
+   await press('#omf-assistant [data-assistant-new-chat]');
+   n=await until(async()=>{const v=await navi();return v.send==='送信'?v:null},'gui:fenced-pending-released',20000,describeNavi);
+   assert.deepEqual(await pendingNow(),[],'gui:fenced-pending-released');assert.equal(n.composer,'PENDING_EMPTY_TEXT','gui:fenced-raw-text-kept '+JSON.stringify(n));
+   const fenced=await conversation(G,GC);assert.ok(fenced.revision>emptyBefore.revision&&fenced.segment===emptyBefore.segment&&fenced.turns.length===0,'gui:fence-recorded '+JSON.stringify({before:emptyBefore.revision,after:fenced.revision,segment:fenced.segment}));
+   const status=await ok(COMPANY+'/status',gc);assert.deepEqual([status.replies?.unread,status.conversation?.state],[0,'idle'],'gui:fence-status-quiet '+JSON.stringify(status));
+   await pause(3000);assert.equal(await turnsWith(GC,'PENDING_EMPTY_TEXT'),0,'gui:no-automatic-resend');
+   await press('#omf-assistant [data-assistant-selection-clear]');await until(async()=>(await navi()).chip===null,'SETUP target cleared');
+   await beat(WG);await press('#omf-assistant [data-assistant-send]');await until(async()=>(await navi()).composer==='','gui:fenced-explicit-send-once',20000,describeNavi);
+   assert.equal(await turnsWith(GC,'PENDING_EMPTY_TEXT'),1,'gui:fenced-explicit-send-once');await consultedJob({page:'recurring'},'SETUP explicit send claim');seen('gui|pending-empty');
+   // (c) An absent conversation (company D, nothing ever stored): an uncertain first send; New chat is available, fences and releases it.
+   await closeNavi();await adopt(GD);await visit('/calendar');await closeNavi();await openNavi();
+   await until(async()=>(await navi()).company.includes('Synthetic selection GUI D'),'SETUP company D conversation',20000,describeNavi);
+   await setComposer('PENDING_ABSENT_TEXT');await dropFirstCopy('absent');assert.equal(await conversation(G,GD),null,'SETUP no company D conversation');
+   const absentEntry=await newChatButton();assert.equal(absentEntry.disabled,false,'gui:empty-new-chat-entry absent '+JSON.stringify(absentEntry));
+   await press('#omf-assistant [data-assistant-new-chat]');
+   n=await until(async()=>{const v=await navi();return v.send==='送信'?v:null},'gui:fenced-pending-released absent',20000,describeNavi);
+   assert.deepEqual(await pendingNow(),[],'gui:fenced-pending-released absent');assert.equal(n.composer,'PENDING_ABSENT_TEXT','gui:fenced-raw-text-kept absent '+JSON.stringify(n));
+   const fencedD=await conversation(G,GD);assert.ok(fencedD&&fencedD.revision>0&&fencedD.turns.length===0,'gui:fence-recorded absent');
+   await pause(3000);assert.equal(await turnsWith(GD,'PENDING_ABSENT_TEXT'),0,'gui:no-automatic-resend absent');seen('gui|pending-absent');
+   // (d) A refused New chat keeps the uncertain request and its text: another tab's question was queued after this tab's last read (its
+   //     reads are held, so it still offers New chat) and the server refuses that New chat. After the answer the same request is sent once.
+   await setComposer('PENDING_REFUSED_TEXT');await dropFirstCopy('refused');const refusedIds=await pendingNow();
+   await page.setRequestInterception(true);const heldReads=[];let holding=true;
+   const onHold=r=>{let u;try{u=new URL(r.url())}catch{}if(holding&&r.method()==='GET'&&u?.pathname===COMPANY){heldReads.push(r);return}r.continue().catch(()=>{})};page.on('request',onHold);
+   try{
+    const other=await send(gd,'GUI pending another tab question',{page:'calendar'});assert.equal(other.r.status,200,'SETUP another tab question '+other.r.raw.slice(0,200));
+    const refusal=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===COMPANY+'/new',{timeout:30000});
+    await press('#omf-assistant [data-assistant-new-chat]');assert.equal((await refusal).status(),409,'SETUP the New chat was refused while answering');
+    n=await settledUncertain('SETUP the refused New chat settled');
+    assert.deepEqual(await pendingNow(),refusedIds,'gui:refused-reset-keeps-pending');assert.equal(n.send,'送信結果を確認','gui:refused-reset-keeps-pending '+JSON.stringify(n));assert.equal(n.composer,'PENDING_REFUSED_TEXT','gui:refused-reset-keeps-pending');
+   }finally{holding=false;page.off('request',onHold);for(const r of heldReads)await r.continue().catch(()=>{});await page.setRequestInterception(false)}
+   const otherJob=await claim(WG,'SETUP another tab claim');await answered(WG,otherJob,'GUI_PENDING_OTHER_REPLY');
+   await until(async()=>{const v=await navi();return !v.sendDisabled&&!v.composerDisabled&&await transcriptHas('GUI_PENDING_OTHER_REPLY')},'SETUP this tab sees the answer',30000,describeNavi);
+   await beat(WG);await press('#omf-assistant [data-assistant-send]');await until(async()=>(await navi()).composer==='','gui:refused-reset-later-send-once',20000,describeNavi);
+   assert.equal(await turnsWith(GD,'PENDING_REFUSED_TEXT'),1,'gui:refused-reset-later-send-once');await consultedJob({page:'calendar'},'SETUP refused-request claim');seen('gui|pending-refused');
+   // (e) An ordinary New chat (no uncertain request) archives the answered conversation as before and leaves the composer alone.
+   await until(()=>transcriptHas('GUI synthetic reply'),'SETUP the reply shown',30000);
+   const ordinary=await conversation(G,GD);await setComposer('ORDINARY_UNSENT');await pressNewChat();
+   await until(async()=>{const c=await conversation(G,GD);return c.segment===(ordinary.segment||0)+1&&c.turns.length===0},'gui:ordinary-new-chat',30000);
+   await until(()=>page.evaluate(()=>document.querySelectorAll('#omf-assistant [data-workspace-turn]').length===0),'gui:ordinary-new-chat shown',30000);
+   n=await navi();assert.equal(n.view,'chat','gui:ordinary-new-chat '+JSON.stringify(n));assert.equal(n.composer,'ORDINARY_UNSENT','gui:ordinary-new-chat composer');assert.deepEqual(await pendingNow(),[],'gui:ordinary-new-chat');
+   await setComposer('');await closeNavi();await adopt(GA);seen('gui|ordinary-new-chat');
+   pass('uncertain send: New chat answers for exactly that request (the witness: the answered conversation archived and the request fenced and released), the recovery hint, New chat on empty and absent conversations, typed text kept, nothing resent, a quiet status, a refused New chat keeps the request, and an ordinary New chat is unchanged');
+  });
+
+  // 8. Accepted requests and lost replies. The server accepts a send whose reply the browser loses (the test forwards the browser's own
+  //    request, then fails the browser's copy); a simulated worker saves one internal calendar plan and answers; another tab's New chat
+  //    archives it before this tab reads it (this tab's reads are held). The request is then recognised from the archive: by "send result
+  //    check" with an edited composer (the edited text kept) or by New chat with the unchanged composer (that text cleared), each showing
+  //    the actual archived turn and receipt in History, never sent again. A lost New chat reply keeps the request (also across a
+  //    same-identity token refresh), and the next New chat reuses the frozen reset id and request identity; its answer never resolves a
+  //    newer uncertain request. A New chat answer arriving after another tab switched company resolves nothing; back in that company the
+  //    request is still uncertain and New chat resolves it.
+  await group('gui-received',async()=>{
+   const t=await tokens(),GE=await company('gui-e','Synthetic selection GUI E',[member(G,'owner')]),ge=await switchTo(G,GE);
+   await viewport({width:1365,height:900});await adopt(GE);await visit('/calendar');await closeNavi();await openNavi();
+   await until(async()=>(await navi()).company.includes('Synthetic selection GUI E'),'SETUP company E conversation',20000,describeNavi);
+   const acceptedThenArchived=async(text,plan,reply)=>{
+    await beat(WG);await setComposer(text);await until(async()=>!(await navi()).sendDisabled,'SETUP send enabled',30000,describeNavi);
+    await page.setRequestInterception(true);let lose=true,lost=null,aborted=false,holding=true;const held=[];
+    const on=async r=>{let u;try{u=new URL(r.url())}catch{}if(holding&&r.method()==='GET'&&u?.pathname===COMPANY){held.push(r);return}
+     if(lose&&r.method()==='POST'&&u?.pathname===COMPANY){lose=false;const h=r.headers();const f=await fetch(r.url(),{method:'POST',headers:{'content-type':'application/json',authorization:h.authorization},body:r.postData()});lost=f.status;await r.abort('failed').catch(()=>{});aborted=true;return}
+     r.continue().catch(()=>{})};
+    page.on('request',on);
+    try{
+     await press('#omf-assistant [data-assistant-send]');await until(async()=>aborted,'SETUP the lost reply failed in the browser',20000,describeNavi);const v=await settledUncertain('SETUP the lost reply settled in the browser');
+     assert.equal(lost,200,'SETUP the server accepted the request');assert.equal(v.send,'送信結果を確認','SETUP the accepted request is uncertain in this tab '+JSON.stringify(v));
+     const job=await claim(WG,'SETUP accepted claim');assert.equal(job.text,text,'SETUP the accepted request was claimed');
+     const made=await act(WG,job,'create_company_calendar_entry',{title:plan,amount:900,currency:'JPY',dueDate:localDay(),type:'expense',category:'事務費'},1);assert.equal(made.status,200,'SETUP plan '+made.raw.slice(0,200));await answered(WG,job,reply);
+     const live=await ok(COMPANY,ge);const archived=await ok(COMPANY+'/new',ge,'POST',{chatRevision:live.conversation.revision,requestId:hex32()});assert.equal(archived.conversation.turns.length,0,'SETUP another tab archived it');
+    }finally{holding=false;page.off('request',on);const next=freshRead('the other tab archived it');for(const r of held)await r.continue().catch(()=>{});await page.setRequestInterception(false);await next}
+    await until(()=>page.evaluate(()=>document.querySelectorAll('#omf-assistant [data-workspace-turn]').length===0),'SETUP this tab shows the new chat',30000);await pause(1000);
+    const v=await navi();assert.equal(v.send,'送信結果を確認','SETUP still uncertain after the other tab archived it '+JSON.stringify(v));const ids=await pendingNow();assert.equal(ids.length,1,'SETUP one uncertain request');return ids[0]};
+   // (a) "Send result check" with an edited composer: recognised from the archive, History shows the archived turn and receipt.
+   const first=await acceptedThenArchived('RECEIVED_EDITED_TEXT','RECEIVED_EDITED_PLAN','RECEIVED_EDITED_REPLY');
+   await setComposer('RECEIVED_EDITED_LATER');await press('#omf-assistant [data-assistant-send]');
+   let n=await until(receivedShown,'gui:accepted-archived-recognised',20000,describeNavi);
+   assert.deepEqual(await pendingNow(),[],'gui:accepted-archived-recognised released');
+   let shownTurn=await until(archivedTurnShown,'gui:archived-receipt-shown',10000,describeNavi);
+   assert.ok(shownTurn.text.includes('RECEIVED_EDITED_TEXT')&&shownTurn.text.includes('RECEIVED_EDITED_REPLY')&&shownTurn.states.join()==='done','gui:archived-receipt-shown '+JSON.stringify(shownTurn));
+   await press('#omf-assistant [data-assistant-view="chat"]');n=await until(async()=>{const v=await navi();return v.view==='chat'&&v.composer!==null?v:null},'SETUP chat view',10000,describeNavi);
+   assert.equal(n.composer,'RECEIVED_EDITED_LATER','gui:accepted-edited-text-kept '+JSON.stringify(n));assert.equal(n.send,'送信','gui:accepted-archived-recognised '+JSON.stringify(n));
+   await pause(2000);let conv=await conversation(G,GE);assert.equal(conv.turns.filter(x=>x.id===first).length,0,'gui:accepted-not-resent');assert.ok(!['queued','working'].includes(conv.state),'gui:accepted-not-resent');
+   assert.equal(await db.collection('payments').countDocuments({title:'RECEIVED_EDITED_PLAN'}),1,'gui:accepted-not-resent');seen('gui|received-send');
+   // (b) New chat with the unchanged composer (no turns shown; the uncertain request keeps the entry point): accepted from the archive,
+   //     the unchanged text cleared, the archived turn and receipt shown, nothing resent.
+   await acceptedThenArchived('RECEIVED_RESET_TEXT','RECEIVED_RESET_PLAN','RECEIVED_RESET_REPLY');
+   assert.equal((await newChatButton()).disabled,false,'gui:empty-new-chat-entry accepted');
+   await press('#omf-assistant [data-assistant-new-chat]');
+   n=await until(receivedShown,'gui:reset-accepted-history-shown',20000,describeNavi);
+   shownTurn=await until(archivedTurnShown,'gui:reset-accepted-history-shown turn',10000,describeNavi);assert.ok(shownTurn.text.includes('RECEIVED_RESET_TEXT')&&shownTurn.text.includes('RECEIVED_RESET_REPLY')&&shownTurn.states.join()==='done','gui:reset-accepted-history-shown '+JSON.stringify(shownTurn));
+   assert.deepEqual(await pendingNow(),[],'gui:reset-accepted-released');
+   await press('#omf-assistant [data-assistant-view="chat"]');n=await until(async()=>{const v=await navi();return v.view==='chat'&&v.composer!==null?v:null},'SETUP chat view',10000,describeNavi);
+   assert.equal(n.composer,'','gui:reset-accepted-unchanged-text-cleared '+JSON.stringify(n));
+   await pause(2000);conv=await conversation(G,GE);assert.equal(conv.turns.length,0,'gui:accepted-not-resent reset');assert.equal(await db.collection('payments').countDocuments({title:'RECEIVED_RESET_PLAN'}),1,'gui:accepted-not-resent reset');seen('gui|received-reset');
+   // (c) A lost New chat reply (the server fenced the request; the test fails the browser's copy) keeps the request, also across a
+   //     same-identity token refresh. The person then sends it ("send result check"): never accepted before, so this is its one
+   //     acceptance. A newer uncertain request p2 follows; the next New chat sends the frozen reset id and p1's identity again, and its
+   //     answer (p1 accepted) never resolves p2. A later New chat (a new reset id) answers for p2: not accepted, released, text kept.
+   //     Exactly one interceptor owns each induced loss: the lost New chat's interceptor ends as soon as that reply is lost, p2's lost first
+   //     copy has its own (dropFirstCopy), and the retried New chat is only observed (waitForRequest), never intercepted. (2026-10-23: an
+   //     earlier version kept the New chat interceptor active around dropFirstCopy; puppeteer runs request listeners in registration order
+   //     and a priority-less continue() marks the request handled at once, so the outer listener continued p2's send before the inner one
+   //     could fail it, and the server accepted p2: full-02's SETUP failure, a test fault.)
+   await setComposer('RECEIVED_LOST_RESET_TEXT');await dropFirstCopy('lost reset');const p1=(await pendingNow())[0];
+   let lostBody=null,lostReset=null,resetAborted=false;
+   const onReset=async r=>{let u;try{u=new URL(r.url())}catch{}if(!lostBody&&r.method()==='POST'&&u?.pathname===COMPANY+'/new'){lostBody=JSON.parse(r.postData()||'{}');const h=r.headers();const f=await fetch(r.url(),{method:'POST',headers:{'content-type':'application/json',authorization:h.authorization},body:r.postData()});lostReset={status:f.status,body:await f.json().catch(()=>null)};await r.abort('failed').catch(()=>{});resetAborted=true;return}r.continue().catch(()=>{})};
+   await page.setRequestInterception(true);page.on('request',onReset);
+   try{
+    await pressNewChat();await until(async()=>resetAborted,'SETUP the lost New chat reply failed in the browser',20000,async()=>JSON.stringify({navi:await navi().catch(e=>String(e)),newChat:await newChatButton().catch(e=>String(e)),pending:await pendingNow().catch(e=>String(e)),lostBody,lostReset}));
+    n=await settledUncertain('SETUP the lost New chat settled in the browser');
+   }finally{page.off('request',onReset);await page.setRequestInterception(false)}
+   assert.equal(lostReset.status,200,'SETUP the server answered the lost New chat '+JSON.stringify(lostReset));assert.equal(lostReset.body?.reset?.pending?.outcome,'not_accepted','SETUP the server fenced the request '+JSON.stringify(lostReset.body?.reset));
+   assert.deepEqual(await pendingNow(),[p1],'gui:lost-reset-pending-kept');assert.equal(n.send,'送信結果を確認','gui:lost-reset-pending-kept '+JSON.stringify(n));
+   const refreshed=await page.evaluate(async()=>{const user=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user'),claims=t=>JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))),before=user.token,result=await user.refreshAuthToken();return{result,changed:before!==user.token,same:claims(before).userId===claims(user.token).userId&&claims(before).organizationId===claims(user.token).organizationId}});
+   assert.deepEqual(refreshed,{result:'refreshed',changed:true,same:true},'SETUP same-identity token refresh '+JSON.stringify(refreshed));await pause(1500);
+   assert.deepEqual(await pendingNow(),[p1],'gui:refresh-keeps-pending');assert.equal((await navi()).send,'送信結果を確認','gui:refresh-keeps-pending');
+   await freshRead('the lost New chat');await beat(WG);await press('#omf-assistant [data-assistant-send]');await until(async()=>(await navi()).composer==='','SETUP the request accepted once',20000,describeNavi);
+   assert.equal(await turnsWith(GE,'RECEIVED_LOST_RESET_TEXT'),1,'SETUP the request accepted once');assert.deepEqual(await pendingNow(),[],'SETUP the request resolved');
+   const p1Job=await claim(WG,'SETUP p1 claim');assert.equal(p1Job.text,'RECEIVED_LOST_RESET_TEXT','SETUP p1 claimed');await answered(WG,p1Job,'RECEIVED_P1_REPLY');
+   await until(async()=>{const v=await navi();return !v.composerDisabled&&await transcriptHas('RECEIVED_P1_REPLY')},'SETUP idle again',30000,describeNavi);
+   await setComposer('RECEIVED_SECOND_TEXT');await dropFirstCopy('second');const p2=(await pendingNow())[0];assert.notEqual(p2,p1,'SETUP a different request');
+   assert.equal(await turnsWith(GE,'RECEIVED_SECOND_TEXT'),0,'SETUP the first copy of p2 never reached the server');
+   const retriedRequest=page.waitForRequest(r=>r.method()==='POST'&&new URL(r.url()).pathname===COMPANY+'/new',{timeout:30000}),retriedAnswer=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===COMPANY+'/new',{timeout:30000});
+   await pressNewChat();const retried=JSON.parse((await retriedRequest).postData()||'{}');assert.equal((await retriedAnswer).status(),200,'SETUP the retried New chat answered');
+   assert.deepEqual([retried.requestId,retried.pending?.requestId,retried.pending?.text],[lostBody.requestId,p1,'RECEIVED_LOST_RESET_TEXT'],'gui:lost-reset-same-identity '+JSON.stringify({lost:lostBody,retried}));
+   await pause(1500);n=await navi();assert.deepEqual(await pendingNow(),[p2],'gui:other-pending-kept '+JSON.stringify(n));assert.equal(n.send,'送信結果を確認','gui:other-pending-kept '+JSON.stringify(n));assert.equal(n.composer,'RECEIVED_SECOND_TEXT','gui:other-pending-kept');
+   await pressNewChat();n=await until(async()=>{const v=await navi();return v.send==='送信'?v:null},'gui:later-reset-resolves',20000,describeNavi);
+   assert.deepEqual(await pendingNow(),[],'gui:later-reset-resolves');assert.equal(n.composer,'RECEIVED_SECOND_TEXT','gui:later-reset-resolves text '+JSON.stringify(n));
+   await pause(2000);assert.equal(await turnsWith(GE,'RECEIVED_SECOND_TEXT'),0,'gui:no-automatic-resend lost reset');seen('gui|received-lost-reset');
+   // (d) A New chat answer arriving after another tab switched company resolves nothing; back in company E the request is still
+   //     uncertain, and a New chat there resolves it.
+   await setComposer('RECEIVED_SWITCH_TEXT');await dropFirstCopy('switch');const p3=await pendingNow();
+   const tab=await pendingTab();let heldReset=null,onHoldReset=null;
+   try{
+    try{
+     await page.setRequestInterception(true);onHoldReset=r=>{let x;try{x=new URL(r.url())}catch{}if(!heldReset&&r.method()==='POST'&&x?.pathname===COMPANY+'/new'){heldReset=r;return}r.continue().catch(()=>{})};page.on('request',onHoldReset);
+     await pressNewChat();await until(async()=>!!heldReset,'SETUP the New chat request is held',20000);
+     await switchTab(tab,GB);await until(async()=>(await navi()).company.includes('Synthetic selection GUI B'),'SETUP this tab follows the other tab to company B',20000,describeNavi);
+     const release=heldReset;heldReset={done:true};const reply=page.waitForResponse(r=>r.request()===release,{timeout:30000});await release.continue();const resp=await reply;
+     assert.equal(resp.status(),200,'SETUP the company E New chat completed');assert.equal((await resp.json())?.reset?.pending?.outcome,'not_accepted','SETUP the server fenced the company E request');await pause(1500);
+    }finally{if(onHoldReset)page.off('request',onHoldReset);if(heldReset&&!heldReset.done)await heldReset.continue().catch(()=>{});await page.setRequestInterception(false)}
+    await switchTab(tab,GE);await until(async()=>(await navi()).company.includes('Synthetic selection GUI E'),'SETUP this tab follows the other tab back to company E',20000,describeNavi);await pause(1500);
+    n=await navi();assert.deepEqual(await pendingNow(),p3,'gui:switched-response-not-applied '+JSON.stringify(n));assert.equal(n.send,'送信結果を確認','gui:switched-response-not-applied '+JSON.stringify(n));assert.equal(n.composer,'RECEIVED_SWITCH_TEXT','gui:switched-response-not-applied');
+   }finally{await tab.close().catch(()=>{})}
+   await pressNewChat();n=await until(async()=>{const v=await navi();return v.send==='送信'?v:null},'gui:switched-later-reset-resolves',20000,describeNavi);
+   assert.deepEqual(await pendingNow(),[],'gui:switched-later-reset-resolves');assert.equal(n.composer,'RECEIVED_SWITCH_TEXT','gui:switched-later-reset-resolves text');
+   await setComposer('');await closeNavi();await adopt(GA);seen('gui|received-switch');
+   pass('accepted and lost replies: an archived accepted request is recognised by send result check (edited text kept) or by New chat (unchanged text cleared) with its archived turn and receipt shown and nothing resent; a lost New chat reply keeps the request across a same-identity refresh, the next New chat reuses the frozen reset id and request identity and never resolves a newer request; an answer after a company switch resolves nothing');
   });
   assert.deepEqual(errors,[],'gui:no-runtime-errors');
  }catch(error){failure=error}

@@ -1,7 +1,7 @@
 import { getCompanyNaviTransaction, listCompanyNaviTransactions, companyTransactionChoices, companyTransactionPatterns } from './companyTransactionAssistantService'
 import { companyActionReceipt, companyActionReceipts, companyConversationActionReceipts, reconcileCompanyActions, updateCompanyCalendarAction, updateCompanyInvoiceAction, updateCompanyTransactionAction, companyKnowledgeAction, companyKnowledgeActions } from './financeCompanyActionService'
 import { listCompanyKnowledge, relevantCompanyKnowledge, getCompanyKnowledgeItem } from './companyKnowledgeService'
-import { startNewCompanyConversation, listCompanyConversationArchives, getCompanyConversationArchive } from './companyConversationHistoryService'
+import { startNewCompanyConversation, listCompanyConversationArchives, getCompanyConversationArchive, findCompanyReceivedRequest } from './companyConversationHistoryService'
 import { publicResearchCapabilityOf, prepareRegistry, capturePublicSource, listPublicSources, readPublicSource, resolveCompanyCitations, turnPublicSources, companyPublicSourceDetail, todayJst } from './companyPublicResearchService'
 import { validateCompanyAssistantReply, findNaviFeatures, naviFeature } from '../../shared/finance-navi-features.mjs'
 import { companyBusinessTools, businessToolMeta, businessWriteNames, companyNaviPage, transactionEditAdditions, invoiceEditAdditions, validateBusinessArgs } from '../../shared/finance-navi-business.mjs'
@@ -78,13 +78,26 @@ async function selectedRecord(check: () => Promise<unknown>) {
     throw createError({ statusCode: 404, statusMessage: e.statusMessage || 'Selected record not found', data: { message: '選択中の記録はこの会社に見つかりません。選択を外すか別の記録を選んでから、もう一度送信してください。', selectedRecordMissing: true } })
   }
 }
-export async function sendCompanyAssistant(ownerId: string, organizationId: any, body: any) {
-  await init(); const selectedCompany = await company(ownerId, organizationId)
+// One request identity for a send and for the uncertain request a New chat names: the same text checks, the same selection() and the
+// same hash, so an uncertain request matches its accepted turn exactly (docs/navi-selected-records.md).
+function companyRequestIdentity(body: any) {
   if (typeof body?.text !== 'string' || !body.text.trim() || body.text.length > 2000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body.text) || !/^[-a-zA-Z0-9]{16,64}$/.test(body.requestId || '')) fail(400, 'Enter a message of at most 2000 characters')
   const target = selection(body.context), text = body.text.trim(), requestHash = createHash('sha256').update(JSON.stringify({ text, target })).digest('hex')
+  return { requestId: String(body.requestId), text, target, requestHash }
+}
+export async function sendCompanyAssistant(ownerId: string, organizationId: any, body: any) {
+  await init(); const selectedCompany = await company(ownerId, organizationId)
+  // The checked canonical id (its string form) is the one request id for recognition, the queue (currentId) and the stored turn, so a
+  // request accepted with an id sent as a JSON number is claimable and is the same request as its string form.
+  const { requestId, text, target, requestHash } = companyRequestIdentity(body)
   let c: any = await Conversation.findOne(identity(ownerId, organizationId)).lean()
-  const previous = c?.turns.find((t: any) => t.id === body.requestId)
+  const previous = c?.turns.find((t: any) => t.id === requestId)
   if (previous) { if (previous.requestHash !== requestHash) fail(409, 'Request id has another meaning'); return getCompanyAssistant(ownerId, organizationId) }
+  // The same id accepted before a New chat moved it to an adopted archive of this conversation is the same request: answered with that
+  // archived turn and its receipts, never queued or executed again; another meaning keeps the 409. Another actor's or company's archive
+  // and an unadopted copy never count (the id is a fresh request there); a new id with the same words is a new request.
+  const archived: any = c ? await findCompanyReceivedRequest(ownerId, organizationId, requestId, c) : null
+  if (archived) { if (archived.requestHash !== requestHash) fail(409, 'Request id has another meaning'); return { ...await getCompanyAssistant(ownerId, organizationId), received: archived.answer } }
   if (c && ['queued', 'working'].includes(c.state)) fail(409, 'Wait for the previous answer')
   if (body.chatRevision !== (c?.revision || 0)) fail(409, 'Conversation changed; reload')
   if ((c?.turns.length || 0) >= turnLimit) fail(409, 'この会話は200件に達しました。「新しい会話」で続けてください。これまでの会話と保存の記録は履歴に残ります。')
@@ -103,7 +116,7 @@ export async function sendCompanyAssistant(ownerId: string, organizationId: any,
     messages: earlierTurns(c?.turns, null).slice(-contextTurns).map(earlierTurn) }
   if (!c) { try { c = (await Conversation.create({ ownerId, organizationId })).toObject() } catch (e: any) { if (e.code === 11000) fail(409, 'Conversation changed; reload'); throw e } }
   await companyMembership(ownerId, String(organizationId))
-  const changed = await Conversation.updateOne({ ...identity(ownerId, organizationId), _id: c._id, revision: body.chatRevision, state: { $nin: ['queued', 'working'] } }, { $set: { state: 'queued', currentId: body.requestId, context, agentId: agent._id, attempts: 0 }, $inc: { revision: 1 }, $unset: { lease: '', leaseUntil: '' }, $push: { turns: { id: body.requestId, text, at: new Date(), scope, target, requestHash } } })
+  const changed = await Conversation.updateOne({ ...identity(ownerId, organizationId), _id: c._id, revision: body.chatRevision, state: { $nin: ['queued', 'working'] } }, { $set: { state: 'queued', currentId: requestId, context, agentId: agent._id, attempts: 0 }, $inc: { revision: 1 }, $unset: { lease: '', leaseUntil: '' }, $push: { turns: { id: requestId, text, at: new Date(), scope, target, requestHash } } })
   if (!changed.matchedCount) fail(409, 'Conversation changed; reload')
   return getCompanyAssistant(ownerId, organizationId)
 }
@@ -114,10 +127,15 @@ async function assertCompanyJob(agent: any, c: any) {
   return c.organizationId
 }
 // User-controlled new chat, archived history and teaching inspection. Each call rechecks live membership of the session company.
+// A New chat may name the client's uncertain earlier send (pending: its request id, text and context). It is normalised here with the
+// send's own identity rules and is context only: the reset answers for exactly that request, accepted (live or an adopted archive,
+// with its turn and receipts) or not accepted after this reset's revision fence. No tool, permission, cancellation or resend.
 export async function newCompanyConversation(ownerId: string, organizationId: any, body: any) {
   await init(); await company(ownerId, organizationId)
-  await startNewCompanyConversation(ownerId, organizationId, body)
-  return getCompanyAssistant(ownerId, organizationId)
+  const pending = body?.pending === undefined || body?.pending === null ? null : companyRequestIdentity(body.pending)
+  const answer = await startNewCompanyConversation(ownerId, organizationId, body, pending)
+  const view = await getCompanyAssistant(ownerId, organizationId)
+  return pending ? { ...view, reset: { requestId: body.requestId, scope: scopeOf(ownerId, organizationId), pending: answer } } : view
 }
 export async function companyConversationHistory(ownerId: string, organizationId: any, query: any) { await init(); await company(ownerId, organizationId); return listCompanyConversationArchives(ownerId, organizationId, query) }
 export async function companyConversationArchive(ownerId: string, organizationId: any, archiveId: string) { await init(); await company(ownerId, organizationId); return getCompanyConversationArchive(ownerId, organizationId, archiveId) }

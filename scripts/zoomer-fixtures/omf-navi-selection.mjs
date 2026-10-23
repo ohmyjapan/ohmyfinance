@@ -1,4 +1,6 @@
-// Saved-record consultation (plan omf-navi-agent-selection-20261022, docs/navi-selected-records.md). Runs the owned integration (its
+// Saved-record consultation (plan omf-navi-agent-selection-20261022, docs/navi-selected-records.md) and the request identity and
+// uncertain-send recovery of New chat (plan omf-navi-agent-pending-exit-20261023: native group `request`, Chrome groups `gui-pending`
+// and `gui-received`). Runs the owned integration (its
 // own MongoMemoryServer, the built app on loopback, installed Chrome, synthetic people/companies/records, simulated worker claims and
 // replies) against this tree's build, then against a packaged copy of that build (positive control: every group must pass) and the same
 // copy with one meaningful defect at a time in its compiled server chunks or client assets (each must fail at its own named assertion;
@@ -17,7 +19,7 @@ import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 export const timeoutMs=7200000;
-const EXPECTED=6;
+const EXPECTED=9;
 // A leg's screenshots (OMF_NAVI_SELECTION_SCREENSHOTS) go to their own sub-folder; a leg without a name takes none.
 const shotsFor=name=>process.env.OMF_NAVI_SELECTION_SCREENSHOTS&&name?path.join(process.env.OMF_NAVI_SELECTION_SCREENSHOTS,name):'';
 const run=(app,only='',name='')=>new Promise(resolve=>{const started=Date.now();execFile(process.execPath,[path.join(root,'scripts/finance-navi-selection-integration.cjs')],{cwd:root,windowsHide:true,env:{...process.env,MONGO_URI:'',MONGODB_URI:'',NUXT_MONGO_URI:'',OMF_NAVI_SELECTION_APP_ROOT:app,OMF_NAVI_SELECTION_ONLY:only,OMF_NAVI_SELECTION_SCREENSHOTS:shotsFor(name)},timeout:2700000,maxBuffer:32*1024*1024},(e,stdout,stderr)=>resolve({code:e?e.code??1:0,signal:e?.signal||null,text:stdout+stderr,ms:Date.now()-started}))});
@@ -64,19 +66,21 @@ export const DEFECTS=[
  // Invoices page: its own successful native delete leaves the pointer.
  {name:'page-delete-ignored',only:'gui-delete',assertion:'gui:page-delete-clears',kind:'client',edits:[['h.deleted(a),f()','f()']]},
  // Conversation: an explicit consultation does not leave History/Memory.
- {name:'no-live-view',only:'gui-view',assertion:'gui:history-consult-live-chat',kind:'client',edits:[['se(()=>l.consultation,o=>{o&&I.company&&!me&&(p.value="chat",y.value=null)})','se(()=>l.consultation,o=>{})']]},
+ // 2026-10-23 (plan omf-navi-agent-pending-exit-20261023): the conversation and panel chunk was re-minified by this fold's own
+ // AssistantConversation.vue change; these seven anchors carry the new minified names with the same edits (refreshed, not new faults).
+ {name:'no-live-view',only:'gui-view',assertion:'gui:history-consult-live-chat',kind:'client',edits:[['re(()=>l.consultation,i=>{i&&b.company&&!z&&(p.value="chat",y.value=null)})','re(()=>l.consultation,i=>{})']]},
  // Conversation: the live view follows the recomputed context instead of the publication (an ordinary page change resets History).
- {name:'context-view-reset',only:'gui-view',assertion:'gui:page-change-keeps-history',kind:'client',edits:[['se(()=>l.consultation,o=>{','se(()=>l.context,o=>{']]},
+ {name:'context-view-reset',only:'gui-view',assertion:'gui:page-change-keeps-history',kind:'client',edits:[['re(()=>l.consultation,i=>{','re(()=>l.context,i=>{']]},
  // Panel: the initiating action is not remembered (close returns focus to the launcher instead of the row).
- {name:'focus-not-returned',only:'gui-view',assertion:'gui:focus-returns-to-row',kind:'client',edits:[['!g.value?.contains(C)&&(Se=C),','!g.value?.contains(C)&&!1,']]},
+ {name:'focus-not-returned',only:'gui-view',assertion:'gui:focus-returns-to-row',kind:'client',edits:[['!v.value?.contains(R)&&(Me=R),','!v.value?.contains(R)&&!1,']]},
  // Panel: the close focus scrolls the document back to the initiator.
- {name:'close-scrolls',only:'gui-view',assertion:'gui:close-no-scroll',kind:'client',edits:[['focus({preventScroll:!0})})}function _e','focus()})}function _e']]},
+ {name:'close-scrolls',only:'gui-view',assertion:'gui:close-no-scroll',kind:'client',edits:[['focus({preventScroll:!0})})}function Ie','focus()})}function Ie']]},
  // Conversation: the definite missing-record refusal keeps the frozen request (the reproduced original behaviour).
- {name:'missing-pending-kept',only:'gui-missing',assertion:'gui:missing-target-released',kind:'client',edits:[['selectedRecordMissing===!0&&delete i.pending[Z],ce(v)','selectedRecordMissing===!0&&!1,ce(v)']]},
+ {name:'missing-pending-kept',only:'gui-missing',assertion:'gui:missing-target-released',kind:'client',edits:[['selectedRecordMissing===!0&&delete o.pending[H],ge(g)','selectedRecordMissing===!0&&!1,ge(g)']]},
  // Conversation: any refusal or lost reply releases the request (a lost accepted request would be sent again as a new one).
- {name:'any-error-releases',only:'gui-missing',assertion:'gui:lost-response-pending-kept',kind:'client',edits:[['(w&&I.company&&o&&i.pending[Z]===o&&(v?.statusCode||v?.status)===404&&v?.data?.data?.selectedRecordMissing===!0&&delete i.pending[Z],ce(v))','(I.company&&o&&delete i.pending[Z],ce(v))']]},
+ {name:'any-error-releases',only:'gui-missing',assertion:'gui:lost-response-pending-kept',kind:'client',edits:[['(k&&b.company&&i&&o.pending[H]===i&&(g?.statusCode||g?.status)===404&&g?.data?.data?.selectedRecordMissing===!0&&delete o.pending[H],ge(g))','(b.company&&i&&delete o.pending[H],ge(g))']]},
  // Conversation: a request already sent once is released by a later marked refusal (an earlier attempt could still be accepted).
- {name:'unknown-retry-releases',only:'gui-missing',assertion:'gui:unknown-then-missing-kept',kind:'client',edits:[['(w&&I.company&&o&&i.pending[Z]===o&&','(I.company&&o&&i.pending[Z]===o&&']]},
+ {name:'unknown-retry-releases',only:'gui-missing',assertion:'gui:unknown-then-missing-kept',kind:'client',edits:[['(k&&b.company&&i&&o.pending[H]===i&&','(b.company&&i&&o.pending[H]===i&&']]},
  // Calendar page: a day-list consultation also opens the payment editor.
  {name:'day-consult-edits',only:'gui-consult',assertion:'gui:day-consult-read-only',kind:'client',edits:[['s=g=>{S.value=!1,_(g)}','s=g=>{S.value=!1,_(g),P.value=g,l.value=!0}']]},
  // Calendar store: the pre-assignment stale-response guard removed (every reply writes the rows; a late company-A reply replaces fresh B rows).
@@ -86,10 +90,46 @@ export const DEFECTS=[
  // Calendar store: only the identity check kept (an older same-company reply answered after a newer one is written).
  {name:'calendar-superseded-unchecked',only:'gui-lifecycle',assertion:'gui:superseded-calendar-reply-dropped',kind:'client',edits:[['return t!==u||c()!==n?!1:','return c()!==n?!1:']]},
  // Calendar store: the read identity includes the token (a same-identity token refresh drops a legitimate reply).
- {name:'calendar-token-compare',only:'gui-lifecycle',assertion:'gui:same-identity-calendar-refresh-applies',kind:'client',edits:[['return t?.userId?String(t.userId)+"|"+String(t.organizationId||""):""}','return t?.userId?String(t.userId)+"|"+String(t.organizationId||"")+d().token:""}']]}
+ {name:'calendar-token-compare',only:'gui-lifecycle',assertion:'gui:same-identity-calendar-refresh-applies',kind:'client',edits:[['return t?.userId?String(t.userId)+"|"+String(t.organizationId||""):""}','return t?.userId?String(t.userId)+"|"+String(t.organizationId||"")+d().token:""}']]},
+ // Request identity and uncertain-send recovery (plan omf-navi-agent-pending-exit-20261023), server: the send checks live turns only
+ // (an archived accepted request is queued and executed again: the reproduced original behaviour).
+ {name:'received-live-only',only:'request',assertion:'native:archived-request-never-reexecutes',kind:'server',edits:[['const archived = c ? await findCompanyReceivedRequest(ownerId, organizationId, requestId, c) : null;','const archived = null;']]},
+ // Server: the send uses the raw request id again instead of the checked canonical one (a numeric id is stored as a number in its turn
+ // but as a string in currentId, and the worker's claim refuses it: the reproduced defect of the parent fold).
+ {name:'uncanonicalized-id',only:'request',assertion:'request:canonical-id-claimable',kind:'server',edits:[['const { requestId, text, target, requestHash } = companyRequestIdentity(body);','const { text, target, requestHash } = companyRequestIdentity(body), requestId = body.requestId;']]},
+ // Server: an archived request id with another meaning is answered as the earlier request instead of the 409.
+ {name:'received-meaning-unchecked',only:'request',assertion:'request:archived-meaning-conflict',kind:'server',edits:[['if (archived.requestHash !== requestHash) fail(409, "Request id has another meaning");','']]},
+ // Server: an unadopted reset copy counts as accepted history (a request never accepted is answered from it).
+ {name:'received-unadopted',only:'request',assertion:'request:unadopted-archive-not-evidence',kind:'server',edits:[['FinanceCompanyConversationArchive.find({ ownerId, organizationId, conversationId: c._id, segment: { $lt: c.segment || 0 }, "turns.id": requestId })','FinanceCompanyConversationArchive.find({ ownerId, organizationId, conversationId: c._id, "turns.id": requestId })']]},
+ // Server: archives of another company, actor or conversation count (a fresh request here is answered from there).
+ {name:'received-any-conversation',only:'request',assertion:'request:foreign-archive-not-evidence',kind:'server',edits:[['FinanceCompanyConversationArchive.find({ ownerId, organizationId, conversationId: c._id, segment: { $lt: c.segment || 0 }, "turns.id": requestId })','FinanceCompanyConversationArchive.find({ segment: { $lt: c.segment || 0 }, "turns.id": requestId })']]},
+ // Server: New chat on an absent conversation answers "not accepted" without creating its fence.
+ {name:'absent-reset-unfenced',only:'request',assertion:'request:absent-reset-fence',kind:'server',edits:[['await FinanceCompanyAssistant.create({ ...identity, revision: 1, lastReset: {','0 && await FinanceCompanyAssistant.create({ ...identity, revision: 1, lastReset: {']]},
+ // Server: New chat on an empty live segment answers "not accepted" without advancing the revision (the reproduced original no-op).
+ {name:'empty-reset-unfenced',only:'request',assertion:'request:empty-reset-fence',kind:'server',edits:[['const fenced = await FinanceCompanyAssistant.updateOne(resetFenceFilter(c), {','const fenced = { matchedCount: 1 } || await FinanceCompanyAssistant.updateOne(resetFenceFilter(c), {']]},
+ // Server: a repeated reset id answers "not accepted" from its earlier fence without fencing again.
+ {name:'lost-reset-not-refenced',only:'request',assertion:'request:lost-reset-refenced',kind:'server',edits:[['const fenced = await FinanceCompanyAssistant.updateOne({ ...resetFenceFilter(c), "lastReset.id": body.requestId }, {','const fenced = { matchedCount: 1 } || await FinanceCompanyAssistant.updateOne({ ...resetFenceFilter(c), "lastReset.id": body.requestId }, {']]},
+ // Server: a repeated reset id is recognised whatever request it now names.
+ {name:'lost-reset-meaning-unchecked',only:'request',assertion:'request:lost-reset-conflicting-meaning',kind:'server',edits:[['if (!sameResetMeaning(c.lastReset, meaning)) fail(409, "Request id has another meaning");','']]},
+ // Server: New chat never looks the named request up (an accepted request is answered "not accepted").
+ {name:'reset-pending-unrecognised',only:'request',assertion:'request:reset-recognises-accepted',kind:'server',edits:[['const found = meaning ? await findCompanyReceivedRequest(ownerId, organizationId, meaning.requestId, c) : null;','const found = null;']]},
+ // Conversation: New chat needs turns again (an empty conversation with an uncertain request has no entry point).
+ {name:'empty-new-chat-disabled',only:'gui-pending',assertion:'gui:empty-new-chat-entry',kind:'client',edits:[['disabled:e(w)||e(P)||!(e(ae).length||e(o).pending[e(H)])','disabled:e(w)||e(P)||!e(ae).length']]},
+ // Conversation: a fenced request is not released (the reproduced original behaviour after a successful New chat).
+ {name:'fenced-pending-kept',only:'gui-pending',assertion:'gui:witness-reset-releases',kind:'client',edits:[['k.outcome==="not_accepted"&&(delete o.pending[H],Y.value.trim()||(Y.value=i.rawText))','k.outcome==="not_accepted"&&(Y.value.trim()||(Y.value=i.rawText))']]},
+ // Conversation: releasing a fenced request clears the typed text.
+ {name:'fenced-text-cleared',only:'gui-pending',assertion:'gui:witness-text-kept',kind:'client',edits:[['Y.value.trim()||(Y.value=i.rawText)','Y.value=""']]},
+ // Conversation: an accepted request's answer clears whatever the composer holds (the edited text is lost).
+ {name:'received-clears-edited',only:'gui-received',assertion:'gui:accepted-edited-text-kept',kind:'client',edits:[['k.outcome==="accepted"?(delete o.pending[H],Y.value===i.rawText&&(Y.value=""),','k.outcome==="accepted"?(delete o.pending[H],Y.value="",']]},
+ // Conversation: an accepted archived request is released without showing its archived result.
+ {name:'received-history-hidden',only:'gui-received',assertion:'gui:accepted-archived-recognised',kind:'client',edits:[['k.where==="archive"&&k.archive?.id&&ot(k)','k.where==="archive"&&k.archive?.id&&!1']]},
+ // Conversation: a lost New chat reply drops the frozen reset request (the next press is a new reset without the same meaning).
+ {name:'reset-identity-not-frozen',only:'gui-received',assertion:'gui:lost-reset-same-identity',kind:'client',edits:[['(m?.statusCode||m?.status)&&(j=null),F()&&ge(m)','j=null,F()&&ge(m)']]},
+ // Conversation: an answer about one request resolves whatever request is pending now.
+ {name:'other-pending-resolved',only:'gui-received',assertion:'gui:other-pending-kept',kind:'client',edits:[['o.pending[H]!==i||k.requestId!==i.id||','']]}
 ];
 async function filesOf(dir,ext){const out=[];if(!existsSync(dir))return out;for(const e of await readdir(dir,{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())out.push(...await filesOf(f,ext));else if(f.endsWith(ext))out.push(f)}return out}
-export default {name:'omf-navi-selection',covers:['server/services/financeCompanyAssistantService.ts','components/finance/AssistantPanel.vue','components/finance/AssistantConversation.vue','components/finance/NaviConsultButton.vue','composables/useNaviRecordSelection.ts','pages/invoices/index.vue','pages/budgets/index.vue','pages/recurring/index.vue','pages/calendar/index.vue','stores/calendar.ts','components/calendar/UpcomingPayments.vue','components/calendar/DayDetailModal.vue','scripts/finance-navi-selection-integration.cjs','scripts/finance-navi-selection-browser.cjs','scripts/zoomer-fixtures/omf-navi-selection.mjs'],async run(){
+export default {name:'omf-navi-selection',covers:['server/services/financeCompanyAssistantService.ts','server/services/companyConversationHistoryService.ts','components/finance/AssistantPanel.vue','components/finance/AssistantConversation.vue','components/finance/NaviConsultButton.vue','composables/useNaviRecordSelection.ts','pages/invoices/index.vue','pages/budgets/index.vue','pages/recurring/index.vue','pages/calendar/index.vue','stores/calendar.ts','components/calendar/UpcomingPayments.vue','components/calendar/DayDetailModal.vue','scripts/finance-navi-selection-integration.cjs','scripts/finance-navi-selection-browser.cjs','scripts/zoomer-fixtures/omf-navi-selection.mjs'],async run(){
  const app=process.env.OMF_NAVI_SELECTION_APP_ROOT||root,built=path.join(app,'.output/server/index.mjs');
  if(!existsSync(built))return{pass:false,message:'omf-navi-selection: built app missing at '+built+' (build the tree first); no coverage granted'};
  const primaryOf=text=>{const lines=text.split(/\r?\n/),i=lines.findIndex(l=>/^(\S*Error\b|\s*\[?Error|.*\b(ECONNRESET|ECONNREFUSED|EADDRINUSE|ETIMEDOUT)\b)/.test(l)&&!/^(PASS|TIMING|APP_LOG|SUMMARY|CLEANUP|FAIL) /.test(l));return i<0?null:lines.slice(i,i+40).join('\n').slice(0,6000)};
@@ -142,5 +182,5 @@ export default {name:'omf-navi-selection',covers:['server/services/financeCompan
   finally{await rm(directory,{recursive:true,force:true})}
  }
  return{pass:pass&&defects.length===DEFECTS.length&&DEFECTS.length>0,databaseCoverage:{executed:main.code===0,ownedProcess:main.code===0},message:JSON.stringify({exit:main.code,signal:main.signal,ms:main.ms,timing:timingOf(main.text),groups,expected:EXPECTED,failure:main.code===0?null:failureOf(main.text),failures:failuresOf(main.text),primary:main.code===0?null:primaryOf(main.text),passes:main.text.match(/^PASS .*$/gm)||[],summary,control,defects,setupError,
-  limits:'Owned synthetic Mongo, loopback native HTTP and installed headless Chrome only; simulated worker claims and replies; no model/provider/mail/bank/Slack calls or production records. Selected-record transport, scope, lifecycle and GUI behaviour only: not model judgement of a selected record, not a production reliability rate, no physical phone or Safari. Touch is Chrome touch emulation at 390 px; another tab is a real same-origin tab; a lost reply is a real accepted request whose browser copy is failed; a slow poll is a held real request. The issuer bill is a synthetic setup row. The packaged copy is this build byte for byte; only each defect edits its compiled file.'})};
+  limits:'Owned synthetic Mongo, loopback native HTTP and installed headless Chrome only; simulated worker claims and replies; no model/provider/mail/bank/Slack calls or production records. Selected-record transport, scope, lifecycle and GUI behaviour, and request identity across New chat (one canonical request id, a JSON-number id included) with uncertain-send recovery, only: not model judgement of a selected record, not a production reliability rate, no physical phone or Safari. Touch is Chrome touch emulation at 390 px; another tab is a real same-origin tab; a lost reply is a real accepted request whose browser copy is failed; a lost first copy is a browser request failed before the server (never accepted); a slow poll is a held real request. A second saved plan is what a simulated worker does with a re-queued request (a controlled native sequence), never a model decision or a production duplicate; the only effects are internal synthetic calendar plans, no money movement. The issuer bill, an unadopted archive copy and a recently claimed action are synthetic setup rows. The packaged copy is this build byte for byte; only each defect edits its compiled file.'})};
 }};
