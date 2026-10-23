@@ -1,4 +1,20 @@
-# Navi reply decoding
+# Navi interpretation
+
+## Current feature guidance (2026-10-23)
+
+The interpreter's feature guide follows the catalogue (`shared/finance-navi-features.mjs`) in all three realms. In the company conversation and the owner workspace, Navi calls `list_navi_features` and answers from each feature's disposition and reason: a `navi_tool` feature is done with its named tools; a `page_handoff` feature is where the person opens the page, and the page is not proof that the requested action works there; an `unsupported` feature, including a native page that is not company-scoped yet, is explained in words with its reason and a useful next step and never carries a link. The purchase conversation answers in words and shows no links. A missing page action never stops the accounting answer: the company prompt says to answer the accounting or tax question from the records and evidence Navi can read.
+
+The company receipt sentence now says saved receipts can be read and their transaction candidates compared, while receipt upload, OCR, linking and deletion are unavailable until the native receipt writers are company-scoped (B1). The two receipt read-tool descriptions say the same. The five native lanes that are not company-scoped (duplicates, receipt upload, vendors, import templates, shipments) use the catalogue's existing unsupported exit; `docs/navi-feature-coverage.md` is the current matrix with sources and next lanes.
+
+The optional reply link stays limited to navigable catalogue entries: the company, public-research and owner workspace reply schemas list only them, and the server's reply validators still refuse a whole reply that names another entry; nothing is silently stripped.
+
+Unchanged: the accountant role (Japanese-accountant reasoning, Korean or Japanese replies), the configured model and effort (`accountantModel`, `accountantEffort`), the tool sets, the 16/40 tool-turn limits, the 90/240/480-second bounds, current-message write authority and the separation of save, remember, approve and post. No keyword classifier, confirmation step or blanket refusal is added.
+
+Evidence: this is shared prompt wording for the final independent review. String and unit contracts do not show that the product model follows it; the fixed model corpus (D01-D03: receipt, master and email limits with zero effects; J cases: useful conditional accounting advice) remains required.
+
+The sections below record the 2026-10 reply decoding change and its tests; they are retained as history.
+
+## Reply decoding
 
 The chat interpreter decodes stdout as a UTF-8 stream before accumulating CLI JSON. A multibyte character can span stdout events; converting each Buffer separately corrupts valid Japanese/Korean text. Literal replacement characters supplied by a source remain literal. The existing 200000 UTF-16-character limit, error/timeout handling, schema validation, prompts, model and tool authority are preserved.
 
