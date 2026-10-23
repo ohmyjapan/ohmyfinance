@@ -233,6 +233,47 @@ async function completedAttempt(jobDir, bound, adapter, manifestOf, { now, wait,
   return { directory: jobDir, manifest };
 }
 
+// Plan omf-paypay-live-period-20261023 (review-slot7 R1): private, value-free retrieval diagnostics. Only an adapter ui that offers the optional
+// `diagnostic()` reader (PayPay銀行 標準 routineUi) gets a record; every other adapter (楽天銀行, the contract-pending defaults) writes nothing
+// and behaves exactly as before. The record is a fixed whitelist — categories, booleans, small counts, the coded step/error and finish()'s
+// outcome — never a title, text, URL, field or option value, account number, cookie, token or credential. It lives in
+// <root>/diagnostics/bank/<bankAccountId>/, outside the outbox: pendingBank, the attempt marker, recovery and uploads never see it. Reading
+// and writing are each bounded and swallow every error, so a broken reader or write never changes the job's result or delays cleanup
+// beyond the bound.
+export const DIAGNOSTIC_SCHEMA = 'bank-diagnostic-1';
+const DIAGNOSTIC_MS = 3000;
+const DIAGNOSTIC_TITLES = ['welcome', 'statements', 'login', 'downloading', 'other-bank'];
+const DIAGNOSTIC_KINDS = ['login', 'verification', 'authenticated', 'statements', 'export_ready', 'error_page', 'unknown'];
+const DIAGNOSTIC_STEPS = ['statements', 'period', 'snapshot', 'export', 'manifest', 'complete'];
+const within = (fn, ms) => Promise.race([Promise.resolve().then(fn).catch(() => null), pause(ms).then(() => null)]);
+const one = (value, list) => value == null ? null : list.includes(value) ? value : 'other';
+const count = (value, max = 99) => Number.isSafeInteger(value) && value >= 0 ? Math.min(value, max) : null;
+const flag = value => typeof value === 'boolean' ? value : null;
+/** The fixed diagnostic record (pure): every field is re-derived from the whitelist, so unknown keys and raw strings never pass. */
+export function diagnosticRecord({ bound, variant = null, at, outcome, step, code = null, page = null, finish = null }) {
+  const p = page && typeof page === 'object' ? page : null, f = finish && typeof finish === 'object' ? finish : null, c = p?.controls && typeof p.controls === 'object' ? p.controls : {};
+  return {
+    schema: DIAGNOSTIC_SCHEMA, at: String(at).slice(0, 40), provider: one(bound?.provider, Object.keys(ADAPTERS)), variant: typeof variant === 'string' && /^[a-z]{1,20}$/.test(variant) ? variant : null,
+    bankAccountId: /^[a-f\d]{24}$/.test(String(bound?.bankAccountId ?? '')) ? String(bound.bankAccountId) : null, jobId: /^[A-Za-z0-9-]{1,64}$/.test(String(bound?.jobId ?? '')) ? String(bound.jobId) : null,
+    outcome: one(outcome, ['completed', 'failed']), step: one(step, DIAGNOSTIC_STEPS), code: code == null ? null : /^[a-z][a-z0-9-]{0,39}$/.test(String(code)) ? String(code) : 'uncoded',
+    page: p ? {
+      readable: flag(p.readable), dialog: flag(p.dialog), origin: flag(p.origin), top: flag(p.top),
+      title: one(p.title, DIAGNOSTIC_TITLES), kind: one(p.kind, DIAGNOSTIC_KINDS),
+      readyState: one(p.readyState, ['loading', 'interactive', 'complete']), visibility: one(p.visibility, ['visible', 'hidden']), focus: flag(p.focus), password: flag(p.password),
+      controls: { period: count(c.period), logout: count(c.logout), csv: count(c.csv), close: count(c.close), query: count(c.query) },
+      dates: Array.isArray(p.dates) ? p.dates.slice(0, 6).map(d => ({ total: count(d?.total), visible: count(d?.visible), select: count(d?.select), disabled: count(d?.disabled) })) : [],
+      panelClose: flag(p.panelClose), frames: { total: count(p.frames?.total), sameOrigin: count(p.frames?.sameOrigin) },
+      lastPress: one(p.lastPress, ['open', 'period', 'query', 'export', 'logout']), changedSincePress: flag(p.changedSincePress)
+    } : null,
+    finish: f ? { settled: true, loggedOut: flag(f.loggedOut), downloadTabsClosed: count(f.downloadTabsClosed, 20), reason: one(f.reason, ['dialog', 'not-signed-in', 'timeout', 'logout', 'error']) } : { settled: false, loggedOut: null, downloadTabsClosed: null, reason: null }
+  };
+}
+async function persistDiagnostic(root, bound, record) {
+  const dir = path.join(root, 'diagnostics', 'bank', record.bankAccountId || 'unknown');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, `${record.jobId || 'job'}-${record.at.replace(/[^0-9]/g, '')}-${randomUUID().slice(0, 8)}.json`), JSON.stringify(record, null, 2), { flag: 'wx', mode: 0o600 });
+}
+
 /**
  * One retrieve job on an open page: sign-in intervention, then the routine steps automated — open the statements, select the
  * period of the job's frozen snapshot, check the shown account label, write attempt.json (bound: bankAccountId, ownerId,
@@ -265,15 +306,20 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   catch (error) { if (error?.code === 'login-refused') return { items: [], failed: error.message }; throw error; }
   // Plan omf-paypay-routine-20261022 Phase C: once signed in, an adapter's `finish` (PayPay銀行: close its download tab, ログアウト) runs
   // after the steps below whatever their outcome — bounded, errors ignored, never changing the result (楽天銀行 declares none).
+  // Plan omf-paypay-live-period-20261023: `step`/`code` name where a retrieval stopped (for the private diagnostic record only).
+  let completed = false, step = 'statements', code = null;
   try {
   signal?.throwIfAborted();
   await status('running', '入出金明細を開く');
   await ui.openStatements();
+  step = 'period';
   await status('running', '対象期間を選択');
   await ui.selectPeriod(job?.snapshot?.coverage ?? null);
+  step = 'snapshot';
   const snapshot = verifyBankSnapshot(await ui.snapshot(), job?.snapshot);
   const labelChecked = Boolean(String(job?.snapshot?.accountLabel ?? '').trim());
   signal?.throwIfAborted();
+  step = 'export';
   await mkdir(jobDir, { recursive: true });
   await writeFile(marker, JSON.stringify({ ...bound, period: snapshot?.period ?? null, labelChecked, requestedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 });
   const session = ui.downloadSession ? await ui.downloadSession(jobDir) : null;
@@ -290,17 +336,26 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
       onVerification: async () => { await status('verification_required', `${adapter.label}の認証をChromeで完了してください`); await ui.show(); } });
   } catch (error) {
     if (error?.code !== 'timeout') throw error;
+    code = 'timeout';
     return { items: [], failed: 'ダウンロードが完了しませんでした。再度「取得」を押してください' };
   } finally { await session?.close?.(); }
+  step = 'manifest';
   const host = began?.host ?? null;
   if (!hostAllowed(host, adapter.hosts)) { await unlink(path.join(jobDir, filename)).catch(() => {}); throw new Error('ダウンロード元が銀行サイトではありません'); } // guard:download-host
   const bytes = await readFile(path.join(jobDir, filename));
   const manifest = manifestOf(filename, bytes, { suggestedFilename: began?.suggestedFilename || null, sourceHost: host, period: snapshot?.period ?? null, labelChecked });
   await writeManifest(jobDir, manifest);
   await status('running', '明細を保存');
+  completed = true; step = 'complete';
   return { items: [{ directory: jobDir, manifest }], failed: null };
-  } finally {
-    if (typeof ui.finish === 'function') await Promise.race([Promise.resolve().then(() => ui.finish()).catch(() => {}), pause(15000)]); // guard:finish-after-login
+  } catch (error) { code = error?.code ?? 'uncoded'; throw error; } finally {
+    // Plan omf-paypay-live-period-20261023: an adapter's optional failure reader runs BEFORE finish() (ログアウト) and before cleanup; finish()'s
+    // outcome is kept; the record is written last, still before withBankBrowser closes the browser. Each part is bounded and swallows errors.
+    const reader = typeof ui.diagnostic === 'function';
+    const page = reader && !completed ? await within(() => ui.diagnostic(), DIAGNOSTIC_MS) : null; // guard:diagnostic-before-finish
+    let finished = null;
+    if (typeof ui.finish === 'function') finished = await Promise.race([Promise.resolve().then(() => ui.finish()).catch(() => null), pause(15000).then(() => null)]); // guard:finish-after-login
+    if (reader) await within(() => persistDiagnostic(root, bound, diagnosticRecord({ bound, variant: adapter.variant ?? null, at: stamp(), outcome: completed ? 'completed' : 'failed', step, code, page, finish: finished })), DIAGNOSTIC_MS); // guard:diagnostic-persisted
   }
 }
 
