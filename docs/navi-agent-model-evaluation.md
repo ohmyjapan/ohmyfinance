@@ -41,13 +41,13 @@ pointers and the declared reconstructed preceding turns.
 
 | File | Role |
 |---|---|
-| `scripts/finance-navi-agent-model.mjs` | Runner: plan validation, owned lifecycle (and its explicit fault controls), native worker loop, freezing, evidence, artifact scan, result table. No-argument run prints the declared population only. |
+| `scripts/finance-navi-agent-model.mjs` | Runner: plan validation, owned lifecycle (and its explicit fault controls), manual authentication handoff (default, connected or vault), native worker loop, freezing, evidence, artifact scan, result table. No-argument run prints the declared population only. |
 | `scripts/finance-navi-agent-model-cases.mjs` | Declared population (verbatim), selection, placeholder resolution, frozen request hashes, deterministic grade, evidence, T-number and outcome helpers. |
 | `scripts/finance-navi-agent-model-company-cases.mjs` | Company-realm designs (R, W, K, C, J, P, D, H): synthetic setup, reconstructed turns, oracles (native quote contract), scripted selftest turns. |
 | `scripts/finance-navi-agent-model-owner-cases.mjs` | Owner/purchase designs (O01–O13): drafts, memories, approval, forecast/final posting, card sync, workflow, intake, allocation, research queue. |
 | `scripts/finance-navi-agent-model-supplemental.mjs` | The one supplemental design (CAP01): reuses O12's native `prepare` unchanged; zero-write oracle, context/claim check, scripted selftest and wrong-allocation turns. Evaluator only; run by the same runner. |
 | `scripts/finance-navi-agent-model-observer.mjs` | Native child observation (passive default JSON; exact native input capture; P01 stream forwarding; connected-auth one-key overlay) and the owned HTTP observer. |
-| `scripts/finance-navi-agent-model-observer.test.mjs` | Default contracts: real disposable children, manifest, evidence, format and grade contracts and nine deliberately seeded defects. |
+| `scripts/finance-navi-agent-model-observer.test.mjs` | Default contracts: real disposable children, manifest, evidence, format and grade contracts, the vault-auth handoff and thirteen deliberately seeded defects. |
 | `scripts/zoomer-fixtures/omf-navi-agent-model.mjs` | The only entry: hub verifier fixture mode. Default = contracts; explicit modes by environment. |
 | `docs/navi-agent-model-evaluation.md` | This document. |
 
@@ -87,7 +87,7 @@ node scripts/zoomer-verify.mjs --run-fixture omf-navi-agent-model.mjs --cwd <omf
 | `OMF_NAVI_AGENT_MODEL_FROZEN` | `frozen-manifest.json` written by `prepare` for the same candidate (manual) |
 | `OMF_NAVI_AGENT_MODEL_ATTEMPT` / `_REASON` | `initial` (default) or `additional` with a named changed/failing thread |
 | `OMF_NAVI_AGENT_MODEL_CLAIMS` | Optional absolute directory: each initial case is claimed once across parallel batches (`<id>.initial`) |
-| `OMF_NAVI_AGENT_MODEL_AUTH` | `default` (unchanged native login, preferred) or `connected` (see below) |
+| `OMF_NAVI_AGENT_MODEL_AUTH` | `default` (unchanged native login, preferred), `connected` or `vault` (manual only; see below) |
 | `OMF_NAVI_AGENT_MODEL_SELFTEST_VARIANT` | `ideal` (default), `defects` or `p02-missing` (selftest only) |
 
 Manual mode refuses to start, before any runtime, when the frozen manifest does not match the current candidate (source revision,
@@ -149,6 +149,27 @@ restored afterwards, even on failure.
   Only the exact matched native CLI spawn receives one added `CLAUDE_CODE_OAUTH_TOKEN`; all other environment entries, arguments,
   input bytes and options stay as the interpreter built them, and unrelated children are untouched. This is an authentication-source
   difference, never "unchanged" authentication, and is never used silently or switched mid-batch.
+- **Vault (explicit manual-only option, disclosed in `batch.json`; plan omf-navi-native-auth-followup-20261024):** the actual
+  product path for an explicitly configured native credential (`docs/native-cli-auth.md`).
+  - **Inputs:** the same private inputs as connected. The token is read from `OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH`. An optional
+    nonsecret `OMF_NAVI_AGENT_MODEL_CONFIG_DIR` must be absolute and existing. `OMF_NAVI_AGENT_MODEL_AUTH_SLOT` is optional.
+  - **Validation:** the token is checked against the product's own rule (one line of 20–4096 visible ASCII characters). Errors are
+    `plan:vault-auth-token-missing`, `plan:vault-auth-token-invalid` and `plan:vault-auth-config-directory-invalid`. The value
+    is never echoed or kept in the plan. Prepare and selftest refuse the option.
+  - **Handoff:** the runner takes the token into memory and deletes it from its own environment before any child (git, mongod,
+    the application, the Vault helper). It writes the token only into the owned DPAPI worker Vault as `nativeOAuthToken`. It then
+    runs the actual TeachingWorker, interpreter and `shared/finance-native-cli-auth.mjs`, which give the native child a clean
+    explicit-credential environment and the actions MCP entry a blank value.
+  - **Observer:** the spawn observer is installed with `connectedAuth: null`. There is no overlay, custom loader or alternate
+    model transport.
+  - **Records and checks:** `batch.json` records `source: owned-vault-native-credential`, the slot, the configuration directory
+    and `observerOverlay: false`, never the token. Each manual attempt adds the check
+    `transport:vault-credential-in-native-env-without-overlay`. It passes only when the credential's key name is in the
+    environment the interpreter built and the observer added nothing.
+  - **Secret scan:** the token joins the in-memory secret values, so it withholds a native input and is scanned for in every
+    written artifact.
+  - **Unchanged:** the default and connected options. Like them, this option never alters the declared questions, denominators,
+    rubrics or the frozen-candidate checks.
 
 Default JSON transport is passive (same ChildProcess, stdin, stderr, events, timer and kill; the options object passes by identity
 when no overlay applies). **P01 only** uses the documented logging-only difference `--output-format stream-json --verbose`: the
@@ -282,7 +303,10 @@ an initial result or grade.
 The default contracts prove, with real disposable node children and a loopback upstream: exact final-payload forwarding before
 close with split multibyte data; nonzero exit, spawn error, timer kill, missing/malformed/duplicate final results (drained, named,
 never repaired); native error envelopes forwarded unchanged; spawn and ESM binding restoration and untouched unrelated children; the
-connected-auth one-key difference against an identical default child, with the credential never retained; the actual interpreter's
+connected-auth one-key difference against an identical default child, with the credential never retained; the manual-only vault
+option (plan validation that never echoes the value, the credential taken from the environment before any child, the batch record,
+and the actual TeachingWorker.cycle() delivering an owned-Vault credential to a real stand-in child with no observer overlay, a
+blank MCP value and the OMF bearer distinct); the actual interpreter's
 spawn seam (node stands in for the CLI and exits on its first unknown option); HTTP forwarding and redaction; the declaration,
 selection, placeholder and evaluator-text boundaries; the unchanged original-62 declaration hash, `ALL`, O03 text and denominator
 shape; the supplemental CAP01 declaration, its refusal as an initial attempt (prepare, selftest, manual), its separate batch and
@@ -291,13 +315,15 @@ O03 and the CAP01 zero-write evaluators rejecting a future memory and an allocat
 (non-canonical JSON kept byte for byte) and withheld when a known marker appears; fail-closed deep redaction; retained source text
 with recomputed hashes and retained affected/selected documents; the native whitespace quote contract (agreeing with the shared
 `literalQuoteIn`); positive and negative T-number formats; and the overall verdict with failed, missing or empty cleanup and secret
-findings. Nine defects are seeded in owned copies (their relative imports point at the real modules) and each must fail its named
+findings. Thirteen defects are seeded in owned copies (their relative imports point at the real modules) and each must fail its named
 assertion: a reserialized forwarder (`observer:exact-native-forwarding`), an inverted no-write grade
 (`grade:no-write-accepts-unchanged`), a reserialized native input (`evidence:native-input-exact`), dropped source text
 (`evidence:source-text-retained`), a strict raw-includes quote predicate (`grade:native-whitespace-quote-accepted`), an optional
 T prefix (`format:bare-corporation-number-rejected`), a truncated spaced identifier (`format:spaced-longer-identifier-rejected`),
-cleanup ignored (`grade:overall-false-after-cleanup-failure`) and vacuous cleanup evidence
-(`grade:overall-false-without-cleanup-evidence`). The selftest `defects` variant repeats the idea against the built application:
+cleanup ignored (`grade:overall-false-after-cleanup-failure`), vacuous cleanup evidence
+(`grade:overall-false-without-cleanup-evidence`), and in the runner the vault token overlaid by the observer
+(`auth:vault-no-observer-overlay`), the vault credential not written (`auth:vault-child-receives-credential`), the token left in
+the environment (`auth:vault-credential-taken-before-any-child`) and an invalid token accepted (`auth:vault-plan-validation`). The selftest `defects` variant repeats the idea against the built application:
 17 scripted wrong native turns must each flip their named oracle. None of this is product-model, privacy or reliability evidence.
 
 ### Implemented but not exercised by these controls
@@ -307,4 +333,6 @@ so only the contract child exercises it); the on-disk scrub of an artifact with 
 (no run produced a finding); the forced tree kill of an application or mongod handle that ignores its first signal and the mongod
 stop-error path (every owned process exited on its first signal); the application health timeout; the O05 settlement blocker
 message (the native settlement held); the manual-mode P01/P02 provenance checks and `evidence:native-input-exact` against a real
-model CLI (only the Node stand-in reaches the manual path in these controls); connected authentication with an actual credential.
+model CLI (only the Node stand-in reaches the manual path in these controls); connected authentication with an actual credential;
+the vault option with an actual credential, the installed CLI's real authentication precedence and routing, and a full manual
+batch on a frozen candidate (the parent's affected additional attempts).

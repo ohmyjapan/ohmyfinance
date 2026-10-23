@@ -28,10 +28,14 @@ import { population, selectCases, denominators, resolveRequest, verifyDeclaratio
 import { companyCases, FOREIGN_MARKERS } from './finance-navi-agent-model-company-cases.mjs';
 import { ownerCases } from './finance-navi-agent-model-owner-cases.mjs';
 import { supplementalCases } from './finance-navi-agent-model-supplemental.mjs';
-import { installSpawnObserver, openHttpObserver, redact } from './finance-navi-agent-model-observer.mjs';
+import { installSpawnObserver, openHttpObserver, redact, AUTH_KEY } from './finance-navi-agent-model-observer.mjs';
+import { validNativeCliToken } from '../shared/finance-native-cli-auth.mjs';
 
 export const HARNESS_FILES = Object.freeze(['scripts/finance-navi-agent-model.mjs', 'scripts/finance-navi-agent-model-cases.mjs', 'scripts/finance-navi-agent-model-company-cases.mjs', 'scripts/finance-navi-agent-model-owner-cases.mjs', 'scripts/finance-navi-agent-model-supplemental.mjs', 'scripts/finance-navi-agent-model-observer.mjs', 'scripts/finance-navi-agent-model-observer.test.mjs', 'scripts/zoomer-fixtures/omf-navi-agent-model.mjs', 'docs/navi-agent-model-evaluation.md']);
 export const MODES = Object.freeze(['prepare', 'selftest', 'manual', 'lifecycle']);
+// Manual-only authentication sources: the unchanged default native login, the connected one-key observer overlay, or the owned
+// worker Vault (nativeOAuthToken delivered by the product's own shared/finance-native-cli-auth.mjs; the observer adds nothing).
+export const AUTH_MODES = Object.freeze(['default', 'connected', 'vault']);
 // Selftest variants: 'ideal' (scripted correct turns), 'defects' (scripted WRONG turns that must flip their named oracle) and
 // 'p02-missing' (the scripted P01 source publishes no T-number, so P02 exercises its missing-prerequisite branch).
 export const SELFTEST_VARIANTS = Object.freeze(['ideal', 'defects', 'p02-missing']);
@@ -75,7 +79,7 @@ export function parsePlan(env = {}) {
   if (plan.variant === 'defects') { const missing = rows.filter(r => !designFor(r)?.defect).map(r => r.id); if (missing.length) throw Error('plan:defect-not-defined ' + missing.join(',')); }
   if (plan.variant === 'p02-missing' && !['P01', 'P02'].every(id => rows.some(r => r.id === id))) throw Error('plan:p02-missing-needs-P01-and-P02');
   if (plan.claims && !path.isAbsolute(plan.claims)) throw Error('plan:absolute-claims-directory-required');
-  if (!['default', 'connected'].includes(plan.auth)) throw Error('plan:auth-default-or-connected');
+  if (!AUTH_MODES.includes(plan.auth)) throw Error('plan:auth-' + AUTH_MODES.join('-or-'));
   if (mode === 'manual') {
     if (!plan.cli || !path.isAbsolute(plan.cli) || !fs.existsSync(plan.cli) || !fs.statSync(plan.cli).isFile()) throw Error('plan:native-cli-path-required');
     if (!plan.frozen || !fs.existsSync(plan.frozen)) throw Error('plan:frozen-manifest-required');
@@ -83,6 +87,14 @@ export function parsePlan(env = {}) {
       if (typeof env[ENV.token] !== 'string' || !env[ENV.token]) throw Error('plan:connected-auth-token-missing');
       const dir = env[ENV.configDir]; if (!dir || !path.isAbsolute(dir) || !fs.existsSync(dir)) throw Error('plan:connected-auth-config-directory-required');
       plan.configDirectory = dir; plan.slot = env[ENV.slot] || null;
+    } else if (plan.auth === 'vault') {
+      // The same private inputs as connected; the value is validated by the product's own rule and never echoed or kept in the plan.
+      const value = env[ENV.token];
+      if (typeof value !== 'string' || !value) throw Error('plan:vault-auth-token-missing');
+      if (!validNativeCliToken(value)) throw Error('plan:vault-auth-token-invalid');
+      const dir = env[ENV.configDir];
+      if (dir !== undefined && dir !== '' && (!path.isAbsolute(dir) || !fs.existsSync(dir))) throw Error('plan:vault-auth-config-directory-invalid');
+      plan.configDirectory = dir || null; plan.slot = env[ENV.slot] || null;
     }
   } else if (plan.auth !== 'default') throw Error('plan:auth-only-in-manual-mode');
   return plan;
@@ -290,14 +302,50 @@ async function sendDraw(ctx, row, binding, request, requestId) {
 // Boundary of the actual native input: computed in memory from the observed stdin bytes; only booleans and key names are kept.
 const boundaryFor = (request, row) => text => { let input; try { input = JSON.parse(text); } catch { return { parsed: false }; } const evaluator = evaluatorOf(row.id); return { parsed: true, currentMessageMatchesFrozen: input.currentMessage === request.text, evaluatorExpectationAbsent: !evaluator || !text.includes(evaluator.expected), rubricLabelAbsent: !text.includes('manual-grading.md'), keys: Object.keys(input).sort() }; };
 
+// ---- Manual authentication handoff
+// The connected or vault credential (explicit manual options only) is taken into memory and removed from the given environment and
+// this process environment before any child starts (git, mongod, the application, the Vault helper, the worker's native and MCP
+// children), so no other child can inherit it.
+export function takeNativeCredential(env, plan) {
+  if (plan?.mode !== 'manual' || !['connected', 'vault'].includes(plan.auth)) return null;
+  const taken = { mode: plan.auth, token: env[ENV.token], slot: plan.slot ?? null, configDirectory: plan.configDirectory ?? null };
+  delete env[ENV.token]; delete process.env[ENV.token];
+  return taken;
+}
+// The auth source recorded in batch.json: never the credential itself.
+export function authRecord(plan, connected, vaultAuth) {
+  if (plan.mode !== 'manual') return null;
+  if (connected) return { source: 'connected-resource-overlay', slot: connected.slot, configDirectory: connected.configDirectory, oneKeyOverlay: 'CLAUDE_CODE_OAUTH_TOKEN on the exact matched native CLI spawn only' };
+  if (vaultAuth) return { source: 'owned-vault-native-credential', slot: vaultAuth.slot, configDirectory: vaultAuth.configDirectory, delivery: 'nativeOAuthToken in the owned DPAPI worker Vault, applied by shared/finance-native-cli-auth.mjs to the native CLI child (clean explicit-credential environment, blank MCP value)', observerOverlay: false };
+  return { source: 'unchanged-default-native-login' };
+}
+// Manual mode: the spawn observer (installed before the worker/interpreter is imported), the owned DPAPI worker Vault and the actual
+// TeachingWorker built as teaching-worker/run.mjs builds it (Vault config plus its directory, native defaults for everything else).
+// Vault mode writes the credential only into this owned Vault as nativeOAuthToken and installs the observer with connectedAuth null:
+// no overlay, custom loader or alternate model transport; the product helper alone delivers it.
+export async function startManualWorker({ root, cli, connected = null, vaultAuth = null, agentToken, origin, vaultDir, inferenceDirectory, secretValues, log = () => {} }) {
+  if (connected && vaultAuth) throw Error('manual:one-auth-source-only');
+  const spawnObserver = installSpawnObserver({ cliPath: cli, connectedAuth: connected, secretValues });
+  try {
+    const { Vault } = await import(pathToFileURL(path.join(root, 'collector/vault.mjs')).href);
+    const configDirectory = connected?.configDirectory || vaultAuth?.configDirectory || null;
+    await new Vault(vaultDir).update(() => ({ enabled: true, token: agentToken, baseUrl: origin, cliPath: cli, inferenceDirectory, publicResearch: true, ...(configDirectory ? { claudeConfigDirectory: configDirectory } : {}), ...(vaultAuth ? { nativeOAuthToken: vaultAuth.token } : {}) }));
+    const { TeachingWorker } = await import(pathToFileURL(path.join(root, 'teaching-worker/worker.mjs')).href);
+    const worker = new TeachingWorker({ ...await new Vault(vaultDir).read(), directory: vaultDir }, { log: line => { worker.lines.push({ at: new Date().toISOString(), line: String(line).slice(0, 200) }); log('worker: ' + line); } });
+    worker.lines = [];
+    return { spawnObserver, worker };
+  } catch (e) { try { spawnObserver.restore(); } catch {} throw e; }
+}
+
 // ---- Main explicit-mode entry (called by the fixture with process.env)
 export async function runCorpusFromEnvironment(env, { root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), log = s => process.stderr.write('[navi-agent-model] ' + s + '\n') } = {}) {
   const plan = parsePlan(env);
   if (plan.mode === 'lifecycle') return runLifecycle(plan, root, log);
-  // The connected credential (explicit manual option only) is taken into memory and removed from this process environment before
-  // any child starts, so no other child (application, mongod, Vault helper, MCP) can inherit it.
-  let connected = null;
-  if (plan.mode === 'manual' && plan.auth === 'connected') { connected = { token: env[ENV.token], slot: plan.slot, configDirectory: plan.configDirectory }; delete env[ENV.token]; delete process.env[ENV.token]; }
+  // The connected or vault credential (explicit manual options only) is taken into memory and removed from this process environment
+  // before any child starts, so no other child (git, application, mongod, Vault helper, MCP) can inherit it.
+  const credential = takeNativeCredential(env, plan);
+  const connected = credential?.mode === 'connected' ? { token: credential.token, slot: credential.slot, configDirectory: credential.configDirectory } : null;
+  const vaultAuth = credential?.mode === 'vault' ? { token: credential.token, slot: credential.slot, configDirectory: credential.configDirectory } : null;
   verifyDeclaration(); verifySupplementalDeclaration();
   try { os.setPriority(0, os.constants.priority.PRIORITY_LOW); } catch {}
   await fsp.mkdir(plan.out, { recursive: true });
@@ -308,29 +356,21 @@ export async function runCorpusFromEnvironment(env, { root = path.resolve(path.d
     const mismatch = !identity.revision || identity.trackedChanges?.length ? 'tracked source changes or no revision' : frozen.source?.revision !== identity.revision ? 'source revision' : frozen.source?.buildSha256 !== identity.buildSha256 ? 'built application' : canonicalJson(frozen.source?.harnessSha256) !== canonicalJson(identity.harnessSha256) ? 'harness files' : frozen.declarationSha256 !== identity.declarationSha256 ? 'declaration' : frozen.source?.supplementalDeclarationSha256 !== identity.supplementalDeclarationSha256 ? 'supplemental declaration' : null;
     if (mismatch) { await writeExclusive(path.join(plan.out, 'batch.json'), { batch: plan.batch, mode: plan.mode, startedAt, refused: 'frozen manifest does not match the current candidate: ' + mismatch, identity, frozenSource: frozen.source }); return { pass: false, summary: { mode: plan.mode, refused: 'frozen-candidate-mismatch: ' + mismatch, nativeCliProcesses: 0, processesReportingModelUsage: 0 } }; }
   }
-  const batchRecord = { batch: plan.batch, mode: plan.mode, attempt: plan.attempt, reason: plan.reason, startedAt, selected: plan.rows.map(r => r.id), denominators: denominators(plan.rows), auth: plan.mode === 'manual' ? (connected ? { source: 'connected-resource-overlay', slot: connected.slot, configDirectory: connected.configDirectory, oneKeyOverlay: 'CLAUDE_CODE_OAUTH_TOKEN on the exact matched native CLI spawn only' } : { source: 'unchanged-default-native-login' }) : null, cliPath: plan.mode === 'manual' ? plan.cli : null, identity, frozenManifestSha256: plan.frozen ? sha256File(plan.frozen) : null, processPriority: (() => { try { return os.getPriority(0); } catch { return null; } })(), countingUnit: 'one initial queued native product job and its native CLI process; internal model/tool turns are recorded separately' };
+  const batchRecord = { batch: plan.batch, mode: plan.mode, attempt: plan.attempt, reason: plan.reason, startedAt, selected: plan.rows.map(r => r.id), denominators: denominators(plan.rows), auth: authRecord(plan, connected, vaultAuth), cliPath: plan.mode === 'manual' ? plan.cli : null, identity, frozenManifestSha256: plan.frozen ? sha256File(plan.frozen) : null, processPriority: (() => { try { return os.getPriority(0); } catch { return null; } })(), countingUnit: 'one initial queued native product job and its native CLI process; internal model/tool turns are recorded separately' };
   await writeExclusive(path.join(plan.out, 'batch.json'), batchRecord);
   // Caller-owned runtime: every resource startRuntime creates is reachable by stopRuntime, even when startup throws part-way.
   const rt = { secrets: new Set() };
   let ctx = null, spawnObserver = null, worker = null, fatal = null, cleanup = null;
   // Known synthetic credentials (memory only): agent/research/owner tokens, every lease and bearer token the loopback observer
-  // forwarded and, when used, the connected credential. Used to withhold a native input and to scan every written artifact.
-  const secretValues = () => [...rt.secrets, ...(rt.http ? rt.http.secretValues() : []), ...(connected ? [connected.token] : [])].filter(v => typeof v === 'string' && v.length >= 8);
+  // forwarded and, when used, the connected or vault credential. Used to withhold a native input and to scan every written artifact.
+  const secretValues = () => [...rt.secrets, ...(rt.http ? rt.http.secretValues() : []), ...(connected ? [connected.token] : []), ...(vaultAuth ? [vaultAuth.token] : [])].filter(v => typeof v === 'string' && v.length >= 8);
   const attempts = [], families = new Map(), manifest = { kind: 'navi-agent-model resolved request manifest', createdAt: startedAt, mode: plan.mode, batch: plan.batch, source: identity, declarationSha256: identity.declarationSha256, cases: {} };
   try {
     await startRuntime(root, plan, log, rt);
     ctx = await buildContext(rt, plan, log);
     ctx.secretValues = secretValues;
-    if (plan.mode === 'manual') {
-      spawnObserver = installSpawnObserver({ cliPath: plan.cli, connectedAuth: connected, secretValues });
-      const { Vault } = await import(pathToFileURL(path.join(root, 'collector/vault.mjs')).href);
-      const vaultDir = path.join(rt.dir, 'vault');
-      await new Vault(vaultDir).update(() => ({ enabled: true, token: ctx.agent.token, baseUrl: rt.http.origin, cliPath: plan.cli, inferenceDirectory: path.join(rt.dir, 'inference'), publicResearch: true, ...(connected?.configDirectory ? { claudeConfigDirectory: connected.configDirectory } : {}) }));
-      // As teaching-worker/run.mjs: the Vault config plus the explicit Vault directory, the native defaults for everything else.
-      const { TeachingWorker } = await import(pathToFileURL(path.join(root, 'teaching-worker/worker.mjs')).href);
-      worker = new TeachingWorker({ ...await new Vault(vaultDir).read(), directory: vaultDir }, { log: line => { worker.lines.push({ at: new Date().toISOString(), line: String(line).slice(0, 200) }); log('worker: ' + line); } });
-      worker.lines = [];
-    } else spawnObserver = installSpawnObserver({ cliPath: plan.cli || path.join(os.homedir(), '.local/bin/claude.exe'), secretValues });
+    if (plan.mode === 'manual') ({ spawnObserver, worker } = await startManualWorker({ root, cli: plan.cli, connected, vaultAuth, agentToken: ctx.agent.token, origin: rt.http.origin, vaultDir: path.join(rt.dir, 'vault'), inferenceDirectory: path.join(rt.dir, 'inference'), secretValues, log }));
+    else spawnObserver = installSpawnObserver({ cliPath: plan.cli || path.join(os.homedir(), '.local/bin/claude.exe'), secretValues });
     for (let i = 0; i < plan.rows.length; i++) {
       const row = plan.rows[i], a = await runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, families, manifest, index: i, log, secretValues });
       attempts.push(a); await writeReplace(path.join(plan.out, 'result-table.json'), resultTable(plan, attempts));
@@ -449,7 +489,7 @@ async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, fami
     rec.effects = diff;
     const ev = { mode: plan.mode, request, turn: rec.turn, diff, events, native: { processes }, beforeDocs, sourcesBefore };
     const checks = [];
-    if (plan.mode === 'manual') checks.push(...nativeChecks(processes, row, request));
+    if (plan.mode === 'manual') checks.push(...nativeChecks(processes, row, request, plan.auth));
     checks.push(check('product:reply-saved', !!turn?.proposal?.summary && ['ready', 'confirmed'].includes(conversation?.state), 'state ' + conversation?.state));
     const visible = JSON.stringify({ proposal: turn?.proposal || null, events: events.map(e => e.responseText || e.job || '') });
     checks.push(check('scope:no-foreign-or-outsider-marker', !FOREIGN_MARKERS.some(m => visible.includes(m)), 'reply, citations and tool results scanned'));
@@ -467,7 +507,7 @@ async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, fami
   return finishRecord(plan, rec, secrets);
 }
 async function safeChecks(design, ctx, state, ev) { try { return await design.check(ctx, state, ev); } catch (e) { return [check('oracle:check-executed', false, 'check threw: ' + String(e?.message || e).slice(0, 300))]; } }
-function nativeChecks(processes, row, request) {
+function nativeChecks(processes, row, request, auth = 'default') {
   const p = processes[0] || {}, env = p.envelope || {};
   const exactInput = p.nativeInput?.exact === true && typeof p.nativeInput.text === 'string' && sha256(Buffer.from(p.nativeInput.text, 'utf8')) === p.stdin?.sha256;
   return [
@@ -480,7 +520,10 @@ function nativeChecks(processes, row, request) {
     check('native:exit-zero', p.exitCode === 0 && !p.signal && !env.isError, 'exit ' + p.exitCode + (p.signal ? ' signal ' + p.signal : '') + (env.isError ? ' is_error' : '')),
     // The requested accountant model must be among the models the native envelope reports; any other (internal helper) model is
     // recorded in the detail as an observation, never hidden.
-    check('native:requested-model-observed', Array.isArray(env.modelNames) && env.modelNames.some(n => n.startsWith(p.args?.find(x => x[0] === '--model')?.[1] || '\u0000')), 'requested ' + (p.args?.find(x => x[0] === '--model')?.[1] || null) + '; observed ' + JSON.stringify(env.modelNames || []))
+    check('native:requested-model-observed', Array.isArray(env.modelNames) && env.modelNames.some(n => n.startsWith(p.args?.find(x => x[0] === '--model')?.[1] || '\u0000')), 'requested ' + (p.args?.find(x => x[0] === '--model')?.[1] || null) + '; observed ' + JSON.stringify(env.modelNames || [])),
+    // Vault option only: the credential reached the native child through the product's own environment (its key name is present in
+    // the options the interpreter built) and the observer added nothing.
+    ...(auth === 'vault' ? [check('transport:vault-credential-in-native-env-without-overlay', processes.length === 1 && p.auth?.overlay === false && p.optionsIdentityPreserved === true && (p.envKeys || []).includes(AUTH_KEY), 'overlay ' + p.auth?.overlay + '; key ' + ((p.envKeys || []).includes(AUTH_KEY) ? 'present' : 'absent'))] : [])
   ];
 }
 // Zero-model selftest: the synthetic agent claims the queued job through the owned observer (so the evidence has the same shape as a

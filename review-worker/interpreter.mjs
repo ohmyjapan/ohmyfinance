@@ -13,8 +13,8 @@ export async function interpretReply(config, review, text) {
   const env = { ...process.env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
   delete env.CLAUDECODE;
   if (config.claudeConfigDirectory) env.CLAUDE_CONFIG_DIR = config.claudeConfigDirectory;
-  // This worker keeps inheriting the ambient environment (its existing default); a configured Vault nativeOAuthToken replaces only
-  // the native credential variable of this child's copy.
+  // Without a configured Vault nativeOAuthToken this worker keeps inheriting the ambient environment (its existing default). With
+  // one, the helper reduces this child's copy to the same clean environment the other native callers build, plus the credential.
   applyNativeCliAuth(env, config);
   const args = ['-p', '--output-format', 'json', '--json-schema', JSON.stringify(schema), '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--no-session-persistence', '--system-prompt', system];
   const input = { question: review.context.study.question, draft: { purpose: review.context.values.purpose, customerId: review.context.values.customerId }, previousProposedFields: review.proposal?.patch || {}, previousReplies: (review.replies || []).slice(-4).map(r => r.text), customers: review.context.customers, reply: text };

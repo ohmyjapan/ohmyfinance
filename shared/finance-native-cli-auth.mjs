@@ -13,11 +13,31 @@ export function nativeCliToken(config){
  if(!validNativeCliToken(config[NATIVE_CLI_TOKEN_FIELD]))throw Error('Native CLI credential configuration is invalid');
  return config[NATIVE_CLI_TOKEN_FIELD];
 }
-// Sets the configured credential on the caller's private child environment (never process.env); returns that same object.
+// Explicit-credential mode selects a clean native child environment, so no competing ambient credential, provider selector, model
+// endpoint, custom header, proxy/TLS/runtime injection or arbitrary key can outrank or reroute the configured token: the operating
+// system keys the allowlisted callers copy (read from process.env exactly as they read them), the callers' explicit switches (the
+// nonessential-traffic switch and the research job paths), the profile directory only when the config names one, and the token.
+// For the four allowlisted callers this is the environment they already build; the review worker's ambient inheritance is replaced
+// only in this mode. Trusted managed CLI policy still applies (docs/native-cli-auth.md).
+const OS_KEYS=['PATH','Path','SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH','LOCALAPPDATA','APPDATA','PROGRAMDATA','ComSpec'];
+const EXPLICIT_KEYS=['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC','OMF_RESEARCH_DATA_DIR','OMF_RESEARCH_JOB_FILE'];
+function explicitChildEnv(env,config){
+ const clean={};
+ for(const key of OS_KEYS)if(process.env[key])clean[key]=process.env[key];
+ for(const key of EXPLICIT_KEYS)if(typeof env[key]==='string')clean[key]=env[key];
+ if(config.claudeConfigDirectory&&typeof env.CLAUDE_CONFIG_DIR==='string')clean.CLAUDE_CONFIG_DIR=env.CLAUDE_CONFIG_DIR;
+ return clean;
+}
+// Absent credential: the caller's environment object is returned untouched (each caller's existing default, including the review
+// worker's ambient inheritance). Configured: the same private object (never process.env) is reduced in place to the clean selection
+// above plus the credential, and returned.
 export function applyNativeCliAuth(env,config){
  const token=nativeCliToken(config);
  if(token===null)return env;
  if(!env||typeof env!=='object'||env===process.env)throw Error('Native CLI credential needs the child environment');
+ const clean=explicitChildEnv(env,config);
+ for(const key of Object.keys(env))delete env[key];
+ Object.assign(env,clean);
  env[NATIVE_CLI_AUTH_KEY]=token;
  return env;
 }

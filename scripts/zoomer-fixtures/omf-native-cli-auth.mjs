@@ -5,6 +5,11 @@
 // an unchanged copied source tree (control) and on meaningful source mutants of that copy. A mutant counts as detected only when
 // an assertion carrying its expected tag fails; a missing module, syntax error or crashed setup is never detection. Finally the
 // source-importing sibling tests run, with the one known inherited stale assertion recorded, not hidden.
+// Follow-up (plan omf-navi-native-auth-followup-20261024): the explicit-credential child must be clean of competing ambient provider,
+// injection, profile and arbitrary keys while every absent default (the review worker's ambient inheritance) stays as it was; and
+// the corpus contracts (scripts/finance-navi-agent-model-observer.test.mjs runContracts, run in its own child) must pass, including
+// the manual-only vault option's owned-Vault handoff through the actual TeachingWorker with no observer overlay and its four seeded
+// runner defects. Both legs run on every invocation, so a fail-first run reports both.
 import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, cp, readFile, writeFile, rm, readdir, lstat } from 'node:fs/promises';
 import path from 'node:path';
@@ -24,6 +29,13 @@ const classify = text => ({
   setup: [...new Set([...text.matchAll(/native-auth:setup:[a-z0-9-]+/g)].map(m => m[0]))],
   moduleOrSyntax: /ERR_MODULE_NOT_FOUND|SyntaxError/.test(text),
   pass: (text.match(/ℹ pass (\d+)/) || [])[1], fail: (text.match(/ℹ fail (\d+)/) || [])[1],
+});
+// The corpus contracts in their own Node child (they patch child_process.spawn and count handles); their JSON follows a marker.
+const MARK = '@@omf-navi-agent-model-contracts@@';
+const contracts = () => new Promise(resolve => {
+  const script = "import { pathToFileURL } from 'node:url'; const m = await import(pathToFileURL(process.argv[1]).href); const r = await m.runContracts({ root: process.argv[2] }); process.stdout.write('" + MARK + "' + JSON.stringify({ pass: r.pass, checks: r.checks.length, failures: r.failures, deliberateDefects: r.deliberateDefects.map(d => ({ name: d.name, detected: d.detected })) }));";
+  const child = execFile(process.execPath, ['--input-type=module', '-e', script, path.join(root, 'scripts/finance-navi-agent-model-observer.test.mjs'), root], { cwd: root, windowsHide: true, timeout: 600000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => { let parsed = null; try { parsed = JSON.parse(stdout.split(MARK).pop()); } catch {} resolve({ code: error ? error.code ?? 1 : 0, result: parsed, text: parsed ? '' : clip(stdout + stderr) }); });
+  try { os.setPriority(child.pid, os.constants.priority.PRIORITY_LOW); } catch {}
 });
 const copied = ['shared', 'teaching-worker', 'research-worker', 'review-worker', 'finalization-worker', 'collector/windows', 'collector/vault.mjs', 'scripts/configure-native-cli-token.mjs'];
 // [name, file, anchor, replacement, expected tag, test-name pattern]
@@ -47,16 +59,27 @@ const mutants = [
   ['configure-prints-credential', 'scripts/configure-native-cli-token.mjs', "process.stdout.write(JSON.stringify({nativeOAuthToken:'configured'})+'\\n');", "process.stdout.write(JSON.stringify({nativeOAuthToken:'configured',value})+'\\n');", 'native-auth:configure-set-output', '^owned DPAPI'],
   ['configure-drops-other-fields', 'scripts/configure-native-cli-token.mjs', '{...object(current),[NATIVE_CLI_TOKEN_FIELD]:value}', '{[NATIVE_CLI_TOKEN_FIELD]:value}', 'native-auth:vault-preserve', '^owned DPAPI'],
   ['configure-clear-removes-server-bearer', 'scripts/configure-native-cli-token.mjs', 'delete next[NATIVE_CLI_TOKEN_FIELD];', 'delete next[NATIVE_CLI_TOKEN_FIELD];delete next.token;', 'native-auth:vault-clear-preserve', '^owned DPAPI'],
+  // Explicit-credential isolation defects (follow-up): each keeps or drops something the clean child selection must not.
+  ['helper-keeps-ambient-in-explicit-mode', 'shared/finance-native-cli-auth.mjs', 'for(const key of Object.keys(env))delete env[key];', '', 'native-auth:explicit-clean-review-provider', '^configured:'],
+  ['helper-keeps-provider-keys', 'shared/finance-native-cli-auth.mjs', 'for(const key of Object.keys(env))delete env[key];', 'for(const key of Object.keys(env))if(!/^(ANTHROPIC_|CLAUDE_CODE_USE_)/.test(key))delete env[key];', 'native-auth:explicit-clean-review-provider', '^configured:'],
+  ['helper-keeps-proxy-and-runtime-injection', 'shared/finance-native-cli-auth.mjs', 'for(const key of Object.keys(env))delete env[key];', 'for(const key of Object.keys(env))if(!/PROXY|^NODE_/.test(key))delete env[key];', 'native-auth:explicit-clean-review-runtime-injection', '^configured:'],
+  ['helper-keeps-arbitrary-ambient-keys', 'shared/finance-native-cli-auth.mjs', 'for(const key of Object.keys(env))delete env[key];', "for(const key of Object.keys(env))if(!key.startsWith('OMF_NATIVE_AUTH_'))delete env[key];", 'native-auth:explicit-clean-review arbitrary ambient key', '^configured:'],
+  ['helper-keeps-ambient-profile-directory', 'shared/finance-native-cli-auth.mjs', "if(config.claudeConfigDirectory&&typeof env.CLAUDE_CONFIG_DIR==='string')", "if(typeof env.CLAUDE_CONFIG_DIR==='string')", 'native-auth:explicit-clean-review-config-dir', '^review worker: explicit'],
+  ['helper-cleans-the-absent-default', 'shared/finance-native-cli-auth.mjs', 'if(token===null)return env;', 'if(token===null){if(env&&typeof env==="object"&&env!==process.env){const clean=explicitChildEnv(env,config||{});for(const key of Object.keys(env))delete env[key];Object.assign(env,clean);}return env;}', 'native-auth:review-ambient-inherited', '^default:'],
+  ['helper-drops-research-job-paths', 'shared/finance-native-cli-auth.mjs', "const EXPLICIT_KEYS=['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC','OMF_RESEARCH_DATA_DIR','OMF_RESEARCH_JOB_FILE'];", "const EXPLICIT_KEYS=['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'];", 'native-auth:env-unchanged-research', '^research: initial'],
+  ['helper-drops-traffic-switch', 'shared/finance-native-cli-auth.mjs', "const EXPLICIT_KEYS=['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC','OMF_RESEARCH_DATA_DIR','OMF_RESEARCH_JOB_FILE'];", "const EXPLICIT_KEYS=['OMF_RESEARCH_DATA_DIR','OMF_RESEARCH_JOB_FILE'];", 'native-auth:env-unchanged-teaching', '^configured:'],
   ['configure-reads-environment', 'scripts/configure-native-cli-token.mjs', 'const value = singleLine(bytes);', 'const value = process.env.OMF_NATIVE_OAUTH_TOKEN || singleLine(bytes);', 'native-auth:configure-refuses-environment', '^provisioning refuses'],
 ];
 async function noLinks(dir) { for (const e of await readdir(dir)) { const f = path.join(dir, e), s = await lstat(f); if (s.isSymbolicLink()) throw Error('Owned copy contains a link: ' + f); if (s.isDirectory()) await noLinks(f); } }
 export default {
   name: 'omf-native-cli-auth',
-  covers: ['teaching-worker/interpreter.mjs', 'teaching-worker/document-interpreter.mjs', 'research-worker/worker.mjs', 'review-worker/interpreter.mjs', 'finalization-worker/interpreter.mjs', 'shared/finance-native-cli-auth.mjs', 'scripts/configure-native-cli-token.mjs', 'scripts/finance-native-cli-auth.test.mjs', 'scripts/zoomer-fixtures/omf-native-cli-auth.mjs'],
+  covers: ['scripts/finance-navi-agent-model.mjs', 'scripts/finance-navi-agent-model-observer.test.mjs', 'teaching-worker/interpreter.mjs', 'teaching-worker/document-interpreter.mjs', 'research-worker/worker.mjs', 'review-worker/interpreter.mjs', 'finalization-worker/interpreter.mjs', 'shared/finance-native-cli-auth.mjs', 'scripts/configure-native-cli-token.mjs', 'scripts/finance-native-cli-auth.test.mjs', 'scripts/zoomer-fixtures/omf-native-cli-auth.mjs'],
   async run() {
     const main = await run([test]);
-    const evidence = { main: { code: main.code, ...classify(main.text), text: clip(main.text) }, control: null, mutants: [], siblings: null, database: 'none; owned temporary DPAPI Vault and real Node stand-in children; 0 provider/model/business calls' };
-    if (main.code !== 0) return { pass: false, message: JSON.stringify(evidence) };
+    const corpus = await contracts();
+    const corpusOk = corpus.code === 0 && corpus.result?.pass === true;
+    const evidence = { main: { code: main.code, ...classify(main.text), text: clip(main.text) }, corpusContracts: { code: corpus.code, pass: corpus.result?.pass ?? null, checks: corpus.result?.checks ?? null, failures: corpus.result?.failures ?? null, deliberateDefects: corpus.result?.deliberateDefects ?? null, text: corpus.text }, control: null, mutants: [], siblings: null, database: 'none; owned temporary DPAPI Vaults and real Node stand-in children; 0 provider/model/business calls' };
+    if (main.code !== 0 || !corpusOk) return { pass: false, message: JSON.stringify(evidence) };
     const directory = await mkdtemp(path.join(os.tmpdir(), 'omf-native-auth-mutant-'));
     try {
       for (const entry of copied) { await mkdir(path.dirname(path.join(directory, entry)), { recursive: true }); await cp(path.join(root, entry), path.join(directory, entry), { recursive: true, dereference: false, verbatimSymlinks: true }); }
@@ -90,7 +113,7 @@ export default {
       siblings.push({ file, code: r.code, pass: classify(r.text).pass, fail: classify(r.text).fail, failed: unique, ok: r.code === 0 || (file === 'scripts/finance-evaluation.test.mjs' && unique.length === 1 && unique[0] === inherited) });
     }
     evidence.siblings = { inherited, results: siblings };
-    const pass = evidence.control?.code === 0 && evidence.mutants.length === mutants.length && evidence.mutants.every(m => m.detected) && siblings.every(s => s.ok);
+    const pass = corpusOk && evidence.control?.code === 0 && evidence.mutants.length === mutants.length && evidence.mutants.every(m => m.detected) && siblings.every(s => s.ok);
     return { pass, message: JSON.stringify(evidence) };
   }
 };

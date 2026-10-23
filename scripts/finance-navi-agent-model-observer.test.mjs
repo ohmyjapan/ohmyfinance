@@ -41,6 +41,23 @@ process.stdin.on('end', async () => {
 });
 `;
 
+// Vault auth (manual-only option, plan omf-navi-native-auth-followup-20261024): an owned stand-in for the configured CLI path that
+// records what the actual interpreter handed it (the credential only as a digest) and returns one synthetic final result. It lays the
+// MCP server entry's env over its own environment for a probe child, as the worst case for an inherited credential.
+const VAULT_STANDIN = String.raw`
+const fs=require('fs'),path=require('path'),crypto=require('crypto'),cp=require('child_process');
+const [records,...args]=process.argv.slice(2),KEY='CLAUDE_CODE_OAUTH_TOKEN',token=process.env[KEY];
+const sha=v=>crypto.createHash('sha256').update(v).digest('hex');
+let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);
+process.stdin.on('end',()=>{
+ let mcp=null;try{mcp=JSON.parse(args[args.indexOf('--mcp-config')+1])}catch{}
+ const servers=Object.entries((mcp&&mcp.mcpServers)||{}).map(([name,s])=>{const env=s.env||{},probe=cp.spawnSync(process.execPath,['-e',"const v=process.env.CLAUDE_CODE_OAUTH_TOKEN;process.stdout.write(JSON.stringify({present:v!==undefined,sha:v?require('crypto').createHash('sha256').update(v).digest('hex'):''}))"],{env:{...process.env,...env},encoding:'utf8',windowsHide:true});return {name,envAuth:Object.prototype.hasOwnProperty.call(env,KEY)?(env[KEY]===''?'blank':'value'):'absent',probe:JSON.parse(probe.stdout||'null')}});
+ fs.mkdirSync(records,{recursive:true});
+ fs.writeFileSync(path.join(records,process.pid+'.json'),JSON.stringify({authSha:token===undefined?null:sha(token),envNames:Object.keys(process.env).filter(k=>k!==KEY).sort(),argsHaveToken:!!token&&args.some(a=>a.includes(token)),inputHasToken:!!token&&input.includes(token),servers}));
+ process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,num_turns:1,modelUsage:{'vault-contract-not-live':{inputTokens:1,outputTokens:1}},structured_output:{kind:'unclear',summary:'保管庫 테스트',patch:{},quotes:{}}}));
+});
+`;
+
 // The interpreter's child handling (teaching-worker/interpreter.mjs interpretChat), with the test's own spawn binding and timeout.
 function interpreterShaped(spawnImpl, file, args, options, input, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
@@ -278,6 +295,86 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       assert.throws(() => installSpawnObserver({ cliPath: node, connectedAuth: { token: '' } }), /connected-auth-token-required/);
     });
 
+    // ---- Vault auth (explicit manual-only option, plan omf-navi-native-auth-followup-20261024). The credential is validated without
+    // ever being echoed, taken into memory and removed from the environment before any child, written only into the owned DPAPI
+    // worker Vault as nativeOAuthToken, and delivered by the actual TeachingWorker/interpreter/helper; the spawn observer runs with
+    // connectedAuth null (no overlay). The default and connected options stay as they were.
+    const runnerModule = await import('./finance-navi-agent-model.mjs');
+    const vaultToken = () => 'synthetic-vault-native-' + randomUUID().replace(/-/g, '');
+    const planExercise = async mod => {
+      const out = path.join(temporary, 'not-created-vault'), frozen = path.join(temporary, 'frozen-placeholder.json'); await fs.writeFile(frozen, '{}');
+      const manual = { OMF_NAVI_AGENT_MODEL_MODE: 'manual', OMF_NAVI_AGENT_MODEL_CASES: 'R01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_BATCH: 'b1', OMF_NAVI_AGENT_MODEL_CLI: node, OMF_NAVI_AGENT_MODEL_FROZEN: frozen, OMF_NAVI_AGENT_MODEL_AUTH: 'vault' };
+      assert.throws(() => mod.parsePlan(manual), /plan:vault-auth-token-missing/, 'auth:vault-plan-validation');
+      for (const bad of ['short-token', 'synthetic vault with a space ' + 'x'.repeat(20), 'synthetic-vault\n' + 'y'.repeat(24), 'あ'.repeat(30)]) assert.throws(() => mod.parsePlan({ ...manual, OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH: bad }), e => /plan:vault-auth-token-invalid/.test(e.message) && !e.message.includes(bad), 'auth:vault-plan-validation');
+      const token = vaultToken();
+      assert.throws(() => mod.parsePlan({ ...manual, OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH: token, OMF_NAVI_AGENT_MODEL_CONFIG_DIR: 'relative-profile' }), /plan:vault-auth-config-directory-invalid/, 'auth:vault-plan-validation');
+      const plan = mod.parsePlan({ ...manual, OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH: token, OMF_NAVI_AGENT_MODEL_AUTH_SLOT: 'contract-slot', OMF_NAVI_AGENT_MODEL_CONFIG_DIR: temporary });
+      assert.equal(plan.auth, 'vault', 'auth:vault-plan-validation'); assert.equal(plan.slot, 'contract-slot'); assert.equal(plan.configDirectory, temporary);
+      assert.ok(!JSON.stringify(plan).includes(token), 'auth:vault-plan-never-holds-credential');
+      for (const mode of ['prepare', 'selftest']) assert.throws(() => mod.parsePlan({ OMF_NAVI_AGENT_MODEL_MODE: mode, OMF_NAVI_AGENT_MODEL_CASES: 'R01', OMF_NAVI_AGENT_MODEL_OUT: out, OMF_NAVI_AGENT_MODEL_AUTH: 'vault', OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH: token }), /auth-only-in-manual-mode/, 'auth:vault-manual-only');
+      assert.throws(() => mod.parsePlan({ ...manual, OMF_NAVI_AGENT_MODEL_AUTH: 'overlay-or-vault' }), /plan:auth-/, 'auth:vault-plan-validation');
+      // The existing connected option is unchanged: it still requires its configuration directory.
+      assert.throws(() => mod.parsePlan({ ...manual, OMF_NAVI_AGENT_MODEL_AUTH: 'connected', OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH: token }), /plan:connected-auth-config-directory-required/, 'auth:connected-unchanged');
+      assert.equal(mod.parsePlan({ ...manual, OMF_NAVI_AGENT_MODEL_AUTH: 'connected', OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH: token, OMF_NAVI_AGENT_MODEL_CONFIG_DIR: temporary }).auth, 'connected', 'auth:connected-unchanged');
+      await assert.rejects(fs.access(out));
+    };
+    await run('auth:vault-plan-validation-manual-only-never-echoed', () => planExercise(runnerModule));
+    const takeExercise = async mod => {
+      const name = 'OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH', token = vaultToken(), saved = process.env[name];
+      try {
+        const env = { [name]: token }; process.env[name] = token;
+        const taken = mod.takeNativeCredential(env, { mode: 'manual', auth: 'vault', slot: 'contract-slot', configDirectory: null });
+        assert.equal(taken?.token, token, 'auth:vault-credential-taken-before-any-child'); assert.equal(taken.mode, 'vault');
+        assert.ok(!Object.hasOwn(env, name) && process.env[name] === undefined && !Object.values(process.env).includes(token), 'auth:vault-credential-taken-before-any-child');
+        const record = mod.authRecord({ mode: 'manual', auth: 'vault' }, null, taken);
+        assert.equal(record.source, 'owned-vault-native-credential', 'auth:vault-batch-record'); assert.equal(record.observerOverlay, false, 'auth:vault-batch-record'); assert.equal(record.slot, 'contract-slot', 'auth:vault-batch-record');
+        assert.ok(!JSON.stringify(record).includes(token), 'auth:vault-batch-record-never-holds-credential');
+        assert.deepEqual(mod.authRecord({ mode: 'manual', auth: 'connected' }, { token, slot: 's', configDirectory: 'C:/synthetic' }, null), { source: 'connected-resource-overlay', slot: 's', configDirectory: 'C:/synthetic', oneKeyOverlay: 'CLAUDE_CODE_OAUTH_TOKEN on the exact matched native CLI spawn only' }, 'auth:connected-unchanged');
+        assert.deepEqual(mod.authRecord({ mode: 'manual', auth: 'default' }, null, null), { source: 'unchanged-default-native-login' }, 'auth:default-unchanged');
+        const untouched = { [name]: token }; assert.equal(mod.takeNativeCredential(untouched, { mode: 'manual', auth: 'default' }), null); assert.equal(untouched[name], token, 'auth:default-unchanged');
+      } finally { if (saved === undefined) delete process.env[name]; else process.env[name] = saved; }
+    };
+    await run('auth:vault-credential-taken-before-any-child-and-batch-record', () => takeExercise(runnerModule));
+    // The actual TeachingWorker.cycle() through startManualWorker: owned DPAPI Vault, a loopback stand-in for the OMF worker API, the
+    // spawn observer of the corpus and, beneath it, the owned stand-in child for the configured CLI path. No model or provider.
+    const vaultHandoffExercise = async mod => {
+      const { Vault } = await import(pathToFileURL(path.join(root, 'collector/vault.mjs')).href);
+      const token = vaultToken(), agentToken = 'omft_' + createHash('sha256').update(randomUUID()).digest('hex');
+      const dir = await fs.mkdtemp(path.join(temporary, 'vault-handoff-')), vaultDir = path.join(dir, 'vault'), inference = path.join(dir, 'inference'), records = path.join(dir, 'records');
+      for (const d of [vaultDir, inference]) await fs.mkdir(d);
+      const cli = path.join(dir, 'native-cli-standin.exe'), standin = path.join(dir, 'standin.cjs'); await fs.writeFile(cli, ''); await fs.writeFile(standin, VAULT_STANDIN);
+      const id = '0123456789abcdef01234567', job = { id, mode: 'workspace', lease: 'synthetic-vault-lease', text: '保管庫 경로', context: { mode: 'workspace', pageName: 'Synthetic', facts: {}, capabilities: [], messages: [] }, tools: [{ name: 'get_draft', description: 'Synthetic', inputSchema: { type: 'object', properties: {} } }], nextSlot: 1 };
+      const seen = { auth: new Set(), bodies: [], result: null }; let claimed = false;
+      const server = http.createServer((req, res) => { const c = []; req.on('data', b => c.push(b)); req.on('end', () => { const body = Buffer.concat(c).toString('utf8'); seen.auth.add(req.headers.authorization); seen.bodies.push(body); const route = req.url.replace('/api/finance-chat/worker/', ''); let answer = {}; if (route === 'workspace-claim') { answer = { job: claimed ? null : job }; claimed = true; } else if (route === 'claim') answer = { job: null }; else if (route === 'workspace/' + id + '/result') { seen.result = JSON.parse(body); answer = { success: true }; } res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' }); res.end(JSON.stringify(answer)); }); });
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+      const below = cp.spawn;
+      cp.spawn = function (file, args, options) { return file === cli ? below.call(this, node, [standin, records, ...args], options) : below.apply(this, arguments); };
+      (await import('node:module')).syncBuiltinESMExports();
+      let started = null;
+      try {
+        started = await mod.startManualWorker({ root, cli, connected: null, vaultAuth: { token, slot: 'contract-slot', configDirectory: null }, agentToken, origin: 'http://127.0.0.1:' + server.address().port, vaultDir, inferenceDirectory: inference, secretValues: () => [agentToken, token], log: () => {} });
+        const { spawnObserver, worker } = started;
+        spawnObserver.setCase({ caseId: 'VAULT', attemptId: 'vault', transport: 'default-json' });
+        assert.equal(await worker.cycle(), true, 'auth:vault-setup-cycle-handled');
+        assert.equal(spawnObserver.processes.length, 1, 'auth:vault-setup-one-native-process');
+        const p = spawnObserver.processes[0];
+        assert.equal(p.auth?.overlay, false, 'auth:vault-no-observer-overlay'); assert.equal(p.optionsIdentityPreserved, true, 'auth:vault-no-observer-overlay');
+        assert.ok(p.envKeys.includes(AUTH_KEY), 'auth:vault-child-receives-credential');
+        const files = await fs.readdir(records); assert.equal(files.length, 1, 'auth:vault-setup-one-native-process');
+        const r = JSON.parse(await fs.readFile(path.join(records, files[0]), 'utf8'));
+        assert.equal(r.authSha, sha(token), 'auth:vault-child-receives-credential');
+        assert.equal(r.argsHaveToken || r.inputHasToken, false, 'auth:vault-credential-not-in-arguments-or-input');
+        assert.equal(r.servers.length, 1, 'auth:vault-setup-mcp'); assert.equal(r.servers[0].envAuth, 'blank', 'auth:vault-mcp-blank'); assert.notEqual(r.servers[0].probe?.sha, sha(token), 'auth:vault-mcp-blank');
+        assert.equal(seen.result?.proposal?.summary, '保管庫 테스트', 'auth:vault-setup-result');
+        assert.deepEqual([...seen.auth], ['Bearer ' + agentToken], 'auth:vault-server-bearer-distinct'); assert.ok(!seen.bodies.some(b => b.includes(token)), 'auth:vault-credential-never-sent-to-omf');
+        assert.ok(!JSON.stringify(spawnObserver.processes).includes(token) && !JSON.stringify(worker.lines).includes(token), 'auth:vault-credential-never-retained');
+        const raw = await fs.readFile(path.join(vaultDir, 'credentials.dpapi')); assert.ok(!raw.includes(Buffer.from(token)) && !raw.includes(Buffer.from(token, 'utf16le')), 'auth:vault-owned-vault-encrypted');
+        const stored = await new Vault(vaultDir).read(); assert.equal(stored.nativeOAuthToken, token, 'auth:vault-owned-vault'); assert.equal(stored.token, agentToken, 'auth:vault-owned-vault'); assert.equal(stored.cliPath, cli, 'auth:vault-owned-vault');
+      } finally { try { started?.spawnObserver?.restore(); } catch {} cp.spawn = below; (await import('node:module')).syncBuiltinESMExports(); await new Promise(r => server.close(r)); }
+      assert.equal(cp.spawn, below, 'auth:vault-spawn-restored');
+    };
+    await run('auth:vault-owned-worker-handoff-real-child-no-observer-overlay', () => vaultHandoffExercise(runnerModule));
+
     // ---- The actual product interpreter seam: node stands in for the CLI and exits on its first unknown option (no network).
     await run('seam:actual-interpreter-spawn-observed-unchanged', async () => {
       const ob = installSpawnObserver({ cliPath: node });
@@ -436,6 +533,12 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     await run('defect:ignored-cleanup-flips-overall-assertion', () => defect('cleanup-ignored-in-overall-pass', 'finance-navi-agent-model-cases.mjs', "const cleanupOk = CLEANUP_STEPS.every(step => cleanup?.[step] === 'ok');", 'const cleanupOk = true;', outcomeContract, 'grade:overall-false-after-cleanup-failure'));
     await run('defect:vacuous-cleanup-evidence-flips-missing-cleanup-assertion', () => defect('vacuous-cleanup-evidence', 'finance-navi-agent-model-cases.mjs', "const cleanupOk = CLEANUP_STEPS.every(step => cleanup?.[step] === 'ok');", "const cleanupOk = Object.values(cleanup || {}).every(v => v === 'ok');", outcomeContract, 'grade:overall-false-without-cleanup-evidence'));
     await run('defect:truncated-spaced-identifier-flips-longer-identifier-assertion', () => defect('spaced-longer-identifier-truncated', 'finance-navi-agent-model-cases.mjs', "(?![0-9A-Za-z])' + NO_SPACED_CONTINUATION, 'g');", "(?![0-9A-Za-z])', 'g');", formatContract, 'format:spaced-longer-identifier-rejected'));
+    // Vault auth defects in owned copies of the runner (plan omf-navi-native-auth-followup-20261024); the unmutated runner passes the
+    // same exercises above.
+    await run('defect:vault-token-overlaid-by-observer-flips-no-overlay-assertion', () => defect('vault-token-overlaid-by-observer', 'finance-navi-agent-model.mjs', 'installSpawnObserver({ cliPath: cli, connectedAuth: connected, secretValues })', 'installSpawnObserver({ cliPath: cli, connectedAuth: connected || vaultAuth, secretValues })', vaultHandoffExercise, 'auth:vault-no-observer-overlay'));
+    await run('defect:vault-credential-not-written-flips-child-credential-assertion', () => defect('vault-credential-not-written', 'finance-navi-agent-model.mjs', '...(vaultAuth ? { nativeOAuthToken: vaultAuth.token } : {})', '...({})', vaultHandoffExercise, 'auth:vault-child-receives-credential'));
+    await run('defect:vault-token-left-in-environment-flips-taken-assertion', () => defect('vault-token-left-in-environment', 'finance-navi-agent-model.mjs', 'delete env[ENV.token]; delete process.env[ENV.token];', '', takeExercise, 'auth:vault-credential-taken-before-any-child'));
+    await run('defect:vault-plan-accepts-invalid-token-flips-validation-assertion', () => defect('vault-plan-accepts-invalid-token', 'finance-navi-agent-model.mjs', "if (!validNativeCliToken(value)) throw Error('plan:vault-auth-token-invalid');", '', planExercise, 'auth:vault-plan-validation'));
     // The unmutated observer passes the same exact-byte exercise (control for the defect above).
     await run('defect-control:unmutated-forwarding-passes', async () => { const ob = installSpawnObserver({ cliPath: node }); try { ob.setCase({ caseId: 'P01', attemptId: 'control', transport: 'stream-json' }); const r = await interpreterShaped(esmSpawn, node, argv('stream-ok'), options(), input); assert.equal(r.raw, FINAL_PAYLOAD, 'observer:exact-native-forwarding'); } finally { ob.restore(); } });
     await run('stream-parser:split-utf8-bound-and-invalid-input', () => {
@@ -449,6 +552,6 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     const resolved = await fs.realpath(temporary), base = await fs.realpath(os.tmpdir());
     if (resolved.startsWith(base + path.sep) && path.basename(resolved).startsWith('omf-navi-agent-model-contract-')) await fs.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
   }
-  const expectedDefects = 9;
+  const expectedDefects = 13;
   return { pass: failures.length === 0 && deliberateDefects.length === expectedDefects && deliberateDefects.every(d => d.detected), checks, failures, deliberateDefects, limits: 'Transport/manifest/evidence/format/grade contracts only: owned disposable local node children, loopback HTTP to an owned fake upstream and the actual interpreter spawn seam with node as a stand-in executable. No model, provider, application or database call and no EXTERNAL network (local child processes and loopback HTTP only). Fake model names and messages are synthetic; no product-model, query-privacy or reliability claim.' };
 }

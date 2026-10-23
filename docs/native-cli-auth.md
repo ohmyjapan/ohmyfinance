@@ -17,6 +17,21 @@ separately: the bearer authenticates the worker to OMF; `nativeOAuthToken` is on
 - **Present and valid** (one line of 20–4096 visible ASCII characters): `CLAUDE_CODE_OAUTH_TOKEN` is set in the **native CLI
   child's own environment object** and nowhere else. `process.env` is never changed. The child's arguments and input are
   unchanged. The value is never written to a job file, MCP configuration, argument, input, result, API body, log or error.
+- **Explicit mode uses a clean child environment** (follow-up 2026-10-24). The CLI's documented authentication precedence puts
+  cloud-provider selection, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` ahead of `CLAUDE_CODE_OAUTH_TOKEN`, and
+  `ANTHROPIC_BASE_URL` and provider base URLs reroute model requests. So when a valid token is configured, the helper reduces that
+  child's private environment object in place to:
+  - the operating-system keys the allowlisted callers copy (`PATH`/`Path`, `SystemRoot`, `WINDIR`, `TEMP`, `TMP`, `USERPROFILE`,
+    `HOMEDRIVE`, `HOMEPATH`, `LOCALAPPDATA`, `APPDATA`, `PROGRAMDATA`, `ComSpec`, read from `process.env` as those callers do);
+  - the callers' explicit switches: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and the research job paths `OMF_RESEARCH_DATA_DIR`
+    and `OMF_RESEARCH_JOB_FILE`;
+  - `CLAUDE_CONFIG_DIR` only when the config names `claudeConfigDirectory`;
+  - the token.
+
+  Other provider credentials, provider selectors, model endpoints or custom headers, proxy/TLS/`NODE_OPTIONS` injection, an
+  ambient profile directory and any other ambient key are not passed. For the four allowlisted callers this is exactly the
+  environment they already built. Only the review worker changes, and only in this mode. There is no new rejection branch: the
+  only explicit-mode refusal remains the invalid-value guard below.
 - **Present and invalid** (empty, `null`, a non-string, spaces, control characters, other lines, non-ASCII, too short or too
   long): the call is refused with `Native CLI credential configuration is invalid` before any job file or child exists. Nothing
   falls back to the default login or another account. **This is a new guard.** It affects only a Vault that sets the field. No
@@ -28,7 +43,7 @@ separately: the bearer authenticates the worker to OMF; `nativeOAuthToken` is on
 
 ## Callers, Vaults and continuations
 
-| Native CLI caller | Started by | Vault (config) | Child environment style (unchanged) | MCP child |
+| Native CLI caller | Started by | Vault (config) | Child environment style without a credential (unchanged); with one, the clean selection above | MCP child |
 |---|---|---|---|---|
 | `teaching-worker/interpreter.mjs` `interpretChat` | `teaching-worker/run.mjs`; also the hosted chat worker inside `research-worker/run.mjs` | teaching Vault (`~/.ohmyfinance-teaching`, `OMF_TEACHING_DATA_DIR`); hosted chat: research Vault | allowlist | `omf_actions` (`actions-mcp.mjs`) for tool jobs: blank |
 | `teaching-worker/document-interpreter.mjs` `interpretDocument` | teaching worker `documentCycle` (`documentEnabled:true`); research tools `extract` (nested, see below) | teaching Vault; research Vault | allowlist | none |
@@ -42,11 +57,9 @@ next attempt. An invalid credential fails the same way. The document cycle repor
 A workflow read records `connection_required`. The review worker logs its error and retries on its next cycle. No caller retries
 with another credential, rotates accounts or changes the global CLI login.
 
-**Review worker.** It keeps its existing behaviour: its child receives a copy of the worker's whole ambient environment. A
-configured `nativeOAuthToken` replaces only `CLAUDE_CODE_OAUTH_TOKEN` in that copy. This is not a new filter and not a security
-fix. Competing ambient provider credentials in the review worker's own process environment are still passed through, and the native
-CLI may prefer them. Keep the review worker's PM2 environment free of them. The parent's real native probe must confirm which
-identity was used.
+**Review worker.** Without a configured credential (absent or cleared) it keeps its existing behaviour: its child receives a copy
+of the worker's whole ambient environment, including any ambient provider keys. That default is not filtered. With a valid
+configured `nativeOAuthToken`, the copy is reduced to the clean selection above plus the token, the same as the other callers.
 
 ## Containment limits (truthful)
 
@@ -56,6 +69,12 @@ identity was used.
   also receives the configured credential through the same helper. The actions tools child never uses it.
 - The blank MCP value relies on the native CLI applying the server entry's `env` over what the tools child inherits. The owned
   stand-in tests that layering; the installed CLI's real behaviour is part of the parent's paid real native probe.
+- The clean environment controls only what the worker passes to the child. It is not a universal policy bypass:
+  - Trusted managed CLI policy (managed settings, including any `env` they set) remains authoritative. User and project
+    settings are already disabled by `--setting-sources ''`.
+  - An existing login in the selected profile directory is still present on disk.
+  - Which identity and route were really used must be checked in the parent's real-provider acceptance, not inferred from these
+    controlled children.
 - Anyone who can run code as the worker's Windows user can decrypt that user's DPAPI CurrentUser Vault. They can also read the
   child process environment. This change adds no operator-blindness and does not filter other pre-existing ambient secrets.
 - `collector/vault.mjs` serialises writes inside one process only. The provisioning command and the research settings page (which
@@ -101,5 +120,14 @@ The default weekly quota of the existing login is unaffected and may still be ex
 
 `scripts/finance-native-cli-auth.test.mjs` and the fixture `scripts/zoomer-fixtures/omf-native-cli-auth.mjs` run the actual
 callers, the research correction leg and the real teaching worker entrypoint. The native CLI is replaced at the spawn seam by real
-Node stand-in children, and the Vault is an owned temporary DPAPI Vault, with zero provider or model calls. These tests check
-recorded behaviour, not reliability. Paid native, provider and identity branches are not exercised here.
+Node stand-in children, and the Vault is an owned temporary DPAPI Vault, with zero provider or model calls.
+
+The tests plant synthetic competing ambient values: provider keys and selectors, a stale endpoint, custom headers, a proxy,
+`NODE_OPTIONS`, a profile directory and an arbitrary key. They show:
+- the explicit review child is clean and equals the teaching caller's environment;
+- the absent and cleared review defaults keep every one of those values.
+
+The fixture also runs the product-model corpus contracts. Those cover the corpus's manual-only `vault` option, which delivers
+through an owned Vault and the actual TeachingWorker with no observer overlay (`docs/navi-agent-model-evaluation.md`).
+
+These tests check recorded behaviour, not reliability. Paid native, provider and identity branches are not exercised here.

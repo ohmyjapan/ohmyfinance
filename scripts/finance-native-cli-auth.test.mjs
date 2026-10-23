@@ -33,9 +33,19 @@ const unicode = '会社用です。 한국어 응답입니다. 🚀';
 
 // The review worker inherits the ambient environment (its existing default); the four allowlisted callers do not. One ambient
 // credential and one ambient probe make that difference observable without reading any real environment value.
-const savedAmbient = { [KEY]: process.env[KEY], OMF_NATIVE_AUTH_AMBIENT_PROBE: process.env.OMF_NATIVE_AUTH_AMBIENT_PROBE };
+// Synthetic competing ambient values (2026-10-24 follow-up): provider credentials and selectors, a stale model endpoint and custom
+// headers, proxy/TLS/runtime injection and an ambient profile directory. The review default keeps inheriting them unchanged; an
+// explicitly configured credential must reach a clean native child without any of them. None of these is a real value.
+const competing = {
+  provider: { ANTHROPIC_API_KEY: 'synthetic-competing-api-key-' + randomBytes(12).toString('hex'), ANTHROPIC_AUTH_TOKEN: 'synthetic-competing-auth-' + randomBytes(12).toString('hex'), ANTHROPIC_BASE_URL: 'https://stale-gateway.invalid/', ANTHROPIC_CUSTOM_HEADERS: 'X-Synthetic: competing', ANTHROPIC_MODEL: 'synthetic-competing-model', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', ANTHROPIC_BEDROCK_BASE_URL: 'https://stale-bedrock.invalid/' },
+  injection: { HTTPS_PROXY: 'http://127.0.0.1:9', NODE_OPTIONS: '--no-deprecation', NODE_TLS_REJECT_UNAUTHORIZED: '1' },
+  configDir: { CLAUDE_CONFIG_DIR: path.join(owned, 'ambient-profile-directory-unused') },
+  arbitrary: { OMF_NATIVE_AUTH_AMBIENT_PROBE: 'ambient-probe' }
+};
+const competingNames = group => Object.keys(competing[group]);
+const savedAmbient = { [KEY]: process.env[KEY], ...Object.fromEntries(Object.values(competing).flatMap(g => Object.keys(g)).map(k => [k, process.env[k]])) };
 process.env[KEY] = ambient;
-process.env.OMF_NATIVE_AUTH_AMBIENT_PROBE = 'ambient-probe';
+for (const group of Object.values(competing)) Object.assign(process.env, group);
 
 const standin = path.join(owned, 'standin.cjs');
 const intercept = path.join(owned, 'intercept.mjs');
@@ -191,16 +201,29 @@ test('default: an absent credential keeps every caller environment, argument and
     if (allowlisted.includes(name)) {
       assert.equal(r.auth.present, false, tag('default-' + name + ' allowlisted child has no native credential'));
       assert.equal(r.ambientProbe, '', tag('default-' + name + ' allowlist preserved'));
+      for (const group of ['provider', 'injection', 'arbitrary']) for (const k of competingNames(group)) assert.ok(!r.envNames.includes(k), tag('default-' + name + ' allowlist preserved'));
     } else {
       assert.equal(r.auth.sha, sha(ambient), tag('review-ambient-inherited (unchanged default, not a security fix)'));
       assert.equal(r.ambientProbe, 'ambient-probe', tag('review-ambient-inherited'));
+      // Absent credential: the review child still inherits every competing ambient key, exactly as before.
+      for (const group of ['provider', 'injection', 'arbitrary']) for (const k of competingNames(group)) assert.ok(r.envNames.includes(k), tag('review-ambient-inherited ' + k));
     }
     assert.equal(r.traffic, '1', tag('default-' + name + ' traffic switch'));
     assert.equal(r.cwd.toLowerCase(), inference.toLowerCase(), tag('default-' + name + ' cwd'));
   }
 });
 
-test('configured: the explicit credential reaches the native CLI child only; environment, arguments and input are otherwise identical', async () => {
+// The clean explicit-credential environment of the review child: no competing provider, injection, profile or arbitrary ambient
+// key, and exactly the environment (names and values) the allowlisted teaching caller builds for the same config.
+function assertCleanExplicitReview(c, reference) {
+  for (const k of competingNames('provider')) assert.ok(!c.envNames.includes(k), tag('explicit-clean-review-provider ' + k));
+  for (const k of competingNames('injection')) assert.ok(!c.envNames.includes(k), tag('explicit-clean-review-runtime-injection ' + k));
+  assert.notEqual(c.configDir, competing.configDir.CLAUDE_CONFIG_DIR, tag('explicit-clean-review-config-dir'));
+  assert.equal(c.ambientProbe, '', tag('explicit-clean-review arbitrary ambient key'));
+  assert.deepEqual(c.envNames, reference.envNames, tag('explicit-clean-review-shape'));
+  assert.equal(c.envDigest, reference.envDigest, tag('explicit-clean-review-shape'));
+}
+test('configured: the explicit credential reaches a clean native CLI child; arguments and input are otherwise identical', async () => {
   for (const [name, call] of Object.entries(callers)) {
     const before = envSnapshot();
     const plain = await scenario(); const shared = await base();
@@ -210,8 +233,15 @@ test('configured: the explicit credential reaches the native CLI child only; env
     const [d] = await records(plain), [c] = await records(configured);
     assert.ok(d && c, tag('setup:no-child-' + name));
     assert.equal(c.auth.present && c.auth.sha, sha(tokenA), tag('configured-' + name + ' child did not receive the configured native credential'));
-    assert.deepEqual(c.envNames, d.envNames, tag('env-unchanged-' + name));
-    assert.equal(c.envDigest, d.envDigest, tag('env-unchanged-' + name));
+    if (name === 'review') {
+      // Deliberate change (follow-up plan omf-navi-native-auth-followup-20261024): explicit mode no longer inherits the review
+      // worker's ambient environment; the absent default above still does.
+      const ref = await scenario(); await callers.teaching(shared); const [reference] = await records(ref);
+      assertCleanExplicitReview(c, reference);
+    } else {
+      assert.deepEqual(c.envNames, d.envNames, tag('env-unchanged-' + name));
+      assert.equal(c.envDigest, d.envDigest, tag('env-unchanged-' + name));
+    }
     assert.deepEqual(normalizeArgs(c.args), normalizeArgs(d.args), tag('args-unchanged-' + name + ' (model, effort, schema, tools, turns)'));
     assert.equal(c.stdin, d.stdin, tag('input-unchanged-' + name));
     assert.equal(c.argsHaveToken || c.stdinHasToken, false, tag('no-arg-input-leak-' + name));
@@ -227,13 +257,27 @@ test('configured: the explicit credential reaches the native CLI child only; env
   assert.equal(JSON.parse(r.stdin).currentMessage, unicode + ' 質問', tag('unicode-input'));
 });
 
-test('configured review worker: the configured credential replaces the ambient one; the rest of the inherited environment is unchanged', async () => {
-  const dir = await scenario();
-  await callers.review({ ...(await base()), nativeOAuthToken: tokenB });
-  const [r] = await records(dir);
-  assert.equal(r.auth.sha, sha(tokenB), tag('configured-review-over-ambient'));
-  assert.equal(r.ambientProbe, 'ambient-probe', tag('review-ambient-inherited'));
-  assert.equal(process.env[KEY], ambient, tag('process-env-unchanged-review'));
+test('review worker: explicit credential selects a clean child over competing ambient provider keys; absent and cleared keep the ambient environment', async () => {
+  // Without claudeConfigDirectory the absent default inherits the ambient profile directory; explicit mode drops it.
+  const config = { ...(await base()), claudeConfigDirectory: undefined };
+  const before = envSnapshot();
+  const plain = await scenario(); await callers.review(config); const [d] = await records(plain);
+  assert.equal(d.auth.sha, sha(ambient), tag('review-ambient-inherited'));
+  assert.equal(d.configDir, competing.configDir.CLAUDE_CONFIG_DIR, tag('review-ambient-inherited profile directory'));
+  for (const group of ['provider', 'injection', 'arbitrary']) for (const k of competingNames(group)) assert.ok(d.envNames.includes(k), tag('review-ambient-inherited ' + k));
+  const configured = await scenario(); await callers.review({ ...config, nativeOAuthToken: tokenB }); const [c] = await records(configured);
+  assert.equal(c.auth.sha, sha(tokenB), tag('configured-review-over-ambient'));
+  const ref = await scenario(); await callers.teaching(config); const [reference] = await records(ref);
+  assert.equal(reference.configDir, '', tag('setup:reference-without-profile'));
+  assertCleanExplicitReview(c, reference);
+  assert.equal(c.configDir, '', tag('explicit-clean-review-config-dir'));
+  // Cleared (the key removed, or explicitly undefined) is the absent default again: the full ambient environment.
+  for (const cleared of [config, { ...config, nativeOAuthToken: undefined }]) {
+    const again = await scenario(); await callers.review(cleared); const [a] = await records(again);
+    assert.equal(a.envDigest, d.envDigest, tag('review-ambient-inherited after clear'));
+    assert.deepEqual(a.envNames, d.envNames, tag('review-ambient-inherited after clear'));
+  }
+  assert.equal(envSnapshot(), before, tag('process-env-unchanged-review'));
 });
 
 test('MCP tools children get an explicit blank credential; job files carry none; the default MCP environment is unchanged', async () => {
