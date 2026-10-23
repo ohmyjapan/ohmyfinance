@@ -277,8 +277,8 @@ const SHAPE = ({ c, ids, selector, titles }) => {
  * submission; its outcome becomes `authenticated` (D1) only when that submission, within the settle window and with no dialog open,
  * reached a NEW top document of the official origin classified as the exact Welcome page — never from a pathname, a file, a similar
  * title, an older document or a page after the person was asked. An already-queued guided observe job uses the same ui and still
- * treats that outcome as merely submitted (bank.mjs guidedSignIn: P1). JS dialogs are never accepted: while one is open state() is
- * `verification` and the person decides. snapshot() refuses to export unless the sign-in was direct or the connection carries an
+ * treats that outcome as merely submitted (bank.mjs guidedSignIn: P1). JS dialogs are never accepted — except the one observed logout
+ * confirm of finish()'s own ログアウト press (logoutConfirm below) — while one is open state() is `verification` and the person decides. snapshot() refuses to export unless the sign-in was direct or the connection carries an
  * account label (verified on the page by bank.mjs). finish() closes the download tab this job's CSV press opened (no other page),
  * then presses ログアウト once;
  * it is bounded and never changes the job's result. `options` are the test seams for the settle and step windows.
@@ -293,7 +293,28 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
   let pressed = null;
   const PRESSED = { [c.open]: 'open', [c.period]: 'period', [c.query]: 'query', [c.export]: 'export', [c.logout]: 'logout' };
   const TITLES = { [c.welcome.title]: 'welcome', [c.statements.title]: 'statements', 'ログイン - PayPay銀行': 'login', [c.downloading]: 'downloading' };
-  const watch = async () => { if (dialogs) return; try { dialogs = await page.createCDPSession(); await dialogs.send('Page.enable'); dialogs.on('Page.javascriptDialogOpening', () => { waiting = true; }); dialogs.on('Page.javascriptDialogClosed', () => { waiting = false; }); } catch { dialogs = null; } };
+  // Plan omf-paypay-logout-20261023 (actual trace, hub CAUSE.md / LIVE-LOGOUT-TRACE.jsonl): right after this job's own verified ログアウト
+  // press the bank opened a `confirm` on the statement page whose text had logout and confirmation wording; left unanswered, the
+  // post-logout page was never reached. The one exception to "JS dialogs are never accepted": `logout` is the scope of ONE finish()
+  // invocation, armed just before its single ログアウト press and dropped when finish() ends or its window passes. Only the FIRST dialog in
+  // that scope can be answered, and only when it is a confirm with both wording categories the trace recorded, on this job's own page
+  // (this CDP session's target, so never another tab), raised by its current top document on the official origin (the dialog's frame url
+  // is the main frame's url; nothing is evaluated under the open dialog). It is accepted once through the session already enabled here.
+  // Every other dialog (login, 照会, CSV, one already open, a second one, alert/prompt/beforeunload, a frame, another origin, a late one)
+  // is left to the person exactly as before.
+  const LOGOUT_WORDS = /ログアウト|log.?out|log.?off/i, CONFIRM_WORDS = /よろしい|しますか|confirm/i;
+  let logout = null;
+  const accept = scope => { scope.answered = true; dialogs?.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}); };
+  const logoutConfirm = event => {
+    const scope = logout;
+    if (!scope || scope.seen || Date.now() > scope.until) return; // guard:routine-logout-scope
+    scope.seen = true;
+    if (event?.type !== 'confirm') return; // guard:routine-logout-confirm-type
+    const text = String(event?.message ?? ''); if (!LOGOUT_WORDS.test(text) || !CONFIRM_WORDS.test(text)) return; // guard:routine-logout-confirm-words
+    let same = false; try { same = new URL(String(event?.url)).origin === c.origin && event.url === page.url(); } catch { same = false; } if (!same) return; // guard:routine-logout-confirm-page
+    if (scope.pressed) accept(scope); else scope.pending = true;
+  };
+  const watch = async () => { if (dialogs) return; try { dialogs = await page.createCDPSession(); await dialogs.send('Page.enable'); dialogs.on('Page.javascriptDialogOpening', () => { waiting = true; }); dialogs.on('Page.javascriptDialogOpening', logoutConfirm); dialogs.on('Page.javascriptDialogClosed', () => { waiting = false; }); } catch { dialogs = null; } };
   const read = async () => { try { return (await bounded(page.evaluate(ROUTINE_PAGE, { selector: ROUTINE_CONTROLS }))) || null; } catch { return null; } };
   const kind = async () => waiting ? 'verification' : classifyRoutinePage(await read(), c);
   const reach = async (kinds, code, message) => { const until = Date.now() + stepMs; while (Date.now() < until) { const k = await kind(); if (kinds.includes(k)) return k; await pause(250); } throw coded(code, message); };
@@ -355,9 +376,16 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
         }
         if (waiting) return { ...result, reason: 'dialog' };
         const k = await kind(); if (k !== 'authenticated' && k !== 'statements' && k !== 'export_ready') return { ...result, reason: 'not-signed-in' };
-        await press('link', c.logout, [c.welcome.title, c.statements.title], 'logout');
-        while (left() > 0) { const r = await read(); if (r && (r.password || classifyRoutinePage(r, c) === 'unknown')) return { ...result, loggedOut: true }; await pause(250); }
-        return { ...result, reason: 'timeout' };
+        // the logout-confirm scope of this invocation (see logoutConfirm): armed before the press because the bank's confirm can arrive
+        // before the press call returns; a confirm seen meanwhile is answered only once that press is confirmed as this job's own
+        const scope = logout = { until, pressed: false, seen: false, pending: false, answered: false };
+        try {
+          await press('link', c.logout, [c.welcome.title, c.statements.title], 'logout');
+          scope.pressed = true; if (scope.pending && !scope.answered && logout === scope && Date.now() <= until) accept(scope); // guard:routine-logout-own-press
+          // `loggedOut` is what this adapter saw afterwards (a password field or an unrecognized page), not proof from the bank's server
+          while (left() > 0) { const r = await read(); if (r && (r.password || classifyRoutinePage(r, c) === 'unknown')) return { ...result, loggedOut: true }; await pause(250); }
+          return { ...result, reason: 'timeout' };
+        } finally { if (logout === scope) logout = null; } // guard:routine-logout-lifetime
       } catch (error) { return { ...result, reason: String(error?.code || 'error') }; }
     },
     /**

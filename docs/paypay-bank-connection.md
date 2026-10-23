@@ -208,7 +208,8 @@ pathname is ever used. These facts are frozen as `collector/banks/paypay.mjs STA
   cap (an absent year option → `period-mismatch`; missing in-period rows → `overlap-mismatch` hold); O4 additional verification, expiry,
   maintenance and time-out pages (unknown → the person, no acceptance, no export without a label); O5 the empty-period export (no CSV
   control → `export-unidentified`; header-only → zero rows / hold / the existing other-account 409); O6 JS dialogs on CSV/logout (never
-  accepted); O7 whether ログアウト prevents the next in-use page (in-use handled without overwrite); O8 whether the CSV tab comes to the
+  accepted; since plan `omf-paypay-logout-20261023` the one observed logout confirm of the own ログアウト press is the scoped
+  exception, see that section); O7 whether ログアウト prevents the next in-use page (in-use handled without overwrite); O8 whether the CSV tab comes to the
   foreground in a background job (the tab is closed after the download; foreground is a live check, not provable headless); O9 the
   option value format of the date selects (numeric match + read-back).
 
@@ -272,6 +273,72 @@ fixture `scripts/zoomer-fixtures/omf-paypay-live-period.mjs`:
 
 Live limits: the change is not deployed. The full-period empty outcome, PayPay 1/2/4 routine captures and the four-account acceptance
 are open.
+
+## Logout confirmation (plan `omf-paypay-logout-20261023`)
+
+### Actual facts
+
+Source: hub `output/plan/omf-paypay-logout-20261023/CAUSE.md` and `LIVE-LOGOUT-TRACE.jsonl`. These are value-free observations of the
+owned background Chrome on the deployed `1284d40`, PayPay 4.
+
+- **The failure.** The CSV download completed and its tab closed. 31 ms later a `confirm` opened on the original statement page, with
+  logout wording and confirmation wording.
+- **What was absent.** There was no earlier dialog and no bank document request in between.
+- **What happened next.** Nothing answered the confirm until browser cleanup. `finish()` reported `loggedOut:false`, `reason:timeout`.
+  The original download itself was retained.
+- **Cause.** `finish()` presses its one verified ログアウト and then polls a page that the unanswered confirm blocks.
+- **Not retained.** The exact bank wording was deliberately not kept: only its type and the two wording categories are facts.
+
+### Behaviour (`collector/banks/paypay.mjs` `routineUi`)
+
+**The exception.** This is the one exception to "JS dialogs are never accepted" (`logoutConfirm`, `finish()`).
+
+**Scope of the exception.** `finish()` arms a scope just before its single ログアウト press. The scope belongs to that invocation only:
+it is dropped when `finish()` ends or its unchanged window passes (`guard:routine-logout-lifetime`). Within the scope, only the
+**first** dialog of the job's own page is considered (`guard:routine-logout-scope`). It is accepted once, and only when all of these
+hold:
+
+- it is a `confirm` (`guard:routine-logout-confirm-type`);
+- its text matches both observed categories, logout (`ログアウト|log.?out|log.?off`) and confirmation (`よろしい|しますか|confirm`)
+  (`guard:routine-logout-confirm-words`);
+- its frame URL is the main frame's current URL on the official origin (`guard:routine-logout-confirm-page`);
+- that press is confirmed as this job's own (`guard:routine-logout-own-press`).
+
+**How it is answered.** Through the CDP session already enabled for the page. Nothing is evaluated under the open dialog. Another tab
+is another target, so its dialogs never reach this listener.
+
+**What stays unanswered.** Everything else is left to the person exactly as before:
+
+- login, 照会 and CSV dialogs;
+- one already open before `finish()` (reason `dialog`, no press);
+- a second dialog;
+- alerts, prompts and beforeunload;
+- a frame's dialog;
+- another origin or tab;
+- a late dialog after `finish()`.
+
+**Unchanged:**
+
+- the logout press and click method;
+- every window, timer and the background window;
+- the results;
+- `finish()`'s outcome shape and the private diagnostic record (`collector/bank.mjs` is untouched).
+
+**What `loggedOut` means.** It reports what the adapter saw after the press: a password field or an unrecognized page. It is **not**
+independent proof that the bank's server ended the session.
+
+### Proof
+
+Fully intercepted fictional pages on owned headless Chrome. All HTML declares UTF-8 and every dialog is recorded through the test's own
+enabled CDP sessions. The fictional confirm text only carries the two categories.
+
+- `collector/test/paypay-logout.test.mjs`: the observed shape, logout without a dialog, once only, lifetime, out-of-scope dialogs
+  after and before the press, and a failure with a confirmed logout and a canary-free record.
+- Hub fixture `scripts/zoomer-fixtures/omf-paypay-logout.mjs`: fail-first on `1284d40`; mutants G-M1…G-M8 plus the legacy C-M1…C-M18
+  and L-M1…L-M8; the staged package.
+
+**Live limits.** Not deployed. A positive post-logout page in the real bank, and whether it prevents the next in-use page (O7), are
+unmeasured. The four-account acceptance and the mapping/import of the retained originals are open.
 
 ## Overlapping captures (plan `omf-paypay-routine-20261022` Phase S; PayPay銀行 and 楽天銀行)
 
@@ -399,7 +466,17 @@ bank-local guards in `banks/paypay.mjs` (`routine-welcome`, `routine-statements`
 - `finish-after-login`, which now keeps `finish()`'s outcome.
 
 Its only caller is `collectBankFromPage` (retrieval). Observe jobs, the guided lane and adapters without `diagnostic()` are unchanged
-(see that section above). Fixtures: `scripts/zoomer-fixtures/omf-bank-overlap-capture.mjs` (native legs incl. the owner
+(see that section above). Plan `omf-paypay-logout-20261023` adds bank-local guards that widen the blanket no-answer dialog rule only
+for the observed logout confirm of `finish()`'s own press:
+
+- `routine-logout-scope`
+- `routine-logout-confirm-type`
+- `routine-logout-confirm-words`
+- `routine-logout-confirm-page`
+- `routine-logout-own-press`
+- `routine-logout-lifetime`
+
+`collector/bank.mjs` and all shared code are unchanged. Fixtures: `scripts/zoomer-fixtures/omf-bank-overlap-capture.mjs` (native legs incl. the owner
 reinterpretation, the paused holder, pure and built-chunk mutants S-M1…S-M20n) and `scripts/zoomer-fixtures/omf-paypay-routine.mjs`
 (unit, native daemon walkthrough, HTTP/Chrome, collector mutants C-M1…C-M19). The full audit is the build's `7-shared-boundary-audit.md`.
 
