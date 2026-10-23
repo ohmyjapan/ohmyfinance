@@ -281,3 +281,48 @@ export function unchangedFields(name, before, after, keys) {
   return { name, pass: !!before && !!after && moved.length === 0, detail: moved.length ? 'changed: ' + moved.join(',') : 'unchanged: ' + keys.join(',') };
 }
 export const check = (name, pass, detail = '') => ({ name, pass: !!pass, detail: String(detail).slice(0, 600) });
+
+// ---- Evidence, format and outcome helpers (2026-10-24 continuation)
+// An explicitly published invoice registration number: ASCII 'T' and exactly 13 ASCII digits. Display whitespace (space, tab, line
+// breaks, no-break, en/em/thin/hair, narrow no-break, medium mathematical and ideographic spaces) may separate them. A bare
+// corporation number, a longer, shorter or control/zero-width/hyphen-separated identifier, letters or digits touching either end,
+// a 14th digit after horizontal whitespace on the same line (a spaced longer identifier is never truncated to 13), and full-width
+// forms are not recognized; a separate next line (a date) is unaffected. The retained source text stays available to the manual
+// grader. Never derives a prefix.
+const SPACE_H = '[ \\t\\u00a0\\u2000-\\u200a\\u202f\\u205f\\u3000]', SPACE_ANY = '[ \\t\\r\\n\\u00a0\\u2000-\\u200a\\u202f\\u205f\\u3000]';
+const NO_SPACED_CONTINUATION = '(?!' + SPACE_H + '*[0-9])';
+const T_NUMBER_IN_TEXT = new RegExp('(?<![0-9A-Za-z])T((?:' + SPACE_ANY + '*[0-9]){13})(?![0-9A-Za-z])' + NO_SPACED_CONTINUATION, 'g');
+export function publishedTNumbers(text) {
+  const out = [];
+  for (const m of String(text ?? '').matchAll(T_NUMBER_IN_TEXT)) { const number = 'T' + m[1].replace(/[^0-9]/g, ''); if (!out.includes(number)) out.push(number); }
+  return out;
+}
+// A captured public source as retained evidence: its literal text (bounded by the native capture limit), the stored hash and a
+// recomputed one. A failed or unavailable read stays recorded as activity with its safe error and no text.
+export function retainedSource(doc) {
+  const kept = {
+    id: plainDocument(doc?._id ?? doc?.id ?? null), kind: doc?.kind ?? null, status: doc?.status ?? null, evidence: doc?.evidence ?? null, url: doc?.url ?? null, requestedUrl: doc?.requestedUrl ?? null, title: doc?.title ?? null,
+    text: typeof doc?.text === 'string' ? doc.text : null,
+    hash: doc?.hash ?? null, chars: doc?.chars ?? null, truncated: doc?.truncated ?? null, capturedAt: plainDocument(doc?.capturedAt ?? null), registry: plainDocument(doc?.registry ?? null), safeError: doc?.safeError ?? null, reason: doc?.reason ?? null
+  };
+  kept.textSha256 = kept.text === null ? null : sha256(kept.text);
+  kept.hashMatches = kept.text === null ? null : kept.textSha256 === kept.hash;
+  return kept;
+}
+// Retained native documents for independent grading: every document this attempt added, removed or changed (before and after) and
+// the named selected/protected documents even when unchanged. Inputs are this attempt's canonical before/after snapshots.
+export function retainedDocuments(before, after, diff, selected = []) {
+  const out = {}, read = (snap, collection, id) => { const v = snap?.[collection]?.[id]; return v === undefined ? null : JSON.parse(v); };
+  const put = (collection, id, change) => { (out[collection] ||= {})[id] = { before: read(before, collection, id), after: read(after, collection, id), change }; };
+  for (const [collection, d] of Object.entries(diff || {})) { for (const id of d.added) put(collection, id, 'added'); for (const id of d.removed) put(collection, id, 'removed'); for (const c of d.changed) put(collection, c.id, 'changed'); }
+  for (const [collection, rawId] of selected) { const id = String(rawId); if (out[collection]?.[id]) continue; put(collection, id, read(before, collection, id) === null && read(after, collection, id) === null ? 'selected-absent' : 'selected-unchanged'); }
+  return out;
+}
+// The overall verdict of a run: every selected case reached the expected status, no fatal error, every one of the runner's cleanup
+// steps reported ok and no known credential/lease value was found in the written evidence. A failed, missing or empty cleanup record
+// can never be overall green.
+export const CLEANUP_STEPS = Object.freeze(['http-observer', 'app', 'mongo-client', 'mongod', 'temp-directory']);
+export function overallPass({ fatal, attempts, expected, selected, cleanup, secretFindings }) {
+  const cleanupOk = CLEANUP_STEPS.every(step => cleanup?.[step] === 'ok');
+  return !fatal && Array.isArray(attempts) && attempts.length > 0 && attempts.length === selected && attempts.every(a => a.status === expected) && cleanupOk && secretFindings === 0;
+}

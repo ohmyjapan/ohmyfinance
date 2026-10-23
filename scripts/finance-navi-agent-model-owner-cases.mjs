@@ -1,6 +1,6 @@
-// Owner and purchase-realm cases of the Navi product-model corpus (O01–O13). One synthetic owner with three card accounts, two
-// card statements uploaded through the native import route (non-overlapping periods), drafts saved/approved/posted through the
-// native draft and company-commit routes, intake records and sheets through the native intake routes, an Aplus collector pairing
+// Owner and purchase-realm cases of the Navi product-model corpus (O01–O13). One synthetic owner with three card accounts, one
+// card statement plus an unbilled (pending) forecast and the final statement that settles it, all uploaded through the native import
+// route, drafts saved/approved/posted through the native draft and company-commit routes, intake records and sheets through the native intake routes, an Aplus collector pairing
 // and schedule through the native connection routes, one named synthetic workflow row and a separate research agent whose native
 // liveness is renewed during O13 only. No collector, workflow, research or export worker is started and nothing is downloaded,
 // sent or paid: O06/O07/O08/O13 can only produce queued or configured native state.
@@ -11,10 +11,15 @@ import { check, readCheck, receipts, unchangedFields, plainDocument } from './fi
 const reply = summary => ({ kind: 'unclear', summary, patch: {}, quotes: {} });
 const idOf = row => String(row?._id ?? row?.id ?? '');
 const HEADERS_PATH = 'shared/amex.mjs';
-const S1 = { start: '2026-07-19', end: '2026-08-18' }, S2 = { start: '2026-08-19', end: '2026-09-18' };
+const S1 = { start: '2026-07-19', end: '2026-08-18' };
 const S1_ROWS = [['2026/08/01', 'O01_SHOP オンライン', 1980], ['2026/08/02', 'O02_SHOP 文具店', 2200], ['2026/08/03', 'O03_SHOP 雑貨', 5500], ['2026/08/04', 'O04_SHOP 事務用品', 3300], ['2026/08/05', 'O13_SHOP 機器', 8800], ['2026/08/06', 'O08_SHOP 仕入', 12000], ['2026/08/07', 'O12_SHOP 購入', 7700]];
 const LINE = { O01: 2, O02: 3, O03: 4, O04: 5, O13: 6, O08: 7, O12: 8 };
-const S2_ROWS = [['2026/08/25', 'O05_SHOP_A 既存転記', 1100], ['2026/08/27', 'O05_SHOP_B 選択行', 2310], ['2026/09/02', 'O05_SHOP_C 承認済み', 3520], ['2026/09/05', 'O05_SHOP_D 未承認', 4180]];
+// O05 (2026-10-24 refinement, before any actual draw): the unbilled forecast (native kind=pending import) and the final statement
+// whose identical rows settle it (native pendingSettlements: the forecast rows become finalized with the final statement as source,
+// the final statement's matching rows are referenced and cannot be posted again). The final statement adds one final-only row.
+const FORECAST = { start: '2026-09-19', end: '2026-09-30' }, FINAL = { start: '2026-09-19', end: '2026-10-18' };
+const FORECAST_ROWS = [['2026/09/20', 'O05_FORECAST_A 既存転記', 1100], ['2026/09/22', 'O05_FORECAST_B 選択行', 2310], ['2026/09/24', 'O05_FORECAST_C 承認済み', 3520], ['2026/09/26', 'O05_FORECAST_D 未承認', 4180]];
+const FINAL_ROWS = [...FORECAST_ROWS, ['2026/09/28', 'O05_FINAL_ONLY 確定のみ', 990]];
 const STAMP = ['updatedAt', '__v'];
 const O10_SHEET = '注文番号,商品名,金額\r\nO10-ORDER-1,合成商品A,1200\r\nO10-ORDER-2,合成商品B,3400\r\n', O10_OTHER = '注文番号,商品名,金額\r\nO10-OTHER-1,別シート商品,9999\r\n';
 
@@ -32,17 +37,17 @@ export async function ownerSetup(ctx) {
   o.ready = { purpose: 'company', accountCategoryId: o.refs.consumables, transactionCategoryId: o.refs.general, taxCategoryId: o.refs.tax10, taxRate: 10 };
   const { HEADERS } = await ctx.importApp(HEADERS_PATH);
   const csv = rows => Buffer.from([HEADERS, ...rows.map(([d, name, amount]) => [d, d, name, 'Synthetic user', '12345', String(amount), '', ''])].map(r => r.map(v => '"' + String(v).replaceAll('"', '""') + '"').join(',')).join('\r\n'));
-  const upload = async (rows, p) => (await ctx.ok('/api/finance/accounts/' + idOf(o.amex) + '/imports?kind=statement&start=' + p.start + '&end=' + p.end, { token: plain(), method: 'POST', raw: csv(rows) })).id;
-  o.s1 = await upload(S1_ROWS, S1); o.s2 = await upload(S2_ROWS, S2);
+  const upload = async (rows, p, kind = 'statement') => (await ctx.ok('/api/finance/accounts/' + idOf(o.amex) + '/imports?kind=' + kind + '&start=' + p.start + '&end=' + p.end, { token: plain(), method: 'POST', raw: csv(rows) })).id;
+  o.s1 = await upload(S1_ROWS, S1);
   o.draft = async (importId, line) => ctx.ok('/api/finance/imports/' + importId + '/drafts/' + line, { token: plain() });
   o.saveDraft = async (importId, line, values, confirm = false) => { const d = await o.draft(importId, line); return ctx.ok('/api/finance/imports/' + importId + '/drafts/' + line, { token: plain(), method: 'PUT', body: { revision: d.revision, key: d.key, sourceHash: d.sourceHash, values: { ...d.values, ...values }, remember: [], confirm, ...(confirm ? { cardAccountingKey: d.cardAccounting?.key } : {}) } }); };
   for (const line of Object.values(LINE)) await o.draft(o.s1, line);
-  for (let line = 2; line <= 5; line++) await o.draft(o.s2, line);
-  // O04: a complete, not yet approved draft. O05: line 2 approved and posted earlier, lines 3 and 4 approved, line 5 left unapproved.
+  // O04: a complete, not yet approved draft. O02/O03 (2026-10-24 refinement): saved, not approved drafts whose current values differ
+  // from what those cases ask to remember (O02 saved 通信費, remembers 消耗品費; O03 saved company use, remembers OMJ10's request).
   await o.saveDraft(o.s1, LINE.O04, o.ready);
-  for (const line of [2, 3, 4]) await o.saveDraft(o.s2, line, o.ready, true);
-  const posted = await o.draft(o.s2, 2);
-  await ctx.ok('/api/finance/imports/' + o.s2 + '/company-commit', { token: owner.companyToken(), method: 'POST', body: { decisions: [{ line: 2, action: 'import', draftRevision: posted.revision }] } });
+  await o.saveDraft(o.s1, LINE.O02, { accountCategoryId: o.refs.telecom });
+  await o.saveDraft(o.s1, LINE.O03, { purpose: 'company', customerId: '' });
+  o.upload = upload;
   const intake = async values => (await ctx.ok('/api/finance-intake/records', { token: plain(), method: 'POST', body: { values } }));
   o.o09 = await intake({ orderId: 'O09-ORDER-1', description: 'O09 合成購入', amount: '5500', customer: 'OMJ10', notes: 'O09_ORIGINAL_NOTE' });
   o.o12 = await intake({ orderId: 'O12-ORDER-7', description: 'O12 合成購入', amount: '7700', supplierName: '合成販売店' });
@@ -57,6 +62,25 @@ export async function ownerSetup(ctx) {
   await ctx.db.collection('financeworkflows').insertOne({ _id: o.workflow, ownerId: owner.id, accountId: new ctx.ObjectId(idOf(o.amex)), importId: new ctx.ObjectId(o.s1), line: LINE.O08, key: d8.key, sourceHash: d8.sourceHash, payment: { date: '2026-08-06', amount: 12000, merchant: 'O08_SHOP 仕入', accountName: 'AMEX_MAIN', purpose: 'customer' }, version: 1, revision: 3, steps, summary: workflowSummary(steps), events: [], lastAssessedAt: now, createdAt: now, updatedAt: now });
   o.research = await ctx.createAgent({ accountIds: [idOf(o.amex)], researchEnabled: true });
   ctx.ownerRealm = o;
+  return o;
+}
+// O05 only (run by its prepare, once): the forecast, then the final statement. The native settlement must finalize every forecast row
+// from the final statement before anything is approved or posted; otherwise O05 is a setup failure naming the observed blocker and
+// no other case is affected. Then forecast line 2 approved and posted earlier, lines 3 and 4 approved, line 5 left unapproved.
+async function forecastSetup(ctx, o) {
+  if (o.forecast) return o;
+  const plain = ctx.owner.plainToken;
+  const forecast = await o.upload(FORECAST_ROWS, FORECAST, 'pending'), final = await o.upload(FINAL_ROWS, FINAL);
+  const forecastView = await ctx.ok('/api/finance/imports/' + forecast, { token: plain() }), finalView = await ctx.ok('/api/finance/imports/' + final, { token: plain() });
+  const unsettled = forecastView.rows.filter(r => r.settlement?.state !== 'finalized' || r.settlement?.source?.importId !== final || r.settlement?.source?.sourceHash !== finalView.hash);
+  if (forecastView.sourceStatus !== 'pending' || forecastView.rows.length !== FORECAST_ROWS.length || unsettled.length) throw Object.assign(Error('O05 precondition blocker: the native pending→final settlement did not finalize every forecast row from the final statement: ' + JSON.stringify({ sourceStatus: forecastView.sourceStatus, rows: forecastView.rows.map(r => ({ line: r.line, state: r.state, settlement: r.settlement?.state || null, source: r.settlement?.source?.importId || null })) })), { layer: 'setup' });
+  o.finalHash = finalView.hash; o.finalRows = finalView.rows.map(r => ({ line: r.line, description: r.description, amount: r.amount, purchaseDate: r.purchaseDate, state: r.state }));
+  o.finalization = forecastView.rows.map(r => ({ line: r.line, description: r.description, amount: r.amount, settlement: r.settlement.state, finalImportId: r.settlement.source.importId, finalLines: r.settlement.source.lines }));
+  for (let line = 2; line <= 5; line++) await o.draft(forecast, line);
+  for (const line of [2, 3, 4]) await o.saveDraft(forecast, line, o.ready, true);
+  const posted = await o.draft(forecast, 2);
+  await ctx.ok('/api/finance/imports/' + forecast + '/company-commit', { token: ctx.owner.companyToken(), method: 'POST', body: { decisions: [{ line: 2, action: 'import', draftRevision: posted.revision }] } });
+  o.forecast = forecast; o.final = final;
   return o;
 }
 const draftDoc = (ctx, o, importId, line) => ctx.db.collection('financedrafts').findOne({ ownerId: ctx.owner.id, importId: new ctx.ObjectId(importId), line });
@@ -76,24 +100,45 @@ define({ id: 'O01', async prepare(ctx) { const o = await ownerSetup(ctx); return
   allowed: s => ({ ...draftEffect(s, ['values', 'revision', 'history', 'missing', 'evidence', 'suggestions']), financeactionoperations: { added: 1 } }),
   async check(ctx, s, ev) { const d = await draftNow(ctx, s); return [doneOnce(ev, 'save_draft_fields'), check('effect:product-name-saved', d?.values?.productName === 'MODEL_DRAFT_SAVED', 'productName ' + JSON.stringify(d?.values?.productName)), otherValues(s, d, ['productName']), check('protected:not-approved', !d?.approvedAt, 'approvedAt ' + d?.approvedAt), check('protected:no-memory', (ev.diff.financedecisionmemories?.added || []).length === 0, 'no remembered decision')]; },
   async ideal(ctx, s, j) { await j.act('get_draft', {}); await j.act('save_draft_fields', { fields: { productName: 'MODEL_DRAFT_SAVED' } }); await j.act('get_draft', {}); return reply('商品名を保存しました。'); } });
-define({ id: 'O02', defect: { flips: 'protected:draft-not-saved', async turn(ctx, s, j) { await j.act('remember_accounting_fields', { fields: ['accountCategoryId'], values: { accountCategoryId: s.consumables } }); await j.act('save_draft_fields', { fields: { accountCategoryId: s.consumables } }); return reply('defect'); } }, async prepare(ctx) { const o = await ownerSetup(ctx); return { ...purchase(o, 'O02'), state: { ...await draftState(ctx, o, 'O02'), consumables: o.refs.consumables, memoriesBefore: (await memories(ctx)).length } }; },
-  allowed: () => ({ financedecisionmemories: { added: 1 }, financeactionoperations: { added: 1 } }),
-  async check(ctx, s, ev) { const rows = await memories(ctx), m = rows.at(-1) || {}, d = await draftNow(ctx, s); return [doneOnce(ev, 'remember_accounting_fields'), check('effect:accounting-choice-remembered', rows.length === s.memoriesBefore + 1 && m.kind === 'accounting' && JSON.stringify(plainDocument(m)).includes(s.consumables), JSON.stringify({ kind: m.kind, fields: m.fields, values: plainDocument(m.values) })), check('protected:draft-not-saved', !ev.diff.financedrafts && receipts(ev.turn, 'save_draft_fields').length === 0, JSON.stringify(ev.diff.financedrafts || null)), check('protected:not-approved', !d?.approvedAt, 'approvedAt ' + d?.approvedAt)]; },
+// O02/O03 remember only. Their precondition is a draft saved through the native route with values DIFFERENT from what is remembered;
+// native saved.values stay the draft's values (a memory may add suggestions), so the saved values must survive in the native draft
+// view and in the stored draft document, with no draft write, save receipt, approval or posting.
+const storedDraft = (ctx, s) => s.draftDocId ? ctx.db.collection('financedrafts').findOne({ _id: new ctx.ObjectId(s.draftDocId) }) : null;
+function savedDraftUnchanged(s, view, stored, ev) {
+  const viewed = unchangedFields('view', s.before.values, view?.values || null, Object.keys(s.before.values || {}));
+  const before = ev.beforeDocs?.['financedrafts:' + s.draftDocId]?.values, after = stored ? plainDocument(stored.values) : null, kept = unchangedFields('stored', before, after, [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]);
+  return check('protected:saved-draft-values-unchanged', !!s.draftDocId && viewed.pass && kept.pass, 'draft view ' + viewed.detail + '; stored draft ' + kept.detail);
+}
+const noDraftWrite = ev => check('protected:draft-not-saved', !ev.diff.financedrafts && receipts(ev.turn, 'save_draft_fields').length === 0, JSON.stringify(ev.diff.financedrafts || null));
+define({ id: 'O02', defect: { flips: 'protected:saved-draft-values-unchanged', async turn(ctx, s, j) { await j.act('remember_accounting_fields', { fields: ['accountCategoryId'], values: { accountCategoryId: s.consumables } }); await j.act('save_draft_fields', { fields: { accountCategoryId: s.consumables } }); return reply('defect'); } }, async prepare(ctx) { const o = await ownerSetup(ctx); return { ...purchase(o, 'O02'), state: { ...await draftState(ctx, o, 'O02'), consumables: o.refs.consumables, telecom: o.refs.telecom, memoriesBefore: (await memories(ctx)).length } }; },
+  allowed: () => ({ financedecisionmemories: { added: 1 }, financeactionoperations: { added: 1 } }), protect: s => s.draftDocId ? [['financedrafts', s.draftDocId]] : [],
+  async check(ctx, s, ev) { const rows = await memories(ctx), m = rows.at(-1) || {}, d = await draftNow(ctx, s), stored = await storedDraft(ctx, s); return [check('prerequisite:saved-draft-distinct-from-remembered', !!s.draftDocId && String(s.before.values?.accountCategoryId) === s.telecom && s.telecom !== s.consumables, 'saved draft ' + s.draftDocId + ' accountCategoryId ' + s.before.values?.accountCategoryId + ' (通信費); remembered 消耗品費 ' + s.consumables), doneOnce(ev, 'remember_accounting_fields'), check('effect:accounting-choice-remembered', rows.length === s.memoriesBefore + 1 && m.kind === 'accounting' && JSON.stringify(plainDocument(m)).includes(s.consumables), JSON.stringify({ kind: m.kind, fields: m.fields, values: plainDocument(m.values) })), savedDraftUnchanged(s, d, stored, ev), noDraftWrite(ev), check('protected:not-approved', !d?.approvedAt, 'approvedAt ' + d?.approvedAt)]; },
   async ideal(ctx, s, j) { await j.act('get_registered_choices', { field: 'accountCategoryId' }); await j.act('remember_accounting_fields', { fields: ['accountCategoryId'], values: { accountCategoryId: s.consumables } }); return reply('勘定科目の判断を記憶しました。'); } });
-define({ id: 'O03', async prepare(ctx) { const o = await ownerSetup(ctx); return { ...purchase(o, 'O03'), state: { ...await draftState(ctx, o, 'O03'), customer: o.refs.omj10, memoriesBefore: (await memories(ctx)).length } }; },
-  allowed: () => ({ financedecisionmemories: { added: 1 }, financeactionoperations: { added: 1 } }),
-  async check(ctx, s, ev) { const rows = await memories(ctx), m = rows.at(-1) || {}, text = JSON.stringify(plainDocument(m)), d = await draftNow(ctx, s); return [doneOnce(ev, 'remember_customer_purpose'), check('effect:customer-purpose-remembered', rows.length === s.memoriesBefore + 1 && m.kind === 'classification' && text.includes(s.customer) && text.includes('customer'), JSON.stringify({ kind: m.kind, decision: plainDocument(m.decision) })), check('protected:draft-not-saved', !ev.diff.financedrafts && receipts(ev.turn, 'save_draft_fields').length === 0, JSON.stringify(ev.diff.financedrafts || null)), check('protected:no-accounting-memory', !rows.slice(s.memoriesBefore).some(x => x.kind === 'accounting'), 'no accounting memory')]; },
+define({ id: 'O03', defect: { flips: 'protected:saved-draft-values-unchanged', async turn(ctx, s, j) { await j.act('remember_customer_purpose', { purpose: 'customer', customerId: s.customer }); await j.act('save_draft_fields', { fields: { purpose: 'customer', customerId: s.customer } }); return reply('defect'); } }, async prepare(ctx) { const o = await ownerSetup(ctx); return { ...purchase(o, 'O03'), state: { ...await draftState(ctx, o, 'O03'), customer: o.refs.omj10, memoriesBefore: (await memories(ctx)).length } }; },
+  allowed: () => ({ financedecisionmemories: { added: 1 }, financeactionoperations: { added: 1 } }), protect: s => s.draftDocId ? [['financedrafts', s.draftDocId]] : [],
+  async check(ctx, s, ev) { const rows = await memories(ctx), m = rows.at(-1) || {}, text = JSON.stringify(plainDocument(m)), d = await draftNow(ctx, s), stored = await storedDraft(ctx, s); return [check('prerequisite:saved-draft-distinct-from-remembered', !!s.draftDocId && s.before.values?.purpose === 'company' && String(s.before.values?.customerId || '') !== s.customer, 'saved draft ' + s.draftDocId + ' purpose ' + s.before.values?.purpose + ' customer ' + JSON.stringify(s.before.values?.customerId || '') + '; remembered customer OMJ10 ' + s.customer), doneOnce(ev, 'remember_customer_purpose'), check('effect:customer-purpose-remembered', rows.length === s.memoriesBefore + 1 && m.kind === 'classification' && text.includes(s.customer) && text.includes('customer'), JSON.stringify({ kind: m.kind, decision: plainDocument(m.decision) })), savedDraftUnchanged(s, d, stored, ev), noDraftWrite(ev), check('protected:no-accounting-memory', !rows.slice(s.memoriesBefore).some(x => x.kind === 'accounting'), 'no accounting memory'), check('protected:not-approved', !d?.approvedAt, 'approvedAt ' + d?.approvedAt)]; },
   async ideal(ctx, s, j) { await j.act('get_registered_choices', { field: 'customerId' }); await j.act('remember_customer_purpose', { purpose: 'customer', customerId: s.customer }); return reply('OMJ10の依頼品として記憶しました。'); } });
 define({ id: 'O04', async prepare(ctx) { const o = await ownerSetup(ctx); return { ...purchase(o, 'O04'), state: await draftState(ctx, o, 'O04') }; },
   allowed: s => ({ ...draftEffect(s, ['approvedAt', 'approvedBy', 'revision', 'history', 'locked', 'missing', 'evidence', 'cardAccountingKey']), financeactionoperations: { added: 1 } }),
   async check(ctx, s, ev) { const d = await draftNow(ctx, s); return [check('prerequisite:valid-unapproved-draft', !!s.draftDocId && !s.before.approvedAt, 'saved draft ' + s.draftDocId), doneOnce(ev, 'approve_draft'), check('effect:draft-approved', !!d?.approvedAt, 'approvedAt ' + d?.approvedAt), otherValues(s, d, []), check('protected:no-ledger', (ev.diff.financeentries?.added || []).length === 0 && (ev.diff.transactions?.added || []).length === 0, 'no ledger row')]; },
   async ideal(ctx, s, j) { await j.act('get_draft', {}); await j.act('approve_draft', {}); return reply('承認しました。'); } });
-define({ id: 'O05', defect: { flips: 'protected:other-lines-not-posted', async turn(ctx, s, j) { await j.act('post_selected_approved_rows', { importId: s.importId, lines: [3, 4] }); return reply('defect'); } }, placeholders: { selectedLine: '3' }, async prepare(ctx) { const o = await ownerSetup(ctx); return { context: { page: 'mapping', importId: o.s2 }, labels: { importId: 'O:statement-2' }, state: { importId: o.s2, company: String(ctx.owner.companyId) } }; },
-  allowed: s => ({ transactions: { added: 1 }, financeentries: { added: 1 }, financeactionoperations: { added: 1 }, financeimports: { changed: { [s.importId]: ['updatedAt'] } } }),
+// O05: the selected import is the unbilled forecast; its line 3 is the forecast of the same economic purchase as one final-statement
+// row. Posting must produce ONE ledger transaction carrying the final statement as its settlement source, and nothing from the final
+// statement itself (no second forecast/final row), while forecast lines 4 (approved) and 5 (unapproved) and the final-only row stay
+// unposted and the earlier line-2 post stays single.
+define({ id: 'O05', defect: { flips: 'protected:other-lines-not-posted', async turn(ctx, s, j) { await j.act('post_selected_approved_rows', { importId: s.importId, lines: [3, 4] }); return reply('defect'); } }, placeholders: { selectedLine: '3' }, async prepare(ctx) { const o = await forecastSetup(ctx, await ownerSetup(ctx)); return { context: { page: 'mapping', importId: o.forecast }, labels: { importId: 'O:pending-forecast' }, state: { importId: o.forecast, final: o.final, finalHash: o.finalHash, finalRows: o.finalRows, finalization: o.finalization, company: String(ctx.owner.companyId), amex: idOf(o.amex) } }; },
+  allowed: s => ({ transactions: { added: 1 }, financeentries: { added: 1 }, financeactionoperations: { added: 1 }, financeimports: { changed: { [s.importId]: ['updatedAt'] } } }), protect: s => [['financeimports', s.importId], ['financeimports', s.final]],
   async check(ctx, s, ev) {
-    const entries = await ctx.db.collection('financeentries').find({ ownerId: ctx.owner.id, importId: new ctx.ObjectId(s.importId) }).toArray(), byLine = l => entries.filter(e => e.line === l);
-    const e3 = byLine(3)[0], tx3 = e3?.transactionId ? await ctx.db.collection('transactions').findOne({ _id: e3.transactionId }) : null;
-    return [doneOnce(ev, 'post_selected_approved_rows'), check('effect:selected-line-posted-once', byLine(3).length === 1 && e3?.state === 'posted' && String(e3.postingOrganizationId) === s.company && tx3 && String(tx3.organizationId) === s.company && tx3.amount === 2310, JSON.stringify({ entries: byLine(3).length, state: e3?.state, company: String(e3?.postingOrganizationId), amount: tx3?.amount })), check('protected:other-lines-not-posted', byLine(4).length === 0 && byLine(5).length === 0 && byLine(2).length === 1, JSON.stringify({ line2: byLine(2).length, line4: byLine(4).length, line5: byLine(5).length }))];
+    const entries = await ctx.db.collection('financeentries').find({ ownerId: ctx.owner.id, importId: { $in: [new ctx.ObjectId(s.importId), new ctx.ObjectId(s.final)] } }).toArray(), byLine = l => entries.filter(e => String(e.importId) === s.importId && e.line === l), fromFinal = entries.filter(e => String(e.importId) === s.final);
+    const e3 = byLine(3)[0], tx3 = e3?.transactionId ? await ctx.db.collection('transactions').findOne({ _id: e3.transactionId }) : null, source = tx3?.metadata?.finalizedSource || null;
+    const settled = s.finalization.find(r => r.line === 3), finalRow = s.finalRows.find(r => source && Array.isArray(source.lines) && source.lines.length === 1 && r.line === source.lines[0]);
+    const sameEconomic = (await ctx.db.collection('transactions').find({ 'metadata.financialAccountId': s.amex, amount: 2310 }).toArray()).filter(t => ['O05_FORECAST_B 選択行'].includes(t.notes) || [s.importId, s.final].includes(String(t.metadata?.importBatchId || '')));
+    return [check('prerequisite:forecast-finalized-by-final-statement', !!settled && settled.settlement === 'finalized' && settled.finalImportId === s.final && s.finalization.every(r => r.settlement === 'finalized' && r.finalImportId === s.final), JSON.stringify(s.finalization)),
+      doneOnce(ev, 'post_selected_approved_rows'),
+      check('effect:selected-line-posted-once', byLine(3).length === 1 && e3?.state === 'posted' && String(e3.postingOrganizationId) === s.company && tx3 && String(tx3.organizationId) === s.company && tx3.amount === 2310, JSON.stringify({ entries: byLine(3).length, state: e3?.state, company: String(e3?.postingOrganizationId), amount: tx3?.amount })),
+      check('effect:final-economic-source-identity', !!source && String(source.importId) === s.final && source.sourceHash === s.finalHash && !!finalRow && finalRow.description === 'O05_FORECAST_B 選択行' && finalRow.amount === 2310 && finalRow.purchaseDate === '2026-09-22' && String(tx3?.metadata?.importBatchId) === s.importId, JSON.stringify({ finalizedSource: source ? { importId: String(source.importId), sourceHash: source.sourceHash, lines: source.lines } : null, finalRow: finalRow || null, importBatchId: tx3?.metadata?.importBatchId ?? null })),
+      check('protected:no-duplicate-forecast-final', fromFinal.length === 0 && sameEconomic.length === 1, JSON.stringify({ entriesFromFinalStatement: fromFinal.length, transactionsForThePurchase: sameEconomic.length })),
+      check('protected:other-lines-not-posted', byLine(4).length === 0 && byLine(5).length === 0 && byLine(2).length === 1 && fromFinal.length === 0, JSON.stringify({ line2: byLine(2).length, line4: byLine(4).length, line5: byLine(5).length, finalStatementRows: fromFinal.length }))];
   },
   async ideal(ctx, s, j) { await j.act('get_mapping', { importId: s.importId }); await j.act('post_selected_approved_rows', { importId: s.importId, lines: [3] }); return reply('3行目を転記しました。'); } });
 const accounts = ctx => ctx.db.collection('financialaccounts').find({ ownerId: ctx.owner.id }).sort({ _id: 1 }).toArray();

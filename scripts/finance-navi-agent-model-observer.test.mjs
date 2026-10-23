@@ -1,8 +1,9 @@
 // Default contracts of the Navi product-model corpus (scripts/zoomer-fixtures/omf-navi-agent-model.mjs, no mode set).
 // Real disposable local node children (an owned fake CLI script in an owned temp directory), a loopback fake upstream, the actual
-// product interpreter's spawn seam with node as a stand-in executable (it exits on its first unknown option), pure manifest/grade
-// checks and two deliberately seeded defects in owned copies. No model, provider, application, database or network is reached;
-// these contracts give transport/manifest/grade evidence only, never product-model, privacy or reliability coverage.
+// product interpreter's spawn seam with node as a stand-in executable (it exits on its first unknown option), pure manifest/grade/
+// evidence/format checks and seven deliberately seeded defects in owned copies. No model, provider, application or database is
+// reached and no EXTERNAL network (owned local children and loopback HTTP only); these contracts give transport/manifest/evidence/
+// grade evidence only, never product-model, privacy or reliability coverage.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -133,7 +134,8 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
         assert.deepEqual(p.envKeys, Object.keys(baseEnv).sort()); assert.equal(p.exitCode, 0); assert.equal(p.stdout.sha256, sha(Buffer.from(FINAL_PAYLOAD))); assert.equal(p.envelopeSha256, sha(FINAL_PAYLOAD));
         assert.deepEqual(p.envelope.modelNames, ['transport-fixture-not-live']); assert.equal(p.envelope.num_turns, 3); assert.equal(p.envelope.usage.serverToolUse.web_search_requests, 1);
         assert.equal(p.stdin.sha256, sha(JSON.stringify(input))); assert.deepEqual(p.boundary, { parsed: true, currentMessageMatchesFrozen: true });
-        assert.ok(!JSON.stringify(ob.processes).includes('契約テスト'), 'raw stdin retained');
+        // Deliberate change (2026-10-24, scope item 1): the exact native input is retained as the interpreter wrote it, unchanged.
+        assert.deepEqual(p.nativeInput, { exact: true, text: JSON.stringify(input) }, 'evidence:native-input-exact');
       } finally { ob.restore(); }
     });
     await run('transport:native-nonzero-exit-preserved', async () => {
@@ -234,6 +236,8 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
         await fetch(ob.origin + '/api/finance-chat/worker/workspace-claim', { method: 'POST', headers: { Authorization: 'Bearer omft_' + 'c'.repeat(64), 'Content-Type': 'application/json' }, body: JSON.stringify({ capabilities: { publicResearch: { version: 1, webSearch: true, publicPage: true, chrome: true, registry: 'connection_required' } } }) }).then(x => x.text());
         assert.equal(seen[0].body, body); assert.equal(seen[0].auth, 'Bearer omft_' + 'c'.repeat(64));
         const recorded = JSON.stringify(ob.events); assert.ok(!recorded.includes('LEASE_SECRET') && !recorded.includes('omft_') && !recorded.includes('Bearer'), 'secret recorded');
+        // The forwarded lease and bearer token are known in memory (for withholding and artifact scans), never in the events.
+        assert.ok(ob.secretValues().includes('LEASE_SECRET') && ob.secretValues().includes('omft_' + 'c'.repeat(64)), 'evidence:observed-secrets-known-in-memory');
         const action = ob.events.find(e => e.kind === 'action'); assert.equal(action.tool, 'get_company_transaction'); assert.equal(action.status, 200); assert.equal(action.caseId, 'CONTRACT.http'); assert.ok(action.responseText.includes('RECORD_MARKER')); assert.equal(action.receipt.state, 'done');
         const claim = ob.events.find(e => e.kind === 'claim'); assert.deepEqual(claim.job.toolNames, ['get_company_transaction']); assert.equal(claim.job.publicResearch.chrome, true); assert.equal(claim.reportedCapability.webSearch, true);
         assert.deepEqual(cases.observedCalls(ob.events, ['get_company_transaction'], { includes: ['RECORD_MARKER'] }).length, 1);
@@ -262,11 +266,87 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     };
     await run('grade:no-write-and-effect-oracles', () => gradeContract(cases));
 
-    // ---- Deliberate defects in owned copies: each must flip its named assertion.
+    // ---- Evidence, format and outcome contracts (2026-10-24 continuation). Pure helpers plus a real child; still no app/model.
+    const formatContract = mod => {
+      const t = text => mod.publishedTNumbers(text);
+      assert.deepEqual(t('適格請求書発行事業者登録番号：T8010401087388'), ['T8010401087388'], 'format:published-t-number-plain');
+      assert.deepEqual(t('登録番号 T 8010 4010 8738 8 です'), ['T8010401087388'], 'format:published-t-number-display-whitespace');
+      assert.deepEqual(t('T 8010401087388\nT　8010401087389'), ['T8010401087388', 'T8010401087389'], 'format:published-t-number-display-whitespace');
+      assert.deepEqual(t('登録番号：T8010401087388\n2023/10/01 登録'), ['T8010401087388'], 'format:published-t-number-plain');
+      assert.deepEqual(t('法人番号 8010401087388'), [], 'format:bare-corporation-number-rejected');
+      for (const bad of ['T80104010873881', 'T801040108738', 'T8010401\u0001087388', 'T8010​401087388', 'XT8010401087388', 'T8010401087388X', '1T8010401087388', 'T8010-4010-87388']) assert.deepEqual(t(bad), [], 'format:malformed-identifier-rejected ' + JSON.stringify(bad));
+      // Full-width forms are not display whitespace: not recognized here (the retained source text stays available to the grader).
+      assert.deepEqual(t('Ｔ８０１０４０１０８７３８８'), [], 'format:full-width-form-not-recognized');
+      // A horizontally spaced longer identifier is never truncated to 13 digits (parent counterexample 2026-10-24); a separate next line stays legitimate.
+      for (const longer of ['T 1 2 3 4 5 6 7 8 9 0 1 2 3 4', 'T 8010 4010 8738 8 1', 'T8010401087388\t9']) assert.deepEqual(t(longer), [], 'format:spaced-longer-identifier-rejected ' + JSON.stringify(longer));
+      assert.deepEqual(t('T 8010 4010 8738 8\n2023/10/01 登録'), ['T8010401087388'], 'format:published-t-number-next-line-date');
+    };
+    await run('format:published-t-number-positive-and-negative', () => formatContract(cases));
+    const quoteContract = async mod => {
+      const text = 'Tesla Japan  合同会社\n\t登録番号 T8010401087388\n住所 東京都', sources = [{ id: 'a'.repeat(24), status: 'captured', text }, { id: 'b'.repeat(24), status: 'failed', text: 'Tesla Japan 合同会社' }];
+      const ok = quote => mod.citationsResolve([{ sourceId: 'a'.repeat(24), quote, claim: 'c' }], sources).pass;
+      assert.equal(ok('Tesla Japan 合同会社 登録番号 T8010401087388'), true, 'grade:native-whitespace-quote-accepted');
+      assert.equal(ok('Tesla Japan 合同会社 登録番号 T8010401087389'), false, 'grade:altered-quote-rejected');
+      assert.equal(ok('   '), false, 'grade:empty-quote-rejected');
+      assert.equal(mod.citationsResolve([{ sourceId: 'b'.repeat(24), quote: 'Tesla Japan 合同会社', claim: 'c' }], sources).pass, false, 'grade:failed-capture-not-a-source');
+      assert.equal(mod.citationsResolve([{ sourceId: 'c'.repeat(24), quote: 'Tesla Japan', claim: 'c' }], sources).pass, false, 'grade:uncaptured-source-rejected');
+      assert.equal(mod.citationsResolve([], sources).pass, false, 'grade:no-citation-no-pass');
+      const { literalQuoteIn } = await import(pathToFileURL(path.join(root, 'shared/finance-company-public-research.mjs')).href);
+      assert.equal(literalQuoteIn(text, 'Tesla Japan 合同会社 登録番号 T8010401087388'), true, 'grade:native-contract-agrees');
+    };
+    await run('grade:native-whitespace-citations', async () => quoteContract(await import('./finance-navi-agent-model-company-cases.mjs')));
+    const retentionContract = mod => {
+      const text = '会社概要\nTesla Japan 合同会社 T8010401087388', doc = { _id: oid('d'.repeat(24)), kind: 'chrome', status: 'captured', url: 'https://example.com/', requestedUrl: 'https://example.com/', title: 't', text, hash: sha(text), chars: text.length, truncated: false, capturedAt: new Date('2026-10-24T00:00:00Z'), evidence: 'published_page' };
+      const r = mod.retainedSource(doc);
+      assert.equal(r.text, text, 'evidence:source-text-retained'); assert.equal(r.textSha256, sha(text), 'evidence:source-hash-recomputed'); assert.equal(r.hashMatches, true, 'evidence:source-hash-recomputed'); assert.equal(r.id, 'd'.repeat(24));
+      assert.equal(mod.retainedSource({ ...doc, hash: 'e'.repeat(64) }).hashMatches, false, 'evidence:source-hash-mismatch-visible');
+      const failed = mod.retainedSource({ _id: oid('f'.repeat(24)), kind: 'web', status: 'failed', requestedUrl: 'https://example.com/x', safeError: 'refused', capturedAt: new Date('2026-10-24T00:00:00Z') });
+      assert.equal(failed.status, 'failed'); assert.equal(failed.text, null); assert.equal(failed.hashMatches, null, 'evidence:failed-capture-kept-as-activity'); assert.equal(failed.safeError, 'refused');
+      const before = { transactions: { ['a'.repeat(24)]: cases.canonicalJson({ _id: 'a'.repeat(24), amount: 800 }), ['b'.repeat(24)]: cases.canonicalJson({ _id: 'b'.repeat(24), amount: 5 }) } };
+      const after = { transactions: { ['a'.repeat(24)]: cases.canonicalJson({ _id: 'a'.repeat(24), amount: 900 }), ['c'.repeat(24)]: cases.canonicalJson({ _id: 'c'.repeat(24), amount: 7 }), ['b'.repeat(24)]: cases.canonicalJson({ _id: 'b'.repeat(24), amount: 5 }) } };
+      const kept = mod.retainedDocuments(before, after, mod.diffSnapshots(before, after), [['transactions', 'b'.repeat(24)]]);
+      assert.deepEqual(kept.transactions['a'.repeat(24)], { before: { _id: 'a'.repeat(24), amount: 800 }, after: { _id: 'a'.repeat(24), amount: 900 }, change: 'changed' }, 'evidence:affected-documents-retained');
+      assert.deepEqual(kept.transactions['c'.repeat(24)], { before: null, after: { _id: 'c'.repeat(24), amount: 7 }, change: 'added' }, 'evidence:affected-documents-retained');
+      assert.deepEqual(kept.transactions['b'.repeat(24)], { before: { _id: 'b'.repeat(24), amount: 5 }, after: { _id: 'b'.repeat(24), amount: 5 }, change: 'selected-unchanged' }, 'evidence:selected-documents-retained');
+    };
+    await run('evidence:source-text-hash-and-affected-documents-retained', () => retentionContract(cases));
+    const outcomeContract = mod => {
+      const cleanup = { 'http-observer': 'ok', app: 'ok', 'mongo-client': 'ok', mongod: 'ok', 'temp-directory': 'ok' };
+      const base = { fatal: null, attempts: [{ status: 'deterministic-pass' }], expected: 'deterministic-pass', selected: 1, cleanup, secretFindings: 0 };
+      assert.equal(mod.overallPass(base), true, 'grade:overall-true-only-when-everything-held');
+      assert.equal(mod.overallPass({ ...base, cleanup: { ...cleanup, mongod: 'failed: still running' } }), false, 'grade:overall-false-after-cleanup-failure');
+      assert.equal(mod.overallPass({ ...base, secretFindings: 1 }), false, 'grade:overall-false-after-secret-finding');
+      assert.equal(mod.overallPass({ ...base, fatal: 'x' }), false); assert.equal(mod.overallPass({ ...base, attempts: [] }), false); assert.equal(mod.overallPass({ ...base, attempts: [{ status: 'harness-failure' }] }), false);
+      // Removed or partial cleanup evidence is never a pass (parent counterexample 2026-10-24: null and {} were accepted).
+      for (const missing of [null, undefined, {}, { app: 'ok', mongod: 'ok' }]) assert.equal(mod.overallPass({ ...base, cleanup: missing }), false, 'grade:overall-false-without-cleanup-evidence ' + JSON.stringify(missing ?? null));
+      assert.equal(mod.overallPass({ ...base, secretFindings: undefined }), false, 'grade:overall-false-without-secret-scan');
+    };
+    await run('grade:overall-outcome-includes-cleanup-and-secret-scan', () => outcomeContract(cases));
+    // Real child: the exact native input bytes are retained (not a reparsed copy); a known secret marker withholds the raw text.
+    const nativeInputExercise = async mod => {
+      const marker = 'SYNTHETIC_LEASE_MARKER_' + randomUUID(), ob = mod.installSpawnObserver({ cliPath: node, secretValues: () => [marker] });
+      const raw = '{"mode" : "workspace",  "currentMessage": "契約テスト 메시지", "evidence": {"synthetic": true}}';
+      const run1 = (text, attemptId) => new Promise((resolve, reject) => { ob.setCase({ caseId: 'CONTRACT', attemptId, transport: 'default-json' }); const c = esmSpawn(node, argv('json-ok'), options()); c.stdout.setEncoding('utf8'); c.stdout.on('data', () => {}); c.stderr.resume(); c.once('error', reject); c.once('close', () => resolve(ob.processes.find(p => p.attemptId === attemptId))); c.stdin.end(text); });
+      try {
+        const kept = await run1(raw, 'input-exact');
+        assert.equal(kept.nativeInput?.exact, true, 'evidence:native-input-exact'); assert.equal(kept.nativeInput.text, raw, 'evidence:native-input-exact'); assert.equal(kept.stdin.sha256, sha(Buffer.from(raw)), 'evidence:native-input-exact');
+        const secret = await run1(raw.replace('契約テスト', marker), 'input-secret');
+        assert.equal(secret.nativeInput?.exact, false, 'evidence:native-input-secret-withheld'); assert.equal(secret.nativeInput.withheld, true, 'evidence:native-input-secret-withheld'); assert.ok(!JSON.stringify(ob.processes).includes(marker), 'evidence:native-input-secret-withheld');
+      } finally { ob.restore(); }
+    };
+    await run('evidence:native-input-exact-and-secret-withheld-real-child', () => nativeInputExercise({ installSpawnObserver }));
+    await run('evidence:redaction-fail-closed-beyond-depth', () => {
+      let deep = { lease: 'DEEP_LEASE_SECRET', keep: 'value' }; for (let i = 0; i < 16; i++) deep = { level: i, nested: deep, token: 'TOKEN_' + i };
+      const out = JSON.stringify(redact(deep)); assert.ok(!out.includes('DEEP_LEASE_SECRET') && !/TOKEN_\d/.test(out), 'evidence:redaction-fail-closed-beyond-depth'); assert.ok(out.includes('[REDACTED:depth]'), 'evidence:redaction-fail-closed-beyond-depth');
+    });
+
+    // ---- Deliberate defects in owned copies: each must flip its named assertion. A copy's relative imports are rewritten to the
+    // actual worktree modules, so a copied module runs against the real code around it.
     const defect = async (name, file, anchor, replacement, exercise, assertion) => {
       const source = await fs.readFile(path.join(here, file), 'utf8');
       if (source.split(anchor).length !== 2) throw Error('defect anchor must occur once: ' + name);
-      const dir = await fs.mkdtemp(path.join(temporary, 'defect-')), copy = path.join(dir, file); await fs.writeFile(copy, source.replace(anchor, replacement));
+      const absolute = text => text.replace(/from '(\.\.?\/[^']+)'/g, (m, rel) => "from '" + pathToFileURL(path.resolve(here, rel)).href + "'");
+      const dir = await fs.mkdtemp(path.join(temporary, 'defect-')), copy = path.join(dir, file); await fs.writeFile(copy, absolute(source.replace(anchor, replacement)));
       let detected = false, message = null;
       try { await exercise(await import(pathToFileURL(copy).href + '?' + randomUUID())); } catch (e) { message = String(e?.message || e); detected = e?.code === 'ERR_ASSERTION' && message.includes(assertion); } finally { try { cp.spawn = originalSpawn; (await import('node:module')).syncBuiltinESMExports(); } catch {} }
       deliberateDefects.push({ name, assertion, detected, message: message ? message.slice(0, 200) : 'not detected' });
@@ -277,6 +357,13 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
       try { ob.setCase({ caseId: 'P01', attemptId: 'defect', transport: 'stream-json' }); const r = await interpreterShaped(esmSpawn, node, argv('stream-ok'), options(), input); assert.equal(r.raw, FINAL_PAYLOAD, 'observer:exact-native-forwarding'); } finally { ob.restore(); }
     }, 'observer:exact-native-forwarding'));
     await run('defect:inverted-no-write-grade-flips-named-assertion', () => defect('inverted-no-write-grade', 'finance-navi-agent-model-cases.mjs', "pass: changed.length === 0, detail: changed.length ? 'changed: '", "pass: changed.length !== 0, detail: changed.length ? 'changed: '", gradeContract, 'grade:no-write-accepts-unchanged'));
+    await run('defect:reserialized-native-input-flips-exact-input-assertion', () => defect('reserialized-native-input', 'finance-navi-agent-model-observer.mjs', ': { exact: true, text };', ': { exact: true, text: JSON.stringify(JSON.parse(text)) };', nativeInputExercise, 'evidence:native-input-exact'));
+    await run('defect:dropped-source-text-flips-retention-assertion', () => defect('dropped-source-text', 'finance-navi-agent-model-cases.mjs', "text: typeof doc?.text === 'string' ? doc.text : null,", 'text: null,', retentionContract, 'evidence:source-text-retained'));
+    await run('defect:strict-quote-predicate-flips-native-whitespace-assertion', () => defect('strict-raw-includes-quote', 'finance-navi-agent-model-company-cases.mjs', "literalQuoteIn(String(source.text || ''), String(c.quote || ''))", "String(source.text || '').includes(String(c.quote || ''))", quoteContract, 'grade:native-whitespace-quote-accepted'));
+    await run('defect:optional-t-prefix-flips-bare-number-assertion', () => defect('optional-t-prefix', 'finance-navi-agent-model-cases.mjs', '(?<![0-9A-Za-z])T((?:', '(?<![0-9A-Za-z])T?((?:', formatContract, 'format:bare-corporation-number-rejected'));
+    await run('defect:ignored-cleanup-flips-overall-assertion', () => defect('cleanup-ignored-in-overall-pass', 'finance-navi-agent-model-cases.mjs', "const cleanupOk = CLEANUP_STEPS.every(step => cleanup?.[step] === 'ok');", 'const cleanupOk = true;', outcomeContract, 'grade:overall-false-after-cleanup-failure'));
+    await run('defect:vacuous-cleanup-evidence-flips-missing-cleanup-assertion', () => defect('vacuous-cleanup-evidence', 'finance-navi-agent-model-cases.mjs', "const cleanupOk = CLEANUP_STEPS.every(step => cleanup?.[step] === 'ok');", "const cleanupOk = Object.values(cleanup || {}).every(v => v === 'ok');", outcomeContract, 'grade:overall-false-without-cleanup-evidence'));
+    await run('defect:truncated-spaced-identifier-flips-longer-identifier-assertion', () => defect('spaced-longer-identifier-truncated', 'finance-navi-agent-model-cases.mjs', "(?![0-9A-Za-z])' + NO_SPACED_CONTINUATION, 'g');", "(?![0-9A-Za-z])', 'g');", formatContract, 'format:spaced-longer-identifier-rejected'));
     // The unmutated observer passes the same exact-byte exercise (control for the defect above).
     await run('defect-control:unmutated-forwarding-passes', async () => { const ob = installSpawnObserver({ cliPath: node }); try { ob.setCase({ caseId: 'P01', attemptId: 'control', transport: 'stream-json' }); const r = await interpreterShaped(esmSpawn, node, argv('stream-ok'), options(), input); assert.equal(r.raw, FINAL_PAYLOAD, 'observer:exact-native-forwarding'); } finally { ob.restore(); } });
     await run('stream-parser:split-utf8-bound-and-invalid-input', () => {
@@ -290,6 +377,6 @@ export async function runContracts({ root = path.resolve(here, '..') } = {}) {
     const resolved = await fs.realpath(temporary), base = await fs.realpath(os.tmpdir());
     if (resolved.startsWith(base + path.sep) && path.basename(resolved).startsWith('omf-navi-agent-model-contract-')) await fs.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
   }
-  const expectedDefects = 2;
-  return { pass: failures.length === 0 && deliberateDefects.length === expectedDefects && deliberateDefects.every(d => d.detected), checks, failures, deliberateDefects, limits: 'Transport/manifest/grade contracts only: owned disposable local node children, a loopback fake upstream and the actual interpreter spawn seam with node as a stand-in executable. No model, provider, application, database or network. Fake model names and messages are synthetic; no product-model, query-privacy or reliability claim.' };
+  const expectedDefects = 9;
+  return { pass: failures.length === 0 && deliberateDefects.length === expectedDefects && deliberateDefects.every(d => d.detected), checks, failures, deliberateDefects, limits: 'Transport/manifest/evidence/format/grade contracts only: owned disposable local node children, loopback HTTP to an owned fake upstream and the actual interpreter spawn seam with node as a stand-in executable. No model, provider, application or database call and no EXTERNAL network (local child processes and loopback HTTP only). Fake model names and messages are synthetic; no product-model, query-privacy or reliability claim.' };
 }

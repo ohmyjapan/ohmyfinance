@@ -6,10 +6,15 @@
 //   selftest — prepare plus a scripted synthetic worker turn per case through the native worker routes (zero model) and its checks.
 //   manual   — the paid corpus: the actual TeachingWorker.cycle() (its own claim, capability report, 20 s heartbeat, result and
 //              failure reporting), the unchanged interpreter/native CLI/actions MCP, and the configured accountant model.
+//   lifecycle — zero model, no case list: owned startup/cleanup controls (normal start, faults during and after each startup stage,
+//              a failed cleanup, and a deliberately lost partial reference that must be detected).
 // The runtime is owned and disposable: random loopback ports, its own mongod and database, OMF_DATA_DIR, synthetic Vault and
 // inference directory, the existing OMF_SYNC_SCHEDULE_MS=0 scheduler switch, and an allowlisted application environment (no
 // ambient credential, database address or provider key). Only the native accountant inference and the configured public
 // company/accounting research of company jobs leave it. No collector, research, workflow or export worker is started.
+// The runtime object is created by the caller and filled as each resource starts, so a failure at any startup stage (including a
+// mongod whose start has not finished) still reaches cleanup; cleanup verifies each owned process exited through its own handle
+// before it deletes the checked temp directory, keeps the primary error, and a failed cleanup step is never an overall pass.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -19,13 +24,16 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { population, selectCases, denominators, resolveRequest, verifyDeclaration, canonicalJson, sha256, plainDocument, diffSnapshots, gradeEffects, check, EVALUATOR_ONLY, DECLARED_TEXT_SHA256, COHORT } from './finance-navi-agent-model-cases.mjs';
+import { population, selectCases, denominators, resolveRequest, verifyDeclaration, canonicalJson, sha256, plainDocument, diffSnapshots, gradeEffects, check, retainedSource, retainedDocuments, overallPass, EVALUATOR_ONLY, DECLARED_TEXT_SHA256, COHORT } from './finance-navi-agent-model-cases.mjs';
 import { companyCases, FOREIGN_MARKERS } from './finance-navi-agent-model-company-cases.mjs';
 import { ownerCases } from './finance-navi-agent-model-owner-cases.mjs';
-import { installSpawnObserver, openHttpObserver } from './finance-navi-agent-model-observer.mjs';
+import { installSpawnObserver, openHttpObserver, redact } from './finance-navi-agent-model-observer.mjs';
 
 export const HARNESS_FILES = Object.freeze(['scripts/finance-navi-agent-model.mjs', 'scripts/finance-navi-agent-model-cases.mjs', 'scripts/finance-navi-agent-model-company-cases.mjs', 'scripts/finance-navi-agent-model-owner-cases.mjs', 'scripts/finance-navi-agent-model-observer.mjs', 'scripts/finance-navi-agent-model-observer.test.mjs', 'scripts/zoomer-fixtures/omf-navi-agent-model.mjs', 'docs/navi-agent-model-evaluation.md']);
-export const MODES = Object.freeze(['prepare', 'selftest', 'manual']);
+export const MODES = Object.freeze(['prepare', 'selftest', 'manual', 'lifecycle']);
+// Selftest variants: 'ideal' (scripted correct turns), 'defects' (scripted WRONG turns that must flip their named oracle) and
+// 'p02-missing' (the scripted P01 source publishes no T-number, so P02 exercises its missing-prerequisite branch).
+export const SELFTEST_VARIANTS = Object.freeze(['ideal', 'defects', 'p02-missing']);
 const ENV = Object.freeze({ mode: 'OMF_NAVI_AGENT_MODEL_MODE', cases: 'OMF_NAVI_AGENT_MODEL_CASES', out: 'OMF_NAVI_AGENT_MODEL_OUT', cli: 'OMF_NAVI_AGENT_MODEL_CLI', frozen: 'OMF_NAVI_AGENT_MODEL_FROZEN', attempt: 'OMF_NAVI_AGENT_MODEL_ATTEMPT', reason: 'OMF_NAVI_AGENT_MODEL_REASON', batch: 'OMF_NAVI_AGENT_MODEL_BATCH', claims: 'OMF_NAVI_AGENT_MODEL_CLAIMS', auth: 'OMF_NAVI_AGENT_MODEL_AUTH', token: 'OMF_NAVI_AGENT_MODEL_CONNECTED_OAUTH', configDir: 'OMF_NAVI_AGENT_MODEL_CONFIG_DIR', slot: 'OMF_NAVI_AGENT_MODEL_AUTH_SLOT', variant: 'OMF_NAVI_AGENT_MODEL_SELFTEST_VARIANT' });
 export const ENVIRONMENT = ENV;
 const EXCLUDED = new Set(['financecompanyassistants', 'financeassistants', 'financechats', 'financechatagents', 'financecompanyconversationarchives', 'financeownerconversationarchives', 'financecompanypublicsources', 'users', 'auditlogs', 'usedauthchallenges', 'authverificationattempts', 'sessions']);
@@ -48,16 +56,22 @@ export function parsePlan(env = {}) {
   if (!['initial', 'additional'].includes(attempt)) throw Error('plan:attempt-kind');
   const reason = env[ENV.reason] || null;
   if (attempt === 'additional' && (!reason || reason.trim().length < 8)) throw Error('plan:additional-attempt-needs-named-reason');
+  const outputDirectory = () => { const out = env[ENV.out]; if (typeof out !== 'string' || !path.isAbsolute(out)) throw Error('plan:absolute-output-directory-required'); if (fs.existsSync(out) && fs.readdirSync(out).length) throw Error('plan:output-directory-must-be-new'); return out; };
+  // lifecycle: owned startup/cleanup controls only; no case, model, CLI, frozen manifest, auth or variant.
+  if (mode === 'lifecycle') {
+    if (env[ENV.cases]) throw Error('plan:lifecycle-takes-no-case-list');
+    if (attempt !== 'initial' || env[ENV.cli] || env[ENV.frozen] || env[ENV.variant] || env[ENV.claims] || (env[ENV.auth] && env[ENV.auth] !== 'default')) throw Error('plan:lifecycle-takes-only-an-output-directory');
+    return { mode, attempt, reason: null, rows: [], out: outputDirectory(), batch: 'lifecycle', claims: null, auth: 'default', cli: null, frozen: null, variant: null };
+  }
   const rows = selectCases(env[ENV.cases], { attempt });
-  const out = env[ENV.out];
-  if (typeof out !== 'string' || !path.isAbsolute(out)) throw Error('plan:absolute-output-directory-required');
-  if (fs.existsSync(out) && fs.readdirSync(out).length) throw Error('plan:output-directory-must-be-new');
+  const out = outputDirectory();
   const batch = env[ENV.batch] || (mode === 'manual' ? null : mode);
   if (!batch || !/^[A-Za-z0-9._-]{1,64}$/.test(batch)) throw Error('plan:batch-label-required');
   const plan = { mode, attempt, reason, rows, out, batch, claims: env[ENV.claims] || null, auth: env[ENV.auth] || 'default', cli: env[ENV.cli] || null, frozen: env[ENV.frozen] || null, variant: env[ENV.variant] || 'ideal' };
   // selftest 'defects': every selected case runs its scripted WRONG native turn, which must flip its named oracle.
-  if (!['ideal', 'defects'].includes(plan.variant) || (plan.variant === 'defects' && mode !== 'selftest')) throw Error('plan:selftest-variant-ideal-or-defects');
+  if (!SELFTEST_VARIANTS.includes(plan.variant) || (plan.variant !== 'ideal' && mode !== 'selftest')) throw Error('plan:selftest-variant ' + SELFTEST_VARIANTS.join('|') + ' (selftest only)');
   if (plan.variant === 'defects') { const missing = rows.filter(r => !designFor(r)?.defect).map(r => r.id); if (missing.length) throw Error('plan:defect-not-defined ' + missing.join(',')); }
+  if (plan.variant === 'p02-missing' && !['P01', 'P02'].every(id => rows.some(r => r.id === id))) throw Error('plan:p02-missing-needs-P01-and-P02');
   if (plan.claims && !path.isAbsolute(plan.claims)) throw Error('plan:absolute-claims-directory-required');
   if (!['default', 'connected'].includes(plan.auth)) throw Error('plan:auth-default-or-connected');
   if (mode === 'manual') {
@@ -89,8 +103,18 @@ async function writeReplace(file, value) { const tmp = file + '.' + rid() + '.tm
 // ---- Owned runtime
 async function freePort() { const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const p = s.address().port; await new Promise(r => s.close(r)); return p; }
 function appEnvironment(extra) { const env = {}; for (const k of APP_ENV_KEYS) if (process.env[k]) env[k] = process.env[k]; return { ...env, ...extra }; }
-async function startRuntime(root, plan, log) {
-  const rt = { root, logs: '', timing: {}, cleanup: [] };
+// Exit state of an owned child, read from its own ChildProcess handle (never by probing a PID that may have been reused).
+const unexited = child => !!child && child.exitCode === null && child.signalCode === null;
+const handleState = child => child ? { pid: child.pid ?? null, exited: !unexited(child), exitCode: child.exitCode ?? null, signal: child.signalCode ?? null } : null;
+const waitExit = (child, ms) => unexited(child) ? Promise.race([new Promise(r => child.once('exit', r)), pause(ms)]) : Promise.resolve();
+// The owned mongod and its killer process, kept from the instance while it holds them (MongoInstance.stop() drops its references).
+function mongoHandles(rt) { const i = rt?.mongo?.instanceInfo?.instance; if (i?.mongodProcess) rt.mongodProcess = i.mongodProcess; if (i?.killerProcess) rt.killerProcess = i.killerProcess; return [rt?.mongodProcess, rt?.killerProcess].filter(Boolean); }
+export const ownedProcessStates = rt => ({ app: handleState(rt?.app), mongod: handleState(rt?.mongodProcess), killer: handleState(rt?.killerProcess) });
+const ownedProcessesExited = rt => Object.values(ownedProcessStates(rt)).every(s => !s || s.exited);
+// rt is created by the caller and filled as each resource exists, so cleanup reaches every partial resource. fault(point) is the
+// lifecycle mode's injection seam (a no-op in every other mode).
+async function startRuntime(root, plan, log, rt, fault = async () => {}) {
+  Object.assign(rt, { root, logs: '', timing: {} });
   const requireApp = createRequire(path.join(root, 'package.json'));
   const { MongoMemoryServer } = requireApp('mongodb-memory-server'), { MongoClient, ObjectId } = requireApp('mongodb');
   rt.ObjectId = ObjectId;
@@ -98,33 +122,65 @@ async function startRuntime(root, plan, log) {
   for (const d of ['data', 'vault', 'inference']) await fsp.mkdir(path.join(rt.dir, d));
   const binary = [path.join(root, 'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe'), path.resolve(root, '../node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe')].find(f => fs.existsSync(f));
   let started = Date.now();
-  rt.mongo = await MongoMemoryServer.create({ binary: binary ? { systemBinary: binary, version: '8.2.1' } : undefined, instance: { launchTimeout: SETUP_READY_MS } });
+  // The instance exists before its start finishes: cleanup waits for a pending start and stops what it launched.
+  rt.mongo = new MongoMemoryServer({ binary: binary ? { systemBinary: binary, version: '8.2.1' } : undefined, instance: { launchTimeout: SETUP_READY_MS } });
+  rt.mongoStarting = rt.mongo.start(); rt.mongoStarting.then(() => { rt.mongoStarted = true; }, () => { rt.mongoStarted = false; });
+  await fault('during-mongo-start');
+  await rt.mongoStarting; rt.mongoStarting = null; mongoHandles(rt);
   rt.timing.mongoMs = Date.now() - started;
+  await fault('after-mongo-start');
   rt.dbName = 'navi_agent_model_' + rid().slice(0, 12); const uri = rt.mongo.getUri(rt.dbName);
   const port = await freePort(); rt.origin = 'http://127.0.0.1:' + port;
   const marker = 'disabled-navi-agent-model-' + rid().slice(0, 8);
   rt.app = spawn(process.execPath, ['.output/server/index.mjs'], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: appEnvironment({ MONGO_URI: uri, MONGODB_URI: uri, NUXT_MONGO_URI: uri, OMF_DATA_DIR: path.join(rt.dir, 'data'), JWT_SECRET: randomBytes(32).toString('hex'), NODE_ENV: 'production', HOST: '127.0.0.1', NITRO_HOST: '127.0.0.1', PORT: String(port), NITRO_PORT: String(port), OMF_SYNC_SCHEDULE_MS: '0', GEMINI_API_KEY: '', ANTHROPIC_API_KEY: marker, OPENAI_API_KEY: marker, SLACK_BOT_TOKEN: marker, BASE_URL: rt.origin, OMF_COLLECTOR_PUBLIC_ORIGIN: '', OMF_TRUST_CLOUDFLARE_LOOPBACK: '' }) });
   rt.appClosed = new Promise(r => rt.app.once('close', r));
   for (const s of [rt.app.stdout, rt.app.stderr]) { s.setEncoding('utf8'); s.on('data', v => { rt.logs = (rt.logs + v).slice(-20000); }); }
+  await fault('after-app-spawn');
   started = Date.now(); let healthy = false;
   while (!healthy && Date.now() - started < SETUP_READY_MS) { try { const r = await fetch(rt.origin + '/api/health', { signal: AbortSignal.timeout(5000) }), d = await r.json(); if (d.database?.connected) { if (d.database.name !== rt.dbName) throw new SetupError('owned database name mismatch'); healthy = true; } } catch (e) { if (e instanceof SetupError) throw e; } if (!healthy) await pause(500); }
   rt.timing.appMs = Date.now() - started;
   if (!healthy) throw new SetupError('owned application unavailable after ' + rt.timing.appMs + ' ms');
+  await fault('after-health');
   rt.client = await MongoClient.connect(uri); rt.db = rt.client.db(rt.dbName);
   if (rt.db.databaseName !== rt.dbName) throw new SetupError('owned database client mismatch');
   rt.http = await openHttpObserver(rt.origin);
   log('owned runtime ready ' + JSON.stringify(rt.timing));
   return rt;
 }
-async function stopRuntime(rt) {
+// Every step runs and reports separately. A process is confirmed stopped only by its own handle; the forced tree kill is sent only
+// to a handle that has not exited (its PID is still this child's), never to a bare or reused PID. The checked temp directory is
+// deleted only after the application and mongod steps confirmed exit. failStep is the lifecycle mode's cleanup-fault seam.
+async function stopRuntime(rt, { failStep = null } = {}) {
   const status = {};
-  const step = async (name, fn) => { try { await fn(); status[name] = 'ok'; } catch (e) { status[name] = 'failed: ' + String(e?.message || e).slice(0, 200); } };
+  const step = async (name, fn) => { try { if (failStep === name) throw Error('injected ' + name + ' cleanup fault (lifecycle control)'); await fn(); status[name] = 'ok'; } catch (e) { status[name] = 'failed: ' + String(e?.message || e).slice(0, 200); } };
+  const forceTree = child => { if (unexited(child) && child.pid) { try { execFileSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore', windowsHide: true }); } catch {} } };
   if (rt?.keepAlive) clearInterval(rt.keepAlive);
   await step('http-observer', async () => { if (rt?.http) await rt.http.close(); });
-  await step('app', async () => { if (rt?.app && rt.app.exitCode === null) { rt.app.kill(); const ended = await Promise.race([rt.appClosed.then(() => true), pause(15000).then(() => false)]); if (!ended && rt.app.pid) execFileSync('taskkill', ['/F', '/T', '/PID', String(rt.app.pid)], { stdio: 'ignore', windowsHide: true }); } });
+  await step('app', async () => {
+    const app = rt?.app; if (!app) return;
+    if (unexited(app)) { app.kill(); await waitExit(app, 15000); }
+    if (unexited(app)) { forceTree(app); await waitExit(app, 10000); }
+    if (unexited(app)) throw Error('owned application process ' + app.pid + ' did not exit');
+  });
   await step('mongo-client', async () => { if (rt?.client) await rt.client.close(); });
-  await step('mongod', async () => { if (rt?.mongo) await rt.mongo.stop(); });
-  await step('temp-directory', async () => { if (rt?.dir) { const resolved = path.resolve(rt.dir), base = path.resolve(os.tmpdir()); if (!resolved.startsWith(base + path.sep) || !path.basename(resolved).startsWith('omf-navi-agent-model-')) throw Error('unsafe owned cleanup ' + resolved); await fsp.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } });
+  await step('mongod', async () => {
+    if (!rt?.mongo) return;
+    if (rt.mongoStarting) { try { await rt.mongoStarting; } catch {} rt.mongoStarting = null; }
+    const handles = mongoHandles(rt); let stopError = null;
+    try { await rt.mongo.stop(); } catch (e) { stopError = e; }
+    for (const h of handles) { await waitExit(h, 15000); if (unexited(h)) { forceTree(h); await waitExit(h, 10000); } }
+    const running = handles.filter(unexited);
+    if (running.length) throw Error('owned mongod process(es) did not exit: ' + running.map(h => h.pid).join(','));
+    if (stopError) throw Error('mongod stop: ' + String(stopError.message || stopError).slice(0, 160));
+  });
+  await step('temp-directory', async () => {
+    if (!rt?.dir) return;
+    if (status.app !== 'ok' || status.mongod !== 'ok') throw Error('owned process exit not confirmed; temp directory kept: ' + rt.dir);
+    const resolved = path.resolve(rt.dir), base = path.resolve(os.tmpdir());
+    if (!resolved.startsWith(base + path.sep) || !path.basename(resolved).startsWith('omf-navi-agent-model-')) throw Error('unsafe owned cleanup ' + resolved);
+    await fsp.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    if (fs.existsSync(resolved)) throw Error('temp directory still present ' + resolved);
+  });
   return status;
 }
 
@@ -142,13 +198,17 @@ function bindHttp(rt) {
 
 async function buildContext(rt, plan, log) {
   const { api, ok } = bindHttp(rt), ObjectId = rt.ObjectId, now = new Date();
-  const register = async (email, name) => { for (let attempt = 0; ; attempt++) { const r = await api('/api/auth/register', { method: 'POST', body: { email, password: PASSWORD, name } }); if (r.status === 429 && attempt < 3) { await pause(61000); continue; } if (r.status !== 200) throw new SetupError('register ' + r.status); const u = await rt.db.collection('users').findOne({ email }); return { id: u._id, pair: { access: r.data.tokens.accessToken, refresh: r.data.tokens.refreshToken, at: Date.now() } }; } };
+  // Every synthetic credential is also kept in rt.secrets (memory only) so retained evidence can be scanned for it, even when setup
+  // stops part-way.
+  const keep = (...values) => { for (const v of values) if (typeof v === 'string' && v.length >= 8) rt.secrets?.add(v); return values[0]; };
+  keep(PASSWORD);
+  const register = async (email, name) => { for (let attempt = 0; ; attempt++) { const r = await api('/api/auth/register', { method: 'POST', body: { email, password: PASSWORD, name } }); if (r.status === 429 && attempt < 3) { await pause(61000); continue; } if (r.status !== 200) throw new SetupError('register ' + r.status); keep(r.data.tokens.accessToken, r.data.tokens.refreshToken); const u = await rt.db.collection('users').findOne({ email }); return { id: u._id, pair: { access: r.data.tokens.accessToken, refresh: r.data.tokens.refreshToken, at: Date.now() } }; } };
   // Synthetic token pairs stay in memory and are renewed through the native refresh route, which keeps the selected company.
-  const refreshing = pair => async () => { if (Date.now() - pair.at > TOKEN_REFRESH_MS) { const r = await ok('/api/auth/refresh', { method: 'POST', body: { refreshToken: pair.refresh } }); pair.access = r.tokens.accessToken; pair.refresh = r.tokens.refreshToken || pair.refresh; pair.at = Date.now(); } return pair.access; };
+  const refreshing = pair => async () => { if (Date.now() - pair.at > TOKEN_REFRESH_MS) { const r = await ok('/api/auth/refresh', { method: 'POST', body: { refreshToken: pair.refresh } }); keep(r.tokens.accessToken, r.tokens.refreshToken); pair.access = r.tokens.accessToken; pair.refresh = r.tokens.refreshToken || pair.refresh; pair.at = Date.now(); } return pair.access; };
   const owner = await register('navi-agent-model-owner-' + rid().slice(0, 8) + '@example.invalid', 'Synthetic Navi owner'), outsider = await register('navi-agent-model-outsider-' + rid().slice(0, 8) + '@example.invalid', 'Synthetic outsider');
   const ownerPlain = refreshing(owner.pair), member = { userId: owner.id, role: 'owner', joinedAt: now };
   const organization = async (name, members = [member]) => { const _id = new ObjectId(); await rt.db.collection('organizations').insertOne({ _id, name, slug: 'navi-agent-model-' + String(_id), type: 'business', isActive: true, members, settings: { defaultCurrency: 'JPY', fiscalYearStart: 11, timezone: 'Asia/Tokyo' }, createdAt: now, updatedAt: now }); return _id; };
-  const switchTo = async (token, orgId) => { const r = await ok('/api/auth/switch-organization', { token, method: 'POST', body: { organizationId: String(orgId) } }); return { access: r.tokens.accessToken, refresh: r.tokens.refreshToken, at: Date.now() }; };
+  const switchTo = async (token, orgId) => { const r = await ok('/api/auth/switch-organization', { token, method: 'POST', body: { organizationId: String(orgId) } }); keep(r.tokens.accessToken, r.tokens.refreshToken); return { access: r.tokens.accessToken, refresh: r.tokens.refreshToken, at: Date.now() }; };
   const orgs = new Map();
   const orgFor = async key => { if (orgs.has(key)) return orgs.get(key); const id = await organization('テスト株式会社'), pair = await switchTo(ownerPlain, id), org = { key, id, token: refreshing(pair) }; orgs.set(key, org); return org; };
   // Owner card accounts (native route) before the agent, which is assigned to them at creation.
@@ -161,7 +221,7 @@ async function buildContext(rt, plan, log) {
   const outsiderCompany = await organization('OUTSIDER_PRIVATE_MARKER 合同会社', [{ userId: outsider.id, role: 'owner', joinedAt: now }]);
   await rt.db.collection('transactions').insertOne({ organizationId: outsiderCompany, referenceNumber: 'OUTSIDER_PRIVATE_MARKER-1', date: new Date('2026-09-16T03:00:00Z'), amount: 123987, type: '支出', status: 'completed', productName: 'OUTSIDER_PRIVATE_MARKER', hasReceipt: false, items: [], timeline: [], metadata: { currency: 'JPY' }, createdAt: now, updatedAt: now });
   await ok('/api/finance-intake/records', { token: refreshing(outsider.pair), method: 'POST', body: { values: { orderId: 'OUTSIDER_PRIVATE_MARKER-ORDER', description: 'OUTSIDER_PRIVATE_MARKER purchase', amount: '1' } } });
-  const createAgent = async body => { const a = await ok('/api/finance-chat/agents', { token: ownerPlain, method: 'POST', body }); return { id: a.id, token: a.token }; };
+  const createAgent = async body => { const a = await ok('/api/finance-chat/agents', { token: ownerPlain, method: 'POST', body }); keep(a.token); return { id: a.id, token: a.token }; };
   const agent = await createAgent({ accountIds: Object.values(accounts).map(a => String(a._id)), workspaceEnabled: true });
   const worker = (route, body = {}, token = agent.token) => api('/api/finance-chat/worker/' + route, { token, method: 'POST', body });
   const workerOk = async (route, body, label) => { const r = await worker(route, body); if (r.status !== 200) throw new SetupError(label + ' ' + r.status + ' ' + r.raw.slice(0, 300)); return r.data; };
@@ -229,6 +289,7 @@ const boundaryFor = (request, row) => text => { let input; try { input = JSON.pa
 // ---- Main explicit-mode entry (called by the fixture with process.env)
 export async function runCorpusFromEnvironment(env, { root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), log = s => process.stderr.write('[navi-agent-model] ' + s + '\n') } = {}) {
   const plan = parsePlan(env);
+  if (plan.mode === 'lifecycle') return runLifecycle(plan, root, log);
   // The connected credential (explicit manual option only) is taken into memory and removed from this process environment before
   // any child starts, so no other child (application, mongod, Vault helper, MCP) can inherit it.
   let connected = null;
@@ -241,17 +302,23 @@ export async function runCorpusFromEnvironment(env, { root = path.resolve(path.d
   if (plan.mode === 'manual') {
     frozen = JSON.parse(await fsp.readFile(plan.frozen, 'utf8'));
     const mismatch = !identity.revision || identity.trackedChanges?.length ? 'tracked source changes or no revision' : frozen.source?.revision !== identity.revision ? 'source revision' : frozen.source?.buildSha256 !== identity.buildSha256 ? 'built application' : canonicalJson(frozen.source?.harnessSha256) !== canonicalJson(identity.harnessSha256) ? 'harness files' : frozen.declarationSha256 !== identity.declarationSha256 ? 'declaration' : null;
-    if (mismatch) { await writeExclusive(path.join(plan.out, 'batch.json'), { batch: plan.batch, mode: plan.mode, startedAt, refused: 'frozen manifest does not match the current candidate: ' + mismatch, identity, frozenSource: frozen.source }); return { pass: false, summary: { mode: plan.mode, refused: 'frozen-candidate-mismatch: ' + mismatch, modelCalls: 0 } }; }
+    if (mismatch) { await writeExclusive(path.join(plan.out, 'batch.json'), { batch: plan.batch, mode: plan.mode, startedAt, refused: 'frozen manifest does not match the current candidate: ' + mismatch, identity, frozenSource: frozen.source }); return { pass: false, summary: { mode: plan.mode, refused: 'frozen-candidate-mismatch: ' + mismatch, nativeCliProcesses: 0, processesReportingModelUsage: 0 } }; }
   }
   const batchRecord = { batch: plan.batch, mode: plan.mode, attempt: plan.attempt, reason: plan.reason, startedAt, selected: plan.rows.map(r => r.id), denominators: denominators(plan.rows), auth: plan.mode === 'manual' ? (connected ? { source: 'connected-resource-overlay', slot: connected.slot, configDirectory: connected.configDirectory, oneKeyOverlay: 'CLAUDE_CODE_OAUTH_TOKEN on the exact matched native CLI spawn only' } : { source: 'unchanged-default-native-login' }) : null, cliPath: plan.mode === 'manual' ? plan.cli : null, identity, frozenManifestSha256: plan.frozen ? sha256File(plan.frozen) : null, processPriority: (() => { try { return os.getPriority(0); } catch { return null; } })(), countingUnit: 'one initial queued native product job and its native CLI process; internal model/tool turns are recorded separately' };
   await writeExclusive(path.join(plan.out, 'batch.json'), batchRecord);
-  let rt = null, ctx = null, spawnObserver = null, worker = null, fatal = null, cleanup = null;
+  // Caller-owned runtime: every resource startRuntime creates is reachable by stopRuntime, even when startup throws part-way.
+  const rt = { secrets: new Set() };
+  let ctx = null, spawnObserver = null, worker = null, fatal = null, cleanup = null;
+  // Known synthetic credentials (memory only): agent/research/owner tokens, every lease and bearer token the loopback observer
+  // forwarded and, when used, the connected credential. Used to withhold a native input and to scan every written artifact.
+  const secretValues = () => [...rt.secrets, ...(rt.http ? rt.http.secretValues() : []), ...(connected ? [connected.token] : [])].filter(v => typeof v === 'string' && v.length >= 8);
   const attempts = [], families = new Map(), manifest = { kind: 'navi-agent-model resolved request manifest', createdAt: startedAt, mode: plan.mode, batch: plan.batch, source: identity, declarationSha256: identity.declarationSha256, cases: {} };
   try {
-    rt = await startRuntime(root, plan, log);
+    await startRuntime(root, plan, log, rt);
     ctx = await buildContext(rt, plan, log);
+    ctx.secretValues = secretValues;
     if (plan.mode === 'manual') {
-      spawnObserver = installSpawnObserver({ cliPath: plan.cli, connectedAuth: connected });
+      spawnObserver = installSpawnObserver({ cliPath: plan.cli, connectedAuth: connected, secretValues });
       const { Vault } = await import(pathToFileURL(path.join(root, 'collector/vault.mjs')).href);
       const vaultDir = path.join(rt.dir, 'vault');
       await new Vault(vaultDir).update(() => ({ enabled: true, token: ctx.agent.token, baseUrl: rt.http.origin, cliPath: plan.cli, inferenceDirectory: path.join(rt.dir, 'inference'), publicResearch: true, ...(connected?.configDirectory ? { claudeConfigDirectory: connected.configDirectory } : {}) }));
@@ -259,9 +326,9 @@ export async function runCorpusFromEnvironment(env, { root = path.resolve(path.d
       const { TeachingWorker } = await import(pathToFileURL(path.join(root, 'teaching-worker/worker.mjs')).href);
       worker = new TeachingWorker({ ...await new Vault(vaultDir).read(), directory: vaultDir }, { log: line => { worker.lines.push({ at: new Date().toISOString(), line: String(line).slice(0, 200) }); log('worker: ' + line); } });
       worker.lines = [];
-    } else spawnObserver = installSpawnObserver({ cliPath: plan.cli || path.join(os.homedir(), '.local/bin/claude.exe') });
+    } else spawnObserver = installSpawnObserver({ cliPath: plan.cli || path.join(os.homedir(), '.local/bin/claude.exe'), secretValues });
     for (let i = 0; i < plan.rows.length; i++) {
-      const row = plan.rows[i], a = await runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, families, manifest, index: i, log });
+      const row = plan.rows[i], a = await runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, families, manifest, index: i, log, secretValues });
       attempts.push(a); await writeReplace(path.join(plan.out, 'result-table.json'), resultTable(plan, attempts));
       if (a.abortBatch) { fatal = Error(a.abortBatch); for (const rest of plan.rows.slice(i + 1)) attempts.push({ attemptId: rest.id + '.' + plan.attempt, caseId: rest.id, cohort: rest.cohort, status: 'not-run', layer: 'batch-aborted', detail: a.abortBatch }); break; }
     }
@@ -270,20 +337,47 @@ export async function runCorpusFromEnvironment(env, { root = path.resolve(path.d
     try { spawnObserver?.restore(); } catch (e) { fatal ||= e; }
     cleanup = await stopRuntime(rt);
   }
+  const processes = ownedProcessStates(rt);
   if (plan.mode !== 'manual') await writeExclusive(path.join(plan.out, 'frozen-manifest.json'), manifest);
-  const table = resultTable(plan, attempts, { fatal, cleanup, spawnStats: spawnObserver?.stats() || null, logsTail: fatal ? redactLogs(rt?.logs || '') : undefined });
+  const table = resultTable(plan, attempts, { fatal: fatal ? String(fatal.message || fatal).slice(0, 600) : null, cleanup, ownedProcesses: processes, spawnStats: spawnObserver?.stats() || null, logsTail: fatal ? redactLogs(rt.logs || '') : undefined });
   await writeReplace(path.join(plan.out, 'result-table.json'), table); await writeReplace(path.join(plan.out, 'result-table.md'), tableMarkdown(table));
-  const nativeProcesses = spawnObserver?.stats()?.matched ?? 0;
-  const passed = !fatal && attempts.length === plan.rows.length && attempts.every(a => a.status === (plan.mode === 'prepare' ? 'prepared' : plan.variant === 'defects' ? 'defect-detected' : 'deterministic-pass'));
-  return { pass: passed, summary: { mode: plan.mode, variant: plan.mode === 'selftest' ? plan.variant : undefined, batch: plan.batch, attempt: plan.attempt, out: plan.out, denominators: table.denominators, counts: table.counts, nativeCliProcesses: nativeProcesses, modelCalls: plan.mode === 'manual' ? nativeProcesses : 0, manualGrades: plan.mode === 'manual' ? 'PENDING for every attempt (manual-grading.md)' : 'not applicable', cleanup, fatal: fatal ? String(fatal.message || fatal).slice(0, 400) : null, limits: limitsFor(plan.mode) }, databaseCoverage: { executed: !!rt?.db, ownedProcess: !!rt?.mongo } };
+  // Every written artifact is scanned for every known synthetic credential; a hit is scrubbed on disk and the run is not a pass.
+  const secretScan = await scanArtifacts(plan.out, secretValues());
+  const expected = plan.mode === 'prepare' ? 'prepared' : plan.variant === 'defects' ? 'defect-detected' : 'deterministic-pass';
+  const passed = overallPass({ fatal, attempts, expected, selected: plan.rows.length, cleanup, secretFindings: secretScan.findings.length });
+  const counters = nativeCounters(plan, spawnObserver);
+  const outcome = { batch: plan.batch, mode: plan.mode, variant: plan.mode === 'selftest' ? plan.variant : undefined, pass: passed, expectedStatus: expected, fatal: fatal ? String(fatal.message || fatal).slice(0, 400) : null, cleanup, ownedProcesses: processes, secretScan, ...counters, finishedAt: new Date().toISOString() };
+  await writeExclusive(path.join(plan.out, 'outcome.json'), outcome);
+  return { pass: passed, summary: { mode: plan.mode, variant: outcome.variant, batch: plan.batch, attempt: plan.attempt, out: plan.out, denominators: table.denominators, counts: table.counts, ...counters, manualGrades: plan.mode === 'manual' ? 'PENDING for every attempt (manual-grading.md)' : 'not applicable', cleanup, ownedProcesses: processes, secretScan: { files: secretScan.files, findings: secretScan.findings.length }, fatal: outcome.fatal, limits: limitsFor(plan.mode) }, databaseCoverage: { executed: !!rt.db, ownedProcess: !!rt.mongo } };
 }
-const limitsFor = mode => mode === 'manual' ? 'Finite declared corpus draws on synthetic owned data. Deterministic record/receipt/HTTP checks only; accountant reasoning, citations and public-source facts need the separate manual grade. Not a reliability percentage, tax advice or production replay.' : 'Zero model, provider or native CLI calls: owned synthetic setup' + (mode === 'selftest' ? ' and scripted synthetic worker turns' : '') + ' only. Grants no product-model coverage.';
+// Separate counts, never one "model calls" number: matched spawns of the configured CLI path, processes whose final envelope
+// reported model usage, and whether that CLI is this Node executable (a stand-in, never any of the 62 actual-model draws).
+function nativeCounters(plan, spawnObserver) {
+  const processes = spawnObserver?.processes || [], reported = processes.filter(p => (p.envelope?.modelNames || []).length > 0);
+  const standIn = !!plan.cli && path.resolve(plan.cli).toLowerCase() === path.resolve(process.execPath).toLowerCase();
+  return { nativeCliProcesses: spawnObserver?.stats()?.matched ?? 0, processesReportingModelUsage: reported.length, modelNamesReported: [...new Set(reported.flatMap(p => p.envelope.modelNames))].sort(), cliIsNodeExecutable: standIn, actualModelDraws: plan.mode !== 'manual' || standIn ? 0 : 'not inferred by the runner: read processesReportingModelUsage and each attempt envelope', externalNetwork: plan.mode === 'manual' && !standIn ? 'the configured native CLI and its public research only' : 'none (owned loopback application, mongod and observer only)' };
+}
+const limitsFor = mode => mode === 'manual' ? 'Finite declared corpus draws on synthetic owned data. Deterministic record/receipt/HTTP checks only; accountant reasoning, citations and public-source facts need the separate manual grade. Not a reliability percentage, tax advice or production replay.' : 'Zero model, provider or native CLI calls and no EXTERNAL network: owned loopback application, mongod and synthetic setup' + (mode === 'selftest' ? ' with scripted synthetic worker turns' : '') + ' only. Grants no product-model coverage.';
 const redactLogs = text => String(text).replace(/(Bearer\s+)[A-Za-z0-9._-]+/g, '$1[REDACTED]').replace(/omft_[a-f0-9]{64}/g, '[REDACTED]').slice(-4000);
+async function scanArtifacts(dir, secrets) {
+  const findings = []; let files = 0;
+  const walk = async d => { for (const e of (await fsp.readdir(d, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) { const f = path.join(d, e.name); if (e.isDirectory()) await walk(f); else if (e.isFile()) { files++; let text = await fsp.readFile(f, 'utf8'); const hits = secrets.filter(s => text.includes(s)); if (hits.length) { for (const s of hits) text = text.split(s).join('[REDACTED]'); await fsp.writeFile(f, text); findings.push({ file: path.relative(dir, f).split(path.sep).join('/'), markers: hits.length, scrubbed: true }); } } } };
+  await walk(dir);
+  return { files, markersChecked: secrets.length, findings };
+}
 
-async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, families, manifest, log }) {
+// Context pointers whose native documents are retained (before and after) with every attempt, beside the design's protected ones.
+const POINTER_COLLECTIONS = Object.freeze({ transactionId: 'transactions', invoiceId: 'invoices', paymentId: 'payments', budgetId: 'budgets', recurringPaymentId: 'recurringpayments', receiptId: 'receipts', recordId: 'financeintakerecords', importId: 'financeimports', paymentImportId: 'financeimports' });
+function selectedDocuments(design, state, context) {
+  const pairs = [...(design.protect ? design.protect(state) : [])];
+  for (const [key, collection] of Object.entries(POINTER_COLLECTIONS)) { const v = context?.[key]; if (typeof v === 'string' && /^[a-f0-9]{24}$/.test(v)) pairs.push([collection, v]); }
+  if (typeof state?.draftDocId === 'string') pairs.push(['financedrafts', state.draftDocId]);
+  return [...new Map(pairs.map(([c, id]) => [c + ':' + id, [c, String(id)]])).values()];
+}
+async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, families, manifest, log, secretValues = null }) {
   const design = designFor(row), attemptId = row.id + '.' + (plan.attempt === 'initial' ? 'initial' : 'additional-' + new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15));
   const rec = { attemptId, caseId: row.id, cohort: row.cohort, realm: row.realm, endpoint: row.endpoint, page: row.page, nativePage: row.nativePage, transport: row.transport, family: row.family, batch: plan.batch, mode: plan.mode, attemptKind: plan.attempt, reason: plan.reason, startedAt: new Date().toISOString(), rubric: EVALUATOR_ONLY[row.id]?.rubric || null, manualGrade: plan.mode === 'manual' ? 'PENDING' : 'not-applicable' };
-  const secrets = [ctx.agent.token];
+  const secrets = () => secretValues ? secretValues() : [ctx.agent.token];
   let binding = null, request = null, state = null;
   try {
     if (!design) throw new SetupError('no case design');
@@ -322,7 +416,7 @@ async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, fami
     try {
       if (plan.mode === 'manual') {
         await worker.api('heartbeat');
-        spawnObserver.setCase({ caseId: row.id, attemptId, transport: row.transport, boundary: boundaryFor(request, row) });
+        spawnObserver.setCase({ caseId: row.id, attemptId, transport: row.transport, boundary: boundaryFor(request, row), binding: { resolvedSha256: request.resolvedSha256, normalizedSha256: request.normalizedSha256 } });
         await sendDraw(ctx, row, binding, request, requestId); rec.queuedAt = new Date().toISOString();
         const linesBefore = worker.lines.length;
         const handled = await Promise.race([worker.cycle().then(v => ({ v }), e => ({ e })), pause(CYCLE_BOUND_MS).then(() => ({ bound: true }))]);
@@ -339,7 +433,10 @@ async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, fami
     const conversation = await conversationOf(ctx, row, binding), turn = conversation?.turns?.find(t => t.id === requestId) || null;
     const after = await snapshot(ctx.db), diff = diffSnapshots(before, after), events = rt.http.since(eventStart).filter(e => e.caseId === attemptId);
     const processes = spawnObserver ? spawnObserver.processes.filter(p => p.attemptId === attemptId) : [];
-    const sources = org ? (await ctx.db.collection('financecompanypublicsources').find({ organizationId: org.id }).toArray()).filter(x => !sourcesBefore.includes(String(x._id))).map(x => ({ id: String(x._id), kind: x.kind, status: x.status, url: x.url, requestedUrl: x.requestedUrl, title: x.title, hash: x.hash, chars: typeof x.text === 'string' ? x.text.length : 0, text: typeof x.text === 'string' ? x.text.slice(0, 60000) : null, evidence: x.evidence, registry: x.registry || null, capturedAt: x.capturedAt })) : [];
+    // Captured public sources of this attempt, retained with their literal text and a recomputed hash (they outlive the owned DB).
+    const sources = org ? (await ctx.db.collection('financecompanypublicsources').find({ organizationId: org.id }).toArray()).filter(x => !sourcesBefore.includes(String(x._id))).map(retainedSource) : [];
+    // Every added/removed/changed native document and the selected/protected ones, before and after (credential-shaped keys removed).
+    rec.documents = redact(retainedDocuments(before, after, diff, selectedDocuments(design, state, request.context)));
     rec.conversationState = conversation?.state ?? null;
     rec.turn = turn ? { id: turn.id, text: turn.text, proposal: turn.proposal || null, actions: turn.actions || [], answeredAt: turn.answeredAt || null, sources: turn.sources || [] } : null;
     rec.native = { processes, processCount: processes.length, internalTurns: processes.map(p => p.envelope?.num_turns ?? null), requestedModel: processes[0]?.args?.find(x => x[0] === '--model')?.[1] ?? null, effort: processes[0]?.args?.find(x => x[0] === '--effort')?.[1] ?? null };
@@ -348,14 +445,14 @@ async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, fami
     rec.effects = diff;
     const ev = { mode: plan.mode, request, turn: rec.turn, diff, events, native: { processes }, beforeDocs, sourcesBefore };
     const checks = [];
-    if (plan.mode === 'manual') checks.push(...nativeChecks(processes, row));
+    if (plan.mode === 'manual') checks.push(...nativeChecks(processes, row, request));
     checks.push(check('product:reply-saved', !!turn?.proposal?.summary && ['ready', 'confirmed'].includes(conversation?.state), 'state ' + conversation?.state));
     const visible = JSON.stringify({ proposal: turn?.proposal || null, events: events.map(e => e.responseText || e.job || '') });
     checks.push(check('scope:no-foreign-or-outsider-marker', !FOREIGN_MARKERS.some(m => visible.includes(m)), 'reply, citations and tool results scanned'));
     checks.push(...gradeEffects(diff, design.allowed ? design.allowed(state) : {}));
     checks.push(...await safeChecks(design, ctx, state, ev));
     rec.checks = checks;
-    const failed = checks.filter(c => !c.pass), transport = failed.filter(c => c.name.startsWith('transport:'));
+    const failed = checks.filter(c => !c.pass), transport = failed.filter(c => c.name.startsWith('transport:') || c.name.startsWith('evidence:'));
     rec.status = transport.length ? 'harness-failure' : failed.some(c => c.name.startsWith('native:')) ? 'native-failure' : failed.some(c => c.name === 'product:reply-saved') ? 'product-failure' : failed.length ? 'deterministic-fail' : 'deterministic-pass';
     rec.layer = rec.status === 'deterministic-pass' ? null : rec.status === 'harness-failure' ? 'transport' : rec.status === 'native-failure' ? 'native' : rec.status === 'product-failure' ? 'product' : 'deterministic';
     if (plan.variant === 'defects') { const flipped = checks.find(c => c.name === design.defect.flips); rec.defect = { flips: design.defect.flips, detected: !!flipped && !flipped.pass, detail: flipped?.detail || 'named check absent' }; rec.status = rec.defect.detected ? 'defect-detected' : 'defect-missed'; rec.layer = null; }
@@ -366,10 +463,13 @@ async function runCase({ row, plan, rt, ctx, worker, spawnObserver, frozen, fami
   return finishRecord(plan, rec, secrets);
 }
 async function safeChecks(design, ctx, state, ev) { try { return await design.check(ctx, state, ev); } catch (e) { return [check('oracle:check-executed', false, 'check threw: ' + String(e?.message || e).slice(0, 300))]; } }
-function nativeChecks(processes, row) {
+function nativeChecks(processes, row, request) {
   const p = processes[0] || {}, env = p.envelope || {};
+  const exactInput = p.nativeInput?.exact === true && typeof p.nativeInput.text === 'string' && sha256(Buffer.from(p.nativeInput.text, 'utf8')) === p.stdin?.sha256;
   return [
     check('transport:one-native-process', processes.length === 1 && !p.outOfCase && !p.unexpectedShape, processes.length + ' native CLI process(es)'),
+    // The retained native input is the exact stdin bytes (its hash recomputed) and is bound to this attempt's frozen request.
+    check('evidence:native-input-exact', processes.length === 1 && exactInput && p.binding?.resolvedSha256 === request?.resolvedSha256 && p.binding?.normalizedSha256 === request?.normalizedSha256, p.nativeInput?.withheld ? 'withheld: ' + p.nativeInput.reason : exactInput ? 'exact input retained; binding ' + JSON.stringify(p.binding || null) : 'native input missing or not matching its byte hash'),
     check('transport:observer-clean', processes.length === 1 && !p.observerFailure && (row.transport !== 'stream-json' || p.forwardedBeforeClose === true), p.observerFailure || (row.transport === 'stream-json' ? 'forwardedBeforeClose ' + p.forwardedBeforeClose : 'passive')),
     check('transport:native-input-boundary', !!p.boundary?.parsed && p.boundary.currentMessageMatchesFrozen === true && p.boundary.evaluatorExpectationAbsent === true && p.boundary.rubricLabelAbsent === true, JSON.stringify(p.boundary || null)),
     check('transport:native-envelope', !!p.envelope, p.envelopeParse || 'final result envelope ' + (p.envelope ? 'present' : 'missing')),
@@ -394,14 +494,17 @@ async function scriptedTurn(ctx, rt, row, design, state, turn) {
   if (r.status !== 200) throw new SetupError('selftest result ' + r.status + ' ' + r.raw.slice(0, 300));
   return proposal;
 }
+// The attempt file keeps the full evidence; a known credential found in it is replaced, the attempt becomes a harness failure and
+// the replaced file is never presented as exact.
 async function finishRecord(plan, rec, secrets) {
   rec.finishedAt = new Date().toISOString();
+  const known = (typeof secrets === 'function' ? secrets() : secrets || []).filter(s => typeof s === 'string' && s.length >= 8);
   let text = JSON.stringify(rec, null, 2);
-  for (const s of secrets.filter(Boolean)) if (text.includes(s)) { text = text.split(s).join('[REDACTED]'); rec.secretRedacted = true; }
-  if (rec.secretRedacted) { rec.status = 'harness-failure'; rec.layer = 'evidence-redaction'; text = JSON.stringify({ ...JSON.parse(text), status: rec.status, layer: rec.layer }, null, 2); }
+  for (const s of known) if (text.includes(s)) { text = text.split(s).join('[REDACTED]'); rec.secretRedacted = true; }
+  if (rec.secretRedacted) { rec.status = 'harness-failure'; rec.layer = 'evidence-redaction'; text = JSON.stringify({ ...JSON.parse(text), status: rec.status, layer: rec.layer, evidenceNote: 'a known synthetic credential was found and replaced: this file is not the exact evidence' }, null, 2); }
   await writeExclusive(path.join(plan.out, 'attempts', rec.attemptId + '.json'), text + '\n');
-  const { request, turn, native, http, effects, checks, baseline, ...summary } = rec;
-  return { ...summary, checks: (checks || baseline || []).map(c => ({ name: c.name, pass: c.pass })), failed: (checks || []).filter(c => !c.pass).map(c => c.name + ': ' + c.detail).slice(0, 12), processCount: native?.processCount ?? null, internalTurns: native?.internalTurns ?? null, requestedModel: native?.requestedModel ?? null, observedModels: [...new Set((native?.processes || []).flatMap(p => p.envelope?.modelNames || []))], normalizedSha256: request?.normalizedSha256 ?? null };
+  const { request, turn, native, http, effects, checks, baseline, documents, research, ...summary } = rec;
+  return { ...summary, ...(research ? { research: { webSearchRequests: research.webSearchRequests, capturedSources: research.capturedSources.length, captureAttempts: research.captureAttempts.length } } : {}), checks: (checks || baseline || []).map(c => ({ name: c.name, pass: c.pass })), failed: (checks || []).filter(c => !c.pass).map(c => c.name + ': ' + c.detail).slice(0, 12), processCount: native?.processCount ?? null, internalTurns: native?.internalTurns ?? null, requestedModel: native?.requestedModel ?? null, observedModels: [...new Set((native?.processes || []).flatMap(p => p.envelope?.modelNames || []))], normalizedSha256: request?.normalizedSha256 ?? null };
 }
 function resultTable(plan, attempts, extra = {}) {
   const statuses = ['deterministic-pass', 'deterministic-fail', 'product-failure', 'native-failure', 'harness-failure', 'setup-failure', 'not-run', 'prepared', 'defect-detected', 'defect-missed'];
@@ -413,6 +516,91 @@ function tableMarkdown(t) {
   for (const a of t.attempts) lines.push('| ' + a.caseId + ' | ' + (a.cohort === COHORT.core ? 'core' : 'historical') + ' | ' + a.status + ' | ' + (a.layer || '') + ' | ' + (a.processCount ?? '') + ' | ' + (a.internalTurns || []).join(',') + ' | ' + String((a.failed || []).join('; ') || a.error || a.detail || '').replace(/\|/g, '/').slice(0, 300) + ' |');
   lines.push('', 'Counts (total): ' + JSON.stringify(t.counts.total), 'Counts (core): ' + JSON.stringify(t.counts.core), 'Counts (historical): ' + JSON.stringify(t.counts.historical), '', t.note);
   return lines.join('\n') + '\n';
+}
+
+// ---- Lifecycle mode (explicit, zero model, no case): the corpus's own startRuntime/stopRuntime under injected faults, with an
+// owned mongod and the built application. No synthetic owner, agent, worker or CLI is created; the only HTTP is owned loopback.
+const LIFECYCLE_SCENARIOS = Object.freeze([
+  { id: 'normal' },
+  { id: 'fault-during-mongo-start', point: 'during-mongo-start' },
+  { id: 'fault-after-mongo-start', point: 'after-mongo-start' },
+  { id: 'fault-after-app-spawn', point: 'after-app-spawn' },
+  { id: 'fault-after-health', point: 'after-health' },
+  { id: 'cleanup-failure', failStep: 'temp-directory' },
+  { id: 'fault-and-cleanup-failure', point: 'after-health', failStep: 'temp-directory' },
+  // The first source's defect, reintroduced on purpose: cleanup without the partial runtime (the caller's reference stayed null).
+  { id: 'defect-lost-partial-reference', point: 'after-app-spawn', lostReference: true }
+]);
+export const LIFECYCLE = Object.freeze(LIFECYCLE_SCENARIOS.map(s => s.id));
+const STAGES = ['during-mongo-start', 'after-mongo-start', 'after-app-spawn', 'after-health'];
+async function safetyRemove(dir) {
+  if (!dir || !fs.existsSync(dir)) return 'nothing-left';
+  const resolved = path.resolve(dir), base = path.resolve(os.tmpdir());
+  if (!resolved.startsWith(base + path.sep) || !path.basename(resolved).startsWith('omf-navi-agent-model-')) return 'refused: unsafe path';
+  try { await fsp.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch (e) { return 'failed: ' + String(e?.message || e).slice(0, 160); }
+  return fs.existsSync(resolved) ? 'failed: still present' : 'ok';
+}
+async function lifecycleScenario(sc, plan, root, log) {
+  const rt = { secrets: new Set() }, r = { scenario: sc.id, injectedFault: sc.point || null, injectedCleanupFault: sc.failStep || null, startedAt: new Date().toISOString() };
+  let primary = null;
+  const fault = async point => {
+    if (point !== sc.point) return;
+    if (point === 'during-mongo-start') r.mongoStartPendingAtFault = !!rt.mongoStarting && rt.mongoStarted === undefined;
+    throw Object.assign(new SetupError('injected lifecycle fault at ' + point), { injected: true });
+  };
+  try {
+    await startRuntime(root, plan, log, rt, fault);
+    // A normal start must stay usable: owned health through the loopback observer and an owned database read.
+    const health = await (await fetch(rt.http.origin + '/api/health', { signal: AbortSignal.timeout(10000) })).json();
+    r.normalUse = { healthThroughObserver: health?.database?.connected === true && health.database.name === rt.dbName, observedEvents: rt.http.events.length, ownedOrganizations: await rt.db.collection('organizations').countDocuments() };
+  } catch (e) { primary = e; }
+  r.primaryError = primary ? String(primary.message || primary).slice(0, 300) : null; r.primaryInjected = primary?.injected === true;
+  r.reached = { tempDirectory: !!rt.dir, mongoInstance: !!rt.mongo, mongoStartPending: !!rt.mongoStarting, app: !!rt.app, databaseClient: !!rt.client, observer: !!rt.http };
+  if (sc.lostReference) {
+    r.defectCleanup = await stopRuntime(null);
+    mongoHandles(rt);
+    r.afterDefectCleanup = ownedProcessStates(rt);
+    r.defect = { cleanupReported: Object.values(r.defectCleanup).every(v => v === 'ok') ? 'every step ok (the false green)' : 'a step failed', detected: !ownedProcessesExited(rt), by: 'lifecycle:owned-processes-exited' };
+  }
+  r.cleanup = await stopRuntime(rt, { failStep: sc.failStep || null });
+  r.ownedProcesses = ownedProcessStates(rt); r.processesExited = ownedProcessesExited(rt);
+  r.tempDirectoryPresentAfterCleanup = rt.dir ? fs.existsSync(rt.dir) : null;
+  r.overallPass = overallPass({ fatal: primary, attempts: [{ status: 'control' }], expected: 'control', selected: 1, cleanup: r.cleanup, secretFindings: 0 });
+  if (sc.failStep) r.safetyRemoval = await safetyRemove(rt.dir);
+  const cleanupOk = Object.values(r.cleanup).every(v => v === 'ok'), stage = STAGES.indexOf(sc.point), expect = [];
+  const want = (name, pass, detail) => expect.push(check(name, pass, detail));
+  want('lifecycle:owned-processes-exited', r.processesExited, JSON.stringify(r.ownedProcesses));
+  want('lifecycle:temp-directory-removed', sc.failStep ? r.tempDirectoryPresentAfterCleanup === true && r.safetyRemoval === 'ok' : r.tempDirectoryPresentAfterCleanup === false, sc.failStep ? 'kept by the injected cleanup fault, then safety removal ' + r.safetyRemoval : 'present after cleanup: ' + r.tempDirectoryPresentAfterCleanup);
+  if (!sc.point) want('lifecycle:normal-start-usable', r.normalUse?.healthThroughObserver === true && r.normalUse.ownedOrganizations === 0 && r.normalUse.observedEvents >= 1, JSON.stringify(r.normalUse || null));
+  else {
+    want('lifecycle:primary-error-kept', r.primaryInjected && r.primaryError.includes(sc.point), r.primaryError);
+    want('lifecycle:partial-resources-reached', r.reached.mongoInstance && (stage < 2 || r.reached.app) && !!r.ownedProcesses.mongod && (stage < 2 || !!r.ownedProcesses.app), JSON.stringify({ reached: r.reached, captured: Object.fromEntries(Object.entries(r.ownedProcesses).map(([k, v]) => [k, !!v])) }));
+  }
+  if (sc.point === 'during-mongo-start') want('lifecycle:fault-while-mongo-start-pending', r.mongoStartPendingAtFault === true, 'pending at fault: ' + r.mongoStartPendingAtFault);
+  if (sc.failStep) want('lifecycle:cleanup-failure-reported-separately', String(r.cleanup[sc.failStep] || '').startsWith('failed') && Object.entries(r.cleanup).every(([k, v]) => k === sc.failStep || v === 'ok') && (sc.point ? r.primaryInjected : r.primaryError === null), JSON.stringify({ cleanup: r.cleanup, primaryError: r.primaryError }));
+  else want('lifecycle:cleanup-all-ok', cleanupOk, JSON.stringify(r.cleanup));
+  want(sc.point || sc.failStep ? 'lifecycle:overall-false' : 'lifecycle:overall-true', r.overallPass === !(sc.point || sc.failStep), 'overallPass ' + r.overallPass);
+  if (sc.lostReference) want('lifecycle:lost-reference-detected', r.defect.detected === true && r.defect.cleanupReported.startsWith('every step ok'), JSON.stringify(r.defect));
+  r.expectations = expect; r.asExpected = expect.every(c => c.pass); r.finishedAt = new Date().toISOString();
+  log('lifecycle ' + sc.id + ': ' + (r.asExpected ? 'as expected' : 'NOT as expected ' + expect.filter(c => !c.pass).map(c => c.name).join(',')));
+  return r;
+}
+async function runLifecycle(plan, root, log) {
+  verifyDeclaration();
+  try { os.setPriority(0, os.constants.priority.PRIORITY_LOW); } catch {}
+  await fsp.mkdir(plan.out, { recursive: true });
+  const identity = sourceIdentity(root), startedAt = new Date().toISOString();
+  await writeExclusive(path.join(plan.out, 'batch.json'), { batch: plan.batch, mode: plan.mode, startedAt, identity, scenarios: LIFECYCLE, processPriority: (() => { try { return os.getPriority(0); } catch { return null; } })(), note: 'Explicit zero-model lifecycle controls: owned mongod and built application on loopback, injected startup and cleanup faults, no case, owner, agent, worker or CLI.' });
+  const results = [];
+  for (const sc of LIFECYCLE_SCENARIOS) {
+    try { results.push(await lifecycleScenario(sc, plan, root, log)); } catch (e) { results.push({ scenario: sc.id, asExpected: false, harnessError: String(e?.stack || e).slice(0, 600) }); }
+  }
+  await writeExclusive(path.join(plan.out, 'lifecycle.json'), { batch: plan.batch, startedAt, finishedAt: new Date().toISOString(), results });
+  const secretScan = await scanArtifacts(plan.out, []);
+  const pass = results.length === LIFECYCLE_SCENARIOS.length && results.every(r => r.asExpected === true);
+  const summary = { mode: plan.mode, batch: plan.batch, out: plan.out, scenarios: results.map(r => ({ scenario: r.scenario, asExpected: r.asExpected, primaryError: r.primaryError ?? null, cleanup: r.cleanup ?? null, failed: (r.expectations || []).filter(c => !c.pass).map(c => c.name + ': ' + c.detail), harnessError: r.harnessError })), nativeCliProcesses: 0, processesReportingModelUsage: 0, actualModelDraws: 0, externalNetwork: 'none (owned loopback application, mongod and observer only)', secretScan: { files: secretScan.files, findings: secretScan.findings.length, markersChecked: 0 }, limits: 'Owned startup/cleanup controls only; no product-model, case or reliability coverage.' };
+  await writeExclusive(path.join(plan.out, 'outcome.json'), { ...summary, pass, finishedAt: new Date().toISOString() });
+  return { pass, summary, databaseCoverage: { executed: results.some(r => r.normalUse?.healthThroughObserver === true), ownedProcess: true } };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

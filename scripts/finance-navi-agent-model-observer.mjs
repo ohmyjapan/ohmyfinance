@@ -4,7 +4,8 @@
 //
 // Default JSON transport: passive. The matched native CLI spawn receives the interpreter's exact file, arguments and options object;
 // the same ChildProcess, stdin, stderr, error/close events, timer and kill reach the interpreter. The observer adds listeners that
-// only count, hash and parse a copy, and tees stdin bytes into a hash.
+// only count, hash and parse a copy, and tees stdin bytes into a hash and a retained copy of the exact native input (withheld, and
+// recorded as withheld, when a known secret marker appears in it).
 // P01 stream transport (the one declared logging-only difference): --output-format json becomes stream-json and --verbose is added.
 // The interpreter gets the actual ChildProcess with a PassThrough as stdout; the real pipe is parsed (split UTF-8 and NDJSON), drained
 // to its end, and the EXACT original final-result JSON payload is written to the PassThrough before the real child's close event.
@@ -12,8 +13,9 @@
 // named observer failure and can never yield a model or privacy pass.
 // Connected-auth (explicit manual option only): the exact matched CLI spawn gets one added CLAUDE_CODE_OAUTH_TOKEN from memory; all
 // other environment entries, arguments and options stay as the interpreter built them. Unrelated children are never touched.
-// Records keep whitelisted metadata, hashes and synthetic observations only: never credentials, headers, leases, MCP configuration,
-// provider settings, hidden reasoning or the raw native stream.
+// Records keep whitelisted metadata, hashes, the exact native stdin input (synthetic records and the frozen message; the product
+// writes its lease to the private job file, not to stdin) and synthetic observations only: never credentials, headers, leases, MCP
+// configuration, provider settings, hidden reasoning or the raw native stream.
 import cp from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
@@ -108,19 +110,22 @@ export class NativeStreamObserver {
 
 // ---- Spawn observer
 // cliPath: the exact configured native CLI path (string equality, as the interpreter passes config.cliPath).
-// caseContext (setCase): { caseId, attemptId, transport: 'default-json' | 'stream-json', boundary?(stdinText) -> booleans }.
+// caseContext (setCase): { caseId, attemptId, transport: 'default-json' | 'stream-json', boundary?(stdinText) -> booleans,
+//   binding?: { resolvedSha256, normalizedSha256 } } — the frozen request the native input belongs to.
 // connectedAuth: null, or { token, slot, configDirectory } held only in this closure.
-export function installSpawnObserver({ cliPath, connectedAuth = null, now = Date.now } = {}) {
+// secretValues: () => strings that must never be retained (synthetic agent tokens, observed leases); the connected token is added.
+export function installSpawnObserver({ cliPath, connectedAuth = null, secretValues = null, now = Date.now } = {}) {
   if (typeof cliPath !== 'string' || !cliPath) throw Error('observer:cli-path-required');
   if (connectedAuth !== null && (!connectedAuth || typeof connectedAuth.token !== 'string' || !connectedAuth.token)) throw Error('observer:connected-auth-token-required');
   const original = cp.spawn;
   if (original[OBSERVED]) throw Error('observer:already-installed');
   const token = connectedAuth ? connectedAuth.token : null, authInfo = connectedAuth ? { slot: connectedAuth.slot ? String(connectedAuth.slot) : null, configDirectory: connectedAuth.configDirectory ? String(connectedAuth.configDirectory) : null } : null;
+  const markers = () => { let extra = []; try { extra = typeof secretValues === 'function' ? secretValues() || [] : []; } catch { extra = []; } return [...(token ? [token] : []), ...extra].filter(v => typeof v === 'string' && v.length >= 8); };
   const state = { caseContext: null, processes: [], unrelated: 0, restored: false };
   function observedSpawn(file, args, options) {
     if (file !== cliPath || !Array.isArray(args) || !options || typeof options !== 'object') { if (file !== cliPath) state.unrelated++; else state.processes.push({ seq: state.processes.length + 1, unexpectedShape: true, caseId: state.caseContext?.caseId ?? null }); return original.apply(this, arguments); }
     const context = state.caseContext, stream = context?.transport === 'stream-json';
-    const record = { seq: state.processes.length + 1, caseId: context?.caseId ?? null, attemptId: context?.attemptId ?? null, outOfCase: !context, transport: stream ? 'stream-json' : 'default-json', startedAt: new Date(now()).toISOString(), file, args: argumentShape(args), originalArgsSha256: sha256(JSON.stringify(args)), cwd: options.cwd ?? null, envKeys: Object.keys(options.env || {}).sort() };
+    const record = { seq: state.processes.length + 1, caseId: context?.caseId ?? null, attemptId: context?.attemptId ?? null, outOfCase: !context, transport: stream ? 'stream-json' : 'default-json', startedAt: new Date(now()).toISOString(), file, args: argumentShape(args), originalArgsSha256: sha256(JSON.stringify(args)), cwd: options.cwd ?? null, envKeys: Object.keys(options.env || {}).sort(), binding: context?.binding ? { resolvedSha256: context.binding.resolvedSha256 ?? null, normalizedSha256: context.binding.normalizedSha256 ?? null } : null };
     state.processes.push(record);
     let spawnArgs = args, spawnOptions = options;
     if (stream) { try { const mapped = streamArguments(args); spawnArgs = mapped.args; record.spawnedArgsSha256 = mapped.observedArgsHash; record.loggingChanges = mapped.loggingChanges; } catch (e) { record.observerFailure = 'stream-arguments: ' + e.message; } }
@@ -132,7 +137,7 @@ export function installSpawnObserver({ cliPath, connectedAuth = null, now = Date
     record.optionsIdentityPreserved = spawnOptions === options; record.argsIdentityPreserved = spawnArgs === args;
     const child = original.call(this, file, spawnArgs, spawnOptions);
     try { record.pid = child.pid ?? null; } catch { record.pid = null; }
-    observeStdin(child, record, context);
+    observeStdin(child, record, context, markers);
     if (child.stderr) { let bytes = 0; const h = createHash('sha256'); child.stderr.on('data', b => { try { const x = Buffer.isBuffer(b) ? b : Buffer.from(String(b)); bytes += x.length; h.update(x); } catch {} }); record.stderrDigest = () => ({ bytes, sha256: h.copy().digest('hex') }); }
     const finalize = stream ? observeStream(child, record) : observePassive(child, record);
     child.once('error', error => { record.spawnError = String(error?.code || error?.name || 'error'); });
@@ -153,14 +158,25 @@ export function installSpawnObserver({ cliPath, connectedAuth = null, now = Date
     restore() { if (state.restored) return; if (cp.spawn === observedSpawn) cp.spawn = original; syncBuiltinESMExports(); state.restored = cp.spawn === original; if (!state.restored) throw Error('observer:spawn-not-restored'); }
   };
 }
-function observeStdin(child, record, context) {
+// The native input: a tee of the exact bytes the interpreter hands to stdin, taken before they are delivered (the same chunks then go
+// to the original write/end unchanged). Retained exactly as written (synthetic records and the frozen message, no lease or token: the
+// job file carries those), with its byte hash. When a known secret marker appears, or the input exceeds the retention bound, the
+// raw text is withheld and the record says so: a redacted copy is never presented as the exact input.
+const NATIVE_INPUT_LIMIT = 16 * 1024 * 1024;
+function observeStdin(child, record, context, markers = () => []) {
   const stdin = child.stdin; if (!stdin) return;
   const h = createHash('sha256'), chunks = []; let bytes = 0, ending = false, done = false;
-  const tap = (chunk, encoding) => { if (chunk === undefined || chunk === null || typeof chunk === 'function') return; const b = Buffer.isBuffer(chunk) ? chunk : chunk instanceof Uint8Array ? Buffer.from(chunk) : Buffer.from(String(chunk), typeof encoding === 'string' ? encoding : 'utf8'); h.update(b); bytes += b.length; if (bytes <= 16 * 1024 * 1024) chunks.push(b); };
-  const settle = () => { if (done) return; done = true; record.stdin = { bytes, sha256: h.digest('hex') }; try { if (typeof context?.boundary === 'function') record.boundary = context.boundary(Buffer.concat(chunks).toString('utf8')); } catch (e) { record.boundary = { error: String(e.message).slice(0, 200) }; } chunks.length = 0; };
+  const tap = (chunk, encoding) => { if (chunk === undefined || chunk === null || typeof chunk === 'function') return; const b = Buffer.isBuffer(chunk) ? chunk : chunk instanceof Uint8Array ? Buffer.from(chunk) : Buffer.from(String(chunk), typeof encoding === 'string' ? encoding : 'utf8'); h.update(b); bytes += b.length; if (bytes <= NATIVE_INPUT_LIMIT) chunks.push(b); };
+  const settle = () => {
+    if (done) return; done = true; record.stdin = { bytes, sha256: h.digest('hex') };
+    const text = Buffer.concat(chunks).toString('utf8'); chunks.length = 0;
+    const withheld = bytes > NATIVE_INPUT_LIMIT ? 'the input exceeds the retention bound' : markers().some(m => text.includes(m)) ? 'a known secret marker is present; the raw input is not retained' : null;
+    record.nativeInput = withheld ? { exact: false, withheld: true, reason: withheld } : { exact: true, text };
+    try { if (typeof context?.boundary === 'function') record.boundary = context.boundary(text); } catch (e) { record.boundary = { error: String(e.message).slice(0, 200) }; }
+  };
   const write = stdin.write, end = stdin.end;
   stdin.write = function (chunk, encoding) { if (!ending) { try { tap(chunk, encoding); } catch {} } return write.apply(this, arguments); };
-  stdin.end = function (chunk, encoding) { ending = true; try { tap(chunk, encoding); } catch {} try { return end.apply(this, arguments); } finally { ending = false; try { settle(); } catch {} } };
+  stdin.end = function (chunk, encoding) { ending = true; try { tap(chunk, encoding); } catch {} try { settle(); } catch {} try { return end.apply(this, arguments); } finally { ending = false; } };
 }
 function observePassive(child, record) {
   const kept = []; let bytes = 0, truncated = false; const h = createHash('sha256');
@@ -198,8 +214,11 @@ function observeStream(child, record) {
 // Requests are forwarded byte for byte with their original headers (tokens stay in memory, never recorded). An upstream failure
 // destroys the client socket, exactly as an unreachable application would; no status is ever synthesized.
 const SECRET_KEYS = /^(lease|token|authorization|password|secret|refreshToken|accessToken|apiKey|cookie)$/i;
+// Removes credential-shaped keys at every level it walks and fails closed below twelve levels (the subtree becomes a marker string,
+// never retained raw). Shapes the harness actually keeps are shallower; this is a retention bound, not a product policy.
 export function redact(value, depth = 0) {
-  if (depth > 12 || value === null || typeof value !== 'object') return value;
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= 12) return '[REDACTED:depth]';
   if (Array.isArray(value)) return value.map(v => redact(v, depth + 1));
   return Object.fromEntries(Object.entries(value).filter(([k]) => !SECRET_KEYS.test(k)).map(([k, v]) => [k, redact(v, depth + 1)]));
 }
@@ -232,21 +251,27 @@ function workerEvent(info, request, status, response, maxChars) {
   if (info.kind === 'result') { const p = request?.proposal; return { ...base, failed: request?.failed === true, proposal: p ? { kind: p.kind, summary: typeof p.summary === 'string' ? p.summary : null, citations: Array.isArray(p.citations) ? p.citations : [], navigation: p.navigation ?? null } : null }; }
   return base;
 }
+// secretValues(): the bearer tokens and lease/token-keyed values this observer forwarded, held in memory only so the runner can
+// withhold a native input or fail a retained artifact that contains one. They are never recorded or written.
 export async function openHttpObserver(upstream, { maxResponseChars = 60000 } = {}) {
   const target = new URL(upstream);
   if (target.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(target.hostname)) throw Error('observer:loopback-upstream-required');
-  const events = [], sockets = new Set(); let seq = 0, caseId = null;
+  const events = [], sockets = new Set(), secrets = new Set(); let seq = 0, caseId = null;
+  const keep = (value, depth = 0) => { if (depth > 16 || value === null || typeof value !== 'object') return; for (const [k, v] of Object.entries(value)) { if (SECRET_KEYS.test(k) && typeof v === 'string') { if (v.length >= 8) secrets.add(v); } else if (v && typeof v === 'object') keep(v, depth + 1); } };
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', b => chunks.push(b));
     req.on('error', () => {});
     req.on('end', () => {
       const body = Buffer.concat(chunks), info = classifyWorkerRoute(req.method, req.url), at = new Date().toISOString(), tag = caseId, n = ++seq;
+      const bearer = typeof req.headers.authorization === 'string' ? req.headers.authorization.replace(/^Bearer\s+/i, '') : '';
+      if (bearer.length >= 8) secrets.add(bearer);
+      const requestJson = parseJson(body); try { keep(requestJson); } catch {}
       const outgoing = http.request({ hostname: target.hostname, port: target.port, path: req.url, method: req.method, headers: { ...req.headers, host: target.host } }, reply => {
         const response = [];
         res.writeHead(reply.statusCode, reply.statusMessage, reply.headers);
         reply.on('data', b => { response.push(b); res.write(b); });
-        reply.on('end', () => { res.end(); try { events.push({ seq: n, at, caseId: tag, ...(info.kind === 'other' ? { kind: 'other', method: req.method, path: String(req.url).split('?')[0], status: reply.statusCode } : workerEvent(info, parseJson(body), reply.statusCode, parseJson(Buffer.concat(response)), maxResponseChars)) }); } catch (e) { events.push({ seq: n, at, caseId: tag, kind: 'observer_error', error: String(e.message).slice(0, 200) }); } });
+        reply.on('end', () => { const responseJson = parseJson(Buffer.concat(response)); try { keep(responseJson); } catch {} res.end(); try { events.push({ seq: n, at, caseId: tag, ...(info.kind === 'other' ? { kind: 'other', method: req.method, path: String(req.url).split('?')[0], status: reply.statusCode } : workerEvent(info, requestJson, reply.statusCode, responseJson, maxResponseChars)) }); } catch (e) { events.push({ seq: n, at, caseId: tag, kind: 'observer_error', error: String(e.message).slice(0, 200) }); } });
         reply.on('error', () => res.destroy());
       });
       outgoing.on('error', error => { events.push({ seq: n, at, caseId: tag, kind: 'upstream_error', path: String(req.url).split('?')[0], error: String(error?.code || error?.name || 'error') }); res.destroy(); });
@@ -257,6 +282,7 @@ export async function openHttpObserver(upstream, { maxResponseChars = 60000 } = 
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   return {
     origin: 'http://127.0.0.1:' + server.address().port, events,
+    secretValues() { return [...secrets]; },
     setCase(id) { caseId = id || null; },
     since(index) { return events.slice(index); },
     close() { return new Promise(resolve => { server.close(() => resolve()); for (const s of sockets) s.destroy(); }); }
