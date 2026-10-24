@@ -24,7 +24,7 @@ the collector, its saved logins and its security are the same as before.
 
 States shown on the screen: オフ · 対象外 · 要確認 (connection changed) · 要対応 (サインイン・確認待ち) · 取得中 · 途中で停止 (PCが再開) ·
 予約済み・PCの受け取り待ち · PC待ち · 本日分は取得済み／実行済み（失敗） · まもなく予約 · 次回 HH:MM（日本時間）. The saved setting and
-the last failure each have their own line. Unsaved form changes are marked "未保存の変更があります". Times are shown in JST.
+the last failure each have their own line. Unsaved form changes are marked "未保存の変更があります". Times are shown in JST, labelled 日本時間, on the status lines and in 取得の記録 alike (one rendering of the same stored instant; an absent or unreadable stored time shows nothing). Stored times are unchanged.
 
 ## Sign-in, attention and saved logins
 

@@ -557,6 +557,19 @@ async function legC(mongo, base, out) {
     assert.match(await text(R, '[data-bank-schedule-status]'), dueOrWaiting, 'ui:reconfirmed'); assert.equal((await db.collection('financebankaccounts').findOne({ _id: new ObjectId(R) })).schedule.binding.templateId, w.template, 'ui:reconfirm-recorded');
     const jobText = await page.$eval(card(H), e => e.textContent); assert.doesNotMatch(jobText, /Error|undefined|null|omfc_|Stack/, 'ui:no-raw-error');
     const html = await page.content(); assert.ok(!html.includes(w.device.token), 'ui:no-token');
+    // Phase C (parent lead 8): one instant, one rendering. The same failed run reads the same labelled Japan time in its status line and in
+    // 取得の記録; a run requested at 17:12 UTC (02:12 JST the next day) is shown on the JST date; an absent or unreadable stored time
+    // renders as nothing, never as a crash or "Invalid Date". Stored times are not changed.
+    const T = await w.account('UI 楽天銀行 時刻', RAKUTEN); await w.grant([R, P, H, V, U, T]);
+    const instant = new Date('2026-10-24T17:12:00.000Z'), jobBase = { ownerId: w.owner._id, bankAccountId: new ObjectId(T), kind: 'retrieve', open: false, snapshot: { provider: 'rakuten' }, snapshotHash: 'fictional', statementIds: [], observation: null, trigger: 'manual' };
+    await db.collection('financebankjobs').insertMany([{ ...jobBase, jobId: 'ui-boundary-failed', state: 'failed', requestedAt: instant, completedAt: instant, lastMessage: 'fictional failure at the UTC/JST date boundary' }, { ...jobBase, jobId: 'ui-absent-time', state: 'complete', requestedAt: null, completedAt: null, lastMessage: 'fictional run without a stored time' }, { ...jobBase, jobId: 'ui-unreadable-time', state: 'complete', requestedAt: 'not-a-date', completedAt: null, lastMessage: 'fictional run with an unreadable stored time' }]);
+    await open(); await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-job="ui-boundary-failed"]'), T, 'time jobs');
+    assert.match(await text(T, '[data-bank-schedule-last-failure]'), /2026-10-25 02:12/, 'ui:jst-status-same-instant');
+    const logLine = await text(T, '[data-bank-job="ui-boundary-failed"]');
+    assert.match(logLine, /2026-10-25 02:12（日本時間）/, 'ui:jst-log-same-instant (取得の記録 shows the same Japan time, labelled) ' + logLine); assert.doesNotMatch(logLine, /2026-10-24 17:12/, 'ui:jst-log-not-utc');
+    for (const jobId of ['ui-absent-time', 'ui-unreadable-time']) { const line = await text(T, '[data-bank-job="' + jobId + '"]'); assert.doesNotMatch(line, /Invalid|NaN|undefined|not-a-date|（日本時間）/, 'ui:jst-tolerant ' + jobId + ' ' + line); }
+    assert.equal((await db.collection('financebankjobs').findOne({ jobId: 'ui-boundary-failed' })).requestedAt.toISOString(), instant.toISOString(), 'ui:stored-time-unchanged');
+    await shot('390-times'); if (shots) await (await page.$('[data-bank-connection="' + T + '"]')).screenshot({ path: path.join(shots, '390-times-card.png') }); assert.equal(await overflow(), false, 'ui:no-overflow-390-times');
     await page.setViewport({ width: 1440, height: 1000 }); await pause(300); assert.equal(await overflow(), false, 'ui:no-overflow-1440'); await shot('1440-states');
     await page.evaluate(() => document.documentElement.classList.add('dark')); await pause(200); assert.equal(await overflow(), false, 'ui:dark'); await shot('1440-dark');
     await page.setViewport({ width: 390, height: 844 }); await pause(300); assert.equal(await overflow(), false, 'ui:dark-390'); await shot('390-dark');
