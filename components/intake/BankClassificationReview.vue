@@ -2,7 +2,7 @@
   <section class="card min-w-0 space-y-4 p-4 text-gray-800 dark:text-gray-100 md:p-6" data-bank-classification>
     <header class="space-y-1">
       <h2 class="font-semibold">銀行明細の仕訳</h2>
-      <p class="text-sm leading-relaxed text-gray-500">選択中の会社（{{ data.company?.name || '未選択' }}）のカレンダーと過去の仕訳を根拠に、銀行明細ごとの用途・勘定科目を提案します。提案の作成や修正の保存では取引は作成されず、カレンダーも変更されません。「確認して取引へ登録」を押した明細だけが、この会社の取引として1件登録されます。税区分とT番号は推定しません。</p>
+      <p class="text-sm leading-relaxed text-gray-500">選択中の会社（{{ data.company?.name || '未選択' }}）のカレンダーと過去の仕訳を根拠に、銀行明細ごとの用途・勘定科目を提案します。提案の作成や修正の保存では取引は作成されず、カレンダーも変更されません。「確認して取引へ登録」を押した明細だけが、この会社の取引として1件登録されます。税区分とT番号は推定しません。支払の照合で購入を紐付けた明細には、その購入と会社名・T番号の根拠を表示します（使うかどうかは、確認して選びます）。</p>
     </header>
     <div class="flex min-w-0 flex-wrap items-end gap-3">
       <label class="min-w-0 text-sm">口座<select v-model="account" data-bank-classification-account :class="INPUT" @change="load"><option value="">選択してください</option><option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}（{{ a.currency }}）</option></select></label>
@@ -37,7 +37,29 @@
           <p class="break-words text-xs text-gray-600 dark:text-gray-300" data-bank-classification-preview>借方 {{ view(r).preview.debit.account }} {{ num(view(r).preview.debit.amount) }} ／ 貸方 {{ view(r).preview.credit.account }} {{ num(view(r).preview.credit.amount) }}</p>
           <ul v-if="evidenceOf(r).length" class="space-y-0.5 text-xs text-gray-500" data-bank-classification-evidence><li v-for="(e, i) in evidenceOf(r)" :key="i" class="break-words">根拠: {{ e.label }}</li></ul>
           <ul v-if="unresolvedOf(r).length" class="space-y-0.5 text-xs text-amber-700 dark:text-amber-300" data-bank-classification-unresolved><li v-for="u in unresolvedOf(r)" :key="u" class="break-words">要確認: {{ LABELS[u] || u }}</li></ul>
-          <p class="break-words text-xs text-gray-500">税区分: {{ r.draft?.tax?.status === 'owner-selected' ? '手入力' : '未確認（推定しません）' }} · T番号: {{ r.draft?.invoice?.value ? r.draft.invoice.value + '（未検証）' : '未確認' }}</p>
+          <div v-if="r.purchases" class="min-w-0 space-y-1 rounded-xl border border-gray-100 p-2 text-xs dark:border-gray-700" data-bank-classification-purchases>
+            <p class="font-medium text-gray-700 dark:text-gray-200">紐付けた購入（支払の照合）</p>
+            <p v-if="!r.purchases.available" class="break-words text-amber-700 dark:text-amber-300">購入の根拠を読み込めませんでした（再読み込みしてください。手動の登録はこれまでどおりできます）。</p>
+            <p v-else-if="!r.purchases.links.length && !r.purchases.otherLinks.length" class="text-gray-500">紐付けた購入はありません。</p>
+            <ul v-if="r.purchases.links.length" class="space-y-1">
+              <li v-for="l in r.purchases.links" :key="l.allocationId" class="break-words text-gray-600 dark:text-gray-300" :data-bank-classification-purchase="l.allocationId">
+                <span>{{ l.kind === 'refund' ? '返金' : '購入' }} {{ num(l.amount) }} {{ l.currency }} · 注文 {{ l.record?.orderId || '—' }} / 明細 {{ l.record?.itemId || '—' }} / 外部 {{ l.record?.externalOrderId || '—' }} · 購入日 {{ l.record?.purchaseDate || '未入力' }} · 購入金額 {{ l.record?.amount === '' || l.record?.amount == null ? '不明' : num(l.record.amount) }}</span><br>
+                <span>会社 {{ l.evidence?.supplierName || '未確認' }} · T番号 {{ l.evidence?.invoiceNumber || '未確認' }}（{{ evidenceText(l) }}）</span>
+                <span v-if="l.changed || l.sourceChanged" class="text-amber-700 dark:text-amber-300"> · 配分した後に変更があります（支払の照合で再確認）</span>
+                <span v-if="l.record?.id"> · <NuxtLink :to="'/intake/' + l.record.id" class="text-primary-main dark:text-primary-light">購入を開く</NuxtLink></span>
+              </li>
+            </ul>
+            <p v-for="o in r.purchases.otherLinks" :key="o.allocationId" class="break-words text-gray-600 dark:text-gray-300">{{ o.kind === 'card-repayment' ? 'カードの返済' : 'カードの請求の支払' }}として照合 {{ num(o.amount) }} {{ o.currency }}（購入の経費ではありません）</p>
+            <template v-if="r.draft && !r.draft.registration && r.purchases.available && r.purchases.links.length">
+              <p v-if="r.purchases.adoption.eligible && r.draft.adoption?.current && r.draft.adoption.allocationId === r.purchases.adoption.candidate.allocationId" class="break-words text-green-700 dark:text-green-300" data-bank-classification-adopted>この購入の会社名・T番号をこの仕訳に使っています（購入・調査・配分・明細が変わると、確認済みの表示は外れます）。</p>
+              <template v-else-if="r.purchases.adoption.eligible">
+                <label class="flex items-start gap-2 text-sm"><input v-model="adoptConfirm[r.rowId]" data-bank-classification-adopt-confirm type="checkbox" class="mt-1">この購入の会社名（{{ r.purchases.adoption.candidate.supplierName }}）とT番号（{{ r.purchases.adoption.candidate.invoiceNumber }}・購入日 {{ r.purchases.adoption.candidate.purchaseDate }} 時点の国税庁の公表情報）を、この仕訳に使います。税区分は推定せず、取引先は登録済みの同じ会社がある場合だけ選びます。</label>
+                <button class="btn btn-secondary" :disabled="busy || !adoptConfirm[r.rowId] || dirty(r)" data-bank-classification-adopt @click="adoptPurchase(r)">購入の会社名・T番号を使う</button>
+              </template>
+              <p v-else class="break-words text-gray-500" data-bank-classification-adopt-reason>購入の会社名・T番号はこの明細には使えません: {{ adoptionReasons(r.purchases.adoption.reasons) }}。用途・勘定科目・T番号を確認して、これまでどおり手動で登録できます。</p>
+            </template>
+          </div>
+          <p class="break-words text-xs text-gray-500">税区分: {{ r.draft?.tax?.status === 'owner-selected' ? '手入力' : '未確認（推定しません）' }} · <span data-bank-classification-invoice :class="r.draft?.invoice?.status === 'verified-purchase' ? 'text-green-700 dark:text-green-300' : r.draft?.invoice?.status === 'adopted-stale' ? 'text-amber-700 dark:text-amber-300' : ''">T番号: {{ invoiceText(r) }}</span></p>
           <p v-if="r.draft?.sourceChanged" class="text-xs text-red-600 dark:text-red-300">元の明細が変更されています。内容を確認して保存してください。</p>
           <p v-if="r.predecessorRegistered" class="text-xs text-amber-700 dark:text-amber-300" data-bank-classification-predecessor>訂正前の同じ明細で登録・紐付け済みです。この明細は登録しません（二重登録の防止）。</p>
           <p v-if="r.draft?.evidenceChanged && !done(r)" class="text-xs text-amber-700 dark:text-amber-300">保存後に根拠が変わりました。「提案を作成・更新」で最新の提案を確認してください。</p>
@@ -85,11 +107,11 @@
         </div>
       </article>
     </template>
-    <p class="text-xs leading-relaxed text-gray-500">登録・紐付けは国税庁の登録番号の確認、請求書の受領、振込の実行、外部の会計ソフトへの転記ではありません。未確定の明細はそのまま表示され続けます。</p>
+    <p class="text-xs leading-relaxed text-gray-500">登録・紐付けは国税庁の登録番号の確認、請求書の受領、振込の実行、外部の会計ソフトへの転記ではありません。「購入の会社名・T番号を使う」は、購入の調査で確定した根拠（国税庁の公表情報・購入日時点）を記録するだけで、根拠が変わると確認済みの表示は外れます。未確定の明細はそのまま表示され続けます。</p>
   </section>
 </template>
 <script setup lang="ts">
-import { UNRESOLVED_LABELS } from '~/shared/finance-bank-classification.mjs'
+import { UNRESOLVED_LABELS, PURCHASE_ADOPTION_LABELS } from '~/shared/finance-bank-classification.mjs'
 import { useUserStore } from '~/stores/user'
 // Plan omf-rakuten-native-shiwake-20261020 §7: the native review of the selected company's bank classification. Reads/generation
 // never post; the explicit「確認して取引へ登録」creates the one reserved Transaction; links never rewrite an existing Transaction.
@@ -111,7 +133,7 @@ const ISSUES: Record<string, string> = {
   'link-changed': '紐付けた取引の金額・入出金が明細と異なります。誤った紐付けなら「紐付けを解除」してください。過去の仕訳としては使いません。'
 }
 const accounts = ref<any[]>([]), chart = ref<any[]>([]), taxes = ref<any[]>([]), suppliers = ref<any[]>([]), account = ref(''), data = ref<any>({}), busy = ref(false), error = ref(''), message = ref('')
-const forms = reactive<Record<string, any>>({}), open = reactive<Record<string, boolean>>({}), links = reactive<Record<string, any[]>>({}), reassignConfirm = reactive<Record<string, boolean>>({}), releaseConfirm = reactive<Record<string, boolean>>({})
+const forms = reactive<Record<string, any>>({}), open = reactive<Record<string, boolean>>({}), links = reactive<Record<string, any[]>>({}), reassignConfirm = reactive<Record<string, boolean>>({}), releaseConfirm = reactive<Record<string, boolean>>({}), adoptConfirm = reactive<Record<string, boolean>>({})
 const num = (n: any) => Number(n).toLocaleString('ja-JP')
 const money = (r: any) => (r.direction === 'in' ? '+' : '−') + num(Math.abs(Number(r.amount))) + ' ' + (r.currency || 'JPY')
 const view = (r: any) => r.draft || r.proposal
@@ -120,6 +142,26 @@ const canRelease = (r: any) => done(r) && (r.draft.registration.kind === 'link' 
 const evidenceOf = (r: any) => (r.draft ? r.draft.evidence : r.proposal?.evidence) || []
 const unresolvedOf = (r: any) => (r.draft ? r.draft.unresolved : r.proposal?.unresolved) || []
 const accountName = (id: string) => chart.value.find((a: any) => String(a._id) === String(id))?.name || ''
+// Plan omf-workflow-daily-20261025 Phase C (B1): what each linked purchase's seller evidence is (the server's intakeEvidence/registryBasis,
+// never recomputed here), and the draft's T number standing (verified only for a current server-resolved adoption of that number).
+const adoptionReasons = (reasons: string[]) => (reasons || []).map(x => (PURCHASE_ADOPTION_LABELS as any)[x] || x).join('・')
+function evidenceText(l: any) {
+  const e = l.evidence || {}, b = e.registryBasis
+  if (!e.invoiceNumber && !e.supplierName) return '根拠なし'
+  if (e.origin === 'candidate') return '調査の候補（未確定・未検証）'
+  if (e.origin !== 'research-confirmed') return '未検証（ファイル・手入力の値）'
+  if (!e.registryMatch) return '調査で確定・国税庁の公表情報とは不一致（未検証）'
+  if (!b?.purchaseDate) return '国税庁の公表情報は調査日 ' + (b?.asOf || '') + ' 時点（購入日が未入力・未検証）'
+  if (!b.current || b.asOf !== b.purchaseDate) return '国税庁の照合は ' + b.asOf + ' 時点で、購入日 ' + b.purchaseDate + ' と異なります（未検証）'
+  return '国税庁の公表情報で確認済み（購入日 ' + b.purchaseDate + ' 時点）'
+}
+function invoiceText(r: any) {
+  const i = r.draft?.invoice, a = r.draft?.adoption
+  if (!i?.value) return '未確認'
+  if (i.status === 'verified-purchase') return i.value + '（購入の調査で確認済み・国税庁の公表情報 購入日 ' + a?.purchaseDate + ' 時点・' + a?.supplierName + '）'
+  if (i.status === 'adopted-stale') return i.value + '（購入の根拠が変わったため未検証: ' + adoptionReasons(a?.staleReasons || []) + '）'
+  return i.value + '（未検証）'
+}
 function proposalText(r: any) {
   const p = r.draft ? r.draft.proposed : r.proposal?.proposal
   const proposed = p ? `提案: ${p.purpose || '用途未確定'} · ${p.accountName || '勘定科目 未設定'} · 根拠 ${ORIGINS[p.origin] || p.origin} · ${CONFIDENCE[p.confidence] || p.confidence}` : '提案なし'
@@ -158,6 +200,14 @@ async function register(r: any, action: 'create' | 'link') {
   })
 }
 const reloadList = async () => adopt(await $fetch(api, { headers: user.authHeader, query: { account: account.value } }))
+// The owner's explicit adoption (PUT with adoptPurchase): the client names only what it saw; the server resolves every value again.
+async function adoptPurchase(r: any) {
+  const c = r.purchases.adoption.candidate
+  await run(async () => {
+    await $fetch(api + '/' + r.draft.id, { method: 'PUT', headers: user.authHeader, body: { revision: r.draft.revision, adoptPurchase: { allocationId: c.allocationId, recordId: c.recordId, recordRevision: c.recordRevision } } })
+    adoptConfirm[r.rowId] = false; message.value = '購入の会社名・T番号をこの仕訳に記録しました（取引はまだ作成していません。税区分は手動で選んでください）。'; await reloadList()
+  })
+}
 async function reassign(r: any) {
   await run(async () => {
     await $fetch(api + '/reassign', { method: 'POST', headers: user.authHeader, body: { bankAccountId: account.value, rowId: r.rowId, revision: r.otherCompanyDraft.revision, confirm: true } })

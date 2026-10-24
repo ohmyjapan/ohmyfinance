@@ -9,7 +9,9 @@ import AccountCategory from '../models/AccountCategory'
 import TaxCategory from '../models/TaxCategory'
 import Supplier from '../models/Supplier'
 import Organization from '../models/Organization'
-import { BANK_CLASSIFICATION_VERSION, UNRESOLVED_LABELS, classificationValues, journalPreview, normalizePayee, proposalHash, proposeBankClassifications, registrationReady } from '../../shared/finance-bank-classification.mjs'
+import { BANK_CLASSIFICATION_VERSION, UNRESOLVED_LABELS, PURCHASE_ADOPTION_LABELS, classificationValues, journalPreview, normalizePayee, proposalHash, proposeBankClassifications, registrationReady, purchaseAdoption, purchaseAdoptionState, invoiceStatusOf } from '../../shared/finance-bank-classification.mjs'
+import { normalizeMerchant } from '../../shared/finance-draft.mjs'
+import { bankPurchaseLinks } from './financePaymentMatchService'
 // Native bank classification (plan omf-rakuten-native-shiwake-20261020 §4-§7). Every function receives the owner (the signed-in
 // user: the bank account and rows are the owner's) and the selected company whose membership the route checked fresh at this
 // request (calendarCompany). Calendar, history and teaching are read for that company only. Reads and generation never post a
@@ -30,6 +32,41 @@ const storedProposal = (p: any) => ({ proposal: p.proposal, evidence: p.evidence
 // a completed registration's Transaction is read as present / missing / changed, and only present ones teach history; the
 // stored identity (payee key, signed direction) follows the source on an untouched refresh and on an acknowledged change.
 const NEWER = '登録の操作が新しくなりました。再読み込みしてください。 [registration-superseded-by-newer]'
+// Plan omf-workflow-daily-20261025 Phase C (B1): the purchases linked to the account's rows come from the canonical payment projection
+// (financePaymentMatchService bankPurchaseLinks), read once per request. GUARDS (independent review required): the optional explicit
+// adoption (purchaseAdoption: eligibility of that convenience action only) and the adoption's current standing (purchaseAdoptionState:
+// stale evidence is shown, never green). Neither is a condition of the existing manual registration; a failure to read the purchases is
+// shown and never blocks the review or a registration.
+const adoptionNow = purchaseAdoptionState;
+const NO_PURCHASES = { links: [], otherLinks: [], state: 'unmatched', allocated: 0, remaining: null }
+async function purchaseLinksOf(ownerId: string, account: any): Promise<Map<string, any> | null> {
+  try { return await bankPurchaseLinks(ownerId, sid(account._id)) } catch (e: any) { console.error('[Finance] purchase links unavailable', e?.name || 'Error'); return null }
+}
+// The owner's selected Supplier of each draft that carries an adoption (one read): a Supplier with another stored number is never green.
+async function adoptionSuppliers(drafts: any[]) {
+  const ids = [...new Set(drafts.filter((d: any) => d?.adoption && /^[a-f\d]{24}$/i.test(String(d.values?.supplierId || ''))).map((d: any) => String(d.values.supplierId)))]
+  if (!ids.length) return new Map<string, any>()
+  return new Map<string, any>(((await Supplier.find({ _id: { $in: ids } } as any).select('_id invoiceNumber').lean()) as any[]).map((x: any) => [sid(x._id), x]))
+}
+const purchasesFor = (row: any, c: any) => !c.purchases ? null : c.purchases.get(sid(row._id)) || NO_PURCHASES
+function purchasesView(row: any, c: any) {
+  const p = purchasesFor(row, c)
+  if (!p) return { available: false, payment: null, links: [], otherLinks: [], adoption: { eligible: false, reasons: ['purchase-evidence-unavailable'], candidate: null } }
+  return { available: true, payment: { state: p.state, allocated: p.allocated, remaining: p.remaining }, links: p.links, otherLinks: p.otherLinks, adoption: purchaseAdoption({ row: { amount: row.amount, currency: row.currency }, purchases: p }) }
+}
+function adoptionStateOf(d: any, row: any, c: any) {
+  if (d.adoption && row && !c.purchases) return { current: false, staleReasons: ['purchase-evidence-unavailable'] }
+  return adoptionNow(d.adoption, { row, values: d.values, purchases: row ? purchasesFor(row, c) : null, supplier: (c.suppliers || new Map()).get(String(d.values?.supplierId || '')) || null })
+}
+// What a registration freezes (reservation and Transaction metadata): every linked purchase with its identities, revisions, file hashes,
+// research and registry, the card settlement links, and the adoption with its standing at that moment. Never refreshed afterwards.
+function frozenPurchases(d: any, row: any, c: any) {
+  const p = purchasesFor(row, c), state = adoptionStateOf(d, row, c)
+  const link = (l: any) => ({ allocationId: l.allocationId, paymentKey: l.paymentKey, anchorKey: l.anchorKey, amount: l.amount, currency: l.currency, kind: l.kind, changed: l.changed, sourceChanged: l.sourceChanged, recordId: l.record?.id ?? null, recordKey: l.record?.key ?? null, recordRevision: l.record?.revision ?? null, orderId: l.record?.orderId ?? '', itemId: l.record?.itemId ?? '', externalOrderId: l.record?.externalOrderId ?? '', purchaseDate: l.record?.purchaseDate ?? '', recordAmount: l.record?.amount ?? '', sourceHashes: (l.record?.sources || []).map((x: any) => x.hash), researchId: l.evidence?.research?.id ?? null, researchRevision: l.evidence?.research?.revision ?? null, supplierName: l.evidence?.supplierName ?? '', invoiceNumber: l.evidence?.invoiceNumber ?? '', evidenceOrigin: l.evidence?.origin ?? 'none', verified: !!l.evidence?.verified, registryBasis: l.evidence?.registryBasis ?? null, registry: l.evidence?.research?.registry ?? null })
+  return { readAt: new Date(), available: !!p, links: p ? p.links.map(link) : null, settlementLinks: p ? p.otherLinks : null, adoption: d.adoption ? { ...d.adoption, status: state?.current ? 'current' : 'stale', staleReasons: state?.staleReasons || [] } : null, invoiceStatus: invoiceStatusOf(d.values, d.adoption, state) }
+}
+const LEDGER_INVOICE_STATUS: Record<string, string> = { 'verified-purchase': 'purchase-registry-verified', 'adopted-stale': 'entered-unverified', 'entered-unverified': 'entered-unverified', unverified: 'none' }
+const adoptionView = (a: any, state: any) => a ? { at: a.at, allocationId: a.allocationId, recordId: a.recordId, recordRevision: a.recordRevision, researchId: a.researchId, researchRevision: a.researchRevision, invoiceNumber: a.invoiceNumber, supplierName: a.supplierName, purchaseDate: a.purchaseDate, orderId: a.orderId, itemId: a.itemId, externalOrderId: a.externalOrderId, registry: a.registry, current: !!state?.current, staleReasons: state?.staleReasons || [] } : null
 const TEXT_KINDS = ['bank-fee', 'card-fee', 'interest']
 const opOf = (reg: any) => reg?.op ? { 'registration.op': reg.op } : { 'registration.op': { $exists: false } }
 const sameOp = (a: any, b: any) => !!a && !!b && String(a.op ?? '') === String(b.op ?? '')
@@ -80,7 +117,9 @@ async function context(ownerId: string, organizationId: mongoose.Types.ObjectId,
   const predecessorRegistered = new Set<string>(rows.filter((r: any) => superseded.has(sid(r._id)) && registeredRows.has(sid(r._id))).map((r: any) => canonical(sid(r._id))))
   const active = rows.filter((r: any) => !superseded.has(sid(r._id)))
   const proposed = proposeBankClassifications({ rows: active.map((r: any) => ({ id: sid(r._id), date: r.date, amount: r.amount, currency: r.currency, description: r.description })), calendar, history: usableHistory.map((d: any) => ({ payeeKey: d.payeeKey, direction: d.direction, values: d.registration?.values || d.values })), teachings: teachings.map((t: any) => ({ payeeKey: t.payeeKey, direction: t.direction, values: t.values })), companyNames: [organization?.name].filter(Boolean), chart, bankAccountName: bankName })
-  return { account, rows, drafts, superseded, predecessorRegistered, chart, bankName, organizationId, organization, targets, proposals: new Map<string, any>(proposed.rows.map((p: any) => [p.rowId, p])), notes: proposed.notes }
+  const purchases = await purchaseLinksOf(ownerId, account)
+  const suppliers = await adoptionSuppliers(drafts)
+  return { account, rows, drafts, superseded, predecessorRegistered, chart, bankName, organizationId, organization, targets, purchases, suppliers, proposals: new Map<string, any>(proposed.rows.map((p: any) => [p.rowId, p])), notes: proposed.notes }
 }
 function draftView(d: any, row: any, c: any) {
   const reg = d.registration, proposed = d.proposed || {}, live = row ? c.proposals.get(sid(row._id)) : null
@@ -88,12 +127,13 @@ function draftView(d: any, row: any, c: any) {
   const state = reg?.state === 'registered' ? 'registered' : reg?.state === 'linked' ? 'linked' : reg?.state === 'reserved' ? 'registering' : d.manual ? 'edited' : 'proposed'
   const account = c.chart.find((a: any) => a.id === d.values?.accountCategoryId), target = targetState(d, c.targets || new Map())
   const issue = target === 'missing' ? (reg.kind === 'link' ? 'link-missing' : 'transaction-missing') : target === 'changed' ? (reg.kind === 'link' ? 'link-changed' : 'transaction-changed') : null
+  const adoption = adoptionStateOf(d, row, c)
   return {
     id: sid(d._id), revision: d.revision, state, manual: !!d.manual, values: d.values, payeeKey: d.payeeKey, proposed: proposed.proposal || null, evidence: proposed.evidence || [], unresolved: proposed.unresolved || [], calendarCandidates: proposed.calendarCandidates || [], transfer: proposed.transfer || null,
-    tax: { status: d.values?.taxCategoryId ? 'owner-selected' : 'unknown' }, invoice: { value: d.values?.invoiceNumber || null, status: d.values?.invoiceNumber ? 'entered-unverified' : 'unverified' },
+    tax: { status: d.values?.taxCategoryId ? 'owner-selected' : 'unknown' }, invoice: { value: d.values?.invoiceNumber || null, status: invoiceStatusOf(d.values, d.adoption, adoption) }, adoption: adoptionView(d.adoption, adoption),
     preview: journalPreview(d.direction, Math.abs(Number(d.source?.amount)), account?.name || null, c.bankName), source: d.source, sourceChanged, superseded, evidenceChanged: !!live && proposalHash(live) !== d.proposalHash,
     predecessorRegistered, ready: registrationReady({ values: d.values, transfer: proposed.transfer, sourceChanged, superseded, predecessorRegistered, currency: d.source?.currency }),
-    registration: reg ? { state: reg.state, kind: reg.kind, transactionId: sid(reg.transactionId), at: reg.at || null, completedAt: reg.completedAt || null, target } : null, issue,
+    registration: reg ? { state: reg.state, kind: reg.kind, transactionId: sid(reg.transactionId), at: reg.at || null, completedAt: reg.completedAt || null, target, purchaseLinks: reg.purchase?.links?.length ?? null, purchaseEvidence: reg.purchase?.adoption?.status ?? null } : null, issue,
     reservedTransactionId: sid(d.reservedTransactionId), history: (d.history || []).slice(-20)
   }
 }
@@ -103,7 +143,7 @@ function rowView(row: any, c: any) {
   // F1: another company's draft of this owner row shows only its revision and whether it is registered (or registering): an
   // unregistered one can be moved here explicitly; its values, evidence and history are never shown to this company.
   const otherCompanyDraft = otherCompany && !superseded ? { revision: d.revision, registered: !!d.registration } : null
-  return { rowId: rid, rowRevision: row.revision, key: row.key, date: row.date, amount: row.amount, direction: row.direction, currency: row.currency, description: row.description, state: superseded ? 'superseded' : otherCompany ? 'other-company' : draft ? draft.state : 'none', superseded, otherCompany, otherCompanyDraft, predecessorRegistered: c.predecessorRegistered.has(rid), proposal: superseded || otherCompany ? null : c.proposals.get(rid) || null, draft }
+  return { rowId: rid, rowRevision: row.revision, key: row.key, date: row.date, amount: row.amount, direction: row.direction, currency: row.currency, description: row.description, state: superseded ? 'superseded' : otherCompany ? 'other-company' : draft ? draft.state : 'none', superseded, otherCompany, otherCompanyDraft, predecessorRegistered: c.predecessorRegistered.has(rid), proposal: superseded || otherCompany ? null : c.proposals.get(rid) || null, purchases: superseded || otherCompany ? null : purchasesView(row, c), draft }
 }
 function listOf(c: any) {
   const rows = c.rows.map((r: any) => rowView(r, c)), count = (s: string) => rows.filter((r: any) => r.state === s).length
@@ -160,6 +200,7 @@ export async function updateBankClassification(ownerId: string, organizationId: 
   if (!body || typeof body !== 'object' || !Number.isSafeInteger(body.revision)) fail(400, '仕訳のリビジョンを確認してください。')
   if (body.revision !== draft.revision) fail(409, STALE)
   if (draft.registration) fail(409, '登録済み（または登録中）の仕訳は変更できません。')
+  if (body.adoptPurchase !== undefined) return adoptPurchase(ownerId, organizationId, draft, body)
   let values: any; try { values = classificationValues(body.values ?? {}, draft.values) } catch (e: any) { fail(400, e.message) }
   await assertReferences(values)
   const row: any = await BankRow.findOne({ _id: draft.bankRowId, ownerId }).lean(); if (!row) fail(409, '元の明細が見つかりません。')
@@ -167,11 +208,45 @@ export async function updateBankClassification(ownerId: string, organizationId: 
   if (sourceChanged && body.acceptSource !== true) fail(409, '元の明細が変更されました。変更後の内容を確認して「元の明細の変更を確認」を選んでください。')
   // An acknowledged source change also moves the stored identity (payee key, signed direction) to the acknowledged source.
   const set: any = { values, manual: true }
+  // Phase C (B1): a hand-changed T number or Supplier ends the adoption (kept in this history entry); other edits keep it, and its
+  // standing is derived on every read.
+  const clearAdoption = !!draft.adoption && (String(values.invoiceNumber || '') !== String(draft.adoption.invoiceNumber || '') || String(values.supplierId || '') !== String(draft.adoption.supplierId || ''))
+  if (clearAdoption) set.adoption = null
   if (sourceChanged) {
     set.source = sourceOf(row)
     Object.assign(set, identityOf(row))
   }
-  const saved = await BankClassification.updateOne({ _id: draft._id, ownerId, organizationId, revision: draft.revision, registration: null }, { $set: set, $inc: { revision: 1 }, $push: { history: { at: new Date(), by: ownerId, action: 'edited', revision: draft.revision + 1, before: draft.values, after: values, ...(sourceChanged ? { sourceAccepted: { from: draft.source?.revision ?? null, to: row.revision, identity: { from: { payeeKey: draft.payeeKey, direction: draft.direction }, to: identityOf(row) } } } : {}) } } })
+  const saved = await BankClassification.updateOne({ _id: draft._id, ownerId, organizationId, revision: draft.revision, registration: null }, { $set: set, $inc: { revision: 1 }, $push: { history: { at: new Date(), by: ownerId, action: 'edited', revision: draft.revision + 1, before: draft.values, after: values, ...(sourceChanged ? { sourceAccepted: { from: draft.source?.revision ?? null, to: row.revision, identity: { from: { payeeKey: draft.payeeKey, direction: draft.direction }, to: identityOf(row) } } } : {}), ...(clearAdoption ? { cleared: { reason: String(values.invoiceNumber || '') !== String(draft.adoption.invoiceNumber || '') ? 'invoice-number-changed' : 'supplier-changed', adoption: draft.adoption } } : {}) } } })
+  if (!saved.modifiedCount) fail(409, STALE)
+  return { row: await viewOne(ownerId, organizationId, await BankClassification.findOne({ _id: draft._id }).lean()) }
+}
+/**
+ * Phase C (B1)「この購入の会社名・T番号を使う」: the owner's explicit adoption, at the draft's expected revision, of the one linked purchase
+ * the server finds adoptable for this row now (purchaseAdoption). The client only names what it saw (allocation, record, record revision);
+ * every value comes from the server's current evidence. The draft gets the evidenced T number (and a Supplier only when exactly one
+ * already-stored Supplier has that number and legal name and the owner chose none); the evidence is stored as `adoption` with a history
+ * event. No Transaction, tax or Supplier is written. Unavailable → 409 with the reasons; the manual edit/registration stays as before.
+ */
+async function adoptPurchase(ownerId: string, organizationId: mongoose.Types.ObjectId, draft: any, body: any) {
+  const ask = body.adoptPurchase
+  if (!ask || typeof ask !== 'object' || typeof ask.allocationId !== 'string' || typeof ask.recordId !== 'string' || !Number.isSafeInteger(ask.recordRevision) || body.values !== undefined || body.acceptSource !== undefined) fail(400, '購入の根拠の採用内容を確認してください。')
+  const c = await context(ownerId, organizationId, sid(draft.bankAccountId)), row = c.rows.find((r: any) => sid(r._id) === sid(draft.bankRowId))
+  if (!row || c.superseded.has(sid(row._id))) fail(409, '元の明細が見つからないか訂正済みです。 [purchase-adoption-unavailable:source]')
+  if (row.revision !== draft.source?.revision || row.fingerprint !== draft.source?.fingerprint) fail(409, '元の明細が変更されました。「元の明細の変更を確認」して保存してから使ってください。 [purchase-adoption-unavailable:source-changed]')
+  const result = purchaseAdoption({ row: { amount: row.amount, currency: row.currency }, purchases: purchasesFor(row, c) || { links: [], otherLinks: [] } })
+  const reasons: string[] = c.purchases ? result.reasons : ['purchase-evidence-unavailable']
+  if (!c.purchases || !result.eligible) fail(409, 'この明細では購入の会社名・T番号を使えません: ' + reasons.map((r: string) => (PURCHASE_ADOPTION_LABELS as any)[r] || r).join('・') + ' [purchase-adoption-unavailable:' + reasons.join(',') + ']')
+  const cand: any = result.candidate
+  if (cand.allocationId !== ask.allocationId || cand.recordId !== ask.recordId || cand.recordRevision !== ask.recordRevision) fail(409, '購入の根拠が変わりました。再読み込みしてください。 [purchase-adoption-unavailable:stale]')
+  let supplierId = String(draft.values?.supplierId || '')
+  if (!supplierId) {
+    const found: any[] = await Supplier.find({ invoiceNumber: cand.invoiceNumber } as any).select('_id name companyName').limit(10).lean()
+    const exact = found.filter((x: any) => [x.companyName, x.name].some((n: any) => n && normalizeMerchant(n) === normalizeMerchant(cand.supplierName)))
+    if (exact.length === 1) supplierId = sid(exact[0]._id)
+  }
+  const now = new Date(), values = { ...draft.values, invoiceNumber: cand.invoiceNumber, supplierId }
+  const adoption = { ...cand, at: now, by: ownerId, supplierId, bankRowId: sid(row._id), bankRowRevision: row.revision, bankRowFingerprint: row.fingerprint, revision: draft.revision + 1 }
+  const saved = await BankClassification.updateOne({ _id: draft._id, ownerId, organizationId, revision: draft.revision, registration: null }, { $set: { values, manual: true, adoption }, $inc: { revision: 1 }, $push: { history: { at: now, by: ownerId, action: 'purchase-adopted', revision: draft.revision + 1, before: draft.values, after: values, adoption } } })
   if (!saved.modifiedCount) fail(409, STALE)
   return { row: await viewOne(ownerId, organizationId, await BankClassification.findOne({ _id: draft._id }).lean()) }
 }
@@ -204,13 +279,13 @@ async function linkCandidates(organizationId: mongoose.Types.ObjectId, d: any) {
   const used = new Set(taken.map(x => sid(x.registration?.transactionId)))
   return found.filter(t => !used.has(sid(t._id)))
 }
-function transactionPayload(d: any, row: any, v: any, op: string) {
+function transactionPayload(d: any, row: any, v: any, op: string, frozen: any) {
   const ref = (key: string) => v[key] ? { [key]: v[key] } : {}
   return {
     referenceNumber: 'BANK-' + sid(d._id), date: new Date(row.date + 'T00:00:00.000Z'), amount: Math.abs(Number(row.amount)), type: Number(row.amount) < 0 ? '入金' : '支出', status: 'completed',
     ...ref('accountCategoryId'), ...ref('subAccountCategoryId'), ...ref('taxCategoryId'), ...ref('supplierId'), ...(v.taxRate !== null && v.taxRate !== undefined ? { taxRate: v.taxRate } : {}), ...(v.invoiceNumber ? { invoiceNumber: v.invoiceNumber } : {}),
     paymentMethod: '銀行口座', hasReceipt: false, notes: v.notes || row.description, items: [], attachments: [], tags: ['bank'],
-    metadata: { bankClassificationId: sid(d._id), bankAccountId: sid(d.bankAccountId), bankRowId: sid(row._id), bankRowKey: row.key, bankRowRevision: row.revision, sourceFingerprint: row.fingerprint, sourceHashes: [...new Set((row.provenance || []).map((p: any) => p?.hash).filter(Boolean))], bankDescription: row.description, purpose: v.purpose, evidence: (d.proposed?.evidence || []).map((e: any) => String(e?.label || '')).slice(0, 10), unresolvedAtRegistration: d.proposed?.unresolved || [], taxStatus: v.taxCategoryId ? 'owner-selected' : 'unknown', invoiceNumberStatus: v.invoiceNumber ? 'entered-unverified' : 'none', classificationVersion: BANK_CLASSIFICATION_VERSION, registrationOp: op },
+    metadata: { bankClassificationId: sid(d._id), bankAccountId: sid(d.bankAccountId), bankRowId: sid(row._id), bankRowKey: row.key, bankRowRevision: row.revision, sourceFingerprint: row.fingerprint, sourceHashes: [...new Set((row.provenance || []).map((p: any) => p?.hash).filter(Boolean))], bankDescription: row.description, purpose: v.purpose, evidence: (d.proposed?.evidence || []).map((e: any) => String(e?.label || '')).slice(0, 10), unresolvedAtRegistration: d.proposed?.unresolved || [], taxStatus: v.taxCategoryId ? 'owner-selected' : 'unknown', invoiceNumberStatus: LEDGER_INVOICE_STATUS[frozen.invoiceStatus] || (v.invoiceNumber ? 'entered-unverified' : 'none'), purchaseLinks: frozen.links, settlementLinks: frozen.settlementLinks, purchaseEvidence: frozen.adoption, purchaseEvidenceAvailable: frozen.available, classificationVersion: BANK_CLASSIFICATION_VERSION, registrationOp: op },
     timeline: [{ type: 'bank-classification', title: '銀行明細から登録', timestamp: new Date(), description: row.date + ' ' + String(row.description ?? '').slice(0, 120) }]
   }
 }
@@ -279,7 +354,9 @@ export async function registerBankClassification(ownerId: string, organizationId
   }
   // `op` names this reservation; the Transaction ID stays the draft's one durable reserved ID (or the chosen link target).
   const op = new mongoose.Types.ObjectId().toHexString()
-  const at = new Date(), registration = { state: 'reserved', kind: action, op, transactionId: target, at, by: ownerId, values: draft.values, source: sourceOf(row), ...(action === 'create' ? { payload: transactionPayload(draft, row, draft.values, op) } : {}) }
+  // Phase C (B1): the purchase evidence is frozen into the reservation (and the Transaction payload) once; a retry resumes these bytes.
+  const frozen = frozenPurchases(draft, row, c)
+  const at = new Date(), registration = { state: 'reserved', kind: action, op, transactionId: target, at, by: ownerId, values: draft.values, source: sourceOf(row), purchase: frozen, ...(action === 'create' ? { payload: transactionPayload(draft, row, draft.values, op, frozen) } : {}) }
   let reserved: any
   try { reserved = await BankClassification.updateOne({ _id: draft._id, ownerId, organizationId, revision: draft.revision, registration: null }, { $set: { registration }, $inc: { revision: 1 }, $push: { history: { at, by: ownerId, action: action === 'link' ? 'link-reserved' : 'registration-reserved', revision: draft.revision + 1, transactionId: target, op } } }) }
   catch (e: any) { if (e?.code === 11000) fail(409, 'この取引は別の明細に紐付け済みです。'); throw e }
@@ -308,9 +385,9 @@ export async function reassignBankClassification(ownerId: string, organizationId
   if (Number(body.revision) !== d.revision) fail(409, STALE)
   const p = c.proposals.get(rid); if (!p) fail(409, STALE)
   const fresh = { values: p.values, proposed: storedProposal(p), proposalHash: proposalHash(p) }, at = new Date()
-  const archived = { at, by: ownerId, action: 'company-reassigned-out', organizationId: d.organizationId, toOrganizationId: organizationId, revision: d.revision, manual: !!d.manual, values: d.values, proposed: d.proposed, proposalHash: d.proposalHash, payeeKey: d.payeeKey, direction: d.direction, source: d.source, history: d.history || [], version: d.version || null }
+  const archived = { at, by: ownerId, action: 'company-reassigned-out', organizationId: d.organizationId, toOrganizationId: organizationId, revision: d.revision, manual: !!d.manual, values: d.values, proposed: d.proposed, proposalHash: d.proposalHash, payeeKey: d.payeeKey, direction: d.direction, source: d.source, adoption: d.adoption ?? null, history: d.history || [], version: d.version || null }
   const claimFilter = { _id: d._id, ownerId, organizationId: d.organizationId, revision: d.revision, registration: null }
-  const claimed = await BankClassification.updateOne(claimFilter, { $set: { organizationId, values: fresh.values, proposed: fresh.proposed, proposalHash: fresh.proposalHash, payeeKey: p.payeeKey, direction: p.direction, source: sourceOf(row), manual: false, version: BANK_CLASSIFICATION_VERSION, history: [{ at, by: ownerId, action: 'company-reassigned', revision: d.revision + 1 }] }, $inc: { revision: 1 }, $push: { archive: archived } })
+  const claimed = await BankClassification.updateOne(claimFilter, { $set: { organizationId, values: fresh.values, proposed: fresh.proposed, proposalHash: fresh.proposalHash, payeeKey: p.payeeKey, direction: p.direction, source: sourceOf(row), manual: false, adoption: null, version: BANK_CLASSIFICATION_VERSION, history: [{ at, by: ownerId, action: 'company-reassigned', revision: d.revision + 1 }] }, $inc: { revision: 1 }, $push: { archive: archived } })
   if (!claimed.modifiedCount) fail(409, STALE)
   return { row: await viewOne(ownerId, organizationId, await BankClassification.findOne({ _id: d._id }).lean()) }
 }
@@ -334,7 +411,7 @@ export async function releaseBankClassification(ownerId: string, organizationId:
   const present = !!await Transaction.exists({ _id: reg.transactionId, organizationId: draft.organizationId } as any)
   if (reg.kind === 'create' && present) fail(409, '登録した取引がまだあります。取引ページで修正するか削除してから、登録を解除してください（ここでは取引を変更・削除しません）。 [registered-transaction-present]')
   const at = new Date(), action = reg.kind === 'link' ? 'link-released' : 'registration-released', ownerReleaseScope = opOf(reg)
-  const released = { kind: reg.kind, state: reg.state, op: reg.op ?? null, at: reg.at ?? null, completedAt: reg.completedAt ?? null, values: reg.values, source: reg.source }
+  const released = { kind: reg.kind, state: reg.state, op: reg.op ?? null, at: reg.at ?? null, completedAt: reg.completedAt ?? null, values: reg.values, source: reg.source, purchase: reg.purchase ?? null }
   const saved = await BankClassification.updateOne({ _id: draft._id, ownerId, organizationId, revision: draft.revision, 'registration.state': reg.state, 'registration.transactionId': reg.transactionId, ...ownerReleaseScope }, { $set: { registration: null }, $inc: { revision: 1 }, $push: { history: { at, by: ownerId, action, reason: present ? 'owner-unlink' : reg.kind === 'link' ? 'link-missing' : 'transaction-missing', revision: draft.revision + 1, transactionId: reg.transactionId, released } } })
   if (!saved.modifiedCount) fail(409, STALE)
   return { row: await viewOne(ownerId, organizationId, await BankClassification.findOne({ _id: draft._id }).lean()) }

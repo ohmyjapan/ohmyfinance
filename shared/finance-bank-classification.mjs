@@ -131,6 +131,84 @@ export const UNRESOLVED_LABELS = Object.freeze({
   'purpose-missing': '用途を入力してください', 'account-missing': '勘定科目を選択してください', 'source-changed': '元の明細が変更されました',
   'superseded': '訂正済みの明細です', 'predecessor-registered': '訂正前の同じ明細で登録・紐付け済みです（二重登録しません）', 'transfer-unreviewed': '資金移動の確認が必要です', 'currency-unsupported': '円以外の明細は登録できません'
 });
+// Plan omf-workflow-daily-20261025 Phase C (B1): the purchases the owner allocated to a bank row (financePaymentMatchService
+// bankPurchaseLinks: the canonical payment/correction/allocation projection, with each record's intakeEvidence/registryBasis) are shown
+// on the review; the owner may EXPLICITLY adopt one purchase's evidenced seller T number into an unregistered draft. Never automatic,
+// never a tax, never a new Supplier, and never a condition of the existing manual registration.
+export const PURCHASE_ADOPTION_LABELS = Object.freeze({
+  'no-linked-purchase': '紐付けた購入はありません', 'other-settlement': 'カードの返済・請求の支払として照合した明細です（購入の経費ではありません）',
+  'several-purchases': '複数の購入をまとめた支払です（1件の購入の会社名・T番号を支払全体には使いません）', 'not-outgoing': '入金（返金など）の明細です',
+  'payment-not-covered': '支払額の一部だけを購入に配分しています', 'purchase-split': 'この購入は複数の支払（分割・返金を含む）に配分されています',
+  'purchase-not-settled': '購入金額が不明、または支払額と一致していません', 'currency-differs': '購入と支払の通貨が異なります',
+  'purchase-changed': '配分した後に購入または明細が変わっています（支払の照合で再確認してください）', 'purchase-not-normal': 'キャンセル・返品の購入です',
+  'seller-unverified': '会社名・T番号が、調査で確定した国税庁の公表情報と一致していません（未検証）', 'number-shape': 'T番号（T＋13桁）ではありません（法人番号などは登録番号として使いません）',
+  'registry-date-differs': '国税庁の照合が購入日の時点ではありません（購入日の未入力・変更を含む）',
+  'purchase-unlinked': '購入との配分が解除されました', 'research-changed': '会社の調査が更新されました', 'evidence-changed': '購入の根拠（会社名・T番号・購入日）が変わりました',
+  'purchase-evidence-unavailable': '購入の根拠を読み込めませんでした（再読み込みしてください。手動の登録はこれまでどおりできます）', 'bank-row-changed': '元の明細が変わりました', 'invoice-number-changed': 'T番号が手入力で変更されました', 'supplier-number-differs': '選択した取引先に別のT番号が登録されています'
+});
+const sameMoney = (a, b) => Math.round(Math.abs(Number(a)) * 100) === Math.round(Math.abs(Number(b)) * 100);
+/**
+ * GUARD (optional convenience only — never a registration condition) — whether the owner may adopt a purchase's seller T number into
+ * the draft of `row` ({amount (+out/-in), currency}): exactly one linked purchase, no card settlement link, outgoing, the allocation
+ * covers the whole row, the purchase has no other allocation and is fully paid by this one (known total), same currency, unchanged
+ * (allocation snapshot, bank row, not archived, no identity review), an ordinary purchase, a research-confirmed seller whose NTA row
+ * matches number and legal name, a T number, and that registry check as of the purchase's own valid 購入日. Returns {eligible, reasons,
+ * candidate}; the candidate is server-resolved evidence (identities, revisions, number, legal name, date, registry).
+ */
+export function purchaseAdoption({ row, purchases } = {}) {
+  const links = arr(purchases?.links), other = arr(purchases?.otherLinks), reasons = [];
+  if (!links.length) reasons.push('no-linked-purchase');
+  if (other.length) reasons.push('other-settlement');
+  if (links.length > 1) reasons.push('several-purchases');
+  if (!(Number(row?.amount) > 0) || links.some(l => l.kind !== 'purchase')) reasons.push('not-outgoing');
+  const l = links.length === 1 ? links[0] : null;
+  if (l) {
+    const r = l.record || {}, t = l.totals || {}, e = l.evidence || {}, basis = e.registryBasis, currency = row?.currency || 'JPY';
+    if (!sameMoney(l.amount, row?.amount)) reasons.push('payment-not-covered');
+    if (Number(t.links) > 1) reasons.push('purchase-split');
+    if (t.total === null || t.total === undefined || t.state !== 'settled' || !sameMoney(t.total, l.amount)) reasons.push('purchase-not-settled');
+    if ((l.currency || 'JPY') !== currency || (r.currency || 'JPY') !== currency) reasons.push('currency-differs');
+    if (l.changed || l.sourceChanged || r.archived || r.identityReview) reasons.push('purchase-changed');
+    if (['cancelled', 'refunded'].includes(r.purchaseState)) reasons.push('purchase-not-normal');
+    const dated = !!basis && !!basis.purchaseDate && basis.asOf === basis.purchaseDate && basis.current;
+    if (e.origin !== 'research-confirmed' || !e.registryMatch || (dated && !e.verified)) reasons.push('seller-unverified');
+    if (!/^T\d{13}$/.test(String(e.invoiceNumber ?? ''))) reasons.push('number-shape');
+    if (!dated) reasons.push('registry-date-differs');
+  }
+  const unique = [...new Set(reasons)], eligible = !unique.length, e = l?.evidence || {}, reg = e.research?.registry || null;
+  return { eligible, reasons: unique, candidate: eligible ? { allocationId: l.allocationId, paymentKey: l.paymentKey ?? null, anchorKey: l.anchorKey ?? null, recordId: l.record.id, recordKey: l.record.key ?? null, recordRevision: l.record.revision, researchId: e.research?.id ?? null, researchRevision: e.research?.revision ?? null, researchConfirmedAt: e.research?.confirmedAt ?? null, invoiceNumber: e.invoiceNumber, supplierName: e.supplierName, purchaseDate: e.registryBasis.purchaseDate, amount: l.amount, currency: l.currency || 'JPY', orderId: l.record.orderId ?? '', itemId: l.record.itemId ?? '', externalOrderId: l.record.externalOrderId ?? '', sourceHashes: arr(l.record.sources).map(s => s?.hash).filter(Boolean), registry: reg ? { number: reg.number, legalName: reg.legalName, asOf: reg.asOf, active: reg.active, registeredFrom: reg.registeredFrom ?? null, checkedAt: reg.checkedAt ?? null, sourceId: reg.sourceId ?? null, hash: reg.hash ?? null } : null } : null };
+}
+/**
+ * The current standing of a stored adoption (null without one): current only while the same allocation still links the same purchase
+ * revision and research revision, the purchase is still adoptable for this row with the same number/legal name/date, the bank row is
+ * the one adopted from, the draft's number is the adopted one and the owner's selected Supplier (if any) does not carry another number.
+ * Otherwise stale with the reasons: shown, never green, never a refusal of the manual registration.
+ */
+export function purchaseAdoptionState(adoption, { row, values, purchases, supplier } = {}) {
+  if (!adoption) return null;
+  const stale = [], link = arr(purchases?.links).find(l => l.allocationId === adoption.allocationId);
+  if (!link) stale.push('purchase-unlinked');
+  else {
+    if (link.record?.id !== adoption.recordId || link.record?.revision !== adoption.recordRevision || link.record?.archived) stale.push('purchase-changed');
+    const research = link.evidence?.research;
+    if (!research || research.id !== adoption.researchId || research.revision !== adoption.researchRevision) stale.push('research-changed');
+    const now = purchaseAdoption({ row, purchases });
+    if (!now.eligible) stale.push(...now.reasons);
+    else if (now.candidate.invoiceNumber !== adoption.invoiceNumber || now.candidate.supplierName !== adoption.supplierName || now.candidate.purchaseDate !== adoption.purchaseDate) stale.push('evidence-changed');
+  }
+  if (row && row.revision !== adoption.bankRowRevision) stale.push('bank-row-changed');
+  if (String(values?.invoiceNumber ?? '') !== String(adoption.invoiceNumber ?? '')) stale.push('invoice-number-changed');
+  if (supplier && String(supplier.invoiceNumber ?? '').trim() && String(supplier.invoiceNumber).trim().toUpperCase() !== adoption.invoiceNumber) stale.push('supplier-number-differs');
+  const staleReasons = [...new Set(stale)];
+  return { current: !staleReasons.length, staleReasons };
+}
+/** The draft's T number status: verified only for the server-resolved, current adoption of this very number. */
+export function invoiceStatusOf(values, adoption, state) {
+  const value = String(values?.invoiceNumber ?? '');
+  if (!value) return 'unverified';
+  if (!adoption || adoption.invoiceNumber !== value) return 'entered-unverified';
+  return state?.current ? 'verified-purchase' : 'adopted-stale';
+}
 export function proposalHash(row) {
   const p = row?.proposal || {};
   return JSON.stringify([BANK_CLASSIFICATION_VERSION, p.purposeKind, p.purpose, p.accountCategoryId, p.supplierId, arr(row?.calendarCandidates).map(c => c.kind + ':' + (c.paymentId || arr(c.paymentIds).join('+'))), arr(row?.unresolved)]);

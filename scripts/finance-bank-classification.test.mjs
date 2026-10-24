@@ -162,3 +162,55 @@ test('a payee the owner remembered as an own-company account stays a transfer aw
   assert.deepEqual(fn('registrationReady')({ values: r.values, transfer: r.transfer, currency: 'JPY' }).reasons, ['account-missing', 'transfer-unreviewed'], 'classification:taught-own-holder-not-ready');
   assert.notEqual(one({ rows: [row('h2', '2026-10-15', -120000, HOLDER)], teachings }, 'h2').proposal.purposeKind, 'own-transfer', 'classification:taught-own-holder-direction');
 });
+
+// Plan omf-workflow-daily-20261025 Phase C (B1): the optional explicit adoption of a linked purchase's evidenced seller T number.
+const purchaseLink = (o = {}) => ({ allocationId: 'al1', amount: 5500, currency: 'JPY', kind: 'purchase', changed: false, sourceChanged: false,
+  ...Object.fromEntries(Object.entries(o).filter(([k]) => !['record', 'totals', 'evidence'].includes(k))),
+  record: { id: 'r1', revision: 3, archived: false, identityReview: false, purchaseState: 'purchased', currency: 'JPY', purchaseDate: '2026-10-01', ...(o.record || {}) },
+  totals: { total: 5500, net: 5500, state: 'settled', links: 1, ...(o.totals || {}) },
+  evidence: { supplierName: 'カクウセラーワン株式会社', invoiceNumber: 'T1000000000001', origin: 'research-confirmed', verified: true, registryMatch: true, registryBasis: { asOf: '2026-10-01', purchaseDate: '2026-10-01', current: true }, research: { id: 's1', revision: 4, registry: { number: 'T1000000000001', legalName: 'カクウセラーワン株式会社', asOf: '2026-10-01', active: true } }, ...(o.evidence || {}) } });
+const bankRow = (o = {}) => ({ amount: 5500, currency: 'JPY', revision: 2, ...o });
+
+test('adoption: only one unchanged, fully paid, same-currency ordinary purchase with a research-confirmed registry match as of its own purchase date', () => {
+  const ok = fn('purchaseAdoption')({ row: bankRow(), purchases: { links: [purchaseLink()], otherLinks: [] } });
+  assert.equal(ok.eligible, true, 'adoption:eligible ' + JSON.stringify(ok.reasons)); assert.deepEqual(ok.reasons, []);
+  assert.deepEqual([ok.candidate.allocationId, ok.candidate.recordId, ok.candidate.recordRevision, ok.candidate.researchId, ok.candidate.researchRevision, ok.candidate.invoiceNumber, ok.candidate.supplierName, ok.candidate.purchaseDate], ['al1', 'r1', 3, 's1', 4, 'T1000000000001', 'カクウセラーワン株式会社', '2026-10-01']);
+  const why = (purchases, row = bankRow()) => fn('purchaseAdoption')({ row, purchases }).reasons;
+  assert.deepEqual(why({ links: [], otherLinks: [] }), ['no-linked-purchase'], 'adoption:none');
+  assert.ok(why({ links: [], otherLinks: [{ kind: 'card-repayment', amount: 5500 }] }).includes('other-settlement'), 'adoption:card-repayment');
+  assert.ok(why({ links: [purchaseLink(), purchaseLink({ allocationId: 'al2', record: { id: 'r2' } })] }).includes('several-purchases'), 'adoption:combined');
+  assert.ok(why({ links: [purchaseLink({ amount: -5500, kind: 'refund' })] }, bankRow({ amount: -5500 })).includes('not-outgoing'), 'adoption:refund');
+  assert.ok(why({ links: [purchaseLink({ amount: 3000 })] }).includes('payment-not-covered'), 'adoption:partial-payment');
+  assert.ok(why({ links: [purchaseLink({ totals: { links: 2 } })] }).includes('purchase-split'), 'adoption:split');
+  assert.ok(why({ links: [purchaseLink({ totals: { total: null, state: 'unknown' } })] }).includes('purchase-not-settled'), 'adoption:unknown-total');
+  assert.ok(why({ links: [purchaseLink({ currency: 'USD' })] }).includes('currency-differs'), 'adoption:currency');
+  assert.ok(why({ links: [purchaseLink({ record: { currency: 'USD' } })] }).includes('currency-differs'), 'adoption:record-currency');
+  for (const changed of [{ changed: true }, { sourceChanged: true }, { record: { archived: true } }, { record: { identityReview: true } }]) assert.ok(why({ links: [purchaseLink(changed)] }).includes('purchase-changed'), 'adoption:changed ' + JSON.stringify(changed));
+  assert.ok(why({ links: [purchaseLink({ record: { purchaseState: 'cancelled' } })] }).includes('purchase-not-normal'), 'adoption:cancelled');
+  assert.ok(why({ links: [purchaseLink({ evidence: { verified: false, registryMatch: false } })] }).includes('seller-unverified'), 'adoption:registry-mismatch');
+  assert.ok(why({ links: [purchaseLink({ evidence: { origin: 'file-manual' } })] }).includes('seller-unverified'), 'adoption:typed-number');
+  assert.ok(why({ links: [purchaseLink({ evidence: { invoiceNumber: '1234567890123', origin: 'file-manual', verified: false, registryMatch: false } })] }).includes('number-shape'), 'adoption:corporate-number');
+  assert.deepEqual(why({ links: [purchaseLink({ evidence: { verified: false, registryBasis: { asOf: '2026-10-01', purchaseDate: '2026-10-02', current: false } } })] }), ['registry-date-differs'], 'adoption:date-basis (the registry check is not as of the purchase date)');
+  assert.deepEqual(why({ links: [purchaseLink({ evidence: { registryBasis: { asOf: '2026-10-25', purchaseDate: '', current: true } } })] }), ['registry-date-differs'], 'adoption:undated');
+  assert.ok(why({ links: [purchaseLink({ evidence: { registryBasis: null } })] }).includes('registry-date-differs'), 'adoption:no-registry');
+  for (const r of ['no-linked-purchase', 'several-purchases', 'registry-date-differs', 'seller-unverified', 'purchase-unlinked', 'research-changed']) assert.ok(classification.PURCHASE_ADOPTION_LABELS?.[r], 'adoption:label ' + r);
+});
+test('adoption state: current only while the same allocation, purchase revision, research revision, bank row and number stand; never green otherwise', () => {
+  const adoption = { allocationId: 'al1', recordId: 'r1', recordRevision: 3, researchId: 's1', researchRevision: 4, invoiceNumber: 'T1000000000001', supplierName: 'カクウセラーワン株式会社', purchaseDate: '2026-10-01', bankRowRevision: 2 };
+  const state = (o = {}) => fn('purchaseAdoptionState')(adoption, { row: bankRow(), values: { invoiceNumber: 'T1000000000001', supplierId: '' }, purchases: { links: [purchaseLink()], otherLinks: [] }, supplier: null, ...o });
+  assert.deepEqual(state(), { current: true, staleReasons: [] }, 'adoption-state:current');
+  assert.equal(fn('purchaseAdoptionState')(null, {}), null);
+  const stale = (o, reason) => { const s = state(o); assert.equal(s.current, false, 'adoption-state:' + reason); assert.ok(s.staleReasons.includes(reason), 'adoption-state:' + reason + ' ' + JSON.stringify(s.staleReasons)); };
+  stale({ purchases: { links: [] } }, 'purchase-unlinked');
+  stale({ purchases: { links: [purchaseLink({ record: { revision: 4 } })] } }, 'purchase-changed');
+  stale({ purchases: { links: [purchaseLink({ evidence: { research: { id: 's1', revision: 5 } } })] } }, 'research-changed');
+  stale({ purchases: { links: [purchaseLink(), purchaseLink({ allocationId: 'al2' })] } }, 'several-purchases');
+  stale({ row: bankRow({ revision: 3 }) }, 'bank-row-changed');
+  stale({ values: { invoiceNumber: 'T1000000000099' } }, 'invoice-number-changed');
+  stale({ supplier: { invoiceNumber: 'T5555555555555' } }, 'supplier-number-differs');
+  assert.deepEqual(state({ supplier: { invoiceNumber: 'T1000000000001' } }), { current: true, staleReasons: [] }, 'adoption-state:same-supplier-number');
+  const status = fn('invoiceStatusOf');
+  assert.equal(status({ invoiceNumber: '' }, null, null), 'unverified'); assert.equal(status({ invoiceNumber: 'T1000000000001' }, null, null), 'entered-unverified');
+  assert.equal(status({ invoiceNumber: 'T1000000000001' }, adoption, { current: true }), 'verified-purchase'); assert.equal(status({ invoiceNumber: 'T1000000000001' }, adoption, { current: false }), 'adopted-stale');
+  assert.equal(status({ invoiceNumber: 'T1000000000002' }, adoption, { current: true }), 'entered-unverified', 'adoption-state:other-number-never-green');
+});
