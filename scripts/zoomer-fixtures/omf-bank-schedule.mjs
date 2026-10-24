@@ -13,7 +13,8 @@
 //      and processes · S6 crash between writes (fail point) and a killed process mid-insert · S7 manual overlap and the interrupted-job
 //      lane · S8 attention/failure/recovery through the real collector login code (fictional page-less UI and saved login) · S9 changed
 //      settings, revision compare-and-set, closed period, a second PC · S10 owner/PC isolation · S11 default off, malformed input,
-//      tolerance · S12 the claim-time check (stale enqueue after off/changed connection, a manual run between read and insert, in-flight).
+//      tolerance · S12 the claim-time check (stale enqueue after off/changed connection/another setting revision, a manual run between
+//      read and insert, in-flight) and the save closing a still-queued earlier-revision run.
 //   A  the built app (.output) with its real plugin timer: default off, five accounts queued once, claims, restart, two server processes.
 //   C  owned headless Chrome on the built app: saved vs current state, opt-in save, last failure, attention, unsupported, stale save,
 //      390/1440 px and dark.
@@ -350,6 +351,25 @@ async function harnessMain(SRC) {
     // (e) Manual jobs are claimed exactly as before with the schedule off.
     const manual2 = ok(await call(api + 'bank/accounts/' + id + '/sync', { method: 'POST', token: o.token, body: {} }), 'manual 2').job;
     assert.equal((await claim(dev)).job?.jobId, manual2.jobId, 'sched:manual-claim-unchanged'); ok(await status(dev, manual2.jobId, 'complete'), 'complete');
+    // (f) Phase C: the tick read the setting, the owner saved another hour, the tick's insert landed with the earlier setting's revision and
+    // its process stopped: the current setting did not ask for that run (claim closes it); the current setting's run follows at its hour.
+    ok(await sched(null, { enabled: true, hour: 0, revision: 5 }), 'enable at 0時'); before = await read();
+    ok(await sched(null, { enabled: true, hour: 23, revision: 6 }), 'owner moves the hour to 23時');
+    const staleHour = await m.collection.queueScheduledBankJob(before, await templateOf(before), { day: D2, now: at(D2, 0, 0, 1), revision: 6 });
+    assert.equal((await claim(dev)).job, null, 'sched:stale-setting-claim-refused (an earlier hour)');
+    const closedHour = (await jobsOf(id, { jobId: staleHour.jobId }))[0]; assert.deepEqual([closedHour.state, closedHour.open], ['superseded', false], 'sched:stale-setting-claim-refused closed'); assert.match(closedHour.lastMessage, /設定が変わった/);
+    assert.equal(await queuedFor(await tick(at(D2, 22)), [id]), 0, 'sched:current-setting-hour (nothing before 23時)');
+    assert.equal(await queuedFor(await tick(at(D2, 23)), [id]), 1, 'sched:current-setting-runs'); const current = await claim(dev); assert.equal((await jobsOf(id, { jobId: current.job?.jobId }))[0]?.schedule?.day, D2, 'sched:current-setting-runs claimed'); ok(await status(dev, current.job.jobId, 'complete'), 'complete');
+    // (g) Turned off and on again at the same hour after the tick's read: the same.
+    before = await read(); ok(await sched(null, { enabled: false, hour: 23, revision: 7 }), 'off'); ok(await sched(null, { enabled: true, hour: 23, revision: 8 }), 'on again');
+    const staleToggle = await m.collection.queueScheduledBankJob(before, await templateOf(before), { day: D3, now: at(D3, 23, 0, 1), revision: 7 });
+    assert.equal((await claim(dev)).job, null, 'sched:stale-setting-claim-refused (off and on again)'); assert.equal((await jobsOf(id, { jobId: staleToggle.jobId }))[0].state, 'superseded');
+    // (h) A save closes a still-queued run of the earlier setting at once (no PC received it), so the screen never shows the old run as
+    // pending; the next tick queues under the saved setting and a PC runs it.
+    const D4 = J.nextDay(D3); assert.equal(await queuedFor(await tick(at(D4, 23, 5)), [id]), 1); const pending = (await scheduled(id)).find(j => j.state === 'queued');
+    ok(await sched(null, { enabled: true, hour: 22, revision: 9 }), 'owner saves 22時 while the run is queued');
+    assert.equal((await jobsOf(id, { jobId: pending.jobId }))[0].state, 'superseded', 'sched:save-closes-older-queued');
+    assert.equal(await queuedFor(await tick(at(D4, 23, 6)), [id]), 1, 'sched:save-then-current-run'); const after = await claim(dev); assert.ok(after.job, 'sched:save-then-current-run claimed'); ok(await status(dev, after.job.jobId, 'complete'), 'complete');
   });
   console.log('RECEIPT ' + JSON.stringify({ pass: failed === 0, checks, failed, days: { D, D1, D2, D3 } }));
   server.close(); await mongoose.disconnect().catch(() => {}); await rm(temp, { recursive: true, force: true }).catch(() => {});
@@ -556,6 +576,8 @@ const MUTANTS = [
   ['MS6-closed-period-replaced', 'server/services/financeBankCollectionService.ts', /const \{snapshot,snapshotHash\}=snapshotOf\(account\.connection,template,account,day\)/g, 'const {snapshot,snapshotHash}=snapshotOf({...account.connection,coverage:account.connection.coverage&&{from:account.connection.coverage.from,to:null}},template,account,day)', 'S9', /sched:closed-period-kept/],
   ['MS7-earlier-run-not-replaced', 'server/services/financeBankScheduleService.ts', /  for \(const job of await queuedScheduled\(account\)\) if \(job\.schedule\.day < day && await supersede\(job, now, REPLACED_DAY\)\) result\.superseded\.push\(job\.jobId\)\n/g, '', 'S3', /sched:coalesce/],
   ['MS9-earlier-run-ignored-at-claim', 'shared/finance-bank-schedule.mjs', /  if \(earlier\) return 'already-requested-today';\n/g, '', 'S12', /sched:manual-between/],
+  ['MS10-setting-revision-ignored-at-claim', 'shared/finance-bank-schedule.mjs', /  if \(job\?\.schedule\?\.revision !== s\.revision\) return 'setting-changed';\n/g, '', 'S12', /sched:stale-setting-claim-refused/],
+  ['MS11-save-keeps-older-queued-run', 'server/services/financeBankScheduleService.ts', /  for \(const job of await queuedScheduled\(fresh\)\) await supersede\(job, now, REPLACED_SETTING\)\n/g, '', 'S12', /sched:save-closes-older-queued/],
   ['MS8-revision-not-compared', 'server/services/financeBankScheduleService.ts', /, 'schedule\.revision': raw === undefined \? \{ \$exists: false \} : raw \}/g, ' }', 'S9', /sched:revision-cas/]
 ];
 

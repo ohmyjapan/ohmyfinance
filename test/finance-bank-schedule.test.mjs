@@ -106,7 +106,7 @@ test('changed connection needs a re-save; PCs are the existing grant: a second P
 });
 
 test('claim-time check of a scheduled job no PC received: off, changed connection or an earlier run that day closes it; otherwise it runs', () => {
-  const account = { schedule: saved(RAKUTEN), connection: RAKUTEN }, scheduled = { trigger: 'schedule', schedule: { day: '2026-10-25', binding: bankScheduleBinding(RAKUTEN) } };
+  const account = { schedule: saved(RAKUTEN), connection: RAKUTEN }, scheduled = { trigger: 'schedule', schedule: { day: '2026-10-25', revision: 1, binding: bankScheduleBinding(RAKUTEN) } };
   assert.equal(scheduledRunCurrent({ job: scheduled, account }), null);
   assert.equal(scheduledRunCurrent({ job: scheduled, account: { ...account, schedule: { ...account.schedule, enabled: false } } }), 'schedule-off');
   assert.equal(scheduledRunCurrent({ job: scheduled, account: null }), 'schedule-off');
@@ -114,4 +114,8 @@ test('claim-time check of a scheduled job no PC received: off, changed connectio
   assert.equal(scheduledRunCurrent({ job: scheduled, account: { ...account, connection: { ...RAKUTEN, templateId: 'f6f6f6f6f6f6f6f6f6f6f6f6' } } }), 'connection-changed');
   assert.equal(scheduledRunCurrent({ job: { ...scheduled, schedule: { ...scheduled.schedule, binding: bankScheduleBinding(PAYPAY) } }, account }), 'connection-changed', 're-saved for another connection after this job was queued');
   assert.equal(scheduledRunCurrent({ job: scheduled, account, earlier: { _id: 'x' } }), 'already-requested-today');
+  // Queued under an earlier saved setting (another hour, or turned off and on again): the current setting did not ask for this run.
+  assert.equal(scheduledRunCurrent({ job: scheduled, account: { ...account, schedule: saved(RAKUTEN, { revision: 2, hour: 23 }) } }), 'setting-changed');
+  assert.equal(scheduledRunCurrent({ job: scheduled, account: { ...account, schedule: saved(RAKUTEN, { revision: 3 }) } }), 'setting-changed', 'same hour, saved again');
+  assert.equal(scheduledRunCurrent({ job: { ...scheduled, schedule: { ...scheduled.schedule, revision: 3 } }, account: { ...account, schedule: saved(RAKUTEN, { revision: 3 }) } }), null);
 });

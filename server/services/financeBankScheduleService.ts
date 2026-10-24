@@ -8,8 +8,9 @@
 // between any two writes leave at most one scheduled job per day. A running job whose lease expired is never closed or duplicated here:
 // it stays claimable and the PC resumes it (the one recovery lane). A scheduled job still queued from an earlier day is replaced when
 // today's run is due (missed/offline days coalesce into one run through today), and one whose setting or connection no longer authorizes
-// it is closed as superseded; neither was ever claimed. A job a tick inserted from a setting read just before the owner changed it (or
-// after a manual 取得 completed) and could not close because its process stopped is closed by the PC's claim instead
+// it is closed as superseded; neither was ever claimed. A job a tick inserted from a setting read just before the owner changed it (another
+// hour, off, off and on again, another connection — the job carries the setting revision it was queued under — or after a manual 取得
+// completed) and could not close because its process stopped is closed by the PC's claim instead
 // (financeBankCollectionService.ts claimBankJob → scheduledRunCurrent), before any PC receives it. A failed run is shown, not held: the
 // next day's run is queued as usual and the collector's own journal/marker never sends an unconfirmed or refused saved login again.
 import mongoose from 'mongoose'
@@ -78,7 +79,8 @@ export async function readBankSchedule(ownerId: string, accountId: string, now =
  * Save the setting at the revision the owner read (409 when another save came first). Turning it on needs a supported connection and,
  * like the manual 取得, an unrevoked PC allowed this account; it records the connection's binding, so a later provider/variant/template
  * change stops the schedule until it is saved again (the PCs are the existing grant and are not recorded). Saving never touches the
- * connection or a job, except that a still-queued scheduled job the new setting no longer authorizes is closed (superseded).
+ * connection or a job, except that a still-queued scheduled job (queued under the earlier revision, never received by a PC) is closed
+ * (superseded).
  */
 export async function saveBankSchedule(ownerId: string, accountId: string, body: any, now = new Date()) {
   await init()
@@ -96,9 +98,12 @@ export async function saveBankSchedule(ownerId: string, accountId: string, body:
   const raw = account.schedule && typeof account.schedule === 'object' ? account.schedule.revision : undefined
   const saved = await BankAccount.updateOne({ _id: account._id, ownerId, 'schedule.revision': raw === undefined ? { $exists: false } : raw }, { $set: { schedule: next } })
   if (!saved.matchedCount) fail(409, STALE)
-  const fresh: any = await BankAccount.findOne({ _id: account._id, ownerId }).lean(), status = await stateOf(fresh, now)
-  if (UNAUTHORIZED.includes(status.state)) for (const job of await queuedScheduled(fresh)) await supersede(job, now, REPLACED_SETTING)
-  return view(fresh, UNAUTHORIZED.includes(status.state) ? await stateOf(fresh, now) : status, now)
+  // Phase C: every still-queued scheduled run was queued under an earlier revision of the setting, so none of them is what the saved
+  // setting asks for (another hour, off, or off and on again); each is closed now — no PC received it — and the tick queues the saved
+  // setting's own run. A run a PC already received is in flight and is not touched.
+  const fresh: any = await BankAccount.findOne({ _id: account._id, ownerId }).lean()
+  for (const job of await queuedScheduled(fresh)) await supersede(job, now, REPLACED_SETTING)
+  return view(fresh, await stateOf(fresh, now), now)
 }
 // One account at `now`: close queued scheduled jobs it no longer authorizes; when due, replace an earlier day's queued run and queue
 // today's; then read the setting again and close the new job if a save or connection change landed meanwhile.
@@ -110,10 +115,11 @@ async function scheduleAccount(account: any, now: Date) {
   const day = jstDay(now)
   for (const job of await queuedScheduled(account)) if (job.schedule.day < day && await supersede(job, now, REPLACED_DAY)) result.superseded.push(job.jobId)
   const template: any = await BankTemplate.findOne({ _id: account.connection.templateId, ownerId: account.ownerId }).lean(); if (!template) return result
-  const job: any = await queueScheduledBankJob(account, template, { day, now, revision: storedBankSchedule(account.schedule).revision })
+  const revision = storedBankSchedule(account.schedule).revision
+  const job: any = await queueScheduledBankJob(account, template, { day, now, revision })
   if (!job) return result
   const fresh: any = await BankAccount.findOne({ _id: account._id, ownerId: account.ownerId }).lean(), after = fresh ? await stateOf(fresh, now) : null
-  if (!after || UNAUTHORIZED.includes(after.state)) { if (await supersede(job, now, REPLACED_SETTING)) result.superseded.push(job.jobId); return result }
+  if (!after || UNAUTHORIZED.includes(after.state) || storedBankSchedule(fresh.schedule).revision !== revision) { if (await supersede(job, now, REPLACED_SETTING)) result.superseded.push(job.jobId); return result }
   result.queued = job.jobId
   return result
 }

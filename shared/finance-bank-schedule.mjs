@@ -57,15 +57,17 @@ export function bankScheduleSupport(connection, today) {
   return null;
 }
 // GUARD — a queued scheduled job is run only while its account's current setting still authorizes it: the schedule is on, the
-// connection's provider/variant/template equal both the saved binding and the job's own binding, and no other retrieval of the account
-// was requested earlier on the job's JST day (a manual 取得 that completed between the tick's read and its insert). claimBankJob asks
-// this once, before the PC first receives the job; a job a PC already received is in flight and is never re-judged. `earlier` is that
-// other retrieval or null. Returns null (run it) or the reason it is closed instead.
+// connection's provider/variant/template equal both the saved binding and the job's own binding, the job was queued under the saved
+// setting's current revision (Phase C: not under an earlier hour, nor before the owner turned it off and on again), and no other
+// retrieval of the account was requested earlier on the job's JST day (a manual 取得 that completed between the tick's read and its
+// insert). claimBankJob asks this once, before the PC first receives the job; a job a PC already received is in flight and is never
+// re-judged. `earlier` is that other retrieval or null. Returns null (run it) or the reason it is closed instead.
 export function scheduledRunCurrent({ job, account, earlier = null }) {
   const s = storedBankSchedule(account?.schedule);
   if (!account || !s.enabled) return 'schedule-off';
   const current = bankScheduleBinding(account.connection);
   if (!sameBinding(s.binding, current) || !sameBinding(job?.schedule?.binding, current)) return 'connection-changed';
+  if (job?.schedule?.revision !== s.revision) return 'setting-changed';
   if (earlier) return 'already-requested-today';
   return null;
 }

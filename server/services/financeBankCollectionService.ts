@@ -113,7 +113,7 @@ export async function listCollectorBankAccounts(device:any){
 // or another retrieval was requested earlier on that JST day, it is closed as superseded here — the PC never receives it — and the next
 // job is claimed. Otherwise it is marked in flight (schedule.claimedAt) before it is returned and is never re-judged: a reclaim after an
 // expired lease resumes it. Manual jobs are claimed exactly as before.
-const SCHEDULE_CLOSED:Record<string,string>={'schedule-off':'毎日の自動取得がオフになったため、この予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','connection-changed':'接続の内容が変わったため、この自動取得の予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','already-requested-today':'同じ日に別の取得がすでに行われたため、この自動取得は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）'}
+const SCHEDULE_CLOSED:Record<string,string>={'schedule-off':'毎日の自動取得がオフになったため、この予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','connection-changed':'接続の内容が変わったため、この自動取得の予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','setting-changed':'予約した後に自動取得の設定が変わったため、この予約は実行しません。今の設定の時刻に取得します（PCに渡す前に止めたため、銀行へのログインは行っていません）','already-requested-today':'同じ日に別の取得がすでに行われたため、この自動取得は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）'}
 export async function claimBankJob(device:any){
  await init()
  for(let attempt=0;attempt<20;attempt++){

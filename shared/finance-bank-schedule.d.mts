@@ -13,7 +13,7 @@ export type StoredBankSchedule={enabled:boolean;hour:number;revision:number;bind
 export function storedBankSchedule(value:any):StoredBankSchedule;
 export type BankScheduleSupportReason='no-connection'|'observe-only'|'unmapped'|'no-coverage'|'template-missing';
 export function bankScheduleSupport(connection:any,today:string):Exclude<BankScheduleSupportReason,'template-missing'>|null;
-export type ScheduledRunReason='schedule-off'|'connection-changed'|'already-requested-today';
+export type ScheduledRunReason='schedule-off'|'connection-changed'|'setting-changed'|'already-requested-today';
 export function scheduledRunCurrent(input:{job:any;account:any;earlier?:any}):ScheduledRunReason|null;
 export type BankScheduleStateName='off'|'unsupported'|'reconfirm'|'attention'|'running'|'interrupted'|'queued'|'waiting-pc'|'done-today'|'due'|'waiting';
 export type BankScheduleJob={jobId:string;state:string;kind:string;trigger:'schedule'|'manual';requestedAt:any;completedAt:any;scheduledDay:string|null;lastMessage:string};
