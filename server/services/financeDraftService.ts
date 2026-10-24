@@ -133,7 +133,8 @@ async function propose(ctx: any, references: any) {
   const memories: any[] = await FinanceDraft.find({ ownerId, accountId: account._id, 'memory.merchant': merchant, 'memory.purpose': scope.purpose, 'memory.customerId': scope.customerId }).select('memory importId line').sort({ 'memory.at': -1, _id: -1 }).limit(200).lean()
   // Independent memory events (a Navi "remember" command) and legacy approval memories are merged per field by recency; a paused
   // event does not contribute. An event may serve the very purchase it was remembered on: its draft stays unsaved and unapproved.
-  const events: any[] = await FinanceDecisionMemory.find({ ownerId, accountId: account._id, kind: 'accounting', status: 'active', merchant, purpose: scope.purpose, customerId: scope.customerId }).sort({ at: -1, _id: -1 }).limit(200).lean()
+  // Dated independent rules start on their source purchase date. Date-less events and legacy approval memories keep their existing scope.
+  const events: any[] = await FinanceDecisionMemory.find({ ownerId, accountId: account._id, kind: 'accounting', status: 'active', merchant, purpose: scope.purpose, customerId: scope.customerId, $or: [{ effectiveFrom: { $lte: row.purchaseDate } }, { effectiveFrom: null }] }).sort({ at: -1, _id: -1 }).limit(200).lean()
   const remembered = [
     ...memories.filter(previous => !(previous.importId.toString() === ctx.importId && previous.line === row.line)).map(previous => ({ at: new Date(previous.memory.at).getTime(), fields: previous.memory.fields || [], values: previous.memory.values || {}, proof: { draftId: previous._id.toString(), importId: previous.importId.toString(), line: previous.line, at: previous.memory.at } })),
     ...events.map(event => ({ at: new Date(event.at).getTime(), fields: event.fields || [], values: event.values || {}, proof: { memoryId: event._id.toString(), importId: String(event.source?.importId || ''), line: event.source?.line, at: event.at, provenance: 'navi' } }))

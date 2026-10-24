@@ -98,10 +98,36 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  const dB=await getDraft(2,importedB.data.id,other);assert.equal(dB.values.accountCategoryId,'','navi:other-owner-no-inherit');assert.equal(dB.values.purpose,'unresolved');
  pass('N2b another owner with the same merchant inherits neither the accounting nor the classification memory');
 
+ // Fable5.1 F1: import older purchases after remembering; only their purchase date controls eligibility, not import/write time.
+ // Save blank accounting under the same company scope so learned candidates remain observable as suggestions, not saved values.
+ const fromDate=event.effectiveFrom;assert.match(fromDate,/^\d{4}-\d{2}-\d{2}$/);
+ const shift=days=>new Date(Date.parse(fromDate+'T00:00:00Z')+days*86400000).toISOString().slice(0,10);
+ const boundary=await upload(csv([-1,0,1].map((delta,i)=>row({0:shift(delta).replaceAll('-','/'),1:shift(delta).replaceAll('-','/'),2:'Navi retailer',5:String(3100+i)}))));
+ assert.equal(boundary.status,200);const boundaryId=boundary.data.id;
+ for(const [i,delta]of [-1,0,1].entries()){
+  const line=i+2,current=await getDraft(line,boundaryId),path=draftPath(line,boundaryId);
+  const saved=await ok(path,{method:'PUT',token,body:{...bind(current),values:{...current.values,purpose:'company',customerId:'',accountCategoryId:'',subAccountCategoryId:''},remember:[],confirm:false}});
+  const after=await getDraft(line,boundaryId),candidate=after.suggestions.find(s=>s.field==='accountCategoryId'&&s.evidence?.memoryId===String(event._id));
+  assert.equal(after.source.purchaseDate,shift(delta));
+  if(delta<0)assert.equal(candidate,undefined,'navi:accounting-memory-before-start-excluded');
+  else {assert.equal(candidate?.value,X,'navi:accounting-memory-on-and-after-start-eligible');assert.equal(candidate?.evidence.source,'learned');}
+  assert.equal(after.values.accountCategoryId,'');assert.equal(after.values.purpose,'company');assert.equal(after.revision,saved.revision);assert.equal(after.approvedAt,null);
+ }
+ assert.equal((await getDraft(2)).values.accountCategoryId,X,'navi:accounting-memory-source-purchase-kept');
+ // Date-less independent records remain compatible (the native writer always dates new events).
+ const undatedId=new ObjectId(),undated={...event,_id:undatedId,merchant:'dateless navi shop',merchantLabel:'Dateless navi shop',purpose:'unresolved',customerId:'',operationId:'synthetic-undated-'+String(undatedId)};delete undated.effectiveFrom;
+ await memories().insertOne(undated);
+ const undatedImport=await upload(csv([row({0:'2026/08/01',1:'2026/08/01',2:'Dateless navi shop',5:'3201'})]));assert.equal(undatedImport.status,200);
+ for(const value of [undefined,null,'']){if(value===undefined)await memories().updateOne({_id:undatedId},{$unset:{effectiveFrom:''}});else await memories().updateOne({_id:undatedId},{$set:{effectiveFrom:value}});assert.equal((await getDraft(2,undatedImport.data.id)).values.accountCategoryId,X,'navi:accounting-memory-dateless-compatible');}
+ await memories().deleteOne({_id:undatedId});
+ pass('N2c independent accounting rules use inclusive purchase-date scope on later-imported statements, leave drafts untouched and preserve date-less compatibility');
+
  // N3 (leg 4): pausing the independent event stops its contribution; a legacy draft memory keeps contributing; Learning toggles it.
  const d5=await getDraft(5);const batch=await db.collection('financeimports').findOne({_id:oid}),row5=batch.rows.find(r=>r.line===5);
  await db.collection('financedrafts').insertOne({ownerId:owner,accountId:account._id,importId:oid,line:5,key:row5.key,sourceHash:batch.hash,revision:1,values:{...d5.values,taxRate:8},evidence:d5.evidence,history:[],approvedAt:new Date(),memory:{fields:['taxRate'],merchant:'legacy navi shop',purpose:'unresolved',customerId:'',values:{taxRate:8},at:new Date('2026-08-07T00:00:00Z')},createdAt:new Date(),updatedAt:new Date()});
  assert.equal((await getDraft(6)).values.taxRate,8,'legacy memory contributes');
+ const oldLegacy=await upload(csv([row({0:'2026/08/01',1:'2026/08/01',2:'Legacy navi shop',5:'3301'})]));assert.equal(oldLegacy.status,200);
+ assert.equal((await getDraft(2,oldLegacy.data.id)).values.taxRate,8,'navi:legacy-dateless-memory-still-covers-earlier-purchase');
  const c=await ask(2,'그 과목 기억은 잠시 꺼 줘');
  const paused=await acted(c.job,1,'set_memory_status',{memoryId:String(event._id),status:'paused'});assert.equal(paused.receipt.state,'done');
  event=await memories().findOne({_id:event._id});assert.equal(event.status,'paused','navi:memory-paused');assert.equal(event.revision,2,'creation is revision 1, the pause revision 2');assert.equal(event.audit.at(-1).operationId,paused.receipt.operationId);

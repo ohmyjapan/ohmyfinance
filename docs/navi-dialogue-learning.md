@@ -134,3 +134,7 @@ The existing `omf-company-assistant` fixture still passes its 8 groups and 31 de
 - **Dates.** Replies name local days in the company's saved time zone, using `facts.clock`; a JST message sent after midnight is not "yesterday". Saved timestamps stay literal UTC instants.
 - **Pattern examples.** They use the same whitelisted currency source as the transaction view: `currency`, else the card statement's `metadata.currency`, with `currencyEvidence`. A missing currency stays unknown.
 - **Refresh.** A done business receipt refreshes the open native page of the same actor and company. The conversation, its buffer and the pinned record stay in place.
+
+## Owner/purchase accounting memory date scope
+
+The separate owner/purchase `remember_accounting_fields` lane stores the purchase date as `effectiveFrom`. Draft proposals and saved-draft suggestions use a dated independent accounting memory only for purchases on or after that date, together with the existing owner/account/merchant/saved-purpose/customer/active-state match. Importing an older statement later does not move the date boundary. The source purchase itself remains eligible, and reading a suggestion does not change the saved draft or approve/post it. Date-less independent records retain their compatibility behavior. Legacy approval memories in `FinanceDraft.memory` have no `effectiveFrom`; their existing date-less lookup is unchanged and is outside this dated-event rule. Company teachings above and the classification date rule are separate unchanged lanes.
