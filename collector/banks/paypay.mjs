@@ -17,6 +17,8 @@
 // Plan omf-paypay-live-period-20261023: the actual statement page whose default period is empty shows no CSV, so the statement page is
 // recognized from its period/logout navigation (export still needs the one actual CSV after this job's 照会), and routineUi.diagnostic()
 // is the optional value-free failure reader bank.mjs keeps before ログアウト and cleanup.
+// Plan omf-paypay-ready-20261024: the statement page is recognized while its HTML is still parsing, so the one 期間選択 press now waits,
+// within the step window, for that same document to have run its DOMContentLoaded handlers (READY / routineUi `settled` below).
 import { pause } from '../interaction.mjs';
 
 const coded = (code, message) => Object.assign(new Error(message), { code });
@@ -226,6 +228,12 @@ const PRESS = ({ c, selector, kind, text, titles, expectedDocument }) => {
   const target = list[0]; setTimeout(() => target.click(), 0);
   return { ok: true };
 };
+// Plan omf-paypay-ready-20261024 (hub output/plan/omf-paypay-ready-20261024 CAUSE.md / OBSERVATION.json: the one observed 期間選択 press
+// came at readyState=loading, 113 ms before DOMContentLoaded, and opened nothing): whether the current document has run its
+// DOMContentLoaded handlers (serialized; reads only its readiness and its document id, never a value) — readyState 'complete', or past
+// 'loading' with the navigation entry's DOMContentLoaded end recorded. 'interactive' alone is not enough (a deferred script still runs
+// before DOMContentLoaded); the load event (images and other subresources) is not waited for.
+const READY = () => { const nav = performance.getEntriesByType('navigation')[0]; return { document: String(performance.timeOrigin), ready: document.readyState === 'complete' || (document.readyState !== 'loading' && nav?.domContentLoadedEventEnd > 0) }; };
 // The six observed period fields (serialized; one resolver for validation, assignment and read-back, so all three act on the SAME
 // element): for each recorded identifier, every input/select/textarea carrying it as name or id; exactly one of them must be visible,
 // and that one must be an enabled <select>. Hidden copies are ignored by all three (a hidden duplicate is never set, read or taken for
@@ -318,7 +326,24 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
   const read = async () => { try { return (await bounded(page.evaluate(ROUTINE_PAGE, { selector: ROUTINE_CONTROLS }))) || null; } catch { return null; } };
   const kind = async () => waiting ? 'verification' : classifyRoutinePage(await read(), c);
   const reach = async (kinds, code, message) => { const until = Date.now() + stepMs; while (Date.now() < until) { const k = await kind(); if (kinds.includes(k)) return k; await pause(250); } throw coded(code, message); };
-  const press = async (pressKind, text, titles, error) => { const doc = (await read())?.document || null; let r = null; pressed = { what: PRESSED[text] || 'other', doc }; try { r = await bounded(page.evaluate(PRESS, { c, selector: ROUTINE_CONTROLS, kind: pressKind, text, titles, expectedDocument: doc })); } catch { r = null; } if (!r?.ok) throw coded(error, `${label}の「${text}」を特定できません（${r?.error || '画面が変わりました'}）。Chromeを確認してください`); };
+  // `expected`: the document the press is bound to (the period press: the ready statement document); otherwise the one read just before
+  const press = async (pressKind, text, titles, error, expected = null) => { const doc = expected || (await read())?.document || null; let r = null; pressed = { what: PRESSED[text] || 'other', doc }; try { r = await bounded(page.evaluate(PRESS, { c, selector: ROUTINE_CONTROLS, kind: pressKind, text, titles, expectedDocument: doc })); } catch { r = null; } if (!r?.ok) throw coded(error, `${label}の「${text}」を特定できません（${r?.error || '画面が変わりました'}）。Chromeを確認してください`); };
+  // GUARD (plan omf-paypay-ready-20261024) — before the one 期間選択 press, the recognized statement document `doc` must have run its
+  // DOMContentLoaded handlers (READY), polled every 250 ms within the step window. An open JS dialog (never answered), another current
+  // document (a navigation, the login page, another origin, an error page), no readable document or the window passing ends the step
+  // with the existing period-unidentified exit and nothing pressed. The answer is that same document id, so the press stays bound to it
+  // (PRESS still checks origin, top, title, document and exactly one visible control). No retry, no second press, no fixed sleep.
+  const settled = async doc => {
+    const end = Date.now() + stepMs; // guard:routine-period-ready-bound
+    while (doc && Date.now() < end) {
+      if (waiting) break; // guard:routine-period-ready-dialog
+      let r = null; try { r = await bounded(page.evaluate(READY)); } catch { r = null; }
+      if (r && r.document !== doc) break; // guard:routine-period-ready-document
+      if (r?.ready === true) return doc;
+      await pause(250);
+    }
+    throw coded('period-unidentified', `${label}の入出金明細の画面が読み込みを終える前に変わったか、読み込みが終わりませんでした（期間選択は押していません）。Chromeを確認してください`); // guard:routine-period-ready-timeout
+  };
   const ui = {
     ...base,
     async open() { await watch(); await base.open(); },
@@ -337,13 +362,22 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
       await reach(['statements', 'export_ready'], 'statements-unidentified', `${label}の入出金明細が開きませんでした。Chromeを確認してください`);
     },
     async selectPeriod(coverage) {
-      const wanted = routinePeriodValues(coverage), k = await kind();
+      // `seen`: the page read that classified this step's statement document (kind() reads it the same way)
+      const wanted = routinePeriodValues(coverage), seen = waiting ? null : await read(), k = waiting ? 'verification' : classifyRoutinePage(seen, c);
       if (k !== 'statements' && k !== 'export_ready') throw coded('period-unidentified', `${label}の入出金明細の画面ではありません。Chromeを確認してください`);
+      const other = () => coded('period-unidentified', `${label}の期間の項目が確認済みの形と異なります。Chromeを確認してください`);
       let found = await bounded(page.evaluate(PERIOD, { op: 'check', ids: fields }));
       if (!found?.every(f => f === 'ok')) {
-        if (found?.some(f => f === 'other')) throw coded('period-unidentified', `${label}の期間の項目が確認済みの形と異なります。Chromeを確認してください`);
-        await press('link', c.period, [c.statements.title], 'period-unidentified');
-        const until = Date.now() + 15000; while (Date.now() < until) { found = await bounded(page.evaluate(PERIOD, { op: 'check', ids: fields })); if (found?.every(f => f === 'ok')) break; await pause(250); }
+        if (found?.some(f => f === 'other')) throw other();
+        // plan omf-paypay-ready-20261024: the press waits for that document's DOMContentLoaded handlers (settled); the six fields are
+        // checked again on the ready document — fields its own initialization showed are used without a press
+        const ready = await settled(seen?.document || null); // guard:routine-period-ready
+        found = await bounded(page.evaluate(PERIOD, { op: 'check', ids: fields })); // guard:routine-period-ready-recheck
+        if (found?.some(f => f === 'other')) throw other();
+        if (!found?.every(f => f === 'ok')) {
+          await press('link', c.period, [c.statements.title], 'period-unidentified', ready);
+          const until = Date.now() + 15000; while (Date.now() < until) { found = await bounded(page.evaluate(PERIOD, { op: 'check', ids: fields })); if (found?.every(f => f === 'ok')) break; await pause(250); }
+        }
         if (!found?.every(f => f === 'ok')) throw coded('period-unidentified', `${label}の期間の項目が表示されませんでした（${(found || []).join('/')}）。Chromeを確認してください`);
       }
       const set = await page.evaluate(PERIOD, { op: 'set', ids: fields, wanted });

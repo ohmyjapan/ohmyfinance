@@ -342,6 +342,117 @@ the in-use page (O7); those require a separate operator check after activation. 
 deployment check. For current import status, inspect the retained originals in OMF: first-capture receipts keep their frozen original
 interpretation and may still show a review state after their rows have subsequently been imported through the mapping workflow.
 
+## Statement page readiness before 期間選択 (plan `omf-paypay-ready-20261024`)
+
+### Actual facts
+
+Sources in the hub, `output/plan/omf-paypay-ready-20261024/`:
+
+- `OBSERVATION.json` — a value-free parent aggregate of one native trace. It was taken on `1262ca3`; the bank source is unchanged
+  through `daa4ec3`.
+- `CAUSE.md`.
+- `READINESS-POC.json` — a fictional proof that ran the unchanged installed adapter.
+
+What they record:
+
+- **The press.** The one 期間選択 press came at 341 ms, while the document's `readyState` was `loading`.
+- **DOMContentLoaded** followed at 454 ms, 113 ms after the press.
+- **The fields.** All six date fields were present, and none became visible. The step ended `period-unidentified` after its 15 s field
+  window. There was one click, no page error and no consent action.
+- **Why the press was allowed.** The statement page is recognized from its exact title and controls while its HTML is still parsing.
+  `PRESS` checks origin, top document, title, document identity and the unique control — not readiness.
+- **The fictional proof.** On a delayed-handler page the unchanged adapter loses the early click and fails. The same operation started
+  after DOMContentLoaded gets one handled click and one query.
+- **Not measured.** When the real page registers its listeners was not measured. The original trace's `pendingScripts` field counts
+  script tags, not pending requests, and is excluded. Nothing here blames a consent banner.
+
+### Behaviour (`collector/banks/paypay.mjs` `routineUi.selectPeriod`)
+
+**When the wait applies.** Only when the six fields are not already shown, that is, when the one 期間選択 press is needed.
+
+**What it waits for.** The statement document classified at the start of the step must have run its DOMContentLoaded handlers before
+the press (`READY`, `settled`, `guard:routine-period-ready`). Ready means one of:
+
+- `readyState` is `complete`;
+- `readyState` is past `loading` **and** the navigation entry records the end of DOMContentLoaded.
+
+`interactive` alone is not enough, because a deferred script still runs before DOMContentLoaded. The load event (images and other
+subresources) is not waited for.
+
+**The bound.** The page is polled every 250 ms within the existing step window (`stepMs`, 45 s; `guard:routine-period-ready-bound`).
+
+**When it stops.** The step ends with the existing `period-unidentified` exit and **nothing pressed** when:
+
+- a JS dialog is open (`guard:routine-period-ready-dialog`) — it is never answered;
+- the current document is another one: a navigation, the login page, another origin or an error page
+  (`guard:routine-period-ready-document`);
+- no document can be read;
+- the window passes (`guard:routine-period-ready-timeout`).
+
+The message says 期間選択 was not pressed.
+
+**On the ready document.**
+
+- The six fields are checked again (`guard:routine-period-ready-recheck`). Fields that the page's own initialization showed are used
+  without a press. A visible non-select field stops the step as before.
+- The press is bound to that same document (`press(…, ready)`). `PRESS` still checks the official origin, the top document, the title,
+  the document identity and exactly one visible 期間選択; a second one is `ambiguous`.
+
+**Unchanged:**
+
+- no retry and no second press; the 15 s field window after the press;
+- the six-field resolver, assignment and read-back; 照会; CSV and export;
+- identity, the frozen period, once-only, no overwrite;
+- the logout confirm and its lifetime; the diagnostics — a never-ready page is recorded with `readyState: loading` and
+  `lastPress: open`;
+- sign-in, page classification, the dialog rule, 楽天銀行 and `collector/bank.mjs`.
+
+**Timing.** A page that never finishes loading now fails after the step window (45 s) with no press, instead of after the 15 s field
+window that followed a lost press.
+
+### Callers and continuations
+
+- **The one caller.** `collectBankFromPage` (retrieve jobs only) → `openStatements` → `selectPeriod` → `snapshot` and `exportCsv` →
+  `finish`. A failure takes the existing path: the private diagnostic, then `finish()` (ログアウト), then cleanup.
+- **`press()`** gained an optional expected document. Only the period press passes it. The open, 照会, CSV and ログアウト presses
+  still read the document just before they press, exactly as before.
+- **Not callers:**
+  - observe and guided jobs (`standardUi`, where `selectPeriod` is `pending`);
+  - the BA-PLUS default;
+  - 楽天銀行 (its own adapter);
+  - `diagnostic()` and `finish()`.
+
+### Proof
+
+Fully intercepted fictional pages on owned headless Chrome. Every document and script declares UTF-8.
+
+- `collector/test/paypay-ready.test.mjs` runs the real `routineUi` and `bank.collectBankFromPage`. It covers:
+  - a replica self-check;
+  - delayed handlers: a slow blocking script, a ready callback one task after DOMContentLoaded, a slow deferred script;
+  - already-ready pages, DOMContentLoaded without load, visible fields, an inert ready 期間選択;
+  - fields shown by the page's own initialization;
+  - never ready;
+  - another document, title, login page or origin during the wait;
+  - a replacement right after the ready answer;
+  - a dialog;
+  - ambiguity and a non-select field;
+  - end to end: the empty default view and an existing CSV view, once-only, no overwrite and the immutable frozen period;
+  - end to end: never ready, with its diagnostic.
+- Hub fixture `scripts/zoomer-fixtures/omf-paypay-ready.mjs`:
+  - fail-first on `daa4ec3`: one press at `loading` before the handlers, no query, no export;
+  - mutants R-M1…R-M9 and the live-period L-M1…L-M8. The routine C and logout G guard bodies are unchanged: their tests run in the
+    unit regression and their mutant anchors are checked as still exact, but those mutants are not re-run;
+  - the staged package.
+
+### Live limits
+
+- **Source-level fictional proof only.** Everything above is proven on fictional, fully intercepted pages. Real-bank resolution needs a
+  separate, recorded actual-bank acceptance after the reviewed activation.
+- **Handlers attached later than DOMContentLoaded's own tasks** (on the load event, or by an async script) are not covered. No such
+  page was observed.
+- **When the six fields are already visible while the page is loading,** no wait applies before 照会. This is unchanged and was not
+  observed.
+
 ## Overlapping captures (plan `omf-paypay-routine-20261022` Phase S; PayPay銀行 and 楽天銀行)
 
 - A retrieve capture with a frozen period and a mapped balance column is planned in `capture` mode (`shared/finance-payment-match.mjs
@@ -481,6 +592,18 @@ for the observed logout confirm of `finish()`'s own press:
 `collector/bank.mjs` and all shared code are unchanged. Fixtures: `scripts/zoomer-fixtures/omf-bank-overlap-capture.mjs` (native legs incl. the owner
 reinterpretation, the paused holder, pure and built-chunk mutants S-M1…S-M20n) and `scripts/zoomer-fixtures/omf-paypay-routine.mjs`
 (unit, native daemon walkthrough, HTTP/Chrome, collector mutants C-M1…C-M19). The full audit is the build's `7-shared-boundary-audit.md`.
+
+Plan `omf-paypay-ready-20261024` adds bank-local guards on the one 期間選択 press only (see "Statement page readiness before 期間選択"):
+
+- `routine-period-ready`
+- `routine-period-ready-bound`
+- `routine-period-ready-dialog`
+- `routine-period-ready-document`
+- `routine-period-ready-timeout`
+- `routine-period-ready-recheck`
+
+Its only caller is `collectBankFromPage` (retrieval). `collector/bank.mjs` and all shared code are unchanged. Fixture:
+`scripts/zoomer-fixtures/omf-paypay-ready.mjs`.
 
 ## Not observed / not supported / pending
 
