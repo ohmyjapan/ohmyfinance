@@ -88,6 +88,23 @@ test('the eight owner fields are guessed from their headers and the five money f
   const v = normalize({ amount: '12,800', itemPrice: '¥1,000', tax: '￥0', shippingFee: '1 200', otherFee: '-500' });
   assert.deepEqual([v.amount, v.itemPrice, v.tax, v.shippingFee, v.otherFee], ['12800', '1000', '0', '1200', '-500']);
 });
+test('B2 (plan omf-workflow-daily-20261025 Phase C): the exact orderno / itemseqno export headers are guessed; no alias names two fields; an explicit mapping still decides', () => {
+  const headers = ['orderno', 'itemseqno', 'externalorderno', 'website URL', 'itemprice', 'tax', 'shipping', 'otherfee'];
+  const mapping = guessMapping(headers);
+  assert.deepEqual([mapping.orderId, mapping.itemId, mapping.externalOrderId, mapping.merchantUrl, mapping.itemPrice, mapping.tax, mapping.shippingFee, mapping.otherFee], ['0', '1', '2', '3', '4', '5', '6', '7'], 'b2:exact-headers');
+  for (const [h, field] of [['order_no', 'orderId'], ['Order No', 'orderId'], ['item_seq_no', 'itemId'], ['itemseq', 'itemId'], ['ITEM SEQ NO', 'itemId']]) assert.equal(guessMapping(['x', h])[field], '1', 'b2:alias ' + h);
+  assert.equal(guessMapping(['orderno', 'externalorderno']).externalOrderId, '1', 'b2:externalorderno stays external');
+  assert.equal(guessMapping(['orderno', 'externalorderno']).orderId, '0', 'b2:orderno stays the order');
+  const n = s => String(s).trim().toLowerCase().replace(/[\s・（）()_-]/g, ''), owner = new Map();
+  for (const [field, label, aliases] of FIELDS) for (const a of [label, ...aliases]) { const k = n(a); assert.ok(!owner.has(k) || owner.get(k) === field, 'b2:alias-collision ' + a + ' → ' + owner.get(k) + ' and ' + field); owner.set(k, field); }
+  // The guess is only a suggestion: the owner's explicit mapping (or a saved template's) is what mappedRows reads, and identifiers keep
+  // their leading zeros; blank or absent cost cells stay blank and the all-in amount is never summed from them.
+  const rows = mappedRows([['000123', '0007', 'EXT-01', 'https://shop.example.invalid/i/1', '1000', '', '', '']], { ...mapping, orderId: '2', itemId: '1' }, defaults, { hash: 'b2', fileName: 'b2.csv', documentId: 'b2', sheet: 'Sheet1', firstRow: 2 });
+  assert.deepEqual([rows[0].values.orderId, rows[0].values.itemId], ['EXT-01', '0007'], 'b2:explicit-mapping-authoritative');
+  const guessed = mappedRows([['000123', '0007', 'EXT-01', 'https://shop.example.invalid/i/1', '1000', '', '', '']], mapping, defaults, { hash: 'b2', fileName: 'b2.csv', documentId: 'b2', sheet: 'Sheet1', firstRow: 2 })[0].values;
+  assert.deepEqual([guessed.orderId, guessed.itemId, guessed.externalOrderId], ['000123', '0007', 'EXT-01'], 'b2:leading-zeros');
+  assert.deepEqual([guessed.itemPrice, guessed.tax, guessed.shippingFee, guessed.otherFee, guessed.amount ?? ''], ['1000', '', '', '', ''], 'b2:unknown-costs-stay-blank');
+});
 test('identifiers and the research fields stay trimmed strings', () => {
   const v = normalize({ externalOrderId: ' 000777 ', invoiceNumber: 'T1234567890123', supplierName: ' Synthetic 株式会社 ' });
   assert.equal(v.externalOrderId, '000777'); assert.equal(v.invoiceNumber, 'T1234567890123'); assert.equal(v.supplierName, 'Synthetic 株式会社');

@@ -3,8 +3,8 @@
 // unchanged / ambiguous). Pure: no database, no clock beyond options.now, no identifiers beyond options.id. Behaviour
 // reference: output/omf-intake-platform-20261016/model.js; fields 14-20 and extras: plan omf-intake-mapping-research-amended-20261017.
 export const FIELDS = [
-  ['orderId', '注文・取引ID', ['注文番号', '注文id', '取引id', 'orderid', 'order_id', 'order number', '注文ID', '注文ID（文字列）', '서비스주문번호']],
-  ['itemId', '商品・明細ID', ['商品id', '明細id', 'itemid', 'item_id', '상품번호']],
+  ['orderId', '注文・取引ID', ['注文番号', '注文id', '取引id', 'orderid', 'order_id', 'orderno', 'order_no', 'order number', '注文ID', '注文ID（文字列）', '서비스주문번호']],
+  ['itemId', '商品・明細ID', ['商品id', '明細id', 'itemid', 'item_id', 'itemseqno', 'item_seq_no', 'itemseq', '상품번호']],
   ['externalOrderId', '外部注文番号', ['外部注文番号', '外部注文id', 'externalorderno', 'external_order_no', 'externalorderid', 'external_order_id', '購入先注文番号', '店舗注文番号']],
   ['customer', 'お客様・案件', ['顧客', 'お客様', 'customer', 'customerid', '고객']],
   ['description', '商品・依頼内容', ['商品名', '内容', 'description', 'product', '상품명']],
