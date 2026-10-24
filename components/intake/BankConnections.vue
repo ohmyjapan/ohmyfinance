@@ -10,7 +10,13 @@
     </div>
     <p v-if="!accounts.length" class="text-sm text-gray-500">銀行口座がありません。上で口座を追加するか、「銀行のExcel・CSVを取込」で追加してください。</p>
     <article v-for="a in accounts" :key="a.id" class="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-gray-700" :data-bank-connection="a.id">
-      <h3 class="font-medium">{{ a.name }}（{{ a.currency }}）</h3>
+      <div class="flex min-w-0 flex-wrap items-center justify-between gap-2"><h3 class="min-w-0 break-words font-medium" data-bank-account-name>{{ a.name }}（{{ a.currency }}）</h3><button v-if="renaming !== a.id" class="text-sm text-primary-main dark:text-primary-light" :disabled="busy" data-bank-account-rename @click="startRename(a)">口座名を変更</button></div>
+      <div v-if="renaming === a.id" class="min-w-0 space-y-2 rounded-xl border border-gray-200 p-3 dark:border-gray-700" data-bank-account-rename-form>
+        <label class="block min-w-0 text-sm">口座名<input v-model="renameDraft" data-bank-account-name-input type="text" maxlength="100" :class="INPUT" @keydown.enter.prevent="saveRename(a)" @keydown.esc.prevent="cancelRename"></label>
+        <p class="break-words text-xs leading-relaxed text-gray-500">口座名はOMFの画面に表示する名前です。変更しても、口座の接続・取得の記録・明細・仕訳はそのまま残ります。銀行の画面との一致確認に使う下の「口座の表示名（任意・一致確認用）」は別の項目で、変わりません。</p>
+        <p v-if="renameError" role="alert" class="break-words text-sm text-red-600 dark:text-red-300" data-bank-account-rename-error>{{ renameError }}</p>
+        <div class="flex flex-wrap gap-2"><button class="btn btn-primary" :disabled="busy || !renameDraft.trim()" data-bank-account-rename-save @click="saveRename(a)">保存</button><button class="btn btn-secondary" :disabled="busy" data-bank-account-rename-cancel @click="cancelRename">キャンセル</button></div>
+      </div>
       <p class="break-words text-sm" data-bank-connection-state>{{ connectionText(a) }}</p>
       <div class="grid min-w-0 gap-3 md:grid-cols-3">
         <label class="min-w-0 text-sm">銀行<select v-model="forms[a.id].provider" data-bank-provider :class="INPUT"><option value="">選択してください</option><option v-for="[key,label,support] in BANK_PROVIDERS" :key="key" :value="key">{{ label }}（{{ providerSupportText(key, support) }}）</option></select></label>
@@ -91,6 +97,14 @@ async function load(){const [a,t,c]:any[]=await Promise.all([$fetch(api+'account
  for(const acc of a.accounts)forms[acc.id]??={provider:acc.connection?.provider||'',templateId:acc.connection?.templateId||'',accountLabel:acc.connection?.accountLabel||'',transactionIdConfirmed:!!acc.connection?.transactionIdConfirmed,variant:acc.connection?.variant||'',coverageFrom:acc.connection?.coverage?.from||'',coverageTo:acc.connection?.coverage?.to||''}
  accounts.value=a.accounts;await Promise.all(a.accounts.map((acc:any)=>loadJobs(acc.id)))}
 async function createAccount(){await run(async()=>{await $fetch(api+'accounts',{method:'POST',headers:user.authHeader,body:{name:newAccount.name.trim(),currency:(newAccount.currency||'JPY').trim().toUpperCase()}});newAccount.name='';await load();emit('changed')})}
+// Plan omf-bank-account-names-20261024: the account name (BankAccount.name) is edited in place, one account at a time; the name only
+// is sent. A refused name keeps the form open with the reason; cancel discards the draft.
+const renaming=ref(''),renameDraft=ref(''),renameError=ref('')
+function startRename(a:any){renaming.value=a.id;renameDraft.value=a.name;renameError.value=''}
+function cancelRename(){renaming.value='';renameDraft.value='';renameError.value=''}
+async function saveRename(a:any){if(busy.value||!renameDraft.value.trim())return;busy.value=true;renameError.value=''
+ try{await $fetch(api+'accounts/'+a.id,{method:'PUT',headers:user.authHeader,body:{name:renameDraft.value.trim()}})}catch(e:any){renameError.value=e.data?.data?.message||e.data?.statusMessage||e.message;return}finally{busy.value=false}
+ cancelRename();messages[a.id]='口座名を保存しました。';await run(async()=>{await load();emit('changed')})}
 async function saveConnection(a:any){await run(async()=>{const f=forms[a.id],period=capabilityOf(f).period==='required'&&f.coverageFrom?{coverage:{from:f.coverageFrom,to:f.coverageTo||null}}:{};await $fetch(api+'accounts/'+a.id+'/connection',{method:'PUT',headers:user.authHeader,body:{provider:f.provider,templateId:f.templateId||undefined,accountLabel:f.accountLabel,transactionIdConfirmed:f.transactionIdConfirmed,variant:f.variant||null,...period}});messages[a.id]='接続を保存しました。';const saved=(await $fetch(api+'accounts',{headers:user.authHeader}) as any).accounts.find((x:any)=>x.id===a.id);if(saved?.connection)forms[a.id].templateId=saved.connection.templateId||'';await load();emit('changed')})}
 async function sync(a:any){await run(async()=>{const r:any=await $fetch(api+'accounts/'+a.id+'/sync',{method:'POST',headers:user.authHeader,body:{}});messages[a.id]=r.message;await loadJobs(a.id);emit('changed')})}
 async function toggleDevice(c:any,accountId:string,event:Event){const checked=(event.target as HTMLInputElement).checked;await run(async()=>{const ids=new Set<string>((c.bankAccountIds||[]).map(String));if(checked)ids.add(accountId);else ids.delete(accountId);await $fetch(api+'collectors/'+c._id,{method:'PUT',headers:user.authHeader,body:{bankAccountIds:[...ids]}});await load()})}

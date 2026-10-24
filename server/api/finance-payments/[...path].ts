@@ -41,6 +41,9 @@ export default defineEventHandler(async event=>{
   }
   if(parts[0]==='bank'){
    if(parts[1]==='accounts'&&parts.length===2){if(method==='GET')return bank.listBankAccounts(ownerId);if(method==='POST')return bank.createBankAccount(ownerId,await json())}
+   // Plan omf-bank-account-names-20261024: rename an existing owned account (name only). Awaited, so a name another owned account
+   // has (the unique index) reaches the 11000 → 409 adapter below.
+   if(parts[1]==='accounts'&&parts.length===3&&method==='PUT')return await bank.renameBankAccount(ownerId,parts[2],await json())
    // S4 (plan omf-bank-collection-amended-20261018): the owner's web-bank connection, request, jobs and captures of one account; the retained files; a PC's bank scope.
    if(parts[1]==='accounts'&&parts.length===4){
     if(parts[3]==='connection'&&method==='PUT')return collection.saveBankConnection(ownerId,parts[2],await json())

@@ -15,7 +15,17 @@ const view=(r:any)=>({...r,id:String(r._id),ownerId:undefined,_id:undefined,__v:
 const location=(ownerId:string,hash:string)=>{if(!/^[a-f0-9]{64}$/.test(hash))fail(400,'Invalid file hash');return path.join(process.env.OMF_DATA_DIR||path.join(os.homedir(),'.ohmyfinance'),'bank-statements',id(ownerId),hash)}
 export async function ownedBankAccount(ownerId:string,accountId:string){const r:any=await BankAccount.findOne({_id:id(accountId),ownerId}).lean();if(!r)fail(404,'銀行口座が見つかりません。');return r}
 export async function listBankAccounts(ownerId:string){await init();return{accounts:(await BankAccount.find({ownerId}).sort({name:1}).lean()).map(view)}}
-export async function createBankAccount(ownerId:string,body:any){await init();const name=text(body?.name),currency=text(body?.currency||'JPY').toUpperCase();if(!name||name.length>100||/[\x00-\x1f]/.test(name)||!/^[A-Z]{3}$/.test(currency))fail(400,'口座名・通貨を確認してください。');return{account:view((await BankAccount.create({ownerId,name,currency,revision:1})).toObject())}}
+// The account name rule of create and rename: trimmed, 1-100 characters, no control characters ('' when it fails).
+const accountName=(v:any)=>{const s=text(v);return s&&s.length<=100&&!/[\x00-\x1f]/.test(s)?s:''}
+export async function createBankAccount(ownerId:string,body:any){await init();const name=accountName(body?.name),currency=text(body?.currency||'JPY').toUpperCase();if(!name||!/^[A-Z]{3}$/.test(currency))fail(400,'口座名・通貨を確認してください。');return{account:view((await BankAccount.create({ownerId,name,currency,revision:1})).toObject())}}
+// Plan omf-bank-account-names-20261024: the owner renames an existing account. Only `name` is read from the body and only `name`
+// is written, in one $set on the owner's own account: id, currency, revision, corrections, connection (its accountLabel is the
+// statement-identity label and stays), row lease, rows, jobs, captures and PC grants are untouched, and a concurrent connection or
+// correction update is never overwritten. Another owner's or an unknown account is 404; a name another account of this owner has
+// is the unique index (ownerId, name) — 409 through the route. The same name writes nothing and returns the account.
+export async function renameBankAccount(ownerId:string,accountId:string,body:any){await init();const name=accountName(body?.name);if(!name)fail(400,'口座名を確認してください。')
+ const saved:any=await BankAccount.findOneAndUpdate({_id:id(accountId),ownerId,name:{$ne:name}},{$set:{name}},{new:true}).lean()
+ return{account:view(saved||await ownedBankAccount(ownerId,accountId))}}
 async function ownedFile(ownerId:string,fileId:string){const r:any=await BankStatement.findOne({_id:id(fileId),ownerId}).lean();if(!r)fail(404,'ファイルが見つかりません。');return r}
 // A3 (plan omf-bank-collection-amended-20261018): the validation, retention and BankStatement creation of the owner upload,
 // shared with the collector capture. Returns the stored statement document (the existing one for identical bytes).
