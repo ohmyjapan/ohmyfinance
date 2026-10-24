@@ -6,6 +6,10 @@ const oid=Schema.Types.ObjectId, mixed=Schema.Types.Mixed, options={timestamps:t
 // account's canonical rows (a collector capture or an owner import); an expired lease is taken over. Never selected by default.
 const account=new Schema({ownerId:{type:oid,required:true},name:{type:String,required:true},currency:{type:String,default:'JPY'},revision:{type:Number,default:1},corrections:{type:[mixed],default:[]},connection:{type:mixed,default:null},rowLock:{type:mixed,default:null,select:false}},options)
 account.index({ownerId:1,name:1},{unique:true})
+// `schedule` (plan omf-workflow-daily-20261025 Phase B) is the owner's daily collection setting, separate from `connection` so saving a
+// connection never rewrites it: {enabled, hour (JST), revision, savedAt, binding {provider, variant, templateId}}. Absent/null = off;
+// read tolerantly (shared/finance-bank-schedule.mjs storedBankSchedule).
+account.add({schedule:{type:mixed,default:null}})
 // `capture` is written once for a statement received from the collector: the job, a copy of the interpretation it was taken
 // under and its hash, the source host, the state (received|imported|needs_review), the reason and the row counts.
 const statement=new Schema({ownerId:{type:oid,required:true},hash:{type:String,required:true},name:String,mimeType:String,size:Number,sheetNames:[String],dateRange:mixed,capture:{type:mixed,default:null}},options)
@@ -34,10 +38,17 @@ template.index({ownerId:1,name:1},{unique:true})
 // One web-bank collection job per request (financebankjobs): kind retrieve|observe, the state and collector lease, and the
 // interpretation frozen at queue time (`snapshot` + sha256 `snapshotHash`). `open` is true while the job blocks another
 // request for the same account (queued, or running with a live lease); jobs are never deleted — captures point back by jobId.
-const job=new Schema({ownerId:{type:oid,required:true},bankAccountId:{type:oid,required:true},jobId:{type:String,required:true},kind:{type:String,enum:['retrieve','observe'],required:true},state:{type:String,enum:['queued','running','verification_required','complete','failed'],default:'queued'},open:{type:Boolean,default:true},requestedAt:Date,collectorId:oid,leaseUntil:Date,lastAttemptAt:Date,lastMessage:String,snapshot:{type:mixed,required:true},snapshotHash:{type:String,required:true},statementIds:{type:[oid],default:[]},observation:{type:mixed,default:null},completedAt:Date},options)
+const job=new Schema({ownerId:{type:oid,required:true},bankAccountId:{type:oid,required:true},jobId:{type:String,required:true},kind:{type:String,enum:['retrieve','observe'],required:true},state:{type:String,enum:['queued','running','verification_required','complete','failed','superseded'],default:'queued'},open:{type:Boolean,default:true},requestedAt:Date,collectorId:oid,leaseUntil:Date,lastAttemptAt:Date,lastMessage:String,snapshot:{type:mixed,required:true},snapshotHash:{type:String,required:true},statementIds:{type:[oid],default:[]},observation:{type:mixed,default:null},completedAt:Date},options)
 job.index({ownerId:1,jobId:1},{unique:true})
 job.index({ownerId:1,bankAccountId:1},{unique:true,partialFilterExpression:{open:true}})
 job.index({ownerId:1,bankAccountId:1,requestedAt:-1})
+// Plan omf-workflow-daily-20261025 Phase B: a job queued by the daily schedule carries trigger 'schedule' and schedule {day (JST),
+// revision, binding, claimedAt once a PC received it}; jobs without them are manual requests. At most one scheduled job per owner,
+// account and JST day (the partial unique index), alongside the open-job index above. `superseded` is the end of a scheduled job no PC
+// received: a later day's run replaced it, or its setting/connection changed or another retrieval came first that day (closed by the
+// tick, the save or the claim); its day moves to schedule.supersededDay.
+job.add({trigger:{type:String,enum:['manual','schedule']},schedule:{type:mixed,default:undefined}})
+job.index({ownerId:1,bankAccountId:1,'schedule.day':1},{unique:true,partialFilterExpression:{'schedule.day':{$type:'string'}}})
 const anchor=new Schema({ownerId:{type:oid,required:true},paymentKey:{type:String,required:true},aliases:{type:[String],default:[]},kind:String,source:mixed,date:String,amount:Number,currency:String,description:String,revision:{type:Number,default:0},allocations:{type:[mixed],default:[]}},options)
 anchor.index({ownerId:1,paymentKey:1},{unique:true})
 export const BankAccount:mongoose.Model<any>=mongoose.models.FinanceBankAccount||mongoose.model('FinanceBankAccount',account,'financebankaccounts')

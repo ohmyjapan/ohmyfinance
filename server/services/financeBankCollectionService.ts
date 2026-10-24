@@ -4,6 +4,7 @@ import { FinanceCollector } from '../models/Finance'
 import { BankAccount, BankStatement, BankTemplate, BankJob, initializePaymentMatching } from '../models/FinancePaymentMatch'
 import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_NATIVE_TEMPLATES, bankCollectionMode, bankCoverageInput, frozenCoverage, jstToday, bankFirstCapture } from '../../shared/finance-payment-match.mjs'
 import { ownedBankAccount, acceptBankCapture } from './financeBankStatementService'
+import { bankScheduleBinding, scheduledRunCurrent, jstDayStart } from '../../shared/finance-bank-schedule.mjs'
 // Web-bank collection jobs (plan omf-bank-collection-amended-20261018 A4): the owner's connection and request, the collector's
 // claim/status/upload under its bank scope, and the interpretation frozen on each job at queue time.
 const LEASE_MS=180000,text=(v:any)=>String(v??'').trim(),sid=(v:any)=>String(v??'')
@@ -54,9 +55,10 @@ export async function saveBankConnection(ownerId:string,accountId:string,body:an
 // settings give the same hash; the variant key gives a new hash only to jobs queued after it was added.
 // Plan omf-paypay-four-accounts-20261021: without a template (a template-free first capture) the snapshot freezes an explicit unmapped
 // interpretation — no template, headers or mapping, `interpretation: 'unmapped'` — with the same provider, label, variant, currency and
-// coverage keys; a mapped snapshot keeps exactly its former shape (and hash).
-function snapshotOf(connection:any,template:any,account:any){const snapshot:any=template?{templateId:sid(template._id),templateRevision:Number(template.revision||0),headers:[...(template.headers||[])],mapping:{...(template.mapping||{})},amountSign:template.amountSign||'outflow-positive',transactionIdConfirmed:connection.transactionIdConfirmed===true,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,jstToday()):null}
- :{templateId:null,templateRevision:0,headers:[],mapping:{},amountSign:'outflow-positive',transactionIdConfirmed:false,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,jstToday()):null,interpretation:'unmapped'};return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
+// coverage keys; a mapped snapshot keeps exactly its former shape (and hash). `today` (plan omf-workflow-daily-20261025) is the JST day an
+// open period (to null) runs through: the request's day for a manual request, the tick's JST day for a scheduled one.
+function snapshotOf(connection:any,template:any,account:any,today:string=jstToday()){const snapshot:any=template?{templateId:sid(template._id),templateRevision:Number(template.revision||0),headers:[...(template.headers||[])],mapping:{...(template.mapping||{})},amountSign:template.amountSign||'outflow-positive',transactionIdConfirmed:connection.transactionIdConfirmed===true,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,today):null}
+ :{templateId:null,templateRevision:0,headers:[],mapping:{},amountSign:'outflow-positive',transactionIdConfirmed:false,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,today):null,interpretation:'unmapped'};return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
 // GUARD g3 (mirrored from financeService.ts:125-129): an unrevoked PC allowed this account, and no job queued or running on a
 // live lease; a running job whose lease expired no longer blocks (it stays claimable and continues under its own snapshot).
 // GUARD g7 (tolerance): an unverified provider/variant gets an observe job and a message, never a refusal. Plan omf-rakuten-native-
@@ -78,6 +80,17 @@ export async function queueBankSync(ownerId:string,accountId:string){
  let job:any;try{job=(await BankJob.create({ownerId,bankAccountId:account._id,jobId:randomUUID(),kind,state:'queued',open:true,requestedAt:now,lastMessage:message,snapshot,snapshotHash,statementIds:[],observation:null})).toObject()}catch(e:any){if(e.code!==11000)throw e;fail(409,'取得はすでに予約・実行中です。')}
  return{job:jobView(job),message}
 }
+// Plan omf-workflow-daily-20261025 Phase B: the one scheduled retrieval of an account's JST `day` (financeBankScheduleService, only in
+// state due). The same frozen interpretation as a manual request on that day (snapshotOf: a saved open period runs through `day`, a
+// closed one keeps its end). Open from its creation, so the partial unique index on open jobs keeps it exclusive with a manual or
+// earlier job; the unique (owner, account, schedule.day) index keeps one per day across ticks, processes and restarts. Either
+// duplicate is null, never an error. It never closes or changes another job.
+export async function queueScheduledBankJob(account:any,template:any,{day,now,revision}:{day:string,now:Date,revision:number}){
+ const {snapshot,snapshotHash}=snapshotOf(account.connection,template,account,day)
+ const message='毎日の自動取得を予約しました'+(snapshot.coverage?'（'+snapshot.coverage.from+'〜'+snapshot.coverage.to+'）':'')
+ try{return (await BankJob.create({ownerId:account.ownerId,bankAccountId:account._id,jobId:randomUUID(),kind:'retrieve',state:'queued',open:true,requestedAt:now,lastMessage:message,snapshot,snapshotHash,statementIds:[],observation:null,trigger:'schedule',schedule:{day,revision,binding:bankScheduleBinding(account.connection)}})).toObject()}
+ catch(e:any){if(e?.code===11000)return null;throw e}
+}
 export async function setCollectorBankScope(ownerId:string,collectorId:string,body:any){
  await init();const device:any=await FinanceCollector.findOne({_id:id(collectorId),ownerId,revokedAt:null}).lean();if(!device)fail(404,'Collector not found')
  if(!Array.isArray(body?.bankAccountIds)||body.bankAccountIds.length>30)fail(400,'銀行口座を確認してください。')
@@ -95,12 +108,28 @@ export async function listCollectorBankAccounts(device:any){
 }
 // One atomic claim (shape of finance/[...path].ts:22): the oldest queued job, or a running one whose lease expired, within the
 // device's bank scope; the claim carries the frozen snapshot, its hash, the provider and its adapter support.
+// Plan omf-workflow-daily-20261025 Phase B: a scheduled job (trigger schedule) that no PC has received yet (no schedule.claimedAt) is first
+// checked against its account's current setting (shared scheduledRunCurrent): when the schedule was turned off, the connection changed
+// or another retrieval was requested earlier on that JST day, it is closed as superseded here — the PC never receives it — and the next
+// job is claimed. Otherwise it is marked in flight (schedule.claimedAt) before it is returned and is never re-judged: a reclaim after an
+// expired lease resumes it. Manual jobs are claimed exactly as before.
+const SCHEDULE_CLOSED:Record<string,string>={'schedule-off':'毎日の自動取得がオフになったため、この予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','connection-changed':'接続の内容が変わったため、この自動取得の予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','already-requested-today':'同じ日に別の取得がすでに行われたため、この自動取得は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）'}
 export async function claimBankJob(device:any){
- await init();const now=new Date()
- const job:any=await BankJob.findOneAndUpdate({...scopeOf(device),$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$lt:now}}]},{$set:{state:'running',collectorId:device._id,leaseUntil:new Date(now.getTime()+LEASE_MS),lastAttemptAt:now,lastMessage:'取得を開始'}},{new:true,sort:{requestedAt:1}}).lean()
- if(!job)return{job:null}
- const account:any=await BankAccount.findOne({_id:job.bankAccountId,ownerId:device.ownerId}).lean(),provider=providerOf(account?.connection?.provider)
- return{job:{...jobView(job),bankAccountId:sid(job.bankAccountId),provider:account?.connection?.provider||null,label:provider?.[1]||null,support:provider?.[2]||'contract-pending',accountLabel:account?.connection?.accountLabel??null},account:account?{_id:sid(account._id),name:account.name,currency:account.currency,ownerId:sid(account.ownerId),connection:account.connection}:null}
+ await init()
+ for(let attempt=0;attempt<20;attempt++){
+  const now=new Date()
+  const job:any=await BankJob.findOneAndUpdate({...scopeOf(device),$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$lt:now}}]},{$set:{state:'running',collectorId:device._id,leaseUntil:new Date(now.getTime()+LEASE_MS),lastAttemptAt:now,lastMessage:'取得を開始'}},{new:true,sort:{requestedAt:1}}).lean()
+  if(!job)return{job:null}
+  const account:any=await BankAccount.findOne({_id:job.bankAccountId,ownerId:device.ownerId}).lean(),provider=providerOf(account?.connection?.provider)
+  if(job.trigger==='schedule'&&!job.schedule?.claimedAt){
+   const requested=new Date(job.requestedAt),earlier=await BankJob.findOne({ownerId:job.ownerId,bankAccountId:job.bankAccountId,_id:{$ne:job._id},kind:'retrieve',state:{$ne:'superseded'},requestedAt:{$gte:jstDayStart(requested),$lt:requested}}).select('_id').lean()
+   const reason=scheduledRunCurrent({job,account,earlier})
+   if(reason){await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{state:'superseded',open:false,completedAt:now,lastMessage:SCHEDULE_CLOSED[reason],'schedule.supersededDay':job.schedule?.day??null},$unset:{'schedule.day':'',leaseUntil:''}});continue}
+   await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{'schedule.claimedAt':now}})
+  }
+  return{job:{...jobView(job),bankAccountId:sid(job.bankAccountId),provider:account?.connection?.provider||null,label:provider?.[1]||null,support:provider?.[2]||'contract-pending',accountLabel:account?.connection?.accountLabel??null},account:account?{_id:sid(account._id),name:account.name,currency:account.currency,ownerId:sid(account.ownerId),connection:account.connection}:null}
+ }
+ return{job:null}
 }
 // Status (shape of finance/[...path].ts:33-35): only the claiming device, only while the job is running; terminal states release the account for the next request.
 export async function bankJobStatus(device:any,body:any){
@@ -132,7 +161,7 @@ export async function acceptBankJobUpload(device:any,query:any,bytes:Buffer,mime
  return result
 }
 export async function storeObservation(device:any,query:any,bytes:Buffer){return acceptBankJobUpload(device,{...query,kind:'observation'},bytes,'application/json')}
-export async function listBankJobs(ownerId:string,accountId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const jobs:any[]=await BankJob.find({ownerId,bankAccountId:account._id}).sort({requestedAt:-1,_id:-1}).limit(50).lean();const statements:any[]=await BankStatement.find({ownerId,'capture.jobId':{$in:jobs.map(j=>j.jobId)}}).lean();return{jobs:jobs.map(j=>({...jobView(j),captures:statements.filter(s=>s.capture?.jobId===j.jobId).map(captureView)}))}}
+export async function listBankJobs(ownerId:string,accountId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const jobs:any[]=await BankJob.find({ownerId,bankAccountId:account._id}).sort({requestedAt:-1,_id:-1}).limit(50).lean();const statements:any[]=await BankStatement.find({ownerId,'capture.jobId':{$in:jobs.map(j=>j.jobId)}}).lean();return{jobs:jobs.map(j=>({...jobView(j),trigger:j.trigger==='schedule'?'schedule':'manual',scheduledDay:j.schedule?.day??j.schedule?.supersededDay??null,captures:statements.filter(s=>s.capture?.jobId===j.jobId).map(captureView)}))}}
 // The stored observation of one owned job, read-only (plan omf-rakuten-bank-connector-amended-20261019 R4): the sanctioned
 // input for writing a bank's contract. Another owner's account or an unknown job is 404; nothing is written.
 export async function getBankObservation(ownerId:string,accountId:string,jobId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const job:any=await BankJob.findOne({ownerId,bankAccountId:account._id,jobId:sid(jobId)}).lean();if(!job)fail(404,'取得の記録が見つかりません。');return{jobId:job.jobId,kind:job.kind,state:job.state,requestedAt:job.requestedAt||null,snapshotHash:job.snapshotHash,observation:Array.isArray(job.observation)?job.observation:null}}

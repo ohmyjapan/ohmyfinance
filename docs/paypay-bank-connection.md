@@ -628,6 +628,16 @@ bound; its earlier 81,810 ms result under an extended test bound is retained as 
   duplicate replay and classification remain live acceptance work; routine automatic collection is not yet verified.
 - No real PayPay login, export, replay or production observation is part of this build.
 
+## Daily collection (plan `omf-workflow-daily-20261025` Phase B)
+
+A PayPay銀行 標準 connection **with a mapped template** and a saved period can be put on the opt-in 毎日の自動取得 (see
+`docs/bank-daily-collection.md`). The schedule only queues one retrieval per Japan day. The PC runs it exactly like 取得, with the same
+single automatic sign-in, the same pending marker and the same stop on 上書きログイン, refusal or an unconfirmed sign-in. So after an
+unconfirmed or refused attempt, no daily run sends the saved login again until the owner allows one more sign-in in the downloader setup
+or saves changed values. A failed run is shown (要対応) and the next day's run is queued as usual; it waits for the person rather than
+re-sending. A connection without a template
+(first capture, `mapping-required`) and BA-PLUS stay manual. This build ran no real PayPay daily run.
+
 ## Live checklist — routine retrieval (owner, after review and the separate deployment approval)
 
 1. In the normal OMF screen, save a requested period on each PayPay 標準 connection (existing connections have none; 取得 refuses

@@ -35,7 +35,24 @@
       <p v-if="messages[a.id]" class="text-sm text-green-700 dark:text-green-300" role="status" data-bank-sync-message>{{ messages[a.id] }}</p>
       <p v-if="a.connection" class="break-words text-xs" data-bank-test-state>{{ testStateText(a) }}</p>
       <div class="space-y-1"><p class="text-sm font-medium">取得を許可するPC</p><p class="text-xs text-gray-500" data-bank-pc-status>{{ pcStatusText(a) }}</p><p v-if="!collectors.length" class="text-xs text-gray-500">接続済みのPCがありません。カード連携の手順でPCを接続してください。</p><label v-for="c in collectors" :key="c._id" class="flex items-center gap-2 text-sm"><input type="checkbox" :data-bank-device="c._id" :checked="(c.bankAccountIds || []).map(String).includes(a.id)" :disabled="busy" @change="toggleDevice(c, a.id, $event)">{{ c.name }}</label></div>
-      <div class="space-y-1"><p class="text-sm font-medium">取得の記録</p><p v-if="!(jobs[a.id] || []).length" class="text-xs text-gray-500">まだ取得はありません。</p><template v-for="j in jobs[a.id] || []" :key="j.jobId"><p class="break-words text-xs" :data-bank-job="j.jobId">{{ kindName(j.kind, j) }} · {{ stateName(j.state) }} · {{ when(j.requestedAt) }}<span v-if="j.snapshot?.coverage"> · 取得期間（指定） {{ j.snapshot.coverage.from }}〜{{ j.snapshot.coverage.to }}</span> · 取得時の設定 {{ (j.snapshotHash || '').slice(0, 8) }}<span v-if="j.lastMessage"> · {{ j.lastMessage }}</span><span v-if="j.hasObservation"> · 観察記録あり{{ eventChannelText(j.eventChannel) }} · <button class="text-primary-main dark:text-primary-light" data-bank-observation-open @click="toggleObservation(a.id, j.jobId)">{{ observations[a.id + ':' + j.jobId] ? '観察記録を閉じる' : '観察記録を見る' }}</button></span></p><pre v-if="observations[a.id + ':' + j.jobId]" data-bank-observation class="max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 p-2 text-xs dark:border-gray-700">{{ observationText(observations[a.id + ':' + j.jobId]) }}</pre></template></div>
+      <div v-if="a.connection" class="min-w-0 space-y-2 rounded-xl border border-gray-200 p-3 dark:border-gray-700" data-bank-schedule>
+        <p class="text-sm font-medium">毎日の自動取得</p>
+        <p class="break-words text-xs" data-bank-schedule-saved>{{ scheduleSavedText(a) }}</p>
+        <p class="break-words text-xs" :class="scheduleTone(a)" :role="scheduleAlert(a) ? 'alert' : 'status'" :data-bank-schedule-state="schedules[a.id]?.status?.state || ''" data-bank-schedule-status>{{ scheduleStatusText(a) }}</p>
+        <p v-if="schedules[a.id]?.status?.lastFailure" role="alert" class="break-words text-xs text-amber-700 dark:text-amber-300" data-bank-schedule-last-failure>{{ lastFailureText(a) }}</p>
+        <template v-if="scheduleForms[a.id] && (schedules[a.id]?.supported || schedules[a.id]?.schedule?.enabled)">
+          <div class="flex min-w-0 flex-wrap items-end gap-3">
+            <label class="flex items-center gap-2 text-sm"><input v-model="scheduleForms[a.id].enabled" data-bank-schedule-enabled type="checkbox" :disabled="busy">毎日自動で取得する</label>
+            <label class="min-w-0 text-sm">取得する時刻（日本時間）<select v-model.number="scheduleForms[a.id].hour" data-bank-schedule-hour :class="INPUT" :disabled="busy"><option v-for="h in 24" :key="h" :value="h - 1">{{ h - 1 }}時以降</option></select></label>
+            <button class="btn btn-secondary" :disabled="busy || (!scheduleDirty(a) && schedules[a.id]?.status?.state !== 'reconfirm')" data-bank-schedule-save @click="saveSchedule(a)">{{ schedules[a.id]?.status?.state === 'reconfirm' && !scheduleDirty(a) ? '現在の接続で自動取得を保存し直す' : '自動取得の設定を保存' }}</button>
+          </div>
+          <p v-if="scheduleDirty(a)" class="text-xs text-amber-700 dark:text-amber-300" data-bank-schedule-unsaved>未保存の変更があります（保存するまで反映されません）</p>
+        </template>
+        <p v-else-if="schedules[a.id]" class="break-words text-xs text-gray-500" data-bank-schedule-unsupported>{{ unsupportedText(supportReason(a)) }}「{{ syncLabel(a) }}」ボタンはこれまでどおり使えます。</p>
+        <p v-if="scheduleErrors[a.id]" role="alert" class="break-words text-sm text-red-600 dark:text-red-300" data-bank-schedule-error>{{ scheduleErrors[a.id] }}</p>
+        <p class="break-words text-xs leading-relaxed text-gray-500" data-bank-schedule-note>毎日、指定した時刻（日本時間）以降に1回だけ、接続したPCで「取得」と同じ手順で取得します。取得期間は接続に保存した期間です（終了日が空欄なら開始日から取得する日の当日まで）。PCが起動していなかった日の分は、次の1回にまとめて取得します。銀行が追加の確認を求めたときや、保存済みのログインが使えないときは、PCのChromeでお知らせして待ち、保存済みのログインを自動で再送信することはありません。失敗したときはここにお知らせし、翌日も1回だけ自動で取得します。手動の「取得」とCSVの取込はこれまでどおり使えます。</p>
+      </div>
+      <div class="space-y-1"><p class="text-sm font-medium">取得の記録</p><p v-if="!(jobs[a.id] || []).length" class="text-xs text-gray-500">まだ取得はありません。</p><template v-for="j in jobs[a.id] || []" :key="j.jobId"><p class="break-words text-xs" :data-bank-job="j.jobId">{{ j.trigger === 'schedule' ? '毎日の自動取得（' + (j.scheduledDay || '') + '）' : kindName(j.kind, j) }} · {{ stateName(j.state) }} · {{ when(j.requestedAt) }}<span v-if="j.snapshot?.coverage"> · 取得期間（指定） {{ j.snapshot.coverage.from }}〜{{ j.snapshot.coverage.to }}</span> · 取得時の設定 {{ (j.snapshotHash || '').slice(0, 8) }}<span v-if="j.lastMessage"> · {{ j.lastMessage }}</span><span v-if="j.hasObservation"> · 観察記録あり{{ eventChannelText(j.eventChannel) }} · <button class="text-primary-main dark:text-primary-light" data-bank-observation-open @click="toggleObservation(a.id, j.jobId)">{{ observations[a.id + ':' + j.jobId] ? '観察記録を閉じる' : '観察記録を見る' }}</button></span></p><pre v-if="observations[a.id + ':' + j.jobId]" data-bank-observation class="max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 p-2 text-xs dark:border-gray-700">{{ observationText(observations[a.id + ':' + j.jobId]) }}</pre></template></div>
       <div class="space-y-1"><p class="text-sm font-medium">受信した明細</p><p v-if="!(captures[a.id] || []).length" class="text-xs text-gray-500">まだありません。</p><div v-for="c in captures[a.id] || []" :key="c.id" class="flex flex-wrap items-center gap-2 text-xs" :data-bank-capture="c.id"><span class="min-w-0 flex-1 break-words">{{ c.name }} · {{ captureState(c.state) }} · 口座照合 {{ labelCheckText(c.labelChecked) }}<span v-if="c.dateRange" data-bank-capture-range> · 明細の日付 {{ c.dateRange.min }}〜{{ c.dateRange.max }}</span><span v-if="c.rows"> · 新規 {{ c.rows.new }} 既存 {{ c.rows.existing }} 差異 {{ c.rows.differs }}</span><span v-if="emptyCapture(c)" class="text-amber-700 dark:text-amber-300" data-bank-capture-empty> · 明細0件（期間内に取引がないのか取得できていないのかは未確認・要確認）</span><span v-if="mappingPending(c)" class="text-amber-700 dark:text-amber-300" data-bank-capture-mapping> · {{ c.dateRange ? '列の割り当て後に取込で割り当て済み（この受信の記録は要確認のまま残ります）' : '列の割り当て待ち（取引はまだ取り込まれていません。「取込で割り当て」から割り当ててください）' }}</span><span v-else-if="c.reason"> · {{ c.reason }}</span></span><button class="text-primary-main dark:text-primary-light" data-bank-capture-map @click="emit('map', c.id)">取込で割り当て</button></div></div>
     </article>
   </section>
@@ -71,7 +88,7 @@ const testStateText=(a:any)=>{
  const retrieves=bankCapability(a.connection?.provider,a.connection?.variant??null).mode==='retrieve'
  if(!retrieves&&guidedOf(a.connection))return '接続テスト: 自動取得の手順が未確認のため対象外（ガイド付き取得のみ・自動取得は未実施）'
  if(!retrieves)return '接続テスト: 自動取得の手順が未確認のため対象外（観察取得のみ）'
- const job=(jobs[a.id]||[]).find((j:any)=>j.kind==='retrieve');if(!job)return '接続テスト: 未実施（「取得」を押すと実際の銀行で試します）'
+ const job=(jobs[a.id]||[]).find((j:any)=>j.kind==='retrieve'&&j.state!=='superseded');if(!job)return '接続テスト: 未実施（「取得」を押すと実際の銀行で試します）'
  if(job.state==='complete'&&(job.captures||[]).some((c:any)=>c.state==='imported'))return `接続テスト: 成功（${when(job.completedAt||job.requestedAt)} · 明細を取り込みました）`
  if(job.state==='complete')return `接続テスト: 完了（取り込んだ明細なし・要確認）${job.lastMessage?' · '+job.lastMessage:''}`
  if(job.state==='failed')return `接続テスト: 失敗（${job.lastMessage||'理由不明'}）`
@@ -80,7 +97,7 @@ const testStateText=(a:any)=>{
 const pcStatusText=(a:any)=>{const n=collectors.value.filter((c:any)=>(c.bankAccountIds||[]).map(String).includes(a.id)).length;return n?`取得を許可したPC: ${n}台`:'この口座の取得を許可したPCがありません（下のチェックで許可してください）'}
 const emptyCapture=(c:any)=>c.state==='imported'&&!!c.rows&&Number(c.rows.new||0)+Number(c.rows.existing||0)+Number(c.rows.unchanged||0)===0
 const kindName=(k:string,j?:any)=>k==='retrieve'?'自動取得':j&&guidedOf(j.snapshot)?'ガイド付き取得':'観察取得'
-const stateName=(s:string)=>({queued:'予約',running:'実行中',verification_required:'サインイン・確認待ち（PCのChromeを確認）',complete:'完了',failed:'失敗'} as Record<string,string>)[s]||s
+const stateName=(s:string)=>({queued:'予約',running:'実行中',verification_required:'サインイン・確認待ち（PCのChromeを確認）',complete:'完了',failed:'失敗',superseded:'置き換え済み（未実行）'} as Record<string,string>)[s]||s
 const captureState=(s:string)=>({received:'受信',imported:'取込済み',needs_review:'要確認'} as Record<string,string>)[s]||s
 const labelCheckText=(checked:any)=>['未確認','確認済み'][Number(checked===true)]
 const eventChannelText=(channel:any)=>({false:' · 操作の記録なし（画面の記録は保存済み）'} as Record<string,string>)[String(channel)]||''
@@ -90,8 +107,42 @@ const mapsTransactionId=(templateId:string)=>{const t=templates.value.find(t=>t.
 // fields, inputs and downloads per recorded page — the server stores no typed value, so none can appear here.
 const observationText=(pages:any[])=>(pages||[]).map((p:any,i:number)=>`${i+1}. ${p.pathname} · ${p.title}${eventChannelText(p.eventChannel)}${(p.clicks||[]).length?' · クリック: '+p.clicks.map((c:any)=>c.text||c.id||c.tag).join(', '):''}${(p.typedInto||[]).length?' · 入力: '+p.typedInto.map((t:any)=>t.id+'('+t.type+')').join(', '):''}${(p.inputs||[]).length?' · 項目: '+p.inputs.map((x:any)=>x.id+'('+x.type+')').join(', '):''}${(p.downloadEvents||[]).length?' · ダウンロード: '+p.downloadEvents.map((d:any)=>d.host+'/'+d.suggestedFilename).join(', '):''}${p.eventsDropped?' · 記録できなかった操作 '+p.eventsDropped:''}`).join('\n')
 async function toggleObservation(accountId:string,jobId:string){const key=accountId+':'+jobId;if(observations[key]){delete observations[key];return}await run(async()=>{const r:any=await $fetch(api+'accounts/'+accountId+'/jobs/'+jobId+'/observation',{headers:user.authHeader});observations[key]=r.observation||[]})}
+// Plan omf-workflow-daily-20261025 Phase B: the daily schedule of one account (GET/PUT …/schedule). The saved setting and the server's
+// derived state are shown apart from the unsaved form; times are shown in JST. Saving sends the revision that was read (409 when another
+// screen saved first: the saved state is reloaded, the form is kept). A failed latest run is shown on its own line (lastFailure); the
+// schedule is not held by it.
+const schedules=reactive<Record<string,any>>({}),scheduleForms=reactive<Record<string,any>>({}),scheduleErrors=reactive<Record<string,string>>({})
+const jst=(v:any)=>v?new Date(new Date(v).getTime()+9*3600000).toISOString().slice(0,16).replace('T',' '):''
+const scheduleDirty=(a:any)=>{const f=scheduleForms[a.id],s=schedules[a.id]?.schedule;return !!f&&!!s&&(f.enabled!==s.enabled||f.hour!==s.hour)}
+function setSchedule(id:string,r:any){const f=scheduleForms[id],s=schedules[id]?.schedule,dirty=!!f&&!!s&&(f.enabled!==s.enabled||f.hour!==s.hour);schedules[id]=r;if(!dirty)scheduleForms[id]={enabled:r.schedule.enabled,hour:r.schedule.hour}}
+const UNSUPPORTED_TEXT:Record<string,string>={'no-connection':'接続が保存されていないため、毎日の自動取得はできません。','observe-only':'このログイン方式は自動取得の手順が未確認のため、毎日の自動取得の対象外です。','unmapped':'列の割り当て（テンプレート）がない接続は、毎日の自動取得の対象外です。最初の明細を割り当て、そのテンプレートで接続を保存すると対象になります。','no-coverage':'取得期間（開始日）が保存されていないため、毎日の自動取得の対象外です。','template-missing':'接続のテンプレートが見つからないため、毎日の自動取得の対象外です。接続を保存し直してください。'}
+const unsupportedText=(reason:any)=>UNSUPPORTED_TEXT[String(reason)]||'この接続は毎日の自動取得の対象外です。'
+const supportReason=(a:any)=>!a.connection?.provider?'no-connection':bankCapability(a.connection.provider,a.connection.variant??null).mode!=='retrieve'?'observe-only':!a.connection.templateId?'unmapped':!a.connection.coverage?'no-coverage':'template-missing'
+const coverageText=(a:any)=>{const c=a.connection?.coverage;if(!c)return '';return c.to?`取得期間 ${c.from}〜${c.to}（終了日が指定されているため、毎日同じ期間を取得します）`:`取得期間 ${c.from}〜取得する日の当日`}
+const scheduleSavedText=(a:any)=>{const s=schedules[a.id]?.schedule;if(!s)return '保存済みの設定: 読み込み中';return s.enabled?`保存済みの設定: 毎日 ${s.hour}時（日本時間）以降に1回、自動で取得${coverageText(a)?' · '+coverageText(a):''}`:'保存済みの設定: オフ（自動では取得しません）'}
+const scheduleAlert=(a:any)=>['attention','reconfirm'].includes(schedules[a.id]?.status?.state)
+const scheduleTone=(a:any)=>scheduleAlert(a)?'text-amber-700 dark:text-amber-300':['off','unsupported','waiting-pc'].includes(schedules[a.id]?.status?.state)?'text-gray-500':'text-gray-700 dark:text-gray-200'
+const scheduleStatusText=(a:any)=>{const st=schedules[a.id]?.status;if(!st)return '';const j=st.job||{},by=j.trigger==='schedule'?'毎日の自動取得':'手動の取得'
+ switch(st.state){
+  case 'off':return '状態: 自動取得はオフです'
+  case 'unsupported':return '状態: 対象外のため自動では取得していません — '+unsupportedText(st.reason)
+  case 'reconfirm':return '状態: 要確認 — 保存したときから接続（銀行・ログイン方式・テンプレート）が変わったため、自動取得を止めています。内容を確認して設定を保存し直すと再開します'
+  case 'attention':return `状態: 要対応 — 銀行のサインイン・追加の確認待ちです。接続したPCのChromeで操作してください（${by} · ${jst(j.requestedAt)} 予約）`
+  case 'running':return `状態: 取得中（${by} · ${jst(j.requestedAt)} 予約）`
+  case 'interrupted':return `状態: 取得が途中で止まっています（${by} · ${jst(j.requestedAt)} 予約）。PCのダウンローダーが同じ取得を再開します。新しい取得は予約しません`
+  case 'queued':return `状態: 予約済み・PCの受け取り待ち（${by} · ${jst(j.requestedAt)} 予約）。PCが起動していない間は、この予約のまま待ちます`
+  case 'waiting-pc':return '状態: PC待ち — この口座の取得を許可した接続済みのPCがないため、予約できません'
+  case 'done-today':return `状態: 本日分は${j.state==='complete'?'取得済み':j.state==='failed'?'実行済み（失敗）':'実行済み'}（${by} · ${jst(j.completedAt||j.requestedAt)}）。次回は ${jst(st.nextAt)}（日本時間）以降`
+  case 'due':return `状態: 本日 ${st.hour}時（日本時間）を過ぎたため、まもなく予約されます`
+  case 'waiting':return `状態: 次回は ${jst(st.nextAt)}（日本時間）以降に予約されます`
+  default:return '状態: '+st.state}}
+const lastFailureText=(a:any)=>{const f=schedules[a.id]?.status?.lastFailure;if(!f)return '';return `要対応 — 前回の取得は失敗しました（${f.trigger==='schedule'?'毎日の自動取得':'手動の取得'} · ${jst(f.completedAt||f.requestedAt)}）。理由は下の「取得の記録」に表示されます。銀行の確認が必要なときは接続したPCのChromeで操作し、ログインを保存し直した場合などは「${syncLabel(a)}」で取り直せます。毎日の自動取得は続けますが、確認できていない保存済みのログインは自動では送信しません`}
+async function saveSchedule(a:any){const f=scheduleForms[a.id],s=schedules[a.id]?.schedule;if(!f||!s||busy.value)return;busy.value=true;scheduleErrors[a.id]=''
+ try{const r:any=await $fetch(api+'accounts/'+a.id+'/schedule',{method:'PUT',headers:user.authHeader,body:{enabled:f.enabled,hour:f.hour,revision:s.revision}});schedules[a.id]=r;scheduleForms[a.id]={enabled:r.schedule.enabled,hour:r.schedule.hour};messages[a.id]=r.schedule.enabled?'自動取得の設定を保存しました。':'自動取得をオフにしました。'}
+ catch(e:any){scheduleErrors[a.id]=e.data?.data?.message||e.data?.statusMessage||e.message;try{schedules[a.id]=await $fetch(api+'accounts/'+a.id+'/schedule',{headers:user.authHeader})}catch{}}
+ finally{busy.value=false}}
 async function run(fn:()=>Promise<void>){busy.value=true;error.value='';try{await fn()}catch(e:any){error.value=e.data?.data?.message||e.data?.statusMessage||e.message}finally{busy.value=false}}
-async function loadJobs(id:string){const [j,c]:any[]=await Promise.all([$fetch(api+'accounts/'+id+'/jobs',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/captures',{headers:user.authHeader})]);jobs[id]=j.jobs;captures[id]=c.captures}
+async function loadJobs(id:string){const [j,c,s]:any[]=await Promise.all([$fetch(api+'accounts/'+id+'/jobs',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/captures',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/schedule',{headers:user.authHeader})]);jobs[id]=j.jobs;captures[id]=c.captures;setSchedule(id,s)}
 // The per-account form state exists before the account renders (the template reads forms[a.id]); jobs and captures follow.
 async function load(){const [a,t,c]:any[]=await Promise.all([$fetch(api+'accounts',{headers:user.authHeader}),$fetch(api+'templates',{headers:user.authHeader}),$fetch('/api/finance/collectors',{headers:user.authHeader})]);templates.value=t.templates;collectors.value=(c.collectors||[]).filter((x:any)=>!x.revokedAt)
  for(const acc of a.accounts)forms[acc.id]??={provider:acc.connection?.provider||'',templateId:acc.connection?.templateId||'',accountLabel:acc.connection?.accountLabel||'',transactionIdConfirmed:!!acc.connection?.transactionIdConfirmed,variant:acc.connection?.variant||'',coverageFrom:acc.connection?.coverage?.from||'',coverageTo:acc.connection?.coverage?.to||''}

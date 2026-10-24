@@ -3,6 +3,7 @@ import { financeUser, fail } from '../../services/financeService'
 import { boundedBody } from '../../services/financeDraftService'
 import * as bank from '../../services/financeBankStatementService'
 import * as collection from '../../services/financeBankCollectionService'
+import * as schedule from '../../services/financeBankScheduleService'
 import * as matches from '../../services/financePaymentMatchService'
 import * as classification from '../../services/financeBankClassificationService'
 import { calendarCompany } from '../../utils/calendarAccess'
@@ -50,6 +51,9 @@ export default defineEventHandler(async event=>{
     if(parts[3]==='sync'&&method==='POST')return collection.queueBankSync(ownerId,parts[2])
     if(parts[3]==='jobs'&&method==='GET')return collection.listBankJobs(ownerId,parts[2])
     if(parts[3]==='captures'&&method==='GET')return collection.listBankCaptures(ownerId,parts[2])
+    // Plan omf-workflow-daily-20261025 Phase B: the owner's daily collection setting of one account and its current state.
+    if(parts[3]==='schedule'&&method==='GET')return schedule.readBankSchedule(ownerId,parts[2])
+    if(parts[3]==='schedule'&&method==='PUT')return schedule.saveBankSchedule(ownerId,parts[2],await json())
    }
    // R5 (plan omf-rakuten-bank-connector-amended-20261019): the stored observation of one job, read-only and owner-scoped — the input for writing a bank's contract.
    if(parts[1]==='accounts'&&parts.length===6&&parts[3]==='jobs'&&parts[5]==='observation'&&method==='GET')return collection.getBankObservation(ownerId,parts[2],parts[4])
