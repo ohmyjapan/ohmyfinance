@@ -462,6 +462,98 @@ async function paypayBindingLegs({pass,digest,origin,user,other,service,models}:
   pass('each of the '+BANK_BINDINGS.length+' bank binding mutants lets through exactly the PayPay attacks and races its line guards (bank-entry: entry names; bank-scope: the device scope; bank-live: provider, login type and owner) and still refuses every other attack')
 }
 
+// 池田泉州銀行 ビジネスゲート entries (plan omf-ikeda-collector-20261025): ikeda-<bankAccountId> of an owned BankAccount whose live
+// connection is ikeda/portal (the password-only certificate login), granted to THIS device after the card-only pairing. The same five
+// bank binding lines guard them; this leg proves the positive flow next to PayPay/楽天銀行/card keys, provider/variant/entry/scope/owner
+// confusion with the other bank entries (the インターネットEB `direct` variant and a connection without a login type included), after-save
+// changes and post-I/O races, and each binding line removed in turn.
+async function ikedaBindingLegs({pass,digest,origin,user,other,service,models}:{pass:(name:string)=>void,digest:(v:string)=>string,origin:string,user:any,other:any,service:any,models:any}){
+  const {sealEnvelope}=await import('../collector/vault.mjs')
+  const {BankAccount}=await import('../server/models/FinancePaymentMatch')
+  const fresh:any=await User.findById(user._id).select('+password +twoFactorSecret +twoFactorBackupCodes')
+  const authStamp=service.stamp(fresh),trustToken=randomBytes(32).toString('hex')
+  const pair=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
+  const card:any=await FinancialAccount.create({ownerId:user._id,provider:'amex',name:'Ikeda-leg Amex',cardIdentifiers:['24680'],primaryCard:'24680',otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'})
+  const connection=(provider:string,variant:string|null)=>({provider,templateId:null,transactionIdConfirmed:false,accountLabel:null,variant,coverage:null,connectedAt:new Date()})
+  const I:any=await BankAccount.create({ownerId:user._id,name:'Fictional Ikeda portal',currency:'JPY',revision:1,connection:connection('ikeda','portal')})
+  const I2:any=await BankAccount.create({ownerId:user._id,name:'Fictional Ikeda portal 2',currency:'JPY',revision:1,connection:connection('ikeda','portal')})
+  const outside:any=await BankAccount.create({ownerId:user._id,name:'Fictional Ikeda (not granted)',currency:'JPY',revision:1,connection:connection('ikeda','portal')})
+  const direct:any=await BankAccount.create({ownerId:user._id,name:'Fictional Ikeda インターネットEB',currency:'JPY',revision:1,connection:connection('ikeda','direct')})
+  const plain:any=await BankAccount.create({ownerId:user._id,name:'Fictional Ikeda (no login type)',currency:'JPY',revision:1,connection:connection('ikeda',null)})
+  const paypay:any=await BankAccount.create({ownerId:user._id,name:'Fictional PayPay (Ikeda leg)',currency:'JPY',revision:1,connection:connection('paypay','standard')})
+  const rakuten:any=await BankAccount.create({ownerId:user._id,name:'Fictional Rakuten (Ikeda leg)',currency:'JPY',revision:1,connection:connection('rakuten','standard')})
+  const foreign:any=await BankAccount.create({ownerId:other._id,name:'Foreign Ikeda',currency:'JPY',revision:1,connection:connection('ikeda','portal')})
+  const token='omfc_'+randomBytes(32).toString('hex')
+  const device:any=await FinanceCollector.create({ownerId:user._id,name:'Ikeda-leg PC',tokenHash:digest(token),accountIds:[card._id]})
+  const inst={id:randomBytes(16).toString('hex'),generation:randomBytes(32).toString('hex')}
+  await models.CollectorInstallation.create({_id:inst.id,ownerId:user._id,collectorId:device._id,generation:inst.generation,publicKey:pair.publicKey,fingerprint:digest(pair.publicKey),origin,trustHash:digest(trustToken),authStamp,accountIds:[card._id],trustedAt:new Date()})
+  const grantFor=async()=>{const g=randomBytes(32).toString('hex');await models.CollectorGrant.create({_id:digest(g),ownerId:user._id,collectorId:device._id,installationId:inst.id,generation:inst.generation,origin,accountIds:[card._id],authStamp,trustHash:digest(trustToken),expiresAt:new Date(Date.now()+20*60000)});return g}
+  const grant=await grantFor()
+  const SCOPE=[I._id,I2._id,direct._id,plain._id,paypay._id,rakuten._id,foreign._id]
+  const scope=(ids:any[])=>FinanceCollector.updateOne({_id:device._id},{$set:{bankAccountIds:ids}})
+  await scope(SCOPE)
+  const record=(provider:string,accountId:string,entryId:string,{ownerId=String(user._id)}:{ownerId?:string}={})=>{const keyId=randomBytes(32).toString('hex');const aad={v:3,installationId:inst.id,origin,ownerId,provider,accountId,generation:inst.generation,keyId};return {keyId,entryId,aad,wrapped:sealEnvelope(pair.publicKey,aad,{password:randomBytes(6).toString('hex')}).wrapped}}
+  const ik=(account:any,entry='ikeda-'+String(account._id),extra={})=>record('ikeda',String(account._id),entry,extra)
+  const refused=async(attempt:Promise<any>)=>{try{await attempt;return false}catch(error:any){if([400,401,403,404].includes(error?.statusCode))return true;throw error}}
+  // 1. Positive: two Ikeda portal keys on one card-only grant, idempotent, read back (also under a renewed grant); the PayPay, 楽天銀行
+  // and Amex keys of the same grant next to them are unchanged.
+  const keys=[ik(I),ik(I2)]
+  for(const k of keys){await service.putKey(token,grant,k);await service.putKey(token,grant,k)}
+  for(const k of keys)assert.equal((await service.getKey(token,grant,k.keyId)).wrapped,k.wrapped,'ikeda:read-after-write')
+  const renewed=await grantFor();for(const k of keys)assert.equal((await service.getKey(token,renewed,k.keyId)).aad.accountId,k.aad.accountId,'ikeda:renewed-grant-read')
+  const others=[record('paypay',String(paypay._id),'paypay-'+String(paypay._id)),record('rakuten',String(rakuten._id),'rakuten-'+String(rakuten._id)),record('amex',String(card._id),'amex-'+String(card._id))]
+  for(const r of others){await service.putKey(token,grant,r);assert.equal((await service.getKey(token,grant,r.keyId)).wrapped,r.wrapped,'ikeda:other-key-unchanged '+r.entryId)}
+  pass('ikeda key: two 池田泉州銀行 ビジネスゲート accounts granted to one device after its card-only pairing each seal, re-register idempotently and read back their own password-only key (also under a renewed grant); the PayPay, 楽天銀行 and Amex keys of the same grant are unchanged')
+  // 2. Attacks: `opens` names the binding line whose removal lets the attack through; every other attack stays refused by another line.
+  const ATTACKS:Record<string,{opens:string[],run:(svc:any)=>Promise<any>}>={
+    'ikeda-entry-other-account':{opens:['bank-entry'],run:svc=>svc.putKey(token,grant,ik(I,'ikeda-'+String(I2._id)))},
+    'ikeda-entry-as-paypay':{opens:['bank-entry'],run:svc=>svc.putKey(token,grant,ik(I,'paypay-'+String(I._id)))},
+    'ikeda-outside-scope':{opens:['bank-scope'],run:svc=>svc.putKey(token,grant,ik(outside))},
+    'ikeda-direct-variant':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,ik(direct))},
+    'ikeda-no-login-type':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,ik(plain))},
+    'ikeda-on-paypay-account':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,ik(paypay))},
+    'ikeda-on-rakuten-account':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,ik(rakuten))},
+    'paypay-on-ikeda-account':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,record('paypay',String(I._id),'paypay-'+String(I._id)))},
+    'rakuten-on-ikeda-account':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,record('rakuten',String(I._id),'rakuten-'+String(I._id)))},
+    'ikeda-other-owner':{opens:['bank-live'],run:svc=>svc.putKey(token,grant,ik(foreign))},
+    'ikeda-as-card':{opens:[],run:svc=>svc.putKey(token,grant,record('amex',String(I._id),'amex-'+String(I._id)))},
+    'ikeda-as-service':{opens:[],run:svc=>svc.putKey(token,grant,record('ikeda','ikeda','ikeda'))},
+    'ikeda-malformed-id':{opens:[],run:svc=>svc.putKey(token,grant,record('ikeda','x','ikeda-x'))},
+    'ikeda-aad-owner':{opens:[],run:svc=>svc.putKey(token,grant,ik(I,undefined,{ownerId:String(other._id)}))},
+    'ikeda-aad-keyid':{opens:[],run:svc=>{const r=ik(I);return svc.putKey(token,grant,{...r,keyId:randomBytes(32).toString('hex')})}},
+    'ikeda-poll-token-as-grant':{opens:[],run:svc=>svc.putKey(token,token.slice(5),ik(I))},
+    'ikeda-other-device':{opens:[],run:svc=>svc.getKey('omfc_'+'7'.repeat(64),grant,keys[0].keyId)}
+  }
+  for(const [name,attack] of Object.entries(ATTACKS))assert.equal(await refused(attack.run(service)),true,'the real service accepted the Ikeda attack '+name)
+  pass('ikeda key attacks refused: another account\'s or a PayPay-named entry, an account outside the device scope, the インターネットEB direct variant or no login type, an Ikeda AAD on a PayPay or 楽天銀行 account and their AADs on an Ikeda account, another owner\'s account, Ikeda as a card or service entry, malformed id, owner/key-id mismatch, poll token as grant, another device')
+  // 3. Changes after the save stop that account's release only; restoring them releases it again.
+  const release=(i=0)=>service.getKey(token,grant,keys[i].keyId)
+  await scope(SCOPE.filter(id=>String(id)!==String(I._id)));assert.equal(await refused(release(0)),true,'ikeda:removed-scope');assert.equal((await release(1)).wrapped,keys[1].wrapped,'ikeda:other-account-unaffected');await scope(SCOPE)
+  for(const change of [{'connection.provider':'paypay'},{'connection.provider':'resona'},{'connection.variant':'direct'},{'connection.variant':null},{connection:null}]){const saved:any=await BankAccount.findById(I._id).lean();await BankAccount.updateOne({_id:I._id},{$set:change});assert.equal(await refused(release(0)),true,'ikeda:changed-connection '+JSON.stringify(change));assert.equal((await release(1)).wrapped,keys[1].wrapped,'ikeda:other-account-unaffected');await BankAccount.updateOne({_id:I._id},{$set:{connection:saved.connection}})}
+  await models.CollectorGrant.updateOne({_id:digest(grant)},{$set:{revokedAt:new Date()}});for(const i of [0,1])assert.equal(await refused(release(i)),true,'ikeda:revoked-grant');await models.CollectorGrant.updateOne({_id:digest(grant)},{$unset:{revokedAt:1}})
+  await FinanceCollector.updateOne({_id:device._id},{$set:{revokedAt:new Date()}});assert.equal(await refused(release(1)),true,'ikeda:revoked-device');await FinanceCollector.updateOne({_id:device._id},{$unset:{revokedAt:1}})
+  for(const i of [0,1])assert.equal((await release(i)).wrapped,keys[i].wrapped,'ikeda:restored-release')
+  pass('after the save, a removed scope, a provider change (PayPay銀行/りそな銀行), the direct/no login type and a cleared connection each stop that Ikeda account\'s release while the other keeps its own; a revoked grant or device stops both; restoring releases again')
+  // 4. Races between the first binding check and the end of the key I/O (the second device read), per operation.
+  const findOne=FinanceCollector.findOne.bind(FinanceCollector)
+  const raced=async(attempt:()=>Promise<any>,change:()=>Promise<any>,undo:()=>Promise<any>)=>{let reads=0,fired=false;(FinanceCollector as any).findOne=(...args:any[])=>{const q:any=(findOne as any)(...args);if(++reads===2&&!fired){fired=true;const lean=q.lean.bind(q);q.lean=async(...l:any[])=>{await change();return lean(...l)}}return q};try{const result=await refused(attempt());assert.equal(fired,true,'the race hook fired (second device read)');return result}finally{(FinanceCollector as any).findOne=findOne;await undo()}}
+  const without0=()=>scope(SCOPE.filter(id=>String(id)!==String(I._id))),restore=()=>scope(SCOPE)
+  const RACES:Record<string,{guard:string,recheck:string,run:(svc:any)=>Promise<boolean>}>={
+    'ikeda-get-scope':{guard:'bank-scope',recheck:'bank-recheck-get',run:svc=>raced(()=>svc.getKey(token,grant,keys[0].keyId),without0,restore)},
+    'ikeda-get-variant':{guard:'bank-live',recheck:'bank-recheck-get',run:svc=>raced(()=>svc.getKey(token,grant,keys[0].keyId),()=>BankAccount.updateOne({_id:I._id},{$set:{'connection.variant':'direct'}}),()=>BankAccount.updateOne({_id:I._id},{$set:{'connection.variant':'portal'}}))},
+    'ikeda-put-scope':{guard:'bank-scope',recheck:'bank-recheck-put',run:svc=>raced(()=>svc.putKey(token,grant,ik(I)),without0,restore)}
+  }
+  for(const [name,race] of Object.entries(RACES))assert.equal(await race.run(service),true,'the real service released an Ikeda key across the race '+name)
+  pass('an Ikeda scope removal or a change to the インターネットEB direct variant between the first binding check and the end of the key I/O is caught by the post-I/O recheck (get and put)')
+  // 5. Each bank binding line removed in turn: exactly the attacks it opens get through; every other attack and race outcome holds.
+  for(const marker of BANK_BINDINGS)await withMutant(SECURITY_SERVICE,marker,async m=>{
+    for(const [name,attack] of Object.entries(ATTACKS)){const open=attack.opens.includes(marker);assert.equal(await refused(attack.run(m)),!open,`ikeda mutant ${marker}: the attack ${name} was ${open?'still refused':'accepted'}`)}
+    for(const [name,race] of Object.entries(RACES)){const open=marker===race.recheck||marker===race.guard;assert.equal(await race.run(m),!open,`ikeda mutant ${marker}: the race ${name} was ${open?'still refused':'accepted'}`)}
+    for(const i of [0,1])assert.equal((await m.getKey(token,grant,keys[i].keyId)).wrapped,keys[i].wrapped,`ikeda mutant ${marker}: the legitimate Ikeda key ${i}`)
+  })
+  pass('each of the '+BANK_BINDINGS.length+' bank binding mutants lets through exactly the Ikeda attacks and races its line guards (bank-entry: entry names; bank-scope: the device scope; bank-live: provider, login type and owner) and still refuses every other attack')
+}
+
 async function main() {
   const service = await import('../server/services/financeCollectorSecurityService')
   const models = await import('../server/models/FinanceCollectorSecurity')
@@ -606,7 +698,8 @@ async function main() {
     await securityBindingLegs({pass,digest,origin,user,service,models})
     await bankBindingLegs({pass,digest,origin,user,other,service,models})
     await paypayBindingLegs({pass,digest,origin,user,other,service,models})
-    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,connectMutants:BINDINGS.length,securityMutants:SECURITY_BINDINGS.length,bankMutants:BANK_BINDINGS.length,paypayMutants:BANK_BINDINGS.length}))
+    await ikedaBindingLegs({pass,digest,origin,user,other,service,models})
+    console.log(JSON.stringify({pass:true,checks,bankCalls:0,productionWrites:0,connectMutants:BINDINGS.length,securityMutants:SECURITY_BINDINGS.length,bankMutants:BANK_BINDINGS.length,paypayMutants:BANK_BINDINGS.length,ikedaMutants:BANK_BINDINGS.length}))
   } finally {await mongoose.disconnect();await mongo.stop()}
 }
 // authService's import starts the token-blacklist cleanup interval, which would keep this child alive after the receipt.

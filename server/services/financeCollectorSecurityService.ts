@@ -207,7 +207,9 @@ async function binding(context:any,record:any){
 // connection of exactly the entry's provider and that standard variant (a PayPay key never opens for a 楽天銀行 account, BA-PLUS or a
 // connection without a login type, and vice versa). putKey/getKey repeat this after their key I/O, so a scope or connection change in
 // between never returns usable material. Each `// binding:<name>` line is one guard the integration removes in turn.
-const BANK_KEY_VARIANTS=new Map<string,string>([['rakuten','standard'],['paypay','standard']])
+// Plan omf-ikeda-collector-20261025: 池田泉州銀行 ビジネスゲート (ikeda-, the password-only certificate login, variant portal) is added to
+// this same map; the インターネットEB `direct` variant and an Ikeda connection without a login type stay unavailable.
+const BANK_KEY_VARIANTS=new Map<string,string>([['rakuten','standard'],['paypay','standard'],['ikeda','portal']])
 async function bankBinding(context:any,record:any){
   const {grant,device}=context,a=record.aad,variant=BANK_KEY_VARIANTS.get(String(a.provider))
   if(!variant||!/^[a-f0-9]{24}$/.test(String(a.accountId))||record.entryId!==a.provider+'-'+a.accountId)deny('Bank account is unavailable for this batch.') // binding:bank-entry
