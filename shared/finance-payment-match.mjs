@@ -4,7 +4,8 @@
 // without them — saved templates, frozen job snapshots, BANK_NATIVE_TEMPLATES — stays exactly as before; a mapping carries them only
 // when they are assigned. Aliases are the observed headers only (compared after NFKC); 取引順番号 is no bank transaction ID.
 export const BANK_DATE_PARTS=[['dateYear','取引日（年）',['操作日(年)']],['dateMonth','取引日（月）',['操作日(月)']],['dateDay','取引日（日）',['操作日(日)']]];
-export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日','date']],['description','摘要',['摘要','取引内容','内容','入出金先内容','description','merchant']],['amount','金額',['金額','入出金(円)','amount']],['outflow','出金',['出金','出金額','お支払金額','withdrawal','debit']],['inflow','入金',['入金','入金額','お預り金額','deposit','credit']],['balance','残高',['残高','差引残高','残高(円)','balance']],['reference','メモ・参照番号',['メモ','参照番号','reference','memo']],['transactionId','銀行の取引ID（任意）',['取引番号','明細番号','取引id','transactionid','transaction_id']],['currency','通貨',['通貨','currency']],['direction','入出金区分',['入出金区分','区分','direction']]];
+// Plan omf-ikeda-collector-20261025: 勘定日 is the observed date header of the 池田泉州銀行 ビジネスゲート CSV (its (起算日) column is not the date).
+export const BANK_FIELDS=[['date','取引日',['取引日','日付','取扱日','date','勘定日']],['description','摘要',['摘要','取引内容','内容','入出金先内容','description','merchant']],['amount','金額',['金額','入出金(円)','amount']],['outflow','出金',['出金','出金額','お支払金額','withdrawal','debit']],['inflow','入金',['入金','入金額','お預り金額','deposit','credit']],['balance','残高',['残高','差引残高','残高(円)','balance']],['reference','メモ・参照番号',['メモ','参照番号','reference','memo']],['transactionId','銀行の取引ID（任意）',['取引番号','明細番号','取引id','transactionid','transaction_id']],['currency','通貨',['通貨','currency']],['direction','入出金区分',['入出金区分','区分','direction']]];
 // Web banks a bank account can be connected to: [key, label, support]. `support` stays 'contract-pending' until a release ships
 // the recorded portal contract and adapter for that bank; only a 'verified' provider runs automatic retrieval, the others run
 // the preparatory observe stage (plan omf-bank-collection-amended-20261018 S7). No provider is verified by this build.
@@ -26,18 +27,57 @@ export const BANK_SOFTWARE={resona:'りそなビジネスダイレクトの電�
 // stays false until an owner-run job proves the connection. Every other provider/variant keeps the preparatory observe stage.
 // Plan omf-paypay-routine-20261022 Phase C: PayPay銀行 標準 retrieves too (the observed statement steps in collector/banks/paypay.mjs);
 // its BA-PLUS and no-variant connections keep the observe stage. Jobs queued earlier keep the kind they were queued with.
-export const BANK_VARIANT_COLLECTION={rakuten:{standard:'retrieve'},paypay:{standard:'retrieve'}};
+// Plan omf-ikeda-collector-20261025: 池田泉州銀行 ビジネスゲート (portal: 電子証明書 + ログインパスワード) retrieves; its インターネットEB `direct`
+// variant (a separate 照会用暗証番号) and no-variant connections keep the observe stage.
+export const BANK_VARIANT_COLLECTION={rakuten:{standard:'retrieve'},paypay:{standard:'retrieve'},ikeda:{portal:'retrieve'}};
 export function bankCollectionMode(provider,variant){if(BANK_PROVIDERS.find(p=>p[0]===provider)?.[2]==='verified')return 'retrieve';return BANK_VARIANT_COLLECTION[provider]?.[variant]==='retrieve'?'retrieve':'observe';}
 // The bank's own statement format a retrieving variant downloads: OMF creates/reuses this owner template for the connection, so no
 // CSV has to be uploaded first (楽天銀行 標準: the four observed columns, outflow negative, no bank transaction ID).
-export const BANK_NATIVE_TEMPLATES={rakuten:{standard:{key:'rakuten-standard-native',name:'楽天銀行 標準フォーマット（自動）',headers:['取引日','入出金(円)','残高(円)','入出金先内容'],mapping:{date:'0',description:'3',amount:'1',outflow:'',inflow:'',balance:'2',reference:'',transactionId:'',currency:'',direction:''},amountSign:'outflow-negative'}}};
+// 池田泉州銀行 ビジネスゲート: the observed 10-column Shift_JIS 入出金明細 (勘定日 date, 摘要, お支払金額 out, お預り金額 in, 残高; outflow
+// positive; no bank transaction ID — 取引区分/明細区分 are not identifiers). Every source column is kept in the row's original/provenance.
+export const BANK_NATIVE_TEMPLATES={rakuten:{standard:{key:'rakuten-standard-native',name:'楽天銀行 標準フォーマット（自動）',headers:['取引日','入出金(円)','残高(円)','入出金先内容'],mapping:{date:'0',description:'3',amount:'1',outflow:'',inflow:'',balance:'2',reference:'',transactionId:'',currency:'',direction:''},amountSign:'outflow-negative'}},
+ ikeda:{portal:{key:'ikeda-portal-native',name:'池田泉州銀行 ビジネスゲート入出金明細（自動）',headers:['勘定日','(起算日)','お支払金額','お預り金額','残高','取引区分','明細区分','金融機関','支店','摘要'],mapping:{date:'0',description:'9',amount:'',outflow:'2',inflow:'3',balance:'4',reference:'',transactionId:'',currency:'',direction:''},amountSign:'outflow-positive'}}};
+// Plan omf-ikeda-collector-20261025: the period a bank still offers for retrieval, per provider and login variant. 池田泉州銀行
+// ビジネスゲート: the first day of the month before last (前々月1日) through the current JST day (bank UI and FAQ; not a rolling 90 days).
+// A provider/variant absent here keeps today's behaviour: its saved period is frozen as is.
+export const BANK_AVAILABILITY={ikeda:{portal:'month-before-last'}};
+const dayBefore=day=>new Date(Date.parse(day+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+/** The first day the bank still offers on the JST day `today` (YYYY-MM-DD), or null when the provider/variant keeps no window. */
+export function bankAvailableFrom(provider,variant,today=jstToday()){if(BANK_AVAILABILITY[provider]?.[variant]!=='month-before-last'||!isoDay(today))return null;const[y,m]=today.split('-').map(Number),t=y*12+(m-1)-2;return String(Math.floor(t/12)).padStart(4,'0')+'-'+String(t%12+1).padStart(2,'0')+'-01';}
+/**
+ * The requested period of a connection against the bank's window on `today` (pure): requested {from, to|null} as saved (to null = open
+ * through the day of the job), available {from, to=today}, effective {from, to} — what one job can actually retrieve (null when nothing of
+ * the request is offered any more) — and missing {from, to}, the requested days before the window (null when none). Null for a
+ * provider/variant without a window. The saved request is never rewritten: a closed end stays closed, an open one follows the day.
+ */
+export function bankCoverageWindow(provider,variant,saved,today=jstToday()){
+ const from=bankAvailableFrom(provider,variant,today);if(!from)return null;const c=bankCoverageInput(saved,today),to=c.to??today;
+ const effective={from:c.from>from?c.from:from,to},missing=c.from<from?{from:c.from,to:to<from?to:dayBefore(from)}:null;
+ return{rule:BANK_AVAILABILITY[provider][variant],requested:{from:c.from,to:c.to},available:{from,to:today},effective:effective.from<=effective.to?effective:null,missing};
+}
+// Plan omf-ikeda-collector-20261025: a variant that selects one of several accounts on the bank's own screen needs the exact account
+// identity on the connection — branch (支店名), type (普通/当座/貯蓄) and the full 7-digit account number — to choose and verify it there
+// (never a first option or a last-digits match). Only 池田泉州銀行 ビジネスゲート is listed.
+export const BANK_IDENTITY_REQUIRED={ikeda:{portal:true}};
+export const BANK_ACCOUNT_TYPES=['普通','当座','貯蓄'];
+export function bankIdentityRequired(provider,variant){return BANK_IDENTITY_REQUIRED[provider]?.[variant]===true;}
+/** The account identity a connection stores (null when none was given), or a 400-message error for a malformed one. */
+export function bankAccountIdentityInput(input){
+ if(input===undefined||input===null)return null;if(typeof input!=='object'||Array.isArray(input))throw Error('口座の支店・種別・口座番号を確認してください。');
+ const branch=String(input.branch??'').normalize('NFKC').replace(/\s+/g,' ').trim(),type=String(input.type??'').normalize('NFKC').trim(),number=String(input.number??'').normalize('NFKC').trim();
+ if(!branch&&!type&&!number)return null;
+ if(!branch||branch.length>40||/[\x00-\x1f]/.test(branch))throw Error('口座の支店名を確認してください。');
+ if(!BANK_ACCOUNT_TYPES.includes(type))throw Error('口座の種別（普通・当座・貯蓄）を確認してください。');
+ if(!/^[0-9]{7}$/.test(number))throw Error('口座番号は7桁の数字で入力してください。');
+ return{branch,type,number};
+}
 // Plan omf-paypay-four-accounts-20261021: a variant whose FIRST capture needs no uploaded file or template — its guided observe job
 // freezes an explicit unmapped interpretation, the received CSV is kept as needs_review (mapping-required, no rows) and the owner maps it
 // with the existing importer. Only PayPay銀行 標準 is listed. Plan omf-paypay-routine-20261022: its jobs now retrieve; a connection
 // without a template still freezes the unmapped interpretation, so its first routine capture is kept for the owner's one mapping.
 export const BANK_FIRST_CAPTURE={paypay:{standard:'unmapped'}};
 export function bankFirstCapture(provider,variant){return BANK_FIRST_CAPTURE[provider]?.[variant]==='unmapped'?'unmapped':null;}
-export function bankCapability(provider,variant){const mode=bankCollectionMode(provider,variant),template=BANK_NATIVE_TEMPLATES[provider]?.[variant]||null;return{mode,steps:mode==='retrieve'?'implemented':'contract-pending',template:template?template.key:null,period:mode==='retrieve'?'required':'portal',liveVerified:false};}
+export function bankCapability(provider,variant){const mode=bankCollectionMode(provider,variant),template=BANK_NATIVE_TEMPLATES[provider]?.[variant]||null,availability=BANK_AVAILABILITY[provider]?.[variant]||null;return{mode,steps:mode==='retrieve'?'implemented':'contract-pending',template:template?template.key:null,period:mode==='retrieve'?'required':'portal',liveVerified:false,...(availability?{availability}:{})};}
 // The requested period of a connection: an explicit start date and an optional end date (null = the JST date when a job is queued);
 // never after today, never reversed. frozenCoverage turns it into the concrete dates a job freezes in its snapshot.
 export function jstToday(now=new Date()){return new Date(now.getTime()+9*3600000).toISOString().slice(0,10);}

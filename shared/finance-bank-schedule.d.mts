@@ -11,7 +11,7 @@ export function bankScheduleBinding(connection:any):BankScheduleBinding;
 export function sameBinding(a:any,b:any):boolean;
 export type StoredBankSchedule={enabled:boolean;hour:number;revision:number;binding:BankScheduleBinding|null;savedAt:any};
 export function storedBankSchedule(value:any):StoredBankSchedule;
-export type BankScheduleSupportReason='no-connection'|'observe-only'|'unmapped'|'no-coverage'|'template-missing';
+export type BankScheduleSupportReason='no-connection'|'observe-only'|'unmapped'|'no-coverage'|'no-identity'|'bank-window'|'template-missing';
 export function bankScheduleSupport(connection:any,today:string):Exclude<BankScheduleSupportReason,'template-missing'>|null;
 export type ScheduledRunReason='schedule-off'|'connection-changed'|'setting-changed'|'already-requested-today';
 export function scheduledRunCurrent(input:{job:any;account:any;earlier?:any}):ScheduledRunReason|null;
@@ -19,3 +19,5 @@ export type BankScheduleStateName='off'|'unsupported'|'reconfirm'|'attention'|'r
 export type BankScheduleJob={jobId:string;state:string;kind:string;trigger:'schedule'|'manual';requestedAt:any;completedAt:any;scheduledDay:string|null;lastMessage:string};
 export type BankScheduleState={state:BankScheduleStateName;reason:string|null;day:string;hour:number;nextAt:string|null;job:BankScheduleJob|null;lastFailure:BankScheduleJob|null};
 export function bankScheduleState(input:{schedule:any;connection:any;templateExists?:boolean;collectorIds?:string[];jobs?:any[];now:Date}):BankScheduleState;
+export type BankDayRange={from:string;to:string};
+export function bankArchiveGaps(input:{requested:BankDayRange|null;covered?:BankDayRange[];availableFrom:string|null}):BankDayRange[];

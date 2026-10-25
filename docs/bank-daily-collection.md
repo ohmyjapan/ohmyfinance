@@ -47,6 +47,19 @@ So a schedule cannot promise unattended completion when the bank needs the perso
 owned ephemeral MongoDB, with headless Chrome limited to the owned app. It is not evidence about a real bank, PC or production database. See
 `output/plan/omf-workflow-daily-20261025/build-01/BUILD-REPORT.md` for the exact runs, counts, retained failures and limits.
 
+## Banks that keep only recent statements (plan omf-ikeda-collector-20261025)
+
+池田泉州銀行 ビジネスゲート offers statements from the first day of the month before last (前々月1日, JST) through today, not 90 days. Each
+day's scheduled job freezes that day's window as its effective period (`coverage`) and keeps the saved request beside it
+(`requestedCoverage`, `missingCoverage`), so an open daily connection follows the bank while every row and original OMF already holds
+stays. A saved period wholly before the window is `unsupported` (`bank-window`) for the schedule and refused by 取得; a connection without
+the account identity is `unsupported` (`no-identity`). A job that waited past a month boundary (PC offline) is refused by the PC before
+any bank page (its start is no longer offered) — the next 取得 or daily run freezes the new window. The schedule view adds `availability`
+{from, requested, effective, missing, gaps}: `gaps` are requested days the bank no longer offers that no imported capture of THIS
+connection (same provider, login type and full account identity, read from each capture's frozen snapshot, every such capture however
+old) confirmed — shown as 要確認 with the advice to import a CSV the owner still has. An owner CSV import does not clear a gap (it is not
+a count-verified retrieval). Other banks' scheduling is unchanged.
+
 ## Live use (owner, after review and the separate deployment approval)
 
 1. Deploy (not part of this build). Leave `OMF_BANK_SCHEDULE_MS` unset (60 s) or set it explicitly. Nothing runs until an owner turns an account on.

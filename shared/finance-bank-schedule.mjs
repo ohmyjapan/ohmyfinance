@@ -7,7 +7,7 @@
 // run per JST day. Each is a state below, never a refusal of the connection or of the manual 取得. The PCs allowed an account are the
 // existing grant (bank scope): the schedule adds no PC rule of its own. A failed run is shown (lastFailure), not held: the next day's run
 // is queued as usual and the collector's own saved-login journal and pending marker keep an unconfirmed or refused login unsent.
-import { bankCollectionMode, bankCoverageInput } from './finance-payment-match.mjs';
+import { bankCollectionMode, bankCoverageInput, bankCoverageWindow, bankIdentityRequired } from './finance-payment-match.mjs';
 
 const JST_MS = 9 * 3600000, DAY_MS = 86400000;
 const day0 = day => Date.parse(day + 'T00:00:00.000Z');
@@ -54,7 +54,36 @@ export function bankScheduleSupport(connection, today) {
   if (!connection.templateId) return 'unmapped';
   if (!connection.coverage) return 'no-coverage';
   try { bankCoverageInput(connection.coverage, today); } catch { return 'no-coverage'; }
+  // Plan omf-ikeda-collector-20261025: a variant that chooses the account on the bank's screen needs its exact identity; a saved period
+  // the bank no longer offers at all (a closed period before its window) can never run. Other providers are unaffected.
+  if (bankIdentityRequired(connection.provider, connection.variant ?? null) && !connection.accountIdentity) return 'no-identity';
+  const window = bankCoverageWindow(connection.provider, connection.variant ?? null, connection.coverage, today);
+  if (window && !window.effective) return 'bank-window';
   return null;
+}
+const dayBefore = day => new Date(day0(day) - DAY_MS).toISOString().slice(0, 10);
+/**
+ * Plan omf-ikeda-collector-20261025 (pure): the parts of a requested period the bank no longer offers (before `availableFrom`) that no
+ * `covered` period (the effective periods of retrievals whose capture was imported) holds — history the PC can no longer fetch. OMF's
+ * imported rows and originals stay; a gap only says that automatic retrieval never confirmed those days (an owner CSV may still hold
+ * them). Requested {from, to} are concrete days; the result is ordered, merged and empty when nothing is missing.
+ */
+export function bankArchiveGaps({ requested, covered = [], availableFrom }) {
+  const day = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(day0(v)) && new Date(day0(v)).toISOString().slice(0, 10) === v;
+  if (!requested || !day(requested.from) || !day(requested.to) || !day(availableFrom)) return [];
+  const end = requested.to < availableFrom ? requested.to : dayBefore(availableFrom);
+  if (requested.from > end) return [];
+  const spans = (Array.isArray(covered) ? covered : []).filter(c => c && day(c.from) && day(c.to) && c.from <= c.to).sort((a, b) => a.from.localeCompare(b.from));
+  const gaps = []; let cursor = requested.from;
+  for (const c of spans) {
+    if (c.to < cursor) continue;
+    if (c.from > end) break;
+    if (c.from > cursor) gaps.push({ from: cursor, to: dayBefore(c.from) < end ? dayBefore(c.from) : end });
+    cursor = nextDay(c.to);
+    if (cursor > end) return gaps;
+  }
+  if (cursor <= end) gaps.push({ from: cursor, to: end });
+  return gaps;
 }
 // GUARD — a queued scheduled job is run only while its account's current setting still authorizes it: the schedule is on, the
 // connection's provider/variant/template equal both the saved binding and the job's own binding, the job was queued under the saved

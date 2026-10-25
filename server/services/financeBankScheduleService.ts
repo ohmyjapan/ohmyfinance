@@ -16,11 +16,11 @@
 import mongoose from 'mongoose'
 import { ready, fail } from './financeService'
 import { FinanceCollector } from '../models/Finance'
-import { BankAccount, BankTemplate, BankJob, initializePaymentMatching } from '../models/FinancePaymentMatch'
+import { BankAccount, BankTemplate, BankJob, BankStatement, initializePaymentMatching } from '../models/FinancePaymentMatch'
 import { ownedBankAccount } from './financeBankStatementService'
 import { queueScheduledBankJob } from './financeBankCollectionService'
-import { frozenCoverage } from '../../shared/finance-payment-match.mjs'
-import { bankScheduleInput, storedBankSchedule, bankScheduleBinding, bankScheduleSupport, bankScheduleState, jstDay, jstDayStart } from '../../shared/finance-bank-schedule.mjs'
+import { frozenCoverage, bankCoverageWindow, bankIdentityRequired } from '../../shared/finance-payment-match.mjs'
+import { bankScheduleInput, storedBankSchedule, bankScheduleBinding, bankScheduleSupport, bankScheduleState, jstDay, jstDayStart, bankArchiveGaps } from '../../shared/finance-bank-schedule.mjs'
 
 async function init() { await ready(); await initializePaymentMatching() }
 const sid = (v: any) => String(v ?? '')
@@ -31,6 +31,8 @@ const UNSUPPORTED: Record<string, string> = {
   'observe-only': 'このログイン方式は自動取得の手順が未確認のため、毎日の自動取得の対象外です（「観察取得」「ガイド付き取得」のボタンはこれまでどおり使えます）。',
   unmapped: '列の割り当て（テンプレート）がない接続は、毎日の自動取得の対象外です。最初の明細を割り当てて、そのテンプレートで接続を保存してください。',
   'no-coverage': '取得期間（開始日）を接続に保存してください。',
+  'no-identity': '口座の支店名・種別・口座番号（7桁）を接続に保存してください。銀行の画面でこの口座を選んで確認するために使います。',
+  'bank-window': '保存した取得期間は、銀行で照会できる期間より前のため、自動取得できません。この期間の明細はCSVの取込で取り込んでください。',
   'template-missing': '接続のテンプレートが見つかりません。接続を保存し直してください。'
 }
 const REPLACED_DAY = '新しい日の自動取得に置き換えました（PCが受け取る前のため、銀行へのログインは行っていません）'
@@ -58,10 +60,31 @@ async function stateOf(account: any, now: Date) {
   const jobs = new Map<string, any>(); for (const j of [...active, ...latest, ...today] as any[]) jobs.set(sid(j._id), j)
   return bankScheduleState({ schedule: account.schedule, connection: account.connection, templateExists: template, collectorIds, jobs: [...jobs.values()], now })
 }
-function view(account: any, status: any, now: Date) {
+// Plan omf-ikeda-collector-20261025: for a connection with a bank window (池田泉州銀行 ビジネスゲート) the window on `now`'s JST day, the
+// requested/effective/missing periods and the archive gaps — requested days the bank no longer offers that no imported capture of THIS
+// connection covered (shared bankArchiveGaps). Read-only; null for every other connection, whose view is unchanged.
+// Parent findings C3/C4: the proof is an imported collector capture of a retrieval frozen for the connection's own provider, login variant
+// and — for a variant that selects its account on the bank's screen — exactly its full account identity (branch, type, number), read from
+// the capture's own frozen snapshot; another account, bank or login type that once used this OMF account never confirms its days, while a
+// changed template or schedule keeps the proof. Every such capture that starts before the window is read through a cursor (no
+// recent-job limit), so a long daily history is never reported as unconfirmed because its proof is old.
+async function availabilityOf(account: any, now: Date) {
+  const c = account.connection; if (!c?.coverage) return null
+  const day = jstDay(now); let w: any = null; try { w = bankCoverageWindow(c.provider, c.variant ?? null, c.coverage, day) } catch { w = null }
+  if (!w) return null
+  const identity = c.accountIdentity && typeof c.accountIdentity === 'object' ? c.accountIdentity : null, needsIdentity = bankIdentityRequired(c.provider, c.variant ?? null)
+  const covered: any[] = []
+  if (!needsIdentity || identity) {
+    const filter: any = { ownerId: account.ownerId, 'capture.bankAccountId': sid(account._id), 'capture.state': 'imported', 'capture.kind': 'retrieve', 'capture.channel': 'collector', 'capture.snapshot.provider': c.provider, 'capture.snapshot.variant': c.variant ?? null, 'capture.snapshot.coverage.from': { $type: 'string', $lt: w.available.from } }
+    if (needsIdentity) Object.assign(filter, { 'capture.snapshot.accountIdentity.branch': String(identity.branch), 'capture.snapshot.accountIdentity.type': String(identity.type), 'capture.snapshot.accountIdentity.number': String(identity.number) })
+    for await (const s of BankStatement.find(filter).select('capture.snapshot.coverage').lean().cursor() as any) covered.push(s.capture.snapshot.coverage)
+  }
+  return { rule: w.rule, from: w.available.from, requested: w.requested, effective: w.effective, missing: w.missing, gaps: bankArchiveGaps({ requested: { from: w.requested.from, to: w.requested.to ?? day }, covered, availableFrom: w.available.from }) }
+}
+function view(account: any, status: any, now: Date, availability: any = null) {
   const s = storedBankSchedule(account.schedule)
   let coverage: any = null; try { coverage = account.connection?.coverage ? frozenCoverage(account.connection.coverage, jstDay(now)) : null } catch { coverage = null }
-  return { schedule: { enabled: s.enabled, hour: s.hour, revision: s.revision, savedAt: s.savedAt }, status, coverage, supported: !bankScheduleSupport(account.connection, jstDay(now)), timezone: 'Asia/Tokyo' }
+  return { schedule: { enabled: s.enabled, hour: s.hour, revision: s.revision, savedAt: s.savedAt }, status, coverage, supported: !bankScheduleSupport(account.connection, jstDay(now)), timezone: 'Asia/Tokyo', ...(availability ? { availability } : {}) }
 }
 // Close one still-queued scheduled job (never claimed: the filter is its queued state and day); its day moves to supersededDay.
 async function supersede(job: any, now: Date, message: string) {
@@ -73,7 +96,7 @@ const queuedScheduled = (account: any) => BankJob.find({ ownerId: account.ownerI
 /** The owner's setting and its current state (owner-scoped; another owner's account is 404). */
 export async function readBankSchedule(ownerId: string, accountId: string, now = new Date()) {
   await init(); const account = await ownedBankAccount(ownerId, accountId)
-  return view(account, await stateOf(account, now), now)
+  return view(account, await stateOf(account, now), now, await availabilityOf(account, now))
 }
 /**
  * Save the setting at the revision the owner read (409 when another save came first). Turning it on needs a supported connection and,
@@ -103,7 +126,7 @@ export async function saveBankSchedule(ownerId: string, accountId: string, body:
   // setting's own run. A run a PC already received is in flight and is not touched.
   const fresh: any = await BankAccount.findOne({ _id: account._id, ownerId }).lean()
   for (const job of await queuedScheduled(fresh)) await supersede(job, now, REPLACED_SETTING)
-  return view(fresh, await stateOf(fresh, now), now)
+  return view(fresh, await stateOf(fresh, now), now, await availabilityOf(fresh, now))
 }
 // One account at `now`: close queued scheduled jobs it no longer authorizes; when due, replace an earlier day's queued run and queue
 // today's; then read the setting again and close the new job if a save or connection change landed meanwhile.

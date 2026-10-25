@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { ready, id, fail } from './financeService'
 import { FinanceCollector } from '../models/Finance'
 import { BankAccount, BankStatement, BankTemplate, BankJob, initializePaymentMatching } from '../models/FinancePaymentMatch'
-import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_NATIVE_TEMPLATES, bankCollectionMode, bankCoverageInput, frozenCoverage, jstToday, bankFirstCapture } from '../../shared/finance-payment-match.mjs'
+import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_NATIVE_TEMPLATES, bankCollectionMode, bankCoverageInput, frozenCoverage, jstToday, bankFirstCapture, bankCoverageWindow, bankAccountIdentityInput, bankIdentityRequired } from '../../shared/finance-payment-match.mjs'
 import { ownedBankAccount, acceptBankCapture } from './financeBankStatementService'
 import { bankScheduleBinding, scheduledRunCurrent, jstDayStart } from '../../shared/finance-bank-schedule.mjs'
 // Web-bank collection jobs (plan omf-bank-collection-amended-20261018 A4): the owner's connection and request, the collector's
@@ -47,7 +47,11 @@ export async function connectionInput(ownerId:string,body:any){
  if(text(template?.mapping?.transactionId)!==''&&body.transactionIdConfirmed!==true)fail(400,'銀行が発行した取引IDの列であることを確認してください。')
  const accountLabel=text(body.accountLabel);if(accountLabel.length>100||/[\x00-\x1f]/.test(accountLabel))fail(400,'口座の表示名を確認してください。')
  const variants:[string,string][]=BANK_LOGIN_VARIANTS[provider![0]]||[],variant=variants.some(([key])=>key===body.variant)?String(body.variant):null
- return{provider:provider![0],templateId:template?sid(template._id):null,transactionIdConfirmed:body.transactionIdConfirmed===true,accountLabel:accountLabel||null,variant,coverage,connectedAt:new Date()}
+ // Plan omf-ikeda-collector-20261025: the exact account identity (branch, type, full 7-digit number) of a variant that selects the account
+ // on the bank's screen (池田泉州銀行 ビジネスゲート), validated here and kept on the connection only for that variant; every other
+ // connection keeps exactly its former shape. It may be saved later: a retrieval refuses to queue without it.
+ let accountIdentity:any=null;if(bankIdentityRequired(provider![0],variant)){try{accountIdentity=bankAccountIdentityInput(body.accountIdentity)}catch(e:any){fail(400,e.message)}}
+ return{provider:provider![0],templateId:template?sid(template._id):null,transactionIdConfirmed:body.transactionIdConfirmed===true,accountLabel:accountLabel||null,variant,coverage,connectedAt:new Date(),...(accountIdentity?{accountIdentity}:{})}
 }
 export async function saveBankConnection(ownerId:string,accountId:string,body:any){await init();const account=await ownedBankAccount(ownerId,accountId),connection=await connectionInput(ownerId,body);await BankAccount.updateOne({_id:account._id,ownerId},{$set:{connection}});return{account:view(await BankAccount.findOne({_id:account._id,ownerId}).lean())}}
 // The interpretation frozen on a job: the connection's template at its current revision, the confirmation, the parser version,
@@ -57,8 +61,19 @@ export async function saveBankConnection(ownerId:string,accountId:string,body:an
 // interpretation — no template, headers or mapping, `interpretation: 'unmapped'` — with the same provider, label, variant, currency and
 // coverage keys; a mapped snapshot keeps exactly its former shape (and hash). `today` (plan omf-workflow-daily-20261025) is the JST day an
 // open period (to null) runs through: the request's day for a manual request, the tick's JST day for a scheduled one.
+// Plan omf-ikeda-collector-20261025: for a provider/variant with a bank window (shared BANK_AVAILABILITY: 池田泉州銀行 ビジネスゲート) the frozen
+// `coverage` is the EFFECTIVE period the bank still offers on `today`, and the request is kept beside it: requestedCoverage (as saved; to
+// null = open), availability {rule, from, asOf} and missingCoverage (the requested days before the window, or null); a variant that selects
+// its account on the bank's screen also freezes accountIdentity. These keys are appended only for those variants, so every other
+// snapshot keeps exactly its former JSON (and hash).
+function windowedOf(connection:any,today:string){if(!connection?.coverage)return null;let w:any=null;try{w=bankCoverageWindow(connection.provider,connection.variant??null,connection.coverage,today)}catch{w=null}return w}
 function snapshotOf(connection:any,template:any,account:any,today:string=jstToday()){const snapshot:any=template?{templateId:sid(template._id),templateRevision:Number(template.revision||0),headers:[...(template.headers||[])],mapping:{...(template.mapping||{})},amountSign:template.amountSign||'outflow-positive',transactionIdConfirmed:connection.transactionIdConfirmed===true,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,today):null}
- :{templateId:null,templateRevision:0,headers:[],mapping:{},amountSign:'outflow-positive',transactionIdConfirmed:false,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,today):null,interpretation:'unmapped'};return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
+ :{templateId:null,templateRevision:0,headers:[],mapping:{},amountSign:'outflow-positive',transactionIdConfirmed:false,parserVersion:'bank-template-1',currency:account.currency||'JPY',provider:connection.provider,accountLabel:connection.accountLabel??null,variant:connection.variant??null,coverage:connection.coverage?frozenCoverage(connection.coverage,today):null,interpretation:'unmapped'}
+ const w=windowedOf(connection,today);if(w){snapshot.coverage=w.effective;snapshot.requestedCoverage={from:w.requested.from,to:w.requested.to};snapshot.availability={rule:w.rule,from:w.available.from,asOf:today};snapshot.missingCoverage=w.missing}
+ if(bankIdentityRequired(connection.provider,connection.variant??null))snapshot.accountIdentity=connection.accountIdentity?{branch:String(connection.accountIdentity.branch),type:String(connection.accountIdentity.type),number:String(connection.accountIdentity.number)}:null
+ return{snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}}
+// The person-facing note of the requested days a windowed bank no longer offers (empty when none).
+const missingNote=(snapshot:any)=>snapshot?.missingCoverage?'。銀行で照会できるのは'+snapshot.availability.from+'以降のため、'+snapshot.missingCoverage.from+'〜'+snapshot.missingCoverage.to+'は取得しません（この期間は明細のCSVの取込で補えます。取り込み済みの明細はそのまま残ります）':''
 // GUARD g3 (mirrored from financeService.ts:125-129): an unrevoked PC allowed this account, and no job queued or running on a
 // live lease; a running job whose lease expired no longer blocks (it stays claimable and continues under its own snapshot).
 // GUARD g7 (tolerance): an unverified provider/variant gets an observe job and a message, never a refusal. Plan omf-rakuten-native-
@@ -73,9 +88,14 @@ export async function queueBankSync(ownerId:string,accountId:string){
  const guided=firstCaptureOf(connection.provider,connection.variant)==='unmapped',unmapped=guided&&connection.templateId===null
  const template:any=unmapped?null:await BankTemplate.findOne({_id:id(connection.templateId),ownerId}).lean();if(!template&&!unmapped)fail(409,'接続のテンプレートが見つかりません。接続を保存し直してください。')
  const mode=bankCollectionMode(connection.provider,connection.variant),support=providerOf(connection.provider)?.[2]||'contract-pending',kind=mode==='retrieve'?'retrieve':support==='verified'?'retrieve':'observe'
- let frozen:any;try{frozen=snapshotOf(connection,template,account)}catch(e:any){fail(400,e.message)}
+ // Plan omf-ikeda-collector-20261025: a windowed retrieval whose whole saved period is older than what the bank still offers is refused with
+ // the reason (no job: it could never complete), and a variant that selects its account on the bank's screen needs the account identity.
+ const today=jstToday(),label=providerOf(connection.provider)?.[1]||String(connection.provider),w=mode==='retrieve'?windowedOf(connection,today):null
+ if(w&&!w.effective)fail(409,'指定した取得期間（'+w.requested.from+'〜'+(w.requested.to||'当日')+'）は、'+label+'で照会できる期間（'+w.available.from+'以降）より前のため、自動取得できません。この期間の明細は、お手元のCSVを「銀行のExcel・CSVを取込」から取り込んでください。')
+ if(mode==='retrieve'&&bankIdentityRequired(connection.provider,connection.variant??null)&&!connection.accountIdentity)fail(400,'口座の支店名・種別・口座番号（7桁）を接続に保存してください。銀行の画面でこの口座を選んで確認するために使います。')
+ let frozen:any;try{frozen=snapshotOf(connection,template,account,today)}catch(e:any){fail(400,e.message)}
  const {snapshot,snapshotHash}=frozen;if(mode==='retrieve'&&!snapshot.coverage)fail(400,'取得期間（開始日）を接続に保存してください。')
- const message=kind==='observe'?(guided?guidedMessage(providerOf(connection.provider)?.[1]||String(connection.provider),unmapped):OBSERVE_MESSAGE):'取得を予約しました'+(snapshot.coverage?'（'+snapshot.coverage.from+'〜'+snapshot.coverage.to+'）':'')
+ const message=kind==='observe'?(guided?guidedMessage(providerOf(connection.provider)?.[1]||String(connection.provider),unmapped):OBSERVE_MESSAGE):'取得を予約しました'+(snapshot.coverage?'（'+snapshot.coverage.from+'〜'+snapshot.coverage.to+'）':'')+missingNote(snapshot)
  await BankJob.updateMany({ownerId,bankAccountId:account._id,open:true,state:{$in:['running','verification_required']},leaseUntil:{$lt:now}},{$set:{open:false}})
  let job:any;try{job=(await BankJob.create({ownerId,bankAccountId:account._id,jobId:randomUUID(),kind,state:'queued',open:true,requestedAt:now,lastMessage:message,snapshot,snapshotHash,statementIds:[],observation:null})).toObject()}catch(e:any){if(e.code!==11000)throw e;fail(409,'取得はすでに予約・実行中です。')}
  return{job:jobView(job),message}
@@ -87,7 +107,7 @@ export async function queueBankSync(ownerId:string,accountId:string){
 // duplicate is null, never an error. It never closes or changes another job.
 export async function queueScheduledBankJob(account:any,template:any,{day,now,revision}:{day:string,now:Date,revision:number}){
  const {snapshot,snapshotHash}=snapshotOf(account.connection,template,account,day)
- const message='毎日の自動取得を予約しました'+(snapshot.coverage?'（'+snapshot.coverage.from+'〜'+snapshot.coverage.to+'）':'')
+ const message='毎日の自動取得を予約しました'+(snapshot.coverage?'（'+snapshot.coverage.from+'〜'+snapshot.coverage.to+'）':'')+missingNote(snapshot)
  try{return (await BankJob.create({ownerId:account.ownerId,bankAccountId:account._id,jobId:randomUUID(),kind:'retrieve',state:'queued',open:true,requestedAt:now,lastMessage:message,snapshot,snapshotHash,statementIds:[],observation:null,trigger:'schedule',schedule:{day,revision,binding:bankScheduleBinding(account.connection)}})).toObject()}
  catch(e:any){if(e?.code===11000)return null;throw e}
 }

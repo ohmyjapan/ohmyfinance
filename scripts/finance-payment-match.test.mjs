@@ -159,9 +159,10 @@ test('per-variant collection mode: 楽天銀行 standard and PayPay銀行 standa
  const mode=tableFn('bankCollectionMode');
  assert.equal(mode('rakuten','standard'),'retrieve','native-bank:standard-retrieve');
  assert.equal(mode('paypay','standard'),'retrieve','native-bank:paypay-standard-retrieve');
+ assert.equal(mode('ikeda','portal'),'retrieve','native-bank:ikeda-portal-retrieve');
  assert.deepEqual(tableFn('bankCapability')('paypay','standard'),{mode:'retrieve',steps:'implemented',template:null,period:'required',liveVerified:false},'native-bank:paypay-standard-capability');
  assert.equal(tableFn('bankFirstCapture')('paypay','standard'),'unmapped','native-bank:paypay-first-capture-kept');
- for(const [p,v] of [['rakuten','plus'],['rakuten',null],['rakuten','x'],['paypay',null],['paypay','baplus'],['resona','direct'],['ikeda','portal'],['nope','standard']])assert.equal(mode(p,v),'observe','native-bank:observe-kept '+p+'/'+v);
+ for(const [p,v] of [['rakuten','plus'],['rakuten',null],['rakuten','x'],['paypay',null],['paypay','baplus'],['resona','direct'],['ikeda','direct'],['nope','standard']])assert.equal(mode(p,v),'observe','native-bank:observe-kept '+p+'/'+v);
  assert.ok(bankTables.BANK_PROVIDERS.every(p=>p[2]==='contract-pending'),'native-bank:provider-table-pending');
  const capability=tableFn('bankCapability');
  assert.deepEqual(capability('rakuten','standard'),{mode:'retrieve',steps:'implemented',template:'rakuten-standard-native',period:'required',liveVerified:false},'native-bank:standard-capability');
