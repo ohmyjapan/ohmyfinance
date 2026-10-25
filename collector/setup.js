@@ -86,7 +86,7 @@ async function refresh() {
 // Bank logins (plans omf-rakuten-auto-login-20261021 §3, omf-paypay-four-accounts-20261021): one section per bank account OMF grants
 // to this PC (/status.banks, metadata only — a saved login is never read back). 楽天銀行 標準 gets the one-time ID/password form;
 // PayPay銀行 標準 gets 店番号 (3 digits), 口座番号 (7 digits) and the login password, kept exactly as typed (text fields: leading zeros
-// stay). Each is saved to /bank/credentials for exactly that account inside a protected connection; every field of the section is
+// stay); 池田泉州銀行 ビジネスゲート (plan omf-ikeda-collector-20261025) gets the login password only. Each is saved to /bank/credentials for exactly that account inside a protected connection; every field of the section is
 // cleared after every attempt. Sections are keyed by account and re-created only when that account's own state changes, so a refresh
 // after another account's save never erases what the person is typing; the save buttons follow the connection state on every refresh.
 const BANK_FORMS={
@@ -99,7 +99,15 @@ const BANK_FORMS={
     saved:'Login saved on this PC. Downloads sign in once with it in the background, save the statement CSV for the requested period and sign out. If the account is signed in elsewhere or the bank asks for an additional check, the same Chrome window is shown for you. Enter all three fields to replace it.',
     refused:'The previous automatic sign-in was not confirmed. Check the bank window, then enter the current branch number, account number and password to replace it; automatic sign-in stays off until then.',
     uncertain:'The previous automatic sign-in was not confirmed: the downloader cannot tell whether the bank accepted it (a downloaded file is not taken as proof; the bank may also have said that the account was signed in elsewhere). Automatic sign-in stays off for this account. If the saved login is correct, allow one more automatic sign-in with it below (nothing is typed again and no download starts until you request one in OMF); if it changed, enter all three fields to replace it.',
-    refusedByBank:'The bank refused the saved login on the last attempt. If you changed the branch number, account number or password, enter all three to replace it. If the saved login is still current, allow one more automatic sign-in with it below instead of typing it again (nothing is typed again and no download starts until you request one in OMF). Automatic sign-in stays off until you do one of these.'}
+    refusedByBank:'The bank refused the saved login on the last attempt. If you changed the branch number, account number or password, enter all three to replace it. If the saved login is still current, allow one more automatic sign-in with it below instead of typing it again (nothing is typed again and no download starts until you request one in OMF). Automatic sign-in stays off until you do one of these.'},
+  // Plan omf-ikeda-collector-20261025: 池田泉州銀行 ビジネスゲート — the 電子証明書 login password only (no login ID, branch or account number:
+  // the certificate in this Windows user's store identifies the user; the account to download is chosen in OMF's connection).
+  ikeda:{fields:[['portalPassword','池田泉州銀行 login password (ビジネスゲートの電子証明書ログインのパスワード, up to 12 characters)','password',12]],body:f=>({portalPassword:f.portalPassword.value}),
+    first:'Enter this 池田泉州銀行 ビジネスゲート account\'s login password once — only the password: the bank\'s electronic certificate, installed for this Windows user, identifies you. It is encrypted on this PC and never sent to OMF. Each download opens the bank in its own Chrome window in the background, chooses the bank\'s certificate there when exactly one valid certificate is offered (otherwise that window is shown for you to choose), signs in once with this password, selects the account saved in OMF, downloads the statement CSV for the period the bank still keeps (from the first day of the month before last) and signs out.',
+    saved:'Login password saved on this PC. Downloads sign in once with it in the background after the certificate is chosen; if the certificate cannot be chosen automatically or the bank asks for an additional check, the same Chrome window is shown for you. Enter the password to replace it.',
+    refused:'The previous automatic sign-in was not confirmed. Check the bank window, then enter the current login password to replace it; automatic sign-in stays off until then.',
+    uncertain:'The previous automatic sign-in was not confirmed: the downloader cannot tell whether the bank accepted the password (for example a notice page was shown instead of the statements). Automatic sign-in stays off for this account. If the saved password is correct, allow one more automatic sign-in with it below (nothing is typed again and no download starts until you request one in OMF); if it changed, enter it again to replace it.',
+    refusedByBank:'The bank refused the saved login password on the last attempt. If you changed the password, enter it to replace it. If the saved password is still current, allow one more automatic sign-in with it below instead of typing it again (nothing is typed again and no download starts until you request one in OMF). Automatic sign-in stays off until you do one of these.'}
 };
 let bankSections=new Map(),bankTimer;
 function bankSection(bank,data) {
@@ -114,7 +122,7 @@ function bankSection(bank,data) {
   const form=document.createElement('form'),fields={};
   for(const [name,label,type,max,pattern] of kind.fields) {
     const el=document.createElement('input'),l=document.createElement('label');el.id='bank-'+bank.bankAccountId+'-'+name;el.type=type;el.required=true;el.autocomplete='off';el.maxLength=max;el.dataset.bankLoginField=name;
-    if(name==='user')el.dataset.bankLoginUser='';if(name==='password')el.dataset.bankLoginPassword='';if(pattern){el.pattern=pattern;el.inputMode='numeric';}
+    if(name==='user')el.dataset.bankLoginUser='';if(name==='password'||name==='portalPassword')el.dataset.bankLoginPassword='';if(pattern){el.pattern=pattern;el.inputMode='numeric';}
     l.htmlFor=el.id;l.textContent=label;form.append(l,el);fields[name]=el;
   }
   const button=document.createElement('button');button.textContent='Save encrypted login';button.dataset.bankLoginSave='';form.append(button);

@@ -63,8 +63,14 @@ async function updateMetadata(updater) {
   });
 }
 
-// The bank providers whose granted standard-login accounts may hold a saved login (plan omf-paypay-four-accounts-20261021).
-const BANK_LOGIN_PROVIDERS=['rakuten','paypay'];
+// The bank providers whose granted standard-login accounts may hold a saved login (plan omf-paypay-four-accounts-20261021), and the one
+// login variant of each that may (plan omf-ikeda-collector-20261025: 池田泉州銀行 ビジネスゲート `portal`, the password-only 電子証明書 login).
+const BANK_LOGIN_PROVIDERS=['rakuten','paypay','ikeda'];
+const BANK_LOGIN_VARIANT=Object.freeze({rakuten:'standard',paypay:'standard',ikeda:'portal'});
+// The providers whose pending marker names its kind ('uncertain'|'refused', plan P1) and whose owner may allow one retry (retryBankLogin).
+const KINDED_MARKER_PROVIDERS=['paypay','ikeda'];
+/** The longest 池田泉州銀行 login password the observed cc form accepts (its password field's maxlength). */
+export const IKEDA_PASSWORD_MAX=12;
 function aadFor(installationId,provider,account,config) {
   // Per-account entries: a card (amex-<id>, aplus-<id>) or a granted bank standard-login account (rakuten-<bankAccountId>, paypay-<bankAccountId>).
   if(provider==='amex'||(provider==='aplus'&&account)||(BANK_LOGIN_PROVIDERS.includes(provider)&&account)) return aadOf({installationId,origin:config.baseUrl,ownerId:account.ownerId,provider,accountId:account._id});
@@ -337,7 +343,7 @@ export function credentialEntryFor(account,entries,scope=[]) {
 // 'uncertain' or 'refused' marker of the current key (retryBankLogin), does. A failed job never clears it. Four PayPay accounts are four entries, four AADs and four markers.
 const bankEntry=(provider,id)=>provider+'-'+id;
 const bankMarker=(provider,id,root=directory)=>path.join(root,'bank-login',bankEntry(provider,id)+'.json');
-export const bankLoginSupported=bank=>BANK_LOGIN_PROVIDERS.includes(bank?.provider)&&bank?.variant==='standard';
+export const bankLoginSupported=bank=>BANK_LOGIN_PROVIDERS.includes(bank?.provider)&&bank?.variant===BANK_LOGIN_VARIANT[bank.provider];
 /** A guided observe job (PayPay銀行 標準 first capture): the observe stage that may use the claimed account's saved login once. */
 export const guidedBankJob=job=>job?.kind==='observe'&&!!guidedAdapterFor(job)&&BANK_LOGIN_PROVIDERS.includes(job.snapshot.provider)&&job.snapshot.variant==='standard';
 // The sealed envelope of the entry when it belongs to this account and connection; false when it exists but is bound elsewhere.
@@ -346,7 +352,7 @@ async function savedBankLogin(store,entry,aad){if(!await store.has(entry))return
 // sign-in) or 'refused' (an adapter-observed refusal). 楽天銀行 markers keep their former shape. A marker without a kind is never taken
 // for a PayPay uncertainty.
 async function bankMarkerOf(file){try{const m=JSON.parse(await readFile(file,'utf8'));return m&&typeof m==='object'&&!Array.isArray(m)?m:null;}catch{return null;}}
-const pendingOf=(provider,marker,envelope)=>!envelope||!marker||marker.keyId!==envelope.keyId?null:provider!=='paypay'?'blocked':marker.kind==='refused'?'refused':marker.kind==='uncertain'?'uncertain':'blocked';
+const pendingOf=(provider,marker,envelope)=>!envelope||!marker||marker.keyId!==envelope.keyId?null:!KINDED_MARKER_PROVIDERS.includes(provider)?'blocked':marker.kind==='refused'?'refused':marker.kind==='uncertain'?'uncertain':'blocked';
 /**
  * The saved-login handle of one claimed bank job, or null: only a protected session's job on a valid account that is either a retrieve
  * job frozen for 楽天銀行 standard or a guided observe job frozen for PayPay銀行 standard. Building it reads nothing. state() reads file
@@ -360,8 +366,9 @@ export function bankLoginFor(bank,config,live,{store=secrets,root=directory,asse
   const job=bank?.job,account=bank?.account,id=String(account?._id??''),ownerId=String(account?.ownerId??'');
   if(!live||live.mode!=='protected'||!/^[a-f\d]{24}$/.test(id)||!/^[a-f\d]{24}$/.test(ownerId))return null;
   const provider=job?.snapshot?.provider??job?.provider;
-  if(!BANK_LOGIN_PROVIDERS.includes(provider)||job?.snapshot?.variant!=='standard')return null;
-  if(provider==='rakuten'&&job.kind!=='retrieve')return null;
+  if(!BANK_LOGIN_PROVIDERS.includes(provider)||job?.snapshot?.variant!==BANK_LOGIN_VARIANT[provider])return null;
+  // 楽天銀行 標準 and (plan omf-ikeda-collector-20261025) 池田泉州銀行 ビジネスゲート: a retrieve job only.
+  if((provider==='rakuten'||provider==='ikeda')&&job.kind!=='retrieve')return null;
   // Plan omf-paypay-routine-20261022: a PayPay銀行 標準 job gets the handle when it is a guided observe job (historical first capture) or
   // a retrieve job (routine retrieval); a claim of any other kind never does.
   if(provider==='paypay'&&!(guidedBankJob(job)||job?.kind==='retrieve'))return null; // guard:bank-login-kind
@@ -380,17 +387,23 @@ export function bankLoginFor(bank,config,live,{store=secrets,root=directory,asse
       catch(error){if(live.abort?.signal?.aborted||error?.name==='AbortError'||error?.status===401||error?.code==='forbidden')throw error;throw coded('bank-login-unavailable','The saved bank login could not be opened for this connection');}
     },
     async rejected(kind='uncertain'){const envelope=await savedBankLogin(store,entry,aad());if(!envelope)return;await mkdir(path.dirname(marker),{recursive:true});
-      await replaceVaultFile(marker,JSON.stringify({entry,keyId:envelope.keyId,refusedAt:new Date().toISOString(),...(provider==='paypay'?{kind:kind==='refused'?'refused':'uncertain'}:{})}));},
+      await replaceVaultFile(marker,JSON.stringify({entry,keyId:envelope.keyId,refusedAt:new Date().toISOString(),...(KINDED_MARKER_PROVIDERS.includes(provider)?{kind:kind==='refused'?'refused':'uncertain'}:{})}));},
     async accepted(){await unlink(marker).catch(error=>{if(error.code!=='ENOENT')throw error;});}
   };
 }
 /**
- * The local setup's bank-login body, one of exactly two shapes: 楽天銀行 — bankAccountId, a login ID (trimmed) and a password
+ * The local setup's bank-login body, one of exactly three shapes: 楽天銀行 — bankAccountId, a login ID (trimmed) and a password
  * (verbatim), each ≤256; PayPay銀行 標準 — bankAccountId, branch (店番号, exactly 3 digits), account (口座番号, exactly 7 digits) as
- * strings (leading zeros kept) and a password of 1-32 characters (verbatim). Any other key, a mix or a number is refused.
+ * strings (leading zeros kept) and a password of 1-32 characters (verbatim); 池田泉州銀行 ビジネスゲート (plan omf-ikeda-collector-20261025) —
+ * bankAccountId and portalPassword, the 電子証明書 login password of 1-12 characters (verbatim): no login ID, branch or account number is
+ * invented (the certificate identifies the user). Any other key, a mix or a number is refused.
  */
 export function bankLoginInput(body){
   const object=!!body&&typeof body==='object'&&!Array.isArray(body),keys=object?Object.keys(body):[];
+  if(object&&keys.includes('portalPassword')){
+    if(keys.some(k=>!['bankAccountId','portalPassword'].includes(k))||!/^[a-f\d]{24}$/.test(String(body.bankAccountId))||typeof body.portalPassword!=='string'||!body.portalPassword.length||body.portalPassword.length>IKEDA_PASSWORD_MAX)throw new Error('Enter the 池田泉州銀行 login password (up to '+IKEDA_PASSWORD_MAX+' characters) only');
+    return {bankAccountId:String(body.bankAccountId),portalPassword:body.portalPassword};
+  }
   if(object&&(keys.includes('branch')||keys.includes('account'))){
     if(keys.some(k=>!['bankAccountId','branch','account','password'].includes(k))||!/^[a-f\d]{24}$/.test(String(body.bankAccountId))||typeof body.branch!=='string'||!/^[0-9]{3}$/.test(body.branch)||typeof body.account!=='string'||!/^[0-9]{7}$/.test(body.account)||typeof body.password!=='string'||!body.password.length||body.password.length>32)throw new Error('Enter the PayPay銀行 branch number (3 digits), account number (7 digits) and login password (up to 32 characters)');
     return {bankAccountId:String(body.bankAccountId),branch:body.branch,account:body.account,password:body.password};
@@ -407,12 +420,12 @@ export function bankLoginInput(body){
 export async function saveBankLogin(input,{live,config,banks,write,root=directory}){
   const list=await banks(),bank=(Array.isArray(list)?list:[]).find(a=>String(a?._id)===input.bankAccountId);
   if(!bank)throw coded('forbidden','This bank account is not allowed for this PC in OMF. Allow the PC for it in OMF first.');
-  if(!bankLoginSupported(bank))throw coded('unsupported','Saved sign-in is available only for 楽天銀行 and PayPay銀行 標準ログイン.');
-  const provider=bank.provider,shape=typeof input.branch==='string'?'paypay':'rakuten';
+  if(!bankLoginSupported(bank))throw coded('unsupported','Saved sign-in is available only for 楽天銀行 and PayPay銀行 標準ログイン and 池田泉州銀行 ビジネスゲート.');
+  const provider=bank.provider,shape=typeof input.portalPassword==='string'?'ikeda':typeof input.branch==='string'?'paypay':'rakuten';
   if(shape!==provider)throw coded('unsupported','This login does not match the bank of this account; enter the fields shown for it.'); // guard:bank-login-shape
   const owner=String(bank.ownerId||''),paired=[...new Set((config?.accountInfo||[]).map(a=>String(a.ownerId||'')))];
   if(!/^[a-f\d]{24}$/.test(owner)||paired.some(id=>id!==owner))throw coded('forbidden','This bank account belongs to another OMF owner.');
-  const value=shape==='paypay'?{branch:input.branch,account:input.account,password:input.password}:{username:input.username,password:input.password};
+  const value=shape==='ikeda'?{password:input.portalPassword}:shape==='paypay'?{branch:input.branch,account:input.account,password:input.password}:{username:input.username,password:input.password};
   await write(bankEntry(provider,input.bankAccountId),aadFor(live.installationId,provider,{_id:input.bankAccountId,ownerId:owner},config),value);
   await unlink(bankMarker(provider,input.bankAccountId,root)).catch(error=>{if(error.code!=='ENOENT')throw error;});
   return {saved:true};
@@ -423,7 +436,8 @@ export function bankRetryInput(body){
   return {bankAccountId:String(body.bankAccountId)};
 }
 /**
- * Plan P1 — the owner's explicit "try once more with the saved login" for ONE PayPay銀行 標準 account whose last automatic attempt is
+ * Plan P1 — the owner's explicit "try once more with the saved login" for ONE PayPay銀行 標準 account (plan omf-ikeda-collector-20261025:
+ * or 池田泉州銀行 ビジネスゲート account, the same rule with its own provider and variant) whose last automatic attempt is
  * uncertain or, since plan omf-paypay-split-dates-retry-20261022, was refused by the bank (the owner says the saved login is still
  * current; changed values are saved instead). Under the store's writer lock: the live session, the account as OMF grants it to this PC
  * now (this pairing's owner, provider paypay, variant standard), the current sealed entry bound to that account and that entry's own
@@ -436,14 +450,15 @@ export async function retryBankLogin(input,{live,config,banks,store=secrets,root
     assert(live);
     const list=await banks(),bank=(Array.isArray(list)?list:[]).find(a=>String(a?._id)===input.bankAccountId);
     if(!bank)throw coded('forbidden','This bank account is not allowed for this PC in OMF. Allow the PC for it in OMF first.');
-    if(bank.provider!=='paypay'||bank.variant!=='standard')throw coded('unsupported','A retry with the saved login is available only for PayPay銀行 標準ログイン; save the login again instead.');
+    if(!KINDED_MARKER_PROVIDERS.includes(bank.provider)||bank.variant!==BANK_LOGIN_VARIANT[bank.provider])throw coded('unsupported','A retry with the saved login is available only for PayPay銀行 標準ログイン and 池田泉州銀行 ビジネスゲート; save the login again instead.');
+    const provider=bank.provider;
     const owner=String(bank.ownerId||''),paired=[...new Set((config?.accountInfo||[]).map(a=>String(a.ownerId||'')))];
     if(!/^[a-f\d]{24}$/.test(owner)||paired.some(id=>id!==owner))throw coded('forbidden','This bank account belongs to another OMF owner.');
-    const entry=bankEntry('paypay',input.bankAccountId),file=bankMarker('paypay',input.bankAccountId,root);
-    const envelope=await savedBankLogin(store,entry,aadFor(live.installationId,'paypay',{_id:input.bankAccountId,ownerId:owner},config));
+    const entry=bankEntry(provider,input.bankAccountId),file=bankMarker(provider,input.bankAccountId,root);
+    const envelope=await savedBankLogin(store,entry,aadFor(live.installationId,provider,{_id:input.bankAccountId,ownerId:owner},config));
     if(envelope===null)throw coded('conflict','No login is saved on this PC for this account. Enter it first.');
     if(envelope===false)throw coded('conflict','The saved login on this PC belongs to another connection. Save it again.');
-    const marker=await bankMarkerOf(file),pending=pendingOf('paypay',marker,envelope);
+    const marker=await bankMarkerOf(file),pending=pendingOf(provider,marker,envelope);
     if(!['uncertain','refused'].includes(pending)||marker.entry!==entry)throw coded('conflict','There is no unconfirmed or refused automatic sign-in to retry for the current saved login.'); // guard:bank-retry-uncertain
     assert(live);
     await unlink(file).catch(error=>{if(error.code!=='ENOENT')throw error;});

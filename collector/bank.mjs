@@ -54,6 +54,17 @@ const bankOutbox = (root, bankAccountId) => path.join(root, 'outbox', 'bank', ba
 export function hostOf(url) {
   try { const u = new URL(String(url)); if (u.protocol === 'blob:') return new URL(u.pathname).hostname || null; return u.hostname || null; } catch { return null; }
 }
+/** The origin a download began from (a blob: URL's own origin), never its path or query; null when unreadable. */
+export function originOf(url) {
+  try { const u = new URL(String(url)); if (u.protocol === 'blob:') return new URL(u.pathname).origin || null; return u.origin && u.origin !== 'null' ? u.origin : null; } catch { return null; }
+}
+// Plan omf-ikeda-collector-20261025: the value-free expectation an adapter's snapshot() may report for its completeness check (the count the
+// bank showed and the period) — whitelisted, never a page text, account or row.
+const isoDay = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+export function expectationOf(value) {
+  if (!value || typeof value !== 'object' || !Number.isSafeInteger(value.rows) || value.rows < 0 || !isoDay(value.from) || !isoDay(value.to)) return null;
+  return { rows: value.rows, from: value.from, to: value.to };
+}
 /** True when `host` is one of the adapter's hosts or a subdomain of one. */
 export function hostAllowed(host, hosts) { return !!host && (hosts || []).some(h => host === h || host.endsWith('.' + h)); }
 /** The statement page must show the connected account's label when the owner recorded one (as aplus.mjs:29-31 checks the card). */
@@ -109,6 +120,9 @@ export const LOGIN_TEXT = Object.freeze({
 export async function ensureBankLogin(ui, status, { label, login = null, journal = null, now = Date.now, wait = pause, timeoutMs = 300000, pollMs = 1500, signal = null, exits = null } = {}) {
   const deadline = now() + timeoutMs; let manual = false, submitted = false, declined = false, refused = false, reclaimed = null, sent = null, direct = false, inUse = false;
   const T = exits?.texts || null;
+  // Plan omf-ikeda-collector-20261025: an adapter may word the person's sign-in step itself (texts.manual, given the value-free reason
+  // its ui.attention() reports — 池田泉州銀行: the certificate chooser); every other adapter keeps LOGIN_TEXT.manual.
+  const manualText = () => T?.manual ? T.manual(label, typeof ui.attention === 'function' ? ui.attention() : null) : LOGIN_TEXT.manual(label);
   const attention = async text => { if (manual) return; manual = true; await status('verification_required', text); await ui.show(); };
   const automatic = !!login && typeof ui.login === 'function' && typeof ui.loginForm === 'function';
   const refuse = async () => {
@@ -118,7 +132,7 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   const loginAgain = async () => { if (!sent) return false; const doc = await ui.document?.(); return !!doc && doc !== sent && !!(await ui.loginForm())?.ok; };
   const signIn = async () => {
     const saved = await login.state();
-    if (saved !== 'ready') { declined = true; return saved === 'blocked' ? (T?.blocked ? T.blocked(label) : LOGIN_TEXT.blocked(label)) : saved === 'refused' && T?.refusedSaved ? T.refusedSaved(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : LOGIN_TEXT.manual(label); }
+    if (saved !== 'ready') { declined = true; return saved === 'blocked' ? (T?.blocked ? T.blocked(label) : LOGIN_TEXT.blocked(label)) : saved === 'refused' && T?.refusedSaved ? T.refusedSaved(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : manualText(); }
     if (!(await ui.loginForm())?.ok) { declined = true; return LOGIN_TEXT.form(label); }
     reclaimed ??= journal ? await journal.seen() : false;
     if (reclaimed) { declined = true; return LOGIN_TEXT.retried(label); } // guard:login-journal
@@ -153,10 +167,10 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
     if (submitted) auto = false; // guard:login-once
     if (kind === 'login' && submitted && !refused && !inUse && await loginAgain()) { await refuse(); await attention(T?.refused ? T.refused(label) : LOGIN_TEXT.refused(label)); } // guard:login-in-use-not-refused
     else if (auto) { const text = await signIn(); if (text) await attention(text); }
-    else if (['login', 'verification', 'unknown'].includes(kind)) await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
+    else if (['login', 'verification', 'unknown'].includes(kind)) await attention(submitted ? LOGIN_TEXT.verify(label) : manualText());
     await wait(pollMs);
   }
-  await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
+  await attention(submitted ? LOGIN_TEXT.verify(label) : manualText());
   if (refused) throw coded('login-refused', T?.refused ? T.refused(label) : `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面でIDとパスワードを保存し直してから、再度「取得」を押してください`);
   if (inUse) throw coded('login-refused', T?.inUseStopped ? T.inUseStopped(label) : LOGIN_TEXT.unconfirmed(label));
   if (submitted) throw coded('login-refused', T?.unconfirmed ? T.unconfirmed(label) : LOGIN_TEXT.unconfirmed(label));
@@ -228,6 +242,9 @@ async function completedAttempt(jobDir, bound, adapter, manifestOf, { now, wait,
   if (!hostAllowed(download.host, adapter.hosts)) return null;
   const filename = await awaitDownload({ jobDir, request: async () => {}, state: async () => ({ kind: 'recovering' }), timeoutMs: Math.max(2000, pollMs * 2), extensionMs: 0, now, wait, pollMs, label: adapter.label });
   const bytes = await readFile(path.join(jobDir, filename));
+  // Plan omf-ikeda-collector-20261025: an adapter with a completeness check (verifyCapture) recovers only a file that passes it against
+  // the expectation recorded before the export click; a partial or foreign file is never rebuilt into a manifest.
+  if (typeof adapter.verifyCapture === 'function' && !adapter.verifyCapture(bytes, { expect: marker.expect ?? null, origin: download.origin ?? null, blob: download.blob === true })?.ok) return null; // guard:recovery-verified
   const manifest = manifestOf(filename, bytes, { suggestedFilename: download.suggestedFilename || null, sourceHost: download.host, period: marker.period ?? null, labelChecked: marker.labelChecked === true, recovered: true });
   await writeManifest(jobDir, manifest);
   return { directory: jobDir, manifest };
@@ -300,6 +317,9 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
     if (recovered) { await status('running', '保存済みの明細を復旧'); return { items: [recovered], failed: null, recovered: true }; }
     return { items: [], failed: 'ダウンロードが完了しませんでした。再度「取得」を押してください', skipped: 'attempted' }; // guard:attempt-marker
   }
+  // Plan omf-ikeda-collector-20261025: an adapter may refuse the frozen job before any bank page is opened (precheck: 池田泉州銀行 — a period
+  // the bank no longer offers after a month rollover, a missing account identity); the reason is the job's result, nothing is sent.
+  if (typeof adapter.precheck === 'function') { const reason = adapter.precheck(job?.snapshot ?? null, now()); if (reason) return { items: [], failed: reason }; } // guard:adapter-precheck
   // The job's sign-in journal: written (exclusively, bound to the job, no credential) before the one automatic submission.
   const journal = { seen: () => exists(path.join(jobDir, 'login.json')), async mark() { await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ ...bound, submittedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error; }); } };
   try { await ensureBankLogin(ui, status, { label: adapter.label, login, journal: login ? journal : null, now, wait, timeoutMs: loginTimeoutMs, signal, exits: adapter.loginExits ?? null }); }
@@ -321,12 +341,13 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   signal?.throwIfAborted();
   step = 'export';
   await mkdir(jobDir, { recursive: true });
-  await writeFile(marker, JSON.stringify({ ...bound, period: snapshot?.period ?? null, labelChecked, requestedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 });
+  const expect = expectationOf(snapshot?.expect);
+  await writeFile(marker, JSON.stringify({ ...bound, period: snapshot?.period ?? null, labelChecked, requestedAt: stamp(), ...(expect ? { expect } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
   const session = ui.downloadSession ? await ui.downloadSession(jobDir) : null;
   let began = null;
   session?.on('Browser.downloadWillBegin', event => {
     if (began) return;
-    began = { guid: event.guid, host: hostOf(event.url), suggestedFilename: String(event.suggestedFilename || '').slice(0, 200) };
+    began = { guid: event.guid, host: hostOf(event.url), origin: originOf(event.url), blob: String(event.url || '').startsWith('blob:'), suggestedFilename: String(event.suggestedFilename || '').slice(0, 200) };
     writeFile(path.join(jobDir, 'download.json'), JSON.stringify(began), { mode: 0o600 }).catch(() => {});
   });
   let filename;
@@ -343,12 +364,15 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   const host = began?.host ?? null;
   if (!hostAllowed(host, adapter.hosts)) { await unlink(path.join(jobDir, filename)).catch(() => {}); throw new Error('ダウンロード元が銀行サイトではありません'); } // guard:download-host
   const bytes = await readFile(path.join(jobDir, filename));
+  // Plan omf-ikeda-collector-20261025: an adapter with a completeness check refuses a file whose origin, encoding, header, rows or count
+  // differ from what the bank showed; the file is removed (never sent, never recovered) and the job says why.
+  if (typeof adapter.verifyCapture === 'function') { const check = adapter.verifyCapture(bytes, { expect, origin: began?.origin ?? null, blob: began?.blob === true }); if (!check?.ok) { await unlink(path.join(jobDir, filename)).catch(() => {}); code = check?.code || 'capture-mismatch'; return { items: [], failed: String(check?.message || 'ダウンロードした明細を確認できませんでした') }; } } // guard:capture-verified
   const manifest = manifestOf(filename, bytes, { suggestedFilename: began?.suggestedFilename || null, sourceHost: host, period: snapshot?.period ?? null, labelChecked });
   await writeManifest(jobDir, manifest);
   await status('running', '明細を保存');
   completed = true; step = 'complete';
   return { items: [{ directory: jobDir, manifest }], failed: null };
-  } catch (error) { code = error?.code ?? 'uncoded'; throw error; } finally {
+  } catch (error) { code = error?.code ?? 'uncoded'; if (error?.report === true && typeof error.message === 'string') return { items: [], failed: error.message }; throw error; } finally {
     // Plan omf-paypay-live-period-20261023: an adapter's optional failure reader runs BEFORE finish() (ログアウト) and before cleanup; finish()'s
     // outcome is kept; the record is written last, still before withBankBrowser closes the browser. Each part is bounded and swallows errors.
     const reader = typeof ui.diagnostic === 'function';

@@ -156,6 +156,21 @@ from an unlisted host is recorded as `ダウンロード: host/filename` but not
 bank file while diagnosing. Data written: `connection.provider = 'ikeda'`, `connection.variant` ∈ {`direct`, `idlink`, `portal`}
 and the job snapshot's copy; no new field or collection.
 
+### 池田泉州銀行 ビジネスゲート retrieval (plan omf-ikeda-collector-20261025)
+
+Only the `portal` variant retrieves (`BANK_VARIANT_COLLECTION.ikeda.portal`, `collector/banks/ikeda.mjs` `variants.portal`); the provider
+default, `direct` (インターネットEB, which asks a separate 照会用暗証番号) and Resona stay `contract-pending`/observe. The connection keeps the
+exact account identity `accountIdentity {branch, type 普通|当座|貯蓄, number (7 digits)}` (only for this variant; a 取得 refuses without it)
+and needs no uploaded CSV: the native template `ikeda-portal-native` maps the observed 10-column Shift_JIS 入出金明細 — 勘定日 (0, not
+(起算日)), 摘要 (9), お支払金額 out (2), お預り金額 in (3), 残高 (4), outflow positive, no bank transaction ID (取引区分/明細区分 are not
+identifiers, so rows keep the file-row identity and every one of the 10 source columns stays in the row's original/provenance). `勘定日`
+is also a date alias for owner CSV imports. The bank offers statements only from the first day of the month before last (前々月1日, JST)
+through today: a job freezes that effective period as `coverage` beside `requestedCoverage` (as saved; an open end stays open, a closed end
+stays closed), `availability` and `missingCoverage`; a saved period wholly before the window is refused (409, import the CSV instead).
+The collector verifies the downloaded blob (BusinessGate origin, Shift_JIS, header, rows inside the period, count = the 全N件 shown) before
+a manifest exists and again on crash recovery; a mismatch is never sent. Details, limits and the person-facing behaviour:
+`docs/ikeda-bank-connection.md`.
+
 A genuine bank transaction ID must be deliberately mapped and confirmed. Its identity is scoped to owner/account.
 Without it the identity is file hash + sheet + original row, including two identical-looking rows in one file. Identical
 bytes reimport without duplication. Different files remain distinct even if fingerprints match. A filtered/reordered
