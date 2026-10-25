@@ -1,12 +1,13 @@
 // Actual installed Chrome and native owned fixture. No production/model calls; injected failures affect this page's test requests only.
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {createRequire}=require('node:module'),{existsSync}=require('node:fs');
+const {closeOwnedBrowser}=require('./finance-browser-cleanup.cjs');
 module.exports=async({root,origin,db,A,B,ids,pause,pass})=>{
  const project=createRequire(path.join(root,'package.json')),{ObjectId}=project('mongodb');
  let puppeteer;try{puppeteer=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core')}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;puppeteer=createRequire(path.resolve(root,'../collector/package.json'))('rebrowser-puppeteer-core')}
  const executablePath=[path.join(process.env.ProgramFiles||'C:/Program Files','Google/Chrome/Application/chrome.exe'),path.join(process.env['ProgramFiles(x86)']||'C:/Program Files (x86)','Google/Chrome/Application/chrome.exe')].find(existsSync);
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'omf-receipt-library-')),downloads=path.join(directory,'downloads'),screenshots=process.env.OMF_RECEIPT_LIBRARY_SCREENSHOTS;
- let browser,page,held=null,holdNext=false,failReads=false,emptyCompany;const errors=[],writes=[];
+ let browser,page,held=null,holdNext=false,failReads=false,emptyCompany,failure=null;const errors=[],writes=[];
  const aIds=new Set((await db.collection('receipts').find({organizationId:A}).project({_id:1}).toArray()).map(x=>String(x._id)));
  const wait=async(fn,args=[],label='condition')=>{for(let i=0;i<200;i++){if(await page.evaluate(fn,...args))return;await pause(100)}throw Error('library-ui:'+label)};
  const push=to=>page.evaluate(to=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.push(to),to);
@@ -79,6 +80,7 @@ module.exports=async({root,origin,db,A,B,ids,pause,pass})=>{
   assert.deepEqual(writes,[],'library-ui:no-receipt-writes');assert.deepEqual(errors,[],'library-ui:no-page-errors');
   pass('installed Chrome: actual delayed company read discarded, switch-back succeeds, failure clears rows with retry and empty company shows true zero counts; no receipt writes');
  }catch(e){
+  failure=e;
   if(page)await capture('failure').catch(()=>{});
   if(page&&screenshots&&e.message.includes('overflow')){
    const layout=()=>({path:location.pathname,viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,nodes:[...document.querySelectorAll('body *')].flatMap(n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);if(!r.width||r.right<=innerWidth+1)return[];const clips=[];for(let p=n.parentElement;p;p=p.parentElement){const c=getComputedStyle(p);if(['auto','scroll','hidden','clip'].includes(c.overflowX))clips.push({tag:p.tagName,class:p.className,right:p.getBoundingClientRect().right,overflowX:c.overflowX})}return[{tag:n.tagName,class:typeof n.className==='string'?n.className:'',left:r.left,right:r.right,width:r.width,scrollWidth:n.scrollWidth,overflowX:s.overflowX,clips}]})});
@@ -90,7 +92,7 @@ module.exports=async({root,origin,db,A,B,ids,pause,pass})=>{
  }
  finally{
   if(held)await held.request.respond({status:held.status,contentType:'application/json',body:held.body}).catch(()=>{});
-  if(browser){const process=browser.process();let timer;try{await Promise.race([browser.close(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned Chrome cleanup timed out')),10000)})])}finally{clearTimeout(timer);if(process&&process.exitCode===null)process.kill()}}if(emptyCompany)await db.collection('organizations').deleteOne({_id:emptyCompany});
-  const target=path.resolve(directory),temp=path.resolve(os.tmpdir());assert.ok(target.startsWith(temp+path.sep)&&path.basename(target).startsWith('omf-receipt-library-'));await fs.rm(target,{recursive:true,force:true});
+  if(browser)console.log('CLEANUP receipt-library-browser '+JSON.stringify(await closeOwnedBrowser(browser,{primaryError:failure})));if(emptyCompany)await db.collection('organizations').deleteOne({_id:emptyCompany});
+  const target=path.resolve(directory),temp=path.resolve(os.tmpdir());assert.ok(target.startsWith(temp+path.sep)&&path.basename(target).startsWith('omf-receipt-library-'));await fs.rm(target,{recursive:true,force:true,maxRetries:10,retryDelay:500});
  }
 };
