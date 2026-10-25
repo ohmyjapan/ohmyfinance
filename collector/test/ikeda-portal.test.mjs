@@ -102,9 +102,22 @@ test('portal: the account is chosen by its full identity — a suffix, another b
   const C = ikeda.portalAccountChoice, I = { branch: 'カクウ支店', type: '普通', number: '0000001' };
   assert.deepEqual(C(F.ACCOUNTS, I), { index: 3, reason: 'exact' }, 'ikeda-portal:choice-exact');
   assert.equal(C(F.ACCOUNTS.slice(0, 3), I).index, -1, 'ikeda-portal:choice-no-suffix-other-branch-type');
-  assert.equal(C([...F.ACCOUNTS, { text: 'カクウ支店 普通 0000001 重複（架空）' }], I).reason, 'ambiguous', 'ikeda-portal:choice-ambiguous');
-  assert.equal(C([{ text: 'カクウ支店 普通 0000001', disabled: true }], I).index, -1, 'ikeda-portal:choice-disabled');
+  assert.equal(C([...F.ACCOUNTS, { text: '池田泉州銀行　カクウ支店　普通　0000001' }], I).reason, 'ambiguous', 'ikeda-portal:choice-ambiguous (a second option of the same account, fullwidth spaces)');
+  assert.equal(C([{ text: '池田泉州銀行 カクウ支店 普通 0000001', disabled: true }], I).index, -1, 'ikeda-portal:choice-disabled');
   assert.equal(C(F.ACCOUNTS, null).reason, 'identity');
+  // Parent finding C7: the configured branch/type/number count only in their own fields of the observed format
+  for (const o of F.MISLEADING_ACCOUNTS) assert.equal(C([o], I).index, -1, 'ikeda-portal:choice-field-roles ' + o.value);
+  assert.deepEqual(C([...F.MISLEADING_ACCOUNTS, F.ACCOUNTS[3]], I), { index: F.MISLEADING_ACCOUNTS.length, reason: 'exact' }, 'ikeda-portal:choice-field-roles-positive');
+  for (const [label, text, identity] of [['branch-suffix', '池田泉州銀行 東大阪支店 普通 0000001', { branch: '大阪支店', type: '普通', number: '0000001' }], ['type-in-extra', '池田泉州銀行 大阪支店 当座 0000001 普通株式会社', { branch: '大阪支店', type: '普通', number: '0000001' }], ['number-in-extra', '池田泉州銀行 大阪支店 普通 9999999 株式会社0000001', { branch: '大阪支店', type: '普通', number: '0000001' }]]) assert.equal(C([{ text }], identity).index, -1, 'ikeda-portal:choice-parent-probe ' + label);
+  assert.equal(C([{ text: '池田泉州銀行 大阪支店 普通 0000001' }], { branch: '大阪支店', type: '普通', number: '0000001' }).index, 0, 'ikeda-portal:choice-parent-probe positive');
+});
+test('portal: on the screen, misleading options (another branch ending in the name, the type or number only as an extra word, an unknown format) are never selected; the observed-format option among them is', async () => {
+  const misled = await collect({ accounts: [...F.MISLEADING_ACCOUNTS] });
+  assert.match(String(misled.result?.failed || ''), /口座を1つに特定できません（見つかりません）/, 'ikeda-portal:dom-misleading-refused ' + String(misled.result?.failed || misled.error?.message));
+  assert.deepEqual([misled.stats.searches.length, misled.stats.csvServed], [0, 0], 'ikeda-portal:dom-misleading-nothing-exported');
+  const mixed = await collect({ accounts: [...F.MISLEADING_ACCOUNTS.slice(0, 3), F.ACCOUNTS[3], ...F.MISLEADING_ACCOUNTS.slice(3)] });
+  assert.equal(mixed.result?.failed ?? null, null, 'ikeda-portal:dom-observed-format ' + String(mixed.result?.failed || mixed.error?.message));
+  assert.equal(mixed.stats.searches.at(-1)?.acct, 'A4', 'ikeda-portal:dom-observed-format-selected');
 });
 test('portal: a refusal is remembered and nothing is submitted again; a later job with the refused marker sends nothing', async () => {
   const r = await collect({ loginOutcome: 'refuse' }, { loginTimeoutMs: 12000 });

@@ -42,12 +42,22 @@ export const PORTAL = 'https://www.0161.houjinportal.anser.ne.jp', AUTH = 'https
 export const AUTH_PATH = '/0161c/oauth/auth', CC_PATH = '/BIZ_0CA0600/rblgi01/BLGI024-BLGI024Info';
 export const CSV_HEADER = ['勘定日', '(起算日)', 'お支払金額', 'お預り金額', '残高', '取引区分', '明細区分', '金融機関', '支店', '摘要'];
 export const IDENTITY = Object.freeze({ branch: 'カクウ支店', type: '普通', number: '0000001' });
-// Decoys first: a first-option or last-four/suffix choice selects the wrong account.
+// The option format the parent observed (SAFE-ACCOUNT-OPTION-FORMAT-V2.json): bank name, branch, type and full number as four
+// whitespace-separated fields, no holder suffix. Values fictional. Decoys first: a first-option or last-four/suffix choice selects the
+// wrong account.
 export const ACCOUNTS = Object.freeze([
-  { value: 'A1', text: 'カクウ支店 普通 1000001 カクウ商事（架空）', number: '1000001' },
-  { value: 'A2', text: 'ベツ支店 普通 0000001 カクウ株式会社（架空）', number: '0000001-other-branch' },
-  { value: 'A3', text: 'カクウ支店 当座 0000001 カクウ株式会社（架空）', number: '0000001-current' },
-  { value: 'A4', text: 'カクウ支店 普通 0000001 カクウ株式会社（架空）', number: '0000001' }
+  { value: 'A1', text: '池田泉州銀行 カクウ支店 普通 1000001', number: '1000001' },
+  { value: 'A2', text: '池田泉州銀行 ベツ支店 普通 0000001', number: '0000001-other-branch' },
+  { value: 'A3', text: '池田泉州銀行 カクウ支店 当座 0000001', number: '0000001-current' },
+  { value: 'A4', text: '池田泉州銀行 カクウ支店 普通 0000001', number: '0000001' }
+]);
+// Parent finding C7: labels where the configured branch, type or number occurs only as part of another field or as an extra word.
+export const MISLEADING_ACCOUNTS = Object.freeze([
+  { value: 'B1', text: '池田泉州銀行 東カクウ支店 普通 0000001' },
+  { value: 'B2', text: '池田泉州銀行 カクウ支店 当座 0000001 普通' },
+  { value: 'B3', text: '池田泉州銀行 カクウ支店 普通 9999999 0000001' },
+  { value: 'B4', text: 'カクウ支店 普通 0000001 カクウ株式会社（架空）' },
+  { value: 'B5', text: '池田泉州銀行 カクウ支店 普通預金 0000001' }
 ]);
 const iso = d => d.toISOString().slice(0, 10);
 export const addDays = (day, n) => iso(new Date(Date.parse(day + 'T00:00:00Z') + n * 86400000));
@@ -429,6 +439,60 @@ async function harnessMain(SRC) {
     assert.equal(independent, true, 'the seeded captures cover every old day (independent check)');
     assert.deepEqual((await m.schedule.readBankSchedule(A.id, acct, t)).availability?.gaps, [], 'ikeda:archive-lifetime (confirmed old days reported as unconfirmed)');
   });
+  // Parent finding C5: a later completed retrieval whose verified file is byte-identical to an earlier one (no new transactions) is received
+  // by the real upload route as a duplicate of the first, immutable capture; its own, longer frozen period must still count as confirmed.
+  // Jobs are frozen like queueBankSync freezes them (a real queued job's snapshot with another period) and run through the real collector
+  // routes (upload, status) — only the read date is injected.
+  const runReceipt = async (acct, snapshot, bytes) => {
+    const jobId = randomUUID(), hash = sha256(JSON.stringify(snapshot));
+    await BankJob.create({ ownerId: oid(A.id), bankAccountId: oid(acct), jobId, kind: 'retrieve', state: 'running', open: true, collectorId: device._id, leaseUntil: new Date(Date.now() + 120000), requestedAt: new Date(), lastAttemptAt: new Date(), lastMessage: 'fixture', snapshot, snapshotHash: hash, statementIds: [], observation: null });
+    let receipt = null;
+    if (bytes) { const r = await fetch(origin + capi + 'bank/upload?' + new URLSearchParams({ jobId, snapshotHash: hash, kind: 'statement', channel: 'collector', labelChecked: 'false', name: 'nyushukkin.csv' }), { method: 'POST', headers: { Authorization: 'Bearer ' + deviceToken, 'Content-Type': 'text/csv' }, body: bytes }); receipt = await r.json(); assert.equal(r.status, 200, 'upload ' + JSON.stringify(receipt).slice(0, 300)); }
+    ok(await status(jobId, 'complete', 'fixture complete'), 'status complete'); return { jobId, receipt };
+  };
+  await leg('S10 a later completed retrieval with byte-identical rows (a duplicate receipt of the first, immutable capture) confirms its own longer period; an unreceived job, another account\'s receipt or another identity never does', async () => {
+    const acct = await account(A, 'Ikeda repeat（架空）', IKEDA({ coverage: { from: '2026-01-05', to: null } })), other = await account(A, 'Ikeda repeat other（架空）', IKEDA({ coverage: { from: '2026-01-05', to: null } }));
+    ok(await grant([K, R, acct, other]), 'grant repeat');
+    const queued = ok(await call(api + 'bank/accounts/' + acct + '/sync', { method: 'POST', token: A.token, body: {} }), 'a real frozen snapshot').job; await BankJob.updateOne({ jobId: queued.jobId }, { $set: { state: 'superseded', open: false } });
+    const frozen = cov => ({ ...queued.snapshot, coverage: cov, requestedCoverage: { from: '2026-01-05', to: null }, missingCoverage: null });
+    const bytes = csvBytes([{ date: '2026-01-10', out: 1000, balance: 9000, desc: 'カクウ振込（架空）' }, { date: '2026-02-03', in: 2000, balance: 11000, desc: 'カクウ入金（架空）' }]);
+    const first = await runReceipt(acct, frozen({ from: '2026-01-05', to: '2026-03-01' }), bytes);
+    assert.equal(first.receipt.duplicate, false); assert.equal(first.receipt.state, 'imported', 'first receipt imported');
+    const later = await runReceipt(acct, frozen({ from: '2026-01-05', to: '2026-03-31' }), bytes);
+    assert.deepEqual([later.receipt.duplicate, later.receipt.id], [true, first.receipt.id], 'the later identical file is the first capture again (immutable, no new rows)');
+    const capture = (await BankStatement.findById(first.receipt.id).lean()).capture; assert.deepEqual([capture.jobId, capture.snapshot.coverage.to], [first.jobId, '2026-03-01'], 'ikeda:repeat-first-capture-immutable');
+    assert.equal(await BankRow.countDocuments({ bankAccountId: oid(acct) }), 2, 'ikeda:repeat-no-duplicate-rows');
+    const t = new Date('2026-07-15T03:00:00Z'), gaps = async () => (await m.schedule.readBankSchedule(A.id, acct, t)).availability?.gaps;
+    assert.deepEqual(await gaps(), [{ from: '2026-04-01', to: '2026-04-30' }], 'ikeda:repeat-later-period-confirmed (the later completed retrieval of the same file was not credited)');
+    // not credited: a completed job with no receipt, a job whose receipt is another account's capture, a job frozen for another identity
+    await runReceipt(acct, frozen({ from: '2026-01-05', to: '2026-04-30' }), null);
+    const foreign = await runReceipt(other, { ...frozen({ from: '2026-01-05', to: '2026-03-10' }) }, csvBytes([{ date: '2026-01-12', out: 5, balance: 1, desc: '別口座（架空）' }]));
+    await BankJob.create({ ownerId: oid(A.id), bankAccountId: oid(acct), jobId: randomUUID(), kind: 'retrieve', state: 'complete', open: false, requestedAt: new Date(), snapshot: frozen({ from: '2026-01-05', to: '2026-04-30' }), snapshotHash: 'fictional', statementIds: [oid(foreign.receipt.id)], observation: null });
+    await BankJob.create({ ownerId: oid(A.id), bankAccountId: oid(acct), jobId: randomUUID(), kind: 'retrieve', state: 'complete', open: false, requestedAt: new Date(), snapshot: { ...frozen({ from: '2026-01-05', to: '2026-04-30' }), accountIdentity: { ...IDENTITY, number: '0000002' } }, snapshotHash: 'fictional', statementIds: [oid(first.receipt.id)], observation: null });
+    assert.deepEqual(await gaps(), [{ from: '2026-04-01', to: '2026-04-30' }], 'ikeda:repeat-receipt-required (an unreceived job, another account\'s receipt or another identity confirmed the period)');
+  });
+  // Parent finding C6: a scheduled job queued for one full account identity is not authorized once the owner saved another identity.
+  const claimFor = async acct => { const got = []; for (let i = 0; i < 20; i++) { const c = await claim(); if (!c.job) break; if (c.job.bankAccountId === acct) got.push(c.job); else ok(await status(c.job.jobId, 'failed', 'fixture: not this leg'), 'close other'); } return got; };
+  await leg('S11 a replaced account identity closes the unclaimed scheduled job of the old identity (connection changed → 要確認); re-saving the schedule queues the new identity\'s run; a save that keeps the identity keeps the queued run; manual 取得 uses the current identity', async () => {
+    const acct = await account(A, 'Ikeda identity change（架空）', IKEDA()); ok(await grant([K, R, acct]), 'grant identity');
+    const t = new Date(); ok(await call(api + 'bank/accounts/' + acct + '/schedule', { method: 'PUT', token: A.token, body: { enabled: true, hour: 0, revision: 0 } }), 'enable');
+    const tick1 = await m.schedule.runBankSchedule(t), old = await BankJob.findOne({ jobId: { $in: tick1.queued }, bankAccountId: oid(acct) }).lean();
+    assert.equal(old?.snapshot?.accountIdentity?.number, '0000001', 'queued for the first identity');
+    ok(await call(api + 'bank/accounts/' + acct + '/connection', { method: 'PUT', token: A.token, body: IKEDA({ accountLabel: '表示名だけ変更（架空）' }) }), 'same-identity save');
+    assert.equal((await BankJob.findById(old._id).lean()).state, 'queued', 'ikeda:identity-same-save-keeps-run'); assert.notEqual((await m.schedule.readBankSchedule(A.id, acct, t)).status.state, 'reconfirm', 'ikeda:identity-same-save-no-reconfirm');
+    ok(await call(api + 'bank/accounts/' + acct + '/connection', { method: 'PUT', token: A.token, body: IKEDA({ accountIdentity: { ...IDENTITY, number: '0000002' } }) }), 'identity replaced');
+    const claimed = await claimFor(acct);
+    assert.deepEqual(claimed.map(j => j.snapshot.accountIdentity.number), [], 'ikeda:identity-stale-scheduled-not-claimed (the old identity\'s scheduled job was handed to the PC)');
+    assert.equal((await BankJob.findById(old._id).lean()).state, 'superseded', 'ikeda:identity-stale-superseded');
+    const view = await m.schedule.readBankSchedule(A.id, acct, t); assert.equal(view.status.state, 'reconfirm', 'ikeda:identity-reconfirm');
+    ok(await call(api + 'bank/accounts/' + acct + '/schedule', { method: 'PUT', token: A.token, body: { enabled: true, hour: 0, revision: view.schedule.revision } }), 're-save the schedule');
+    const tick2 = await m.schedule.runBankSchedule(t), fresh = await BankJob.findOne({ jobId: { $in: tick2.queued }, bankAccountId: oid(acct) }).lean();
+    assert.equal(fresh?.snapshot?.accountIdentity?.number, '0000002', 'ikeda:identity-resave-recovers');
+    const run = await claimFor(acct); assert.deepEqual(run.map(j => j.snapshot.accountIdentity.number), ['0000002'], 'ikeda:identity-current-run-claimed'); ok(await status(run[0].jobId, 'complete', 'fixture complete'), 'complete');
+    const manual = ok(await call(api + 'bank/accounts/' + acct + '/sync', { method: 'POST', token: A.token, body: {} }), 'manual sync').job; assert.equal(manual.snapshot.accountIdentity.number, '0000002', 'ikeda:identity-manual-current');
+    await BankJob.updateOne({ jobId: manual.jobId }, { $set: { state: 'superseded', open: false } });
+    assert.deepEqual(J.bankScheduleBinding({ provider: 'rakuten', variant: 'standard', templateId: 't', accountIdentity: { ...IDENTITY } }), { provider: 'rakuten', variant: 'standard', templateId: 't' }, 'ikeda:other-bank-binding-unchanged');
+  });
   console.log('RECEIPT ' + JSON.stringify({ pass: failed === 0, checks, failed, bankCalls: 0, productionWrites: 0 }));
   await live?.broker?.remote?.end?.().catch(() => {}); await mongoose.disconnect(); server.close(); await rm(temp, { recursive: true, force: true }).catch(() => {});
   process.exit(failed ? 1 : 0);
@@ -442,7 +506,7 @@ async function harnessMain(SRC) {
 // harness failure, never a catch. `expect` must match a failing assertion of that run.
 const PO = 'collector/windows/bank-certificate-policy.ps1', SV = 'server/services/financeBankScheduleService.ts', IK = 'collector/banks/ikeda.mjs', BK = 'collector/bank.mjs', IX = 'collector/index.mjs', PM = 'shared/finance-payment-match.mjs', BS = 'shared/finance-bank-schedule.mjs', CS = 'server/services/financeBankCollectionService.ts', SS = 'server/services/financeCollectorSecurityService.ts';
 export const MUTANTS = [
-  { name: 'MC1-account-last-digits', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'account is chosen', edits: [['(o.text.match(/[0-9]+/g) || []).includes(identity.number)); // guard:portal-account-exact', 'o.text.includes(identity.number.slice(-4))); // guard:portal-account-exact']], expect: /ikeda-portal:choice-(exact|no-suffix-other-branch-type)/ },
+  { name: 'MC1-account-last-digits', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'account is chosen', edits: [['o.fields.number === identity.number); // guard:portal-account-exact', 'o.fields.number.endsWith(identity.number.slice(-4))); // guard:portal-account-exact']], expect: /ikeda-portal:choice-(exact|no-suffix-other-branch-type)/ },
   { name: 'MC2-first-account-unverified', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'certificate login, the saved password', edits: [['const choice = portalAccountChoice(list.options, identity);', "const choice = { index: 0, reason: 'first' };"], ["if (choice.index < 0 || now.selected !== choice.index) throw fail('account-unidentified'", "if (false) throw fail('account-unidentified'"]], expect: /ikeda-portal:(exact-account-range-calendar|exact-bytes|manifest-bound)/ },
   { name: 'MC3-count-unchecked', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'rows differ from', guard: 'portal-capture-count', expect: /ikeda-portal:count-mismatch/ },
   { name: 'MC4-origin-unchecked', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'pure: page states', guard: 'portal-capture-origin', expect: /ikeda-portal:capture origin/ },
@@ -467,6 +531,11 @@ export const MUTANTS = [
   { name: 'MC12-bank-name-in-any-row', leg: 'U2', file: PO, env: 'OMF_TEST_POLICY_SCRIPT', test: 'certificate policy', edits: [['$named = $cells.Count -eq 0 -and $BankName -and $name.Contains($BankName)', '$named = $BankName -and $name.Contains($BankName)']], expect: /cert-policy:name-with-cells-needs-the-cell/ },
   { name: 'MS5-archive-any-identity', leg: 'S', file: SV, legs: 'S8', edits: [['if (needsIdentity) Object.assign(filter, {', 'if (false) Object.assign(filter, {']], expect: /ikeda:archive-identity/ },
   { name: 'MS6-archive-recent-only', leg: 'S', file: SV, legs: 'S9', edits: [[".select('capture.snapshot.coverage').lean().cursor()", ".select('capture.snapshot.coverage').sort({ _id: -1 }).limit(500).lean().cursor()"]], expect: /ikeda:archive-lifetime/ },
+  // parent findings C5-C7 (build-02)
+  { name: 'MC13-branch-suffix-accepted', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'misleading options|account is chosen', edits: [['o.fields.branch === identity.branch &&', 'o.fields.branch.endsWith(identity.branch) &&']], expect: /ikeda-portal:(choice-field-roles B1|dom-misleading-refused|choice-parent-probe branch-suffix)/ },
+  { name: 'MS7-repeat-receipt-ignored', leg: 'S', file: SV, legs: 'S10', guard: 'archive-job-receipt', expect: /ikeda:repeat-later-period-confirmed/ },
+  { name: 'MS8-any-completed-job-credited', leg: 'S', file: SV, legs: 'S10', edits: [['if ((j.statementIds || []).some((v: any) => valid.has(String(v)))) covered.push', 'if ((j.statementIds || []).length) covered.push']], expect: /ikeda:repeat-receipt-required/ },
+  { name: 'MS9-binding-without-identity', leg: 'S', file: BS, legs: 'S11', edits: [[' && (a.accountIdentity ?? null) === (b.accountIdentity ?? null); }', '; }']], expect: /ikeda:identity-stale-scheduled-not-claimed/ },
   { name: 'MW2-closed-end-rewritten', leg: 'U1', file: PM, edits: [['const c=bankCoverageInput(saved,today),to=c.to??today;', 'const c=bankCoverageInput(saved,today),to=today;']], expect: /window:closed-end-kept/ }
 ];
 
