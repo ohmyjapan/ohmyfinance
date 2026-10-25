@@ -140,7 +140,7 @@ const scheduleStatusText=(a:any)=>{const st=schedules[a.id]?.status;if(!st)retur
  switch(st.state){
   case 'off':return '状態: 自動取得はオフです'
   case 'unsupported':return '状態: 対象外のため自動では取得していません — '+unsupportedText(st.reason)
-  case 'reconfirm':return '状態: 要確認 — 保存したときから接続（銀行・ログイン方式・テンプレート）が変わったため、自動取得を止めています。内容を確認して設定を保存し直すと再開します'
+  case 'reconfirm':return '状態: 要確認 — 保存したときから接続（銀行・ログイン方式・テンプレート・口座）が変わったため、自動取得を止めています。内容を確認して設定を保存し直すと再開します'
   case 'attention':return `状態: 要対応 — 銀行のサインイン・追加の確認待ちです。接続したPCのChromeで操作してください（${by} · ${jst(j.requestedAt)} 予約）`
   case 'running':return `状態: 取得中（${by} · ${jst(j.requestedAt)} 予約）`
   case 'interrupted':return `状態: 取得が途中で止まっています（${by} · ${jst(j.requestedAt)} 予約）。PCのダウンローダーが同じ取得を再開します。新しい取得は予約しません`

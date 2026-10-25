@@ -6,7 +6,7 @@ export function nextDay(day:string):string;
 export const BANK_SCHEDULE_DEFAULT_HOUR:number;
 export type BankScheduleInput={enabled:boolean;hour:number;revision:number};
 export function bankScheduleInput(body:any):BankScheduleInput;
-export type BankScheduleBinding={provider:string;variant:string|null;templateId:string|null};
+export type BankScheduleBinding={provider:string;variant:string|null;templateId:string|null;accountIdentity?:string|null};
 export function bankScheduleBinding(connection:any):BankScheduleBinding;
 export function sameBinding(a:any,b:any):boolean;
 export type StoredBankSchedule={enabled:boolean;hour:number;revision:number;binding:BankScheduleBinding|null;savedAt:any};

@@ -32,11 +32,18 @@ export function bankScheduleInput(body) {
   if (!Number.isSafeInteger(body.revision) || body.revision < 0) throw Error('自動取得の設定を再読み込みしてください。');
   return { enabled: body.enabled, hour: body.hour, revision: body.revision };
 }
-/** The authority a schedule was saved for: the connection's provider, login variant and template (label/period are frozen per job). */
+/**
+ * The authority a schedule was saved for: the connection's provider, login variant and template (label/period are frozen per job). Plan
+ * omf-ikeda-collector-20261025 (parent finding C6): a variant that selects its account on the bank's screen (bankIdentityRequired) also
+ * binds the full account identity, so a replaced branch/type/number is a changed connection; every other binding keeps its exact shape.
+ */
 export function bankScheduleBinding(connection) {
-  return { provider: String(connection?.provider ?? ''), variant: connection?.variant == null ? null : String(connection.variant), templateId: connection?.templateId == null ? null : String(connection.templateId) };
+  const binding = { provider: String(connection?.provider ?? ''), variant: connection?.variant == null ? null : String(connection.variant), templateId: connection?.templateId == null ? null : String(connection.templateId) };
+  if (!bankIdentityRequired(binding.provider, binding.variant)) return binding;
+  const a = connection?.accountIdentity && typeof connection.accountIdentity === 'object' ? connection.accountIdentity : null;
+  return { ...binding, accountIdentity: a ? [a.branch, a.type, a.number].map(v => String(v ?? '')).join('|') : null };
 }
-export function sameBinding(a, b) { return !!a && !!b && typeof a.provider === 'string' && a.provider === b.provider && (a.variant ?? null) === (b.variant ?? null) && (a.templateId ?? null) === (b.templateId ?? null); }
+export function sameBinding(a, b) { return !!a && !!b && typeof a.provider === 'string' && a.provider === b.provider && (a.variant ?? null) === (b.variant ?? null) && (a.templateId ?? null) === (b.templateId ?? null) && (a.accountIdentity ?? null) === (b.accountIdentity ?? null); }
 // A stored setting read tolerantly: anything malformed is "off" (never on, never a crash); a numeric revision is kept so the next
 // save is compared against it.
 export function storedBankSchedule(value) {

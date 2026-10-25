@@ -68,6 +68,9 @@ async function stateOf(account: any, now: Date) {
 // the capture's own frozen snapshot; another account, bank or login type that once used this OMF account never confirms its days, while a
 // changed template or schedule keeps the proof. Every such capture that starts before the window is read through a cursor (no
 // recent-job limit), so a long daily history is never reported as unconfirmed because its proof is old.
+// Parent finding C5: identical bytes received again keep their first, immutable capture (a duplicate receipt), so a later completed
+// retrieval of the same connection whose receipt is such an imported capture of this account and identity (statementIds) confirms its
+// own frozen period too. A completed job without a receipt, a receipt of another account or identity, or a held capture confirms nothing.
 async function availabilityOf(account: any, now: Date) {
   const c = account.connection; if (!c?.coverage) return null
   const day = jstDay(now); let w: any = null; try { w = bankCoverageWindow(c.provider, c.variant ?? null, c.coverage, day) } catch { w = null }
@@ -78,6 +81,18 @@ async function availabilityOf(account: any, now: Date) {
     const filter: any = { ownerId: account.ownerId, 'capture.bankAccountId': sid(account._id), 'capture.state': 'imported', 'capture.kind': 'retrieve', 'capture.channel': 'collector', 'capture.snapshot.provider': c.provider, 'capture.snapshot.variant': c.variant ?? null, 'capture.snapshot.coverage.from': { $type: 'string', $lt: w.available.from } }
     if (needsIdentity) Object.assign(filter, { 'capture.snapshot.accountIdentity.branch': String(identity.branch), 'capture.snapshot.accountIdentity.type': String(identity.type), 'capture.snapshot.accountIdentity.number': String(identity.number) })
     for await (const s of BankStatement.find(filter).select('capture.snapshot.coverage').lean().cursor() as any) covered.push(s.capture.snapshot.coverage)
+    const receipt: any = { ...filter }; delete receipt['capture.snapshot.coverage.from']
+    const jobs: any = { ownerId: account.ownerId, bankAccountId: account._id, kind: 'retrieve', state: 'complete', 'snapshot.provider': c.provider, 'snapshot.variant': c.variant ?? null, 'snapshot.coverage.from': { $type: 'string', $lt: w.available.from }, 'statementIds.0': { $exists: true } }
+    if (needsIdentity) Object.assign(jobs, { 'snapshot.accountIdentity.branch': String(identity.branch), 'snapshot.accountIdentity.type': String(identity.type), 'snapshot.accountIdentity.number': String(identity.number) })
+    const batch: any[] = []
+    const credit = async () => {
+      const ids = [...new Set(batch.flatMap(j => (j.statementIds || []).map(String)))]
+      const valid = new Set(((ids.length ? await BankStatement.find({ ...receipt, _id: { $in: ids } }).select('_id').lean() : []) as any[]).map(s => String(s._id)))
+      for (const j of batch) if ((j.statementIds || []).some((v: any) => valid.has(String(v)))) covered.push(j.snapshot.coverage) // guard:archive-job-receipt
+      batch.length = 0
+    }
+    for await (const j of BankJob.find(jobs).select('snapshot.coverage statementIds').lean().cursor() as any) { batch.push(j); if (batch.length >= 500) await credit() }
+    await credit()
   }
   return { rule: w.rule, from: w.available.from, requested: w.requested, effective: w.effective, missing: w.missing, gaps: bankArchiveGaps({ requested: { from: w.requested.from, to: w.requested.to ?? day }, covered, availableFrom: w.available.from }) }
 }
