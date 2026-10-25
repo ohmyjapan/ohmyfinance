@@ -415,10 +415,10 @@ async function harnessMain(SRC) {
   let seq = 0;
   const seedCaptures = async (acct, list) => {
     const jobs = [], statements = [];
-    for (const { coverage, provider = 'ikeda', variant = 'portal', identity = IDENTITY, templateId = 'tpl-fictional', state = 'imported' } of list) {
+    for (const { coverage, provider = 'ikeda', variant = 'portal', identity = IDENTITY, templateId = 'tpl-fictional', state = 'imported', jobState = 'complete' } of list) {
       const jobId = randomUUID(), _id = new mongoose.Types.ObjectId(), snapshot = { templateId, provider, variant, coverage, accountIdentity: identity ? { ...identity } : null };
       statements.push({ _id, ownerId: oid(A.id), hash: sha256('archive-' + (seq++) + '-' + jobId), name: 'archive.csv', mimeType: 'text/csv', size: 10, sheetNames: ['Sheet1'], capture: { bankAccountId: String(acct), jobId, kind: 'retrieve', collectorId: null, channel: 'collector', labelChecked: false, snapshot, snapshotHash: 'fictional', sourceHost: 'www.0161.houjinportal.anser.ne.jp', capturedAt: null, receivedAt: new Date(), state, reason: null, rows: { new: 0, existing: 0, unchanged: 0, differs: 0 } } });
-      jobs.push({ ownerId: oid(A.id), bankAccountId: oid(acct), jobId, kind: 'retrieve', state: 'complete', open: false, requestedAt: new Date(Date.parse(coverage.to + 'T01:00:00Z')), completedAt: new Date(Date.parse(coverage.to + 'T01:10:00Z')), snapshot, snapshotHash: 'fictional', statementIds: [_id], observation: null });
+      jobs.push({ ownerId: oid(A.id), bankAccountId: oid(acct), jobId, kind: 'retrieve', state: jobState, open: false, requestedAt: new Date(Date.parse(coverage.to + 'T01:00:00Z')), completedAt: new Date(Date.parse(coverage.to + 'T01:10:00Z')), snapshot, snapshotHash: 'fictional', statementIds: [_id], observation: null });
     }
     await BankStatement.insertMany(statements); await BankJob.insertMany(jobs);
   };
@@ -431,13 +431,19 @@ async function harnessMain(SRC) {
     await seedCaptures(acct, [{ coverage: { from: '2025-01-01', to: '2025-06-30' }, templateId: 'tpl-changed' }]);
     assert.deepEqual(await gaps(), [{ from: '2025-07-01', to: old.to }], 'ikeda:archive-own-proof');
   });
-  await leg('S9 archive proof is lifetime: 601 daily imported captures — the oldest beyond any recent-job window — together confirm every old requested day', async () => {
-    const t = new Date(), from = monthBeforeLast(J.jstDay(t)), acct = await account(A, 'Ikeda daily archive（架空）', IKEDA({ coverage: { from: '2025-01-01', to: null } }));
+  await leg('S9 archive proof is lifetime, from either source: 601 daily imported captures (their jobs not complete — the captures alone prove it), and 601 completed daily retrievals whose receipts are one duplicate capture (the jobs alone prove it); the oldest beyond any recent window', async () => {
+    const t = new Date(), from = monthBeforeLast(J.jstDay(t));
     const days = Array.from({ length: 601 }, (_, i) => addDays('2025-03-01', i)).filter(d => d <= J.jstDay(t));
-    await seedCaptures(acct, days.map(d => ({ coverage: { from: monthBeforeLast(d), to: d } })));
     const independent = (() => { let cursor = '2025-01-01'; for (const d of days) { const f = monthBeforeLast(d); if (f <= cursor && d >= cursor) cursor = addDays(d, 1); } return cursor > addDays(from, -1); })();
-    assert.equal(independent, true, 'the seeded captures cover every old day (independent check)');
-    assert.deepEqual((await m.schedule.readBankSchedule(A.id, acct, t)).availability?.gaps, [], 'ikeda:archive-lifetime (confirmed old days reported as unconfirmed)');
+    assert.equal(independent, true, 'the seeded periods cover every old day (independent check)');
+    const viaCaptures = await account(A, 'Ikeda daily archive（架空）', IKEDA({ coverage: { from: '2025-01-01', to: null } }));
+    await seedCaptures(viaCaptures, days.map(d => ({ coverage: { from: monthBeforeLast(d), to: d }, jobState: 'failed' })));
+    assert.deepEqual((await m.schedule.readBankSchedule(A.id, viaCaptures, t)).availability?.gaps, [], 'ikeda:archive-lifetime (confirmed old days reported as unconfirmed)');
+    const viaJobs = await account(A, 'Ikeda daily repeat archive（架空）', IKEDA({ coverage: { from: '2025-01-01', to: null } }));
+    await seedCaptures(viaJobs, [{ coverage: { from: '2025-01-01', to: '2025-01-31' } }]);
+    const receipt = (await BankStatement.findOne({ 'capture.bankAccountId': String(viaJobs) }).lean())._id, base = (await BankJob.findOne({ bankAccountId: oid(viaJobs) }).lean()).snapshot;
+    await BankJob.insertMany(days.map(d => ({ ownerId: oid(A.id), bankAccountId: oid(viaJobs), jobId: randomUUID(), kind: 'retrieve', state: 'complete', open: false, requestedAt: new Date(Date.parse(d + 'T01:00:00Z')), completedAt: new Date(Date.parse(d + 'T01:10:00Z')), snapshot: { ...base, coverage: { from: monthBeforeLast(d), to: d } }, snapshotHash: 'fictional', statementIds: [receipt], observation: null })));
+    assert.deepEqual((await m.schedule.readBankSchedule(A.id, viaJobs, t)).availability?.gaps, [], 'ikeda:archive-lifetime-receipts (completed retrievals with a duplicate receipt reported as unconfirmed)');
   });
   // Parent finding C5: a later completed retrieval whose verified file is byte-identical to an earlier one (no new transactions) is received
   // by the real upload route as a duplicate of the first, immutable capture; its own, longer frozen period must still count as confirmed.
@@ -533,6 +539,7 @@ export const MUTANTS = [
   { name: 'MS6-archive-recent-only', leg: 'S', file: SV, legs: 'S9', edits: [[".select('capture.snapshot.coverage').lean().cursor()", ".select('capture.snapshot.coverage').sort({ _id: -1 }).limit(500).lean().cursor()"]], expect: /ikeda:archive-lifetime/ },
   // parent findings C5-C7 (build-02)
   { name: 'MC13-branch-suffix-accepted', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'misleading options|account is chosen', edits: [['o.fields.branch === identity.branch &&', 'o.fields.branch.endsWith(identity.branch) &&']], expect: /ikeda-portal:(choice-field-roles B1|dom-misleading-refused|choice-parent-probe branch-suffix)/ },
+  { name: 'MS10-archive-recent-jobs-only', leg: 'S', file: SV, legs: 'S9', edits: [[".select('snapshot.coverage statementIds').lean().cursor()", ".select('snapshot.coverage statementIds').sort({ _id: -1 }).limit(500).lean().cursor()"]], expect: /ikeda:archive-lifetime-receipts/ },
   { name: 'MS7-repeat-receipt-ignored', leg: 'S', file: SV, legs: 'S10', guard: 'archive-job-receipt', expect: /ikeda:repeat-later-period-confirmed/ },
   { name: 'MS8-any-completed-job-credited', leg: 'S', file: SV, legs: 'S10', edits: [['if ((j.statementIds || []).some((v: any) => valid.has(String(v)))) covered.push', 'if ((j.statementIds || []).length) covered.push']], expect: /ikeda:repeat-receipt-required/ },
   { name: 'MS9-binding-without-identity', leg: 'S', file: BS, legs: 'S11', edits: [[' && (a.accountIdentity ?? null) === (b.accountIdentity ?? null); }', '; }']], expect: /ikeda:identity-stale-scheduled-not-claimed/ },
