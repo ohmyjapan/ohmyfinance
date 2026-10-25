@@ -1,7 +1,8 @@
 import {companyNaviPages,companyNaviPage} from './finance-navi-business.mjs';
-export const assistantPages={mapping:'明細マッピング',draft:'取引の下書き',learning:'学習ノート',connections:'カード連携',intake:'購入受付','intake-payments':'支払い照合',...Object.fromEntries(companyNaviPages.map(p=>[p.id,p.label])),other:'現在のページ'};
+export const assistantPages={mapping:'明細マッピング',draft:'取引の下書き',learning:'学習ノート',connections:'カード連携',intake:'購入受付','intake-payments':'支払い照合','research-evaluation':'AI調査の評価',...Object.fromEntries(companyNaviPages.map(p=>[p.id,p.label])),other:'現在のページ'};
 // UI identity only. Native endpoints independently authorize the token's current membership. Normal company finance pages use the
-// company conversation; owner pages (mapping, drafts, learning, connections, intake, payment matching, other) keep the owner one.
+// company conversation; owner pages (mapping, drafts, learning, connections, intake, payment matching, research evaluation, other) keep
+// the owner one.
 export function assistantConversationScope(actorId,organizationId,page){const company=!!companyNaviPage(page);return {actorId:actorId||'',organizationId:organizationId||'',company,key:company?JSON.stringify(['company',actorId||'',organizationId||'']):JSON.stringify(['workspace',actorId||''])}}
 export function assistantPage(path){if(path==='/')return 'dashboard';if(path.startsWith('/mapping-draft/'))return 'draft';if(path==='/intake/payments'||path.startsWith('/intake/payments/'))return 'intake-payments';if(path==='/reports/tax'||path.startsWith('/reports/tax/'))return 'tax';const first=path.split('/')[1];return Object.hasOwn(assistantPages,first)?first:'other'}
 export function assistantTarget(value){return value?.kind==='draft'&&/^[a-f0-9]{24}$/i.test(value.importId)&&Number.isSafeInteger(value.line)&&value.line>0?{kind:'draft',importId:value.importId,line:value.line}:{kind:'workspace'}}

@@ -6,7 +6,7 @@ The readiness audit of 2026-10-22 and its feature matrix are dated evidence and 
 
 ## Classes
 
-- **Connected** (`navi_tool`): Navi has named tools for it in the conversation that carries them. 9 entries in the company conversation; 7 more in the owner conversation when the job carries their owner tools.
+- **Connected** (`navi_tool`): Navi has named tools for it in the conversation that carries them. 9 entries in the company conversation; 8 more in the owner conversation when the job carries their owner tools (research-evaluation since 2026-10-25, reads only).
 - **Person-required** (`page_handoff`): the person does it on the page. Navi explains the page from its reason and may link it. A link is not proof that every action on that page works; this slice did not re-audit the native code of these pages. 20 entries.
 - **Native dependency** (`unsupported`): the native page or API is not company-scoped yet, so Navi uses the existing unsupported exit: no link, no tool, and a reason that names the native prerequisite and a useful next lane. The entry keeps its route only so the current page is still identified (`naviFeatureForPath`); `naviFeatureRoute` returns no link. The pages and their APIs are unchanged and still reachable directly: this guards Navi's links, it is not the native tenant repair. 5 entries.
 - **Unsupported by design** (`unsupported`, no route): 5 entries.
@@ -52,7 +52,7 @@ The readiness audit of 2026-10-22 and its feature matrix are dated evidence and 
 | `tax-report` | `/reports/tax` | page | page | Person-required | `pages/reports/tax.vue` | tax judgement stays a reasoned proposal |
 | `purchase-workflow` | `/purchase-workflow` | page | workflow tools when carried | Person-required / owner Connected | `pages/purchase-workflow.vue` | purchase acceptance and documents stay on the page |
 | `shipments` | no link (also names `/shipment/:id`) | unsupported | unsupported | Native dependency (B2) | `pages/shipments.vue:191-221` and `pages/shipment/[id].vue:516-525` render generated sample rows; `server/api/shipments/index.ts:15,34,45` and `server/services/shipmentService.ts:17-57,349` read and create without a company | none in OMF until the native data exists |
-| `research-evaluation` | `/research-evaluation` | page | page | Person-required | `pages/research-evaluation.vue` | |
+| `research-evaluation` | `/research-evaluation` | page | evaluation read tools when carried (`get_evaluation_overview`, `get_evaluation_run`; assigned cards only) | Person-required / owner Connected reads | `pages/research-evaluation.vue`; readers `server/services/financeEvaluationService.ts` | case editing and running evaluations stay on the page (docs/navi-evaluation-reads.md) |
 | `audit` | `/audit` | page | page | Person-required | `pages/audit/index.vue` | |
 | `support-report` | no page | panel action | panel action | Person-required | `components/finance/SupportReport.vue` | 診断を作成 in the Navi panel |
 | `admin` | none | unsupported | unsupported | By design | `pages/admin/users/index.vue`, `pages/admin/organizations/index.vue` | organization settings |
@@ -65,6 +65,12 @@ The readiness audit of 2026-10-22 and its feature matrix are dated evidence and 
 - The `receipts` reason no longer says upload, OCR, linking and deletion are done on the page; the two receipt read-tool descriptions (`list_company_receipts`, `find_company_receipt_matches`) say the same. Saved receipt reads and candidate comparisons are unchanged.
 - The owner adapter keeps the full company reason of a company tool feature under an explicit company-conversation prefix instead of replacing it with a generic sentence, so the receipt limits survive in the owner conversation; it still lists only the owner tools the job carries.
 - The interpreter's feature guide (company, owner workspace and purchase realms) answers from each feature's disposition and reason: a page is where the person goes, not proof that the action works there; an unsupported feature is explained in words without a link; a missing page action never stops the accounting answer. This is shared prompt wording for the final independent review.
+
+## What changed on 2026-10-25 (plan omf-navi-evaluation-reads-20261025)
+
+- The owner workspace conversation gained two read-only adapters over the native evaluation readers: `get_evaluation_overview` and `get_evaluation_run` (workspace mode only). They are restricted in the database to the owner AND the claimed worker assigned card accounts before any batch is chosen, counted or summarised, return bounded projections with explicit counts, limits and truncation, and never return case definitions or history, input context, references, binding or document hashes, worker ids, leases or raw diagnostics. An emptied grant is an empty read; a run outside the scope is 404.
+- `research-evaluation` is an owner-realm `navi_tool` only for a job that carries those tools; the catalogue entry, the company realm, purchase jobs and a job without them keep the page handoff. The research-evaluation page is now a named owner page (AI調査の評価); its conversation realm is unchanged.
+- The native owner page (GET overview and run detail) and the queue existing/final returns pass no restriction and keep their queries and response shapes. Case editing, queueing and running evaluations stay on the page. Details: `docs/navi-evaluation-reads.md`.
 
 ## Explicit dependencies (not solved here)
 

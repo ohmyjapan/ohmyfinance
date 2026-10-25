@@ -32,17 +32,37 @@ export async function saveEvaluationCase(ownerId:string,importId:string,line:num
  else{try{saved=(await Case.create({...query,accountId:d.source.account.id,...set})).toObject()}catch(e:any){if(e.code===11000)fail(409,'評価ケースが作成されています。');throw e}}
  return {case:saved}
 }
-export async function evaluationList(ownerId:string,batchId?:string){
- await init();if(batchId&&!uuid(batchId))fail(400,'Invalid evaluation batch')
- const cases=await Case.find({ownerId}).sort({createdAt:1}).lean()
- const recent:any[]=await Run.find({ownerId}).sort({createdAt:-1}).limit(120).select('batchId createdAt').lean()
- const batches=[...new Map(recent.map(r=>[r.batchId,{id:r.batchId,at:r.createdAt}])).values()].slice(0,10)
- const selected=batchId||batches[0]?.id||'',runs=selected?await Run.find({ownerId,batchId:selected}).sort({createdAt:1}).select('-sources -definition -binding -lease -agentId').lean():[]
- const connected=!!await Agent.exists({ownerId,researchEnabled:true,enabled:true,revokedAt:null,lastSeenAt:{$gt:new Date(Date.now()-65000)}})
- return {cases,batches,batchId:selected,runs:runs.map((r:any)=>{const {context,...rest}=r;return {...rest,references:context.references}}),summary:evaluationSummary(runs),connected}
+// Navi read restriction (plan omf-navi-evaluation-reads-20261025): the claimed worker assigned accounts, required as a real list and
+// applied with the owner in every query (cases, run discovery, the selected batch, the connection check and both counts) before any
+// row is chosen, counted or summarised; an empty list reads nothing. Absent (the native owner page and the queue returns) keeps
+// today queries and response shape exactly; the Navi path also bounds what it returns and reports the exact scoped counts.
+export type EvaluationRestriction={accountIds:any[]}
+export const evaluationReadBounds=Object.freeze({overviewCases:100,recentRunDiscovery:120,recentBatches:10,overviewRuns:12})
+// null = no Navi restriction (native callers); a restriction must carry a real list of assigned account ids (empty reads nothing).
+function assignedAccountIds(restriction:EvaluationRestriction|undefined):string[]|null{
+ if(restriction===undefined)return null
+ if(!restriction||!Array.isArray(restriction.accountIds))fail(403,'Assigned accounts required')
+ return restriction.accountIds.map((a:any)=>id(String(a)))
 }
-export async function evaluationRunDetail(ownerId:string,runId:string){
- await init();const run=await Run.findOne({_id:id(runId),ownerId}).select('-lease -agentId').lean();if(!run)fail(404,'Evaluation not found');return {run}
+const readFilter=(ownerId:string,accountIds:string[]|null):any=>accountIds?{ownerId,accountId:{$in:accountIds}}:{ownerId}
+export async function evaluationList(ownerId:string,batchId?:string,restriction?:EvaluationRestriction){
+ await init();if(batchId&&!uuid(batchId))fail(400,'Invalid evaluation batch')
+ const assigned=assignedAccountIds(restriction),filter=readFilter(ownerId,assigned),navi=assigned!==null,b=evaluationReadBounds
+ let caseQuery=Case.find(filter).sort({createdAt:1});if(navi)caseQuery=caseQuery.limit(b.overviewCases).select('-definition -context -binding -history')
+ const cases:any[]=await caseQuery.lean()
+ const recent:any[]=await Run.find(filter).sort({createdAt:-1}).limit(b.recentRunDiscovery).select('batchId createdAt').lean()
+ const distinct=Array.from(new Map(recent.map(r=>[r.batchId,{id:r.batchId,at:r.createdAt}])).values()),batches=distinct.slice(0,b.recentBatches)
+ const selected=batchId||batches[0]?.id||''
+ let runQuery=Run.find({...filter,batchId:selected}).sort({createdAt:1}).select('-sources -definition -binding -lease -agentId');if(navi)runQuery=runQuery.limit(b.overviewRuns)
+ const runs:any[]=selected?await runQuery.lean():[]
+ const connected=!!await Agent.exists({ownerId,...(assigned?{accountIds:{$in:assigned}}:{}),researchEnabled:true,enabled:true,revokedAt:null,lastSeenAt:{$gt:new Date(Date.now()-65000)}})
+ const view={cases,batches,batchId:selected,runs:runs.map((r:any)=>{const {context,...rest}=r;return {...rest,references:context.references}}),summary:evaluationSummary(runs),connected}
+ if(!navi)return view
+ const [casesTotal,runsTotal]=await Promise.all([Case.countDocuments(filter),selected?Run.countDocuments({...filter,batchId:selected}):Promise.resolve(0)])
+ return {...view,population:{cases:{total:casesTotal,returned:cases.length,limit:b.overviewCases,truncated:casesTotal>cases.length},recentRuns:{scanned:recent.length,limit:b.recentRunDiscovery},batches:{returned:batches.length,limit:b.recentBatches,truncated:distinct.length>batches.length||recent.length>=b.recentRunDiscovery},runs:{total:runsTotal,returned:runs.length,limit:b.overviewRuns,truncated:runsTotal>runs.length}}}
+}
+export async function evaluationRunDetail(ownerId:string,runId:string,restriction?:EvaluationRestriction){
+ await init();const run=await Run.findOne({_id:id(runId),...readFilter(ownerId,assignedAccountIds(restriction))}).select('-lease -agentId').lean();if(!run)fail(404,'Evaluation not found');return {run}
 }
 export async function queueEvaluation(ownerId:string,body:any){
  await init();if(!uuid(body.batchId)||!Array.isArray(body.cases)||!body.cases.length||body.cases.length>12||new Set(body.cases.map((c:any)=>c.id)).size!==body.cases.length)fail(400,'評価は1〜12件ずつ選択してください。')

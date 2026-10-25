@@ -81,12 +81,15 @@ const ownerRealmTools=Object.freeze({
  connections:['get_card_sync_status','queue_card_sync','set_card_auto_sync'],
  intake:['list_intake_records','get_intake_record','create_intake_record','patch_intake_record','set_intake_archived','read_intake_sheet','preview_intake_import','apply_intake_import','list_intake_batches','list_intake_templates','save_intake_template','get_intake_research','start_intake_research','confirm_intake_research'],
  'intake-payments':['list_card_payment_matches','get_card_payment_match','get_record_payment_matches','confirm_card_allocation','release_card_allocation','reconfirm_card_allocation'],
- 'purchase-workflow':['get_workflow_status','review_workflow_step']
+ 'purchase-workflow':['get_workflow_status','review_workflow_step'],
+ // Saved research evaluations (plan omf-navi-evaluation-reads-20261025): reads only; case editing and running stay on the page.
+ 'research-evaluation':['get_evaluation_overview','get_evaluation_run']
 });
 const ownerRealmReasons=Object.freeze({
  connections:'割り当てられたカードの取得状況の確認、明細取得の予約、Aplus の自動取得の時刻設定ができます。予約は取得の完了ではありません。認証情報・コレクターの接続は画面で本人が行います。',
  'intake-payments':'割り当てられたカードの支払いと受付の配分を確認し、明示された指示で配分の確定・解除・再確認ができます。銀行明細の取込と銀行の配分は画面で行います。',
- 'purchase-workflow':'割り当てられたカードの照合状況を確認し、明示された指示で要確認の工程を再確認に戻す・後で確認にできます。購入の承認・書類の作成は画面と処理ワーカーの結果です。'
+ 'purchase-workflow':'割り当てられたカードの照合状況を確認し、明示された指示で要確認の工程を再確認に戻す・後で確認にできます。購入の承認・書類の作成は画面と処理ワーカーの結果です。',
+ 'research-evaluation':'割り当てられたカードの保存済み AI 調査評価（ケース・バッチ・実行結果・採点）を読み取り、記録された相違・根拠不足・失敗を説明できます。参照答えの編集と評価の実行は画面で行います。採点は保存された比較であり、税務判断や購入の証明ではありません。'
 });
 export function naviRealmFeatures(realm,available,query){
  const have=new Set(Array.isArray(available)?available:[]),features=findNaviFeatures(query);

@@ -69,7 +69,7 @@ test('company replies carry at most one catalogue pointer and no field changes',
 // and reply schema: no link and no tool; each keeps its route only to name the current page. This guards Navi's links, not the pages.
 const nativeDependencies = ['duplicates', 'receipt-upload', 'vendors', 'templates', 'shipments'];
 const navReply = { kind: 'unclear', summary: '説明', patch: {}, quotes: {} };
-const ownerJobTools = ['list_navi_features', 'get_mapping', 'get_draft', 'save_draft_fields', 'apply_referenced_proposal', 'approve_draft', 'post_selected_approved_rows', 'get_purchase_history', 'get_registered_choices', 'get_research', 'start_purchase_research', 'remember_accounting_fields', 'remember_customer_purpose', 'set_memory_status', 'get_card_sync_status', 'queue_card_sync', 'set_card_auto_sync', 'list_intake_records', 'get_intake_record', 'create_intake_record', 'patch_intake_record', 'set_intake_archived', 'read_intake_sheet', 'preview_intake_import', 'apply_intake_import', 'list_intake_batches', 'list_intake_templates', 'save_intake_template', 'get_intake_research', 'start_intake_research', 'confirm_intake_research', 'list_card_payment_matches', 'get_card_payment_match', 'get_record_payment_matches', 'confirm_card_allocation', 'release_card_allocation', 'reconfirm_card_allocation', 'get_workflow_status', 'review_workflow_step'];
+const ownerJobTools = ['list_navi_features', 'get_mapping', 'get_draft', 'save_draft_fields', 'apply_referenced_proposal', 'approve_draft', 'post_selected_approved_rows', 'get_purchase_history', 'get_registered_choices', 'get_research', 'start_purchase_research', 'remember_accounting_fields', 'remember_customer_purpose', 'set_memory_status', 'get_card_sync_status', 'queue_card_sync', 'set_card_auto_sync', 'list_intake_records', 'get_intake_record', 'create_intake_record', 'patch_intake_record', 'set_intake_archived', 'read_intake_sheet', 'preview_intake_import', 'apply_intake_import', 'list_intake_batches', 'list_intake_templates', 'save_intake_template', 'get_intake_research', 'start_intake_research', 'confirm_intake_research', 'list_card_payment_matches', 'get_card_payment_match', 'get_record_payment_matches', 'confirm_card_allocation', 'release_card_allocation', 'reconfirm_card_allocation', 'get_workflow_status', 'review_workflow_step', 'get_evaluation_overview', 'get_evaluation_run'];
 const companyCatalogueTools = naviFeatures.flatMap(f => f.tools || []);
 
 test('the five native lanes that are not company-scoped are never returned as a Navi link; their pages are still identified', () => {
@@ -129,4 +129,21 @@ test('saved receipt reads and candidates, company settings and owner intake temp
  const intake = naviRealmFeatures('owner', ['list_intake_templates', 'save_intake_template']).find(f => f.id === 'intake');
  assert.equal(intake.disposition, 'navi_tool'); assert.deepEqual(intake.tools, ['list_intake_templates', 'save_intake_template'], 'navi-features:owner-intake-templates-kept');
  assert.equal(naviRealmFeatures('owner', []).find(f => f.id === 'intake').disposition, 'page_handoff'); assert.equal(naviFeatureRoute('intake'), '/intake'); assert.deepEqual(validateOwnerNavigation({ feature: 'intake' }), { feature: 'intake' });
+});
+
+// Deliberate 2026-10-25 (plan omf-navi-evaluation-reads-20261025): the owner realm maps research-evaluation to its two read tools only
+// when the job carries them (the usual intersection); the catalogue entry, the company realm and a job without them keep the page
+// handoff with the original reason. The owner reason says reads happen here while editing and running stay on the page.
+test('research-evaluation is an owner read-tool feature only for a job that carries the evaluation reads; otherwise the page handoff is kept', () => {
+ const reads = ['get_evaluation_overview', 'get_evaluation_run'], catalogue = naviFeature('research-evaluation');
+ assert.equal(catalogue.disposition, 'page_handoff', 'navi-features:evaluation-catalogue-page'); assert.deepEqual(catalogue.tools || [], [], 'navi-features:evaluation-catalogue-no-tool');
+ const carried = naviRealmFeatures('owner', ownerJobTools).find(f => f.id === 'research-evaluation');
+ assert.equal(carried.disposition, 'navi_tool', 'navi-features:evaluation-owner-tool'); assert.deepEqual(carried.tools, reads, 'navi-features:evaluation-owner-tools-exact');
+ assert.ok(/読み取/.test(carried.reason) && /画面/.test(carried.reason) && carried.reason !== catalogue.reason, 'navi-features:evaluation-owner-reason-reads-vs-page');
+ const partial = naviRealmFeatures('owner', ['get_evaluation_overview']).find(f => f.id === 'research-evaluation');
+ assert.deepEqual(partial.tools, ['get_evaluation_overview'], 'navi-features:evaluation-owner-partial-intersection');
+ for (const available of [[], ownerJobTools.filter(n => !reads.includes(n))]) { const f = naviRealmFeatures('owner', available).find(x => x.id === 'research-evaluation'); assert.equal(f.disposition, 'page_handoff', 'navi-features:evaluation-owner-page-without-tools'); assert.deepEqual(f.tools, []); assert.equal(f.reason, catalogue.reason, 'navi-features:evaluation-owner-page-reason-kept'); }
+ const company = naviRealmFeatures('company', reads.concat(companyCatalogueTools)).find(f => f.id === 'research-evaluation');
+ assert.equal(company.disposition, 'page_handoff', 'navi-features:evaluation-company-page'); assert.deepEqual(company.tools, [], 'navi-features:evaluation-company-no-tool');
+ assert.equal(naviFeatureRoute('research-evaluation'), '/research-evaluation'); assert.deepEqual(validateOwnerNavigation({ feature: 'research-evaluation' }), { feature: 'research-evaluation' });
 });
