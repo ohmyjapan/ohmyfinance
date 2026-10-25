@@ -51,16 +51,28 @@ export function portalIdentity(snapshot) {
   const branch = normText(a.branch), type = normText(a.type), number = String(a.number ?? '');
   return branch && type && /^[0-9]{7}$/.test(number) ? { branch, type, number } : null;
 }
+/** The bank name that opens every account option (the observed option format, SAFE-ACCOUNT-OPTION-FORMAT-V2). */
+export const PORTAL_BANK_NAME = '池田泉州銀行';
 /**
- * GUARD — which option of the account select is the connected account (pure): the one enabled option whose text contains the saved
- * branch and type and shows the saved 7-digit number as a whole digit run (a longer number ending in it, the last digits alone, another
- * branch or type never match). None or several → -1 (the person checks; nothing is selected). Never the first option by default.
+ * The fields of one account option in the format the owner's BusinessGate showed (pure; parent finding C7): exactly four
+ * whitespace-separated fields — the bank name, the branch, the type and the account number (digits) — after NFKC (fullwidth spaces and
+ * digits are ordinary ones). Any other shape (a holder suffix, a missing or extra word, another bank) is not read: null.
+ */
+export function portalAccountFields(text) {
+  const t = normText(text).split(' ');
+  return t.length === 4 && t[0] === PORTAL_BANK_NAME && /^[0-9]+$/.test(t[3]) ? { bank: t[0], branch: t[1], type: t[2], number: t[3] } : null;
+}
+/**
+ * GUARD — which option of the account select is the connected account (pure): the one enabled option whose own branch, type and number
+ * fields (portalAccountFields) equal the saved branch, type and full 7-digit number — a branch that merely ends in the saved name, the type
+ * or number appearing only as an extra word, a longer number or the last digits never match. None or several → -1 (the person checks;
+ * nothing is selected); when no option has the known format at all the reason is 'format'. Never the first option by default.
  */
 export function portalAccountChoice(options, identity) {
   if (!identity) return { index: -1, reason: 'identity' };
-  const list = (Array.isArray(options) ? options : []).map((o, index) => ({ text: normText(o?.text), disabled: !!o?.disabled, index }));
-  const hits = list.filter(o => !o.disabled && o.text.includes(identity.branch) && o.text.includes(identity.type) && (o.text.match(/[0-9]+/g) || []).includes(identity.number)); // guard:portal-account-exact
-  return hits.length === 1 ? { index: hits[0].index, reason: 'exact' } : { index: -1, reason: hits.length ? 'ambiguous' : 'missing' }; // guard:portal-account-unique
+  const list = (Array.isArray(options) ? options : []).map((o, index) => ({ fields: portalAccountFields(o?.text), disabled: !!o?.disabled, index })).filter(o => !o.disabled);
+  const hits = list.filter(o => !!o.fields && o.fields.branch === identity.branch && o.fields.type === identity.type && o.fields.number === identity.number); // guard:portal-account-exact
+  return hits.length === 1 ? { index: hits[0].index, reason: 'exact' } : { index: -1, reason: hits.length ? 'ambiguous' : list.some(o => o.fields) ? 'missing' : 'format' }; // guard:portal-account-unique
 }
 /** The state of a BusinessGate page (pure, from the value-free page read). The public login screen (any password field there) is never `login`. */
 export function classifyPortalPage(read, c = PORTAL) {
@@ -280,7 +292,7 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
     const list = await evaluate(FILTER, { c, op: 'accounts' });
     if (!list?.ok) throw fail('account-unidentified', `口座の選択欄を特定できません（${list?.reason || '画面が変わりました'}）`);
     const choice = portalAccountChoice(list.options, identity);
-    if (choice.index < 0) throw fail('account-unidentified', `口座の選択欄で、接続に保存した口座（支店名・種別・口座番号）と一致する口座を1つに特定できません（${choice.reason === 'ambiguous' ? '複数あります' : '見つかりません'}）。明細は出力していません。接続の口座の内容を確認してください`);
+    if (choice.index < 0) throw fail('account-unidentified', `口座の選択欄で、接続に保存した口座（支店名・種別・口座番号）と一致する口座を1つに特定できません（${choice.reason === 'ambiguous' ? '複数あります' : choice.reason === 'format' ? '口座の表示が確認済みの形（銀行名・支店名・種別・口座番号）と異なります' : '見つかりません'}）。明細は出力していません。接続の口座の内容を確認してください`);
     if (list.selected !== choice.index) { const set = await evaluate(FILTER, { c, op: 'choose', index: choice.index, text: list.options[choice.index].text }); if (!set?.ok) throw fail('account-unidentified', '口座を選べませんでした'); }
     return choice;
   };
