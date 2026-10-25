@@ -30,8 +30,9 @@ and 78-row native import were done by the parent outside this code (preparation,
   submission). Authentication counts only when that submission reaches a new portal page with ログアウト and no password field; the exact
   form again is a refusal (marker `refused`); anything else is `uncertain`. Neither is ever submitted again automatically — the owner
   re-saves or uses 「保存済みのログインでもう一度試す」.
-- 入出金明細 → the account select's one option containing the saved branch, type and the full 7-digit number as a whole number (never a suffix
-  or the first option; verified again before export) → 日付範囲で指定 → both vue-datepicker calendars (headings checked, offset/disabled days
+- 入出金明細 → the account select's one option in the observed format `池田泉州銀行 <支店> <種別> <口座番号>` (four whitespace-separated
+  fields, parent SAFE-ACCOUNT-OPTION-FORMAT-V2) whose own branch, type and number fields equal the saved ones (never a substring, an extra
+  word, a suffix or the first option; another format is the person's check; verified again before export) → 日付範囲で指定 → both vue-datepicker calendars (headings checked, offset/disabled days
   refused; nothing typed) → 検索する → waits for its own 全N件 (an earlier result never counts) and CSVダウンロード → the download, observed before
   the click, must be a blob of the BusinessGate origin, strict Shift_JIS, the 10-column header, rows inside the period and exactly N rows.
   0 results with a CSV control: the header-only file is kept (the screen's 明細0件 note applies); 0 without one: not claimed, the job says why.

@@ -57,8 +57,12 @@ the account identity is `unsupported` (`no-identity`). A job that waited past a 
 any bank page (its start is no longer offered) — the next 取得 or daily run freezes the new window. The schedule view adds `availability`
 {from, requested, effective, missing, gaps}: `gaps` are requested days the bank no longer offers that no imported capture of THIS
 connection (same provider, login type and full account identity, read from each capture's frozen snapshot, every such capture however
-old) confirmed — shown as 要確認 with the advice to import a CSV the owner still has. An owner CSV import does not clear a gap (it is not
-a count-verified retrieval). Other banks' scheduling is unchanged.
+old) confirmed — shown as 要確認 with the advice to import a CSV the owner still has. A later completed retrieval whose verified file was
+byte-identical to an earlier one (no new transactions; received as a duplicate of the first, unchanged capture) confirms its own period
+too, but only when that receipt is an imported capture of the same account and identity. An owner CSV import does not clear a gap (it is
+not a count-verified retrieval). The schedule binding of this variant includes the full account identity: saving another branch/type/
+number is a changed connection (要確認; the unclaimed scheduled job of the old identity is closed before any PC receives it; saving the
+schedule again resumes it). Other banks' scheduling and bindings are unchanged.
 
 ## Live use (owner, after review and the separate deployment approval)
 
