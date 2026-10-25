@@ -118,7 +118,7 @@ const { interpretDocument } = await load('teaching-worker/document-interpreter.m
 const { ResearchWorker } = await load('research-worker/worker.mjs');
 const { interpretReply } = await load('review-worker/interpreter.mjs');
 const { interpret: interpretWorkflow } = await load('finalization-worker/interpreter.mjs');
-const { Vault } = await load('collector/vault.mjs');
+const { Vault, SealedStore } = await load('collector/vault.mjs');
 const { emptyValues } = await load('shared/finance-draft.mjs');
 const helperFile = path.join(root, 'shared/finance-native-cli-auth.mjs');
 const configureScript = path.join(root, 'scripts/configure-native-cli-token.mjs');
@@ -529,6 +529,79 @@ test('provisioning standard input is bounded in time', async () => {
   assert.notEqual(r.code, 0, tag('configure-timeout'));
   assert.ok(/timed out/i.test(r.err) && r.ms < 40000, tag('configure-timeout'));
   assert.deepEqual(await fs.readFile(file), bytes, tag('configure-vault-untouched-timeout'));
+});
+
+test('provisioning: respects an existing writer lease and succeeds after release', async () => {
+  provisioningReady();
+  const dir = await ownedVault({ ...original(), nativeOAuthToken: tokenB });
+  const file = path.join(dir, 'credentials.dpapi'), bytes = await fs.readFile(file);
+  const independent = await ownedVault();
+  await new SealedStore(dir).withLock(async () => {
+    for (const action of ['--set', '--clear']) {
+      const r = await runConfigure(['--vault', dir, action], action === '--set' ? tokenA : undefined);
+      assert.notEqual(r.code, 0, tag('configure-held-writer'));
+      assert.equal(r.out, '', tag('configure-held-writer-no-status'));
+      assert.match(JSON.parse(r.err).error, /another (?:writer|collector).*vault.*retry/i, tag('configure-held-writer-retry'));
+      assert.deepEqual(await fs.readFile(file), bytes, tag('configure-held-writer-untouched'));
+      for (const value of [tokenA, tokenB]) assert.equal((r.out + r.err).includes(value), false, tag('configure-held-writer-no-leak'));
+    }
+    const other = await runConfigure(['--vault', independent, '--set'], tokenA);
+    assert.equal(other.code, 0, tag('configure-held-writer-independent'));
+    assert.equal((await new Vault(independent).read()).nativeOAuthToken, tokenA, tag('configure-held-writer-independent'));
+  });
+  const set = await runConfigure(['--vault', dir, '--set'], tokenA);
+  assert.equal(set.code, 0, tag('configure-released-writer'));
+  assert.deepEqual(await new Vault(dir).read(), { ...original(), nativeOAuthToken: tokenA }, tag('configure-released-writer-preserve'));
+  const clear = await runConfigure(['--vault', dir, '--clear']);
+  assert.equal(clear.code, 0, tag('configure-released-writer-clear'));
+  assert.deepEqual(await new Vault(dir).read(), original(), tag('configure-released-writer-preserve'));
+});
+
+test('provisioning: non-lock failures keep the generic error and leave encrypted data untouched', async () => {
+  provisioningReady();
+  const dir = await ownedVault([tokenB]), file = path.join(dir, 'credentials.dpapi'), bytes = await fs.readFile(file);
+  for (const action of ['--set', '--clear']) {
+    const r = await runConfigure(['--vault', dir, action], action === '--set' ? tokenA : undefined);
+    assert.notEqual(r.code, 0, tag('configure-update-failure'));
+    assert.equal(r.out, '', tag('configure-update-failure-no-status'));
+    assert.equal(r.err, '{"error":"The worker Vault could not be updated"}\n', tag('configure-update-failure-generic'));
+    assert.deepEqual(await fs.readFile(file), bytes, tag('configure-update-failure-untouched'));
+    for (const value of [tokenA, tokenB]) assert.equal((r.out + r.err).includes(value), false, tag('configure-update-failure-no-leak'));
+  }
+});
+
+test('provisioning: recovers after an owned writer process dies', async () => {
+  provisioningReady();
+  const dir = await ownedVault(), file = path.join(dir, 'credentials.dpapi'), bytes = await fs.readFile(file);
+  const code = "const {SealedStore}=await import(process.argv[1]);await new SealedStore(process.argv[2]).withLock(async()=>{process.stdout.write('held\\n');await new Promise(()=>{});});";
+  const child = cp.spawn(process.execPath, ['--input-type=module', '-e', code, pathToFileURL(path.join(root, 'collector/vault.mjs')).href, dir], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = new Promise(resolve => child.once('close', resolve));
+  child.stderr.resume();
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error(tag('setup:writer-did-not-acquire'))), 30000);
+      const finish = error => { clearTimeout(timer); error ? reject(error) : resolve(); };
+      let output = '';
+      child.stdout.on('data', value => { output += value; if (output.includes('held\n')) finish(); });
+      child.once('error', () => finish(Error(tag('setup:writer-did-not-start'))));
+      exited.then(() => finish(Error(tag('setup:writer-ended-before-ready'))));
+    });
+    const blocked = await runConfigure(['--vault', dir, '--clear']);
+    assert.notEqual(blocked.code, 0, tag('configure-crashed-writer-held'));
+    assert.deepEqual(await fs.readFile(file), bytes, tag('configure-crashed-writer-untouched'));
+    child.kill();
+    await exited;
+    let retry;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      retry = await runConfigure(['--vault', dir, '--set'], tokenA);
+      if (retry.code === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    assert.equal(retry.code, 0, tag('configure-crashed-writer-released'));
+    assert.deepEqual(await new Vault(dir).read(), { ...original(), nativeOAuthToken: tokenA }, tag('configure-crashed-writer-preserve'));
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { child.kill(); await exited; }
+  }
 });
 
 test('provisioning: concurrent commands on independent Vaults and on one Vault leave a consistent encrypted state', async () => {

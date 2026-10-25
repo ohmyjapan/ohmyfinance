@@ -77,8 +77,10 @@ configured `nativeOAuthToken`, the copy is reduced to the clean selection above 
     controlled children.
 - Anyone who can run code as the worker's Windows user can decrypt that user's DPAPI CurrentUser Vault. They can also read the
   child process environment. This change adds no operator-blindness and does not filter other pre-existing ambient secrets.
-- `collector/vault.mjs` serialises writes inside one process only. The provisioning command and the research settings page (which
-  writes `ntaApplicationId`) must not write the same Vault at the same time. Run provisioning while that worker is stopped.
+- The legacy `Vault` serialises writes inside one instance only. The provisioning command also takes the collector's existing
+  cross-process writer lease through its update and read-back. A competing lease-aware writer makes it fail without writing;
+  retry after that writer finishes. Workers and the research settings page (which writes `ntaApplicationId`) still use the legacy
+  writer, so they must remain stopped while provisioning the same Vault. This command does not change that shared implementation.
 
 ## Provisioning (local, stdin only)
 

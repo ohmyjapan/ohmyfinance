@@ -11,10 +11,11 @@
 // line; nothing here reaches a network, a model, a worker restart, pairing or the global CLI login.
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { Vault } from '../collector/vault.mjs';
+import { Vault, SealedStore } from '../collector/vault.mjs';
 import { NATIVE_CLI_TOKEN_FIELD, validNativeCliToken } from '../shared/finance-native-cli-auth.mjs';
 const MAX_BYTES = 8192, STDIN_TIMEOUT_MS = 15000;
 const fail = message => { process.stderr.write(JSON.stringify({ error: message }) + '\n'); process.exit(1); };
+const failUpdate = error => fail(error?.code === 'locked' ? error.message : 'The worker Vault could not be updated');
 
 function parse(argv) {
   let vault = null, action = null;
@@ -57,20 +58,27 @@ if (!path.isAbsolute(directory)) fail('Give the absolute worker Vault directory'
 const resolved = path.resolve(directory);
 await plain(resolved, 'The worker Vault directory', 'directory');
 await plain(path.join(resolved, 'credentials.dpapi'), 'The worker Vault file', 'file');
+// Reuse the collector's cross-process writer lease for the entire update and read-back.
+// Read and validate stdin first so an unfinished pipe cannot hold the writer lease.
+const withWriter = fn => new SealedStore(resolved).withLock(fn);
 if (action === 'set') {
   const bytes = await readStdin();
   const value = singleLine(bytes);
   bytes.fill(0);
   if (!validNativeCliToken(value)) fail('The credential must be one line of 20-4096 visible ASCII characters');
   try {
-    await new Vault(resolved).update(current => ({...object(current),[NATIVE_CLI_TOKEN_FIELD]:value}));
-    if ((await new Vault(resolved).read())[NATIVE_CLI_TOKEN_FIELD] !== value) throw Error();
-  } catch { fail('The worker Vault could not be updated'); }
+    await withWriter(async () => {
+      await new Vault(resolved).update(current => ({...object(current),[NATIVE_CLI_TOKEN_FIELD]:value}));
+      if ((await new Vault(resolved).read())[NATIVE_CLI_TOKEN_FIELD] !== value) throw Error();
+    });
+  } catch (error) { failUpdate(error); }
   process.stdout.write(JSON.stringify({nativeOAuthToken:'configured'})+'\n');
 } else {
   try {
-    await new Vault(resolved).update(current => { const next = { ...object(current) }; delete next[NATIVE_CLI_TOKEN_FIELD]; return next; });
-    if (Object.hasOwn(await new Vault(resolved).read(), NATIVE_CLI_TOKEN_FIELD)) throw Error();
-  } catch { fail('The worker Vault could not be updated'); }
+    await withWriter(async () => {
+      await new Vault(resolved).update(current => { const next = { ...object(current) }; delete next[NATIVE_CLI_TOKEN_FIELD]; return next; });
+      if (Object.hasOwn(await new Vault(resolved).read(), NATIVE_CLI_TOKEN_FIELD)) throw Error();
+    });
+  } catch (error) { failUpdate(error); }
   process.stdout.write(JSON.stringify({nativeOAuthToken:'cleared'})+'\n');
 }
