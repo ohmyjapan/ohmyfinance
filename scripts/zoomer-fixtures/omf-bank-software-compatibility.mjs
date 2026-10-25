@@ -14,6 +14,8 @@
 // Fail-first on 167504c: S1 RED (no ikeda row, no resona/ikeda variants, no BANK_SOFTWARE), S2 RED (no ikeda adapter; the
 // resona stub ignores the variant), S3 RED (hosts), S5 RED (PUT ikeda → 400 「銀行を確認してください」; no [data-bank-software]),
 // S6 RED (banks/ikeda not staged); S4 green (control: the launcher is unchanged before and after).
+// Deliberate change (plan omf-ikeda-collector-20261025): only the ビジネスゲート (portal) variant retrieves (banks/ikeda.mjs variants.portal);
+// the provider default, インターネットEB (direct) and no-variant connections keep this fixture's contract-pending/observe checks.
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -208,11 +210,16 @@ export default { name: 'omf-bank-software-compatibility', covers: ['shared/finan
       assert.equal(ok(await connect(accountK, { provider: 'ikeda', variant: 'portal' }), 'ikeda portal again').account.connection.variant, 'portal'); assert.equal(ok(await connect(accountR, { provider: 'resona', variant: 'idlink' }), 'resona idlink again').account.connection.variant, 'idlink');
       const listed = ok(await o.get('bank/accounts'), 'accounts').accounts; assert.equal(listed.find(a => a.id === accountK).connection.provider, 'ikeda', 'software:ikeda-accepted (listed)'); assert.equal(listed.find(a => a.id === accountR).connection.variant, 'idlink', 'software:variant-stored (listed)');
       ok(await o.req('bank/collectors/' + app.deviceId, { bankAccountIds: [accountK] }, 'PUT'), 'device scope');
-      const sync = ok(await o.req('bank/accounts/' + accountK + '/sync', {}), 'sync'); assert.equal(sync.job.kind, 'observe', 'software:observe-kept (contract-pending → observe)'); assert.equal(sync.message, OBSERVE_MESSAGE, 'software:observe-kept (message)'); assert.equal(sync.job.snapshot.provider, 'ikeda'); assert.equal(sync.job.snapshot.variant, 'portal', 'software:variant-frozen'); assert.equal(sync.job.snapshotHash, sha256(JSON.stringify(sync.job.snapshot)), 'software:variant-frozen (hash over the snapshot)');
-      const claimed = ok(await app.call(capi + 'bank/claim', { method: 'POST', token: app.deviceToken, body: {} }), 'claim'); assert.equal(claimed.job?.jobId, sync.job.jobId, 'claim returns the queued job'); assert.equal(claimed.job.provider, 'ikeda'); assert.equal(claimed.job.label, '池田泉州銀行', 'software:claim-label'); assert.equal(claimed.job.support, 'contract-pending', 'software:observe-kept (claim support)'); assert.equal(claimed.job.snapshot.variant, 'portal', 'software:variant-frozen (claimed)');
+      // Deliberate change (plan omf-ikeda-collector-20261025): ビジネスゲート (portal) now retrieves — saved without its period and account identity
+      // it is refused with the reason (400), never queued as an observe job; インターネットEB (direct) keeps the honest observe stage.
+      const portalSync = await o.req('bank/accounts/' + accountK + '/sync', {}); assert.equal(portalSync.status, 400, 'software:portal-retrieves (refused without identity/period, no observe job) ' + JSON.stringify(portalSync.data).slice(0, 200));
+      ok(await connect(accountK, { provider: 'ikeda', variant: 'direct' }), 'ikeda direct (observe)');
+      const sync = ok(await o.req('bank/accounts/' + accountK + '/sync', {}), 'sync'); assert.equal(sync.job.kind, 'observe', 'software:observe-kept (contract-pending direct → observe)'); assert.equal(sync.message, OBSERVE_MESSAGE, 'software:observe-kept (message)'); assert.equal(sync.job.snapshot.provider, 'ikeda'); assert.equal(sync.job.snapshot.variant, 'direct', 'software:variant-frozen'); assert.equal(sync.job.snapshotHash, sha256(JSON.stringify(sync.job.snapshot)), 'software:variant-frozen (hash over the snapshot)');
+      const claimed = ok(await app.call(capi + 'bank/claim', { method: 'POST', token: app.deviceToken, body: {} }), 'claim'); assert.equal(claimed.job?.jobId, sync.job.jobId, 'claim returns the queued job'); assert.equal(claimed.job.provider, 'ikeda'); assert.equal(claimed.job.label, '池田泉州銀行', 'software:claim-label'); assert.equal(claimed.job.support, 'contract-pending', 'software:observe-kept (claim support)'); assert.equal(claimed.job.snapshot.variant, 'direct', 'software:variant-frozen (claimed)');
       ok(await app.call(capi + 'bank/status', { method: 'POST', token: app.deviceToken, body: { jobId: sync.job.jobId, state: 'complete', message: '観察記録を保存' } }), 'status complete');
+      ok(await connect(accountK, { provider: 'ikeda', variant: 'portal' }), 'ikeda portal (seed for S5b)');
       http = { accountK, accountR, template, job: sync.job };
-      return `ikeda accepted (variant portal/direct stored, bogus/standard → null), resona direct/idlink stored (portal → null); observe job frozen with variant portal (hash ${sync.job.snapshotHash.slice(0, 8)}); claim label 池田泉州銀行`;
+      return `ikeda accepted (variant portal/direct stored, bogus/standard → null), resona direct/idlink stored (portal → null); portal sync refused without identity/period (retrieval, not observe); observe job frozen with variant direct (hash ${sync.job.snapshotHash.slice(0, 8)}); claim label 池田泉州銀行`;
     });
     // ── S5b: real Chrome on the built app ──
     await leg('S5b real Chrome 390/1440 px on the built app: ikeda option, ログイン方式 select for both banks (seeded from the saved connection), [data-bank-software] note equal to BANK_SOFTWARE and hidden for rakuten/paypay, a connection saved through the panel, no overflow, no console errors', async () => {
