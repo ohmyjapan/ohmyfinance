@@ -102,6 +102,7 @@ export const LOGIN_TEXT = Object.freeze({
   retried: label => `${label}への前回の自動サインインの結果を確認できなかったため、もう一度は送信しません。Chromeでサインインしてください`,
   failed: label => `${label}への自動サインインを完了できませんでした。Chromeでサインインしてください`
 });
+const SHARED_LOGIN_TEXT = LOGIN_TEXT;
 /**
  * Authentication (the shape of ensureAplusLogin): the page is opened; while it shows login or verification the person is told
  * once (verification_required + show) and the wait is bounded. With a saved `login` and an adapter ui that offers loginForm/login,
@@ -121,8 +122,9 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   const deadline = now() + timeoutMs; let manual = false, submitted = false, declined = false, refused = false, reclaimed = null, sent = null, direct = false, inUse = false;
   const T = exits?.texts || null;
   // Plan omf-ikeda-collector-20261025: an adapter may word the person's sign-in step itself (texts.manual, given the value-free reason
-  // its ui.attention() reports — 池田泉州銀行: the certificate chooser); every other adapter keeps LOGIN_TEXT.manual.
-  const manualText = () => T?.manual ? T.manual(label, typeof ui.attention === 'function' ? ui.attention() : null) : LOGIN_TEXT.manual(label);
+  // its ui.attention() reports — 池田泉州銀行: the certificate chooser); every other adapter keeps the shared LOGIN_TEXT unchanged. The
+  // view below keeps the statements of this function as they were (other harnesses anchor on them).
+  const LOGIN_TEXT = T?.manual ? { ...SHARED_LOGIN_TEXT, manual: name => T.manual(name, typeof ui.attention === 'function' ? ui.attention() : null) } : SHARED_LOGIN_TEXT;
   const attention = async text => { if (manual) return; manual = true; await status('verification_required', text); await ui.show(); };
   const automatic = !!login && typeof ui.login === 'function' && typeof ui.loginForm === 'function';
   const refuse = async () => {
@@ -132,7 +134,7 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
   const loginAgain = async () => { if (!sent) return false; const doc = await ui.document?.(); return !!doc && doc !== sent && !!(await ui.loginForm())?.ok; };
   const signIn = async () => {
     const saved = await login.state();
-    if (saved !== 'ready') { declined = true; return saved === 'blocked' ? (T?.blocked ? T.blocked(label) : LOGIN_TEXT.blocked(label)) : saved === 'refused' && T?.refusedSaved ? T.refusedSaved(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : manualText(); }
+    if (saved !== 'ready') { declined = true; return saved === 'blocked' ? (T?.blocked ? T.blocked(label) : LOGIN_TEXT.blocked(label)) : saved === 'refused' && T?.refusedSaved ? T.refusedSaved(label) : saved === 'unbound' ? LOGIN_TEXT.unavailable(label) : LOGIN_TEXT.manual(label); }
     if (!(await ui.loginForm())?.ok) { declined = true; return LOGIN_TEXT.form(label); }
     reclaimed ??= journal ? await journal.seen() : false;
     if (reclaimed) { declined = true; return LOGIN_TEXT.retried(label); } // guard:login-journal
@@ -167,10 +169,10 @@ export async function ensureBankLogin(ui, status, { label, login = null, journal
     if (submitted) auto = false; // guard:login-once
     if (kind === 'login' && submitted && !refused && !inUse && await loginAgain()) { await refuse(); await attention(T?.refused ? T.refused(label) : LOGIN_TEXT.refused(label)); } // guard:login-in-use-not-refused
     else if (auto) { const text = await signIn(); if (text) await attention(text); }
-    else if (['login', 'verification', 'unknown'].includes(kind)) await attention(submitted ? LOGIN_TEXT.verify(label) : manualText());
+    else if (['login', 'verification', 'unknown'].includes(kind)) await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
     await wait(pollMs);
   }
-  await attention(submitted ? LOGIN_TEXT.verify(label) : manualText());
+  await attention(submitted ? LOGIN_TEXT.verify(label) : LOGIN_TEXT.manual(label));
   if (refused) throw coded('login-refused', T?.refused ? T.refused(label) : `${label}が保存済みのログインを受け付けませんでした。ダウンローダーの設定画面でIDとパスワードを保存し直してから、再度「取得」を押してください`);
   if (inUse) throw coded('login-refused', T?.inUseStopped ? T.inUseStopped(label) : LOGIN_TEXT.unconfirmed(label));
   if (submitted) throw coded('login-refused', T?.unconfirmed ? T.unconfirmed(label) : LOGIN_TEXT.unconfirmed(label));
