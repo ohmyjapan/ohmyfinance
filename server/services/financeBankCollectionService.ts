@@ -133,6 +133,15 @@ export async function listCollectorBankAccounts(device:any){
 // or another retrieval was requested earlier on that JST day, it is closed as superseded here — the PC never receives it — and the next
 // job is claimed. Otherwise it is marked in flight (schedule.claimedAt) before it is returned and is never re-judged: a reclaim after an
 // expired lease resumes it. Manual jobs are claimed exactly as before.
+// Plan omf-ikeda-collector-20261025 (review F1): a manual retrieval of a variant that chooses its account on the bank's screen
+// (bankIdentityRequired: 池田泉州銀行 ビジネスゲート) that no PC has received yet (no identityCheckedAt) runs only while the connection is
+// still the same bank and login type with the same branch, type and full number it froze (each compared whole); otherwise it is closed
+// as superseded here with the reason — the PC never receives it — and the owner's next 取得 freezes the current account. It is marked
+// received (identityCheckedAt) before it is returned and is never re-judged: a reclaim after an expired lease resumes it under its
+// frozen identity. Template, period and label changes, scheduled jobs (above) and every other bank's jobs are claimed as before.
+const ACCOUNT_ROLES=['branch','type','number']
+const sameAccount=(snapshot:any,connection:any)=>!!connection&&connection.provider===snapshot?.provider&&(connection.variant??null)===(snapshot?.variant??null)&&!!snapshot?.accountIdentity&&!!connection.accountIdentity&&ACCOUNT_ROLES.every(k=>typeof snapshot.accountIdentity[k]==='string'&&snapshot.accountIdentity[k]!==''&&String(connection.accountIdentity[k]??'')===snapshot.accountIdentity[k])
+const MANUAL_ACCOUNT_CHANGED='取得を予約した後に接続の銀行・口座（支店名・種別・口座番号）が変わったため、この取得は実行しません。今の口座で取得するには、もう一度「取得」を押してください（PCに渡す前に止めたため、銀行へのログインは行っていません）'
 const SCHEDULE_CLOSED:Record<string,string>={'schedule-off':'毎日の自動取得がオフになったため、この予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','connection-changed':'接続の内容が変わったため、この自動取得の予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','setting-changed':'予約した後に自動取得の設定が変わったため、この予約は実行しません。今の設定の時刻に取得します（PCに渡す前に止めたため、銀行へのログインは行っていません）','already-requested-today':'同じ日に別の取得がすでに行われたため、この自動取得は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）'}
 export async function claimBankJob(device:any){
  await init()
@@ -146,6 +155,10 @@ export async function claimBankJob(device:any){
    const reason=scheduledRunCurrent({job,account,earlier})
    if(reason){await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{state:'superseded',open:false,completedAt:now,lastMessage:SCHEDULE_CLOSED[reason],'schedule.supersededDay':job.schedule?.day??null},$unset:{'schedule.day':'',leaseUntil:''}});continue}
    await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{'schedule.claimedAt':now}})
+  }
+  if(job.trigger!=='schedule'&&job.kind==='retrieve'&&bankIdentityRequired(job.snapshot?.provider,job.snapshot?.variant??null)&&!job.identityCheckedAt){
+   if(!sameAccount(job.snapshot,account?.connection)){await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{state:'superseded',open:false,completedAt:now,lastMessage:MANUAL_ACCOUNT_CHANGED},$unset:{leaseUntil:''}});continue} // guard:manual-account-current
+   await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{identityCheckedAt:now}}) // guard:manual-account-received
   }
   return{job:{...jobView(job),bankAccountId:sid(job.bankAccountId),provider:account?.connection?.provider||null,label:provider?.[1]||null,support:provider?.[2]||'contract-pending',accountLabel:account?.connection?.accountLabel??null},account:account?{_id:sid(account._id),name:account.name,currency:account.currency,ownerId:sid(account.ownerId),connection:account.connection}:null}
  }

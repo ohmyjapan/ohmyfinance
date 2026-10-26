@@ -10,7 +10,8 @@
 // key service. No production database, owner AppData, real certificate store, ordinary browser, cursor or keyboard is touched.
 // Legs (parent): U1 test/ikeda-bank-window.test.mjs · U2 collector/test/ikeda-portal.test.mjs (adapter, certificate helper) · S the
 // harness below (S1 protected setup and key binding, S2 queue and coverage, S3 normal native capture/import end to end, S4 replay/overlap/
-// crash recovery, S5 refused/uncertain sign-in, S6 schedule/month rollover/archive gaps, S7 manual CSV and other lanes) · R the existing
+// crash recovery, S5 refused/uncertain sign-in, S6 schedule/month rollover/archive gaps, S7 manual CSV and other lanes, S8-S10 archive
+// proof, S11 scheduled identity binding, S12 manual first-claim account check) · R the existing
 // collector-security integration (extended) · M reintroduced defects (each must fail its named assertion).
 // Fail-first: OMF_IKEDA_SRC points leg S at another server/shared tree and OMF_IKEDA_ONLY selects legs (U1,U2,S,R,M); OMF_IKEDA_ONLY_S
 // selects harness legs.
@@ -31,7 +32,7 @@ const requireRoot = createRequire(path.join(root, 'package.json'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sha256 = v => createHash('sha256').update(v).digest('hex');
 const HARNESS_FLAG = '--omf-ikeda-harness';
-const COVERS = ['collector/banks/ikeda.mjs', 'collector/bank-certificate.mjs', 'collector/windows/bank-certificate.ps1', 'collector/windows/bank-certificate-policy.ps1', 'collector/bank.mjs', 'collector/index.mjs', 'collector/setup.js', 'collector/setup.html', 'collector/package/stage.mjs', 'shared/finance-payment-match.mjs', 'shared/finance-payment-match.d.mts', 'shared/finance-bank-schedule.mjs', 'shared/finance-bank-schedule.d.mts', 'server/services/financeBankCollectionService.ts', 'server/services/financeBankScheduleService.ts', 'server/services/financeCollectorSecurityService.ts', 'components/intake/BankConnections.vue', 'collector/test/ikeda-portal.test.mjs', 'test/ikeda-bank-window.test.mjs', 'scripts/collector-security-integration.ts', 'scripts/zoomer-fixtures/omf-ikeda-collector.mjs'];
+const COVERS = ['collector/banks/ikeda.mjs', 'collector/bank-certificate.mjs', 'collector/windows/bank-certificate.ps1', 'collector/windows/bank-certificate-policy.ps1', 'collector/bank.mjs', 'collector/index.mjs', 'collector/setup.js', 'collector/setup.html', 'collector/package/stage.mjs', 'shared/finance-payment-match.mjs', 'shared/finance-payment-match.d.mts', 'shared/finance-bank-schedule.mjs', 'shared/finance-bank-schedule.d.mts', 'server/services/financeBankCollectionService.ts', 'server/models/FinancePaymentMatch.ts', 'server/services/financeBankScheduleService.ts', 'server/services/financeCollectorSecurityService.ts', 'components/intake/BankConnections.vue', 'collector/test/ikeda-portal.test.mjs', 'test/ikeda-bank-window.test.mjs', 'scripts/collector-security-integration.ts', 'scripts/zoomer-fixtures/omf-ikeda-collector.mjs'];
 const BINARY = [path.join(root, 'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe'), path.join(root, '..', 'node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.1.exe')].find(p => existsSync(p)) || null;
 const EVIDENCE = process.env.OMF_IKEDA_EVIDENCE || '';
 const ONLY = (process.env.OMF_IKEDA_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -499,6 +500,71 @@ async function harnessMain(SRC) {
     await BankJob.updateOne({ jobId: manual.jobId }, { $set: { state: 'superseded', open: false } });
     assert.deepEqual(J.bankScheduleBinding({ provider: 'rakuten', variant: 'standard', templateId: 't', accountIdentity: { ...IDENTITY } }), { provider: 'rakuten', variant: 'standard', templateId: 't' }, 'ikeda:other-bank-binding-unchanged');
   });
+  // Review F1 (final-review-01): a MANUAL retrieval frozen for one full account identity that no PC received yet is not authorized once the
+  // owner saved another identity (or another bank/login type); a PC that already received it resumes it under its frozen identity (O5).
+  // Everything goes through the owner routes, the collector's claim/status routes and the real collector run (runBankJob in owned Chrome);
+  // only an expired lease is simulated by moving leaseUntil into the past.
+  const A5 = { value: 'A5', text: '池田泉州銀行 カクウ支店 普通 0000002' }, NEW_IDENTITY = { ...IDENTITY, number: '0000002' };
+  const twoAccounts = () => { const fake = businessGate({ today, accounts: [...ACCOUNTS, A5] }); fake.rows.push({ acct: 'A5', date: addDays(availableFrom, 6), in: 4200, balance: 54200, desc: 'カクウ新口座（架空）' }); return fake; };
+  // What the PC does on its turn: claim (other legs' leftovers are closed), and run what it received for `acct` through the real collector.
+  const pcTurn = async (acct, fake) => { const got = []; for (let i = 0; i < 20; i++) { const c = await claim(); if (!c.job) break; if (c.job.bankAccountId !== acct) { ok(await status(c.job.jobId, 'failed', 'fixture: not this leg'), 'close other'); continue; } got.push({ claimed: c, run: fake ? await runPc(c, fake) : null }); break; } return got; };
+  const sync = async acct => ok(await call(api + 'bank/accounts/' + acct + '/sync', { method: 'POST', token: A.token, body: {} }), 'manual 取得').job;
+  const connect = async (acct, body, label) => ok(await call(api + 'bank/accounts/' + acct + '/connection', { method: 'PUT', token: A.token, body }), label);
+  const jobLine = async (acct, jobId) => ok(await call(api + 'bank/accounts/' + acct + '/jobs', { token: A.token }), 'jobs').jobs.find(j => j.jobId === jobId);
+  const expire = jobId => BankJob.updateOne({ jobId }, { $set: { leaseUntil: new Date(Date.now() - 1000) } });
+  await leg('S12 a manual 取得 queued for one full account identity is closed before any PC receives it once the owner replaced the identity, type, branch or bank (no bank page; the job line says why; 取得 again runs the current account); a received job resumes under its frozen identity; template/period/label changes and other banks are claimed as before', async () => {
+    const M = await account(A, 'Ikeda manual identity change（架空）', IKEDA()), M2 = await account(A, 'Ikeda manual same identity（架空）', IKEDA()), M3 = await account(A, 'Ikeda manual in flight（架空）', IKEDA()), M4 = await account(A, 'Ikeda manual roles（架空）', IKEDA()), M5 = await account(A, 'Ikeda manual bank change（架空）', IKEDA());
+    ok(await grant([K, R, M, M2, M3, M4, M5]), 'grant manual');
+    assert.deepEqual(await m.index.saveBankLogin(m.index.bankLoginInput({ bankAccountId: M, portalPassword: 'Fict-Pw-12' }), { live, config, banks, write, root: collectorDir }), { saved: true }, 'saved login for M');
+    // the reproducing case: 取得 for 0000001, the owner saves 0000002, then the PC's turn
+    const stale = await sync(M); assert.equal(stale.snapshot.accountIdentity.number, '0000001', 'queued for the first identity');
+    await connect(M, IKEDA({ accountIdentity: NEW_IDENTITY }), 'identity replaced before the first claim');
+    const fake = twoAccounts(), turn = await pcTurn(M, fake), imported = await BankRow.countDocuments({ bankAccountId: oid(M) });
+    assert.deepEqual(turn.map(t => t.claimed.job.snapshot.accountIdentity.number), [], 'ikeda:manual-stale-identity-not-claimed (the old identity\'s manual job was handed to the PC: it chose ' + JSON.stringify(fake.stats.searches.map(s => s.acct)) + ' and imported ' + imported + ' rows into the re-pointed account)');
+    assert.deepEqual([fake.stats.requests.length, turn.flatMap(t => t.run?.launches || []).length, imported], [0, 0, 0], 'ikeda:manual-stale-no-bank-page');
+    const closed = await BankJob.findOne({ jobId: stale.jobId }).lean(), line = await jobLine(M, stale.jobId);
+    assert.deepEqual([closed.state, closed.open, !!closed.completedAt, closed.leaseUntil ?? null], ['superseded', false, true, null], 'ikeda:manual-stale-superseded');
+    assert.deepEqual([line.trigger, line.state, line.scheduledDay], ['manual', 'superseded', null], 'ikeda:manual-stale-line');
+    assert.ok(/口座/.test(line.lastMessage) && /もう一度「取得」/.test(line.lastMessage) && /銀行へのログインは行っていません/.test(line.lastMessage) && !/自動取得/.test(line.lastMessage), 'ikeda:manual-stale-wording ' + line.lastMessage);
+    // recovery: 取得 again freezes the current identity and the real collector exports that account only
+    const current = await sync(M); assert.equal(current.snapshot.accountIdentity.number, '0000002', 'ikeda:manual-recovery-current');
+    const fake2 = twoAccounts(), [again] = await pcTurn(M, fake2);
+    assert.equal(again?.claimed.job.jobId, current.jobId, 'ikeda:manual-recovery-claimed');
+    assert.deepEqual([again.run.error?.message ?? null, again.run.result?.failed ?? null], [null, null], 'ikeda:manual-recovery-ran ' + again.run.seen.slice(-3).join(' | '));
+    assert.ok(fake2.stats.searches.length >= 1 && fake2.stats.searches.every(s => s.acct === 'A5'), 'ikeda:manual-recovery-runs-current-account ' + JSON.stringify(fake2.stats.searches.map(s => s.acct)));
+    assert.deepEqual((await BankRow.find({ bankAccountId: oid(M) }).sort({ date: 1 }).lean()).map(r => [r.date, r.amount, r.balance]), fake2.rows.filter(r => r.acct === 'A5').map(r => [r.date, r.out ?? -r.in, r.balance]), 'ikeda:manual-recovery-imported');
+    assert.equal((await BankJob.findOne({ jobId: current.jobId }).lean()).state, 'complete', 'ikeda:manual-recovery-complete');
+    // the same full identity with another template, period and label stays claimable under its own frozen snapshot
+    const kept = await sync(M2), template = ok(await call(api + 'bank/templates', { method: 'PUT', token: A.token, body: { name: 'Fictional Ikeda S12 template', headers: CSV_HEADER, mapping: { date: '0', description: '9', outflow: '2', inflow: '3', balance: '4' }, amountSign: 'outflow-positive' } }), 'other template').template.id;
+    await connect(M2, IKEDA({ templateId: template, coverage: { from: availableFrom, to: null }, accountLabel: '表示名だけ変更（架空）' }), 'template/period/label changed');
+    const before = Date.now(), [same] = await pcTurn(M2, null);
+    assert.deepEqual([same?.claimed.job.jobId, same?.claimed.job.snapshotHash, same?.claimed.job.snapshot.accountIdentity.number], [kept.jobId, kept.snapshotHash, '0000001'], 'ikeda:manual-same-identity-claimed');
+    assert.deepEqual([same.claimed.job.state, same.claimed.job.lastMessage, Date.parse(same.claimed.job.leaseUntil) >= before + 170000, Date.parse(same.claimed.job.lastAttemptAt) >= before - 1000], ['running', '取得を開始', true, true], 'ikeda:manual-claim-shape');
+    ok(await status(kept.jobId, 'complete', 'fixture complete'), 'complete M2');
+    // O5: received for 0000001, then the identity changes, the lease expires: the reclaim resumes the SAME job under 0000001
+    const flight = await sync(M3), [first] = await pcTurn(M3, null); assert.equal(first?.claimed.job.jobId, flight.jobId, 'first claim');
+    await connect(M3, IKEDA({ accountIdentity: NEW_IDENTITY }), 'identity replaced while in flight'); await expire(flight.jobId);
+    const [resumed] = await pcTurn(M3, null);
+    assert.deepEqual([resumed?.claimed.job.jobId, resumed?.claimed.job.snapshot.accountIdentity.number, resumed?.claimed.job.state], [flight.jobId, '0000001', 'running'], 'ikeda:manual-inflight-keeps-identity');
+    ok(await status(flight.jobId, 'failed', 'fixture closed'), 'close M3');
+    // each role compared whole: another type, another branch (same number) — and another bank — replace the account
+    for (const [change, label] of [[{ ...IDENTITY, type: '当座' }, 'type'], [{ ...IDENTITY, branch: 'ベツ支店' }, 'branch']]) {
+      await connect(M4, IKEDA(), 'identity restored'); const job = await sync(M4); await connect(M4, IKEDA({ accountIdentity: change }), label + ' changed');
+      assert.deepEqual((await pcTurn(M4, null)).map(t => t.claimed.job.jobId), [], 'ikeda:manual-stale-' + label + '-change');
+      assert.equal((await BankJob.findOne({ jobId: job.jobId }).lean()).state, 'superseded', 'ikeda:manual-stale-' + label + '-superseded');
+    }
+    const moved = await sync(M5); await connect(M5, { provider: 'rakuten', variant: 'standard', coverage: { from: '2026-01-01', to: null } }, 'bank changed');
+    assert.deepEqual((await pcTurn(M5, null)).map(t => t.claimed.job.jobId), [], 'ikeda:manual-stale-provider-change'); assert.equal((await BankJob.findOne({ jobId: moved.jobId }).lean()).state, 'superseded', 'ikeda:manual-stale-provider-superseded');
+    // another bank: a changed connection never closes its manual job; claim, document and reclaim keep their former shape
+    const rq = await sync(R); await connect(R, { provider: 'rakuten', variant: 'standard', coverage: { from: '2026-02-01', to: null } }, 'rakuten period changed');
+    const [rc] = await pcTurn(R, null);
+    assert.deepEqual([rc?.claimed.job.jobId, rc?.claimed.job.snapshotHash], [rq.jobId, rq.snapshotHash], 'ikeda:other-bank-manual-claimed');
+    assert.deepEqual([Object.keys(rc.claimed.job).sort(), Object.keys(rc.claimed.account).sort()], [['accountLabel', 'bankAccountId', 'collectorId', 'completedAt', 'eventChannel', 'hasObservation', 'id', 'jobId', 'kind', 'label', 'lastAttemptAt', 'lastMessage', 'leaseUntil', 'provider', 'requestedAt', 'snapshot', 'snapshotHash', 'state', 'statementIds', 'support'], ['_id', 'connection', 'currency', 'name', 'ownerId']], 'ikeda:other-bank-claim-shape');
+    assert.deepEqual(Object.keys(await BankJob.findOne({ jobId: rq.jobId }).lean()).sort(), ['__v', '_id', 'bankAccountId', 'collectorId', 'createdAt', 'jobId', 'kind', 'lastAttemptAt', 'lastMessage', 'leaseUntil', 'observation', 'open', 'ownerId', 'requestedAt', 'snapshot', 'snapshotHash', 'state', 'statementIds', 'updatedAt'], 'ikeda:other-bank-document-unchanged');
+    await expire(rq.jobId); const [rr] = await pcTurn(R, null); assert.deepEqual([rr?.claimed.job.jobId, rr?.claimed.job.snapshotHash], [rq.jobId, rq.snapshotHash], 'ikeda:other-bank-reclaim');
+    const rline = await jobLine(R, rq.jobId); assert.deepEqual([rline.trigger, rline.state, rline.snapshotHash], ['manual', 'running', rq.snapshotHash], 'ikeda:other-bank-line');
+    ok(await status(rq.jobId, 'complete', 'fixture complete'), 'complete R');
+  });
   console.log('RECEIPT ' + JSON.stringify({ pass: failed === 0, checks, failed, bankCalls: 0, productionWrites: 0 }));
   await live?.broker?.remote?.end?.().catch(() => {}); await mongoose.disconnect(); server.close(); await rm(temp, { recursive: true, force: true }).catch(() => {});
   process.exit(failed ? 1 : 0);
@@ -544,7 +610,13 @@ export const MUTANTS = [
   { name: 'MS7-repeat-receipt-ignored', leg: 'S', file: SV, legs: 'S10', guard: 'archive-job-receipt', expect: /ikeda:repeat-later-period-confirmed/ },
   { name: 'MS8-any-completed-job-credited', leg: 'S', file: SV, legs: 'S10', edits: [['if ((j.statementIds || []).some((v: any) => valid.has(String(v)))) covered.push', 'if ((j.statementIds || []).length) covered.push']], expect: /ikeda:repeat-receipt-required/ },
   { name: 'MS9-binding-without-identity', leg: 'S', file: BS, legs: 'S11', edits: [[' && (a.accountIdentity ?? null) === (b.accountIdentity ?? null); }', '; }']], expect: /ikeda:identity-stale-scheduled-not-claimed/ },
-  { name: 'MW2-closed-end-rewritten', leg: 'U1', file: PM, edits: [['const c=bankCoverageInput(saved,today),to=c.to??today;', 'const c=bankCoverageInput(saved,today),to=today;']], expect: /window:closed-end-kept/ }
+  { name: 'MW2-closed-end-rewritten', leg: 'U1', file: PM, edits: [['const c=bankCoverageInput(saved,today),to=c.to??today;', 'const c=bankCoverageInput(saved,today),to=today;']], expect: /window:closed-end-kept/ },
+  // review F1 (build-03): the manual first-claim account check
+  { name: 'MS11-manual-account-unchecked', leg: 'S', file: CS, legs: 'S12', guard: 'manual-account-current', expect: /ikeda:manual-stale-identity-not-claimed/ },
+  { name: 'MS12-rechecked-on-reclaim', leg: 'S', file: CS, legs: 'S12', edits: [['&&!job.identityCheckedAt){', '){']], expect: /ikeda:manual-inflight-keeps-identity/ },
+  { name: 'MS13-received-not-marked', leg: 'S', file: CS, legs: 'S12', guard: 'manual-account-received', expect: /ikeda:manual-inflight-keeps-identity/ },
+  { name: 'MS14-number-only', leg: 'S', file: CS, legs: 'S12', edits: [["const ACCOUNT_ROLES=['branch','type','number']", "const ACCOUNT_ROLES=['number']"]], expect: /ikeda:manual-stale-type-change/ },
+  { name: 'MS15-every-bank-checked', leg: 'S', file: CS, legs: 'S12', edits: [['&&bankIdentityRequired(job.snapshot?.provider,job.snapshot?.variant??null)&&', '&&']], expect: /ikeda:other-bank-manual-claimed/ }
 ];
 
 // ════════════════════════════ The fixture ════════════════════════════

@@ -49,6 +49,10 @@ job.index({ownerId:1,bankAccountId:1,requestedAt:-1})
 // tick, the save or the claim); its day moves to schedule.supersededDay.
 job.add({trigger:{type:String,enum:['manual','schedule']},schedule:{type:mixed,default:undefined}})
 job.index({ownerId:1,bankAccountId:1,'schedule.day':1},{unique:true,partialFilterExpression:{'schedule.day':{$type:'string'}}})
+// Plan omf-ikeda-collector-20261025 (review F1): `identityCheckedAt` is written only on a manual retrieval of a variant that chooses its
+// account on the bank's screen (池田泉州銀行 ビジネスゲート), when a PC first receives it with its frozen account identity still the
+// connection's. Absent on every other job; no default, no index.
+job.add({identityCheckedAt:Date})
 const anchor=new Schema({ownerId:{type:oid,required:true},paymentKey:{type:String,required:true},aliases:{type:[String],default:[]},kind:String,source:mixed,date:String,amount:Number,currency:String,description:String,revision:{type:Number,default:0},allocations:{type:[mixed],default:[]}},options)
 anchor.index({ownerId:1,paymentKey:1},{unique:true})
 export const BankAccount:mongoose.Model<any>=mongoose.models.FinanceBankAccount||mongoose.model('FinanceBankAccount',account,'financebankaccounts')

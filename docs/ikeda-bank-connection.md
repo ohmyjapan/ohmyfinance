@@ -12,6 +12,10 @@ and 78-row native import were done by the parent outside this code (preparation,
    setup and save the **login password only** (`portalPassword`, ≤12 characters, sealed as `ikeda-<bankAccountId>` with the account's AAD; its
    key is released only for a live `ikeda`/`portal` connection granted to that PC — `financeCollectorSecurityService.ts` BANK_KEY_VARIANTS).
 3. 取得 (or the daily schedule) queues a retrieval frozen with the bank window.
+   It also freezes the account identity. A job no PC has received yet runs only while the connection still names the same bank, login
+   type, branch, type and full number (a scheduled job: the schedule binding; a manual 取得: the claim, review F1); otherwise it is closed
+   as 置き換え済み before any bank page with the reason, and 取得 again runs the current account. A job a PC already received keeps its
+   frozen identity when it is resumed after an expired lease. Template, period and label changes do not close it.
 
 ## What one retrieval does (`collector/banks/ikeda.mjs` `portalUi`)
 
