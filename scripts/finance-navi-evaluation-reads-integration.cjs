@@ -314,6 +314,21 @@ async function main(){
    const pay=await wsTurn(P,W,'支払い照合の範囲',{page:'intake-payments'});
    assert.ok(!Object.hasOwn(pay.context.facts,'ownerCardAccounts')&&!Object.hasOwn(pay.context.facts,'accounts'),'eval-reads:payment-context-no-inventory '+JSON.stringify(Object.keys(pay.context.facts)));
    await agree(pay,W,'payments');assert.equal((await finish(pay,W,'配分の範囲です。')).status,200,'eval-reads:payment-finish');
+
+   // An inactive assigned card is absent from list_accounts, but native evaluation history remains readable. The catalogue must
+   // not describe its own emptiness as proof of an empty grant or empty history. The account's original active state is restored.
+   const WI=await agent(P,[A1]);await db.collection('financialaccounts').updateOne({_id:oid(A1)},{$set:{active:false}});
+   try{
+    const historical=await wsTurn(P,WI,'Explain assigned-card history',{page:'research-evaluation'});
+    const activeList=await agree(historical,WI,'inactive-history');assert.deepEqual(activeList.accounts,[],'eval-reads:inactive-active-catalogue-empty');
+    assert.ok(!/An empty accounts list means no card is assigned/.test(activeList.meaning)&&/inactive/.test(activeList.meaning),'eval-reads:inactive-catalogue-not-whole-authority');
+    const history=await read(historical,WI,'get_evaluation_overview',{},'eval-reads:inactive-native-history');
+    assert.ok(history.runs.some(r=>r.id===String(R1)),'eval-reads:inactive-native-history-readable');
+    const detail=await read(historical,WI,'get_evaluation_run',{runId:String(R1)},'eval-reads:inactive-native-detail');
+    assert.equal(detail.accountId,String(A1._id),'eval-reads:inactive-native-detail-owned');
+    assert.equal((await finish(historical,WI,'Historical results remain available through their native read.')).status,200,'eval-reads:inactive-history-answered');
+   }finally{await db.collection('financialaccounts').updateOne({_id:oid(A1)},{$set:{active:true}})}
+
   });
 
   // 6 repeated reads change no evaluation, financial or journal record; reads are not journaled; the turn keeps no receipts.

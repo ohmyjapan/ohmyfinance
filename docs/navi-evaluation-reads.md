@@ -38,14 +38,16 @@ tools' own filters:
 - `facts.cardToolScope` is built at EVERY claim (claimAssistant) for the worker that claims the turn: the same owner, active and
   assigned-id filters and display fields as the native list_accounts tool (kind `assigned_card_accounts`, `accountIds`, `accounts`
   with id, name, provider, primaryCard, and a `meaning`). A reclaim of the same turn by another worker (expired lease) carries that
-  worker's cards; an empty grant is an explicit empty list, and the conversation is still claimed and answered. It is never stored in
-  the conversation row.
+  worker's active assigned cards. This catalogue excludes inactive cards, so an empty catalogue alone does not establish an empty
+  assignment or empty historical results: native evaluation reads can still return history for an assigned inactive card. Use each
+  named read's server-derived scope and returned records to establish that read's coverage. An actually empty grant still yields
+  empty card reads and the conversation stays available. The claim-time catalogue is never stored in the conversation row.
 - An older saved context that still carries `facts.accounts` is projected to `facts.ownerCardAccounts` for the claimed job only;
   the stored history is not migrated and no conversation is refused. A saved context without an inventory keeps none.
 - Company (claimCompanyAssistant) and purchase (financeChatService) claims are separate paths and carry neither fact.
 
 Native actions keep rechecking the live assignment when they run (financeOwnerActionService, financeActionService); the new facts
-describe that assignment to the model, they do not replace the checks. Whether the model's wording follows them is a separate
+describe the active assigned-card catalogue to the model, they do not replace the checks. Whether the model's wording follows them is a separate
 model-acceptance step, not claimed by this document.
 
 ## Bounds (5-plan.json)
