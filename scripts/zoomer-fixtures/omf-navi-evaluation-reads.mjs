@@ -13,6 +13,12 @@
 // built-app files are listed only when the build exists.
 // Fail-first on 803f803 (its compiled runtime is the 37864ca7 build; 803f803 changed scripts and docs only): leg 1 red at
 // eval-reads:job-carries-read-tools and at the HTTP 400 Unknown action of both reads; legs 4-5 NOT RUN until leg 1 is green.
+// Plan omf-navi-card-scope-context-20261026: the integration gains group 7 (scope: owner-wide inventory facts.ownerCardAccounts beside the
+// claiming worker's actual facts.cardToolScope, agreeing with native list_accounts for full/reduced/empty grants and a different-worker
+// reclaim, legacy facts.accounts projected at claim, payment context without inventory, purchase and company jobs untouched) and leg 5
+// three more compiled defects (owner-wide scope metadata, scope metadata dropped, stale first-claim scope reused at a reclaim).
+// Fail-first on 016318c (its own compiled runtime): leg 1 red at eval-reads:owner-inventory-named (the claimed job carries only the
+// ambiguous facts.accounts and no cardToolScope); legs 4-5 NOT RUN until leg 1 is green.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -23,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 export const timeoutMs = 3600000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BUILT = existsSync(path.join(root, '.output', 'server', 'index.mjs'));
-const EXPECTED = 6;
+const EXPECTED = 7;
 const SCRIPT_COVERS = ['scripts/finance-navi-evaluation-reads-integration.cjs', 'scripts/zoomer-fixtures/omf-navi-evaluation-reads.mjs', 'scripts/finance-navi-features.test.mjs', 'scripts/finance-evaluation.test.mjs', 'scripts/finance-assistant.test.mjs', 'shared/finance-navi-features.mjs', 'shared/finance-assistant.mjs', 'shared/finance-evaluation.mjs', 'docs/navi-evaluation-reads.md', 'docs/navi-feature-coverage.md'];
 const APP_COVERS = ['server/services/financeEvaluationService.ts', 'server/services/financeOwnerActionService.ts', 'server/services/financeActionService.ts', 'server/services/financeAssistantService.ts', 'server/api/finance-evaluation/[.' + '..path].ts', 'server/api/finance-chat/[.' + '..path].ts', 'server/models/FinanceEvaluation.ts', 'scripts/finance-integration.cjs', 'scripts/finance-evaluation-integration.cjs'];
 const binary = path.resolve(root, '..', 'node_modules', '.cache', 'mongodb-memory-server', 'mongod-x64-win32-8.2.1.exe');
@@ -96,7 +102,15 @@ export const DEFECTS = [
   // The overview adapter is advertised to purchase jobs as well (mode boundary).
   { name: 'purchase-mode-advertised', only: 'isolation', anchor: /"get_evaluation_overview",\s*"read",\s*\["workspace"\],/, replacement: '"get_evaluation_overview", "read", ["workspace", "purchase"],', expect: /eval-reads:purchase-job-lacks-tools|eval-reads:purchase-job-no-tool/ },
   // The owner realm mapping of research-evaluation is dropped: the feature guide keeps the page handoff although the job carries the tools.
-  { name: 'realm-mapping-dropped', only: 'tools', anchor: "'research-evaluation':['get_evaluation_overview','get_evaluation_run']", replacement: "'research-evaluation':[]", expect: /eval-reads:guide-navi-tool/ }
+  { name: 'realm-mapping-dropped', only: 'tools', anchor: "'research-evaluation':['get_evaluation_overview','get_evaluation_run']", replacement: "'research-evaluation':[]", expect: /eval-reads:guide-navi-tool/ },
+  // Plan omf-navi-card-scope-context-20261026 (claim-time card scope facts, compiled in the finance-chat route chunk):
+  // the claim-time scope is built owner-wide (the assigned-id filter drops out): it names the unassigned card list_accounts never returns.
+  { name: 'owner-wide-scope-metadata', only: 'scope', anchor: 'const accounts = await FinancialAccount.find({ ownerId: agent.ownerId, _id: { $in: agent.accountIds }, active: true }).select("name provider primaryCard").sort({ name: 1 }).lean();', replacement: 'const accounts = await FinancialAccount.find({ ownerId: agent.ownerId, active: true }).select("name provider primaryCard").sort({ name: 1 }).lean();', expect: /eval-reads:scope-agrees-with-list-accounts|eval-reads:full-grant-scope/ },
+  // The scope metadata is dropped from the job facts (the inventory alone is forwarded again).
+  { name: 'scope-metadata-dropped', only: 'scope', anchor: 'return { ...facts, cardToolScope: scope };', replacement: 'return { ...facts };', expect: /eval-reads:scope-shape/ },
+  // The first claim's scope is written into the saved context and reused by every later claim: a reclaim by another worker carries the
+  // first worker's cards (the frozen-at-send defect the native baseline reproduced).
+  { name: 'stale-first-claim-scope', only: 'scope', anchor: 'const cardScope = await cardToolScope(agent);', replacement: 'const cardScope = c.context?.facts?.cardToolScope || await (async () => { const s = await cardToolScope(agent); await FinanceAssistant.updateOne({ _id: c._id }, { $set: { "context.facts.cardToolScope": s } }); return s; })();', expect: /eval-reads:scope-agrees-with-list-accounts reclaim-reduced|eval-reads:reclaim-scope-fresh/ }
 ];
 
 // Applies one defect to the copy and returns the edited file with its original text (restored after the leg).

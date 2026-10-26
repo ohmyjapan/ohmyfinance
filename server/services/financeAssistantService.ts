@@ -59,7 +59,9 @@ async function pageContext(ownerId:string,input:any,postingCompany:PostingCompan
  context.facts.learning=overview.dataset?{title:overview.dataset.title,summary:overview.dataset.summary,counts:overview.counts}:null
  context.facts.instructions=overview.policies.filter((p:any)=>p.status==='active').slice(0,30).map((p:any)=>({title:p.title,reason:p.reason,scope:p.accountName||'指定された口座範囲',decision:p.decision,effectiveFrom:p.effectiveFrom||''}))
  context.facts.customers=overview.customers.map((c:any)=>({id:String(c._id),name:c.name}))
- context.facts.accounts=await FinancialAccount.find({ownerId,active:true}).select('name primaryCard').lean()
+ // The owner-wide inventory of active cards, named for what it is. The claiming worker's actual card tool scope is a separate fact
+ // built at every claim (cardToolScope below), never this list.
+ context.facts.ownerCardAccounts=await FinancialAccount.find({ownerId,active:true}).select('name primaryCard').lean()
  if(input.page==='intake'){
   context.capabilities=['Read owned purchase intake, uploaded sheets, import history/templates and company/T-number research using the supplied named tools','On explicit user instruction create/edit/archive intake, apply a previewed import, save its template, queue or confirm research using current native revisions; a tool receipt is the outcome, not a promise','On an explicit instruction in the CURRENT message, confirm_card_allocation, release_card_allocation and reconfirm_card_allocation change one allocation of an assigned-card charge to an intake record, using current revisions read with get_card_payment_match and get_record_payment_matches; bank allocations, bank CSV import and other or unassigned cards stay on the payment-matching page; a capability question never authorises one','Unresolved or partial writes need inspection, never a blind repeat','Distinguish confirmed saved history from a hypothesis; distinguish published T numbers from native NTA verified:true']
   if(input.recordId){const r:any=await readIntakeRecord(ownerId,id(input.recordId));context.facts.intakeRecord={id:r.id,revision:r.revision,values:r.values,extra:r.extra,archived:r.archived,identityReview:r.identityReview,history:r.history.slice(-12),historyLimit:12,provenance:r.provenance}}
@@ -128,6 +130,22 @@ export async function retryAssistant(ownerId:string,body:any,postingCompany:Post
  const r=await Conversation.updateOne({ownerId,state:'failed',revision:body.chatRevision},{$set:{state:'queued',agentId:agent._id,attempts:0},$inc:{revision:1}})
  if(!r.matchedCount)fail(409,'会話が更新されました。再読込してください。');return getAssistant(ownerId,postingCompany)
 }
+// The claiming worker's actual card tool scope: the same owner, active and assigned-id filters and display fields as list_accounts
+// (financeActionService), built at EVERY claim, so a reclaim by another worker carries that worker's grant and an empty grant is an
+// explicit empty list (never the owner inventory, never a refusal). It describes the live assignment; it grants nothing, and every
+// native action rechecks the assignment when it runs.
+async function cardToolScope(agent:any){
+ const accounts:any[]=await FinancialAccount.find({ownerId:agent.ownerId,_id:{$in:agent.accountIds},active:true}).select('name provider primaryCard').sort({name:1}).lean()
+ return {kind:'assigned_card_accounts',accountIds:accounts.map(a=>String(a._id)),accounts:accounts.map(a=>({id:String(a._id),name:a.name,provider:a.provider||'amex',primaryCard:a.primaryCard||''})),meaning:'The cards the worker answering this turn may read or act on with the card tools of this conversation now: the same owner, active and assigned-account filters and fields as list_accounts, built for this worker at this claim (a reclaim by another worker carries that worker\'s cards). ownerCardAccounts, when present, is the owner-wide inventory of active cards and grants no tool access: a card listed there but not here is unavailable to the tools of this conversation. An empty accounts list means no card is assigned to this worker; the conversation stays available and card tool results are empty. Neither list proves that evaluations, statements or other records exist for a card; every native action rechecks the live assignment when it runs.'}
+}
+// The job's facts: the saved context with the owner inventory under its explicit name (an older saved `accounts` is projected to
+// ownerCardAccounts for this job only; the stored row is not changed, and a context saved without an inventory keeps none) plus the
+// claiming worker's cardToolScope.
+function claimedFacts(saved:any,scope:any){
+ const {accounts:legacy,...facts}=saved||{}
+ if(legacy!==undefined&&facts.ownerCardAccounts===undefined)facts.ownerCardAccounts=legacy
+ return {...facts,cardToolScope:scope}
+}
 export async function claimAssistant(agent:any){
  if(!agent.workspaceEnabled)return {job:null};await Conversation.init()
  // The worker recorded at send is only a hint: any live workspace worker of this owner claims the queued turn, and the claim assigns it
@@ -143,7 +161,9 @@ export async function claimAssistant(agent:any){
  // Same-company teachings and tools only with the turn's frozen company, a workspace worker and a membership read now; earlier
  // messages of another company's (or no company's) context are withheld from this job.
  const bridge:any=await companyClaim(Conversation,c,turn,agent,lease)
- return {job:{id:String(c._id),mode:'workspace',lease,text:turn.text,context:{...c.context,messages:bridge.messages},tools:[...actionTools('workspace'),...(bridge.authority?teachingTools('workspace'):[])],actions:receipts,nextSlot,target:turn.target||null,...(bridge.authority?{teachingCompany:{name:bridge.authority.name},knowledge:bridge.knowledge,knowledgeActiveTotal:bridge.knowledgeActiveTotal}:{})}}
+ // The card tool scope of THIS claiming worker (rebuilt on a reclaim), beside the saved owner inventory.
+ const cardScope=await cardToolScope(agent)
+ return {job:{id:String(c._id),mode:'workspace',lease,text:turn.text,context:{...c.context,facts:claimedFacts(c.context?.facts,cardScope),messages:bridge.messages},tools:[...actionTools('workspace'),...(bridge.authority?teachingTools('workspace'):[])],actions:receipts,nextSlot,target:turn.target||null,...(bridge.authority?{teachingCompany:{name:bridge.authority.name},knowledge:bridge.knowledge,knowledgeActiveTotal:bridge.knowledgeActiveTotal}:{})}}
 }
 export async function finishAssistant(agent:any,chatId:string,body:any){
  if(!agent.workspaceEnabled)fail(403,'Workspace conversation access required')

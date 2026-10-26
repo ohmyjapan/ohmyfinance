@@ -6,6 +6,11 @@
 // "eval-reads:" label so the fixture defect legs can name the assertion a reintroduced defect must flip. Groups run isolated (a red
 // group prints FAIL <key> and the owner conversations are released for the next group); OMF_EVAL_READS_ONLY (comma list of keys) runs
 // only the named groups. Setup steps fail with SETUP and are never a detection.
+// Plan omf-navi-card-scope-context-20261026 adds group 7 (scope): the claimed job names the owner-wide card inventory
+// (facts.ownerCardAccounts) and, separately, the claiming worker's actual card tool scope (facts.cardToolScope), compared with the
+// native list_accounts result for a full, reduced and empty grant, rebuilt for the worker that reclaims the same turn, projected from
+// an older saved facts.accounts without a stored change, absent on the payment-matching context, and never attached to purchase or
+// company jobs.
 const assert=require('node:assert/strict'),fs=require('node:fs'),fsp=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),net=require('node:net'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process'),{MongoMemoryServer}=require('mongodb-memory-server'),{MongoClient,ObjectId}=require('mongodb');
 const root=path.resolve(process.env.OMF_EVAL_READS_APP_ROOT||path.join(__dirname,'..')),pause=ms=>new Promise(r=>setTimeout(r,ms));
@@ -84,7 +89,8 @@ async function main(){
   await C.runs.insertMany([R2,R4,R5,R3,R6,RQ]);
   // Workspace helpers: a heartbeat before every send keeps the worker live; an action is a lease-bound named read on the claimed job.
   const ws='/api/finance-chat/workspace',names=job=>(job.tools||[]).map(t=>t.name);
-  const wsTurn=async(o,A,text,context)=>{await A.w('heartbeat');const view=await ok(ws,o.token,'GET',undefined,'workspace view');const sent=await api(ws,o.token,'POST',{text,requestId:crypto.randomUUID(),chatRevision:view.conversation?.revision||0,context:context||{page:'other'}});assert.equal(sent.status,200,'SETUP workspace send '+sent.raw.slice(0,300));const claimed=await A.w('workspace-claim');assert.ok(claimed.data?.job?.mode==='workspace'&&claimed.data.job.text===text,'SETUP workspace claim '+claimed.raw.slice(0,300));return claimed.data.job};
+  const wsSend=async(o,A,text,context)=>{await A.w('heartbeat');const view=await ok(ws,o.token,'GET',undefined,'workspace view');const requestId=crypto.randomUUID();const sent=await api(ws,o.token,'POST',{text,requestId,chatRevision:view.conversation?.revision||0,context:context||{page:'other'}});assert.equal(sent.status,200,'SETUP workspace send '+sent.raw.slice(0,300));return requestId};
+  const wsTurn=async(o,A,text,context)=>{await wsSend(o,A,text,context);const claimed=await A.w('workspace-claim');assert.ok(claimed.data?.job?.mode==='workspace'&&claimed.data.job.text===text,'SETUP workspace claim '+claimed.raw.slice(0,300));return claimed.data.job};
   const act=(job,A,name,args,slot)=>A.w('workspace/'+job.id+'/actions',{lease:job.lease,slot:slot||1,name,args:args||{}});
   const read=async(job,A,name,args,label)=>{const r=await act(job,A,name,args);assert.equal(r.status,200,label+' HTTP '+r.status+' '+r.raw.slice(0,300));return r.data.result};
   const finish=(job,A,summary)=>A.w('workspace/'+job.id+'/result',{lease:job.lease,proposal:{kind:'unclear',summary,patch:{},quotes:{}}});
@@ -246,6 +252,8 @@ async function main(){
    assert.equal((await api(chatPath,P.token,'POST',{revision:dd.revision,key:dd.key,sourceHash:dd.sourceHash,chatRevision:cc.conversation?.revision||0,requestId:crypto.randomUUID(),text:'この購入の評価結果を見せて'})).status,200,'SETUP purchase send');
    const pj=(await W.w('claim')).data?.job;assert.ok(pj&&pj.id&&pj.lease&&pj.mode===undefined,'SETUP purchase claim');
    assert.ok(TOOLS.every(n=>!names(pj).includes(n)),'eval-reads:purchase-job-lacks-tools '+JSON.stringify(names(pj).filter(n=>/evaluation/.test(n))));
+   // the owner workspace card-scope facts belong to that realm only: a purchase job context carries neither
+   assert.ok(!JSON.stringify(pj.context||{}).includes('"cardToolScope"')&&!JSON.stringify(pj.context||{}).includes('"ownerCardAccounts"'),'eval-reads:purchase-job-no-card-scope-facts');
    const pr=await W.w(pj.id+'/actions',{lease:pj.lease,slot:1,name:'get_evaluation_overview',args:{}});assert.equal(pr.status,400,'eval-reads:purchase-job-no-tool '+pr.status+' '+pr.raw.slice(0,200));
    const pguide=await W.w(pj.id+'/actions',{lease:pj.lease,slot:2,name:'list_navi_features',args:{query:'評価'}});assert.equal(pguide.status,200,'SETUP purchase guide '+pguide.raw.slice(0,200));const pf=pguide.data.result.features.find(x=>x.id==='research-evaluation');
    assert.ok(pf&&pf.disposition==='page_handoff'&&pf.tools.length===0,'eval-reads:purchase-guide-page '+JSON.stringify(pf));
@@ -257,8 +265,55 @@ async function main(){
    assert.equal((await api(cw,tokenC,'POST',{text:'評価の結果を見せて',requestId:crypto.randomUUID(),chatRevision:cview.conversation?.revision||0,context:{page:'transactions'}})).status,200,'SETUP company send');
    const cj=(await W.w('workspace-claim')).data?.job;assert.ok(cj&&cj.companyScoped===true,'SETUP company claim');
    assert.ok(TOOLS.every(n=>!names(cj).includes(n)),'eval-reads:company-job-lacks-tools '+JSON.stringify(names(cj).filter(n=>/evaluation/.test(n))));
+   assert.ok(!JSON.stringify(cj.context||{}).includes('"cardToolScope"')&&!JSON.stringify(cj.context||{}).includes('"ownerCardAccounts"'),'eval-reads:company-job-no-card-scope-facts');
    const cr=await W.w('workspace/'+cj.id+'/actions',{lease:cj.lease,slot:1,name:'get_evaluation_overview',args:{}});assert.equal(cr.status,400,'eval-reads:company-job-no-tool '+cr.status+' '+cr.raw.slice(0,200));
    assert.equal((await W.w('workspace/'+cj.id+'/result',{lease:cj.lease,proposal:{kind:'unclear',summary:'会社の会話では評価を読み取りません。',patch:{},quotes:{}}})).status,200,'SETUP company finish');
+  });
+
+  // 7 card scope facts (plan omf-navi-card-scope-context-20261026): the owner-wide inventory and the claiming worker's actual tool
+  // scope are separate named facts; the scope agrees with native list_accounts for full, reduced and empty grants, is rebuilt for the
+  // worker that reclaims the same turn, an older saved facts.accounts is projected without a stored change, the payment context keeps
+  // no inventory, and no conversation is refused.
+  await group('scope','a claimed job names the owner-wide card inventory and, separately, the claiming worker actual card tool scope; both agree with native list_accounts for full, reduced and empty grants; a same-turn reclaim by another worker carries that worker scope; an older saved context is projected without a stored change; the payment context keeps no inventory; an empty grant still answers',async()=>{
+   const ownerCards=[A1,A2,AX].map(a=>String(a._id)).sort();
+   const scopeOf=job=>job.context.facts.cardToolScope,inventoryOf=job=>(job.context.facts.ownerCardAccounts||[]).map(a=>String(a._id)).sort();
+   const agree=async(job,A,label)=>{const s=scopeOf(job);assert.ok(s&&s.kind==='assigned_card_accounts'&&Array.isArray(s.accounts)&&Array.isArray(s.accountIds)&&typeof s.meaning==='string'&&s.meaning.length>0,'eval-reads:scope-shape '+label+' '+JSON.stringify(s));const native=await read(job,A,'list_accounts',{},'eval-reads:scope-native-read '+label);assert.deepEqual(s.accounts,native.accounts,'eval-reads:scope-agrees-with-list-accounts '+label+' '+JSON.stringify({scope:s.accounts,native:native.accounts}));assert.deepEqual(s.accountIds,native.accounts.map(a=>a.id),'eval-reads:scope-ids '+label);return s};
+   // full grant: the inventory is the three active owner cards (never the foreign one), the scope the two assigned; the ambiguous name is gone
+   const job=await wsTurn(P,W,'使えるカードの範囲を説明して');
+   assert.deepEqual(inventoryOf(job),ownerCards,'eval-reads:owner-inventory-named '+JSON.stringify(job.context.facts.ownerCardAccounts||null));
+   assert.equal(job.context.facts.accounts,undefined,'eval-reads:ambiguous-accounts-absent');
+   const full=await agree(job,W,'full');assert.deepEqual(full.accountIds.slice().sort(),[String(A1._id),String(A2._id)].sort(),'eval-reads:full-grant-scope '+JSON.stringify(full.accountIds));
+   assert.ok(!full.accountIds.includes(String(AX._id))&&inventoryOf(job).includes(String(AX._id)),'eval-reads:inventory-not-scope');
+   assert.ok(!JSON.stringify(job.context.facts.ownerCardAccounts).includes('otpMailbox')&&!JSON.stringify(full).includes('otpMailbox'),'eval-reads:scope-no-credentials');
+   // the same turn reclaimed by a worker with a reduced grant: the job scope is that worker's, the inventory unchanged
+   const W2=await agent(P,[A2]);await C.assistants.updateOne({_id:new ObjectId(job.id)},{$set:{leaseUntil:new Date(Date.now()-1000)}});
+   await W2.w('heartbeat');const reclaimed=(await W2.w('workspace-claim')).data?.job;assert.ok(reclaimed&&reclaimed.id===job.id&&reclaimed.lease!==job.lease,'SETUP reduced reclaim');
+   const reduced=await agree(reclaimed,W2,'reclaim-reduced');assert.deepEqual(reduced.accountIds,[String(A2._id)],'eval-reads:reclaim-scope-fresh '+JSON.stringify(reduced.accountIds));
+   assert.deepEqual(inventoryOf(reclaimed),ownerCards,'eval-reads:reclaim-inventory-unchanged');
+   assert.equal((await finish(reclaimed,W2,'このワーカーに割り当てられたカードだけです。')).status,200,'eval-reads:reclaim-reduced-finish');
+   // an emptied grant: the reclaim succeeds, the scope is an explicit empty list, the conversation is answered and available
+   const WE=await agent(P,[A1]);await C.agents.updateOne({_id:new ObjectId(WE.id)},{$set:{accountIds:[]}});
+   const j2=await wsTurn(P,W,'空の割り当ての確認');await C.assistants.updateOne({_id:new ObjectId(j2.id)},{$set:{leaseUntil:new Date(Date.now()-1000)}});
+   await WE.w('heartbeat');const empty=(await WE.w('workspace-claim')).data?.job;assert.ok(empty&&empty.id===j2.id,'eval-reads:empty-grant-claims '+JSON.stringify(empty?{id:empty.id}:null));
+   const none=await agree(empty,WE,'empty');assert.deepEqual(none.accounts,[],'eval-reads:empty-grant-explicit-empty-scope '+JSON.stringify(none.accounts));assert.deepEqual(inventoryOf(empty),ownerCards,'eval-reads:empty-grant-inventory-kept');
+   assert.equal((await finish(empty,WE,'割り当てられたカードはありません。')).status,200,'eval-reads:empty-grant-answered');
+   const view=await ok(ws,P.token,'GET',undefined,'view');assert.equal(view.conversation.state,'ready','eval-reads:empty-grant-conversation-available '+view.conversation.state);
+   // an older saved context (facts.accounts) is projected at claim; the stored row is not migrated
+   await wsSend(P,W,'古い保存文脈の確認');
+   const row=await C.assistants.findOne({ownerId:P.id});assert.ok(row&&row.context?.facts?.ownerCardAccounts,'SETUP legacy rename source');
+   await C.assistants.updateOne({_id:row._id},{$rename:{'context.facts.ownerCardAccounts':'context.facts.accounts'}});
+   const stored=await C.assistants.findOne({_id:row._id});assert.ok(Object.hasOwn(stored.context.facts,'accounts'),'SETUP legacy context');
+   const legacy=(await W.w('workspace-claim')).data?.job;assert.ok(legacy&&legacy.text==='古い保存文脈の確認','SETUP legacy claim');
+   assert.deepEqual(inventoryOf(legacy),ownerCards,'eval-reads:legacy-context-projected '+JSON.stringify(legacy.context.facts.ownerCardAccounts||null));assert.equal(legacy.context.facts.accounts,undefined,'eval-reads:legacy-field-not-forwarded');
+   await agree(legacy,W,'legacy');
+   const after=await C.assistants.findOne({_id:row._id});
+   assert.equal(JSON.stringify(after.context),JSON.stringify(stored.context),'eval-reads:legacy-context-not-migrated');
+   assert.ok(Object.hasOwn(after.context.facts,'accounts')&&!Object.hasOwn(after.context.facts,'ownerCardAccounts')&&!Object.hasOwn(after.context.facts,'cardToolScope'),'eval-reads:stored-history-unchanged '+JSON.stringify(Object.keys(after.context.facts)));
+   assert.equal((await finish(legacy,W,'以前の保存文脈でも回答できます。')).status,200,'eval-reads:legacy-finish');
+   // the payment-matching context intentionally carries no owner inventory; the claim adds only the worker scope
+   const pay=await wsTurn(P,W,'支払い照合の範囲',{page:'intake-payments'});
+   assert.ok(!Object.hasOwn(pay.context.facts,'ownerCardAccounts')&&!Object.hasOwn(pay.context.facts,'accounts'),'eval-reads:payment-context-no-inventory '+JSON.stringify(Object.keys(pay.context.facts)));
+   await agree(pay,W,'payments');assert.equal((await finish(pay,W,'配分の範囲です。')).status,200,'eval-reads:payment-finish');
   });
 
   // 6 repeated reads change no evaluation, financial or journal record; reads are not journaled; the turn keeps no receipts.
