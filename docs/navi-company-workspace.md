@@ -102,7 +102,7 @@ Company conversation pages come from the fixed list `companyNaviPages` in `share
 
 Owner pages keep the owner conversation and its account grants: mapping, drafts, learning, connections, intake, payment matching, purchase workflow and every other page (`other`). A page name is navigation context, never authority. The server accepts only the fixed page ids (`selection()`). Record ids are accepted only on their own page (invoice, calendar, transaction) and are checked against the frozen company.
 
-Catalogue: the original 17 tools plus 24 finite business tools, 41 in total; tests assert the exact set. No tool takes a URL, endpoint, query, collection, company or marker argument. `validateBusinessArgs` refuses unknown keys at every level, wrong types, impossible dates and unbounded arrays.
+Catalogue: the original 17 tools plus 25 finite business tools, 42 in total; tests assert the exact set. No tool takes a URL, endpoint, query, collection, company or marker argument. `validateBusinessArgs` refuses unknown keys at every level, wrong types, impossible dates and unbounded arrays.
 
 | Tool | Native operation (same as the page) | Proof of a lost outcome |
 |---|---|---|
@@ -115,6 +115,7 @@ Catalogue: the original 17 tools plus 24 finite business tools, 41 in total; tes
 | `create/update/delete_company_budget` | C2 `companyBudgetService` with trusted `{id, naviOperation, expectedUpdatedAt}` | marker / marker / none |
 | `create/update/delete_company_recurring_payment` | C2 `recurringPaymentService` (company/creator stay off the schema) | marker / marker / none |
 | `generate_company_recurring_forecast` | C2 `generateTransaction` for exactly `expectedNextDueDate` (pending forecast) | the cycle's forecast exists and the payment advanced with it |
+| `prepare_company_transaction_export` (2026-10-26) | `transactionExportService.exportTransactionRows`, the export route's own recipe (company-zone date window, the page's search, the list filters); the result is the frozen criteria, the window and a count, never rows; the browser downloads from the conversation card through the existing export route; no record changes | the journal entry itself (frozen criteria and format); an inverted range is a failed receipt |
 | `get_company_profile`, `get_company_finance_summary`, `list/get_company_receipt(s)`, `list/get_company_budget(s)`, `list/get_company_recurring_payment(s)` | `companyNaviSummaryService` / C2 reads | read only |
 | `list_company_conversation_history`, `get_company_conversation_archive`, `get_company_knowledge` | existing archive / knowledge services | read only, evidence |
 

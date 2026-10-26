@@ -2,8 +2,8 @@ export interface CompanyNaviPage { id: string; label: string; feature: string }
 export const companyNaviPages: readonly CompanyNaviPage[];
 export function companyNaviPage(id: any): CompanyNaviPage | null;
 export interface BusinessToolDefinition { name: string; description: string; inputSchema: { type: 'object'; additionalProperties: false; properties: Record<string, any>; required?: string[] } }
-export type BusinessKind = 'company' | 'receipt' | 'budget' | 'recurring' | 'history' | 'knowledge' | 'transaction' | 'invoice' | 'payment';
-export type BusinessEffect = 'read' | 'create' | 'update' | 'delete' | 'generate';
+export type BusinessKind = 'company' | 'receipt' | 'budget' | 'recurring' | 'history' | 'knowledge' | 'transaction' | 'invoice' | 'payment' | 'export';
+export type BusinessEffect = 'read' | 'create' | 'update' | 'delete' | 'generate' | 'prepare';
 export interface BusinessToolMeta { kind: BusinessKind; effect: BusinessEffect; idKey?: string }
 export const companyBusinessTools: readonly BusinessToolDefinition[];
 export function businessTool(name: any): BusinessToolDefinition | null;

@@ -6,8 +6,8 @@ The readiness audit of 2026-10-22 and its feature matrix are dated evidence and 
 
 ## Classes
 
-- **Connected** (`navi_tool`): Navi has named tools for it in the conversation that carries them. 9 entries in the company conversation; 8 more in the owner conversation when the job carries their owner tools (research-evaluation since 2026-10-25, reads only).
-- **Person-required** (`page_handoff`): the person does it on the page. Navi explains the page from its reason and may link it. A link is not proof that every action on that page works; this slice did not re-audit the native code of these pages. 20 entries.
+- **Connected** (`navi_tool`): Navi has named tools for it in the conversation that carries them. 10 entries in the company conversation (transaction-export since 2026-10-26: the export is prepared in the conversation and downloaded by the browser from the card); 8 more in the owner conversation when the job carries their owner tools (research-evaluation since 2026-10-25, reads only).
+- **Person-required** (`page_handoff`): the person does it on the page. Navi explains the page from its reason and may link it. A link is not proof that every action on that page works; this slice did not re-audit the native code of these pages. 19 entries.
 - **Native dependency** (`unsupported`): the native page or API is not company-scoped yet, so Navi uses the existing unsupported exit: no link, no tool, and a reason that names the native prerequisite and a useful next lane. The entry keeps its route only so the current page is still identified (`naviFeatureForPath`); `naviFeatureRoute` returns no link. The pages and their APIs are unchanged and still reachable directly: this guards Navi's links, it is not the native tenant repair. 5 entries.
 - **Unsupported by design** (`unsupported`, no route): 5 entries.
 
@@ -24,7 +24,7 @@ The readiness audit of 2026-10-22 and its feature matrix are dated evidence and 
 | `transaction-import` | `/transactions/import` | page | page | Person-required | `pages/transactions/import.vue` | the person imports on the page |
 | `transaction-upload` | `/transactions/upload` | page | page | Person-required | `pages/transactions/upload.vue` | the person uploads on the page |
 | `duplicates` | no link | unsupported | unsupported | Native dependency (B2) | `pages/transactions/duplicates.vue`; `server/api/transactions/duplicates.ts:25` reads `Transaction.find({})`, `:74-157` merge/delete/ignore by id without a company check | company conversation reads this company's transactions by date and amount; one manual transaction is deleted only on an explicit instruction |
-| `transaction-export` | `/transactions` | page | page | Person-required | `pages/transactions/index.vue` | export button |
+| `transaction-export` | `/transactions` | `prepare_company_transaction_export`: a filtered export (the page's filters, company-zone dates) prepared on an explicit instruction; the result is the frozen recipe and a count, never rows | page | Connected (2026-10-26) | `pages/transactions/index.vue`, `server/api/transactions/export.ts`, `server/services/transactionExportService.ts` | the browser downloads from the conversation card or the page button; a re-download is the current matching records, not a saved file |
 | `mapping` | `/mapping` | page | mapping tools when carried | Person-required / owner Connected | `pages/mapping.vue` | owner purchase conversation |
 | `mapping-drafts` | `/mapping` | page | draft tools when carried | Person-required / owner Connected | `pages/mapping-draft/[importId]/[line].vue` | the purchase conversation of the draft |
 | `learning` | `/learning` | page | `set_memory_status` when carried | Person-required / owner Connected | `pages/learning.vue` | |

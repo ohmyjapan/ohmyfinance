@@ -2,6 +2,8 @@
 // operation; there is no generic endpoint, query, collection or URL argument), their exact supported fields, a strict argument
 // validator, and the date/currency facts business summaries rely on. No Node imports: the page bundle loads it too.
 
+import {exportCriteriaProperties} from './finance-transaction-export.mjs';
+
 // Normal company finance pages. Owner pages (mapping, drafts, learning, connections, intake, payment matching, purchase workflow)
 // keep their separate owner conversation and grants. A page name is navigation context, never financial authority.
 const page=(id,label,feature)=>Object.freeze({id,label,feature});
@@ -70,7 +72,8 @@ export const companyBusinessTools=Object.freeze([
  tool('create_company_recurring_payment','Create one company recurring payment with the stated currency, type (支出/入金), frequency, start date and payee name. '+explicit,recurringFields,['name','amount','currency','transactionType','frequency','startDate','payeeName']),
  tool('update_company_recurring_payment','Save explicitly requested recurring-payment fields (status pause/resume included). '+explicit,{recurringPaymentId:objectId,expectedUpdatedAt:snapshot,status:{type:'string',enum:['active','paused','completed','cancelled']},...recurringFields},['recurringPaymentId','expectedUpdatedAt']),
  tool('delete_company_recurring_payment','Delete one recurring payment; forecasts it already saved stay as ordinary pending transactions. '+explicit+' '+removal,{recurringPaymentId:objectId,expectedUpdatedAt:snapshot},['recurringPaymentId','expectedUpdatedAt']),
- tool('generate_company_recurring_forecast','Save the PENDING forecast transaction for exactly the cycle you read (expectedNextDueDate = its nextDueDate) and advance to the next cycle. A forecast is a plan, not a payment. '+explicit,{recurringPaymentId:objectId,expectedNextDueDate:date},['recurringPaymentId','expectedNextDueDate'])
+ tool('generate_company_recurring_forecast','Save the PENDING forecast transaction for exactly the cycle you read (expectedNextDueDate = its nextDueDate) and advance to the next cycle. A forecast is a plan, not a payment. '+explicit,{recurringPaymentId:objectId,expectedNextDueDate:date},['recurringPaymentId','expectedNextDueDate']),
+ tool('prepare_company_transaction_export','Prepare a filtered export of this company\'s saved transactions (CSV or JSON) from the same filters as the transactions page: status, type (支出/入金), a local date range in the company\'s saved time zone, amount range, the page\'s search text, receipt flag and reference ids. '+explicit+' The file is delivered to the browser from the conversation card; this result never holds rows: it returns the frozen recipe, the resolved window and the count of currently matching records. A later download is the current matching records, not a saved file.',{format:{type:'string',enum:['csv','json']},...exportCriteriaProperties},['format'])
 ]);
 const byName=new Map(companyBusinessTools.map(t=>[t.name,t]));
 export const businessTool=name=>typeof name==='string'?byName.get(name)||null:null;
@@ -79,7 +82,8 @@ export const businessToolMeta=Object.freeze({
  find_company_receipt_matches:meta('receipt','read'),
  get_company_profile:meta('company','read'),get_company_finance_summary:meta('company','read'),list_company_receipts:meta('receipt','read'),get_company_receipt:meta('receipt','read'),list_company_budgets:meta('budget','read'),get_company_budget:meta('budget','read'),list_company_recurring_payments:meta('recurring','read'),get_company_recurring_payment:meta('recurring','read'),list_company_conversation_history:meta('history','read'),get_company_conversation_archive:meta('history','read'),get_company_knowledge:meta('knowledge','read'),get_company_invoice_calendar:meta('invoice','read'),schedule_company_invoice_payment:meta('payment','create','paymentId'),
  create_company_transaction:meta('transaction','create','transactionId'),delete_company_transaction:meta('transaction','delete','transactionId'),create_company_invoice:meta('invoice','create','invoiceId'),delete_company_invoice:meta('invoice','delete','invoiceId'),create_company_calendar_entry:meta('payment','create','paymentId'),delete_company_calendar_entry:meta('payment','delete','paymentId'),
- create_company_budget:meta('budget','create','budgetId'),update_company_budget:meta('budget','update','budgetId'),delete_company_budget:meta('budget','delete','budgetId'),create_company_recurring_payment:meta('recurring','create','recurringPaymentId'),update_company_recurring_payment:meta('recurring','update','recurringPaymentId'),delete_company_recurring_payment:meta('recurring','delete','recurringPaymentId'),generate_company_recurring_forecast:meta('recurring','generate','recurringPaymentId')
+ create_company_budget:meta('budget','create','budgetId'),update_company_budget:meta('budget','update','budgetId'),delete_company_budget:meta('budget','delete','budgetId'),create_company_recurring_payment:meta('recurring','create','recurringPaymentId'),update_company_recurring_payment:meta('recurring','update','recurringPaymentId'),delete_company_recurring_payment:meta('recurring','delete','recurringPaymentId'),generate_company_recurring_forecast:meta('recurring','generate','recurringPaymentId'),
+ prepare_company_transaction_export:meta('export','prepare','exportId')
 });
 export const businessWriteNames=Object.freeze(Object.keys(businessToolMeta).filter(k=>businessToolMeta[k].effect!=='read'));
 // Which native pages a done receipt refreshes (the GUI reloads only for the same actor and company).

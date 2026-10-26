@@ -16,7 +16,7 @@ export const naviFeatures=Object.freeze([
  f('transaction-import','transactions','取引のインポート','거래 가져오기','/transactions/import','page_handoff','ファイルからの取引取込は画面で行います。Navi は取込を実行しません。','pages/transactions/import.vue'),
  f('transaction-upload','transactions','データのアップロード','데이터 업로드','/transactions/upload','page_handoff','明細ファイルのアップロードは画面で行います。','pages/transactions/upload.vue'),
  f('duplicates','transactions','重複の確認','중복 확인','/transactions/duplicates','unsupported','重複の確認画面は、まだ会社ごとに分かれていません。全社の取引を読み比べ、統合・削除・除外も会社を確認しないため、会社ごとの修正（元の機能側）ができるまで Navi はこの画面を案内せず、重複の整理もしません。この会社の取引は会社の会話の Navi が日付・金額などで読み取り、重複の可能性を比べられます。会社の会話では、手入力の取引なら明示された指示で1件ずつ削除できます（カード取込・帳簿転記の行は削除しません）。','pages/transactions/duplicates.vue'),
- f('transaction-export','transactions','取引のCSV出力','거래 CSV 내보내기','/transactions','page_handoff','取引一覧の「エクスポート」ボタンで CSV を出力します。Navi はファイルを作成しません。','pages/transactions/index.vue'),
+ f('transaction-export','transactions','取引のCSV出力','거래 CSV 내보내기','/transactions','navi_tool','取引一覧の「エクスポート」ボタンと同じ条件（状態・区別・会社のタイムゾーンでの日付範囲・金額範囲・検索・領収書・取引先など）で、明示された指示があれば Navi が取引の出力（CSV / JSON）を用意します。ファイルは会話のカードからブラウザがダウンロードします。Navi がファイルを送ることはなく、再ダウンロードは保存済みファイルではなく、その時点で条件に合う記録です。','pages/transactions/index.vue',{tools:['prepare_company_transaction_export']}),
  f('mapping','mapping','明細マッピング','명세 매핑','/mapping','page_handoff','カード明細の分類確認は画面とその画面の Navi 会話で行います。この会社会話からは編集できません。','pages/mapping.vue'),
  f('mapping-drafts','mapping','取引の下書き','거래 초안','/mapping','page_handoff','下書きは明細マッピングの行から開きます。「この購入について」の会話で項目を保存できます。','pages/mapping-draft/[importId]/[line].vue'),
  f('learning','learning','学習ノート','학습 노트','/learning','page_handoff','明細マッピング用の学習ノートです。この会社会話で覚えた内容は Navi の「記憶」に別に保存されます。','pages/learning.vue'),

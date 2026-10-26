@@ -7,7 +7,12 @@
       </div>
 
       <div class="navi-page-actions">
-        <button class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main">
+        <button
+            data-transactions-export
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-white/10 rounded-xl shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-main disabled:opacity-50"
+            :disabled="exporting"
+            @click="exportCsv"
+        >
           <FileText class="mr-2 h-4 w-4 text-gray-500" />
           {{ t('common.export') }} CSV
         </button>
@@ -27,6 +32,7 @@
         </button>
       </div>
     </header>
+    <p v-if="exportError" data-transactions-export-error role="alert" class="mb-4 text-sm text-red-600 dark:text-red-400">{{ exportError }}</p>
 
     <!-- Stats Cards -->
     <div class="navi-summary-grid gap-6 mb-6">
@@ -435,9 +441,28 @@ const {
   createTransaction,
   deleteTransaction,
   updateTransactionStatus: updateStatus,
+  exportTransactions,
   formatDate,
   formatCurrency
 } = useTransactions()
+
+// Export CSV: the current search and filters through the composable; the Blob becomes an object URL the browser downloads
+// (components/finance/DocumentList.vue pattern). A dropped or failed export shows one line and downloads nothing.
+const exporting = ref(false), exportError = ref('')
+const exportCsv = async () => {
+  if (exporting.value) return
+  exporting.value = true
+  exportError.value = ''
+  try {
+    const blob = await exportTransactions('csv')
+    if (!blob) { exportError.value = t('transactionsList.exportFailed'); return }
+    const objectUrl = URL.createObjectURL(blob), link = document.createElement('a')
+    link.href = objectUrl; link.download = 'transactions_' + new Date().toISOString().split('T')[0] + '.csv'; link.click()
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  } finally {
+    exporting.value = false
+  }
+}
 
 watch(() => navi.companyTransactionSavedSequence, () => {
   const saved = navi.companyTransactionSaved, scope = tokenClaims(user.token)

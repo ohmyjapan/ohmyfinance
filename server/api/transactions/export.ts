@@ -1,6 +1,7 @@
 // server/api/transactions/export.ts
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
-import { getTransactions } from '../../services/transactionService'
+import { exportTransactionRows } from '../../services/transactionExportService'
+import { exportCriteriaFromQuery } from '../../../shared/finance-transaction-export.mjs'
 import { requireAuth } from '../../middleware/auth'
 import { ensureConnection } from '../../config/database'
 import { calendarCompany } from '../../utils/calendarAccess'
@@ -21,22 +22,12 @@ export default defineEventHandler(async (event) => {
     // Get format (default to CSV)
     const format = String(query.format || 'csv').toLowerCase()
 
-    // Build filters from query params (OMF style)
-    const filters: Record<string, any> = {}
-
-    if (query.status) filters.status = query.status
-    if (query.type) filters.type = query.type // 支出 or 入金
-    if (query.dateFrom) filters.dateFrom = query.dateFrom
-    if (query.dateTo) filters.dateTo = query.dateTo
-    if (query.minAmount) filters.minAmount = parseFloat(String(query.minAmount))
-    if (query.maxAmount) filters.maxAmount = parseFloat(String(query.maxAmount))
-    if (query.supplierId) filters.supplierId = query.supplierId
-    if (query.customerId) filters.customerId = query.customerId
-    if (query.accountCategoryId) filters.accountCategoryId = query.accountCategoryId
-    if (query.hasReceipt !== undefined) filters.hasReceipt = query.hasReceipt === 'true'
+    // The export recipe: the list route's filter set (search and transactionCategoryId included), typed. A real date key is a whole
+    // local day of the company's saved time zone (transactionExportService); any other date string keeps its instant meaning.
+    const criteria = exportCriteriaFromQuery(query)
 
     // Fetch transactions from MongoDB
-    const transactions = await getTransactions(filters, organizationId)
+    const { transactions } = await exportTransactionRows(organizationId, criteria)
 
     // Define fields and headers for export (OMF Japanese accounting style)
     const fields = [
@@ -92,7 +83,7 @@ export default defineEventHandler(async (event) => {
       invoiceNumber: transaction.invoiceNumber || '',
       receiptNumber: transaction.receiptNumber || '',
       productName: transaction.productName || '',
-      productPrice: transaction.productPrice || '',
+      productPrice: transaction.productPrice ?? '',
       janCode: transaction.janCode || '',
       hasReceipt: transaction.hasReceipt ? 'あり' : 'なし',
       notes: transaction.notes || '',

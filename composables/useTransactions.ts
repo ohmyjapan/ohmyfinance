@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { useUserStore } from '~/stores/user'
 import { tokenClaims } from '~/utils/auth-session'
+import { exportSearchMatches, exportQueryFromCriteria } from '~/shared/finance-transaction-export.mjs'
 import type {
     Transaction,
     TransactionStatus,
@@ -302,17 +303,9 @@ export function useTransactions() {
     const filteredTransactions = computed(() => {
         let result = [...transactions.value]
 
-        // Apply search filter
+        // Apply search filter (the shared predicate the export route applies to the same query)
         if (searchQuery.value) {
-            const query = searchQuery.value.toLowerCase()
-            result = result.filter(transaction =>
-                transaction.id?.toLowerCase().includes(query) ||
-                transaction.referenceNumber?.toLowerCase().includes(query) ||
-                transaction.productName?.toLowerCase().includes(query) ||
-                transaction.invoiceNumber?.toLowerCase().includes(query) ||
-                transaction.companyInfo?.toLowerCase().includes(query) ||
-                transaction.amount?.toString().includes(query)
-            )
+            result = result.filter(transaction => exportSearchMatches(transaction, searchQuery.value))
         }
 
         // Apply status filter
@@ -388,6 +381,37 @@ export function useTransactions() {
         searchQuery.value = ''
     }
 
+    // The export recipe of the current view: the search text and every set filter, exactly as the list applies them.
+    const exportQuery = () => {
+        const f = filters.value, criteria: Record<string, any> = {}
+        if (searchQuery.value) criteria.search = searchQuery.value
+        if (f.status) criteria.status = f.status
+        if (f.type) criteria.type = f.type
+        if (f.dateFrom) criteria.dateFrom = f.dateFrom
+        if (f.dateTo) criteria.dateTo = f.dateTo
+        if (f.minAmount) criteria.minAmount = typeof f.minAmount === 'string' ? parseFloat(f.minAmount) : f.minAmount
+        if (f.maxAmount) criteria.maxAmount = typeof f.maxAmount === 'string' ? parseFloat(f.maxAmount) : f.maxAmount
+        if (f.hasReceipt !== undefined) criteria.hasReceipt = f.hasReceipt
+        for (const key of ['customerId', 'supplierId', 'accountCategoryId', 'transactionCategoryId'] as const) if (f[key]) criteria[key] = f[key]
+        return criteria
+    }
+
+    // Export the current view through the existing route (bearer header, Blob). The reply is dropped when the actor or company
+    // changed while it was in flight, exactly as fetchTransactions drops its list.
+    const exportTransactions = async (format: 'csv' | 'json' = 'csv'): Promise<Blob | null> => {
+        userStore.initAuth()
+        const scope = tokenClaims(userStore.token)
+        try {
+            const blob = await $fetch<Blob>('/api/transactions/export', { query: exportQueryFromCriteria(exportQuery(), format), headers: userStore.authHeader, responseType: 'blob' })
+            const current = tokenClaims(userStore.token)
+            if (scope?.userId !== current?.userId || scope?.organizationId !== current?.organizationId) return null
+            return blob
+        } catch (err: any) {
+            console.error('Error exporting transactions:', err)
+            return null
+        }
+    }
+
     // Format helpers
     const formatDate = (isoDate: string) => {
         return new Date(isoDate).toLocaleDateString('ja-JP', {
@@ -435,6 +459,8 @@ export function useTransactions() {
         deleteTransaction,
         importTransactions,
         resetFilters,
+        exportQuery,
+        exportTransactions,
 
         // Helpers
         formatDate,

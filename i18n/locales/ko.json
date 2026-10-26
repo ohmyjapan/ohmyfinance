@@ -1773,6 +1773,7 @@
     "amountRange": "금액 범위",
     "clearFilters": "필터 지우기",
     "dateRange": "날짜 범위",
+    "exportFailed": "거래를 내보낼 수 없습니다. 회사 선택과 로그인을 확인해 주세요.",
     "getStarted": "첫 거래 가져오기",
     "hideFilters": "필터 숨기기",
     "importTransactions": "거래 가져오기",

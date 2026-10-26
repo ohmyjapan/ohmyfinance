@@ -18,7 +18,9 @@ import { getRecurringPayments, getRecurringPaymentById, createRecurringPayment, 
 import { getCompanyNaviTransaction, transactionNaviView } from './companyTransactionAssistantService'
 import { companyProfile, companyFinanceSummary, listCompanyReceipts, getCompanyReceipt, findCompanyReceiptMatches } from './companyNaviSummaryService'
 import { readInvoiceCalendar, scheduleInvoicePayment, invoicePaymentId, invoiceLinkSummary } from './companyInvoiceCalendarService'
+import { exportTransactionRows } from './transactionExportService'
 import { businessToolMeta, businessFields } from '../../shared/finance-navi-business.mjs'
+import { exportCriteriaKeys } from '../../shared/finance-transaction-export.mjs'
 
 const bad = (statusCode: number, statusMessage: string): never => { throw createError({ statusCode, statusMessage }) }
 // The C2 schedule services require a trusted company of this process's own ObjectId class (instanceof); the frozen job holds the
@@ -61,6 +63,11 @@ type Adapter = { resource?: (args: any, operationId: string) => string, detail?:
 const created = (model: any) => async (c: any, op: any) => { const m = await markerOf(model, c.organizationId, op.resourceId); return sameMarker(m, op) ? m : null }
 const markedOn = (model: any) => created(model)
 const id = (key: string) => (args: any) => String(args[key])
+// Preparing an export changes no record: the journal entry (the frozen criteria and format) is the whole outcome, so a lost reply
+// settles done from it, provided the frozen range is one the run accepts; an inverted range is the run's own failed receipt.
+const exportCriteria = (args: any) => pick(args, [...exportCriteriaKeys])
+const exportRangeOk = (criteria: any) => !(criteria.dateFrom && criteria.dateTo && criteria.dateFrom > criteria.dateTo)
+const exportRecover = async (_c: any, op: any) => op.detail?.format && op.detail?.criteria && exportRangeOk(op.detail.criteria) ? { operationId: op.operationId, payloadHash: op.payloadHash, appliedAt: op.claimedAt, requestedFields: op.requestedFields, nativeResourceIds: { exportId: String(op.operationId) } } : null
 const adapters: Record<string, Adapter> = {
   create_company_transaction: {
     resource: (_args, operationId) => String(createdId(operationId)),
@@ -189,6 +196,20 @@ const adapters: Record<string, Adapter> = {
       if (!forecast || !(payment?.generatedTransactionIds || []).some((v: any) => String(v) === String(forecast._id))) return null
       return { operationId: op.operationId, payloadHash: op.payloadHash, appliedAt: forecast.createdAt, requestedFields: op.requestedFields, nativeResourceIds: { recurringPaymentId, transactionId: String(forecast._id) } }
     }
+  },
+  // The export recipe of the transactions page, prepared from the conversation: the frozen criteria and format are the journal
+  // entry's detail; the result holds the resolved window and the count of currently matching records, never a row. The browser
+  // downloads it from the conversation card through the existing export route; nothing is saved and no record changes.
+  prepare_company_transaction_export: {
+    resource: (_args, operationId) => operationId,
+    detail: args => ({ format: args.format, criteria: exportCriteria(args) }),
+    run: async ({ c, args, op }) => {
+      const criteria = exportCriteria(args)
+      if (!exportRangeOk(criteria)) bad(400, 'Choose a valid date range')
+      const { transactions, window } = await exportTransactionRows(c.organizationId, criteria)
+      return { resourceIds: { exportId: op.operationId }, result: { export: { exportId: op.operationId, format: args.format, criteria, window, matchedCount: transactions.length, delivery: 'browser_download_from_the_conversation_card', snapshot: 'none_recipe_for_current_matching_records' } } }
+    },
+    recover: exportRecover
   }
 }
 export const businessAdapter = (name: string) => Object.hasOwn(adapters, name) ? adapters[name] : null

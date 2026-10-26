@@ -1744,6 +1744,7 @@
     "amountRange": "金額範囲",
     "clearFilters": "フィルターをクリア",
     "dateRange": "日付範囲",
+    "exportFailed": "取引を出力できませんでした。会社の選択とログインを確認してください。",
     "getStarted": "最初の取引をインポート",
     "hideFilters": "フィルターを隠す",
     "importTransactions": "取引をインポート",
