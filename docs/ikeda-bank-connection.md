@@ -61,8 +61,11 @@ Synthetic only (`scripts/zoomer-fixtures/omf-ikeda-collector.mjs`, `collector/te
 `scripts/collector-security-integration.ts`): an invented BusinessGate DOM served by interception to headless Chrome, owned MongoDB, a fresh
 DPAPI device key in a temp directory. Not proven here: the actual chooser's UI Automation tree (the row/cell representation and OK naming),
 the actual BusinessGate DOM and render timing (result re-render, calendar classes), the actual refusal/notice pages and any logout prompt.
-The login form's action, submit controls and initial ログイン state follow the parent's actual observation; still unobserved: the
-software-keyboard checkbox and dialog, when and on which event the actual page enables ログイン (the fixture enables it shortly after the
-field's input event — invented), and where the bank shows a refusal after the cross-origin post (only the cc BLGI024 form on a new
-document counts as a refusal; any other page ends as uncertain and is not submitted again).
+The login form's action, submit controls and initial ログイン state follow the parent's actual observation. A later read-only parent
+observation found jQuery keyup/blur handlers calling controlBtn on the password field, and confirmed that the bank's own keyboard opt-out
+makes the field editable while the blank-password login button stays disabled. This inventory does not enumerate every possible native
+or delegated listener. The adapter emits keyup after its bound fill/clear, and lets the bank enable or disable its own button; it never
+forces either field or button state. The fixture requires keyup and invents a 120 ms enablement delay. Actual post-fill timing, the
+adapter's full checkbox/dialog path, successful submission and the bank's refusal destination still need the parent replay (only the cc
+BLGI024 form on a new document counts as a refusal; any other page ends as uncertain and is not submitted again).
 Those need the parent's separately approved installed replay. Resona/Jable and インターネットEB direct are unchanged and unsupported.

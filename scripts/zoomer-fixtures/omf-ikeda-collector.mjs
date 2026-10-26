@@ -190,7 +190,7 @@ ${s.decoyLogin || s.loginOutside ? `<form id="other" method="post" action="${AUT
 const sync=()=>{if(btn&&E==='ready')btn.disabled=cb.checked||!pw.value;};
 cb.addEventListener('click',e=>{if(!cb.checked){e.preventDefault();d.style.display='block';}else{pw.readOnly=true;sync();}});
 document.getElementById('dg-btnOK').onclick=()=>{cb.checked=false;pw.readOnly=false;d.style.display='none';sync();};document.getElementById('dg-btnCancel').onclick=()=>{d.style.display='none';};
-pw.addEventListener('input',()=>setTimeout(sync,120));
+pw.addEventListener('keyup',()=>setTimeout(sync,120));
 pw.addEventListener('keydown',()=>{fetch('/__typed').catch(()=>{})});</script>`);
   };
   s.attach = async target => { await target.setRequestInterception(true); target.on('request', r => s.respond(r)); s.pages.push(target); return target; };
@@ -643,7 +643,8 @@ export const MUTANTS = [
   { name: 'MC17-second-login-accepted', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', guard: 'portal-login-target-unique', expect: /ikeda-portal:live-negative second-login/ },
   { name: 'MC18-target-outside-form', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [["filter(e => e.form === f && visible(e) && ((e.tagName === 'BUTTON'", "filter(e => visible(e) && ((e.tagName === 'BUTTON'"]], expect: /ikeda-portal:live-negative login-outside-form/ },
   { name: 'MC19-disabled-target-activated', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [["if (!ready.enabled) throw coded('login-form', `${label}のログインボタンが押せる状態になりません`);", ''], ["if (!found.enabled) return { ok: false, reason: 'disabled' }; target.click();", 'target.click();']], expect: /ikeda-portal:live-disabled-not-submitted/ },
-  { name: 'MC20-enablement-not-awaited', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [['for (let i = 0; i < 25 && ready?.ok && ready.document === form.document && !ready.enabled; i++) { await pause(200); signal?.throwIfAborted(); ready = await evaluate(LOGIN_FORM, { c, expectedDocument: form.document }); }', '']], expect: /ikeda-portal:live-one-submission-by-login/ }
+  { name: 'MC20-enablement-not-awaited', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [['for (let i = 0; i < 25 && ready?.ok && ready.document === form.document && !ready.enabled; i++) { await pause(200); signal?.throwIfAborted(); ready = await evaluate(LOGIN_FORM, { c, expectedDocument: form.document }); }', '']], expect: /ikeda-portal:live-one-submission-by-login/ },
+  { name: 'MC21-password-keyup-missing', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [["pw.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));", '']], expect: /ikeda-portal:live-one-submission-by-login/ }
 ];
 
 // ════════════════════════════ The fixture ════════════════════════════

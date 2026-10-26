@@ -167,7 +167,7 @@ const PRESS = ({ c, origin, text = null, certificate = false, expectedDocument =
 // one a known extra (PORTAL.login.otherSubmits, each at most once); at most one visible software-keyboard checkbox. The target may be
 // disabled while the field is empty (the actual form): `enabled` reports it, and `submit` activates it only while it is enabled. Hidden
 // copies of the form never count. `keyboard` clicks that checkbox once (the bank's own opt-out opens its dialog); `dialog` confirms that
-// dialog's exact OK once; `fill` sets the password property and dispatches input/change; `submit` activates the verified target in this
+// dialog's exact OK once; `fill` sets the password property and dispatches input/change/keyup; `submit` activates the verified target in this
 // same task (the form's own handlers post it); `clear` empties the field. The field's readonly flag and the target's disabled state are
 // never touched.
 const LOGIN_FORM = ({ c, expectedDocument = null, keyboard = false, dialog = false, fill = null, submit = false, clear = false }) => {
@@ -200,6 +200,8 @@ const LOGIN_FORM = ({ c, expectedDocument = null, keyboard = false, dialog = fal
     if (pw.readOnly || found.keyboard) return { ok: false, reason: 'readonly' }; // guard:portal-login-editable
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(pw, clear ? '' : String(fill));
     pw.dispatchEvent(new Event('input', { bubbles: true })); pw.dispatchEvent(new Event('change', { bubbles: true }));
+    // The observed bank field has keyup/blur handlers for controlBtn; let its own handler update the target, including after clear.
+    pw.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
     return found;
   }
   if (submit) { if (!found.enabled) return { ok: false, reason: 'disabled' }; target.click(); } // guard:portal-login-enabled
