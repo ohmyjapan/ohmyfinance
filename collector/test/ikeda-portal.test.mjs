@@ -167,6 +167,27 @@ test('portal: an unexpected bank dialog stops the steps for the person (never ac
   const confirm = await collect({ logoutConfirm: true });
   assert.equal(confirm.result?.failed, null, String(confirm.result?.failed || confirm.error?.message)); assert.equal(confirm.stats.loggedOut, true, 'ikeda-portal:logout-confirm');
 });
+test('portal: the actual login form (parent SAFE-ACTUAL-FORM: the official bizsol action, image and s04 submits, ログイン disabled until the page enables it) is the exact form; another action, an unknown or repeated submit, a second or outside ログイン, or a ログイン that stays disabled is never submitted', async () => {
+  const site = F.businessGate({ today });
+  await owned(site, async ({ page, browser }) => {
+    const ui = ikeda.portalUi(page, browser, ikeda.portal, null, { settleMs: 4000, stableMs: 1500 });
+    const form = async (o = {}) => { Object.assign(site, { loginForm: 'live', ccAction: null, ccExtras: null, loginEnable: null, extraSubmit: false, decoyLogin: false, loginOutside: false, ...o }); await page.goto(F.CC + F.CC_PATH + ';jsessionid=FICT0001', { waitUntil: 'load' }); return ui.loginForm(); };
+    // each observed difference alone (the 7f981be adapter refused the first with `action`, the others with `control`)
+    const live = { all: await form(), extras: await form({ ccAction: 'cc' }), disabledTarget: await form({ ccAction: 'cc', ccExtras: false }), simple: await form({ loginForm: 'simple' }) };
+    assert.deepEqual(Object.fromEntries(Object.entries(live).map(([k, v]) => [k, v.ok])), { all: true, extras: true, disabledTarget: true, simple: true }, 'ikeda-portal:live-form-exact ' + JSON.stringify(live));
+    assert.deepEqual([live.all.keyboard, live.all.editable, live.all.enabled, live.simple.enabled], [true, false, false, true], 'ikeda-portal:live-form-state');
+    for (const [label, o, reason] of [['action-foreign', { ccAction: 'foreign' }, 'action'], ['action-other-path', { ccAction: 'auth-other-path' }, 'action'], ['extra-unknown', { extraSubmit: true }, 'control'], ['extra-twice', { ccExtras: 'twice' }, 'control'], ['second-login', { decoyLogin: true }, 'control'], ['login-outside-form', { loginOutside: true }, 'control']]) {
+      const r = await form(o); assert.deepEqual([r.ok, r.reason], [false, reason], 'ikeda-portal:live-negative ' + label + ' ' + JSON.stringify(r));
+    }
+    // a ログイン the page never enables: nothing is posted and the field is emptied again
+    await form({ loginEnable: 'never' }); let e = null; try { await ui.login(SECRET); } catch (error) { e = error; }
+    assert.equal(e?.code, 'login-form', 'ikeda-portal:live-disabled-not-submitted ' + String(e?.code || 'no error'));
+    assert.deepEqual([await page.evaluate(() => document.querySelector('#main [name="blGI024Info.loginPwd"]').value), site.stats.ccPosts.length, site.stats.otherSubmits], ['', 0, 0], 'ikeda-portal:live-disabled-cleared');
+    // the live form: the keyboard opt-out, the field, then the enabled ログイン — one post to the official origin, submitted by ログイン
+    await form(); let r = null; try { r = await ui.login(SECRET); } catch (error) { r = { outcome: 'error ' + error?.code }; }
+    assert.deepEqual([r.outcome, site.stats.ccPosts, site.stats.postOrigins, site.stats.otherSubmits, site.stats.hiddenPosts], ['authenticated', [{ ok: true, keyboardOff: true }], [F.AUTH], 0, 0], 'ikeda-portal:live-one-submission-by-login');
+  });
+});
 test('pure: page states, capture check and the precheck', () => {
   const read = (o = {}) => ({ origin: F.CC, path: F.CC_PATH, top: true, password: 1, logout: 0, ...o }), K = ikeda.classifyPortalPage;
   assert.equal(K(read()), 'login'); assert.equal(K(read({ origin: F.AUTH, path: F.AUTH_PATH })), 'unknown', 'ikeda-portal:public-form-never-login'); assert.equal(K(read({ top: false })), 'unknown');

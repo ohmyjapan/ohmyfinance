@@ -31,7 +31,13 @@ and 78-row native import were done by the parent outside this code (preparation,
   policy, registry or certificate change; the store is read (metadata) only once a qualifying chooser is shown.
 - On the cc password form: the visible checkbox ソフトウェアキーボードを使用する is unchecked through the bank's own confirmation (ＯＫ); the saved
   password is set once on the visible `blGI024Info.loginPwd` and the form's own ログイン is activated (journal + uncertain marker before the
-  submission). Authentication counts only when that submission reaches a new portal page with ログアウト and no password field; the exact
+  submission). The form is accepted in the shape the parent recorded on the actual page (`SAFE-ACTUAL-FORM.json`, public metadata only):
+  the page on the cc0161 host posting to the same BLGI024Info path on `www.bizsol.anser.ne.jp` (that path on the cc0161 host still
+  accepted; any other origin or path refused), next to `button#loginBtn_id[name=forward_rblgi01_s07]` ログイン only an unnamed image
+  submit and an unnamed, textless `button#s04` (each at most once; any other submit, a second visible ログイン or one outside the form
+  refused), and ログイン disabled at first. It is activated only after the page itself enabled it (bounded wait, nothing forced); a ログイン
+  that stays disabled is never activated, the field is emptied and nothing is sent (the uncertain marker written before the attempt
+  stays). Authentication counts only when that submission reaches a new portal page with ログアウト and no password field; the exact
   form again is a refusal (marker `refused`); anything else is `uncertain`. Neither is ever submitted again automatically — the owner
   re-saves or uses 「保存済みのログインでもう一度試す」.
 - 入出金明細 → the account select's one option in the observed format `池田泉州銀行 <支店> <種別> <口座番号>` (four whitespace-separated
@@ -55,4 +61,8 @@ Synthetic only (`scripts/zoomer-fixtures/omf-ikeda-collector.mjs`, `collector/te
 `scripts/collector-security-integration.ts`): an invented BusinessGate DOM served by interception to headless Chrome, owned MongoDB, a fresh
 DPAPI device key in a temp directory. Not proven here: the actual chooser's UI Automation tree (the row/cell representation and OK naming),
 the actual BusinessGate DOM and render timing (result re-render, calendar classes), the actual refusal/notice pages and any logout prompt.
+The login form's action, submit controls and initial ログイン state follow the parent's actual observation; still unobserved: the
+software-keyboard checkbox and dialog, when and on which event the actual page enables ログイン (the fixture enables it shortly after the
+field's input event — invented), and where the bank shows a refusal after the cross-origin post (only the cc BLGI024 form on a new
+document counts as a refusal; any other page ends as uncertain and is not submitted again).
 Those need the parent's separately approved installed replay. Resona/Jable and インターネットEB direct are unchanged and unsupported.

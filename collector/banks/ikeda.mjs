@@ -3,8 +3,8 @@
 // the routine steps reject contract-pending (./contract.mjs) and queueBankSync issues observe jobs only. `start` is the bank's
 // official 法人向けインターネットバンキング page (200 on 2026-10-19); `starts` are its two official login links recorded the same
 // day (public GET, nothing submitted): `portal` 池田泉州ビジネスゲート（法人ポータル）, `direct` the インターネットEB login page that
-// offers 電子証明書ログイン and ID・パスワード; `loginHosts` are the hosts they resolve to plus the cc0161 host the certificate login
-// form posts to; `hosts` bound the download-host guard (the bank's own domain, the AnserBizSOL corporate hosts and the 法人ポータル —
+// offers 電子証明書ログイン and ID・パスワード; `loginHosts` are the hosts they resolve to plus the cc0161 host of the certificate login
+// form (which posts to the bizsol host); `hosts` bound the download-host guard (the bank's own domain, the AnserBizSOL corporate hosts and the 法人ポータル —
 // not the personal-IB parasol host and not bare anser.ne.jp). The login runs on the bank's 電子証明書発行アプリ under the issuing
 // Windows user (shared/finance-payment-match.mjs BANK_SOFTWARE); whether the collector's owned Chrome shows the certificate picker
 // is unverified until the owner's observe run — nothing here changes the launcher.
@@ -32,7 +32,10 @@ export const PORTAL = Object.freeze({
   start: 'https://www.0161.houjinportal.anser.ne.jp/', portal: 'https://www.0161.houjinportal.anser.ne.jp', auth: 'https://www.bizsol.anser.ne.jp', cc: 'https://www.cc0161.bizsol.anser.ne.jp', bank: 'https://www.sihd-bk.jp',
   authPath: '/0161c/oauth/auth', ccPath: '/BIZ_0CA0600/rblgi01/BLGI024-BLGI024Info', statementsPath: '/account-statements',
   certificate: Object.freeze({ id: 's05', name: 'forward_rblgi01_s05', text: '電子証明書ログイン' }),
-  login: Object.freeze({ password: 'blGI024Info.loginPwd', passwordId: 'blGI024InfoLoginPwd3', maxLength: 12, keyboard: 'skloginpwdshiyoumu', keyboardName: 'skLoginPwdShiyoUmu', button: 'loginBtn_id', buttonName: 'forward_rblgi01_s07', buttonText: 'ログイン', dialogOk: 'dg-btnOK', dialogOkText: 'ＯＫ', keyboardWord: 'ソフトウェアキーボード' }),
+  login: Object.freeze({ password: 'blGI024Info.loginPwd', passwordId: 'blGI024InfoLoginPwd3', maxLength: 12, keyboard: 'skloginpwdshiyoumu', keyboardName: 'skLoginPwdShiyoUmu', button: 'loginBtn_id', buttonName: 'forward_rblgi01_s07', buttonText: 'ログイン', dialogOk: 'dg-btnOK', dialogOkText: 'ＯＫ', keyboardWord: 'ソフトウェアキーボード',
+    // The other submit controls the parent observed on the actual form (SAFE-ACTUAL-FORM.json, public metadata): an unnamed image
+    // submit and an unnamed, textless button#s04. Each may appear at most once; any other submit control is not the known form.
+    otherSubmits: Object.freeze([Object.freeze({ tag: 'INPUT', type: 'image', id: '', name: '', text: '' }), Object.freeze({ tag: 'BUTTON', type: 'submit', id: 's04', name: '', text: '' })]) }),
   statements: '入出金明細', range: '日付範囲で指定', rangeRadio: 'checkTermflg', presets: Object.freeze(['当日', '最近1週間', '当月', '前月', '前々月']),
   startInput: 'dp-input-start-date-id', endInput: 'dp-input-end-date-id', search: '検索する', csv: 'CSVダウンロード', logout: 'ログアウト',
   header: Object.freeze(['勘定日', '(起算日)', 'お支払金額', 'お預り金額', '残高', '取引区分', '明細区分', '金融機関', '支店', '摘要'])
@@ -158,11 +161,15 @@ const PRESS = ({ c, origin, text = null, certificate = false, expectedDocument =
 };
 // GUARD (serialized) — the exact visible cc password form on this document, or why not: the cc origin and BLGI024Info path (session
 // matrix parameters ignored), the top document, the expected document; exactly one visible password field — the observed name/id/
-// maxlength — in a visible form posting to that same path on the same origin into the same window; exactly one visible enabled submit
-// control, the observed ログイン; at most one visible software-keyboard checkbox. Hidden copies of the form never count. `keyboard` clicks
-// that checkbox once (the bank's own opt-out opens its dialog); `dialog` confirms that dialog's exact OK once; `fill` sets the password
-// property and dispatches input/change; `submit` activates the verified control in this same task (the form's own handlers post it);
-// `clear` empties the field. The field's readonly flag is never touched.
+// maxlength — in a visible form posting to that same path, on the cc origin or the official bizsol authentication origin the actual
+// form posts to (SAFE-ACTUAL-FORM.json), into the same window; among the form's visible submit controls exactly one ログイン target
+// (the observed id/name/text, a submit button owned by this form, the only visible control of that id or name on the page), every other
+// one a known extra (PORTAL.login.otherSubmits, each at most once); at most one visible software-keyboard checkbox. The target may be
+// disabled while the field is empty (the actual form): `enabled` reports it, and `submit` activates it only while it is enabled. Hidden
+// copies of the form never count. `keyboard` clicks that checkbox once (the bank's own opt-out opens its dialog); `dialog` confirms that
+// dialog's exact OK once; `fill` sets the password property and dispatches input/change; `submit` activates the verified target in this
+// same task (the form's own handlers post it); `clear` empties the field. The field's readonly flag and the target's disabled state are
+// never touched.
 const LOGIN_FORM = ({ c, expectedDocument = null, keyboard = false, dialog = false, fill = null, submit = false, clear = false }) => {
   const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden', norm = t => String(t ?? '').replace(/\s+/g, ' ').trim();
   if (location.origin !== c.cc || location.pathname.split(';')[0] !== c.ccPath || window.top !== window || (expectedDocument !== null && String(performance.timeOrigin) !== expectedDocument)) return { ok: false, reason: 'surface' }; // guard:portal-login-surface
@@ -171,12 +178,16 @@ const LOGIN_FORM = ({ c, expectedDocument = null, keyboard = false, dialog = fal
   if ([...document.querySelectorAll('input[type="password"]')].filter(visible).length !== 1) return { ok: false, reason: 'password' }; // guard:portal-login-password-unique
   const pw = fields[0], f = pw.form; if (!f || !visible(f)) return { ok: false, reason: 'form' };
   let action = null; try { action = new URL(f.getAttribute('action') || '', location.href); } catch { action = null; }
-  if (String(f.getAttribute('method') || '').toLowerCase() !== 'post' || !action || action.origin !== c.cc || action.pathname.split(';')[0] !== c.ccPath || !['', '_self'].includes(String(f.getAttribute('target') || '').toLowerCase())) return { ok: false, reason: 'action' }; // guard:portal-login-action
-  const controls = [...f.querySelectorAll('button, input[type="submit"], input[type="image"]')].filter(e => visible(e) && !e.disabled && (e.tagName !== 'BUTTON' || String(e.getAttribute('type') || 'submit').toLowerCase() === 'submit'));
-  if (controls.length !== 1 || controls[0].id !== c.login.button || controls[0].name !== c.login.buttonName || norm(controls[0].textContent || controls[0].value) !== c.login.buttonText) return { ok: false, reason: 'control' }; // guard:portal-login-control
+  if (String(f.getAttribute('method') || '').toLowerCase() !== 'post' || !action || ![c.cc, c.auth].includes(action.origin) || action.pathname.split(';')[0] !== c.ccPath || !['', '_self'].includes(String(f.getAttribute('target') || '').toLowerCase())) return { ok: false, reason: 'action' }; // guard:portal-login-action
+  const submits = [...document.querySelectorAll('button, input')].filter(e => e.form === f && visible(e) && ((e.tagName === 'BUTTON' && e.type === 'submit') || (e.tagName === 'INPUT' && ['submit', 'image'].includes(e.type))));
+  const targets = submits.filter(e => e.id === c.login.button), target = targets[0];
+  if (targets.length !== 1 || target.tagName !== 'BUTTON' || target.name !== c.login.buttonName || norm(target.textContent) !== c.login.buttonText) return { ok: false, reason: 'control' }; // guard:portal-login-control
+  const extras = submits.filter(e => e !== target).map(e => c.login.otherSubmits.findIndex(k => e.tagName === k.tag && e.type === k.type && e.id === k.id && e.name === k.name && norm(e.textContent) === k.text));
+  if (extras.some(i => i < 0) || new Set(extras).size !== extras.length) return { ok: false, reason: 'control' }; // guard:portal-login-extras
+  if ([...document.querySelectorAll('button, input')].filter(e => visible(e) && (e.id === c.login.button || e.name === c.login.buttonName)).length !== 1) return { ok: false, reason: 'control' }; // guard:portal-login-target-unique
   const boxes = [...f.querySelectorAll('input[type="checkbox"]')].filter(e => visible(e) && e.id === c.login.keyboard && e.name === c.login.keyboardName);
   if (boxes.length > 1) return { ok: false, reason: 'keyboard' };
-  const found = { ok: true, document: String(performance.timeOrigin), keyboard: boxes.length === 1 && boxes[0].checked, editable: !pw.readOnly };
+  const found = { ok: true, document: String(performance.timeOrigin), keyboard: boxes.length === 1 && boxes[0].checked, editable: !pw.readOnly, enabled: !target.matches(':disabled') };
   if (keyboard) { if (!found.keyboard) return { ...found, pressed: false }; boxes[0].click(); return { ...found, pressed: true }; }
   if (dialog) {
     const shown = [...document.querySelectorAll('[role="dialog"]')].filter(visible);
@@ -191,7 +202,7 @@ const LOGIN_FORM = ({ c, expectedDocument = null, keyboard = false, dialog = fal
     pw.dispatchEvent(new Event('input', { bubbles: true })); pw.dispatchEvent(new Event('change', { bubbles: true }));
     return found;
   }
-  if (submit) controls[0].click();
+  if (submit) { if (!found.enabled) return { ok: false, reason: 'disabled' }; target.click(); } // guard:portal-login-enabled
   return found;
 };
 // The statement filter (serialized): the account select (the one visible enabled select that is not the observed preset select), its
@@ -320,7 +331,7 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
     async show() { await bounded(page.bringToFront(), 3000); },
     /** The value-free reason the person is asked (null: the ordinary sign-in), for bank.mjs ensureBankLogin's text. */
     attention: () => attentionReason,
-    /** The exact cc password form on the current page ({ok, document, keyboard, editable}) or {ok:false, reason}; nothing is typed or read. */
+    /** The exact cc password form on the current page ({ok, document, keyboard, editable, enabled}) or {ok:false, reason}; nothing is typed or read. */
     async loginForm() {
       let url; try { url = new URL(page.url()); } catch { return { ok: false, reason: 'surface' }; }
       if (url.origin !== c.cc) return { ok: false, reason: 'surface' };
@@ -330,8 +341,9 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
     /**
      * The one submission of the saved login password: the secret's shape before any page; the exact form; the bank's software-keyboard
      * opt-out through its own checkbox and dialog (when the field is still readonly); the field set in one page task bound to that document;
-     * abort checked; the verified control activated in one page task bound to the same document. A replaced document receives nothing; an
-     * abort after the fill clears the field. Outcome: authenticated, rejected (the exact form again on a new document) or attention.
+     * abort checked; once the page itself has enabled it (bounded), the verified ログイン activated in one page task bound to the same
+     * document — a target that stays disabled is never activated. A replaced document receives nothing; an abort or a disabled target after
+     * the fill clears the field. Outcome: authenticated, rejected (the exact form again on a new document) or attention.
      */
     async login(secret, { signal = null } = {}) {
       const { password } = portalLoginSecret(secret, label);
@@ -352,8 +364,12 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
         const fill = await evaluate(LOGIN_FORM, { c, expectedDocument: form.document, fill: password });
         if (!fill?.ok || fill.document !== form.document) throw coded('login-changed', `${label}のログイン画面が入力前に変わりました`);
         filled = true; signal?.throwIfAborted();
+        // The actual ログイン is disabled while the field is empty; the page's own handlers decide when it is enabled (bounded wait, read only).
+        let ready = fill; for (let i = 0; i < 25 && ready?.ok && ready.document === form.document && !ready.enabled; i++) { await pause(200); signal?.throwIfAborted(); ready = await evaluate(LOGIN_FORM, { c, expectedDocument: form.document }); }
+        if (!ready?.ok || ready.document !== form.document) throw coded('login-changed', `${label}のログイン画面が送信前に変わりました`);
+        if (!ready.enabled) throw coded('login-form', `${label}のログインボタンが押せる状態になりません`);
         const clicked = await evaluate(LOGIN_FORM, { c, expectedDocument: form.document, submit: true });
-        if (!clicked?.ok || clicked.document !== form.document) throw coded('login-changed', `${label}のログイン画面が送信前に変わりました`);
+        if (!clicked?.ok || clicked.document !== form.document) throw coded(clicked?.reason === 'disabled' ? 'login-form' : 'login-changed', `${label}のログイン画面が送信前に変わりました`);
         submitted = true;
       } finally { if (filled && !submitted) await evaluate(LOGIN_FORM, { c, expectedDocument: form.document, clear: true }); }
       return { outcome: await ui.settle(form.document), document: form.document };

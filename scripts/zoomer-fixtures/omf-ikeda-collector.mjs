@@ -2,7 +2,8 @@
 // Run ONLY through the hub verifier (never directly; a direct run dropped the hub database on 2026-09-17):
 //   node C:/Users/Junsan2/Documents/ohmycode/scripts/zoomer-verify.mjs --run-fixture omf-ikeda-collector --cwd <this worktree>
 // Evidence, stated exactly: synthetic only. The fake BusinessGate below follows the public controls of the task's SAFE-CONTRACT.md (screen
-// BLGI024 certificate button, the cc password form with its software-keyboard checkbox and dialog, 入出金明細, the account select, the
+// BLGI024 certificate button, the cc password form with its software-keyboard checkbox and dialog — its action, submit controls and
+// initially disabled ログイン as the parent recorded them on the actual form (SAFE-ACTUAL-FORM.json) —, 入出金明細, the account select, the
 // 日付範囲 radio, the two vue-datepicker inputs and menus, 検索する, 全N件, CSVダウンロード as a blob, ログアウト); its DOM is invented and proves
 // nothing about the actual bank. Every page of every owned HEADLESS Chrome is served by request interception and host resolution is
 // refused for everything else, so no bank or other site is reached. The services and routes run under tsx on an owned
@@ -118,11 +119,18 @@ function wire(){${sidebarScript(s)}
  * helper; 'manual' waits for selectCertificate()), loginOutcome ('ok'|'refuse'|'uncertain'), csv ('ok'|'partial'|'utf8'|'foreign'),
  * displayCount (override of 全N件), emptyNoCsv, searchDelayMs, hiddenDuplicates, logoutConfirm, alertOnStatements, staleResult (an earlier
  * result 全9件 stays on screen until the new one renders), today/minDate (JST).
+ * The cc password form (read when each page is served, so a test may change it between loads): loginForm 'live' (default) follows the
+ * public metadata the parent recorded on the actual form (SAFE-ACTUAL-FORM.json): posting to the official bizsol origin at the same
+ * BLGI024Info path, an unnamed image submit and an unnamed textless button#s04 before the controls, and ログイン disabled while the field is
+ * empty or the software keyboard is on; 'simple' is the earlier same-origin, single-control form. Overrides: ccAction ('auth'|'cc'|
+ * 'foreign'|'auth-other-path'), ccExtras (true|false|'twice'), loginEnable ('ready'|'always'|'never'), extraSubmit (an unknown 戻る submit),
+ * decoyLogin (a second visible ログイン in another form), loginOutside (the ログイン in another form only). When and how the actual page enables
+ * ログイン is not observed: here a short timer after the field's input event (invented).
  */
 export function businessGate(options = {}) {
   const today = options.today || jstNow();
-  const s = { password: 'Fict-Pw-12', cert: 'auto', loginOutcome: 'ok', csv: 'ok', displayCount: null, emptyNoCsv: false, searchDelayMs: 2600, hiddenDuplicates: true, logoutConfirm: false, alertOnStatements: false, staleResult: false, accounts: ACCOUNTS, today, minDate: monthBeforeLast(today), rows: fictionalRows(today), ...options };
-  const st = s.stats = { requests: [], foreign: [], ccPosts: [], publicPosts: 0, hiddenPosts: 0, certClicks: 0, searches: [], csvServed: 0, loggedIn: false, loggedOut: false, typedLogin: 0 };
+  const s = { password: 'Fict-Pw-12', cert: 'auto', loginOutcome: 'ok', csv: 'ok', displayCount: null, emptyNoCsv: false, searchDelayMs: 2600, hiddenDuplicates: true, logoutConfirm: false, alertOnStatements: false, staleResult: false, accounts: ACCOUNTS, today, minDate: monthBeforeLast(today), rows: fictionalRows(today), loginForm: 'live', ccAction: null, ccExtras: null, loginEnable: null, extraSubmit: false, decoyLogin: false, loginOutside: false, ...options };
+  const st = s.stats = { requests: [], foreign: [], ccPosts: [], postOrigins: [], otherSubmits: 0, publicPosts: 0, hiddenPosts: 0, certClicks: 0, searches: [], csvServed: 0, loggedIn: false, loggedOut: false, typedLogin: 0 };
   s.pages = [];
   const html = (request, body, status = 200) => request.respond({ status, contentType: 'text/html; charset=utf-8', body });
   const within = (r, acct, from, to) => r.acct === acct && r.date >= from && r.date <= to;
@@ -153,26 +161,38 @@ export function businessGate(options = {}) {
     if (url.origin === AUTH && p === AUTH_PATH) return html(request, page('池田泉州ビジネスゲート ログイン', `<div id="app"></div><script>setTimeout(()=>{document.getElementById('app').innerHTML=\`<h1>ログイン</h1><form id="pub" method="post" action="/0161c/oauth/login"><label>ログインID<input id="loginId" name="loginId" type="text"></label><label>パスワード<input id="loginPwd" name="loginPwd" type="password"></label><button type="submit" name="forward_rblgi01_s01">ログイン</button></form>${s.hiddenDuplicates ? '<div style="display:none"><button id="s05" name="forward_rblgi01_s05" type="button">電子証明書ログイン</button></div>' : ''}<button id="s05" name="forward_rblgi01_s05" type="button">電子証明書ログイン</button>\`;for(const b of document.querySelectorAll('#s05'))b.addEventListener('click',()=>{fetch('/__certificate-click').catch(()=>{});${s.cert === 'auto' ? `location.href='${CC}${CC_PATH};jsessionid=FICT0001'` : 'window.__certificatePending=true'}});},500)</script>`));
     if (url.origin === AUTH && p === '/__certificate-click') { st.certClicks++; return request.respond({ status: 204, body: '' }); }
     if (url.origin === AUTH && p === '/0161c/oauth/login') { st.publicPosts++; return html(request, page('エラー', '<p>ログインIDまたはパスワードが違います</p>')); }
-    if (url.origin === CC && p === CC_PATH && request.method() === 'GET') return html(request, ccDoc(''));
-    if (url.origin === CC && p === CC_PATH && request.method() === 'POST') {
+    if (url.origin === CC && p === CC_PATH && request.method() === 'GET') return html(request, ccDoc(url.searchParams.get('e') === '1' ? 'ログインパスワードが正しくありません。' : ''));
+    if ((url.origin === CC || url.origin === AUTH) && p === CC_PATH && request.method() === 'POST') {
       const body = new URLSearchParams(request.postData() || ''), token = body.get('token');
       if (token !== 'VISIBLE') { st.hiddenPosts++; return html(request, ccDoc('不正な操作です')); }
-      st.ccPosts.push({ ok: body.get('blGI024Info.loginPwd') === s.password, keyboardOff: !body.has('skLoginPwdShiyoUmu') });
-      if (s.loginOutcome === 'refuse' || body.get('blGI024Info.loginPwd') !== s.password) return html(request, ccDoc('ログインパスワードが正しくありません。'));
+      // only the ログイン button (its name is the submitter) signs in; the image or s04 submit is another operation of the bank
+      if (!body.has('forward_rblgi01_s07')) { st.otherSubmits++; return html(request, page('エラー', '<p>不正な操作です（架空）</p>')); }
+      st.ccPosts.push({ ok: body.get('blGI024Info.loginPwd') === s.password, keyboardOff: !body.has('skLoginPwdShiyoUmu') }); st.postOrigins.push(url.origin);
+      // a refusal: the cc form again with its error (after the cross-origin post: through the cc page, invented)
+      if (s.loginOutcome === 'refuse' || body.get('blGI024Info.loginPwd') !== s.password) return html(request, url.origin === CC ? ccDoc('ログインパスワードが正しくありません。') : page('', `<script>location.replace('${CC}${CC_PATH};jsessionid=FICT0001?e=1')</script>`));
       if (s.loginOutcome === 'uncertain') return html(request, page('お知らせ', '<h2>ログインパスワードの有効期限が近づいています</h2><button type="button">次へ</button>'));
       return html(request, page('', `<script>location.replace('${PORTAL}/auth/callback/login?code=FICTCODE')</script>`));
     }
     if (url.origin === BANKSITE && p === '/corporation/') { if (st.loggedIn) st.loggedOut = true; st.loggedIn = false; return html(request, page('法人のお客さま | 池田泉州銀行', '<h1>法人のお客さま（架空）</h1>')); }
     return request.abort();
   };
-  const ccDoc = error => page('電子証明書ログイン', `<form id="hid" style="display:none" method="post" action="${CC_PATH};jsessionid=FICT0001"><input type="hidden" name="token" value="HIDDEN"><input type="checkbox" id="skloginpwdshiyoumu" name="skLoginPwdShiyoUmu" checked><input type="password" id="blGI024InfoLoginPwd3" name="blGI024Info.loginPwd" maxlength="12" readonly><button id="loginBtn_id" name="forward_rblgi01_s07" type="submit">ログイン</button></form>
-<h2>電子証明書ログイン</h2>${error ? `<p class="err">${error}</p>` : ''}<form id="main" method="post" action="${CC_PATH};jsessionid=FICT0001"><input type="hidden" name="token" value="VISIBLE">
-<label><input type="checkbox" id="skloginpwdshiyoumu" name="skLoginPwdShiyoUmu" checked>ソフトウェアキーボードを使用する</label><label>ログインパスワード<input type="password" id="blGI024InfoLoginPwd3" name="blGI024Info.loginPwd" maxlength="12" readonly></label><button id="loginBtn_id" name="forward_rblgi01_s07" type="submit">ログイン</button></form>
+  const ccDoc = error => {
+    const live = s.loginForm === 'live', act = s.ccAction ?? (live ? 'auth' : 'cc'), extras = s.ccExtras ?? live, enable = s.loginEnable ?? (live ? 'ready' : 'always');
+    const action = { auth: AUTH + CC_PATH, cc: CC_PATH, foreign: 'https://www.bizsol.example.invalid' + CC_PATH, 'auth-other-path': AUTH + '/BIZ_0CA0600/rblgi01/BLGI001-BLGI001Info' }[act] + ';jsessionid=FICT0001';
+    const s04 = '<button type="submit" id="s04"></button>', other = (extras ? '<input type="image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" width="24" height="24">' + s04 + (extras === 'twice' ? s04 : '') : '') + (s.extraSubmit ? '<button type="submit" id="s99" name="forward_rblgi01_s99">戻る</button>' : '');
+    const login = `<button id="loginBtn_id" name="forward_rblgi01_s07" type="submit"${enable === 'always' ? '' : ' disabled'}>ログイン</button>`;
+    return page('電子証明書ログイン', `<form id="hid" style="display:none" method="post" action="${action}"><input type="hidden" name="token" value="HIDDEN">${other}<input type="checkbox" id="skloginpwdshiyoumu" name="skLoginPwdShiyoUmu" checked><input type="password" id="blGI024InfoLoginPwd3" name="blGI024Info.loginPwd" maxlength="12" readonly>${login}</form>
+<h2>電子証明書ログイン</h2>${error ? `<p class="err">${error}</p>` : ''}<form id="main" method="post" action="${action}"><input type="hidden" name="token" value="VISIBLE">${other}
+<label><input type="checkbox" id="skloginpwdshiyoumu" name="skLoginPwdShiyoUmu" checked>ソフトウェアキーボードを使用する</label><label>ログインパスワード<input type="password" id="blGI024InfoLoginPwd3" name="blGI024Info.loginPwd" maxlength="12" readonly></label>${s.loginOutside ? '' : login}</form>
+${s.decoyLogin || s.loginOutside ? `<form id="other" method="post" action="${AUTH}/0161c/oauth/login">${login}</form>` : ''}
 <div id="dlg" role="dialog" style="display:none"><p>ソフトウェアキーボードを使用せずにログインします。よろしいですか？</p><button id="dg-btnOK" type="button">ＯＫ</button><button id="dg-btnCancel" type="button">キャンセル</button></div>
-<script>const f=document.getElementById('main'),cb=f.querySelector('#skloginpwdshiyoumu'),pw=f.querySelector('[name="blGI024Info.loginPwd"]'),d=document.getElementById('dlg');
-cb.addEventListener('click',e=>{if(!cb.checked){e.preventDefault();d.style.display='block';}else pw.readOnly=true;});
-document.getElementById('dg-btnOK').onclick=()=>{cb.checked=false;pw.readOnly=false;d.style.display='none';};document.getElementById('dg-btnCancel').onclick=()=>{d.style.display='none';};
+<script>const f=document.getElementById('main'),cb=f.querySelector('#skloginpwdshiyoumu'),pw=f.querySelector('[name="blGI024Info.loginPwd"]'),d=document.getElementById('dlg'),btn=f.querySelector('#loginBtn_id'),E=${JSON.stringify(enable)};
+const sync=()=>{if(btn&&E==='ready')btn.disabled=cb.checked||!pw.value;};
+cb.addEventListener('click',e=>{if(!cb.checked){e.preventDefault();d.style.display='block';}else{pw.readOnly=true;sync();}});
+document.getElementById('dg-btnOK').onclick=()=>{cb.checked=false;pw.readOnly=false;d.style.display='none';sync();};document.getElementById('dg-btnCancel').onclick=()=>{d.style.display='none';};
+pw.addEventListener('input',()=>setTimeout(sync,120));
 pw.addEventListener('keydown',()=>{fetch('/__typed').catch(()=>{})});</script>`);
+  };
   s.attach = async target => { await target.setRequestInterception(true); target.on('request', r => s.respond(r)); s.pages.push(target); return target; };
   // Installed through the collector's own onLaunch hand-over (collector/browser.mjs browserFor), before its first page.
   s.onLaunch = (launches = []) => async ({ pid, browser }) => { launches.push({ pid, browser }); const original = browser.newPage.bind(browser); browser.newPage = async () => s.attach(await original()); };
@@ -587,7 +607,7 @@ export const MUTANTS = [
   { name: 'MC7-date-assigned-not-picked', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'certificate login, the saved password', edits: [["if (!(await evaluate(CALENDAR, { op: 'open', input, menu }))?.ok) throw fail('period-unidentified', '期間の入力欄を特定できません');", "await evaluate(({ input, day }) => { const e = document.getElementById(input); e.value = day; }, { input, day }); return;"]], expect: /ikeda-portal:(exact-account-range-calendar|not-failed|exact-bytes)/ },
   { name: 'MC8-stale-result-accepted', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'never counts; the job waits', edits: [['if (r && r.fresh && r.counts === 1 && (r.csv === 1 || r.count === 0))', 'if (r && r.counts === 1 && (r.csv === 1 || r.count === 0))']], expect: /ikeda-portal:stale-result/ },
   { name: 'MC9-login-not-direct', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'certificate login, the saved password', guard: 'portal-login-direct', expect: /ikeda-portal:marker-before-submit-cleared-after-direct-sign-in/ },
-  { name: 'MC10-readonly-field-filled', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'certificate login, the saved password', edits: [['if (form.keyboard || !form.editable) {', 'if (false) {']], guard: 'portal-login-editable', expect: /ikeda-portal:one-submission/ },
+  { name: 'MC10-readonly-field-filled', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'certificate login, the saved password', edits: [['if (form.keyboard || !form.editable) {', 'if (false) {']], guard: 'portal-login-editable', expect: /ikeda-portal:(no-error|not-failed|one-submission)/ },
   { name: 'MB1-capture-not-verified', leg: 'U2', file: BK, env: 'OMF_TEST_BANK_MODULE', test: 'rows differ from', guard: 'capture-verified', expect: /ikeda-portal:count-mismatch/ },
   { name: 'MB2-precheck-skipped', leg: 'U2', file: BK, env: 'OMF_TEST_BANK_MODULE', test: 'calendar refuses a day', guard: 'adapter-precheck', expect: /ikeda-portal:rollover-precheck/ },
   { name: 'MB3-partial-recovered', leg: 'S', file: BK, env: 'OMF_IKEDA_BANK_MODULE', legs: 'S0,S1,S2,S3,S4', guard: 'recovery-verified', expect: /ikeda:recovery-verified/ },
@@ -616,7 +636,14 @@ export const MUTANTS = [
   { name: 'MS12-rechecked-on-reclaim', leg: 'S', file: CS, legs: 'S12', edits: [['&&!job.identityCheckedAt){', '){']], expect: /ikeda:manual-inflight-keeps-identity/ },
   { name: 'MS13-received-not-marked', leg: 'S', file: CS, legs: 'S12', guard: 'manual-account-received', expect: /ikeda:manual-inflight-keeps-identity/ },
   { name: 'MS14-number-only', leg: 'S', file: CS, legs: 'S12', edits: [["const ACCOUNT_ROLES=['branch','type','number']", "const ACCOUNT_ROLES=['number']"]], expect: /ikeda:manual-stale-type-change/ },
-  { name: 'MS15-every-bank-checked', leg: 'S', file: CS, legs: 'S12', edits: [['&&bankIdentityRequired(job.snapshot?.provider,job.snapshot?.variant??null)&&', '&&']], expect: /ikeda:other-bank-manual-claimed/ }
+  { name: 'MS15-every-bank-checked', leg: 'S', file: CS, legs: 'S12', edits: [['&&bankIdentityRequired(job.snapshot?.provider,job.snapshot?.variant??null)&&', '&&']], expect: /ikeda:other-bank-manual-claimed/ },
+  // build-04: the actual login form (parent SAFE-ACTUAL-FORM.json)
+  { name: 'MC15-any-action-origin', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [['![c.cc, c.auth].includes(action.origin) || ', '']], expect: /ikeda-portal:live-negative action-foreign/ },
+  { name: 'MC16-any-extra-submit', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', guard: 'portal-login-extras', expect: /ikeda-portal:live-negative (extra-unknown|extra-twice)/ },
+  { name: 'MC17-second-login-accepted', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', guard: 'portal-login-target-unique', expect: /ikeda-portal:live-negative second-login/ },
+  { name: 'MC18-target-outside-form', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [["filter(e => e.form === f && visible(e) && ((e.tagName === 'BUTTON'", "filter(e => visible(e) && ((e.tagName === 'BUTTON'"]], expect: /ikeda-portal:live-negative login-outside-form/ },
+  { name: 'MC19-disabled-target-activated', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [["if (!ready.enabled) throw coded('login-form', `${label}のログインボタンが押せる状態になりません`);", ''], ["if (!found.enabled) return { ok: false, reason: 'disabled' }; target.click();", 'target.click();']], expect: /ikeda-portal:live-disabled-not-submitted/ },
+  { name: 'MC20-enablement-not-awaited', leg: 'U2', file: IK, env: 'OMF_TEST_IKEDA_MODULE', test: 'actual login form', edits: [['for (let i = 0; i < 25 && ready?.ok && ready.document === form.document && !ready.enabled; i++) { await pause(200); signal?.throwIfAborted(); ready = await evaluate(LOGIN_FORM, { c, expectedDocument: form.document }); }', '']], expect: /ikeda-portal:live-one-submission-by-login/ }
 ];
 
 // ════════════════════════════ The fixture ════════════════════════════
