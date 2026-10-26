@@ -32,6 +32,20 @@ try {
   function Get-OmfId($element) { return (@($element.GetRuntimeId()) -join '.') }
   function Get-OmfAncestors($element) { $ids = @(); $e = $walker.GetParent($element); for ($i = 0; $e -and $i -lt 80; $i++) { $ids += (Get-OmfId $e); $e = $walker.GetParent($e) }; return , $ids }
   function Test-OmfWebContent($element) { $e = $walker.GetParent($element); for ($i = 0; $e -and $i -lt 80; $i++) { if ($e.Current.ControlType -eq $C::Document) { return $true }; $e = $walker.GetParent($e) }; return $false }
+  function Test-OmfCertificateRowElement($Element) {
+    $omfSelection = $null
+    $omfSelectable = $Element.TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern, [ref]$omfSelection)
+    $omfAncestors = @(); $omfParent = $walker.GetParent($Element)
+    for ($omfDepth = 0; $omfParent -and $omfDepth -lt 60; $omfDepth++) {
+      $omfKind = $omfParent.Current.ControlType.ProgrammaticName; $omfAncestors += $omfKind
+      if ($omfKind -ceq 'ControlType.Window') { break }
+      $omfParent = $walker.GetParent($omfParent)
+    }
+    return Test-OmfBankCertificateRow $Element.Current.ControlType.ProgrammaticName ([bool]$omfSelectable) $omfAncestors
+  }
+  function Get-OmfCertificateRows($Window) {
+    return @($Window.FindAll($T::Descendants, $rowsCondition) | Where-Object { Test-OmfCertificateRowElement $_ })
+  }
   function Get-OmfRow($row) { $cells = @(); foreach ($cell in $row.FindAll($T::Children, [Windows.Automation.Condition]::TrueCondition)) { if ($cell.Current.Name) { $cells += $cell.Current.Name.Trim() } }; return @{ name = [string]$row.Current.Name; cells = $cells } }
   # Every window of the owned process (top level or nested) holding native rows (not page content), one of them the bank's, and exactly
   # one enabled OK button; then the one innermost such window (Select-OmfChooser), or null / ambiguity.
@@ -39,7 +53,7 @@ try {
     $found = @()
     foreach ($top in $A::RootElement.FindAll($T::Children, $byPid)) {
       foreach ($w in @($top) + @($top.FindAll($T::Descendants, $windows))) {
-        $rows = @($w.FindAll($T::Descendants, $rowsCondition) | Where-Object { -not (Test-OmfWebContent $_) })
+        $rows = @(Get-OmfCertificateRows $w)
         if (-not $rows.Count) { continue }
         $data = @($rows | ForEach-Object { Get-OmfRow $_ })
         $bank = @($data | Where-Object { $d = $_; (@(@($d.name) + @($d.cells) | Where-Object { ([string]$_).Trim() -ceq $Issuer }).Count) -or (-not @($d.cells).Count -and $BankName -and ([string]$d.name).Contains($BankName)) })

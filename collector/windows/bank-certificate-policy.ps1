@@ -74,3 +74,14 @@ function Select-OmfBankCertificate($Rows, $Certificates, [string]$Issuer, [strin
   if (-not $c.hasPrivateKey) { return @{ action = 'attention'; reason = 'no-private-key' } }
   return @{ action = 'select'; index = $matched[0] }
 }
+
+
+# A selectable native row has no row/cell or web-document ancestor before its native window.
+function Test-OmfBankCertificateRow([string]$Kind, [bool]$Selectable, $AncestorKinds) {
+  if (-not $Selectable -or @('ControlType.DataItem', 'ControlType.ListItem') -cnotcontains $Kind) { return $false }
+  foreach ($omfAncestorKind in @($AncestorKinds)) {
+    if (@('ControlType.Document', 'ControlType.DataItem', 'ControlType.ListItem') -ccontains $omfAncestorKind) { return $false }
+    if ($omfAncestorKind -ceq 'ControlType.Window') { return $true }
+  }
+  return $false
+}
