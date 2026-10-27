@@ -29,7 +29,8 @@ export class IntrasCollector {
  constructor(config,{open=browserApi,connect=connectSheetBrowser,interpretDocuments=interpret}={}) {this.config=config;this.open=open;this.connect=connect;this.interpret=interpretDocuments;this.lastLoginAttempt=0;}
  async collect(target) {
   const connection=this.config.workflow?.intras;
-  if(!connection||connection.account!=='ohmyjapan1'||!/^[-\w]{1,80}$/.test(connection.profile||'')||target.providerAccount!==connection.account)fail('connection_required','Intras connection is not configured');
+  // The configured account is the worker's own setting; the target must still name exactly that account.
+  if(!connection||!connection.account||!/^[-\w]{1,80}$/.test(connection.profile||'')||target.providerAccount!==connection.account)fail('connection_required','Intras connection is not configured');
   if(!/^[A-Z0-9]+-[A-Z0-9]+$/.test(target.orderId)||!/^\d{6,30}$/.test(target.tracking.replace(/[-\s]/g,'')))fail('conflict','Invalid shipment identity');
   const url='https://intras.co.jp/mypage/delivery?referCode='+encodeURIComponent(target.orderId),opened=await this.open('open',{url,profile:connection.profile,wait_for_cf:false});
   let browser,page;const tabs=[];

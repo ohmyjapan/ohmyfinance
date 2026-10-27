@@ -5,7 +5,7 @@ import AccountCategory from '../../models/AccountCategory'
 import TaxCategory from '../../models/TaxCategory'
 import TransactionCategory from '../../models/TransactionCategory'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 const defaultAccountCategories = [
   // Main categories (top level)
@@ -63,8 +63,10 @@ const defaultTransactionCategories = [
 ]
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
   await ensureConnection()
+  // Tax categories are seeded per company (the token's selected company with fresh membership); account and transaction
+  // categories stay shared masters.
+  const { organizationId } = await calendarCompany(event)
 
   try {
     const results = {
@@ -109,9 +111,9 @@ export default defineEventHandler(async (event) => {
 
     // Seed Tax Categories
     for (const taxCat of defaultTaxCategories) {
-      const existing = await TaxCategory.findOne({ name: taxCat.name })
+      const existing = await TaxCategory.findOne({ name: taxCat.name, organizationId })
       if (!existing) {
-        await TaxCategory.create(taxCat)
+        await TaxCategory.create({ ...taxCat, organizationId })
         results.taxCategories.created++
       } else {
         results.taxCategories.existing++

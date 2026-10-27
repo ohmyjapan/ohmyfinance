@@ -138,7 +138,8 @@ export default defineEventHandler(async event => {
     if (parts[0] === 'imports' && parts[2] === 'references' && parts.length === 3 && method === 'POST') {
       let body: any
       try { body = JSON.parse((await boundedBody(event, 10000)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; fail(400, 'Invalid reference JSON') }
-      return await createDraftReference(ownerId, parts[1], body)
+      // The created supplier, customer or tax category belongs to the token's selected company (fresh membership checked here).
+      return await createDraftReference(ownerId, parts[1], body, (await calendarCompany(event)).organizationId)
     }
     if (parts[0] === 'imports' && parts[2] === 'drafts' && parts.length >= 4) {
       const line = Number(parts[3])

@@ -26,7 +26,7 @@ const hash = (value: any) => digest(JSON.stringify(value))
 async function init() { await ready(); await Promise.all([Workflow.init(), Config.init(), Run.init(), Source.init()]) }
 function period(body: any) { if (!validDate(body?.from) || !validDate(body?.through) || body.from > body.through || Date.parse(body.through) - Date.parse(body.from) > 732 * 86400000) fail(400, '2年以内の対象期間を選択してください。'); return { from: body.from, through: body.through } }
 function visible(row: any) { return { id: String(row._id), accountId: String(row.accountId), importId: String(row.importId), line: row.line, revision: row.revision, payment: row.payment, purchaseId: row.purchaseId ? String(row.purchaseId) : null, steps: row.steps, summary: workflowSummary(row.steps), lastAssessedAt: row.lastAssessedAt, events: row.events.slice(-40) } }
-function visibleConfig(c: any) { return c ? { revision: c.revision, enabled: c.enabled, accountIds: c.accountIds.map(String), workerId: c.workerId ? String(c.workerId) : null, from: c.from, through: c.through, firstRunAt: c.firstRunAt, workerSeenAt: c.workerSeenAt, workerCapabilities: c.workerCapabilities } : null }
+function visibleConfig(c: any) { return c ? { revision: c.revision, enabled: c.enabled, accountIds: c.accountIds.map(String), workerId: c.workerId ? String(c.workerId) : null, from: c.from, through: c.through, firstRunAt: c.firstRunAt, workerSeenAt: c.workerSeenAt, workerCapabilities: c.workerCapabilities, workerIntrasAccount: c.workerIntrasAccount || null } : null }
 
 // Optional trusted read scope for an owner Navi action: the worker's assigned card accounts. Rows are filtered by it in the query itself
 // (before any count is derived) and the owner's global settings, nightly runs and workers are not returned. Normal callers omit it.
@@ -59,7 +59,7 @@ export async function configureWorkflow(ownerId: string, body: any) {
   if ((existing?.revision || 0) !== body.revision) fail(409, '設定が更新されました。再読込してください。')
   if (body.enabled && (String(existing?.workerId || '') !== String(worker?._id || '') || !existing?.workerSeenAt || Date.now() - new Date(existing.workerSeenAt).getTime() > 300000 || !['purchase', 'inventory', 'shipment', 'documents'].every(stage => existing.workerCapabilities?.includes(stage)))) fail(409, '購入・在庫・出荷・書類の処理に接続した後、有効にしてください。')
   if (existing?.leaseUntil > new Date()) fail(409, '夜間処理が進行中です。完了後に設定を変更してください。')
-  const value = { ...dates, enabled: body.enabled, accountIds, workerId: worker?._id || null, ...(String(existing?.workerId || '') !== String(worker?._id || '') ? { workerSeenAt: null, workerCapabilities: [] } : {}), firstRunAt: body.enabled ? existing?.enabled ? existing.firstRunAt : new Date(nextWorkflowMidnight()) : null }
+  const value = { ...dates, enabled: body.enabled, accountIds, workerId: worker?._id || null, ...(String(existing?.workerId || '') !== String(worker?._id || '') ? { workerSeenAt: null, workerCapabilities: [], workerIntrasAccount: null } : {}), firstRunAt: body.enabled ? existing?.enabled ? existing.firstRunAt : new Date(nextWorkflowMidnight()) : null }
   try {
     if (existing) {
       const r = await Config.updateOne({ ownerId, revision: body.revision, $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: null }, { leaseUntil: { $lte: new Date() } }] }, { $set: value, $inc: { revision: 1 } })
@@ -206,9 +206,13 @@ export async function workflowWorkerStatus(agent: any, body: any) {
   await init()
   const capabilities = ['purchase', 'inventory', 'shipment', 'documents', 'receipt_jan', 'receipt_inference']
   if (!body || !Array.isArray(body.capabilities) || body.capabilities.some((c: any) => !capabilities.includes(c)) || new Set(body.capabilities).size !== body.capabilities.length) fail(400, 'Invalid workflow capabilities')
+  // The worker reports its own Intras account (the one setting, held in the worker vault); the server keeps no account literal.
+  const reported = body.connections?.intras?.account
+  if (body.connections !== undefined && (typeof body.connections !== 'object' || body.connections === null || (reported !== undefined && (typeof reported !== 'string' || !/^[-\w]{1,80}$/.test(reported))))) fail(400, 'Invalid worker connections')
+  const workerIntrasAccount = typeof reported === 'string' ? reported.toLowerCase() : null
   const c: any = await Config.findOne({ ownerId: agent.ownerId, workerId: agent._id }).lean()
   if (!c || agent.researchEnabled !== true || c.accountIds.some((a: any) => !agent.accountIds.map(String).includes(String(a)))) fail(403, 'Workflow worker is not configured for these accounts')
-  await Config.updateOne({ _id: c._id, workerId: agent._id }, { $set: { workerSeenAt: new Date(), workerCapabilities: body.capabilities } })
+  await Config.updateOne({ _id: c._id, workerId: agent._id }, { $set: { workerSeenAt: new Date(), workerCapabilities: body.capabilities, workerIntrasAccount } })
   return { config: visibleConfig(c), serverDay: workflowDay() }
 }
 
@@ -260,10 +264,10 @@ export async function workflowRunHeartbeat(agent: any, runId: string, body: any)
 }
 
 export async function workflowRunContext(agent: any, runId: string, body: any) {
-  const { run } = await leasedRun(agent, runId, body?.lease)
+  const { config, run } = await leasedRun(agent, runId, body?.lease)
   await syncWorkflowRecords(String(agent.ownerId), run.policy)
   await leasedRun(agent, runId, body.lease)
-  const shipments = await workflowShipments(agent, run)
+  const shipments = await workflowShipments(agent, run, config)
   const rows: any[] = await Workflow.find({ ownerId: agent.ownerId, accountId: { $in: run.policy.accountIds }, 'payment.date': { $gte: run.policy.from, $lte: run.policy.through } }).sort({ 'payment.date': 1, _id: 1 }).limit(3001).lean()
   if (rows.length > 3000) fail(409, 'Workflow scope exceeds limit')
   const links: any[] = await FinancePurchaseLink.find({ ownerId: agent.ownerId, accountId: { $in: run.policy.accountIds }, status: 'linked' }).lean()
@@ -423,8 +427,12 @@ async function recordWorkflowConflict(agent: any, run: any, purchase: any, confl
   if (!result.matchedCount) fail(409, 'Workflow review changed')
 }
 
-async function workflowShipments(agent: any, run: any) {
+// Document targets are addressed to the Intras account the authorized worker reported (config.workerIntrasAccount); the server
+// holds no account literal. GUARD: without a reported account there is no document target (the worker refuses every target anyway).
+async function workflowShipments(agent: any, run: any, config: any) {
   const ownerId = agent.ownerId
+  const providerAccount = config.workerIntrasAccount
+  if (!providerAccount) return []
   const rows: any[] = await Workflow.find({ ownerId, accountId: { $in: run.policy.accountIds }, 'payment.date': { $gte: run.policy.from, $lte: run.policy.through }, purchaseId: { $ne: null } }).lean()
   const links: any[] = await FinancePurchaseLink.find({ ownerId, _id: { $in: rows.map(r => r.purchaseId) }, status: 'linked' }).lean()
   const groups = new Map<string, any>()
@@ -438,7 +446,7 @@ async function workflowShipments(agent: any, run: any) {
       if (shipments.length !== 1) { if (shipments.length > 1) await recordWorkflowConflict(agent, run, purchase, [{ reason: 'multiple_shipments', inventoryId: stock.inventoryId }]); continue }
       const s = shipments[0], orderId = s.orderId.trim().toUpperCase(), tracking = s.tracking.replace(/[\s-]/g, ''), shippedAt = s.date.replaceAll('/', '-')
       if (!/^[A-Z0-9]+-[A-Z0-9]+$/.test(orderId) || !/^\d{6,30}$/.test(tracking) || !validDate(shippedAt)) { await recordWorkflowConflict(agent, run, purchase, [{ reason: 'invalid_shipment_reference', inventoryId: stock.inventoryId }]); continue }
-      const key = hash(['intras', 'ohmyjapan1', orderId]), group = groups.get(key) || { key, providerAccount: 'ohmyjapan1', orderId, tracking, shippedAt, allocations: [], conflict: false }
+      const key = hash(['intras', providerAccount, orderId]), group = groups.get(key) || { key, providerAccount, orderId, tracking, shippedAt, allocations: [], conflict: false }
       if (group.tracking !== tracking || group.shippedAt !== shippedAt) group.conflict = true
       group.allocations.push({ purchaseId: String(purchase._id), revision: purchase.revision, inventoryId: stock.inventoryId })
       groups.set(key, group)
@@ -462,9 +470,9 @@ async function workflowShipments(agent: any, run: any) {
 }
 
 export async function saveWorkflowDocuments(agent: any, runId: string, body: any) {
-  const { run } = await leasedRun(agent, runId, body?.lease), owner = String(agent.ownerId)
+  const { config, run } = await leasedRun(agent, runId, body?.lease), owner = String(agent.ownerId)
   if (!body || Object.keys(body).some(k => !['lease', 'key', 'fingerprint', 'capture'].includes(k)) || !/^[a-f0-9]{64}$/.test(body.key || '') || !/^[a-f0-9]{64}$/.test(body.fingerprint || '')) fail(400, 'Invalid document target')
-  const target = (await workflowShipments(agent, run)).find(t => t.key === body.key)
+  const target = (await workflowShipments(agent, run, config)).find(t => t.key === body.key)
   if (!target || target.fingerprint !== body.fingerprint) fail(409, 'Shipment evidence changed')
   const existing: any = target.existingId ? await FinanceExport.findOne({ _id: target.existingId, ownerId: agent.ownerId }).lean() : null
   let parsed: any, documents: any[], verificationEvidence: any
@@ -509,7 +517,7 @@ export async function saveWorkflowDocuments(agent: any, runId: string, body: any
 }
 
 export async function saveWorkflowDocumentAttempt(agent: any, runId: string, body: any) {
-  const { run } = await leasedRun(agent, runId, body?.lease), target = (await workflowShipments(agent, run)).find(t => t.key === body.key), attempt = body.attempt
+  const { config, run } = await leasedRun(agent, runId, body?.lease), target = (await workflowShipments(agent, run, config)).find(t => t.key === body.key), attempt = body.attempt
   if (!target || target.fingerprint !== body.fingerprint) fail(409, 'Document target changed')
   if (target.reusable || !attempt || attempt.kind !== 'delivery_not_found' || attempt.url !== 'https://intras.co.jp/mypage/delivery?referCode=' + encodeURIComponent(target.orderId) || attempt.formPresent !== true || !Array.isArray(attempt.rows) || attempt.rows.length || typeof attempt.html !== 'string' || !attempt.html.includes('form-option-extend') || attempt.html.length > 2000000 || !Number.isFinite(Date.parse(attempt.capturedAt)) || new Date(attempt.capturedAt) < run.startedAt || Date.parse(attempt.capturedAt) > Date.now() + 5000 || workflowDay(attempt.capturedAt) !== run.day) fail(400, 'Qualified document search required')
   const bytes = Buffer.from(JSON.stringify({ target, attempt })), sourceHash = digest(bytes), file = sourcePath(String(agent.ownerId), sourceHash)

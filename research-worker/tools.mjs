@@ -15,7 +15,8 @@ const require=createRequire(new URL('../collector/package.json',import.meta.url)
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const obj=properties=>({type:'object',properties,additionalProperties:false,required:Object.keys(properties)});
 const str={type:'string'};
-export const toolDefinitions=[
+const isseyTools=new Set(['search_issey_orders','read_issey_order']);
+const toolCatalogue=[
  {name:'search_issey_orders',description:'Search the configured private ISSEY MIYAKE order archive for this financial account and the card purchase date plus/minus seven days. Returns dated order candidates, products, variants, quantities, totals, cancellation flags and screenshot parts. Card number is not recorded; exact dates/amounts do not prove an association. Cancelled and incomplete orders cannot be purchase matches. Use read_issey_order for original screenshot evidence before asking for an available order record.',inputSchema:obj({})},
  {name:'read_issey_order',description:'Read one original, hash-verified screenshot part of an order returned by search_issey_orders. Captures order detail and inventory/shipment links, transcribes the screenshot, and preserves it for on-page review. Read each listed image part for a tall order. Order-history screenshots are not tax invoices; do not derive a printed tax percentage from amounts.',inputSchema:obj({orderId:str,part:{type:'integer',minimum:1,maximum:20}})},
  {name:'search_spreadsheet',description:'Search an authorized finance, inventory or shipping spreadsheet. ALL terms must match the same row (AND). Use fewer terms for broader discovery. The optional window requires a parseable row date within seven days of purchase. Returns a page of rows, query scope, snapshot hash and pagination. When pagination.nextOffset is not null, use continue_spreadsheet with this source ID to examine omitted matches before concluding that relevant evidence was not found or describing the historical pattern. Zero matches never proves absence; missing prices remain unknown.',inputSchema:obj({source:{type:'string',enum:['finance','inventory','shipping']},terms:{type:'array',items:str,maxItems:5},withinPurchaseWindow:{type:'boolean'}})},
@@ -28,6 +29,8 @@ export const toolDefinitions=[
  {name:'read_document',description:'Read an existing document listed in the purchase context.',inputSchema:obj({documentId:str})},
  {name:'verify_invoice',description:'Verify a T-number against the official NTA API for this purchase date. Never infer registration from a company number.',inputSchema:obj({number:str})}
 ];
+// The private ISSEY archive tools are offered only to a worker whose vault configures the archive.
+export const toolDefinitions=config=>config?.isseyArchive?toolCatalogue:toolCatalogue.filter(t=>!isseyTools.has(t.name));
 export class ResearchTools {
  constructor(config,job,directory,{get=publicGet,extract=interpretDocument,searchSheet=searchBrowserSheet,archive=null}={}){this.config=config;this.job=job;this.directory=directory;this.sources=[...job.sources];this.get=get;this.extract=extract;this.searchSheet=searchSheet;this.archive=archive;this.isseyImages=new Map();this.sheetContinuations=new Map();this.messages=new Map();this.attachments=new Map();this.registry=null;this.calls=0}
  async persist(stage){await fs.writeFile(path.join(this.directory,'evidence.json'),JSON.stringify({sources:this.sources,registry:this.registry,stage}));}
@@ -92,7 +95,7 @@ export class ResearchTools {
  }
  async call(name,args){
   if(++this.calls>35)throw Error('Research tool budget reached');
-  if(!toolDefinitions.some(t=>t.name===name))throw Error('Unknown research tool');
+  if(!toolDefinitions(this.config).some(t=>t.name===name))throw Error('Unknown research tool');
   if(name==='search_issey_orders'){
    this.archive ||= new IsseyArchive(this.config,this.job.context);
    const result=await this.archive.search();

@@ -11,10 +11,13 @@ const Customer = CustomerModel as mongoose.Model<any>
 import { fail, id } from './financeService'
 import { norm, decisionInput } from '../../shared/finance-learning.mjs'
 import { historicalAnswer, ruleAnswer, patternAnswer } from '../../shared/finance-answers.mjs'
+import { memberCompanies } from '../utils/calendarAccess'
+// Owner intake has no selected company at read time: customers of every company the owner currently belongs to, nothing else.
+const ownerCustomers=async(ownerId:string)=>({organizationId:{$in:await memberCompanies(ownerId)}})
 export async function customerContextEvidence(ownerId:string,customerId?:string) {
  const [records,customers] = await Promise.all([
   FinanceCustomerContext.find({ownerId,kind:'purchase_workflow',status:'confirmed',...(customerId===undefined?{}:{customerId})}).select('-audit').sort({confirmedAt:-1}).limit(100).lean(),
-  Customer.find({isActive:{$ne:false}}).select('name').lean()
+  Customer.find({isActive:{$ne:false},...await ownerCustomers(ownerId)}).select('name').lean()
  ])
  return customerPurchaseContexts(records,customers,customerId)
 }
@@ -40,7 +43,7 @@ const memoryPolicy=(e:any)=>({_id:e._id,kind:'teaching',entry:'memory',memoryKin
 export async function accountingMemories(ownerId:string){
  const events=await FinanceDecisionMemory.find({ownerId,kind:'accounting'}).sort({at:-1}).limit(200).lean()
  if(!events.length)return []
- const references:any=await draftReferences()
+ const references:any=await draftReferences(ownerId)
  return events.map((e:any)=>{const {at,...p}=memoryPolicy(e);return {...p,displayFields:p.fields.map((key:string)=>{
   const field=draftFields.find((f:any)=>f.key===key),value=p.values?.[key]
   const display=value===''||value===null||value===undefined?'空欄として記憶':field?.ref?(references[field.ref]||[]).find((r:any)=>String(r._id)===String(value))?.name||'登録先を確認してください':key==='taxRate'?`${value}%`:String(value)
@@ -78,7 +81,7 @@ export async function saveTeachingStatus(ownerId:string,draftId:string,body:any)
 export async function learningOverview(ownerId:string) {
  const dataset=await learningDataset(ownerId),counts:any={},policies=[...await Policy.find({ownerId}).sort({createdAt:1}).lean(),...await teachingPolicies(ownerId)]
  if(dataset)for(const status of ['proposed','confirmed','deferred'])counts[status]=await Pattern.countDocuments({ownerId,datasetId:dataset._id,status})
- return {dataset,counts,customers:await Customer.find({isActive:true}).select('name').sort({name:1}).lean(),policies,accountingMemories:await accountingMemories(ownerId),customerPurchaseContexts:await customerContextEvidence(ownerId)}
+ return {dataset,counts,customers:await Customer.find({isActive:true,...await ownerCustomers(ownerId)}).select('name').sort({name:1}).lean(),policies,accountingMemories:await accountingMemories(ownerId),customerPurchaseContexts:await customerContextEvidence(ownerId)}
 }
 export async function learningPatterns(ownerId:string,query:any) {
   const dataset = await learningDataset(ownerId), page = pageNumber(query.page)
@@ -89,7 +92,7 @@ export async function learningPatterns(ownerId:string,query:any) {
   if (query.grade) { if (!['B','C','D'].includes(query.grade)) fail(400,'Invalid grade'); filter.grade=query.grade }
   const items:any[] = await Pattern.find(filter).select('-audit').sort({total:-1,key:1}).skip((page-1)*30).limit(30).lean()
   const policies:any[] = [...await Policy.find({ownerId,status:'active',merchants:{$in:items.map(p=>p.merchant)}}).lean(),...await teachingPolicies(ownerId,{'teachingMemory.merchant':{$in:items.map(p=>p.merchant)}})]
-  const customers = (await Customer.find({isActive:true}).select('_id').lean()).map((c:any)=>String(c._id))
+  const customers = (await Customer.find({isActive:true,...await ownerCustomers(ownerId)}).select('_id').lean()).map((c:any)=>String(c._id))
   return {items:items.map(p=>({...p,answer:patternAnswer(p,policies,customers)})),total:await Pattern.countDocuments(filter),page,datasetId:dataset._id}
 }
 async function ownedPattern(ownerId:string,patternId:string):Promise<any> {
@@ -102,7 +105,7 @@ export async function learningDetail(ownerId:string,patternId:string,query:any) 
   const dataset:any = await Dataset.findOne({_id:pattern.datasetId,ownerId,status:'ready'}).lean()
   if (!dataset) fail(404,'Learning dataset unavailable')
   const policies:any[] = [...await Policy.find({ownerId,status:'active',merchants:pattern.merchant}).lean(),...await teachingPolicies(ownerId,{'teachingMemory.merchant':pattern.merchant})]
-  const customers = (await Customer.find({isActive:true}).select('_id').lean()).map((c:any)=>String(c._id))
+  const customers = (await Customer.find({isActive:true,...await ownerCustomers(ownerId)}).select('_id').lean()).map((c:any)=>String(c._id))
   pattern.answer = patternAnswer(pattern,policies,customers)
   const filter:any = {ownerId,datasetId:pattern.datasetId,patternKey:pattern.key}
   if (query.label !== undefined) { if (typeof query.label !== 'string' || query.label.length>300) fail(400,'Invalid customer label'); filter['parsed.customer']=query.label }
@@ -127,7 +130,7 @@ export async function saveLearningDecision(ownerId:string,patternId:string,body:
   let decision:any; try { decision=decisionInput(body) } catch(error:any) { fail(400,error.message) }
   const pattern = await ownedPattern(ownerId,patternId), dataset = await learningDataset(ownerId)
   if (!dataset || String(dataset._id)!==String(pattern.datasetId)) fail(409,'This dataset is no longer active; reload the learning page')
-  if (decision.customerId && !await Customer.exists({_id:decision.customerId,isActive:true})) fail(400,'Customer is no longer active')
+  if (decision.customerId && !await Customer.exists({_id:decision.customerId,isActive:true,...await ownerCustomers(ownerId)})) fail(400,'Customer is no longer active')
   const at = new Date(), revision=body.revision+1
   const updated = await Pattern.findOneAndUpdate({_id:pattern._id,ownerId,revision:body.revision},{$set:{status:decision.status,decision:{...decision,at},revision},$push:{audit:{revision,at,decision,previous:pattern.decision || null}}},{new:true}).lean()
   if (!updated) fail(409,'This rule changed; reload before saving')
@@ -144,7 +147,7 @@ export async function savePolicyStatus(ownerId:string,policyId:string,body:any) 
 // Never use future/current source rows or archive copies to answer a purchase.
 export async function learningEvidence(ownerId:string,accountId:string,merchant:string,before:string,amount?:number) {
   const dataset = await learningDataset(ownerId)
-  const activeCustomers = new Set((await Customer.find({isActive:true}).select('_id').lean()).map((c:any)=>String(c._id)))
+  const activeCustomers = new Set((await Customer.find({isActive:true,...await ownerCustomers(ownerId)}).select('_id').lean()).map((c:any)=>String(c._id)))
   const policies:any[] = [...await Policy.find({ownerId,status:'active',merchants:merchant,$or:[{accountIds:{$size:0}},{accountIds:accountId}]}).lean(),...(await teachingPolicies(ownerId,{accountId,'teachingMemory.merchant':merchant})).filter(p=>p.status==='active')]
   const policyRules=policies.filter(p=>(!p.effectiveFrom||p.effectiveFrom<=before)&&(p.decision.purpose!=='customer'||activeCustomers.has(p.decision.customerId))).map(p=>({id:String(p._id),kind:p.kind || 'policy',merchant,revision:p.revision,cards:[],decision:{...p.decision,note:p.reason,effectiveFrom:p.effectiveFrom || ''}}))
   const bound=dataset?.accountBindings.some((b:any)=>b.accountId===accountId)

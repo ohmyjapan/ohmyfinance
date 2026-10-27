@@ -2,6 +2,7 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import Supplier from '../../models/Supplier'
 import Customer from '../../models/Customer'
 import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * POST /api/transactions/import-preview
@@ -19,13 +20,15 @@ export default defineEventHandler(async (event) => {
         })
     }
 
+    // GUARD: the token's selected company with fresh membership, before any read (this route had no authorization at all).
+    await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
+
     const body = await readBody(event)
     const { supplierNames = [], customerNames = [] } = body || {}
 
-    await ensureConnection()
-
-    const existingSuppliers = await Supplier.find({ name: { $in: supplierNames } }).select('name').lean()
-    const existingCustomers = await Customer.find({ name: { $in: customerNames } }).select('name').lean()
+    const existingSuppliers = await Supplier.find({ organizationId, name: { $in: supplierNames } }).select('name').lean()
+    const existingCustomers = await Customer.find({ organizationId, name: { $in: customerNames } }).select('name').lean()
 
     const existingSupplierSet = new Set(existingSuppliers.map((s: any) => s.name))
     const existingCustomerSet = new Set(existingCustomers.map((c: any) => c.name))

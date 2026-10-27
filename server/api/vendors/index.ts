@@ -5,11 +5,12 @@ import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Supplier from '../../models/Supplier'
 import Transaction from '../../models/Transaction'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
   await ensureConnection()
+  // The token's selected company with fresh membership: this is a second Supplier reader/writer, scoped the same way.
+  const { organizationId } = await calendarCompany(event)
   const method = event.method
 
   if (method === 'GET') {
@@ -20,7 +21,7 @@ export default defineEventHandler(async (event) => {
     if (sync === 'true') {
       // Get unique suppliers from transactions
       const supplierIds = await Transaction.aggregate([
-        { $match: { supplierId: { $exists: true, $ne: null } } },
+        { $match: { organizationId, supplierId: { $exists: true, $ne: null } } },
         { $group: { _id: '$supplierId' } }
       ])
 
@@ -49,7 +50,7 @@ export default defineEventHandler(async (event) => {
     if (category) filter.category = category
     if (active === 'true') filter.isActive = true
 
-    const suppliers = await Supplier.find(filter).sort({ totalSpent: -1 }).lean()
+    const suppliers = await Supplier.find({ ...filter, organizationId }).sort({ totalSpent: -1 }).lean()
 
     return {
       vendors: suppliers.map((s: any) => ({ ...s, id: s._id })),
@@ -64,7 +65,8 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 400, statusMessage: 'Name is required' })
     }
 
-    const supplier = await Supplier.create(body)
+    // A company named in the body is ignored; the row belongs to the token company.
+    const supplier = await Supplier.create({ ...body, organizationId })
     return { vendor: { ...supplier.toObject(), id: supplier._id }, message: 'Vendor/Supplier created' }
   }
 

@@ -2,11 +2,12 @@
 import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
 import TaxCategory from '../../models/TaxCategory'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
   await ensureConnection()
+  // The token's selected company with fresh membership: every read is filtered by it, every write stamped with it.
+  const { organizationId } = await calendarCompany(event)
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -17,7 +18,7 @@ export default defineEventHandler(async (event) => {
       searchQuery.name = { $regex: query.search, $options: 'i' }
     }
 
-    const categories = await TaxCategory.find(searchQuery)
+    const categories = await TaxCategory.find({ ...searchQuery, organizationId })
       .sort({ name: 1 })
       .lean()
 
@@ -35,7 +36,8 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const category = new TaxCategory(body)
+    // A company named in the body is ignored; the row belongs to the token company.
+    const category = new TaxCategory({ ...body, organizationId })
     await category.save()
 
     return category.toObject()

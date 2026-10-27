@@ -76,10 +76,10 @@ export default defineEventHandler(async (event) => {
         // --- Lookup cache: pre-load all reference documents to avoid N+1 queries ---
         const [allAccountCategories, allTaxCategories, allTransactionCategories, allSuppliers, allCustomers] = await Promise.all([
             AccountCategory.find({}).lean(),
-            TaxCategory.find({}).lean(),
+            TaxCategory.find({ organizationId }).lean(),
             TransactionCategory.find({}).lean(),
-            Supplier.find({}).lean(),
-            Customer.find({}).lean(),
+            Supplier.find({ organizationId }).lean(),
+            Customer.find({ organizationId }).lean(),
         ])
 
         const accountCategoryMap = new Map<string, any>()
@@ -117,7 +117,7 @@ export default defineEventHandler(async (event) => {
             if (!name) return null
             if (supplierMap.has(name)) return supplierMap.get(name)
             // Auto-create and cache
-            const supplier = await Supplier.create({ name, isActive: true })
+            const supplier = await Supplier.create({ name, isActive: true, organizationId })
             supplierMap.set(name, supplier._id)
             return supplier._id
         }
@@ -126,7 +126,7 @@ export default defineEventHandler(async (event) => {
             if (!name) return null
             if (customerMap.has(name)) return customerMap.get(name)
             // Auto-create and cache
-            const customer = await Customer.create({ name, isActive: true })
+            const customer = await Customer.create({ name, isActive: true, organizationId })
             customerMap.set(name, customer._id)
             return customer._id
         }

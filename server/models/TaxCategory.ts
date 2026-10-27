@@ -2,6 +2,7 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
 export interface ITaxCategory extends Document {
+    organizationId: mongoose.Types.ObjectId
     name: string
     rate?: number
     description?: string
@@ -10,10 +11,13 @@ export interface ITaxCategory extends Document {
 }
 
 const TaxCategorySchema = new Schema<ITaxCategory>({
+    organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
     name: { type: String, required: true },
     rate: { type: Number },
     description: { type: String }
 }, { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } })
+
+TaxCategorySchema.index({ organizationId: 1, name: 1 })
 
 // Virtual for id
 TaxCategorySchema.virtual('id').get(function() {

@@ -6,9 +6,11 @@ import { ownedImport, ownedAccount, fail, id, assertEditableImportRow } from './
 import { digest } from '../../shared/amex.mjs'
 import { normalizeMerchant } from '../../shared/finance-draft.mjs'
 import { supplierRegistration, resolveSupplier, evidenceUrl } from '../../shared/finance-supplier.mjs'
+import { memberCompanies } from '../utils/calendarAccess'
 const Supplier = SupplierModel as mongoose.Model<any>
-export async function supplierReferences() {
-  const rows: any[] = await Supplier.find({}).select('name companyName serviceName companyInfo invoiceNumber address metadata.invoiceVerification').sort({ name: 1 }).lean()
+// Owner intake has no selected company at read time: the suppliers of every company the owner currently belongs to, nothing else.
+export async function supplierReferences(ownerId: string) {
+  const rows: any[] = await Supplier.find({ organizationId: { $in: await memberCompanies(ownerId) } }).select('name companyName serviceName companyInfo invoiceNumber address metadata.invoiceVerification').sort({ name: 1 }).lean()
   return rows.map(s => ({ _id: s._id, name: s.name, companyName: s.companyName || '', serviceName: s.serviceName || '', companyInfo: s.companyInfo || '', invoiceNumber: s.invoiceNumber || '',
     identityKey: digest(JSON.stringify([s.name, s.companyName || '', s.serviceName || '', s.invoiceNumber || '', s.address || ''])), registration: supplierRegistration(s.metadata?.invoiceVerification?.evidence?.sha256 === digest(s.metadata?.invoiceVerification?.evidence?.text || '') ? s : { ...s, metadata: undefined }) }))
 }
@@ -29,7 +31,7 @@ async function linkContext(ownerId: string, importId: string, line: number) {
   return { batch, account, row, merchant, recordId, link }
 }
 export async function readMerchantLink(ownerId: string, importId: string, line: number) {
-  const ctx = await linkContext(ownerId, importId, line), suppliers = await supplierReferences()
+  const ctx = await linkContext(ownerId, importId, line), suppliers = await supplierReferences(ownerId)
   const match = resolveSupplier(ctx.row.description, suppliers, ctx.link ? [ctx.link] : [])
   const saved: any = await FinanceDraft.findOne({ ownerId, importId, line }).select('revision values.supplierId values.invoiceNumber').lean()
   return { sourceHash: ctx.batch.hash, key: ctx.row.key, line, descriptor: ctx.row.description, accountName: ctx.account.name,
@@ -44,7 +46,7 @@ export async function saveMerchantLink(ownerId: string, importId: string, line: 
   let selected: any, reason = '', sourceUrl = ''
   if (body.enabled) {
     if (body.confirmed !== true || typeof body.reason !== 'string' || !body.reason.trim() || body.reason.length > 1000 || /[\x00-\x1f]/.test(body.reason)) fail(400, '運営会社との対応と確認根拠を入力してください。')
-    selected = (await supplierReferences()).find(s => s._id.toString() === id(body.supplierId))
+    selected = (await supplierReferences(ownerId)).find(s => s._id.toString() === id(body.supplierId))
     if (!selected) fail(404, '仕入れ先が見つかりません。')
     if (body.supplierKey !== selected.identityKey) fail(409, '仕入れ先の情報が変わりました。再読込してください。')
     if (body.sourceUrl && (typeof body.sourceUrl !== 'string' || body.sourceUrl.length > 2000 || !evidenceUrl(body.sourceUrl))) fail(400, '根拠URLはHTTPSのページを指定してください。')

@@ -2,11 +2,12 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import Customer from '../../models/Customer'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
   await ensureConnection()
+  // The token's selected company with fresh membership; another company's id is "not found" here.
+  const { organizationId } = await calendarCompany(event)
   const method = event.method
   const id = event.context.params?.id
 
@@ -20,7 +21,7 @@ export default defineEventHandler(async (event) => {
 
   // GET - Get customer by ID
   if (method === 'GET') {
-    const customer = await Customer.findById(id).lean()
+    const customer = await Customer.findOne({ _id: id, organizationId }).lean()
     if (!customer) {
       throw createError({
         statusCode: 404,
@@ -35,8 +36,8 @@ export default defineEventHandler(async (event) => {
   if (method === 'PUT') {
     const body = await readBody(event)
 
-    const customer = await Customer.findByIdAndUpdate(
-      id,
+    const customer = await Customer.findOneAndUpdate(
+      { _id: id, organizationId },
       {
         name: body.name,
         email: body.email,
@@ -64,7 +65,7 @@ export default defineEventHandler(async (event) => {
 
   // DELETE - Delete customer
   if (method === 'DELETE') {
-    const customer = await Customer.findByIdAndDelete(id)
+    const customer = await Customer.findOneAndDelete({ _id: id, organizationId })
     if (!customer) {
       throw createError({
         statusCode: 404,

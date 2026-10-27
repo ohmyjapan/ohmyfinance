@@ -2,11 +2,12 @@
 import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
 import Supplier from '../../models/Supplier'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
   await ensureConnection()
+  // The token's selected company with fresh membership: every read is filtered by it, every write stamped with it.
+  const { organizationId } = await calendarCompany(event)
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -20,7 +21,7 @@ export default defineEventHandler(async (event) => {
       ]
     }
 
-    const suppliers = await Supplier.find(searchQuery)
+    const suppliers = await Supplier.find({ ...searchQuery, organizationId })
       .sort({ name: 1 })
       .lean()
 
@@ -42,7 +43,8 @@ export default defineEventHandler(async (event) => {
     if (body.metadata?.invoiceVerification !== undefined || Object.keys(body).some(key => key.startsWith('metadata.'))) {
       throw createError({ statusCode: 400, message: '公表情報の確認記録はこの画面から登録できません。' })
     }
-    const supplier = new Supplier(body)
+    // A company named in the body is ignored; the row belongs to the token company.
+    const supplier = new Supplier({ ...body, organizationId })
     await supplier.save()
 
     return supplier.toObject()

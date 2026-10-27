@@ -108,21 +108,23 @@ export async function applyResearch(ownerId:string,importId:string,line:number,b
  await Research.updateOne({_id:r._id,requestId:r.requestId},{$set:{state:'applied',applied:{fields:body.fields,values:selected,at:new Date()}},$unset:{lease:'',leaseUntil:''},$inc:{revision:1}})
  return {draft:await readDraft(ownerId,importId,line),...await researchView(ownerId,importId,line)}
 }
-export async function saveResearchSupplier(ownerId:string,importId:string,line:number,body:any){
+// The confirmed supplier belongs to the token's selected company (organizationId): read, matched and created within it only.
+export async function saveResearchSupplier(ownerId:string,importId:string,line:number,body:any,organizationId:mongoose.Types.ObjectId){
  await init();const r:any=await Research.findOne(scope(ownerId,importId,line)).lean(),d=await readDraft(ownerId,importId,line);binding(d,body)
  if(!r?.report?.supplier||!['ready','applied'].includes(r.state)||r.revision!==body.researchRevision||body.confirm!==true||typeof body.remember!=='boolean')fail(409,'会社情報と根拠を確認してください。')
  if(r.context.key!==d.key||r.context.sourceHash!==d.sourceHash)fail(409,'元のカード明細が変更されています。再調査してください。')
  const p=r.report.supplier,registry=r.registry,source=registry?r.sources.find((s:any)=>s.id===registry.sourceId):null
  const verified=registry?.active&&registry.number===p.invoiceNumber&&normalizeMerchant(registry.legalName)===normalizeMerchant(p.legalName)
- let supplier:any=await Supplier.findOne({companyName:p.legalName,invoiceNumber:p.invoiceNumber}).lean()
+ let supplier:any=await Supplier.findOne({organizationId,companyName:p.legalName,invoiceNumber:p.invoiceNumber}).lean()
  if(!supplier){
-  if(await Supplier.exists({$or:[{name:p.shopName},{serviceName:p.shopName},...(p.invoiceNumber?[{invoiceNumber:p.invoiceNumber}]:[])]}))fail(409,'同名・同番号の仕入れ先があります。仕入れ先の確認・記憶から照合してください。')
-  const supplierId=new mongoose.Types.ObjectId(digest('research-supplier:'+ownerId+':'+p.legalName+':'+p.invoiceNumber).slice(0,24))
+  if(await Supplier.exists({organizationId,$or:[{name:p.shopName},{serviceName:p.shopName},...(p.invoiceNumber?[{invoiceNumber:p.invoiceNumber}]:[])]}))fail(409,'同名・同番号の仕入れ先があります。仕入れ先の確認・記憶から照合してください。')
+  // One deterministic id per owner AND company: a retry meets the same row, another company of the same owner gets its own.
+  const supplierId=new mongoose.Types.ObjectId(digest('research-supplier:'+ownerId+':'+String(organizationId)+':'+p.legalName+':'+p.invoiceNumber).slice(0,24))
   const invoiceVerification=verified?{version:2,source:'nta_api',method:'api_valid_date',scope:'issuer_registration_only',status:'active_at_check',number:registry.number,legalName:registry.legalName,registeredAddress:registry.registeredAddress,registeredFrom:registry.registeredFrom,asOf:registry.asOf,checkedAt:registry.checkedAt,sourceUrl:'https://www.invoice-kohyo.nta.go.jp/regno-search/detail?selRegNo='+registry.number.slice(1),evidence:{text:source.text,sha256:source.hash}}:undefined
-  try{supplier=(await Supplier.create({_id:supplierId,name:p.shopName,serviceName:p.shopName,companyName:p.legalName,companyInfo:p.legalName,invoiceNumber:p.invoiceNumber,metadata:{...(invoiceVerification?{invoiceVerification}:{}),research:{ownerId,researchId:String(r._id),sourceHash:d.sourceHash,citations:p.citations,confirmedAt:new Date()}}})).toObject()}catch(e:any){if(e.code===11000)supplier=await Supplier.findById(supplierId).lean();else throw e}
+  try{supplier=(await Supplier.create({_id:supplierId,organizationId,name:p.shopName,serviceName:p.shopName,companyName:p.legalName,companyInfo:p.legalName,invoiceNumber:p.invoiceNumber,metadata:{...(invoiceVerification?{invoiceVerification}:{}),research:{ownerId,researchId:String(r._id),sourceHash:d.sourceHash,citations:p.citations,confirmedAt:new Date()}}})).toObject()}catch(e:any){if(e.code===11000)supplier=await Supplier.findOne({_id:supplierId,organizationId}).lean();else throw e}
  }
  if(body.remember){
-  const link=await readMerchantLink(ownerId,importId,line),reference=(await supplierReferences()).find(s=>String(s._id)===String(supplier._id))
+  const link=await readMerchantLink(ownerId,importId,line),reference=(await supplierReferences(ownerId)).find(s=>String(s._id)===String(supplier._id))
   if(link.link?.enabled&&link.link.supplierId!==String(supplier._id))fail(409,'既存の仕入れ先の記憶と異なります。対応を確認してください。')
   await saveMerchantLink(ownerId,importId,line,{sourceHash:d.sourceHash,key:d.key,revision:link.revision,enabled:true,confirmed:true,supplierId:String(supplier._id),supplierKey:reference!.identityKey,reason:'調査の引用を確認して仕入れ先との対応を保存しました。',sourceUrl:r.sources.find((s:any)=>p.citations.some((c:any)=>c.sourceId===s.id)&&s.kind==='web')?.url||''})
  }

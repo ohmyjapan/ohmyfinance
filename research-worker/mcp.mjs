@@ -17,7 +17,7 @@ for await(const line of input){
  try{
   let result;
   if(request.method==='initialize')result={protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'omf-research',version:'1.0.0'}};
-  else if(request.method==='tools/list')result={tools:toolDefinitions};
+  else if(request.method==='tools/list')result={tools:toolDefinitions(config)};
   else if(request.method==='ping')result={};
   else if(request.method==='tools/call'){try{const data=await tools.call(request.params.name,request.params.arguments||{});result={content:[{type:'text',text:JSON.stringify(data)}]}}catch(e){result={isError:true,content:[{type:'text',text:e.message}]}}}
   else{process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,error:{code:-32601,message:'Unknown method'}})+'\n');continue}

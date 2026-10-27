@@ -21,6 +21,7 @@ import TransactionCategoryModel from '../models/TransactionCategory'
 import TaxCategoryModel from '../models/TaxCategory'
 import DataSourceModel from '../models/DataSource'
 import { fail, id, ownedImport, ownedAccount, reviewImport, assertEditableImportRow } from './financeService'
+import { memberCompanies } from '../utils/calendarAccess'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
 import { digest } from '../../shared/amex.mjs'
 import {customerPurchaseCandidate,customerReviewBinding,customerReviewApplied} from '../../shared/finance-customer-review.mjs'
@@ -37,25 +38,31 @@ const TransactionCategory = TransactionCategoryModel as mongoose.Model<any>
 const TaxCategory = TaxCategoryModel as mongoose.Model<any>
 const DataSource = DataSourceModel as mongoose.Model<any>
 
-export async function draftReferences() {
-  // Legacy reference records are shared by Transactions. Never expose source credentials.
+// Owner intake has no selected company at read time: customers, suppliers and tax categories of every company the owner currently
+// belongs to, nothing else; the other reference records are shared masters. Never expose source credentials.
+export async function draftReferences(ownerId: string) {
+  const companies = await memberCompanies(ownerId)
   const [customers, suppliers, accountCategories, transactionCategories, taxCategories, sources] = await Promise.all([
-    Customer.find({ isActive: { $ne: false } }).select('name company').sort({ name: 1 }).lean(),
-    supplierReferences(),
+    Customer.find({ isActive: { $ne: false }, organizationId: { $in: companies } }).select('name company').sort({ name: 1 }).lean(),
+    supplierReferences(ownerId),
     AccountCategory.find({ isActive: { $ne: false } }).select('name code parentId type').sort({ order: 1, name: 1 }).lean(),
     TransactionCategory.find({}).select('name').sort({ name: 1 }).lean(),
-    TaxCategory.find({}).select('name rate').sort({ name: 1 }).lean(),
+    TaxCategory.find({ organizationId: { $in: companies } }).select('name rate').sort({ name: 1 }).lean(),
     DataSource.find({ isActive: { $ne: false } }).select('name type').sort({ name: 1 }).lean()
   ])
   return { customers, suppliers, accountCategories, transactionCategories, taxCategories, sources }
 }
-export async function createDraftReference(ownerId: string, importId: string, body: any) {
+const scopedDraftReferenceFields = ['customerId', 'supplierId', 'taxCategoryId']
+// A created customer, supplier or tax category belongs to the token's selected company (the posting company); the match is within it.
+export async function createDraftReference(ownerId: string, importId: string, body: any, organizationId: mongoose.Types.ObjectId) {
   await ownedImport(ownerId, importId)
   if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 100 || /[\x00-\x1f]/.test(body.name)) fail(400, '名称を入力してください（100文字以内）。')
   const models: Record<string, mongoose.Model<any>> = { customerId: Customer, supplierId: Supplier, accountCategoryId: AccountCategory, subAccountCategoryId: AccountCategory, transactionCategoryId: TransactionCategory, taxCategoryId: TaxCategory }
   const model = Object.hasOwn(models, body.field) ? models[body.field] : undefined
   if (!model) fail(400, 'この項目は追加できません。')
   const data: any = { name: body.name.trim() }
+  const scoped = scopedDraftReferenceFields.includes(body.field)
+  if (scoped) data.organizationId = organizationId
   if (body.field === 'accountCategoryId') data.type = 'expense'
   if (body.field === 'subAccountCategoryId') {
     const parent: any = await AccountCategory.findOne({ _id: id(body.parentId), isActive: { $ne: false }, parentId: null }).lean()
@@ -67,12 +74,13 @@ export async function createDraftReference(ownerId: string, importId: string, bo
     data.rate = body.rate
   }
   const match: any = { name: data.name }
+  if (scoped) match.organizationId = organizationId
   if (body.field.includes('AccountCategory') || body.field === 'accountCategoryId') match.parentId = data.parentId || null
   if (body.field === 'taxCategoryId') match.rate = data.rate
   const existing: any = await model.findOne(match).lean()
   if (existing?.isActive === false) fail(409, '同名の無効な項目があります。設定から確認してください。')
   const record: any = existing || await model.create(data)
-  return { id: record._id.toString(), references: await draftReferences() }
+  return { id: record._id.toString(), references: await draftReferences(ownerId) }
 }
 async function context(ownerId: string, importId: string, line: number) {
   if (!Number.isSafeInteger(line)) fail(400, '明細行が不正です。')
@@ -165,7 +173,7 @@ async function propose(ctx: any, references: any) {
 export async function mappingPreparation(ownerId: string, batch: any, account: any, mapped: any[]) {
   const importId = batch._id.toString()
   const [references, saved, review, entries, links] = await Promise.all([
-    draftReferences(), FinanceDraft.find({ ownerId, importId }).lean(), reviewImport(ownerId, importId),
+    draftReferences(ownerId), FinanceDraft.find({ ownerId, importId }).lean(), reviewImport(ownerId, importId),
     FinanceEntry.find({ ownerId, importId }).select('line draftSnapshot.transaction.cardAccounting').lean(), merchantLinks(ownerId, account._id.toString())
   ])
   const savedByLine = new Map(saved.map((d: any) => [d.line, d]))
@@ -205,7 +213,7 @@ export async function prepareSourceCategories(ownerId: string, importId: string,
   try { mapped = mappingRows(batch).filter(r => activeLines.has(r.line)) } catch { fail(409, '元データとの照合をやり直してください。') }
   if (body?.sourceHash !== batch.hash || body?.mappingKey !== digest(JSON.stringify(mapped!))) fail(409, '照合内容が更新されています。再読込してください。')
   if (!Array.isArray(body.names) || !body.names.length || body.names.length > 30 || body.names.some((n: any) => typeof n !== 'string') || new Set(body.names.map(normalizeMerchant)).size !== body.names.length) fail(400, '追加する元シートの区分を選択してください。')
-  const choices = sourceCategoryChoices(mapped!, await draftReferences())
+  const choices = sourceCategoryChoices(mapped!, await draftReferences(ownerId))
   const selected = body.names.map((name: string) => choices.find(c => c.name === name))
   if (selected.some((c: any) => !c)) fail(400, 'この明細の元シートにある区分だけを追加できます。')
   if (selected.some((c: any) => c.matches > 1)) fail(409, '同名の区分が複数あります。区分設定を確認してください。')
@@ -244,7 +252,7 @@ async function validateReferences(values: any, references: any) {
   }
 }
 async function view(ctx: any) {
-  const references = await draftReferences()
+  const references = await draftReferences(ctx.ownerId)
   const proposed = await propose(ctx, references)
   const saved = ctx.saved
   const values = saved?.values || proposed.values, evidence = saved?.evidence || proposed.evidence
@@ -303,7 +311,7 @@ export async function saveDraft(ownerId: string, importId: string, line: number,
     await writable(ctx, body?.revision, body?.key, body?.sourceHash)
     let values: any
     try { values = validateValues(body.values) } catch (error: any) { fail(400, error.message) }
-    const references = await draftReferences()
+    const references = await draftReferences(ctx.ownerId)
     await validateReferences(values, references)
     if (!Array.isArray(body.remember) || body.remember.some((f: any) => !learnedFields.includes(f)) || new Set(body.remember).size !== body.remember.length) fail(400, '記憶する項目を確認してください。')
     if (body.confirm !== true && body.confirm !== false) fail(400, '確認状態が不正です。')
@@ -460,7 +468,7 @@ export async function draftSnapshot(ownerId: string, batch: any, row: any, revis
   let values: any
   try { values = validateValues(draft.values) } catch { fail(409, '下書きの項目を確認してください。') }
   if (missingFields(values).length) fail(409, '必須項目の確認が必要です。')
-  const references = await draftReferences()
+  const references = await draftReferences(ownerId)
   await validateReferences(values, references)
   const account = await ownedAccount(ownerId, batch.accountId.toString()), card = cardAccounting(account, row, references)
   if ((account.provider === 'aplus' && card.status !== 'configured') || card.status === 'review' || !approvedCardMatches(draft, card)) fail(409, 'カード側の科目が変更されました。下書きを再確認してください。')

@@ -17,3 +17,8 @@ export async function companyMembership(userId: string, organizationId: string) 
   if (!member) throw createError({ statusCode: 403, statusMessage: 'Access denied to this organization' })
   return new mongoose.Types.ObjectId(organizationId)
 }
+// Owner intake reads (ownerId, no selected company at read time): the companies the user currently belongs to, read fresh.
+export async function memberCompanies(userId: string): Promise<mongoose.Types.ObjectId[]> {
+  if (!mongoose.isValidObjectId(userId)) return []
+  return Organization.find({ 'members.userId': userId, isActive: true }).distinct('_id')
+}

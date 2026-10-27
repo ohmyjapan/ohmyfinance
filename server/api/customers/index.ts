@@ -2,11 +2,12 @@
 import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
 import Customer from '../../models/Customer'
 import { ensureConnection } from '../../config/database'
-import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
-  requireAuth(event)
   await ensureConnection()
+  // The token's selected company with fresh membership: every read is filtered by it, every write stamped with it.
+  const { organizationId } = await calendarCompany(event)
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -21,7 +22,7 @@ export default defineEventHandler(async (event) => {
       ]
     }
 
-    const customers = await Customer.find(searchQuery)
+    const customers = await Customer.find({ ...searchQuery, organizationId })
       .sort({ name: 1 })
       .lean()
 
@@ -39,7 +40,8 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const customer = new Customer(body)
+    // A company named in the body is ignored; the row belongs to the token company.
+    const customer = new Customer({ ...body, organizationId })
     await customer.save()
 
     return customer.toObject()

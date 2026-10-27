@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
 export interface ICustomer extends Document {
+  organizationId: mongoose.Types.ObjectId
   name: string
   email?: string
   phone?: string
@@ -33,6 +34,7 @@ const AddressSchema = new Schema({
 }, { _id: false })
 
 const CustomerSchema = new Schema<ICustomer>({
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
   name: { type: String, required: true },
   email: { type: String, index: true },
   phone: String,
@@ -54,6 +56,7 @@ CustomerSchema.virtual('id').get(function() {
   return this._id.toHexString()
 })
 
+CustomerSchema.index({ organizationId: 1, name: 1 })
 CustomerSchema.index({ name: 'text', email: 'text', company: 'text' })
 
 export default mongoose.models.Customer || mongoose.model<ICustomer>('Customer', CustomerSchema)

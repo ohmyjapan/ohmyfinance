@@ -44,9 +44,10 @@ async function purchaseLinksOf(ownerId: string, account: any): Promise<Map<strin
 }
 // The owner's selected Supplier of each draft that carries an adoption (one read): a Supplier with another stored number is never green.
 async function adoptionSuppliers(drafts: any[]) {
-  const ids = [...new Set(drafts.filter((d: any) => d?.adoption && /^[a-f\d]{24}$/i.test(String(d.values?.supplierId || ''))).map((d: any) => String(d.values.supplierId)))]
-  if (!ids.length) return new Map<string, any>()
-  return new Map<string, any>(((await Supplier.find({ _id: { $in: ids } } as any).select('_id invoiceNumber').lean()) as any[]).map((x: any) => [sid(x._id), x]))
+  // Each selected Supplier is read within its draft's own company only.
+  const scopes = drafts.filter((d: any) => d?.adoption && d.organizationId && /^[a-f\d]{24}$/i.test(String(d.values?.supplierId || ''))).map((d: any) => ({ _id: String(d.values.supplierId), organizationId: d.organizationId }))
+  if (!scopes.length) return new Map<string, any>()
+  return new Map<string, any>(((await Supplier.find({ $or: scopes } as any).select('_id invoiceNumber').lean()) as any[]).map((x: any) => [sid(x._id), x]))
 }
 const purchasesFor = (row: any, c: any) => !c.purchases ? null : c.purchases.get(sid(row._id)) || NO_PURCHASES
 function purchasesView(row: any, c: any) {
@@ -240,7 +241,7 @@ async function adoptPurchase(ownerId: string, organizationId: mongoose.Types.Obj
   if (cand.allocationId !== ask.allocationId || cand.recordId !== ask.recordId || cand.recordRevision !== ask.recordRevision) fail(409, '購入の根拠が変わりました。再読み込みしてください。 [purchase-adoption-unavailable:stale]')
   let supplierId = String(draft.values?.supplierId || '')
   if (!supplierId) {
-    const found: any[] = await Supplier.find({ invoiceNumber: cand.invoiceNumber } as any).select('_id name companyName').limit(10).lean()
+    const found: any[] = await Supplier.find({ organizationId: draft.organizationId, invoiceNumber: cand.invoiceNumber } as any).select('_id name companyName').limit(10).lean()
     const exact = found.filter((x: any) => [x.companyName, x.name].some((n: any) => n && normalizeMerchant(n) === normalizeMerchant(cand.supplierName)))
     if (exact.length === 1) supplierId = sid(exact[0]._id)
   }

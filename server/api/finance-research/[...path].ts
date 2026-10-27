@@ -7,6 +7,7 @@ import {FinanceChatAgent} from '../../models/FinanceChat'
 import {chatAgent} from '../../services/financeChatService'
 import {researchView,queueResearch,claimResearch,researchProgress,researchDocument,finishResearch,applyResearch,saveResearchSupplier} from '../../services/financeResearchService'
 import {claimIntakeResearch,intakeResearchProgress,finishIntakeResearch} from '../../services/financeIntakeResearchService'
+import {calendarCompany} from '../../utils/calendarAccess'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  const parts=(event.path.split('?')[0].split('/api/finance-research/')[1]||'').split('/').filter(Boolean)
@@ -45,7 +46,7 @@ export default defineEventHandler(async event=>{
    if(parts.length===4&&event.method==='GET')return await researchView(ownerId,parts[1],line)
    if(parts.length===4&&event.method==='POST')return await queueResearch(ownerId,parts[1],line,await body())
    if(parts.length===5&&parts[4]==='apply'&&event.method==='POST')return await applyResearch(ownerId,parts[1],line,await body())
-   if(parts.length===5&&parts[4]==='supplier'&&event.method==='POST')return await saveResearchSupplier(ownerId,parts[1],line,await body())
+   if(parts.length===5&&parts[4]==='supplier'&&event.method==='POST')return await saveResearchSupplier(ownerId,parts[1],line,await body(),(await calendarCompany(event)).organizationId)
   }
   fail(404,'Research endpoint not found')
  }catch(e:any){if(e.statusCode)throw e;console.error('[Finance research] request failed',e.name||'Error');fail(500,'Research request failed')}

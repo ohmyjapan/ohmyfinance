@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
 export interface ISupplier extends Document {
+  organizationId: mongoose.Types.ObjectId
   name: string
   companyName?: string      // 会社名
   serviceName?: string      // サービス名
@@ -19,6 +20,7 @@ export interface ISupplier extends Document {
 }
 
 const SupplierSchema = new Schema<ISupplier>({
+  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
   name: { type: String, required: true },
   companyName: String,
   serviceName: String,
@@ -42,6 +44,7 @@ SupplierSchema.virtual('id').get(function() {
   return this._id.toHexString()
 })
 
+SupplierSchema.index({ organizationId: 1, name: 1 })
 SupplierSchema.index({ name: 'text', companyInfo: 'text' })
 
 export default mongoose.models.Supplier || mongoose.model<ISupplier>('Supplier', SupplierSchema)

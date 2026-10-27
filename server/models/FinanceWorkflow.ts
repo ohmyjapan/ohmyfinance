@@ -17,7 +17,7 @@ const config = new Schema({
   ownerId: { type: oid, required: true, unique: true },
   revision: { type: Number, default: 0 }, enabled: { type: Boolean, default: false },
   accountIds: [oid], workerId: oid, from: String, through: String,
-  firstRunAt: Date, workerSeenAt: Date, workerCapabilities: mixed,
+  firstRunAt: Date, workerSeenAt: Date, workerCapabilities: mixed, workerIntrasAccount: String,
   lease: String, leaseUntil: Date
 }, { timestamps: true })
 

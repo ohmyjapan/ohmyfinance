@@ -39,7 +39,8 @@ export class FinalizationWorker {
  }
  async cycle() {
   let status;
-  try { status=await this.api('status',{capabilities:['purchase','inventory','shipment','receipt_inference',...(this.config.workflow?.intras?['documents']:[])]}); }
+  // The worker reports its own Intras account (the one setting, in its vault); the server addresses document targets to it.
+  try { status=await this.api('status',{capabilities:['purchase','inventory','shipment','receipt_inference',...(this.config.workflow?.intras?['documents']:[])],...(this.config.workflow?.intras?.account?{connections:{intras:{account:this.config.workflow.intras.account}}}:{})}); }
   catch(e){if(e.status===403)return false;throw e;}
   if(!status.config.enabled)return false;
   const {run}=await this.api('claim');if(!run)return false;
@@ -54,7 +55,8 @@ export class FinalizationWorker {
     catch { failures[kind]='connection_required'; }
     if(expired)throw Error('Workflow lease lost');
    }
-   try {
+   // The private ISSEY order archive is read only when this worker's vault configures it.
+   if(this.config.isseyArchive) try {
     sources.orders=await this.snapshot(run,'orders',async()=>{
      const financialAccount=run.policy.accountIds.find(a=>this.config.isseyArchive?.financialAccountIds?.includes(a));if(!financialAccount)throw Error('Archive scope unavailable');
      this.archive=this.archiveFactory(this.config,{source:{account:{id:financialAccount},purchaseDate:run.policy.from}});const payload=await this.archive.catalog();

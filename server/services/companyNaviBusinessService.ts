@@ -12,7 +12,7 @@ import RecurringPayment from '../models/RecurringPayment'
 import { Payment } from '../models/Payment'
 import Receipt from '../models/Receipt'
 import { matchReceiptWithTransaction, unmatchReceipt } from './receiptService'
-import { createCompanyTransaction, deleteTransaction, transactionReferenceModels } from './transactionService'
+import { createCompanyTransaction, deleteTransaction, transactionReferenceModels, referenceScope } from './transactionService'
 import { createCompanyInvoice, deleteCompanyInvoice, invoiceWriteError } from './companyInvoiceWriteService'
 import { createCompanyCalendarEntry, deleteCompanyCalendarEntry } from './companyPaymentWriteService'
 import { listCompanyBudgets, getCompanyBudget, createCompanyBudget, updateCompanyBudget, deleteCompanyBudget } from './companyBudgetService'
@@ -117,7 +117,7 @@ const adapters: Record<string, Adapter> = {
   },
   create_company_transaction: {
     resource: (_args, operationId) => String(createdId(operationId)),
-    precheck: async (_c, args) => { for (const [key, model] of Object.entries(transactionReferenceModels)) if (args[key] !== undefined && !await model.exists({ _id: args[key] })) bad(400, 'Choose an existing transaction reference') },
+    precheck: async (c, args) => { for (const [key, model] of Object.entries(transactionReferenceModels)) if (args[key] !== undefined && !await model.exists(referenceScope(key, args[key], companyOf(c)))) bad(400, 'Choose an existing transaction reference') },
     run: async ({ c, args, op, marker }) => {
       const data: any = pick(args, businessFields.transaction)
       data.date = new Date(args.date)
