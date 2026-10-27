@@ -24,8 +24,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const BUILT = existsSync(path.join(root, '.output', 'server', 'index.mjs'));
 const marker = n => n + ' Company master groups passed';
 const groups = 8;
-const APP_COVERS = ['server/models/Customer.ts', 'server/models/Supplier.ts', 'server/models/TaxCategory.ts', 'server/models/FinanceWorkflow.ts', 'server/api/suppliers/index.ts', 'server/api/suppliers/[id].ts', 'server/api/customers/index.ts', 'server/api/customers/[id].ts', 'server/api/tax-categories/index.ts', 'server/api/vendors/index.ts', 'server/api/transactions/import.ts', 'server/api/transactions/import-preview.ts', 'server/api/seed/index.ts', 'server/services/transactionService.ts', 'server/services/companyNaviBusinessService.ts', 'server/utils/calendarAccess.ts', 'server/services/financeDraftService.ts', 'server/services/financeSupplierService.ts', 'server/services/financeLearningService.ts', 'server/services/financeResearchService.ts', 'server/services/financeBankClassificationService.ts', 'server/services/financeActionService.ts', 'server/services/financeWorkflowService.ts', 'server/api/finance/[...path].ts', 'server/api/finance-research/[...path].ts', 'scripts/finance-company-masters-integration.cjs'];
-const WORKER_COVERS = ['finalization-worker/worker.mjs', 'finalization-worker/intras.mjs', 'research-worker/tools.mjs', 'research-worker/mcp.mjs', 'research-worker/worker.mjs', 'scripts/finance-workflow-worker-integration.cjs', 'scripts/zoomer-fixtures/omf-company-masters.mjs'];
+const APP_COVERS = ['server/models/Customer.ts', 'server/models/Supplier.ts', 'server/models/TaxCategory.ts', 'server/models/FinanceWorkflow.ts', 'server/api/suppliers/index.ts', 'server/api/suppliers/[id].ts', 'server/api/customers/index.ts', 'server/api/customers/[id].ts', 'server/api/tax-categories/index.ts', 'server/api/vendors/index.ts', 'server/api/transactions/index.ts', 'server/api/transactions/import.ts', 'server/api/transactions/import-preview.ts', 'server/api/seed/index.ts', 'server/services/transactionService.ts', 'server/services/companyNaviBusinessService.ts', 'server/utils/calendarAccess.ts', 'server/services/financeDraftService.ts', 'server/services/financeSupplierService.ts', 'server/services/financeLearningService.ts', 'server/services/financeResearchService.ts', 'server/services/financeBankClassificationService.ts', 'server/services/financeActionService.ts', 'server/services/financeWorkflowService.ts', 'server/api/finance/[...path].ts', 'server/api/finance-research/[...path].ts', 'scripts/finance-company-masters-integration.cjs'];
+const WORKER_COVERS = ['finalization-worker/worker.mjs', 'finalization-worker/intras.mjs', 'research-worker/tools.mjs', 'research-worker/mcp.mjs', 'research-worker/worker.mjs', 'scripts/finance-workflow-worker.test.mjs', 'scripts/zoomer-fixtures/omf-company-masters.mjs'];
 const SOURCE_DIRS = ['shared', 'research-worker', 'teaching-worker', 'collector', 'finalization-worker'];
 const SOURCE_TESTS = ['scripts/finance-issey-archive.test.mjs', 'scripts/finance-workflow-worker.test.mjs'];
 const UNIT_TEST = 'scripts/company-masters-worker.test.mjs';
@@ -48,13 +48,14 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),targe
 test('worker:intras-configured-account',async()=>{
  const sentinel=Object.assign(Error('SENTINEL open'),{code:'sentinel'}),collector=config=>new IntrasCollector(config,{open:async()=>{throw sentinel}});
  await assert.rejects(()=>collector({workflow:{intras:{account:'synthetic-buyer',profile:'synthetic-profile'}}}).collect(target),e=>e.code==='sentinel','worker:intras-configured-account');
+ await assert.rejects(()=>collector({workflow:{intras:{account:'Synthetic-Buyer',profile:'synthetic-profile'}}}).collect(target),e=>e.code==='sentinel','worker:intras-mixed-case');
  await assert.rejects(()=>collector({workflow:{intras:{account:'synthetic-buyer',profile:'synthetic-profile'}}}).collect({...target,providerAccount:'another-account'}),e=>e.code==='connection_required'&&/not configured/.test(e.message),'worker:intras-identity');
  await assert.rejects(()=>collector({workflow:{intras:{account:'',profile:'synthetic-profile'}}}).collect({...target,providerAccount:''}),e=>e.code==='connection_required','worker:intras-no-account');
  await assert.rejects(()=>collector({workflow:{}}).collect(target),e=>e.code==='connection_required','worker:intras-no-account');
 });
 test('worker:status-connections',async()=>{
  const report=async config=>{let captured;const w=new FinalizationWorker({baseUrl:'http://127.0.0.1:8080',...config},'unused',{archiveFactory:()=>({searched:new Map()}),log:()=>{}});w.api=async(route,body)=>{if(route==='status'){captured=body;return {config:{enabled:false}}}throw Error('unexpected '+route)};assert.equal(await w.cycle(),false);return captured};
- const configured=await report({workflow:{intras:{account:'synthetic-buyer',profile:'p'}}});assert.deepEqual(configured.connections,{intras:{account:'synthetic-buyer'}},'worker:status-connections');assert.ok(configured.capabilities.includes('documents'));
+ const configured=await report({workflow:{intras:{account:'Synthetic-Buyer',profile:'p'}}});assert.deepEqual(configured.connections,{intras:{account:'synthetic-buyer'}},'worker:status-connections');assert.ok(configured.capabilities.includes('documents'));
  const none=await report({workflow:{}});assert.equal(none.connections,undefined,'worker:status-connections-unset');assert.ok(!none.capabilities.includes('documents'));
 });
 test('worker:orders-gated',async()=>{
@@ -98,7 +99,7 @@ const COMPILED_MUTANTS = [
   { name: 'unscoped-supplier-list', anchor: 'const suppliers = await Supplier.find({ ...searchQuery, organizationId })', replacement: 'const suppliers = await Supplier.find({ ...searchQuery })', assertion: 'masters:list-isolation suppliers' },
   { name: 'trust-body-company-on-create', anchor: 'const supplier = new Supplier({ ...body, organizationId });', replacement: 'const supplier = new Supplier({ ...body, organizationId: body.organizationId || organizationId });', assertion: 'masters:body-company-ignored suppliers' },
   { name: 'unscoped-supplier-id', anchor: 'const supplier = await Supplier.findOne({ _id: id, organizationId }).lean();', replacement: 'const supplier = await Supplier.findOne({ _id: id }).lean();', assertion: 'masters:id-isolation GET suppliers' },
-  { name: 'unscoped-reference-exists', anchor: 'const referenceScope = (key, _id, organizationId) => scopedReferenceFields.includes(key) ? { _id, organizationId } : { _id };', replacement: 'const referenceScope = (key, _id, organizationId) => ({ _id });', assertion: 'masters:foreign-reference supplierId' },
+  { name: 'unscoped-reference-exists', anchor: 'const referenceScope = (key, _id, organizationId) => scopedReferenceFields.includes(key) ? { _id, organizationId } : { _id };', replacement: 'const referenceScope = (key, _id, organizationId) => ({ _id });', assertion: 'masters:foreign-create supplierId' },
   { name: 'restored-intras-literal', anchor: 'const providerAccount = config.workerIntrasAccount;', replacement: 'const providerAccount = "ohmyjapan1";', assertion: 'worker:provider-account' }
 ];
 // Worker source defects in the owned copy: each must flip its named leg-2 assertion.
@@ -106,7 +107,7 @@ const SOURCE_MUTANTS = [
   { name: 'restored-collector-literal', file: 'finalization-worker/intras.mjs', anchor: "!connection||!connection.account||", replacement: "!connection||connection.account!=='ohmyjapan1'||", assertion: 'worker:intras-configured-account' },
   { name: 'ungated-issey-tools', file: 'research-worker/tools.mjs', anchor: 'config?.isseyArchive?toolCatalogue:toolCatalogue.filter(t=>!isseyTools.has(t.name))', replacement: 'toolCatalogue', assertion: 'worker:issey-tools-gated' },
   { name: 'unconditional-issey-prompt', file: 'research-worker/worker.mjs', anchor: "config?.isseyArchive?' '+isseyArchiveContract:''", replacement: "' '+isseyArchiveContract", assertion: 'worker:prompt-gated' },
-  { name: 'silent-status-connections', file: 'finalization-worker/worker.mjs', anchor: '...(this.config.workflow?.intras?.account?{connections:{intras:{account:this.config.workflow.intras.account}}}:{})', replacement: '', assertion: 'worker:status-connections' }
+  { name: 'silent-status-connections', file: 'finalization-worker/worker.mjs', anchor: '...(this.config.workflow?.intras?.account?{connections:{intras:{account:this.config.workflow.intras.account.toLowerCase()}}}:{})', replacement: '', assertion: 'worker:status-connections' }
 ];
 
 export default { name: 'omf-company-masters', covers: BUILT ? [...APP_COVERS, ...WORKER_COVERS] : WORKER_COVERS, async run() {

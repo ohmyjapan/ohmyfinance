@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict'), { ObjectId } = require('mongodb');
 module.exports = async ({db, call, request, upload, token, other, pass, csv, row, origin, root}) => {
+ const masterOrganizationId=new (require('mongodb').ObjectId)(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).organizationId);
  const {aplusCapture} = await import('./finance-pending-fixtures.mjs');
  const a = await request('accounts', {provider:'aplus',name:'Pending synthetic Aplus',primaryCard:'1234',cardIdentifiers:['1234']}); assert.equal(a.status,200);
  const accountId = a.data.account._id;
@@ -56,7 +57,7 @@ module.exports = async ({db, call, request, upload, token, other, pass, csv, row
  assert.equal((await request(`imports/${p.data.id}`,undefined,'GET')).data.rows[0].settlement.state,'pending');
  const expense=new ObjectId(),tax=new ObjectId(),category=new ObjectId();
  await db.collection('accountcategories').insertOne({_id:expense,name:'Synthetic expense',type:'expense',isActive:true,parentId:null});
- await db.collection('taxcategories').insertOne({_id:tax,name:'Synthetic zero rate',rate:0});await db.collection('transactioncategories').insertOne({_id:category,name:'Synthetic class'});
+ await db.collection('taxcategories').insertOne({organizationId:masterOrganizationId,_id:tax,name:'Synthetic zero rate',rate:0});await db.collection('transactioncategories').insertOne({_id:category,name:'Synthetic class'});
  const amexDraftRoute=`imports/${p.data.id}/drafts/2`,ad=(await request(amexDraftRoute,undefined,'GET')).data;
  const approved=await request(amexDraftRoute,{revision:ad.revision,key:ad.key,sourceHash:ad.sourceHash,cardAccountingKey:ad.cardAccounting.key,values:{...ad.values,purpose:'company',customerId:'',accountCategoryId:String(expense),transactionCategoryId:String(category),taxCategoryId:String(tax),taxRate:0},confirm:true,remember:[]},'PUT');assert.equal(approved.status,200,JSON.stringify(approved));
  const decision={decisions:[{line:2,action:'import',draftRevision:approved.data.revision}]};

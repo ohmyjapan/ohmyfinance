@@ -290,6 +290,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useUserStore } from '~/stores/user'
 import {
   ChevronDown,
   Filter,
@@ -305,6 +306,7 @@ import {
 } from 'lucide-vue-next'
 
 const { t, locale } = useI18n()
+const userStore = useUserStore()
 
 const props = defineProps({
   files: {
@@ -543,6 +545,7 @@ const processData = async () => {
   if (supplierNames.length > 0 || customerNames.length > 0) {
     try {
       const preview = await $fetch('/api/transactions/import-preview', {
+        headers: userStore.authHeader,
         method: 'POST',
         body: { supplierNames, customerNames }
       })

@@ -1,8 +1,9 @@
 // server/api/transactions/index.ts
 import { defineEventHandler, getQuery, readBody, getMethod, createError, setHeader } from 'h3'
-import { getTransactions, createCompanyTransaction, getTransactionStats } from '../../services/transactionService'
+import { getTransactions, createCompanyTransaction, getTransactionStats, transactionReferenceModels, referenceScope } from '../../services/transactionService'
 import { requireAuth } from '../../middleware/auth'
 import { ensureConnection } from '../../config/database'
+import mongoose from 'mongoose'
 import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
@@ -77,6 +78,10 @@ export default defineEventHandler(async (event) => {
         statusMessage: 'Bad Request',
         message: '日付は必須です (Date is required)'
       })
+    }
+
+    for (const [key, model] of Object.entries(transactionReferenceModels)) if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
+      if (!mongoose.isValidObjectId(body[key]) || !await model.exists(referenceScope(key, body[key], organizationId))) throw createError({ statusCode: 400, statusMessage: 'Choose an existing transaction reference' })
     }
 
     try {

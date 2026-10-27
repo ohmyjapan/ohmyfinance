@@ -1,7 +1,8 @@
 const assert=require('node:assert/strict'),{ObjectId}=require('mongodb'),path=require('node:path');
 module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,csv,row,pause})=>{
+ const masterOrganizationId=new (require('mongodb').ObjectId)(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).organizationId);
  const owner=(await db.collection('users').findOne({email:'finance-a@example.invalid'}))._id,account=await db.collection('financialaccounts').findOne({ownerId:owner,name:'Synthetic Amex'}),customer=new ObjectId(),policyId=new ObjectId();
- await db.collection('customers').insertOne({_id:customer,name:'Answer test customer',isActive:true});
+ await db.collection('customers').insertOne({organizationId:masterOrganizationId,_id:customer,name:'Answer test customer',isActive:true});
  const policies=db.collection('financelearningpolicies'),policy={_id:policyId,ownerId:owner,key:'synthetic-instruction',title:'Synthetic confirmed instruction',merchants:['instruction retailer'],accountIds:[],decision:{purpose:'customer',customerId:String(customer)},reason:'Explicit test instruction',sourceQuote:'Customer purchases from this retailer',status:'active',revision:1,audit:[]};
  await policies.insertOne(policy);
  const imports=await upload(csv([row({2:'Instruction retailer',5:'1000'}),row({2:'Predictable retailer',5:'1000'})]));assert.equal(imports.status,200);const importId=imports.data.id;

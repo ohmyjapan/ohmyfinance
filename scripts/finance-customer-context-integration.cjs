@@ -1,7 +1,8 @@
 const assert=require('node:assert/strict'),{ObjectId}=require('mongodb'),crypto=require('node:crypto'),path=require('node:path');
 module.exports=async({db,call,request,token,other,origin,pass,root,csv,row})=>{
+ const masterOrganizationId=new (require('mongodb').ObjectId)(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).organizationId);
  const owner=(await db.collection('users').findOne({email:'finance-a@example.invalid'}))._id,otherOwner=(await db.collection('users').findOne({email:'finance-b@example.invalid'}))._id;
- const customerId=new ObjectId(),noteId=new ObjectId();await db.collection('customers').insertOne({_id:customerId,name:'Workflow synthetic customer',isActive:true});
+ const customerId=new ObjectId(),noteId=new ObjectId();await db.collection('customers').insertOne({organizationId:masterOrganizationId,_id:customerId,name:'Workflow synthetic customer',isActive:true});
  const note={_id:noteId,ownerId:owner,customerId,kind:'purchase_workflow',scope:'current_workflow',status:'confirmed',revision:1,confirmedAt:new Date('2026-09-12T00:00:00Z'),routes:['business_orders_and_ships_requested_items','customer_shop_account_business_card'],sourceQuestion:'Does the customer request items for you to buy and ship?',sourceQuote:'Yes, or they order on their own shop account using our business card.',audit:[{private:'Not passed into inference'}]};
  await db.collection('financecustomercontexts').insertMany([note,{...note,_id:new ObjectId(),ownerId:otherOwner,sourceQuote:'Other owner private note'},{...note,_id:new ObjectId(),customerId:new ObjectId(),sourceQuote:'Inactive customer private note'}]);
  const created=await request('accounts',{name:'Workflow synthetic account',primaryCard:'54321',cardIdentifiers:['54321'],otpRecipient:'workflow@example.invalid',otpMailbox:'workflow@example.invalid'});assert.equal(created.status,200);const accountId=created.data.account._id;

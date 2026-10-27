@@ -41,7 +41,14 @@ async function main(){
    }catch(error){if(ASSISTANT_ONLY)console.error('REQUEST_FAILED '+JSON.stringify({method,path:route.split('?')[0],elapsedMs:Date.now()-started,budgetMs:REQUEST_BUDGET_MS,error:String(error?.name||'Error')}));throw error;}
   }
   const register=async email=>{const r=await call('/api/auth/register',{method:'POST',body:{email,password:'Synthetic-password-Only1!',name:'Finance test'}});assert.equal(r.status,200,JSON.stringify(r));return r.data.tokens.accessToken;};
-  const token=await register('finance-a@example.invalid'),other=await register('finance-b@example.invalid');
+  let token=await register('finance-a@example.invalid'),other=await register('finance-b@example.invalid');
+  const unselectedToken=token;
+  const masterCompany=new ObjectId(),masterOwner=(await db.collection('users').findOne({email:'finance-a@example.invalid'}))._id;
+  await db.collection('organizations').insertOne({_id:masterCompany,name:'Synthetic master company',slug:'finance-master-company',isActive:true,members:[{userId:masterOwner,role:'owner',joinedAt:new Date()}]});
+  const selected=await call('/api/auth/switch-organization',{method:'POST',token,body:{organizationId:String(masterCompany)}});assert.equal(selected.status,200);token=selected.data.tokens.accessToken;
+  const otherCompany=new ObjectId(),otherOwner=(await db.collection('users').findOne({email:'finance-b@example.invalid'}))._id;
+  await db.collection('organizations').insertOne({_id:otherCompany,name:'Synthetic foreign master company',slug:'finance-foreign-master-company',isActive:true,members:[{userId:otherOwner,role:'owner',joinedAt:new Date()}]});
+  const otherSelected=await call('/api/auth/switch-organization',{method:'POST',token:other,body:{organizationId:String(otherCompany)}});assert.equal(otherSelected.status,200);other=otherSelected.data.tokens.accessToken;
   const request=(route,body,method='POST')=>call('/api/finance/'+route,{token,body,method});
   assert.equal((await call('/api/finance/accounts')).status,401);assert.equal((await call('/api/finance/collector/accounts')).status,401);pass('finance routes require the correct authorization');
   const input={name:'Synthetic Amex',primaryCard:'12345',cardIdentifiers:['12345','23456'],otpRecipient:'original@example.invalid',otpMailbox:'forwarded@example.invalid'};
@@ -63,7 +70,7 @@ async function main(){
   if(process.env.OMF_TEST_PURCHASE_LINKS_ONLY){await require('./finance-purchase-links-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted purchase connection checks passed');return;}
   if(process.env.OMF_TEST_EXPORT_ONLY){await require('./finance-export-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row,directory});console.log(checks+' targeted export checks passed');return;}
   if(process.env.OMF_TEST_PENDING_ONLY){await require('./finance-pending-integration.cjs')({db,call,request,upload,token,other,pass,csv,row,origin,root});console.log(checks+' targeted pending checks passed');return;}
-  if(process.env.OMF_TEST_APLUS_ONLY){await require('./finance-aplus-integration.cjs')({db,call,request,token,other,pass,root,origin});console.log(checks+' targeted Aplus checks passed');return;}
+  if(process.env.OMF_TEST_APLUS_ONLY){await require('./finance-aplus-integration.cjs')({db,call,request,token:unselectedToken,other,pass,root,origin});console.log(checks+' targeted Aplus checks passed');return;}
   if(process.env.OMF_TEST_IMPORT_OVERLAP_ONLY){await require('./finance-import-overlap-integration.cjs')({db,call,request,upload,token,other,pass,csv,row,origin,root});console.log(checks+' targeted source overlap checks passed');return;}
   if(process.env.OMF_TEST_INVENTORY_REVIEW_ONLY){await require('./finance-inventory-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted inventory review checks passed');return;}
   if(process.env.OMF_TEST_CUSTOMER_REVIEW_ONLY){await require('./finance-customer-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted customer review checks passed');return;}
@@ -71,7 +78,7 @@ async function main(){
   if(process.env.OMF_TEST_DOCUMENTS_ONLY){await require('./finance-document-evidence-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted document checks passed');return;}
   if(process.env.OMF_TEST_ACCOUNTING_ASSESSMENT_ONLY){await require('./finance-accounting-assessment-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });console.log(checks+' targeted accounting assessment checks passed');return;}
   if(process.env.OMF_TEST_PURCHASE_ACCOUNTS_ONLY){await require('./finance-purchase-accounts-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });console.log(checks+' targeted purchase accounting checks passed');return;}
-  if(process.env.OMF_TEST_ACCOUNTING_ONLY){await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token, other, origin, pass, root, csv, row, pause });console.log(`${checks} targeted finance accounting checks passed`);return;}
+  if(process.env.OMF_TEST_ACCOUNTING_ONLY){await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token:unselectedToken, other, origin, pass, root, csv, row, pause });console.log(`${checks} targeted finance accounting checks passed`);return;}
   if(process.env.OMF_TEST_INTAKE_ONLY){await require('./finance-intake-integration.cjs')({db,call,token,other,deviceToken,origin,pass,root,pause});console.log(checks+' targeted intake checks passed');return;}
   if(process.env.OMF_TEST_PAYMENTS_ONLY){await require('./finance-payment-match-integration.cjs')({db,call,request,upload,token,other,deviceToken,origin,pass,root,csv,row,pause,directory});console.log(checks+' targeted payment matching checks passed');return;}
   if(process.env.OMF_TEST_BANK_COLLECTION_ONLY){await require('./finance-bank-collection-integration.cjs')({db,call,request,upload,token,other,deviceToken,origin,pass,root,csv,row,pause,directory});console.log(checks+' targeted bank collection checks passed');return;}
@@ -191,7 +198,7 @@ async function main(){
   await require('./finance-dialogue-integration.cjs')({ db, call, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
   await require('./finance-preparation-integration.cjs')({ db, call, request, upload, token, other, deviceToken, pass, csv, row });
   await require('./finance-supplier-integration.cjs')({ db, call, request, upload, token, other, deviceToken, origin, pass, root, csv, row, pause });
-  await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token, other, origin, pass, root, csv, row, pause });
+  await require('./finance-accounting-integration.cjs')({ db, call, request, upload, token:unselectedToken, other, origin, pass, root, csv, row, pause });
   await require('./finance-purchase-accounts-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });
   await require('./finance-accounting-assessment-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });
   await require('./finance-customer-context-integration.cjs')({ db, call, request, token, other, origin, pass, root, csv, row });
@@ -199,7 +206,7 @@ async function main(){
   await require('./finance-customer-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
   await require('./finance-service-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
   await require('./finance-inventory-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
-  await require('./finance-aplus-integration.cjs')({db,call,request,token,other,pass,root,origin});
+  await require('./finance-aplus-integration.cjs')({db,call,request,token:unselectedToken,other,pass,root,origin});
   await require('./finance-purchase-links-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});
   console.log(`${checks} finance integration checks passed`);
  }catch(error){console.error(error);console.error(logs.slice(-3500));process.exitCode=1;}

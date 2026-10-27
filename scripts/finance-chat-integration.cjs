@@ -1,7 +1,8 @@
 const assert=require('node:assert/strict'),{ObjectId}=require('mongodb'),path=require('node:path'),crypto=require('node:crypto');
 module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,csv,row,pause})=>{
+ const masterOrganizationId=new (require('mongodb').ObjectId)(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).organizationId);
  const owner=(await db.collection('users').findOne({email:'finance-a@example.invalid'}))._id,account=await db.collection('financialaccounts').findOne({ownerId:owner,name:'Synthetic Amex'}),customer=new ObjectId();
- await db.collection('customers').insertOne({_id:customer,name:'OMJ10-CHAT-TEST',isActive:true});
+ await db.collection('customers').insertOne({organizationId:masterOrganizationId,_id:customer,name:'OMJ10-CHAT-TEST',isActive:true});
  const before={tx:await db.collection('transactions').countDocuments(),entries:await db.collection('financeentries').countDocuments()};
  const imported=await upload(csv([row({2:'Chat retailer',5:'617'}),row({2:'Chat unknown retailer',5:'616'})]));assert.equal(imported.status,200);const importId=imported.data.id;
  const base='/api/finance-chat/imports/'+importId+'/drafts/2',draftPath='/api/finance/imports/'+importId+'/drafts/2';

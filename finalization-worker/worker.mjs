@@ -40,7 +40,7 @@ export class FinalizationWorker {
  async cycle() {
   let status;
   // The worker reports its own Intras account (the one setting, in its vault); the server addresses document targets to it.
-  try { status=await this.api('status',{capabilities:['purchase','inventory','shipment','receipt_inference',...(this.config.workflow?.intras?['documents']:[])],...(this.config.workflow?.intras?.account?{connections:{intras:{account:this.config.workflow.intras.account}}}:{})}); }
+  try { status=await this.api('status',{capabilities:['purchase','inventory','shipment','receipt_inference',...(this.config.workflow?.intras?['documents']:[])],...(this.config.workflow?.intras?.account?{connections:{intras:{account:this.config.workflow.intras.account.toLowerCase()}}}:{})}); }
   catch(e){if(e.status===403)return false;throw e;}
   if(!status.config.enabled)return false;
   const {run}=await this.api('claim');if(!run)return false;

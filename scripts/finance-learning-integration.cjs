@@ -3,9 +3,10 @@ const path=require('node:path');
 const fs=require('node:fs');
 const {ObjectId}=require('mongodb');
 module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,csv,row,pause})=>{
+ const masterOrganizationId=new (require('mongodb').ObjectId)(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).organizationId);
  const {fixture}=await import('./finance-learning-fixture.mjs'),{prepareWorkbook}=await import('./finance-learning-workbook.mjs'),{loadLearningBundle}=await import('./finance-learning-import.mjs');
  const owner=await db.collection('users').findOne({email:'finance-a@example.invalid'}),account=await db.collection('financialaccounts').findOne({ownerId:owner._id,name:'Synthetic Amex'}),customerId=new ObjectId();
- await db.collection('customers').insertOne({_id:customerId,name:'Learning test customer',isActive:true});
+ await db.collection('customers').insertOne({organizationId:masterOrganizationId,_id:customerId,name:'Learning test customer',isActive:true});
  const {bytes,config}=fixture({ownerId:String(owner._id),accountBindings:[{accountId:String(account._id),labels:['Test card','Sub card']}],customerAliases:[{customerId:String(customerId),name:'Learning test customer',labels:['Alias','Customer code']}]});
  const bundle=prepareWorkbook(bytes,config),names=['transactions','financeentries','financedrafts','financereviews'];
  const counts=async()=>Object.fromEntries(await Promise.all(names.map(async n=>[n,await db.collection(n).countDocuments()]))),before=await counts();

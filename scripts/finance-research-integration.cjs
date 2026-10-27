@@ -1,11 +1,12 @@
 const assert=require('node:assert/strict'),crypto=require('node:crypto');
 module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,csv,row})=>{
+ const masterOrganizationId=new (require('mongodb').ObjectId)(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).organizationId);
  const imported=await upload(csv([row({2:'Synthetic research shop',5:'4200'}),row({2:'Research stale shop',5:'4300'})]));assert.equal(imported.status,200);
  const importId=imported.data.id,account=await db.collection('financialaccounts').findOne({name:'Synthetic Amex'});
  const base='/api/finance-research/imports/'+importId+'/drafts/2',draftPath='/api/finance/imports/'+importId+'/drafts/2';
  const getDraft=async()=>(await call(draftPath,{token})).data,bind=d=>({revision:d.revision,key:d.key,sourceHash:d.sourceHash});
  assert.equal((await call(base)).status,401);assert.equal((await call(base,{token:other})).status,404);assert.equal((await call(base,{token:deviceToken})).status,401);
- const customerId=(await db.collection('customers').insertOne({name:'Synthetic customer',isActive:true})).insertedId.toString();
+ const customerId=(await db.collection('customers').insertOne({organizationId:masterOrganizationId,name:'Synthetic customer',isActive:true})).insertedId.toString();
  const counts={tx:await db.collection('transactions').countDocuments(),entries:await db.collection('financeentries').countDocuments()};
  const workerInfo=await call('/api/finance-chat/agents',{method:'POST',token,body:{accountIds:[String(account._id)],researchEnabled:true}});assert.equal(workerInfo.status,200);
  const worker=workerInfo.data.token,workerCall=(route,body={})=>call('/api/finance-research/worker/'+route,{method:'POST',token:worker,body});

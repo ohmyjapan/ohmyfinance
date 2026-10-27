@@ -88,6 +88,15 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   const seededB=await ok('/api/seed',tokenB,'POST');assert.equal(seededB.results.taxCategories.created,seeded.results.taxCategories.created,'masters:seed-scoped B');assert.equal(await taxcategories.countDocuments({organizationId:B,name:'課税仕入'}),1,'masters:seed-scoped B');
   pass('vendors, import preview, import auto-create and the tax seed read and write only the token company');
 
+  // REST create must reject foreign references before any transaction is saved.
+  for(const [key,name] of [['supplierId','suppliers'],['customerId','customers'],['taxCategoryId','taxcategories']]){
+   const productName='REST_FOREIGN_'+key;
+   const r=await call('/api/transactions',tokenA,'POST',{date:'2026-10-05',amount:700,productName,[key]:idOf(rows[name+'B'])});
+   assert.equal(r.status,400,'masters:foreign-create '+key);
+   assert.equal(await db.collection('transactions').countDocuments({productName}),0,'masters:foreign-create no row');
+   await ok('/api/transactions',tokenA,'POST',{date:'2026-10-05',amount:700,productName:'REST_OWN_'+key,[key]:idOf(rows[name+'A'])});
+  }
+
   // M4: a foreign supplier, customer or tax category is not an existing reference for this company (REST update and Navi create).
   const txA=await ok('/api/transactions',tokenA,'POST',{date:'2026-10-01',amount:500,productName:'MASTER_TX_A'}),txAId=idOf(txA);
   const put=(body,token=tokenA)=>call('/api/transactions/'+txAId,token,'PUT',body);

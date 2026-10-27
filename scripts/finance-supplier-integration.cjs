@@ -1,11 +1,12 @@
 // Entirely synthetic records in the isolated finance regression database.
 const assert=require('node:assert/strict'),{ObjectId}=require('mongodb'),crypto=require('node:crypto'),path=require('node:path');
 module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass,root,csv,row,pause})=>{
+ const masterOrganizationId=new (require('mongodb').ObjectId)(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).organizationId);
  const imported=await upload(csv([row({2:'Supplier memory descriptor',5:'7651'}),row({2:'Supplier memory descriptor',5:'7652'}),row({2:'前回分口座振替金額',5:'-7653'})]));assert.equal(imported.status,200);
  const batchId=imported.data.id,base='/api/finance/imports/'+batchId,endpoint=base+'/merchant-links/2';
  const sid=new ObjectId(),number='T0000000000000',evidence='Synthetic registry observation only';
  const proof={version:1,number,legalName:'Synthetic operator',source:'nta_public_site',method:'browser_review',scope:'issuer_registration_only',status:'active_at_check',sourceUrl:'https://www.invoice-kohyo.nta.go.jp/regno-search/detail?selRegNo=0000000000000',checkedAt:new Date().toISOString(),asOf:new Date().toISOString().slice(0,10),registeredFrom:'2023-10-01',evidence:{text:evidence,sha256:crypto.createHash('sha256').update(evidence).digest('hex')}};
- await db.collection('suppliers').insertOne({_id:sid,name:'Synthetic supplier memory',companyName:proof.legalName,invoiceNumber:number,metadata:{invoiceVerification:proof,privateOther:'do-not-return-this'}});
+ await db.collection('suppliers').insertOne({organizationId:masterOrganizationId,_id:sid,name:'Synthetic supplier memory',companyName:proof.legalName,invoiceNumber:number,metadata:{invoiceVerification:proof,privateOther:'do-not-return-this'}});
  const protectedState=async()=>{const state={};for(const name of ['transactions','financeentries','financedrafts','financereviews','financeimports','suppliers'])state[name]=JSON.stringify(await db.collection(name).find({}).sort({_id:1}).toArray());return state;};
  const get=async()=>(await call(endpoint,{token})).data;
  let view=await get();assert.equal(view.revision,0);assert.equal(view.match.status,'unmatched');
