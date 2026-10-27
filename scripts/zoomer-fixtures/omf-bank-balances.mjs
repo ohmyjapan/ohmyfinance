@@ -148,7 +148,8 @@ export default { name: 'omf-bank-balances', covers: COVERS, async run() {
   const leg = async (name, fn) => { const key = name.split(' ')[0]; if (!want(key)) return; const t = Date.now(); try { lines.push(name + ': ' + await fn() + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); green.add(key); } catch (e) { pass = false; const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 2400); lines.push(name + ': ' + (/^(SETUP|NOT RUN)/.test(msg) ? '' : 'RED ') + msg); } };
   // --test-timeout: a hung test fails under its own name (never a silent outer wait)
   const unit = async (file, env = {}, pattern = null) => runChild(['--test', '--test-concurrency=1', '--test-timeout=900000', ...(pattern ? ['--test-name-pattern=' + pattern] : []), file], env, 2400000);
-  const harness = async (env = {}, ui = false) => runChild(['--import', 'tsx', INTEGRATION, ...(ui ? ['--ui'] : [])], { MONGO_URI: '', MONGODB_URI: '', NUXT_MONGO_URI: '', ...(EVIDENCE && ui ? { OMF_BALANCE_EVIDENCE: EVIDENCE } : {}), ...env }, 2400000);
+  // A harness run that reached its legs (any PASS/FAIL line or its RECEIPT) ran on its owned database — also inside M (its controls and defects).
+  const harness = async (env = {}, ui = false) => { const r = await runChild(['--import', 'tsx', INTEGRATION, ...(ui ? ['--ui'] : [])], { MONGO_URI: '', MONGODB_URI: '', NUXT_MONGO_URI: '', ...(EVIDENCE && ui ? { OMF_BALANCE_EVIDENCE: EVIDENCE } : {}), ...env }, 2400000); if (r.receipt || r.passes.length || r.fails.length) executed = true; return r; };
   try {
     await leg('U node --test ' + UNIT, async () => {
       const r = await unit(UNIT), t = tests(r); await keep('U', t.out); counts.unitTests = t.pass;
