@@ -62,13 +62,23 @@ async function harness() {
   // The new service (absent before this plan): its absence is a named assertion of the legs that drive the clock, not a setup error.
   let svc = null; try { svc = await import(u('server/services/financeBankBalanceService.ts')); } catch { svc = null; }
   const { mongoose, jwt, h3, User } = m, { FinanceCollector } = m.Finance, { BankAccount, BankJob, BankTemplate } = m.Pay;
-  await mongoose.connect(uri); assert.equal(mongoose.connection.name, dbName);
+  // Bounded database operations (the services share this connection): a hung operation errors instead of waiting without end.
+  await mongoose.connect(uri, { serverSelectionTimeoutMS: 30000, socketTimeoutMS: 120000 }); assert.equal(mongoose.connection.name, dbName);
   await m.Pay.initializePaymentMatching(); await m.Finance.initializeFinance?.();
   const db = mongoose.connection.db, balances = db.collection('financebankbalances');
   const app = h3.createApp(); app.use(m.auth); // The card collector routes (unchanged, out of scope) are mounted too: the real claimWork asks them first.
   app.use(h3.defineEventHandler(e => e.path.startsWith('/api/finance-payments/collector/') ? m.collector(e) : e.path.startsWith('/api/finance-payments/') ? m.payments(e) : e.path.startsWith('/api/finance/') ? m.finance(e) : undefined));
   const server = m.http.createServer(h3.toNodeListener(app)); await new Promise(r => server.listen(0, '127.0.0.1', r)); const origin = 'http://127.0.0.1:' + server.address().port;
-  const call = async (route, { method = 'GET', token, body, raw, type = 'application/json' } = {}) => { const r = await fetch(origin + route, { method, headers: { 'Content-Type': type, ...(token ? { Authorization: 'Bearer ' + token } : {}) }, ...(raw !== undefined ? { body: raw } : body === undefined ? {} : { body: JSON.stringify(body) }) }); const text = await r.text(); let data; try { data = JSON.parse(text); } catch { data = text; } return { status: r.status, data }; };
+  // Every request is bounded (REQUEST_MS) and recorded as the leg's last step; a slow one prints a STEP progress line, so a stalled leg
+  // fails with its own name and step instead of vanishing into the outer wait.
+  const REQUEST_MS = Number(process.env.OMF_BALANCE_REQUEST_MS) || 60000; let lastStep = 'start';
+  const call = async (route, { method = 'GET', token, body, raw, type = 'application/json' } = {}) => {
+    const t = Date.now(); lastStep = method + ' ' + route.split('?')[0];
+    const r = await fetch(origin + route, { method, signal: AbortSignal.timeout(REQUEST_MS), headers: { 'Content-Type': type, ...(token ? { Authorization: 'Bearer ' + token } : {}) }, ...(raw !== undefined ? { body: raw } : body === undefined ? {} : { body: JSON.stringify(body) }) }).catch(e => { throw new Error('request ' + lastStep + ' failed after ' + (Date.now() - t) + ' ms: ' + (e?.name || 'Error')); });
+    const text = await r.text(); let data; try { data = JSON.parse(text); } catch { data = text; }
+    const ms = Date.now() - t; if (ms > 5000) console.log('STEP slow ' + ms + ' ms ' + lastStep + ' → ' + r.status);
+    return { status: r.status, data };
+  };
   const api = '/api/finance-payments/', capi = api + 'collector/', oid = v => new mongoose.Types.ObjectId(String(v));
   const ok = (r, label) => { assert.equal(r.status, 200, label + ' ' + JSON.stringify(r.data).slice(0, 400)); return r.data; };
   const owner = async tag => { const email = 'balance-' + tag + '@example.invalid', user = await User.create({ email, name: 'Synthetic owner ' + tag, password: 'Synthetic-only-Strong-Password1!' }), id = String(user._id); return { id, token: jwt.sign({ userId: id, email, type: 'access', jti: randomUUID() }, process.env.JWT_SECRET, { expiresIn: '3h' }) }; };
@@ -86,7 +96,7 @@ async function harness() {
   const receiptOf = (job, patch = {}) => { const p = job.snapshot.provider, s = SOURCES[p]; return { v: 1, jobId: job.jobId, snapshotHash: job.snapshotHash, provider: p, variant: job.snapshot.variant, currency: 'JPY', amount: 1234567, available: p === 'rakuten' ? 1200000 : null, asOf: new Date(Date.now() - 60000).toISOString(), observedAt: new Date().toISOString(), source: { ...s, labels: [...s.labels] }, ...patch }; };
   const postReceipt = (dev, job, body, query = {}) => call(capi + 'bank/balance?' + new URLSearchParams({ jobId: job.jobId, snapshotHash: job.snapshotHash, ...query }), { method: 'POST', token: dev.token, raw: typeof body === 'string' ? body : JSON.stringify(body) });
   const finish = async (dev, job, patch = {}) => { ok(await postReceipt(dev, job, receiptOf(job, patch)), 'receipt'); ok(await status(dev, job.jobId, 'complete', 'fictional balance'), 'complete'); };
-  const tick = now => { assert.ok(svc && typeof svc.runBalanceSchedule === 'function', 'balance:hourly-tick-service (server/services/financeBankBalanceService.ts runBalanceSchedule)'); return svc.runBalanceSchedule(now); };
+  const tick = now => { assert.ok(svc && typeof svc.runBalanceSchedule === 'function', 'balance:hourly-tick-service (server/services/financeBankBalanceService.ts runBalanceSchedule)'); lastStep = 'tick ' + now.toISOString(); return svc.runBalanceSchedule(now); };
   const balanceJobs = (id, filter = {}) => BankJob.find({ bankAccountId: oid(id), kind: 'balance', ...filter }).sort({ requestedAt: 1, _id: 1 }).lean();
   const queuedFor = async (r, ids) => r.queued.length ? BankJob.countDocuments({ jobId: { $in: r.queued }, bankAccountId: { $in: ids.map(oid) } }) : 0;
   const readView = (o, id, now) => { assert.ok(svc && typeof svc.readBankBalance === 'function', 'balance:view-service'); return svc.readBankBalance(o.id, id, now); };
@@ -94,7 +104,14 @@ async function harness() {
   // Every leg starts with every earlier leg's balance setting off, so a tick acts only on the leg's own accounts.
   const quiet = () => BankAccount.updateMany({ 'balanceSetting.enabled': true }, { $set: { 'balanceSetting.enabled': false } });
   let checks = 0, failed = 0;
-  const leg = async (name, fn) => { const key = name.split(' ')[0]; if (ONLY.length && !ONLY.includes(key)) return; try { await quiet(); await fn(); checks++; console.log('PASS ' + name); } catch (e) { failed++; console.log('FAIL ' + name + ': ' + String(e?.message || e).replace(/\s+/g, ' ').slice(0, 900)); } };
+  // A leg is bounded too (LEG_MS); its START/PASS/FAIL lines carry the elapsed time and, on a timeout, the last step it reached.
+  const LEG_MS = Number(process.env.OMF_BALANCE_LEG_MS) || 600000;
+  const leg = async (name, fn) => {
+    const key = name.split(' ')[0]; if (ONLY.length && !ONLY.includes(key)) return; const t = Date.now(); let timer; console.log('START ' + key + ' ' + new Date().toISOString());
+    try { await Promise.race([(async () => { await quiet(); await fn(); })(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('leg timeout after ' + LEG_MS + ' ms; last step ' + lastStep)), LEG_MS); })]); checks++; console.log('PASS ' + name + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); }
+    catch (e) { failed++; console.log('FAIL ' + name + ': ' + String(e?.message || e).replace(/\s+/g, ' ').slice(0, 900) + ' (' + Math.round((Date.now() - t) / 1000) + 's, last step ' + lastStep + ')'); }
+    finally { clearTimeout(timer); }
+  };
 
   await leg('S0 the claim contract without any new route: the real collector claim advertises balance-v1 (recorded by a spy OMF), and a balance job on the queue is never handed to a claim without that capability', async () => {
     const bodies = [], spy = m.http.createServer((req, res) => { let b = ''; req.on('data', d => { b += d; }); req.on('end', () => { if (req.url.endsWith('/bank/claim')) bodies.push(b); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(req.url.endsWith('/bank/claim') ? { job: null } : { account: null })); }); });
@@ -340,10 +357,12 @@ async function harness() {
     const c4b = await I.claimWork(config, null), n4 = inquiries; const r4 = await run(c4b.bank); assert.equal(inquiries, n4, 'balance:no-second-login'); assert.ok(r4.failed, 'balance:interrupted-fails');
     assert.equal((await BankJob.findOne({ jobId: c4.bank.job.jobId }).lean()).state, 'failed');
     // a receipt OMF refuses for good (the account changed meanwhile) is kept on the PC, never resent; the job fails with the reason
+    // (deterministic: the remaining hourly jobs first — their claim order among equal request times is not defined — then a manual K job)
     const K = ids[5]; let refusedChecked = false;
-    for (let i = 0; i < 6; i++) {
-      const cn = await I.claimWork(config, null); if (!cn.bank) break;
-      if (String(cn.bank.account._id) !== K) { const rn = await run(cn.bank); assert.equal(rn.failed ?? null, null, 'balance:native-run-' + i); continue; }
+    for (let i = 0; i < 6; i++) { const cn = await I.claimWork(config, null); if (!cn.bank) break; const rn = await run(cn.bank); assert.equal(rn.failed ?? null, null, 'balance:native-run-' + i); }
+    ok(await refresh(o, K), 'manual K');
+    for (let i = 0; i < 1; i++) {
+      const cn = await I.claimWork(config, null); assert.equal(String(cn.bank?.account?._id), K, 'balance:manual-k-claimed');
       await BankAccount.updateOne({ _id: oid(K) }, { $set: { 'connection.accountIdentity.number': '0000009' } });
       const r5 = await run(cn.bank); assert.ok(r5.failed, 'balance:refused-receipt-fails');
       const dir5 = path.join(directory, 'outbox', 'balance', K, cn.bank.job.jobId), m5 = JSON.parse(await fsp.readFile(path.join(dir5, 'manifest.json'), 'utf8'));
@@ -363,6 +382,77 @@ async function harness() {
     assert.equal((await tick(at(D2, 11))).queued.length, 0, 'balance:malformed-off'); const v = ok(await view(o, P), 'view'); assert.equal(v.status.state, 'off', 'balance:malformed-reads-off');
     const plugin = await fsp.readFile(path.join(SRC, 'server/plugins/bankSchedule.ts'), 'utf8');
     assert.match(plugin, /runBalanceSchedule/, 'balance:plugin-drives-hourly'); assert.match(plugin, /OMF_BANK_SCHEDULE_MS=0/, 'balance:plugin-off-switch-kept');
+  });
+
+  // Seeded fictional history (owned DB only): a retrieval with its imported capture, then balance-only jobs.
+  const seedRetrieve = async (o, id, { state = 'complete', at: when, imported = true } = {}) => {
+    const jobId = randomUUID(), snapshot = { provider: 'rakuten', variant: 'standard', fictional: true };
+    await db.collection('financebankjobs').insertOne({ ownerId: oid(o.id), bankAccountId: oid(id), jobId, kind: 'retrieve', state, open: false, requestedAt: when, completedAt: when, lastMessage: 'fictional ' + state, snapshot, snapshotHash: sha256(JSON.stringify(snapshot)), statementIds: [], observation: null, trigger: 'manual', createdAt: when, updatedAt: when });
+    if (imported) await db.collection('financebankstatements').insertOne({ ownerId: oid(o.id), hash: sha256(jobId), name: 'fictional-' + jobId.slice(0, 6) + '.csv', size: 10, capture: { jobId, bankAccountId: String(id), kind: 'retrieve', channel: 'collector', state: 'imported', rows: { new: 1, existing: 0, differs: 0 }, receivedAt: when }, createdAt: when, updatedAt: when });
+    return jobId;
+  };
+  const seedBalances = async (o, id, n, from) => { const docs = []; for (let i = 0; i < n; i++) { const when = new Date(from.getTime() + i * 3600000), snapshot = { kind: 'balance', provider: 'rakuten', variant: 'standard', currency: 'JPY' }; docs.push({ ownerId: oid(o.id), bankAccountId: oid(id), jobId: randomUUID(), kind: 'balance', state: 'complete', open: false, requestedAt: when, completedAt: when, lastMessage: '残高を更新しました', snapshot, snapshotHash: sha256(JSON.stringify(snapshot)), statementIds: [], observation: null, balance: { trigger: 'hourly', claimedAt: when }, createdAt: when, updatedAt: when }); } await db.collection('financebankjobs').insertMany(docs); };
+
+  await leg('S10 statement history survives hourly balance history: after more than 50 newer balance jobs the owner jobs route still returns the latest non-superseded retrieval with its captures — its failure when that is the latest, never an older success — within the ordinary bounded list and only for this owner', async () => {
+    const o = await owner('s10'), other = await owner('s10x'), R = await account(o, 'S10 楽天銀行', RAKUTEN), X = await account(other, 'S10 他の所有者', RAKUTEN);
+    const base = Date.now() - 200 * 3600000, okJob = await seedRetrieve(o, R, { at: new Date(base) }); await seedRetrieve(other, X, { at: new Date(base + 1000) });
+    await seedBalances(o, R, 55, new Date(base + 2 * 3600000));
+    const list = async who => ok(await call(api + 'bank/accounts/' + R + '/jobs', { token: who.token }), 'jobs').jobs;
+    let jobs = await list(o);
+    assert.ok(jobs.length <= 51, 'balance:history-bounded ' + jobs.length); assert.equal(jobs.filter(j => j.kind === 'balance').length, 50, 'balance:history-recent-50');
+    const kept = jobs.find(j => j.kind === 'retrieve'); assert.equal(kept?.jobId, okJob, 'balance:history-keeps-statement');
+    assert.equal(kept.captures?.[0]?.state, 'imported', 'balance:history-keeps-capture');
+    assert.equal((await call(api + 'bank/accounts/' + R + '/jobs', { token: other.token })).status, 404, 'balance:history-owner-scoped');
+    const failedJob = await seedRetrieve(o, R, { state: 'failed', at: new Date(base + 3600000), imported: false }); await seedRetrieve(o, R, { state: 'superseded', at: new Date(base + 1.5 * 3600000), imported: false });
+    jobs = await list(o); const retrieves = jobs.filter(j => j.kind === 'retrieve' && j.state !== 'superseded');
+    assert.deepEqual(retrieves.map(j => j.jobId), [failedJob], 'balance:history-latest-failure-not-older-success'); assert.ok(jobs.length <= 51, 'balance:history-bounded-2');
+    assert.equal(jobs.some(j => j.jobId === okJob), false, 'balance:history-no-older-substitution');
+  });
+
+  await leg('S11 an abandoned PC: after PC A claimed a balance job and vanished, the owner explicitly selecting PC B (or turning the check off and on) closes only that long-expired job (kept as a record) and B receives the next job; a live A job is never stolen; a closed (open:false) job neither blocks nor is reclaimed', async () => {
+    const o = await owner('s11'), R = await account(o, 'S11 楽天銀行', RAKUTEN), A = await device(o, [R], 'Synthetic PC A'), Bpc = await device(o, [R], 'Synthetic PC B');
+    await enable(o, R, A);
+    const j1 = ok(await refresh(o, R), 'refresh').job; const a1 = await claim(A); assert.equal(a1.job?.jobId, j1.jobId);
+    // A is still alive (live lease): switching to B never steals it, nothing runs in parallel
+    ok(await save(o, R, { enabled: true, collectorId: Bpc.id, revision: 1 }), 'select B while A is live');
+    assert.equal((await BankJob.findOne({ jobId: j1.jobId }).lean()).state, 'running', 'balance:live-not-stolen');
+    assert.equal((await refresh(o, R)).status, 409, 'balance:live-blocks-refresh'); assert.equal((await claim(Bpc)).job, null, 'balance:live-not-reclaimed-by-b');
+    // A vanished: its lease expired only a minute ago — not yet abandoned; long ago — the explicit reconfiguration closes it
+    await BankJob.updateOne({ jobId: j1.jobId }, { $set: { leaseUntil: new Date(Date.now() - 60000) } });
+    ok(await save(o, R, { enabled: true, collectorId: Bpc.id, revision: 2 }), 'save again (recent expiry)');
+    assert.equal((await BankJob.findOne({ jobId: j1.jobId }).lean()).state, 'running', 'balance:recent-expiry-not-abandoned');
+    await BankJob.updateOne({ jobId: j1.jobId }, { $set: { leaseUntil: new Date(Date.now() - 20 * 60000) } });
+    const s3 = ok(await save(o, R, { enabled: true, collectorId: Bpc.id, revision: 3 }), 'explicit reconfiguration to B');
+    const old = await BankJob.findOne({ jobId: j1.jobId }).lean();
+    assert.deepEqual([old.state, old.open, String(old.balance.collectorId), !!old.balance.claimedAt], ['failed', false, A.id, true], 'balance:abandoned-closed-and-kept');
+    assert.ok(['due', 'done'].includes(s3.status.state), 'balance:recovered-state ' + s3.status.state);
+    const j2 = ok(await refresh(o, R), 'refresh after recovery').job; assert.equal((await claim(A)).job, null, 'balance:abandoned-not-reclaimed-by-a');
+    const b2 = await claim(Bpc); assert.equal(b2.job?.jobId, j2.jobId, 'balance:b-receives-next'); await finish(Bpc, b2.job);
+    assert.equal(await BankJob.countDocuments({ bankAccountId: oid(R), kind: 'balance' }), 2, 'balance:history-kept');
+    // a closed job (open:false, as a statement request leaves an expired one) is no blocker and is never reclaimed
+    const j3 = ok(await refresh(o, R), 'refresh 3').job; const b3 = await claim(Bpc); assert.equal(b3.job?.jobId, j3.jobId);
+    await BankJob.updateOne({ jobId: j3.jobId }, { $set: { open: false, leaseUntil: new Date(Date.now() - 1000) } });
+    assert.equal((await claim(Bpc)).job, null, 'balance:closed-not-reclaimed');
+    const j4 = await refresh(o, R); assert.equal(j4.status, 200, 'balance:closed-not-blocking ' + JSON.stringify(j4.data).slice(0, 200));
+    const b4 = await claim(Bpc); assert.equal(b4.job?.jobId, j4.data.job.jobId, 'balance:next-after-closed'); await finish(Bpc, b4.job);
+    // the same PC vanished: turning the check off and on again is the owner's recovery
+    const j5 = ok(await refresh(o, R), 'refresh 5').job; await claim(Bpc); await BankJob.updateOne({ jobId: j5.jobId }, { $set: { leaseUntil: new Date(Date.now() - 20 * 60000) } });
+    ok(await save(o, R, { enabled: false, collectorId: Bpc.id, revision: 4 }), 'off'); assert.equal((await BankJob.findOne({ jobId: j5.jobId }).lean()).state, 'failed', 'balance:off-closes-abandoned');
+    ok(await save(o, R, { enabled: true, collectorId: Bpc.id, revision: 5 }), 'on'); assert.equal((await refresh(o, R)).status, 200, 'balance:on-after-recovery');
+    assert.equal(await BankJob.countDocuments({ bankAccountId: oid(R), kind: { $ne: 'balance' } }), 0, 'balance:no-statement-job-touched');
+  });
+
+  await leg('S12 a recent closed balance job (open:false while still running, as a statement request leaves an expired one) stays in history and cadence but is not derived as active work: the owner view does not show it running/interrupted, a later due hourly tick queues exactly one new job, the claim returns that job and never the closed one', async () => {
+    const o = await owner('s12'), R = await account(o, 'S12 楽天銀行', RAKUTEN), dev = await device(o, [R]); await enable(o, R, dev);
+    const j = ok(await refresh(o, R), 'refresh').job, c = await claim(dev); assert.equal(c.job?.jobId, j.jobId);
+    await BankJob.updateOne({ jobId: j.jobId }, { $set: { open: false, leaseUntil: new Date(Date.now() - 1000) } });
+    const v = ok(await view(o, R), 'owner view'); assert.ok(!['running', 'interrupted', 'attention', 'queued'].includes(v.status.state), 'balance:closed-not-shown-active ' + v.status.state);
+    assert.ok(ok(await call(api + 'bank/accounts/' + R + '/jobs', { token: o.token }), 'jobs').jobs.some(x => x.jobId === j.jobId && x.state === 'running'), 'balance:closed-kept-in-history');
+    assert.equal((await readView(o, R, at(D2, 10))).status.state, 'due', 'balance:closed-not-active-later');
+    const r = await tick(at(D2, 10)); assert.equal(await queuedFor(r, [R]), 1, 'balance:closed-does-not-block-hourly');
+    const next = await claim(dev); assert.ok(next.job && next.job.jobId !== j.jobId && next.job.kind === 'balance', 'balance:claim-new-not-closed');
+    assert.equal((await claim(dev)).job, null, 'balance:closed-never-reclaimed'); const closed = await BankJob.findOne({ jobId: j.jobId }).lean();
+    assert.deepEqual([closed.state, closed.open], ['running', false], 'balance:closed-record-unchanged'); await finish(dev, next.job);
   });
 
   console.log('RECEIPT ' + JSON.stringify({ pass: failed === 0 && checks > 0, checks, failed }));
@@ -398,7 +488,16 @@ async function ui() {
   const ok = (r, label) => { assert.equal(r.status, 200, label + ' ' + JSON.stringify(r.data).slice(0, 300)); return r.data; };
   // A plain headless Chrome on its own profile (the collector's owned-process machinery is not what this leg tests).
   const { findChrome, LAUNCH_ARGS } = await import(c('collector/browser.mjs')), puppeteer = (await import(pathToFileURL(require.resolve('rebrowser-puppeteer-core', { paths: [path.join(root, 'collector')] })).href)).default;
-  const profile = await fsp.mkdtemp(path.join(os.tmpdir(), 'omf-balance-browser-')), browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: path.join(profile, 'p'), defaultViewport: null, protocolTimeout: 60000, args: [...LAUNCH_ARGS] });
+  // Fixture-owned Chrome readiness: a failed start is logged and retried once only after that Chrome released its profile (process list).
+  const profile = await fsp.mkdtemp(path.join(os.tmpdir(), 'omf-balance-browser-')), userDataDir = path.join(profile, 'p');
+  const holders = () => new Promise(r => require('node:child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | ForEach-Object { $_.CommandLine }"], { windowsHide: true, timeout: 20000 }, (e, out) => r(e ? null : String(out).split(/\r?\n/).filter(l => l.includes(userDataDir)).length)));
+  const released = async () => { for (let i = 0; i < 60; i++) { if ((await holders()) === 0) return true; await pause(500); } return false; };
+  let browser = null;
+  for (let attempt = 1; !browser; attempt++) {
+    const t = Date.now();
+    try { browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir, defaultViewport: null, protocolTimeout: 60000, args: [...LAUNCH_ARGS] }); console.log('STEP owned Chrome ready (attempt ' + attempt + ', ' + (Date.now() - t) + ' ms)'); }
+    catch (e) { const free = await released(); console.log('STEP owned Chrome launch attempt ' + attempt + ' failed after ' + (Date.now() - t) + ' ms (' + (e?.name || 'Error') + '); profile ' + (free ? 'released' : 'STILL HELD')); if (attempt >= 2 || !free) { child.kill(); console.log('SETUP owned Chrome did not start'); process.exit(3); } }
+  }
   const shots = EVIDENCE ? path.join(EVIDENCE, 'screenshots') : null, errors = [], blocked = []; let passed = false;
   try {
     const api = '/api/finance-payments/', email = 'balance-ui@example.invalid', password = 'Synthetic-password-Only1!';
@@ -407,6 +506,11 @@ async function ui() {
     const account = async (name, connection) => { const a = ok(await req('bank/accounts', { method: 'POST', body: { name, currency: 'JPY' } }), 'create').account; if (connection) ok(await req('bank/accounts/' + a.id + '/connection', { method: 'PUT', body: connection }), 'connect'); return a.id; };
     const tpl = ok(await req('bank/templates', { method: 'PUT', body: { name: 'Synthetic UI template', headers: ['日付', '摘要', '出金', '入金', '残高'], mapping: { date: '0', description: '1', outflow: '2', inflow: '3', balance: '4' }, amountSign: 'outflow-positive' } }), 'template').template.id;
     const R = await account('UI 楽天銀行 普通', RAKUTEN), P = await account('UI PayPay銀行 1', PAYPAY), K = await account('UI 池田泉州銀行', { provider: 'ikeda', variant: 'portal', templateId: tpl, accountIdentity: { ...IDENTITY } });
+    // History (parent finding hourly-history-hides-statement-test): an older imported statement retrieval behind 55 newer balance jobs.
+    const H = await account('UI 楽天銀行 履歴', RAKUTEN), hJob = randomUUID(), hAt = new Date(Date.now() - 300 * 3600000), hSnap = { provider: 'rakuten', variant: 'standard', fictional: true };
+    await db.collection('financebankjobs').insertOne({ ownerId: ownerDoc._id, bankAccountId: new ObjectId(H), jobId: hJob, kind: 'retrieve', state: 'complete', open: false, requestedAt: hAt, completedAt: hAt, lastMessage: '明細 1件を保存', snapshot: hSnap, snapshotHash: sha256(JSON.stringify(hSnap)), statementIds: [], observation: null, trigger: 'manual' });
+    await db.collection('financebankstatements').insertOne({ ownerId: ownerDoc._id, hash: sha256(hJob), name: 'fictional-history.csv', size: 10, capture: { jobId: hJob, bankAccountId: H, kind: 'retrieve', channel: 'collector', state: 'imported', rows: { new: 1, existing: 0, differs: 0 }, receivedAt: hAt } });
+    await db.collection('financebankjobs').insertMany(Array.from({ length: 55 }, (_, i) => { const when = new Date(hAt.getTime() + (i + 1) * 3600000), sn = { kind: 'balance', provider: 'rakuten', variant: 'standard', currency: 'JPY' }; return { ownerId: ownerDoc._id, bankAccountId: new ObjectId(H), jobId: randomUUID(), kind: 'balance', state: 'complete', open: false, requestedAt: when, completedAt: when, lastMessage: '残高を更新しました', snapshot: sn, snapshotHash: sha256(JSON.stringify(sn)), statementIds: [], observation: null, balance: { trigger: 'hourly', claimedAt: when } }; }));
     const devToken = 'omfc_' + randomBytes(32).toString('hex'), devId = new ObjectId();
     await db.collection('financecollectors').insertOne({ _id: devId, ownerId: ownerDoc._id, name: '経理PC（架空）', tokenHash: sha256(devToken), accountIds: [], bankAccountIds: [R, P, K].map(id => new ObjectId(id)), createdAt: new Date(), updatedAt: new Date() });
     const claim = async () => ok(await call(api + 'collector/bank/claim', { method: 'POST', token: devToken, body: { capabilities: ['balance-v1'] } }), 'claim');
@@ -422,6 +526,8 @@ async function ui() {
     await page.goto(origin + '/login', { waitUntil: 'networkidle2' }); await page.type('#email', email); await page.type('#password', password); await page.evaluate(() => document.querySelector('button[type="submit"]').click()); await wait(() => location.pathname === '/', null, 'login');
     const open = async () => { await page.goto(origin + '/intake/payments', { waitUntil: 'networkidle2' }); await wait(() => !!document.querySelector('[data-bank-connections-open]'), null, 'page'); await page.click('[data-bank-connections-open]'); await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-schedule-status]')?.textContent.trim(), R, 'card'); };
     await open();
+    await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-test-state]'), H, 'history card');
+    assert.match(await text(H, '[data-bank-test-state]'), /接続テスト: 成功（.*明細を取り込みました）/, 'ui:statement-test-survives-balance-history');
     await wait(id => !!document.querySelector('[data-bank-connection="' + id + '"] [data-bank-balance]'), R, 'ui:balance-panel (the balance panel on the bank connection card)', 60);
     assert.match(await text(R, '[data-bank-balance-amount]'), /まだ残高を取得していません/, 'ui:no-amount-invented');
     assert.match(await text(R, '[data-bank-balance-status]'), /1時間ごとの残高の確認はオフです/, 'ui:default-off');
@@ -471,7 +577,13 @@ async function ui() {
     assert.match(logs, /bank schedule every 1500 ms/, 'ui:plugin-timer');
     passed = true; console.log('PASS UI built app + owned Chrome 390/1280/dark (outside requests aborted: ' + ([...new Set(blocked)].join(', ') || 'none') + ')');
   } catch (e) { console.log('FAIL UI: ' + String(e?.message || e).replace(/\s+/g, ' ').slice(0, 900)); console.log('APP LOG TAIL ' + logs.slice(-2500).replace(/\s+/g, ' ')); }
-  finally { await browser.close().catch(() => {}); child.kill(); await pause(500); await client.close().catch(() => {}); await mongo.stop().catch(() => {}); await fsp.rm(profile, { recursive: true, force: true }).catch(() => {}); await fsp.rm(directory, { recursive: true, force: true }).catch(() => {}); }
+  finally {
+    const chrome = browser.process(); await Promise.race([browser.close().catch(() => {}), pause(10000)]); if (chrome && chrome.exitCode === null && chrome.signalCode === null) { try { chrome.kill(); } catch { /* gone */ } }
+    child.kill(); await pause(500); await client.close().catch(() => {}); await mongo.stop().catch(() => {});
+    // the profile is removed only after its Chrome left; one still held is reported, never silently skipped
+    if (await released()) await fsp.rm(profile, { recursive: true, force: true }).catch(e => { passed = false; console.log('FAIL UI cleanup: profile removal failed (' + (e?.code || 'Error') + ')'); }); else { passed = false; console.log('FAIL UI cleanup: owned Chrome still holds its profile'); }
+    await fsp.rm(directory, { recursive: true, force: true }).catch(() => {});
+  }
   console.log('RECEIPT ' + JSON.stringify({ pass: passed, checks: passed ? 1 : 0, failed: passed ? 0 : 1 }));
   process.exit(passed ? 0 : 1);
 }

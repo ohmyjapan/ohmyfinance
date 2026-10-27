@@ -35,7 +35,24 @@ const CLOSED: Record<string, string> = {
 }
 const REPLACED_HOUR = '新しい時間の残高の確認に置き換えました' + NOT_BEFORE_PC
 const REPLACED_SETTING = '残高の確認の設定または接続が変わったため、この予約は実行しません' + NOT_BEFORE_PC
-export const BALANCE_YIELDED = '明細の取得を優先したため、この残高の確認は実行しません' + NOT_BEFORE_PC + '。明細の取得が終わると、次の確認を予約します'
+// Plan fold (parent finding abandoned-balance-job-pc-recovery): a balance job whose open flag was cleared (a statement request clears it on
+// an expired lease) is neither active nor claimable; statement jobs keep their legacy rules (any active state blocks a balance check).
+const ACTIVE_BALANCE_OPEN = { $or: [{ kind: { $ne: 'balance' } }, { open: true }] } // guard:balance-closed-not-active
+// A balance job is abandoned once its lease expired more than this long ago (no heartbeat from its PC for its 3-minute lease plus 10
+// minutes, far beyond the inquiry's own bounded steps): only then may the owner's explicit reconfiguration end it.
+const ABANDON_GRACE_MS = 10 * 60000
+const ABANDONED = '残高を確認するPCから応答がないまま期限を過ぎたため、所有者の設定の変更でこの残高の確認を終了しました（記録は残します。このPCが戻っても再開しません）'
+/**
+ * The owner's explicit recovery (saving the setting — another PC, or off and on again — or, once another PC is selected, the tick): end
+ * the account's balance jobs whose lease expired more than ABANDON_GRACE_MS ago, optionally only those of PCs other than `keep`. A live
+ * lease is never touched; the record, its saved-login markers and any receipt it may still send stay as they are; statements untouched.
+ */
+async function closeAbandoned(account: any, now: Date, keep: any = undefined) {
+  const filter: any = { ownerId: account.ownerId, bankAccountId: account._id, kind: 'balance', state: { $in: ['running', 'verification_required'] }, leaseUntil: { $lt: new Date(now.getTime() - ABANDON_GRACE_MS) } } // guard:balance-abandon-expired-only
+  if (keep !== undefined) filter['balance.collectorId'] = { $ne: keep }
+  return (await BankJob.updateMany(filter, { $set: { state: 'failed', open: false, completedAt: now, lastMessage: ABANDONED } })).modifiedCount
+}
+export const BALANCE_YIELDED ='明細の取得を優先したため、この残高の確認は実行しません' + NOT_BEFORE_PC + '。明細の取得が終わると、次の確認を予約します'
 
 // The selected PC as the balance state needs it: allowed this account now (unrevoked, in its bank scope) and its last claim capability.
 async function collectorOf(account: any, collectorId: string | null) {
@@ -51,7 +68,7 @@ async function stateOf(account: any, now: Date, { authorization = false } = {}) 
   const scope = { ownerId: account.ownerId, bankAccountId: account._id }, s = storedBalanceSetting(account.balanceSetting)
   if (authorization) return balanceState({ setting: account.balanceSetting, connection: account.connection, collector: await collectorOf(account, s.collectorId), jobs: [], now })
   const [active, recent, claimed, collector] = await Promise.all([
-    BankJob.find({ ...scope, state: { $in: ACTIVE } }).lean(),
+    BankJob.find({ ...scope, state: { $in: ACTIVE }, ...ACTIVE_BALANCE_OPEN }).lean(),
     BankJob.find({ ...scope, kind: 'balance', state: { $ne: 'superseded' } }).sort({ requestedAt: -1, _id: -1 }).limit(5).lean(),
     BankJob.find({ ...scope, kind: 'balance', state: { $ne: 'superseded' }, 'balance.claimedAt': { $exists: true } }).sort({ 'balance.claimedAt': -1 }).limit(1).lean(),
     collectorOf(account, s.collectorId)
@@ -124,6 +141,7 @@ export async function saveBankBalanceSetting(ownerId: string, accountId: string,
   const saved = await BankAccount.updateOne({ _id: account._id, ownerId, 'balanceSetting.revision': raw === undefined ? { $exists: false } : raw }, { $set: { balanceSetting: next } })
   if (!saved.matchedCount) fail(409, STALE)
   const fresh: any = await BankAccount.findOne({ _id: account._id, ownerId }).lean()
+  await closeAbandoned(fresh, now) // guard:balance-save-recovers
   for (const job of await queuedBalance(fresh)) if (job.balance?.trigger === 'hourly' || sid(job.balance?.collectorId) !== sid(collectorId)) await supersede(job, now, REPLACED_SETTING) // guard:balance-save-closes
   return view(fresh, await stateOf(fresh, now), now)
 }
@@ -135,7 +153,7 @@ export async function queueBalanceRefresh(ownerId: string, accountId: string, no
   const collector = await collectorOf(account, s.collectorId)
   if (!collector?.granted) fail(409, 'PC未接続: 選んだPCがこの口座の取得を許可された接続済みのPCではありません。')
   if (collector.capable === false) fail(409, '選んだPCのダウンローダーは残高の確認に対応していません。ダウンローダーを更新してください。')
-  const open: any = await BankJob.findOne({ ownerId, bankAccountId: account._id, state: { $in: ACTIVE } }).select('kind').lean()
+  const open: any = await BankJob.findOne({ ownerId, bankAccountId: account._id, state: { $in: ACTIVE }, ...ACTIVE_BALANCE_OPEN }).select('kind').lean()
   if (open) fail(409, open.kind === 'balance' ? '残高の確認はすでに予約・実行中です。' : '明細の取得を予約・実行中のため、終わってから残高を確認してください。')
   const job = await queueBalanceJob(account, { trigger: 'manual', now, revision: s.revision, collectorId: s.collectorId })
   if (!job) fail(409, '残高の確認はすでに予約・実行中です。')
@@ -145,6 +163,9 @@ export async function queueBalanceRefresh(ownerId: string, accountId: string, no
 // when due, queue this hour's run; then read the setting again and close the new run if a save or connection change landed meanwhile.
 async function scheduleBalance(account: any, now: Date) {
   const result: { queued: string | null, superseded: string[], state: string } = { queued: null, superseded: [], state: '' }
+  // the owner already selected another PC: a run the former PC abandoned is ended (the selected PC's own abandoned run waits for it or for
+  // the owner's off/on recovery)
+  const selected = storedBalanceSetting(account.balanceSetting).collectorId; if (selected) await closeAbandoned(account, now, oid(selected))
   const authorized = await stateOf(account, now, { authorization: true })
   if (UNAUTHORIZED.includes(authorized.state)) { result.state = authorized.state; for (const job of await queuedBalance(account, { 'balance.trigger': 'hourly' })) if (await supersede(job, now, REPLACED_SETTING)) result.superseded.push(job.jobId); return result } // guard:balance-tick-authorization
   let status = await stateOf(account, now); result.state = status.state
@@ -181,7 +202,7 @@ export async function recordClaimCapability(device: any, balance: boolean, now =
 }
 /** The claim filter part for balance jobs: only with balance-v1, and only those targeting this PC (also on a lease reclaim). */
 export function balanceClaimScope(device: any, capable: boolean) {
-  return capable ? { $or: [{ kind: { $ne: 'balance' } }, { kind: 'balance', 'balance.collectorId': device._id }] } : { kind: { $ne: 'balance' } } // guard:balance-claim-capability
+  return capable ? { $or: [{ kind: { $ne: 'balance' } }, { kind: 'balance', open: true, 'balance.collectorId': device._id }] } : { kind: { $ne: 'balance' } } // guard:balance-claim-capability
 }
 /**
  * GUARD — a balance job no PC received yet is run only while the account still authorizes it: the same provider/variant/account it

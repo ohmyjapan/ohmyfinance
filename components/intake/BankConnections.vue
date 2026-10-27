@@ -197,7 +197,7 @@ const balanceStatusText=(a:any)=>{const st=balances[a.id]?.status;if(!st)return 
   case 'unsupported':return '状態: 対象外 — '+(BALANCE_UNSUPPORTED[st.reason]||'この接続は残高の確認の対象外です。')
   case 'attention':return `状態: 要対応 — 銀行のサインインの確認待ちです（${by}）`
   case 'running':return `状態: 残高を確認中（${by} · PCが画面の裏で銀行を確認しています）`
-  case 'interrupted':return `状態: 確認が途中で止まっています（${by}）。同じPCが続きを再開します（銀行へもう一度サインインはしません）`
+  case 'interrupted':return `状態: 確認が途中で止まっています（${by}）。同じPCが続きを再開します（銀行へもう一度サインインはしません）。PCが戻らないときは、別のPCを選んで保存するか、オフにしてから再びオンにして保存してください（PCから応答がないまま期限を10分以上過ぎた確認だけを終了します）`
   case 'queued':return `状態: 予約済み・PCの受け取り待ち（${by} · ${jst(j.requestedAt)} 予約）。PCが起動していない間は、この予約のまま待ちます`
   case 'off':return '状態: 1時間ごとの残高の確認はオフです'+(balances[a.id].setting?.collectorId?'（「残高を更新」で今すぐ確認できます）':'')
   case 'reconfirm':return '状態: 要確認 — 保存したときから接続（銀行・ログイン方式・口座）が変わったため、1時間ごとの確認を止めています。設定を保存し直すと再開します'

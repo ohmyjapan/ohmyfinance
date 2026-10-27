@@ -476,8 +476,9 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
 // The parent's owner-observed facts (SAFE-BANK-CONTRACT.json): after the certificate + password login the dashboard's 各口座残高
 // (#DsbAccounts) renders late — one second after a reload it had no balance block; later each account card showed its balance "¥1,234"
 // /"￥1,234", a second yen amount that is the 前日比 (with an arrow) and 最終取得日：YYYY-MM-DD HH:mm (JST). Only the card of the job's
-// frozen branch, type and full 7-digit number is read (never the total or another card); the card layout's token format (branch, type
-// and number as separate words) follows the account option format of this adapter — the parent's live check confirms it.
+// frozen branch, type and full 7-digit number is read (never the total or another card); the parent's safe DOM facts recorded the frozen
+// branch, type and number as separate tokens of the actual container, a positive ¥ amount, 最終取得日 and 前日比. A signed ¥ amount is
+// accepted like the shared parser (synthetic format; no negative live sample was observed).
 export const BALANCE_PAGE = Object.freeze({ container: '#DsbAccounts', heading: '各口座残高', change: '前日比', path: '/' });
 const BALANCE_READ = ({ container, heading, identity }) => {
   const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden', norm = t => String(t ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -485,7 +486,8 @@ const BALANCE_READ = ({ container, heading, identity }) => {
   const box = document.querySelector(container), base = { origin: location.origin, path: location.pathname.split(';')[0], top: window.top === window, headings, box: !!box && visible(box), cards: [], boxText: '' };
   if (!base.box) return base;
   const words = e => norm(e.innerText || e.textContent).split(' ');
-  const matches = e => { const w = words(e); return w.includes(identity.number) && w.includes(identity.branch) && w.includes(identity.type) && /[¥]\s?\d/.test(norm(e.innerText || e.textContent)); };
+  // a ¥ amount, signed or not ("¥1,234", "¥-1,234", "-¥1,234"; NFKC turns ￥ into ¥) — the same syntax shared findYen reads
+  const matches = e => { const w = words(e); return w.includes(identity.number) && w.includes(identity.branch) && w.includes(identity.type) && /[¥]\s?[-−]?\d/.test(norm(e.innerText || e.textContent)); }; // guard:ikeda-card-signed
   const all = [box, ...box.querySelectorAll('*')].filter(e => visible(e) && matches(e)), minimal = all.filter(e => !all.some(o => o !== e && e.contains(o)));
   return { ...base, cards: minimal.slice(0, 5).map(e => norm(e.innerText || e.textContent).slice(0, 1000)), boxText: norm(box.innerText || box.textContent).slice(0, 4000) };
 };

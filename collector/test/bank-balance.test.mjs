@@ -12,6 +12,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:f
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { execFile } from 'node:child_process';
 import puppeteer from 'rebrowser-puppeteer-core';
 
 const moduleOf = (env, rel) => process.env[env] ? pathToFileURL(process.env[env]).href : new URL(rel, import.meta.url).href;
@@ -26,7 +27,38 @@ const OWNER = 'd6d6d6d6d6d6d6d6d6d6d6d6', ACCOUNT = 'c2c2c2c2c2c2c2c2c2c2c2c2', 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const exists = p => access(p).then(() => true, () => false);
 const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-bank-balance-test-'));
-test.after(async () => { if (path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)) await rm(temp, { recursive: true, force: true }); });
+// Fixture-owned Chrome lifecycle (the full run of 97a9b93 failed here: Target.setDiscoverTargets timed out while Chrome started, puppeteer's
+// failure path killed it without waiting, and the cleanup then met EBUSY on the still-held profile lockfile). A profile is removed only once
+// no chrome.exe of THIS test's profiles is left (read from the process list, bounded); a profile still held is a failure, never ignored.
+const execute = (file, args) => new Promise(resolve => execFile(file, args, { windowsHide: true, timeout: 20000 }, (error, stdout) => resolve(error ? null : String(stdout))));
+async function chromesOf(profile) {
+  const out = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | ForEach-Object { $_.ProcessId.ToString() + ' ' + $_.CommandLine }"]);
+  if (out === null) return null; // unreadable process list: unknown, never "released"
+  return out.split(/\r?\n/).filter(l => l.includes(profile)).map(l => Number(l.split(' ')[0]));
+}
+async function released(profile, ms = 30000) { const until = Date.now() + ms; while (Date.now() < until) { const left = await chromesOf(profile); if (left && !left.length) return true; await new Promise(r => setTimeout(r, 500)); } return false; }
+const profiles = [];
+test.after(async () => {
+  for (const profile of profiles) if (!(await released(profile))) throw new Error('owned Chrome still holds ' + path.basename(profile) + ' at cleanup');
+  if (!path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)) return;
+  for (let i = 0; ; i++) { try { await rm(temp, { recursive: true, force: true }); return; } catch (error) { if (error?.code !== 'EBUSY' || i >= 5) throw error; await new Promise(r => setTimeout(r, 1000)); } }
+});
+async function launchOwned(profile) {
+  for (let attempt = 1; ; attempt++) {
+    const t = Date.now();
+    try { const browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] }); if (attempt > 1) console.log('# owned Chrome ready on attempt ' + attempt + ' after ' + (Date.now() - t) + ' ms'); return browser; }
+    catch (error) {
+      const free = await released(profile);
+      console.log('# owned Chrome launch attempt ' + attempt + ' failed after ' + (Date.now() - t) + ' ms (' + (error?.name || 'Error') + ': ' + String(error?.message || '').slice(0, 120) + '); its profile ' + (free ? 'released' : 'STILL HELD'));
+      if (attempt >= 2 || !free) throw error;
+    }
+  }
+}
+async function closeOwned(browser) {
+  const child = browser.process();
+  await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 10000))]);
+  if (child && child.exitCode === null && child.signalCode === null) { try { child.kill(); } catch { /* gone */ } await Promise.race([new Promise(r => child.once('exit', r)), new Promise(r => setTimeout(r, 10000))]); }
+}
 // The bank's own JST display of an instant: 'YYYY/MM/DD HH:mm(:ss)' or 'YYYY-MM-DD HH:mm'.
 const shown = (ms, sep = '/', seconds = false) => { const d = new Date(ms + 9 * 3600000).toISOString(); return d.slice(0, 10).replace(/-/g, sep) + ' ' + d.slice(11, seconds ? 19 : 16); };
 const minute = ms => new Date(Math.floor(ms / 60000) * 60000).toISOString();
@@ -92,15 +124,15 @@ function ikedaSite(o = {}) {
   return { s, site, stats, respond: r => site.respond(r), card };
 }
 async function owned(site, fn) {
-  const profile = path.join(temp, 'profile-' + randomUUID().slice(0, 8));
-  const browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] });
+  const profile = path.join(temp, 'profile-' + randomUUID().slice(0, 8)); profiles.push(profile);
+  const browser = await launchOwned(profile);
   const dialogs = [], downloads = [];
   const attach = async page => { await page.setRequestInterception(true); page.on('request', r => site.respond(r)); const cdp = await page.createCDPSession(); await cdp.send('Page.enable'); cdp.on('Page.javascriptDialogOpening', e => dialogs.push({ type: e.type, message: e.message })); };
   const ready = page => (page.__attached ??= attach(page));
   browser.on('targetcreated', async target => { if (target.type() !== 'page') return; try { const page = await target.page(); if (page) await ready(page); } catch { /* closed */ } });
   const watcher = await browser.target().createCDPSession(); await watcher.send('Browser.setDownloadBehavior', { behavior: 'deny', eventsEnabled: true }).catch(() => {}); watcher.on('Browser.downloadWillBegin', e => downloads.push(e.url));
   try { const page = await browser.newPage(); await ready(page); if (site.site) site.site.pages.push(page); return await fn({ page, browser, dialogs, downloads }); }
-  finally { await browser.close().catch(() => {}); }
+  finally { await closeOwned(browser); }
 }
 function savedLogin(secret, state = 'ready') {
   const calls = { state: 0, open: 0, rejected: [], accepted: 0 }; let current = state;
@@ -192,6 +224,16 @@ test('池田泉州銀行 ビジネスゲート: certificate login, the dashboard
   }
   const ni = ikedaSite(), noIdentity = await inquire(ni, ikedaAdapter(ni.site), jobOf('ikeda', 'portal'), savedLogin(ISECRET));
   assert.ok(noIdentity.result?.failed, 'ikeda-balance:identity-required'); assert.equal(ni.site.stats.ccPosts.length, 0, 'ikeda-balance:identity-before-login');
+});
+
+test('池田泉州銀行 signed card (synthetic format; no negative live sample was observed): the frozen account card whose balance is an unambiguous signed ¥ amount is selected and read with its sign, the 前日比 still excluded', async () => {
+  // the first two also show a 前日比; the last shows the signed balance alone (no other ¥ amount in its card)
+  for (const [label, amount, value, change] of [['minus-after-yen', '¥-1,234', -1234, undefined], ['minus-before-yen', '-￥5,000', -5000, undefined], ['signed-only', '¥-1,234', -1234, '']]) {
+    const s = ikedaSite({ card: null }), card = s.card(F.IDENTITY.number, amount, change); s.s.card = [card, s.card('0000002', '￥9,999,999')];
+    const r = await inquire(s, ikedaAdapter(s.site), jobOf('ikeda', 'portal', { accountIdentity: { ...F.IDENTITY } }), savedLogin(ISECRET));
+    assert.equal(r.result?.failed ?? null, null, 'ikeda-balance:signed-read ' + label + ' ' + String(r.result?.failed || r.error?.message || ''));
+    assert.deepEqual(r.readings.map(x => x.amount), [value], 'ikeda-balance:signed-amount ' + label); assert.equal(s.site.stats.loggedOut, true, 'ikeda-balance:signed-logout ' + label);
+  }
 });
 
 // ── the durable balance-only receipt (runBalanceJob with a fictional inquiry and send) ──

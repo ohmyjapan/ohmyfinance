@@ -75,6 +75,9 @@ test('state: off, unsupported, reconfirm, waiting-pc, upgrade, busy, and the act
   assert.equal(state({ jobs: [job({ state: 'running', leaseUntil: live })] }).state, 'running');
   assert.equal(state({ jobs: [job({ state: 'running', leaseUntil: jst('2026-10-27', 10, 1) })] }).state, 'interrupted', 'balance:interrupted');
   assert.equal(state({ jobs: [job({ state: 'verification_required', leaseUntil: live })] }).state, 'attention');
+  // an explicitly closed balance job (open:false) is history and cadence only, never active work
+  assert.equal(state({ jobs: [job({ state: 'running', open: false, leaseUntil: jst('2026-10-27', 8, 1), requestedAt: jst('2026-10-27', 8), balance: { trigger: 'manual', claimedAt: jst('2026-10-27', 8) } })] }).state, 'due', 'balance:closed-not-active');
+  assert.equal(state({ jobs: [job({ state: 'running', open: false, leaseUntil: live, requestedAt: jst('2026-10-27', 10, 25), balance: { trigger: 'manual', claimedAt: jst('2026-10-27', 10, 25) } })] }).state, 'done', 'balance:closed-counts-for-cadence');
   assert.equal(state({ setting: null, jobs: [job({ state: 'running', leaseUntil: live, balance: { trigger: 'manual', claimedAt: jst('2026-10-27', 10, 29) } })] }).state, 'running', 'balance:manual-running-while-off');
 });
 

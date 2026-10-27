@@ -167,7 +167,8 @@ export function balanceState({ setting, connection, collector = null, jobs = [],
   const lastFailure = balances[0]?.state === 'failed' ? jobOf(balances[0]) : null;
   const out = (state, extra = {}) => ({ state, reason: null, slot: balanceSlotKey(now, minutes), nextAt: null, job: null, lastFailure, ...extra });
   const support = balanceSupport(connection); if (support) return out('unsupported', { reason: support });
-  const active = balances.filter(j => ACTIVE.includes(j.state)), leased = j => time(j.leaseUntil) > at;
+  // an explicitly closed balance job (open:false) stays history, failure and cadence evidence but is never active work
+  const active = balances.filter(j => ACTIVE.includes(j.state) && j.open !== false), leased = j => time(j.leaseUntil) > at; // guard:balance-closed-not-derived-active
   let j = active.find(x => x.state === 'verification_required' && leased(x)); if (j) return out('attention', { job: jobOf(j) });
   if ((j = active.find(x => x.state === 'running' && leased(x)))) return out('running', { job: jobOf(j) });
   if ((j = active.find(x => x.state !== 'queued'))) return out('interrupted', { job: jobOf(j) });

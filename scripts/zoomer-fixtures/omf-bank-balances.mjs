@@ -36,7 +36,9 @@ const EVIDENCE = process.env.OMF_BALANCES_EVIDENCE || '';
 const ONLY = (process.env.OMF_BALANCES_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
 const COVERS = ['shared/finance-bank-balance.mjs', 'shared/finance-bank-balance.d.mts', 'server/models/FinanceBankBalance.ts', 'server/services/financeBankBalanceService.ts', 'server/models/FinancePaymentMatch.ts', 'server/services/financeBankCollectionService.ts', 'server/services/financeBankScheduleService.ts', 'server/api/finance-payments/[...path].ts', 'server/api/finance-payments/collector/[...path].ts', 'server/plugins/bankSchedule.ts', 'collector/bank-balance.mjs', 'collector/index.mjs', 'collector/bank.mjs', 'collector/banks/rakuten.mjs', 'collector/banks/paypay.mjs', 'collector/banks/ikeda.mjs', 'collector/package/stage.mjs', 'components/intake/BankConnections.vue', 'scripts/finance-bank-balance.test.mjs', 'collector/test/bank-balance.test.mjs', 'scripts/finance-bank-balance-integration.cjs', 'scripts/zoomer-fixtures/omf-bank-balances.mjs'];
 const INTEGRATION = 'scripts/finance-bank-balance-integration.cjs', UNIT = 'scripts/finance-bank-balance.test.mjs', COLLECTOR_TEST = 'collector/test/bank-balance.test.mjs';
-const EXISTING = ['test/finance-bank-schedule.test.mjs', 'collector/test/rakuten-standard.test.mjs', 'collector/test/rakuten-auto-login.test.mjs', 'collector/test/paypay-routine.test.mjs', 'collector/test/paypay-logout.test.mjs', 'collector/test/paypay-standard.test.mjs', 'collector/test/paypay-guided-capture.test.mjs', 'collector/test/ikeda-portal.test.mjs', 'collector/test/statement.test.mjs'];
+const EXISTING = ['test/finance-bank-schedule.test.mjs', 'collector/test/rakuten-standard.test.mjs', 'collector/test/rakuten-auto-login.test.mjs', 'collector/test/paypay-routine.test.mjs', 'collector/test/paypay-logout.test.mjs', 'collector/test/paypay-standard.test.mjs', 'collector/test/paypay-guided-capture.test.mjs', 'collector/test/ikeda-portal.test.mjs', 'collector/test/statement.test.mjs', 'scripts/finance-navi-payments.test.cjs'];
+// The last progress lines of a harness run (STEP/START), named in a failure so a stalled leg shows where it stood.
+const progress = r => r.text.split(/\r?\n/).filter(l => /^(STEP|START) /.test(l)).slice(-4).join(' | ');
 
 // ── M: each entry [label, file, anchor (exactly one hit), replacement, leg ('S'|'K'|'U'), the S legs or K test name pattern, the expected failure] ──
 const BAL = 'server/services/financeBankBalanceService.ts', COL = 'server/services/financeBankCollectionService.ts', SH = 'shared/finance-bank-balance.mjs', RUN = 'collector/bank-balance.mjs';
@@ -44,8 +46,16 @@ const line = guard => new RegExp('^[^\\n]*// guard:' + guard + '\\n', 'm');
 export const MUTANTS = [
   // the cadence, the queue and the claim (leg S on a copy of server/ + shared/)
   ['MB1-cooldown-dropped', SH, '(last >= slotStart || at < cooled)', '(last >= slotStart)', 'S', 'S3', /balance:cooldown-after-late-claim/],
-  ['MB2-capability-ignored', BAL, "return capable ? { $or: [{ kind: { $ne: 'balance' } }, { kind: 'balance', 'balance.collectorId': device._id }] } : { kind: { $ne: 'balance' } }", "return { $or: [{ kind: { $ne: 'balance' } }, { kind: 'balance', 'balance.collectorId': device._id }] }", 'S', 'S0,S6', /balance:old-claim-never-receives-balance|balance:old-collector-never-receives/],
-  ['MB3-target-pc-ignored', BAL, "{ kind: 'balance', 'balance.collectorId': device._id }", "{ kind: 'balance' }", 'S', 'S6', /balance:(other-pc-never-receives|chosen-receives)/],
+  ['MB2-capability-ignored', BAL, "return capable ? { $or: [{ kind: { $ne: 'balance' } }, { kind: 'balance', open: true, 'balance.collectorId': device._id }] } : { kind: { $ne: 'balance' } }", "return { $or: [{ kind: { $ne: 'balance' } }, { kind: 'balance', open: true, 'balance.collectorId': device._id }] }", 'S', 'S0,S6', /balance:old-claim-never-receives-balance|balance:old-collector-never-receives/],
+  ['MB3-target-pc-ignored', BAL, "{ kind: 'balance', open: true, 'balance.collectorId': device._id }", "{ kind: 'balance', open: true }", 'S', 'S6', /balance:(other-pc-never-receives|chosen-receives)/],
+  // the fold (parent findings: statement history, abandoned-PC recovery, signed Ikeda card)
+  ['MB17-history-retrieval-omitted', COL, line('history-latest-retrieval'), '', 'S', 'S10', /balance:history-keeps-statement/],
+  ['MB18-closed-job-blocks', BAL, "const ACTIVE_BALANCE_OPEN = { $or: [{ kind: { $ne: 'balance' } }, { open: true }] }", 'const ACTIVE_BALANCE_OPEN = {}', 'S', 'S11', /balance:closed-not-blocking/],
+  ['MB19-closed-job-reclaimed', BAL, "{ kind: 'balance', open: true, 'balance.collectorId': device._id }", "{ kind: 'balance', 'balance.collectorId': device._id }", 'S', 'S11', /balance:closed-not-reclaimed/],
+  ['MB20-save-does-not-recover', BAL, line('balance-save-recovers'), '', 'S', 'S11', /balance:abandoned-closed-and-kept/],
+  ['MB21-live-lease-stolen', BAL, 'leaseUntil: { $lt: new Date(now.getTime() - ABANDON_GRACE_MS) } }', "leaseUntil: { $exists: true } }", 'S', 'S11', /balance:live-not-stolen/],
+  ['MB22-closed-job-derived-active', SH, "ACTIVE.includes(j.state) && j.open !== false)", 'ACTIVE.includes(j.state))', 'S', 'S12', /balance:(closed-not-shown-active|closed-not-active-later|closed-does-not-block-hourly)/],
+  ['MK13-ikeda-unsigned-only', 'collector/banks/ikeda.mjs', '/[¥]\\s?[-−]?\\d/.test(norm(e.innerText || e.textContent))', '/[¥]\\s?\\d/.test(norm(e.innerText || e.textContent))', 'K', 'signed card', /ikeda-balance:signed-read signed-only/],
   ['MB4-claim-binding-unchecked', BAL, " || !sameBalanceBinding(job.balance?.binding, balanceBinding(account.connection))) reason = 'connection-changed'", ") reason = 'connection-changed'", 'S', 'S4', /balance:(old-pc-and-changed-connection-never-received|changed-connection-claim-refused)/],
   ['MB5-claim-setting-unchecked', BAL, line('balance-claim-setting'), '', 'S', 'S4', /balance:(old-pc-and-changed-connection-never-received|stale-setting-claim-refused|off-claim-refused)/],
   ['MB6-complete-without-receipt', COL, "const receipt=body.state==='complete'?{$or:[{kind:{$ne:'balance'}},{'balance.snapshotId':{$exists:true}}]}:{}", 'const receipt={}', 'S', 'S7', /balance:complete-needs-receipt/],
@@ -114,7 +124,8 @@ export default { name: 'omf-bank-balances', covers: COVERS, async run() {
   const want = name => !ONLY.length || ONLY.includes(name);
   const keep = async (name, text) => { if (EVIDENCE) { await mkdir(EVIDENCE, { recursive: true }); await writeFile(path.join(EVIDENCE, 'leg-' + name + '.txt'), text); } };
   const leg = async (name, fn) => { const key = name.split(' ')[0]; if (!want(key)) return; const t = Date.now(); try { lines.push(name + ': ' + await fn() + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); green.add(key); } catch (e) { pass = false; const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 2400); lines.push(name + ': ' + (/^(SETUP|NOT RUN)/.test(msg) ? '' : 'RED ') + msg); } };
-  const unit = async (file, env = {}, pattern = null) => runChild(['--test', '--test-concurrency=1', ...(pattern ? ['--test-name-pattern=' + pattern] : []), file], env, 2400000);
+  // --test-timeout: a hung test fails under its own name (never a silent outer wait)
+  const unit = async (file, env = {}, pattern = null) => runChild(['--test', '--test-concurrency=1', '--test-timeout=900000', ...(pattern ? ['--test-name-pattern=' + pattern] : []), file], env, 2400000);
   const harness = async (env = {}, ui = false) => runChild(['--import', 'tsx', INTEGRATION, ...(ui ? ['--ui'] : [])], { MONGO_URI: '', MONGODB_URI: '', NUXT_MONGO_URI: '', ...(EVIDENCE && ui ? { OMF_BALANCE_EVIDENCE: EVIDENCE } : {}), ...env }, 2400000);
   try {
     await leg('U node --test ' + UNIT, async () => {
@@ -131,14 +142,14 @@ export default { name: 'omf-bank-balances', covers: COVERS, async run() {
     await leg('S services, routes and the real collector on an owned MongoDB with an injected JST clock (S1-S9' + (process.env.OMF_BALANCE_SRC ? ', SRC ' + process.env.OMF_BALANCE_SRC : '') + ')', async () => {
       const r = await harness(); executed = true; await keep('S', r.text + '\n--- stderr ---\n' + r.stderr); counts.harnessLegs = r.passes.length;
       if (r.setup) throw new Error(r.setup + ' (no behavioural result)');
-      if (r.code !== 0 || !r.receipt?.pass || r.fails.length) throw new Error(r.fails.length + ' failed / ' + r.passes.length + ' green: ' + (r.fails.join(' | ') || r.stderr.slice(-800)).slice(0, 2000));
+      if (r.code !== 0 || !r.receipt?.pass || r.fails.length) throw new Error(r.fails.length + ' failed / ' + r.passes.length + ' green: ' + (r.fails.join(' | ') || r.stderr.slice(-800)).slice(0, 2000) + ' — progress: ' + (progress(r) || 'none') + (r.receipt ? '' : ' (no RECEIPT: the harness did not finish)'));
       return r.passes.length + ' legs green — ' + r.passes.map(p => p.slice(5, 8).trim()).join(' ');
     });
     await leg('C built app with its real plugin timer in an owned headless Chrome (' + (process.env.OMF_BALANCE_OUTPUT || 'this tree') + ')', async () => {
       const out = process.env.OMF_BALANCE_OUTPUT || root; if (!existsSync(path.join(out, '.output/server/index.mjs'))) throw new Error('NOT RUN: built app absent');
       const r = await harness({}, true); executed = true; await keep('C', r.text + '\n--- stderr ---\n' + r.stderr); counts.ui = r.passes.length;
       if (r.setup) throw new Error(r.setup);
-      if (r.code !== 0 || !r.receipt?.pass) throw new Error((r.fails.join(' | ') || r.stderr.slice(-800)).slice(0, 1500));
+      if (r.code !== 0 || !r.receipt?.pass) throw new Error((r.fails.join(' | ') || r.stderr.slice(-800)).slice(0, 1500) + ' — progress: ' + (progress(r) || 'none'));
       return r.passes.join(' ').slice(5) + (EVIDENCE ? '; screenshots ' + path.join(EVIDENCE, 'screenshots') : '');
     });
     await leg('P collector package: the balance runtime modules staged with their repo hashes, the staged graph resolves from index.mjs, the staged balance module and readers load without node_modules, no test code staged', async () => {

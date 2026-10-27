@@ -21,6 +21,20 @@ automatic, failed included). An automatic access at 09:59 is therefore followed 
 while the PC was off coalesce into one newest check (earlier queued ones are closed, never received). Statements keep priority: a
 balance check no PC received yet yields to a manual 取得 or the day's statement run; one in flight is never stolen.
 
+## A PC that does not come back
+
+A balance check a PC received keeps its lease while that PC sends heartbeats; nothing else may take it over (no parallel bank sessions).
+If the PC disappears, the owner recovers by an ordinary save: selecting another allowed PC, or turning the check off and on again. That
+save ends only balance checks whose lease expired more than 10 minutes ago (kept as a 失敗 record; the PC's retained receipt may still
+arrive and is stored; its saved-login markers stay on that PC). Once another PC is selected, the hourly tick ends such a check of the
+former PC too. A balance job whose open flag was cleared is neither active nor claimable. The new PC uses its own saved login.
+
+## Statement connection test and history
+
+The account history keeps its 50 most recent jobs; when hourly balance checks push the latest statement retrieval out of them, that
+retrieval (non-superseded, whatever its state, with its captures) is still listed, so 接続テスト keeps showing the actual last statement
+result — a failure stays a failure, and a balance check never counts as a statement test.
+
 ## Collector (PC)
 
 The collector advertises `balance-v1` in `bank/claim`. An older collector never receives a balance job (also not on a lease reclaim);
@@ -42,12 +56,13 @@ page origin/path/labels and the times, and that the account's connection is stil
 (`balance-identity-changed` otherwise). One immutable snapshot per job (`financebankbalances`); the same receipt again returns it, a
 different one is `balance-receipt-conflict`. The latest balance is the latest bank time, so a delayed older receipt never replaces newer
 data. A balance job completes only after its receipt was stored. Amounts keep the bank's sign when it is unambiguous ("-1,234 円",
-"¥-1,234"); the live samples were positive and no negative format was observed. Anything unreadable is an error, never zero.
+"¥-1,234"; the 池田泉州銀行 card is also selected by such a signed amount); the live samples were positive and no negative format was
+observed. Anything unreadable is an error, never zero.
 
 ## Verification boundary
 
 The fixture `scripts/zoomer-fixtures/omf-bank-balances.mjs` proves the queue, routes, collector, readers (on fictional pages built from
-the parent's recorded facts) and the screen with synthetic data only. The readers against the real bank pages, the PayPay 残高照会 page
-title (an assumption following the observed "<page> - PayPay銀行" pattern) and the 池田泉州銀行 card word format are validated by the
+the parent's recorded facts) and the screen with synthetic data only. The parent's safe DOM facts recorded the PayPay 残高照会 page title
+for all four actual accounts and the 池田泉州銀行 container tokens; the complete readers against the real bank pages are validated by the
 parent separately; no clock-triggered production run is claimed before release. Activation order: deploy OMF, update the PC's
 collector, then the owner turns the panel on per account.

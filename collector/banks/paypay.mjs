@@ -450,8 +450,8 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
 // ── Hourly background balance (plan omf-bank-hourly-balances-20261027) ───────────────────────────────────────────────────────────
 // The parent's owner-observed facts (SAFE-BANK-CONTRACT.json): after the account's own direct standard login, the unique 残高照会 opens
 // the 残高照会 page (/wctx/NBCW2101.do) whose #mainArea first table row holds 普通預金残高 "1,234 円" with "YYYY/MM/DD HH:mm:ss現在" (JST).
-// The exact page title is an ASSUMPTION following the observed "<page> - PayPay銀行" pattern; it was not in the parent's facts, so the
-// parent's live check decides it (a different title fails closed: nothing is read). Four logins are four entries: the page's account
+// The exact page title "残高照会 - PayPay銀行" is the one the parent's safe DOM facts recorded for all four actual accounts
+// (PARENT-ADAPTER-DOM-FACTS.json; a different title fails closed: nothing is read). Four logins are four entries: the page's account
 // number(s), when shown, must equal the account of the saved login just submitted (compared here, never stored).
 export const BALANCE_PAGE = Object.freeze({ title: '残高照会 - PayPay銀行', open: '残高照会', area: '#mainArea', row: '#mainArea tr:first-child', label: '普通預金残高', path: '/wctx/NBCW2101.do' });
 /** The 残高照会 page with its ログアウト on the official top document (pure; the routineUi `balance` option's signed-in page). */
