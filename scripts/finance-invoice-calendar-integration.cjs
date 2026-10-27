@@ -27,7 +27,7 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   const account=(await ok('/api/finance/accounts',ownerToken,'POST',{name:'Synthetic calendar card',primaryCard:'54321',cardIdentifiers:['54321'],otpRecipient:'test@example.invalid',otpMailbox:'test@example.invalid'})).account;
   const agent=await ok('/api/finance-chat/agents',ownerToken,'POST',{accountIds:[account._id],workspaceEnabled:true}),worker=(route,body={})=>call('/api/finance-chat/worker/'+route,agent.token,'POST',body);assert.equal((await worker('heartbeat')).status,200);
   const endpoint='/api/finance-chat/company-workspace';
-  const ask=async(token,text,context={page:'invoices'})=>{const view=await ok(endpoint,token);return ok(endpoint,token,'POST',{requestId:crypto.randomBytes(16).toString('hex'),chatRevision:view.conversation?.revision||0,text,context})};
+  const ask=async(token,text,context={page:'invoices'})=>{assert.equal((await worker('heartbeat')).status,200);const view=await ok(endpoint,token);return ok(endpoint,token,'POST',{requestId:crypto.randomBytes(16).toString('hex'),chatRevision:view.conversation?.revision||0,text,context})};
   const claim=async()=>{assert.equal((await worker('heartbeat')).status,200);const r=await worker('workspace-claim');assert.equal(r.status,200,'invoice-calendar:claim '+r.raw.slice(0,300));assert.ok(r.data.job,'invoice-calendar:claimed');return r.data.job};
   const act=(job,name,args={},slot=1,lease=job.lease)=>worker('workspace/'+job.id+'/actions',{lease,name,args,slot});
   const actOk=async(job,name,args={},slot=1,label=name)=>{const r=await act(job,name,args,slot);assert.equal(r.status,200,'invoice-calendar:'+label+' '+r.raw.slice(0,500));return r.data};
@@ -117,7 +117,7 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   // ---- 6. Navi read and explicit schedule through the same service
   const inv6=await invoice({dueDate:'2026-12-01'});
   let job=await turn(tokenA,'この請求書の入金予定をカレンダーに追加して。',{page:'invoices',invoiceId:String(inv6._id)});const names=job.tools.map(t=>t.name);
-  assert.ok(names.includes('get_company_invoice_calendar')&&names.includes('schedule_company_invoice_payment'),'invoice-calendar:catalogue');assert.equal(job.tools.length,45,'invoice-calendar:catalogue');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
+  assert.ok(names.includes('get_company_invoice_calendar')&&names.includes('schedule_company_invoice_payment'),'invoice-calendar:catalogue');assert.equal(job.tools.length,46,'invoice-calendar:catalogue');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
   const scheduleTool=job.tools.find(t=>t.name==='schedule_company_invoice_payment');assert.deepEqual(Object.keys(scheduleTool.inputSchema.properties).sort(),['expectedUpdatedAt','invoiceId'],'invoice-calendar:finite-arguments');assert.deepEqual(scheduleTool.inputSchema.required.slice().sort(),['expectedUpdatedAt','invoiceId']);
   r=await actOk(job,'get_company_invoice_calendar',{invoiceId:String(inv6._id)});assert.equal(r.effect,'read');assert.equal(r.result.state,'not_linked');assert.equal(r.result.invoice.updatedAt,inv6.updatedAt.toISOString());assert.notEqual(r.result.calendarInvoiceLink,'not_established','invoice-calendar:read-flag-truthful');
   const args6={invoiceId:String(inv6._id),expectedUpdatedAt:r.result.invoice.updatedAt};
