@@ -68,12 +68,16 @@ const GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABA
 
 // ── 楽天銀行 (標準): the recorded START_CORP login form, the MyAccount home with both balances, the image-only ログアウト ──
 function rakutenSite(o = {}) {
-  const s = { bankMs: Date.now() - 120000, amount: '<span>1,234,567</span> 円', available: '(1,200,000円)', duplicate: false, hidePrimary: false, noTime: false, logout: 'login', logoutId: 'j_idt' + Math.floor(Math.random() * 900 + 100) + ':j_idt7', afterLogin: 'home', ...o };
+  // The actual paired layout (parent PARENT-LIVE-READER-FACTS-01.json, safe shape only): ONE recorded outer row whose label cell holds
+  // 普通預金残高 and （支払可能残高）, whose third direct cell holds "<PRIMARY_YEN> （<AVAILABLE_YEN>）" in that order, and a 入出金明細 link.
+  // `logoutConfirm`: 'logout' — the bank's own logout confirmation after the press; 'other' — an unrelated confirmation (never answered).
+  const s = { bankMs: Date.now() - 120000, amount: '<span>1,234,567</span> 円', available: '（1,200,000円）', availableLabel: '（支払可能残高）', duplicate: false, hidePrimary: false, noTime: false, logout: 'login', logoutConfirm: null, logoutId: 'j_idt' + Math.floor(Math.random() * 900 + 100) + ':j_idt7', afterLogin: 'home', ...o };
   const stats = { posts: 0, requests: [], foreign: [], logout: 0, downloads: 0 };
   const login = () => doc('楽天銀行 ログイン', `<form id="LOGIN" name="LOGIN" method="post" action="/XMS/security/fcs/rb/fes/views/mainservice/Security/LoginAuthentication/Login/CorpLogin.xhtml"><input type="text" id="LOGIN:USER_ID" name="LOGIN:USER_ID"><input type="password" id="LOGIN:LOGIN_PASSWORD" name="LOGIN:LOGIN_PASSWORD"><input type="submit" value="ログイン"></form>`);
-  const row = (label, amount, hidden = false) => `<tr${hidden ? ' style="display:none"' : ''}><td><table><tr><td>${label}</td></tr></table></td><td><table><tr><td>${amount}</td></tr></table></td><td><a href="#">明細</a></td></tr>`;
-  const home = () => doc('楽天銀行 MyAccount', `<table><tr><td><a href="#">入出金明細</a> <a href="#">登録情報の照会・変更</a></td><td><a id="${s.logoutId}" href="#" onclick="location.href='/XMS/security/RbS?COMMAND=LOGOUT';return false;"> \n <img alt="ログアウト" src="${GIF}" width="60" height="20"> </a></td></tr></table>
-<table class="balances">${row('普通預金残高', s.amount, s.hidePrimary)}${s.duplicate ? row('普通預金残高', '9,999 円') : ''}${row('支払可能残高', s.available)}</table>${s.noTime ? '' : `<p><span>残高確認時間:</span> <span>${shown(s.bankMs)}</span></p>`}<p>普通 1234567（架空）</p>`);
+  const row = (amount, available, hidden = false) => `<tr${hidden ? ' style="display:none"' : ''}><td><table><tr><td>普通預金残高</td></tr>${s.availableLabel ? `<tr><td>${s.availableLabel}</td></tr>` : ''}</table></td><td>&nbsp;</td><td><table><tr><td>${amount}</td></tr>${available ? `<tr><td>${available}</td></tr>` : ''}</table></td><td><a href="#">入出金明細</a></td></tr>`;
+  const confirmText = { logout: 'ログアウトしますか？', other: '入力した内容を破棄して移動しますか？' }[s.logoutConfirm] || null;
+  const home = () => doc('楽天銀行 MyAccount', `<table><tr><td><a href="#">入出金明細</a> <a href="#">登録情報の照会・変更</a></td><td><a id="${s.logoutId}" href="#" onclick="${confirmText ? `if(!confirm('${confirmText}'))return false;` : ''}location.href='/XMS/security/RbS?COMMAND=LOGOUT';return false;"> \n <img alt="ログアウト" src="${GIF}" width="60" height="20"> </a></td></tr></table>
+<table class="balances">${row(s.amount, s.available, s.hidePrimary)}${s.duplicate ? row('9,999 円', '（9,000円）') : ''}</table>${s.noTime ? '' : `<p><span>残高確認時間:</span> <span>${shown(s.bankMs)}</span></p>`}<p>普通 1234567（架空）</p>`);
   const respond = request => {
     let url; try { url = new URL(request.url()); } catch { return request.abort(); }
     if (url.protocol === 'data:') return request.continue();
@@ -96,7 +100,7 @@ function paypaySite(o = {}) {
   const login = () => doc('ログイン - PayPay銀行', `<form method="post" action="NBCW2101.do" name="HOST" onSubmit="return true" target="_self">店番号 <input type="tel" name="TenNo" id="idTenNo" maxlength="3"> 口座番号 <input type="tel" name="KozaNo" id="idKozaNo" maxlength="7"> パスワード <input type="password" name="Pw" id="idPw" maxlength="32"> <input type="submit" name="login" value="ログイン"></form>`);
   const logoutLink = `<a href="#" onclick="${s.confirm ? "if(!confirm('ログアウトしてもよろしいですか？'))return false;" : ''}location.href='${PP_ACTION}?p=logout';return false;">ログアウト</a>`;
   const welcome = () => doc('Welcome Page - PayPay銀行', `<a href="${PP_ACTION}?p=balance">残高照会</a> <a href="${PP_ACTION}?p=statements">普通預金取引明細照会</a> ${logoutLink}`);
-  const balance = () => doc('残高照会 - PayPay銀行', `<div id="mainArea"><p>店番号 012 口座番号 ${s.accountShown} 普通 カクウ商事（架空）</p><table><tr><th>普通預金残高</th><td>${s.amount}</td></tr><tr><th>お引出し可能額</th><td>－</td></tr></table>${s.duplicate ? '<table><tr><th>普通預金残高</th><td>1 円</td></tr></table>' : ''}<p>${shown(s.bankMs, '/', s.seconds)}現在</p></div> ${logoutLink}`);
+  const balance = () => doc('残高照会 - PayPay銀行', `<div id="mainArea"><p>店番号 012 口座番号 ${s.accountShown} 普通 カクウ商事（架空）</p><table><tr><th>普通預金残高</th><td>${s.amount}</td></tr><tr><th>お引出し可能額</th><td>－</td></tr></table>${s.duplicate ? '<table><tr><th>普通預金残高</th><td>1 円</td></tr></table>' : ''}</div><div id="headerInfo">${s.times === 'none' ? '' : `<p>${shown(s.bankMs, '/', s.seconds)} 現在</p>`}${s.times === 'two' ? `<p>${shown(s.bankMs - 3600000, '/', true)} 現在</p>` : ''}</div> ${logoutLink}`); // the actual time is visible OUTSIDE #mainArea
   const respond = request => {
     let url; try { url = new URL(request.url()); } catch { return request.abort(); }
     if (url.protocol === 'data:') return request.continue();
@@ -167,7 +171,7 @@ test('楽天銀行: one saved-login submission in the background, both bank fiel
 });
 
 test('楽天銀行: a duplicated or hidden label, an amount outside the bank syntax or a missing 残高確認時間 never publishes a balance (never zero); logout still runs', async () => {
-  for (const [label, o, pattern] of [['duplicate', { duplicate: true }, /普通預金残高/], ['hidden', { hidePrimary: true }, /普通預金残高/], ['syntax', { amount: '1,234,56 円' }, /普通預金残高/], ['no-time', { noTime: true }, /残高確認時間/], ['no-yen', { amount: '1,234,567' }, /普通預金残高/], ['two-amounts', { amount: '1,234 円 5,678 円' }, /普通預金残高/]]) {
+  for (const [label, o, pattern] of [['duplicate', { duplicate: true }, /普通預金残高/], ['hidden', { hidePrimary: true }, /普通預金残高/], ['syntax', { amount: '1,234,56 円' }, /普通預金残高/], ['no-time', { noTime: true }, /残高確認時間/], ['no-yen', { amount: '1,234,567' }, /普通預金残高/], ['two-amounts', { amount: '1,234 円 5,678 円' }, /普通預金残高/], ['available-missing', { available: '' }, /支払可能残高/], ['available-unparenthesized', { available: '1,200,000円' }, /支払可能残高/]]) {
     const site = rakutenSite(o), r = await inquire(site, rakutenAdapter({ readMs: 2500 }), jobOf('rakuten', 'standard'), savedLogin(RSECRET));
     assert.equal(r.error, null, 'rakuten-balance:no-throw ' + label + ' ' + String(r.error?.message || ''));
     assert.ok(r.result.failed && pattern.test(r.result.failed), 'rakuten-balance:refused ' + label + ' ' + r.result.failed); assert.deepEqual(r.readings, [], 'rakuten-balance:nothing-read ' + label);
@@ -180,6 +184,11 @@ test('楽天銀行 logout: the explicit logout text with no ログアウト cont
   assert.equal(a.result.logout?.loggedOut, true, 'rakuten-balance:logout-thanks'); assert.equal(a.readings.length, 1);
   const stuck = rakutenSite({ logout: 'stuck' }), b = await inquire(stuck, rakutenAdapter({ finishMs: 3000 }), jobOf('rakuten', 'standard'), savedLogin(RSECRET));
   assert.equal(b.result.logout?.loggedOut, false, 'rakuten-balance:logout-not-inferred'); assert.equal(b.readings.length, 1, 'rakuten-balance:reading-kept'); assert.equal(stuck.stats.logout, 1, 'rakuten-balance:logout-once');
+  // the bank's own logout confirmation right after this press is answered once; an unrelated confirmation never is (logout stays unconfirmed)
+  const confirmed = rakutenSite({ logoutConfirm: 'logout' }), c = await inquire(confirmed, rakutenAdapter(), jobOf('rakuten', 'standard'), savedLogin(RSECRET));
+  assert.deepEqual([c.result.logout?.loggedOut, confirmed.stats.logout, c.dialogs.map(d => d.type)], [true, 1, ['confirm']], 'rakuten-balance:logout-confirmation-answered');
+  const other = rakutenSite({ logoutConfirm: 'other' }), d = await inquire(other, rakutenAdapter({ finishMs: 3000 }), jobOf('rakuten', 'standard'), savedLogin(RSECRET));
+  assert.deepEqual([d.result.logout?.loggedOut, other.stats.logout, d.readings.length], [false, 0, 1], 'rakuten-balance:unrelated-confirmation-unanswered');
 });
 
 test('protected failure: a blocked or refused saved login, a bank refusal or an extra verification ends the background inquiry without asking a person, showing a window or submitting again', async () => {
@@ -207,7 +216,7 @@ test('PayPay銀行: four saved logins are four inquiries, each bound to its own 
     const site = paypaySite({ accountShown: n }), r = await inquire(site, paypayAdapter(), jobOf('paypay', 'standard'), savedLogin({ ...PSECRET, account: n }));
     assert.equal(r.result?.failed, null, 'paypay-balance:four ' + n + ' ' + r.result?.failed); assert.deepEqual(site.stats.submitted, [n], 'paypay-balance:own-login ' + n);
   }
-  for (const [label, o, secret] of [['other-account', { accountShown: '0099999' }, PSECRET], ['duplicate', { duplicate: true }, PSECRET], ['no-seconds', { seconds: false }, PSECRET], ['not-direct', { mode: 'notice' }, PSECRET]]) {
+  for (const [label, o, secret] of [['other-account', { accountShown: '0099999' }, PSECRET], ['duplicate', { duplicate: true }, PSECRET], ['no-seconds', { seconds: false }, PSECRET], ['no-time', { times: 'none' }, PSECRET], ['two-times', { times: 'two' }, PSECRET], ['not-direct', { mode: 'notice' }, PSECRET]]) {
     const site = paypaySite(o), r = await inquire(site, paypayAdapter({ readMs: 2500 }), jobOf('paypay', 'standard'), savedLogin(secret));
     assert.ok(r.result?.failed, 'paypay-balance:refused ' + label + ' ' + String(r.error?.message || '')); assert.deepEqual(r.readings, [], 'paypay-balance:nothing ' + label);
   }

@@ -449,7 +449,8 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
 
 // ── Hourly background balance (plan omf-bank-hourly-balances-20261027) ───────────────────────────────────────────────────────────
 // The parent's owner-observed facts (SAFE-BANK-CONTRACT.json): after the account's own direct standard login, the unique 残高照会 opens
-// the 残高照会 page (/wctx/NBCW2101.do) whose #mainArea first table row holds 普通預金残高 "1,234 円" with "YYYY/MM/DD HH:mm:ss現在" (JST).
+// the 残高照会 page (/wctx/NBCW2101.do) whose #mainArea first table row holds 普通預金残高 "1,234 円"; its bank time "YYYY/MM/DD HH:mm:ss 現在"
+// (JST) is visible on the page OUTSIDE #mainArea (PARENT-LIVE-READER-FACTS-01.json).
 // The exact page title "残高照会 - PayPay銀行" is the one the parent's safe DOM facts recorded for all four actual accounts
 // (PARENT-ADAPTER-DOM-FACTS.json; a different title fails closed: nothing is read). Four logins are four entries: the page's account
 // number(s), when shown, must equal the account of the saved login just submitted (compared here, never stored).
@@ -460,12 +461,13 @@ const BALANCE_READ = ({ area, row, label }) => {
   const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden', norm = t => String(t ?? '').replace(/\s+/g, ' ').trim();
   const tokens = el => { const out = [], walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n; while ((n = walk.nextNode())) { const p = n.parentElement; if (!p || !visible(p)) continue; const t = norm(n.textContent); if (t) out.push(t.slice(0, 200)); } return out.slice(0, 60); };
   const box = document.querySelector(area);
-  return { origin: location.origin, path: location.pathname, top: window.top === window, title: document.title, area: !!box && visible(box), rows: [...document.querySelectorAll(row)].filter(visible).map(tokens).filter(t => t.includes(label)).slice(0, 10), text: box && visible(box) ? norm(box.innerText).slice(0, 3000) : '' };
+  return { origin: location.origin, path: location.pathname, top: window.top === window, title: document.title, area: !!box && visible(box), rows: [...document.querySelectorAll(row)].filter(visible).map(tokens).filter(t => t.includes(label)).slice(0, 10), text: box && visible(box) ? norm(box.innerText).slice(0, 3000) : '', page: norm(document.body?.innerText || '').slice(0, 8000) };
 };
 /**
  * GUARD — the balance of one 残高照会 read (pure): the official origin, path, top document and title; exactly one first row holding
- * 普通預金残高 with exactly one amount of the bank's syntax (no other digits in it); exactly one distinct "…:ss現在"; and, when the page
- * shows a 7-digit account number or a 店番号, each equal to the saved login's. Anything else throws a coded error — never a zero.
+ * 普通預金残高 with exactly one amount of the bank's syntax (no other digits in it); exactly one distinct "…:ss 現在" on the visible page
+ * (the actual page shows it OUTSIDE #mainArea, parent PARENT-LIVE-READER-FACTS-01.json); and, when #mainArea shows a 7-digit account
+ * number or a 店番号, each equal to the saved login's. Anything else throws a coded error — never a zero.
  */
 export function paypayBalanceOf(read, saved = null, c = BALANCE_PAGE) {
   const label = 'PayPay銀行', no = (code, m) => coded(code, `${label}の${m}。残高は保存していません`);
@@ -473,7 +475,7 @@ export function paypayBalanceOf(read, saved = null, c = BALANCE_PAGE) {
   if (read.rows.length !== 1 || read.rows[0].filter(t => t === c.label).length !== 1) throw no('balance-field', `「${c.label}」を1つに特定できません（${read.rows.length}件）`); // guard:paypay-label-unique
   const part = read.rows[0].filter(t => t !== c.label).join(' '), hits = findYen(part, 'suffix');
   if (hits.length !== 1 || /\d/.test(part.slice(0, hits[0].index) + part.slice(hits[0].end))) throw no('balance-field', `「${c.label}」の金額を1つに特定できません`); // guard:paypay-amount-exact
-  const times = [...new Set([...read.text.matchAll(/(\d{4}\/\d{2}\/\d{2})\s+(\d{2}:\d{2}:\d{2})\s*現在/g)].map(m => m[1] + ' ' + m[2]))], asOf = times.length === 1 ? parseBankTime(times[0], 'YYYY/MM/DD HH:mm:ss') : null;
+  const times = [...new Set([...String(read.page ?? '').matchAll(/(\d{4}\/\d{2}\/\d{2})\s+(\d{2}:\d{2}:\d{2})\s*現在/g)].map(m => m[1] + ' ' + m[2]))], asOf = times.length === 1 ? parseBankTime(times[0], 'YYYY/MM/DD HH:mm:ss') : null;
   if (!asOf) throw no('balance-time', `残高の時刻（現在）を1つに特定できません（${times.length}件）`); // guard:paypay-time-unique
   const numbers = [...read.text.matchAll(/(?<![\d,/:])\d{7}(?![\d,/:])/g)].map(m => m[0]), branch = /店番号\s*[:：]?\s*(\d{3})(?!\d)/.exec(read.text)?.[1];
   if (saved?.account && numbers.some(n => n !== saved.account)) throw no('balance-identity', '画面の口座番号が、この口座の保存済みのログインと一致しません'); // guard:paypay-identity

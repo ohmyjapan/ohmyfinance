@@ -59,6 +59,15 @@ data. A balance job completes only after its receipt was stored. Amounts keep th
 "¥-1,234"; the 池田泉州銀行 card is also selected by such a signed amount); the live samples were positive and no negative format was
 observed. Anything unreadable is an error, never zero.
 
+## Readers (the parent's actual-page facts)
+
+- 楽天銀行: one row holds 普通預金残高 and （支払可能残高） before both amounts; its third cell holds the primary amount, then the available
+  amount in parentheses (positive). Exactly that shape is read; any other count, order or parenthesis is refused. The image ログアウト may
+  be followed by the bank's own logout confirmation (a confirm on the same page with logout wording), answered once; any other dialog is
+  left and the logout is reported unconfirmed. Why an earlier candidate's logout timed out was not captured.
+- PayPay銀行: the 普通預金残高 is read inside #mainArea; the bank time "YYYY/MM/DD HH:mm:ss 現在" is read once on the whole visible page
+  (it is shown outside #mainArea).
+
 ## Verification boundary
 
 The fixture `scripts/zoomer-fixtures/omf-bank-balances.mjs` proves the queue, routes, collector, readers (on fictional pages built from
