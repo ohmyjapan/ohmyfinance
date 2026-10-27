@@ -84,6 +84,8 @@ export const MUTANTS = [
   ['MK4-refusal-resent', RUN, 'const reason = balanceRefusal(error); if (!reason) throw error;', 'throw error;', 'K', 'receipt: written durably', /✖ receipt: written durably/],
   ['MK5-receipt-not-retained', RUN, 'item = await retain(dir, bound, balanceReceiptOf(bound, job, reading, now()), now);', 'void reading;', 'K', 'receipt: written durably', /✖ receipt: written durably/],
   ['MK6-no-logout', RUN, 'finally { if (signed) logout = ', 'finally { if (false) logout = ', 'K', 'one saved-login submission', /rakuten-balance:image-logout-pressed/],
+  // final review 01 F1: a logout result that is not a confirmed one (null: no answer within finishMs, or a throwing finish) carries the note
+  ['MK18-null-logout-unnoted', RUN, "(result?.logout?.loggedOut === true ? '' : BALANCE_TEXT.noLogout)", "(result?.logout && result.logout.loggedOut === false ? BALANCE_TEXT.noLogout : '')", 'K', 'logout result', /balance-logout:null-unconfirmed-note/],
   // the actual paired 楽天銀行 layout and the PayPay page time (parent PARENT-LIVE-READER-FACTS-01.json)
   ['MK7-rakuten-duplicate-label', 'collector/banks/rakuten.mjs', 'if (primaries !== 1 || withPrimary.length !== 1) throw', 'if (primaries < 1) throw', 'K', 'duplicated or hidden label', /rakuten-balance:refused duplicate/],
   ['MK8-rakuten-amount-count', 'collector/banks/rakuten.mjs', "const exact = hits.length === (own ? 2 : 1) && !paren(hits[0]) && (!own || paren(hits[1])) && !/\\d/.test(gaps);", 'const exact = hits.length >= 1;', 'K', 'duplicated or hidden label', /rakuten-balance:refused (syntax|no-yen|two-amounts|available-missing|available-unparenthesized)/],

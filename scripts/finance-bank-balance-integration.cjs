@@ -321,12 +321,12 @@ async function harness() {
     }
     assert.equal(I.bankLoginFor({ job: claimed.bank.job, account: claimed.bank.account }, config, { ...live, mode: 'manual' }, { store: { has: async () => false }, root: directory, assert: () => {} }), null, 'balance:login-handle-protected-only');
     const reading = job => ({ amount: 4321000, available: job.snapshot.provider === 'rakuten' ? 4000000 : null, asOf: new Date(Date.now() - 60000).toISOString(), source: { ...SOURCES[job.snapshot.provider] } });
-    const inquire = async (bound, job, root, st, { onReading }) => { inquiries++; await st('running', 'fictional inquiry'); await onReading(reading(job)); return { loggedOut: true }; };
+    const inquire = async (bound, job, root, st, { onReading }) => { inquiries++; await st('running', 'fictional inquiry'); await onReading(reading(job)); return { failed: null, reading: reading(job), logout: { loggedOut: true } }; }; // the inquireFromPage result shape
     const noStatement = async () => { statements.push(1); throw new Error('the statement path was used for a balance job'); };
     const statusOf = job => async (state, text) => { const r = await call(capi + 'bank/status', { method: 'POST', token: dev.token, body: { jobId: job.jobId, state, message: text } }); if (r.status !== 200) throw Object.assign(new Error('status ' + r.status), { status: r.status }); };
     const run = (bank, extra = {}) => I.runBankJob(bank, config, null, { status: statusOf(bank.job), directory, collect: noStatement, observe: noStatement, inquire, now: Date.now, login: null, ...extra });
     const r1 = await run(claimed.bank); assert.equal(r1.failed ?? null, null, 'balance:native-run ' + JSON.stringify(r1).slice(0, 300)); assert.deepEqual([inquiries, statements.length], [1, 0], 'balance:native-one-inquiry-no-statement');
-    const j1 = await BankJob.findOne({ jobId: claimed.bank.job.jobId }).lean(); assert.equal(j1.state, 'complete', 'balance:native-complete'); assert.ok(j1.balance.snapshotId, 'balance:native-receipt-stored');
+    const j1 = await BankJob.findOne({ jobId: claimed.bank.job.jobId }).lean(); assert.equal(j1.state, 'complete', 'balance:native-complete'); assert.equal(j1.lastMessage, '残高を更新しました', 'balance:native-complete-text (confirmed logout: no unconfirmed-logout note)');assert.ok(j1.balance.snapshotId, 'balance:native-receipt-stored');
     const dir1 = path.join(directory, 'outbox', 'balance', String(claimed.bank.account._id), claimed.bank.job.jobId), m1 = JSON.parse(await fsp.readFile(path.join(dir1, 'manifest.json'), 'utf8'));
     assert.ok(m1.acknowledgedAt && m1.importId === String(j1.balance.snapshotId), 'balance:native-acknowledged-after-store');
     const bytes1 = await fsp.readFile(path.join(dir1, m1.filename)); assert.equal(sha256(bytes1), m1.sha256); assert.equal(/password|cookie|0000001|<td|\?/.test(bytes1.toString()), false, 'balance:receipt-minimal');

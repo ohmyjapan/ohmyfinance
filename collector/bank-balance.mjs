@@ -146,7 +146,7 @@ export async function runBalanceJob(bank, config, live, { status, send, root, in
   if (!item) { const text = BALANCE_TEXT.unread(label); await status('failed', text); return { failed: text }; }
   const sent = await sendItem(item);
   if (sent !== true) { const text = BALANCE_TEXT.refused(sent); await status('failed', text); return { failed: text }; }
-  const message = BALANCE_TEXT.complete + (result?.logout && result.logout.loggedOut === false ? BALANCE_TEXT.noLogout : '');
+  const message = BALANCE_TEXT.complete + (result?.logout?.loggedOut === true ? '' : BALANCE_TEXT.noLogout);
   await status('complete', message);
   return { failed: null, logout: result?.logout ?? null };
 }

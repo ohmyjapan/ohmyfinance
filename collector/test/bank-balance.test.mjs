@@ -255,7 +255,7 @@ async function runner(job, { root, send, inquire: inq, statuses = [] } = {}) {
 test('receipt: written durably before it is sent, acknowledged only after OMF answered; a crash after it resends identical bytes without another inquiry; an interrupted inquiry never logs in again; a refusal is final', async () => {
   const root = path.join(temp, 'runner-' + randomUUID().slice(0, 6)); await mkdir(root, { recursive: true });
   const job = jobOf('rakuten', 'standard'); let inquiries = 0, sends = []; const statuses = [];
-  const inq = async (bound, j, r, st, { onReading }) => { inquiries++; await onReading(readingOf('rakuten')); return { loggedOut: true }; };
+  const inq = async (bound, j, r, st, { onReading }) => { inquiries++; await onReading(readingOf('rakuten')); return { failed: null, reading: readingOf('rakuten'), logout: { loggedOut: true } }; }; // the inquireFromPage result shape
   const failing = async () => { throw Object.assign(new Error('fictional network'), { name: 'TypeError' }); };
   await assert.rejects(runner(job, { root, send: failing, inquire: inq, statuses }), /fictional network/, 'balance-receipt:send-failure-propagates');
   const dir = path.join(root, 'outbox', 'balance', ACCOUNT, job.jobId), m = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8')), bytes = await readFile(path.join(dir, m.filename));
@@ -280,4 +280,32 @@ test('receipt: written durably before it is sent, acknowledged only after OMF an
   const n4 = inquiries, r4 = await runner({ ...jobOf('resona', 'direct') }, { root, send: ok, inquire: inq }); assert.ok(r4.failed, 'balance-receipt:unsupported'); assert.equal(inquiries, n4);
   assert.equal((await readdir(path.join(root, 'outbox'))).includes('bank'), false, 'balance-receipt:no-statement-outbox');
   assert.equal(await exists(path.join(root, 'outbox', 'balance', ACCOUNT, job.jobId, 'attempt.json')), true, 'balance-receipt:attempt-journal');
+});
+
+// Final review 01 F1: the completion text tells the owner whenever the bank's logout was not confirmed — an explicit false, and also no
+// answer within finishMs or a throwing balanceFinish (inquireFromPage's logout null). runBalanceJob with the real inquireFromPage on the
+// fictional 楽天銀行 in an owned Chrome; the receipt is retained and sent and the Chrome closed in every case.
+test('logout result in the completion message: a confirmed ログアウト completes plainly; an unconfirmed one, none within finishMs or a throwing finish (logout null) adds the unconfirmed-logout note; the receipt is sent and the owned Chrome closed every time', async () => {
+  const live = b => typeof b.isConnected === 'function' ? b.isConnected() : b.connected;
+  const finishing = finish => ({ ...rakuten.standardBalance, ui(page, browser, snapshot) { const ui = rakuten.balanceUi(page, browser, this, snapshot, { readMs: 8000, finishMs: 8000 }); return { ...ui, balanceFinish: finish }; } });
+  const run = async (label, site, adapter, finishMs) => {
+    const root = path.join(temp, 'logout-' + randomUUID().slice(0, 6)); await mkdir(root, { recursive: true });
+    const job = jobOf('rakuten', 'standard'), statuses = [], sends = []; let chrome = null;
+    const send = async (cfg, acct, item) => { sends.push(item.manifest.jobId); await writeFile(path.join(item.directory, 'manifest.json'), JSON.stringify({ ...item.manifest, acknowledgedAt: new Date().toISOString(), importId: 'x' })); return { id: 'x' }; };
+    const inq = (bound, j, r, st, opts) => owned(site, async ({ page, browser }) => { chrome = browser; return B.inquireFromPage(page, browser, adapter, bound, j, r, st, { ...opts, login: savedLogin(RSECRET), loginTimeoutMs: 40000, finishMs }); });
+    const out = await runner(job, { root, send, inquire: inq, statuses });
+    assert.equal(out.failed ?? null, null, 'balance-logout:completes ' + label + ' ' + JSON.stringify(statuses).slice(0, 400));
+    assert.deepEqual(sends, [job.jobId], 'balance-logout:receipt-sent ' + label);
+    assert.equal(chrome && live(chrome), false, 'balance-logout:chrome-closed ' + label);
+    return { out, text: statuses.at(-1) };
+  };
+  const confirmed = rakutenSite(), a = await run('confirmed', confirmed, rakutenAdapter(), 20000);
+  assert.deepEqual(a.text, ['complete', B.BALANCE_TEXT.complete], 'balance-logout:confirmed-plain'); assert.equal(a.out.logout?.loggedOut, true); assert.equal(confirmed.stats.logout, 1);
+  const stuck = rakutenSite({ logout: 'stuck' }), b = await run('false', stuck, rakutenAdapter({ finishMs: 3000 }), 20000);
+  assert.deepEqual(b.text, ['complete', B.BALANCE_TEXT.complete + B.BALANCE_TEXT.noLogout], 'balance-logout:false-unconfirmed-note'); assert.equal(b.out.logout?.loggedOut, false);
+  // balanceFinish resolving only AFTER the runner's finishMs (its late "confirmed" must not count)
+  const late = await run('late', rakutenSite(), finishing(() => new Promise(resolve => setTimeout(() => resolve({ loggedOut: true }), 4000))), 1500);
+  assert.match(late.text[1], /ログアウトは確認できませんでした/, 'balance-logout:null-unconfirmed-note late'); assert.deepEqual(late.text, ['complete', B.BALANCE_TEXT.complete + B.BALANCE_TEXT.noLogout]); assert.equal(late.out.logout, null);
+  const throwing = await run('throwing', rakutenSite(), finishing(async () => { throw new Error('fictional finish failure'); }), 20000);
+  assert.match(throwing.text[1], /ログアウトは確認できませんでした/, 'balance-logout:null-unconfirmed-note throwing'); assert.equal(throwing.out.logout, null);
 });
