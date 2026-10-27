@@ -97,7 +97,9 @@ async function owned(site, fn) {
   for (let attempt = 1; ; attempt++) {
     const profile = path.join(temp, 'profile-' + randomUUID().slice(0, 8)), t = Date.now(); profiles.push(profile);
     let browser = null, started = null;
-    try { browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] }); started = await ownedStart(site, browser); }
+    // No implicit startup tab (the production quiet browser's options, collector/browser.mjs): the default about:blank target was the one
+    // whose Network.enable timed out while the pages were listed (parent PARENT-STARTUP-TARGET-FINDING.json); ownedStart opens it explicitly.
+    try { browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, ignoreDefaultArgs: ['about:blank'], waitForInitialPage: false, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost', '--no-startup-window'] }); started = await ownedStart(site, browser); }
     catch (error) {
       if (browser) await closeOwned(browser); const free = await released(profile);
       console.log('# owned Chrome start-up attempt ' + attempt + ' failed after ' + (Date.now() - t) + ' ms (' + (error?.name || 'Error') + ': ' + String(error?.message || '').slice(0, 100) + '); its profile ' + (free ? 'released' : 'STILL HELD'));
@@ -127,6 +129,7 @@ async function ownedStart(site, browser) {
   const ready = page => (page.__attached ??= attach(page));
   browser.on('targetcreated', async target => { if (target.type() !== 'page') return; try { const page = await target.page(); if (page) await ready(page); } catch { /* closed */ } });
   const open = async () => { const page = await browser.newPage(); await ready(page); return page; };
+  await open(); // explicitly keep the original unrelated blank tab, fully initialized (the cases count it among the pages left open)
   return { page: await open(), dialogs, open };
 }
 // A fictional saved login with the interface bank.mjs expects, counting every call.

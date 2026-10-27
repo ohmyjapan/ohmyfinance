@@ -105,7 +105,9 @@ function bankSite(options = {}) {
 // An owned headless Chrome; every page gets request interception and the TEST's own enabled CDP session recording its dialogs.
 async function owned(site, fn) {
   const profile = path.join(temp, 'profile-' + randomUUID().slice(0, 8));
-  const browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] });
+  // No implicit startup tab (the production quiet browser's options, collector/browser.mjs; parent PARENT-STARTUP-TARGET-FINDING.json and
+  // PARENT-LOGOUT-BOOTSTRAP-ACCEPTANCE.json): the unrelated blank tab the cases keep is opened explicitly below.
+  const browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, ignoreDefaultArgs: ['about:blank'], waitForInitialPage: false, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost', '--no-startup-window'] });
   const dialogs = [];
   const attach = async page => {
     const cdp = await page.createCDPSession(); await cdp.send('Page.enable');
@@ -116,7 +118,7 @@ async function owned(site, fn) {
   const ready = page => (page.__attached ??= attach(page));
   let main = null;
   browser.on('targetcreated', async target => { if (target.type() !== 'page') return; try { const page = await target.page(); if (page) await ready(page); } catch { /* closed */ } });
-  try { main = await browser.newPage(); await ready(main); return await fn({ page: main, browser, dialogs }); }
+  try { const keptBlank = await browser.newPage(); await ready(keptBlank); main = await browser.newPage(); await ready(main); return await fn({ page: main, browser, dialogs }); }
   finally { for (const d of dialogs) if (!d.closed) await d.cdp.send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {}); await browser.close().catch(() => {}); }
 }
 function savedLogin() {
