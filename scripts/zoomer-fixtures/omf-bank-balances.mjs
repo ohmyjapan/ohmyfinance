@@ -123,9 +123,26 @@ async function walkImports(entry, seen = new Set()) {
   return seen;
 }
 
+// Scoped replay selectors (optional; unset = the full default): OMF_BALANCES_EXISTING (R suites) and OMF_BALANCES_MUTANTS (M labels),
+// each a comma list that must be non-empty and name only known entries; OMF_BALANCES_M_SELF_CONTROL=1 lets M run without U/K/S in the same
+// run by first running, for every selected defect, its own unchanged positive control on the same leg/test selection (which must pass).
+export function selection(env = process.env) {
+  const list = (name, known) => {
+    if (env[name] === undefined) return null;
+    const items = String(env[name]).split(',').map(s => s.trim()).filter(Boolean);
+    if (!items.length) throw new Error(name + ' is set but selects nothing');
+    const unknown = items.filter(i => !known.includes(i)); if (unknown.length) throw new Error(name + ' names unknown entries: ' + unknown.join(', '));
+    return [...new Set(items)];
+  };
+  const selfControl = env.OMF_BALANCES_M_SELF_CONTROL === undefined ? false : env.OMF_BALANCES_M_SELF_CONTROL === '1' ? true : (() => { throw new Error('OMF_BALANCES_M_SELF_CONTROL must be 1 when set'); })();
+  return { existing: list('OMF_BALANCES_EXISTING', EXISTING), mutants: list('OMF_BALANCES_MUTANTS', MUTANTS.map(m => m[0])), selfControl };
+}
+
 export default { name: 'omf-bank-balances', covers: COVERS, async run() {
-  const started = Date.now(), lines = [], green = new Set(); let pass = true, executed = false;
-  const counts = { unitTests: 0, collectorTests: 0, harnessLegs: 0, ui: 0, existing: {}, mutantsCaught: 0, mutantsTotal: MUTANTS.length };
+  const started = Date.now(), lines = [], green = new Set(); let pass = true, executed = false, chosen;
+  try { chosen = selection(); } catch (e) { return { pass: false, databaseCoverage: { executed: false, ownedProcess: false }, message: 'RED invalid selection: ' + e.message }; }
+  const EXISTING_RUN = chosen.existing || EXISTING, MUTANTS_RUN = chosen.mutants ? MUTANTS.filter(m => chosen.mutants.includes(m[0])) : MUTANTS;
+  const counts = { unitTests: 0, collectorTests: 0, harnessLegs: 0, ui: 0, existing: {}, mutantsCaught: 0, mutantsTotal: MUTANTS_RUN.length, mutantsDefined: MUTANTS.length, selection: { existing: chosen.existing, mutants: chosen.mutants ? chosen.mutants.length : null, selfControl: chosen.selfControl } };
   const want = name => !ONLY.length || ONLY.includes(name);
   const keep = async (name, text) => { if (EVIDENCE) { await mkdir(EVIDENCE, { recursive: true }); await writeFile(path.join(EVIDENCE, 'leg-' + name + '.txt'), text); } };
   const leg = async (name, fn) => { const key = name.split(' ')[0]; if (!want(key)) return; const t = Date.now(); try { lines.push(name + ': ' + await fn() + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); green.add(key); } catch (e) { pass = false; const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 2400); lines.push(name + ': ' + (/^(SETUP|NOT RUN)/.test(msg) ? '' : 'RED ') + msg); } };
@@ -172,18 +189,34 @@ export default { name: 'omf-bank-balances', covers: COVERS, async run() {
         return Object.keys(manifest.files).length + ' files staged; balance modules hashed; graph resolves; staged readers construct without a page';
       } finally { await rm(temp, { recursive: true, force: true }).catch(() => {}); }
     });
-    await leg('R affected existing suites unchanged: ' + EXISTING.join(', '), async () => {
-      const out = [];
-      for (const file of EXISTING) { const r = await unit(file), t = tests(r); counts.existing[file] = t.pass; out.push(file + ' ' + t.pass + '/' + (t.pass + t.fail)); await keep('R-' + path.basename(file), t.out); if (r.code !== 0 || t.fail || !t.pass) throw new Error(file + ': ' + t.fail + ' failed: ' + t.failures.join(' | ') + ' — ' + t.message); }
+    await leg('R affected existing suites unchanged: ' + EXISTING_RUN.join(', ') + (chosen.existing ? ' (selected ' + EXISTING_RUN.length + '/' + EXISTING.length + ')' : ''), async () => {
+      // every selected suite runs and is recorded; the leg fails at the end when any failed (no later suite is left unrun)
+      const out = [], failed = [];
+      for (const file of EXISTING_RUN) { const r = await unit(file), t = tests(r); counts.existing[file] = { pass: t.pass, fail: t.fail }; out.push(file + ' ' + t.pass + '/' + (t.pass + t.fail)); await keep('R-' + path.basename(file), t.out); if (r.code !== 0 || t.fail || !t.pass) failed.push(file + ': ' + t.fail + ' failed: ' + t.failures.join(' | ') + ' — ' + t.message); }
+      if (failed.length) throw new Error(failed.length + ' of ' + EXISTING_RUN.length + ' suites failed: ' + failed.join(' || ') + ' ; all: ' + out.join('; '));
       return out.join('; ');
     });
-    await leg('M reintroduced defects (each through its own leg; an unchanged copy first)', async () => {
-      for (const need of ['U', 'K', 'S']) if (!green.has(need)) throw new Error('NOT RUN: legs U, K and S must be green first');
-      if (!MUTANTS.length) throw new Error('no mutants defined');
+    await leg('M reintroduced defects (each through its own leg; ' + (chosen.selfControl ? 'each selected defect after its own unchanged positive control' : 'an unchanged copy first') + (chosen.mutants ? '; selected ' + MUTANTS_RUN.length + '/' + MUTANTS.length : '') + ')', async () => {
+      if (!chosen.selfControl) for (const need of ['U', 'K', 'S']) if (!green.has(need)) throw new Error('NOT RUN: legs U, K and S must be green first');
+      if (!MUTANTS_RUN.length) throw new Error('no mutants defined');
       const copyTree = async label => { const dir = path.join(root, '.cache', 'omf-balance-' + label); await rm(dir, { recursive: true, force: true }); for (const d of ['server', 'shared']) await cp(path.join(root, d), path.join(dir, d), { recursive: true }); return dir; };
-      const control = await copyTree('control'); try { const r = await harness({ OMF_BALANCE_SRC: control, OMF_BALANCE_ONLY: 'S2,S7' }); if (r.code !== 0 || r.fails.length) throw new Error('unchanged copy failed: ' + r.fails.join(' | ').slice(0, 500)); } finally { await rm(control, { recursive: true, force: true }); }
-      const caught = [], ENV = { 'collector/bank-balance.mjs': 'OMF_TEST_BALANCE_MODULE', 'collector/banks/rakuten.mjs': 'OMF_TEST_RAKUTEN_MODULE', 'collector/banks/paypay.mjs': 'OMF_TEST_PAYPAY_MODULE', 'collector/banks/ikeda.mjs': 'OMF_TEST_IKEDA_MODULE', 'shared/finance-bank-balance.mjs': 'OMF_TEST_BALANCE_MODULE' };
-      for (const [label, file, anchor, replacement, via, select, expect] of MUTANTS) {
+      if (!chosen.selfControl) { const control = await copyTree('control'); try { const r = await harness({ OMF_BALANCE_SRC: control, OMF_BALANCE_ONLY: 'S2,S7' }); if (r.code !== 0 || r.fails.length) throw new Error('unchanged copy failed: ' + r.fails.join(' | ').slice(0, 500)); } finally { await rm(control, { recursive: true, force: true }); } }
+      const caught = [], missed = [], ENV = { 'collector/bank-balance.mjs': 'OMF_TEST_BALANCE_MODULE', 'collector/banks/rakuten.mjs': 'OMF_TEST_RAKUTEN_MODULE', 'collector/banks/paypay.mjs': 'OMF_TEST_PAYPAY_MODULE', 'collector/banks/ikeda.mjs': 'OMF_TEST_IKEDA_MODULE', 'shared/finance-bank-balance.mjs': 'OMF_TEST_BALANCE_MODULE' };
+      const record = async item => { if (EVIDENCE) { await mkdir(EVIDENCE, { recursive: true }); await writeFile(path.join(EVIDENCE, 'leg-M.jsonl'), JSON.stringify({ at: new Date().toISOString(), ...item }) + '\n', { flag: 'a' }); } };
+      // Self-contained mode: the unchanged positive control of a defect's own leg/test selection, run once per selection on unchanged bytes
+      // placed exactly where the defect copy goes; it must pass before that defect counts.
+      const controls = new Map();
+      const control = async (file, via, select) => {
+        const key = via + '|' + (via === 'S' ? (file.startsWith('collector/') ? 'index' : 'tree') : file) + '|' + select; if (controls.has(key)) return controls.get(key);
+        const unchanged = await readFile(path.join(root, file)); let ok = false, detail = '';
+        if (via === 'S' && file.startsWith('collector/')) { const copy = path.join(root, 'collector', '.zoomer-balance-control-index.mjs'); try { await writeFile(copy, unchanged); const r = await harness({ OMF_TEST_INDEX_MODULE: copy, OMF_BALANCE_ONLY: select }); ok = r.code === 0 && !r.fails.length && r.passes.length > 0; detail = r.passes.length + ' green / ' + r.fails.length + ' failed ' + r.fails.join(' | ').slice(0, 300); } finally { await rm(copy, { force: true }).catch(() => {}); } }
+        else if (via === 'S') { const dir = await copyTree('control-' + select.toLowerCase().replace(/[^a-z0-9]+/g, '-')); try { const r = await harness({ OMF_BALANCE_SRC: dir, OMF_BALANCE_ONLY: select }); ok = r.code === 0 && !r.fails.length && r.passes.length > 0; detail = r.passes.length + ' green / ' + r.fails.length + ' failed ' + r.fails.join(' | ').slice(0, 300); } finally { await rm(dir, { recursive: true, force: true }).catch(() => {}); } }
+        else { const copy = path.join(root, path.dirname(file), '.zoomer-balance-control-' + path.basename(file)); try { await writeFile(copy, unchanged); const r = await unit(via === 'U' ? UNIT : COLLECTOR_TEST, { [ENV[file]]: copy }, select), t = tests(r); ok = r.code === 0 && !t.fail && t.pass > 0; detail = t.pass + ' pass / ' + t.fail + ' fail ' + t.message.slice(0, 300); } finally { await rm(copy, { force: true }).catch(() => {}); } }
+        const result = { ok, detail }; controls.set(key, result); await record({ control: key, ok, detail }); return result;
+      };
+      for (const [label, file, anchor, replacement, via, select, expect] of MUTANTS_RUN) {
+        if (chosen.selfControl) { const c = await control(file, via, select); if (!c.ok) { missed.push(label + ' (its unchanged positive control failed: ' + c.detail + ')'); await record({ label, caught: false, reason: 'control-failed' }); continue; } }
+        try {
         // a string anchor is literal text; a RegExp anchor (a whole guarded line) is a pattern
         const source = (await readFile(path.join(root, file), 'utf8')).replace(/\r\n/g, '\n'), hits = typeof anchor === 'string' ? source.split(anchor).length - 1 : (source.match(new RegExp(anchor.source, anchor.flags.replace('g', '') + 'g')) || []).length;
         if (hits !== 1) throw new Error(label + ' anchor hits ' + hits + ' in ' + file);
@@ -203,9 +236,12 @@ export default { name: 'omf-bank-balances', covers: COVERS, async run() {
           const t = tests(r); if (!t.fail || !expect.test(t.out)) throw new Error(label + ' did not fail ' + expect + ' (pass ' + t.pass + ', fail ' + t.fail + '): ' + t.message);
           caught.push(label + '→' + t.out.match(expect)[0]);
         }
-        counts.mutantsCaught++;
+        counts.mutantsCaught++; await record({ label, caught: true, evidence: caught[caught.length - 1] });
+        } catch (e) { missed.push(String(e?.message || e).slice(0, 600)); await record({ label, caught: false, reason: String(e?.message || e).slice(0, 600) }); }
       }
-      await keep('M', caught.join('\n')); return 'control green; ' + caught.length + '/' + MUTANTS.length + ' caught: ' + caught.join(', ');
+      await keep('M', caught.join('\n') + (missed.length ? '\n--- not caught ---\n' + missed.join('\n') : ''));
+      if (missed.length) throw new Error(missed.length + ' of ' + MUTANTS_RUN.length + ' not caught: ' + missed.join(' || ').slice(0, 1800) + ' ; caught ' + caught.length);
+      return (chosen.selfControl ? controls.size + ' unchanged positive controls green; ' : 'control green; ') + caught.length + '/' + MUTANTS_RUN.length + ' caught: ' + caught.join(', ');
     });
   } catch (e) { pass = false; lines.push('setup: ' + String(e?.message || e).slice(0, 800)); }
   return { pass, databaseCoverage: { executed, ownedProcess: executed }, message: (pass ? 'green' : 'RED') + ' in ' + Math.round((Date.now() - started) / 1000) + 's ' + JSON.stringify(counts) + '\n' + lines.join('\n') };
