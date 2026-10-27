@@ -42,9 +42,9 @@ async function main(){let mongo,child,client,directory,logs='',checks=0,failure=
   const names=job.tools.map(t=>t.name);for(const n of['list_company_invoices','get_company_invoice','list_company_calendar_entries','get_company_calendar_entry','get_company_action_status','update_company_calendar_entry','update_company_invoice','list_company_transactions','get_company_transaction','list_company_transaction_choices','update_company_transaction'])assert.ok(names.includes(n),'knowledge:existing-tool '+n);
   for(const n of['search_company_knowledge','remember_company_knowledge','correct_company_knowledge','set_company_knowledge_status','find_company_transaction_patterns','list_navi_features'])assert.ok(names.includes(n),'knowledge:new-tool '+n);
   // Deliberate 2026-10-20: business adapters extend the closed catalogue (17 -> 41 exact names; 43 with the two invoice-calendar tools of 2026-10-20); every teaching assertion below is kept.
-  assert.equal(job.tools.length,45,'knowledge:catalogue-count');assert.deepEqual(names.slice().sort(),[...require('./finance-company-business-integration.cjs').companyToolNames].sort(),'knowledge:catalogue-count');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
+  assert.equal(job.tools.length,46,'knowledge:catalogue-count');assert.deepEqual(names.slice().sort(),[...require('./finance-company-business-integration.cjs').companyToolNames].sort(),'knowledge:catalogue-count');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
   assert.deepEqual(job.knowledge,[],'knowledge:empty-recall');
-  pass('company job keeps the eleven native tools and the six strict teaching/pattern/feature tools within the exact 45-tool company catalogue');
+  pass('company job keeps the eleven native tools and the six strict teaching/pattern/feature tools within the exact 46-tool company catalogue');
 
   // 2. Pattern evidence: counts, conflicting examples, exact protected card credit names, receipt flag meaning, company isolation.
   let r=await act(job,'find_company_transaction_patterns',{merchant:'SYNTH_MART'});assert.equal(r.status,200,'knowledge:patterns '+r.raw.slice(0,300));const p=r.data.result;
