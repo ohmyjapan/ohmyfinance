@@ -121,6 +121,13 @@ export function fiscalYearFor(key,startMonth){
  const [y,m]=key.split('-').map(Number),startYear=m>=startMonth?y:y-1,start=`${startYear}-${String(startMonth).padStart(2,'0')}-01`,next=`${startMonth===1?startYear+1:startYear+1}-${String(startMonth).padStart(2,'0')}-01`;
  return {startMonth,start,end:addDayKey(next,-1)};
 }
+// The fiscal periods around a local date: the one containing it (current), the one ending the day before it starts (previous) and the
+// one starting the day after it ends (next); null when no start month is saved (EX02 called the current period the previous one).
+export function fiscalPeriodsFor(key,startMonth){
+ const current=fiscalYearFor(key,startMonth);
+ if(!current)return null;
+ return {startMonth:current.startMonth,current,previous:fiscalYearFor(addDayKey(current.start,-1),startMonth),next:fiscalYearFor(addDayKey(current.end,1),startMonth)};
+}
 
 // ---- Currency: the saved code, the card statement's code, or explicitly unknown. Never assumed.
 let known=null;try{known=new Set(Intl.supportedValuesOf('currency'))}catch{}

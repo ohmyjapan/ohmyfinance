@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { useUserStore } from '~/stores/user'
 import { tokenClaims } from '~/utils/auth-session'
 import { exportSearchMatches, exportQueryFromCriteria } from '~/shared/finance-transaction-export.mjs'
+import { isRealDateKey, zonedDayStart, addDayKey, validTimeZone } from '~/shared/finance-navi-business.mjs'
 import type {
     Transaction,
     TransactionStatus,
@@ -318,15 +319,19 @@ export function useTransactions() {
             result = result.filter(transaction => transaction.type === filters.value.type)
         }
 
-        // Apply date range filter
+        // Apply date range filter: a date key is a whole local day of the company's saved time zone (Asia/Tokyo when none is saved), the
+        // same window the export route resolves, so the visible set equals the button export for the same keys whatever the browser's
+        // zone. Any other value keeps its new Date(value) meaning.
+        const zone = validTimeZone(userStore.currentOrganization?.settings?.timezone) || 'Asia/Tokyo'
         if (filters.value.dateFrom) {
-            const fromDate = new Date(filters.value.dateFrom)
+            const fromDate = isRealDateKey(filters.value.dateFrom) ? zonedDayStart(filters.value.dateFrom, zone) : new Date(filters.value.dateFrom)
             result = result.filter(transaction => new Date(transaction.date) >= fromDate)
         }
 
         if (filters.value.dateTo) {
-            const toDate = new Date(filters.value.dateTo)
-            toDate.setHours(23, 59, 59, 999) // End of the day
+            let toDate: Date
+            if (isRealDateKey(filters.value.dateTo)) toDate = new Date(zonedDayStart(addDayKey(filters.value.dateTo, 1), zone).getTime() - 1) // last millisecond of the local day
+            else { toDate = new Date(filters.value.dateTo); toDate.setHours(23, 59, 59, 999) } // End of the day
             result = result.filter(transaction => new Date(transaction.date) <= toDate)
         }
 

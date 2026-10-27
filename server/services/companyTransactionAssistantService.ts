@@ -2,6 +2,7 @@ import type mongoose from 'mongoose'
 import { createError } from 'h3'
 import { getTransactions, getTransactionById } from './transactionService'
 import { registeredAccountCatalogue } from './companyAccountRegistrationService'
+import { companyDateFilters } from './transactionExportService'
 const refFields = ['customerId','supplierId','accountCategoryId','subAccountCategoryId','taxCategoryId','transactionCategoryId','sourceId']
 const reference = (value: any) => value?._id ? { id: String(value._id), name: value.name || '', ...(value.code ? { code: value.code } : {}), ...(value.rate !== undefined ? { rate: value.rate } : {}) } : null
 // Only facts from company-owned roots; never contacts, local paths, metadata, marker or source fingerprint.
@@ -13,8 +14,11 @@ export async function getCompanyNaviTransaction(organizationId: mongoose.Types.O
 }
 export async function listCompanyNaviTransactions(organizationId: mongoose.Types.ObjectId, args: any) {
   const { page = 1, limit = 50, ...filters } = args
-  const values = await getTransactions(filters, organizationId, { skip: (page-1)*limit, limit: limit+1 })
-  return { transactions: values.slice(0,limit).map(transactionNaviView), page, limit, hasMore: values.length > limit }
+  // Date keys are the company's whole local days, resolved exactly as the export route resolves them (the EX03 read lost the final day's
+  // 23:30 JST row); the window is reported only when a date key was given.
+  const resolved = await companyDateFilters(organizationId, filters)
+  const values = await getTransactions(resolved.filters, organizationId, { skip: (page-1)*limit, limit: limit+1 })
+  return { transactions: values.slice(0,limit).map(transactionNaviView), page, limit, hasMore: values.length > limit, ...(resolved.window ? { window: resolved.window } : {}) }
 }
 export async function companyTransactionChoices(organizationId: mongoose.Types.ObjectId, args: any = {}) {
   const rows: any[] = await getTransactions({}, organizationId, { skip: 0, limit: 501 })
@@ -47,7 +51,10 @@ const classificationFields = ['accountCategoryId','subAccountCategoryId','taxCat
 // Historical classification is evidence, not a legal or tax determination; a missing receipt flag only means OMF has none recorded.
 export async function companyTransactionPatterns(organizationId: mongoose.Types.ObjectId, args: any) {
   const limit = 500, exampleLimit = args.exampleLimit || 5
-  const rows: any[] = await getTransactions({ search: literalPattern(args.merchant), ...(args.dateFrom ? { dateFrom: args.dateFrom } : {}), ...(args.dateTo ? { dateTo: args.dateTo } : {}) }, organizationId, { skip: 0, limit: limit + 1 })
+  // The same company-zone day resolution as the list read and the export.
+  const dates = { ...(args.dateFrom ? { dateFrom: args.dateFrom } : {}), ...(args.dateTo ? { dateTo: args.dateTo } : {}) }
+  const resolved = await companyDateFilters(organizationId, dates)
+  const rows: any[] = await getTransactions({ search: literalPattern(args.merchant), ...resolved.filters }, organizationId, { skip: 0, limit: limit + 1 })
   const scanned = rows.slice(0, limit).filter(row => !args.cardLast4 || String(row.cardNumber || '').slice(-4) === args.cardLast4)
   const groups = new Map<string, any>(), credit = new Map<string, any>(), receipts = { savedFlagTrue: 0, notRecordedInOMF: 0 }
   for (const row of scanned) {
@@ -63,5 +70,5 @@ export async function companyTransactionPatterns(organizationId: mongoose.Types.
     if (row.cardAccounting) { const ck = JSON.stringify([row.cardAccounting.accountName || '', row.cardAccounting.subAccountName || '']), c = credit.get(ck) || { accountName: row.cardAccounting.accountName || '', subAccountName: row.cardAccounting.subAccountName || '', count: 0 }; c.count++; credit.set(ck, c) }
   }
   const ordered = [...groups.values()].sort((a, b) => b.count - a.count || (b.lastDate?.getTime() || 0) - (a.lastDate?.getTime() || 0))
-  return { merchant: args.merchant, matchedFields: 'referenceNumber, productName, invoiceNumber, receiptNumber, companyInfo, notes (literal, case-insensitive)', matched: scanned.length, groups: ordered, consistent: ordered.length === 1, conflicting: ordered.length > 1, cardCreditAccounts: [...credit.values()].sort((a, b) => b.count - a.count), receipts: { ...receipts, meaning: 'not_recorded_in_OMF means OMF has no saved receipt flag; it is not proof that no receipt exists' }, evidence: 'historical_classification_not_legal_or_tax_truth', scanned: Math.min(rows.length, limit), truncated: rows.length > limit, limit, exampleLimit }
+  return { merchant: args.merchant, matchedFields: 'referenceNumber, productName, invoiceNumber, receiptNumber, companyInfo, notes (literal, case-insensitive)', matched: scanned.length, groups: ordered, consistent: ordered.length === 1, conflicting: ordered.length > 1, cardCreditAccounts: [...credit.values()].sort((a, b) => b.count - a.count), receipts: { ...receipts, meaning: 'not_recorded_in_OMF means OMF has no saved receipt flag; it is not proof that no receipt exists' }, evidence: 'historical_classification_not_legal_or_tax_truth', scanned: Math.min(rows.length, limit), truncated: rows.length > limit, limit, exampleLimit, ...(resolved.window ? { window: resolved.window } : {}) }
 }

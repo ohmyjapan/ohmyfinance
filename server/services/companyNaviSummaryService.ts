@@ -11,7 +11,7 @@ import { Payment } from '../models/Payment'
 import { ensureConnection } from '../config/database'
 import { findCompanyMatchesForReceipt } from './receiptService'
 import { getCompanyNaviTransaction } from './companyTransactionAssistantService'
-import { validTimeZone, localBusinessDate, zonedRange, fiscalYearFor, currencyCode, isRealDateKey, zonedDayStart, addDayKey } from '../../shared/finance-navi-business.mjs'
+import { validTimeZone, localBusinessDate, zonedRange, fiscalYearFor, fiscalPeriodsFor, currencyCode, isRealDateKey, zonedDayStart, addDayKey } from '../../shared/finance-navi-business.mjs'
 
 const DEFAULT_ZONE = 'Asia/Tokyo'
 const summaryScope = (organizationId: mongoose.Types.ObjectId) => ({ organizationId })
@@ -31,9 +31,13 @@ async function settings(organizationId: mongoose.Types.ObjectId) {
 export async function companyClock(organizationId: mongoose.Types.ObjectId, now = new Date()) {
   await ensureConnection()
   const s = await settings(organizationId)
+  // The fiscal period containing today, the one before and the one after, from the saved start month only (EX02 labelled the current
+  // period "previous" with only the start month in hand); nulls when no start month is recorded.
+  const localDate = localBusinessDate(now, s.timeZone), periods = fiscalPeriodsFor(localDate, s.fiscalYearStart)
   return {
-    clock: { capturedAt: now.toISOString(), timeZone: s.timeZone, timeZoneEvidence: s.timeZoneEvidence, localDate: localBusinessDate(now, s.timeZone), meaning: 'capturedAt is a UTC instant; name local days in timeZone. Saved record timestamps are UTC instants too.' },
-    companySettings: { defaultCurrency: s.defaultCurrency, fiscalYearStart: s.fiscalYearStart, meaning: 'saved company settings; null means not recorded' }
+    clock: { capturedAt: now.toISOString(), timeZone: s.timeZone, timeZoneEvidence: s.timeZoneEvidence, localDate, meaning: 'capturedAt is a UTC instant; name local days in timeZone. Saved record timestamps are UTC instants too.' },
+    companySettings: { defaultCurrency: s.defaultCurrency, fiscalYearStart: s.fiscalYearStart, meaning: 'saved company settings; null means not recorded' },
+    fiscalPeriods: { current: periods?.current ?? null, previous: periods?.previous ?? null, next: periods?.next ?? null, evidence: s.fiscalYearStart ? 'saved_fiscal_year_start' : 'not_recorded', asOf: localDate, meaning: 'current contains clock.localDate; previous ends the day before current starts; next starts the day after current ends; null means the fiscal start month is not recorded' }
   }
 }
 

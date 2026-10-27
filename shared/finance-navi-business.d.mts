@@ -26,5 +26,6 @@ export function addDayKey(key: string, days: number): string;
 export const MAX_RANGE_DAYS: number;
 export function zonedRange(dateFrom: string, dateTo: string, timeZone: string): { start: Date; end: Date };
 export function fiscalYearFor(key: string, startMonth: any): { startMonth: number; start: string; end: string } | null;
+export function fiscalPeriodsFor(key: string, startMonth: any): { startMonth: number; current: { startMonth: number; start: string; end: string }; previous: { startMonth: number; start: string; end: string }; next: { startMonth: number; start: string; end: string } } | null;
 export function currencyCode(value: any): string | null;
 export function recordCurrency(row: any): { currency: string | null; evidence: 'saved' | 'saved_card_source' | 'not_recorded' | 'unrecognized' };

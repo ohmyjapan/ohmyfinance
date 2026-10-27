@@ -29,6 +29,18 @@ export function exportWindow(criteria: TransactionExportCriteria, timeZone: stri
   return { start, end }
 }
 
+/** Date filters of a Navi transaction read resolved like the export: dateFrom/dateTo keys become the company's whole local days as ISO
+ *  instants for getTransactions, and the window they resolved to is reported; without a date key the filters pass through untouched. */
+export async function companyDateFilters(organizationId: mongoose.Types.ObjectId, filters: Record<string, any>) {
+  if (!filters.dateFrom && !filters.dateTo) return { filters, window: null }
+  const zone = await exportTimeZone(organizationId)
+  const window = exportWindow({ dateFrom: filters.dateFrom, dateTo: filters.dateTo }, zone.timeZone)
+  const resolved: Record<string, any> = { ...filters }
+  if (window.start) resolved.dateFrom = instant(window.start)
+  if (window.end) resolved.dateTo = instant(window.end)
+  return { filters: resolved, window: { start: instant(window.start), end: instant(window.end), timeZone: zone.timeZone, timeZoneEvidence: zone.timeZoneEvidence, meaning: 'dateFrom and dateTo keys are whole local days of timeZone; start and end are the UTC instants queried, end inclusive' } }
+}
+
 /** The matching transactions of the frozen company for the criteria, with the resolved window. */
 export async function exportTransactionRows(organizationId: mongoose.Types.ObjectId, criteria: TransactionExportCriteria) {
   const zone = await exportTimeZone(organizationId)
