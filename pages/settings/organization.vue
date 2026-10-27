@@ -574,9 +574,12 @@ function discardChanges() {
 async function saveAllChanges() {
   if (!currentOrganization.value) return
 
+  const orgId = String(currentOrganization.value.id || currentOrganization.value._id)
+  const sessionId = userStore.sessionId
+  const sameSession = () => userStore.sessionId === sessionId
+  const sameEditor = () => String(currentOrganization.value?.id || currentOrganization.value?._id) === orgId
   saving.value = true
   try {
-    const orgId = currentOrganization.value.id || currentOrganization.value._id
     const response = await fetch(`/api/organizations/${orgId}`, {
       method: 'PUT',
       headers: {
@@ -589,16 +592,29 @@ async function saveAllChanges() {
       })
     })
     const data = await response.json()
+    // A save reply belongs to the session that sent it, including when another actor now edits the same company.
+    if (!sameSession()) return
     if (data.success) {
-      isDirty.value = false
-      // Update local state
-      currentOrganization.value = { ...currentOrganization.value, ...data.organization }
-    } else {
+      const mergeSaved = (org: any) => ({ ...org, ...data.organization })
+      organizations.value = organizations.value.map(org => String(org.id || org._id) === orgId ? mergeSaved(org) : org)
+      userStore.organizations = userStore.organizations.map(org => String(org.id || org._id) === orgId ? mergeSaved(org) : org)
+      if (String(userStore.currentOrganization?.id || userStore.currentOrganization?._id) === orgId) {
+        userStore.currentOrganization = mergeSaved(userStore.currentOrganization)
+      }
+      userStore.persistSession()
+      // Keep a different selected editor intact while refreshing the saved company in the shared session.
+      if (sameEditor()) {
+        isDirty.value = false
+        currentOrganization.value = mergeSaved(currentOrganization.value)
+      }
+    } else if (sameEditor()) {
       alert(data.statusMessage || t('common.error'))
     }
   } catch (error) {
-    console.error('Failed to save:', error)
-    alert(t('common.error'))
+    if (sameSession() && sameEditor()) {
+      console.error('Failed to save:', error)
+      alert(t('common.error'))
+    }
   } finally {
     saving.value = false
   }
