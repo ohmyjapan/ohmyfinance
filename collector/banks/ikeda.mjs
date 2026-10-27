@@ -23,6 +23,7 @@ import { contractUi } from './contract.mjs';
 import { pause } from '../interaction.mjs';
 import { IKEDA_BANK_NAME, IKEDA_ISSUER, selectBankCertificate } from '../bank-certificate.mjs';
 import { bankAvailableFrom, jstToday } from '../../shared/finance-payment-match.mjs';
+import { findYen, parseBankTime } from '../../shared/finance-bank-balance.mjs';
 
 const coded = (code, message, report = false) => Object.assign(new Error(message), { code, ...(report ? { report: true } : {}) });
 const LABEL = '池田泉州銀行';
@@ -471,6 +472,63 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
   return ui;
 }
 
+// ── Hourly background balance (plan omf-bank-hourly-balances-20261027) ───────────────────────────────────────────────────────────
+// The parent's owner-observed facts (SAFE-BANK-CONTRACT.json): after the certificate + password login the dashboard's 各口座残高
+// (#DsbAccounts) renders late — one second after a reload it had no balance block; later each account card showed its balance "¥1,234"
+// /"￥1,234", a second yen amount that is the 前日比 (with an arrow) and 最終取得日：YYYY-MM-DD HH:mm (JST). Only the card of the job's
+// frozen branch, type and full 7-digit number is read (never the total or another card); the card layout's token format (branch, type
+// and number as separate words) follows the account option format of this adapter — the parent's live check confirms it.
+export const BALANCE_PAGE = Object.freeze({ container: '#DsbAccounts', heading: '各口座残高', change: '前日比', path: '/' });
+const BALANCE_READ = ({ container, heading, identity }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden', norm = t => String(t ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const headings = [...document.querySelectorAll('body *')].filter(e => visible(e) && norm(e.textContent) === heading && ![...e.children].some(ch => norm(ch.textContent) === heading)).length;
+  const box = document.querySelector(container), base = { origin: location.origin, path: location.pathname.split(';')[0], top: window.top === window, headings, box: !!box && visible(box), cards: [], boxText: '' };
+  if (!base.box) return base;
+  const words = e => norm(e.innerText || e.textContent).split(' ');
+  const matches = e => { const w = words(e); return w.includes(identity.number) && w.includes(identity.branch) && w.includes(identity.type) && /[¥]\s?\d/.test(norm(e.innerText || e.textContent)); };
+  const all = [box, ...box.querySelectorAll('*')].filter(e => visible(e) && matches(e)), minimal = all.filter(e => !all.some(o => o !== e && e.contains(o)));
+  return { ...base, cards: minimal.slice(0, 5).map(e => norm(e.innerText || e.textContent).slice(0, 1000)), boxText: norm(box.innerText || box.textContent).slice(0, 4000) };
+};
+/**
+ * GUARD — the balance of one dashboard read (pure): the portal origin, path and top document, the 各口座残高 heading once; exactly one
+ * card of the frozen account (`unready` while none has rendered — never a zero); in it the first ¥ amount, and a second one only as the
+ * 前日比 after it (any other count or order is refused); exactly one distinct 最終取得日 in the card (else exactly one in the container).
+ */
+export function ikedaBalanceOf(read, identity, c = BALANCE_PAGE) {
+  const no = (code, m) => coded(code, `${LABEL}の${m}。残高は保存していません`);
+  if (!identity) throw no('balance-identity', '口座（支店名・種別・口座番号）が残高の確認の設定にありません');
+  if (!read || read.origin !== PORTAL.portal || read.path !== c.path || read.top !== true) throw no('balance-page', 'ビジネスゲートのトップ画面を確認できません');
+  if (!read.box || read.headings !== 1 || !read.cards.length) throw no('balance-unready', `「${c.heading}」に接続の口座の残高がまだ表示されていません`);
+  if (read.cards.length !== 1) throw no('balance-field', `「${c.heading}」に接続の口座が複数あります`); // guard:ikeda-card-unique
+  const text = read.cards[0], hits = findYen(text, 'prefix'), change = text.indexOf(c.change);
+  let amount = null;
+  if (hits.length === 1 && change < 0) amount = hits[0].value;
+  else if (hits.length === 2 && change > hits[0].end && change < hits[1].index) amount = hits[0].value; // guard:ikeda-change-excluded
+  if (amount === null) throw no('balance-field', `口座の残高（¥）を1つに特定できません（前日比は残高として扱いません）`);
+  const timesIn = t => [...new Set([...String(t).matchAll(/最終取得日[:：]\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?![:\d])/g)].map(m => m[1] + ' ' + m[2]))];
+  const own = timesIn(text), times = own.length ? own : timesIn(read.boxText), asOf = times.length === 1 ? parseBankTime(times[0], 'YYYY-MM-DD HH:mm') : null;
+  if (!asOf) throw no('balance-time', `最終取得日を1つに特定できません（${times.length}件）`); // guard:ikeda-time-unique
+  return { amount, available: null, asOf, source: { origin: PORTAL.portal, path: c.path, labels: [c.heading] } };
+}
+/**
+ * The ui of a background balance inquiry: the unchanged portalUi (certificate, the one saved-password submission, its finish() with the
+ * logout prompt) plus readBalance(): the dashboard read until the frozen account's card is exact (within `readMs`).
+ */
+export function portalBalanceUi(page, browser, adapter = portalBalance, snapshot = null, { readMs = 45000, ...options } = {}) {
+  const base = portalUi(page, browser, portal, snapshot, options), identity = portalIdentity(snapshot);
+  const evaluate = async (fn, arg) => { try { return await Promise.race([page.evaluate(fn, arg), pause(5000).then(() => null)]); } catch { return null; } };
+  return {
+    ...base,
+    async readBalance() {
+      if (!identity) throw coded('balance-identity', `${LABEL}の口座（支店名・種別・口座番号）が残高の確認の設定にありません。残高は保存していません`);
+      const until = Date.now() + readMs; let last = coded('balance-unready', `${LABEL}の口座の残高が表示されませんでした。残高は保存していません`);
+      while (Date.now() < until) { const read = await evaluate(BALANCE_READ, { container: BALANCE_PAGE.container, heading: BALANCE_PAGE.heading, identity }); if (read) { try { return ikedaBalanceOf(read, identity); } catch (error) { last = error; } } await pause(500); }
+      throw last;
+    },
+    balanceFinish: () => base.finish()
+  };
+}
+
 /** The ビジネスゲート login (電子証明書 + ログインパスワード), resolved only for a job frozen with variant `portal`. */
 export const portal = Object.freeze({
   provider: 'ikeda', label: LABEL, variant: 'portal', support: 'verified', contract: PORTAL,
@@ -479,6 +537,13 @@ export const portal = Object.freeze({
   precheck(snapshot, now) { return portalPrecheck(snapshot, now, LABEL); },
   verifyCapture(bytes, context) { return portalCaptureCheck(bytes, context); },
   ui(page, browser, snapshot = null) { return portalUi(page, browser, this, snapshot); }
+});
+/** The ビジネスゲート login's balance inquiry (collector/bank-balance.mjs BALANCE_ADAPTERS): the portal's login exits; the frozen account required. */
+export const portalBalance = Object.freeze({
+  provider: 'ikeda', label: LABEL, variant: 'portal', hosts: [...HOSTS], loginExits: portal.loginExits,
+  source: Object.freeze({ origin: PORTAL.portal, path: BALANCE_PAGE.path, labels: Object.freeze([BALANCE_PAGE.heading]) }),
+  precheck(snapshot) { return portalIdentity(snapshot) ? null : `${LABEL}の口座（支店名・種別・口座番号）が残高の確認の設定にありません。接続に口座を保存してから、もう一度確認してください`; },
+  ui(page, browser, snapshot = null) { return portalBalanceUi(page, browser, this, snapshot); }
 });
 export default {
   provider: 'ikeda', label: LABEL, support: 'contract-pending', contract: null,

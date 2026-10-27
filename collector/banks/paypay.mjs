@@ -10,7 +10,8 @@
 // is classified; nothing else is: the authenticated pages, the statement controls and the export
 // are the person's steps in the same owned window until the actual export is observed. The generated handler name is never pinned, no
 // POST is rebuilt or replayed, no value is read back, no keyboard or pointer input is used. BA-PLUS (専用ログイン) is not a saved-login
-// variant: its observe job opens the provider default. Imports only ../interaction.mjs, so the staged copy loads without node_modules.
+// variant: its observe job opens the provider default. Imports only ../interaction.mjs (and, for the balance reader, the dependency-free
+// shared balance rules), so the staged copy loads without node_modules.
 // Plan omf-paypay-routine-20261022 Phase C: `standard` now also retrieves (routineUi below): the observed Welcome/statement pages,
 // 期間選択, the six named date selects, 照会, CSV and ログアウト drive a retrieve job; the guided first-capture behaviour above is kept
 // for observe jobs queued before (historical snapshots). The provider default (BA-PLUS, no or unknown variant) is unchanged.
@@ -20,6 +21,7 @@
 // Plan omf-paypay-ready-20261024: the statement page is recognized while its HTML is still parsing, so the one 期間選択 press now waits,
 // within the step window, for that same document to have run its DOMContentLoaded handlers (READY / routineUi `settled` below).
 import { pause } from '../interaction.mjs';
+import { findYen, parseBankTime } from '../../shared/finance-bank-balance.mjs';
 
 const coded = (code, message) => Object.assign(new Error(message), { code });
 const pending = async () => { throw coded('contract-pending', 'contract-pending: PayPay銀行の取得手順は未確認です'); };
@@ -291,8 +293,12 @@ const SHAPE = ({ c, ids, selector, titles }) => {
  * then presses ログアウト once;
  * it is bounded and never changes the job's result. `options` are the test seams for the settle and step windows.
  */
-export function routineUi(page, browser, adapter = standard, snapshot = null, { settleMs = 30000, stableMs = 2500, stepMs = 45000, finishMs = 10000 } = {}) {
+// Plan omf-bank-hourly-balances-20261027: `balance` (the balance inquiry only; off for every statement job) also takes the observed 残高照会
+// page as a signed-in page, so finish() presses its ログアウト there with the same one scoped confirm.
+export function routineUi(page, browser, adapter = standard, snapshot = null, { settleMs = 30000, stableMs = 2500, stepMs = 45000, finishMs = 10000, balance = false } = {}) {
   const c = STANDARD_PAGES, label = adapter?.label || 'PayPay銀行', base = standardUi(page, browser, adapter, snapshot, { settleMs, stableMs });
+  const classify = read => balance && classifyBalancePage(read, c) ? 'authenticated' : classifyRoutinePage(read, c);
+  const logoutTitles = [c.welcome.title, c.statements.title, ...(balance ? [BALANCE_PAGE.title] : [])];
   const bounded = (promise, ms = 5000) => Promise.race([promise, pause(ms).then(() => null)]);
   const fields = c.periodFields;
   // `known`: the page targets of this browser just before this job's CSV press (null until then); only a tab opened after it counts.
@@ -324,7 +330,7 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
   };
   const watch = async () => { if (dialogs) return; try { dialogs = await page.createCDPSession(); await dialogs.send('Page.enable'); dialogs.on('Page.javascriptDialogOpening', () => { waiting = true; }); dialogs.on('Page.javascriptDialogOpening', logoutConfirm); dialogs.on('Page.javascriptDialogClosed', () => { waiting = false; }); } catch { dialogs = null; } };
   const read = async () => { try { return (await bounded(page.evaluate(ROUTINE_PAGE, { selector: ROUTINE_CONTROLS }))) || null; } catch { return null; } };
-  const kind = async () => waiting ? 'verification' : classifyRoutinePage(await read(), c);
+  const kind = async () => waiting ? 'verification' : classify(await read());
   const reach = async (kinds, code, message) => { const until = Date.now() + stepMs; while (Date.now() < until) { const k = await kind(); if (kinds.includes(k)) return k; await pause(250); } throw coded(code, message); };
   // `expected`: the document the press is bound to (the period press: the ready statement document); otherwise the one read just before
   const press = async (pressKind, text, titles, error, expected = null) => { const doc = expected || (await read())?.document || null; let r = null; pressed = { what: PRESSED[text] || 'other', doc }; try { r = await bounded(page.evaluate(PRESS, { c, selector: ROUTINE_CONTROLS, kind: pressKind, text, titles, expectedDocument: doc })); } catch { r = null; } if (!r?.ok) throw coded(error, `${label}の「${text}」を特定できません（${r?.error || '画面が変わりました'}）。Chromeを確認してください`); };
@@ -414,10 +420,10 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
         // before the press call returns; a confirm seen meanwhile is answered only once that press is confirmed as this job's own
         const scope = logout = { until, pressed: false, seen: false, pending: false, answered: false };
         try {
-          await press('link', c.logout, [c.welcome.title, c.statements.title], 'logout');
+          await press('link', c.logout, logoutTitles, 'logout');
           scope.pressed = true; if (scope.pending && !scope.answered && logout === scope && Date.now() <= until) accept(scope); // guard:routine-logout-own-press
           // `loggedOut` is what this adapter saw afterwards (a password field or an unrecognized page), not proof from the bank's server
-          while (left() > 0) { const r = await read(); if (r && (r.password || classifyRoutinePage(r, c) === 'unknown')) return { ...result, loggedOut: true }; await pause(250); }
+          while (left() > 0) { const r = await read(); if (r && (r.password || classify(r) === 'unknown')) return { ...result, loggedOut: true }; await pause(250); }
           return { ...result, reason: 'timeout' };
         } finally { if (logout === scope) logout = null; } // guard:routine-logout-lifetime
       } catch (error) { return { ...result, reason: String(error?.code || 'error') }; }
@@ -440,6 +446,73 @@ export function routineUi(page, browser, adapter = standard, snapshot = null, { 
   };
   return ui;
 }
+
+// ── Hourly background balance (plan omf-bank-hourly-balances-20261027) ───────────────────────────────────────────────────────────
+// The parent's owner-observed facts (SAFE-BANK-CONTRACT.json): after the account's own direct standard login, the unique 残高照会 opens
+// the 残高照会 page (/wctx/NBCW2101.do) whose #mainArea first table row holds 普通預金残高 "1,234 円" with "YYYY/MM/DD HH:mm:ss現在" (JST).
+// The exact page title is an ASSUMPTION following the observed "<page> - PayPay銀行" pattern; it was not in the parent's facts, so the
+// parent's live check decides it (a different title fails closed: nothing is read). Four logins are four entries: the page's account
+// number(s), when shown, must equal the account of the saved login just submitted (compared here, never stored).
+export const BALANCE_PAGE = Object.freeze({ title: '残高照会 - PayPay銀行', open: '残高照会', area: '#mainArea', row: '#mainArea tr:first-child', label: '普通預金残高', path: '/wctx/NBCW2101.do' });
+/** The 残高照会 page with its ログアウト on the official top document (pure; the routineUi `balance` option's signed-in page). */
+export function classifyBalancePage(read, c = STANDARD_PAGES) { return !!read && read.origin === c.origin && read.top === true && !read.password && read.title === BALANCE_PAGE.title && (Array.isArray(read.controls) ? read.controls : []).includes(c.logout); }
+const BALANCE_READ = ({ area, row, label }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden', norm = t => String(t ?? '').replace(/\s+/g, ' ').trim();
+  const tokens = el => { const out = [], walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n; while ((n = walk.nextNode())) { const p = n.parentElement; if (!p || !visible(p)) continue; const t = norm(n.textContent); if (t) out.push(t.slice(0, 200)); } return out.slice(0, 60); };
+  const box = document.querySelector(area);
+  return { origin: location.origin, path: location.pathname, top: window.top === window, title: document.title, area: !!box && visible(box), rows: [...document.querySelectorAll(row)].filter(visible).map(tokens).filter(t => t.includes(label)).slice(0, 10), text: box && visible(box) ? norm(box.innerText).slice(0, 3000) : '' };
+};
+/**
+ * GUARD — the balance of one 残高照会 read (pure): the official origin, path, top document and title; exactly one first row holding
+ * 普通預金残高 with exactly one amount of the bank's syntax (no other digits in it); exactly one distinct "…:ss現在"; and, when the page
+ * shows a 7-digit account number or a 店番号, each equal to the saved login's. Anything else throws a coded error — never a zero.
+ */
+export function paypayBalanceOf(read, saved = null, c = BALANCE_PAGE) {
+  const label = 'PayPay銀行', no = (code, m) => coded(code, `${label}の${m}。残高は保存していません`);
+  if (!read || read.origin !== STANDARD_PAGES.origin || read.path !== c.path || read.top !== true || read.title !== c.title || !read.area) throw no('balance-page', '残高照会の画面を確認できません');
+  if (read.rows.length !== 1 || read.rows[0].filter(t => t === c.label).length !== 1) throw no('balance-field', `「${c.label}」を1つに特定できません（${read.rows.length}件）`); // guard:paypay-label-unique
+  const part = read.rows[0].filter(t => t !== c.label).join(' '), hits = findYen(part, 'suffix');
+  if (hits.length !== 1 || /\d/.test(part.slice(0, hits[0].index) + part.slice(hits[0].end))) throw no('balance-field', `「${c.label}」の金額を1つに特定できません`); // guard:paypay-amount-exact
+  const times = [...new Set([...read.text.matchAll(/(\d{4}\/\d{2}\/\d{2})\s+(\d{2}:\d{2}:\d{2})\s*現在/g)].map(m => m[1] + ' ' + m[2]))], asOf = times.length === 1 ? parseBankTime(times[0], 'YYYY/MM/DD HH:mm:ss') : null;
+  if (!asOf) throw no('balance-time', `残高の時刻（現在）を1つに特定できません（${times.length}件）`); // guard:paypay-time-unique
+  const numbers = [...read.text.matchAll(/(?<![\d,/:])\d{7}(?![\d,/:])/g)].map(m => m[0]), branch = /店番号\s*[:：]?\s*(\d{3})(?!\d)/.exec(read.text)?.[1];
+  if (saved?.account && numbers.some(n => n !== saved.account)) throw no('balance-identity', '画面の口座番号が、この口座の保存済みのログインと一致しません'); // guard:paypay-identity
+  if (saved?.branch && branch && branch !== saved.branch) throw no('balance-identity', '画面の店番号が、この口座の保存済みのログインと一致しません');
+  return { amount: hits[0].value, available: null, asOf, source: { origin: STANDARD_PAGES.origin, path: c.path, labels: [c.label] } };
+}
+/**
+ * The ui of a background balance inquiry: routineUi (its one direct sign-in, dialog rules and finish()) with the `balance` option, plus
+ * readBalance(): only after the direct sign-in of this job, the unique 残高照会 once from Welcome (the operator's label rule), then the page
+ * read until it is exact (within `readMs`); balanceFinish() is finish() (ログアウト and its one scoped confirm). The saved login's 店番号 and
+ * 口座番号 are kept in this closure only for the comparison, never its password, and dropped after the read.
+ */
+export function balanceUi(page, browser, adapter = standardBalance, snapshot = null, { readMs = 30000, ...options } = {}) {
+  const base = routineUi(page, browser, standard, snapshot, { ...options, balance: true }), c = STANDARD_PAGES, label = 'PayPay銀行';
+  const bounded = (promise, ms = 5000) => Promise.race([promise, pause(ms).then(() => null)]);
+  const evaluate = async (fn, arg) => { try { return await bounded(page.evaluate(fn, arg)); } catch { return null; } };
+  let saved = null;
+  return {
+    ...base,
+    async login(secret, opts = {}) { saved = secret && typeof secret === 'object' ? { branch: String(secret.branch ?? ''), account: String(secret.account ?? '') } : null; return base.login(secret, opts); },
+    async readBalance() {
+      try {
+        if (!base.direct()) throw coded('balance-identity', `${label}へのサインインをこの確認の保存済みのログインで直接確認できなかったため、残高は読み取りません`); // guard:paypay-direct
+        const first = await evaluate(ROUTINE_PAGE, { selector: ROUTINE_CONTROLS });
+        if (first?.title === c.welcome.title) { const r = await evaluate(PRESS, { c, selector: ROUTINE_CONTROLS, kind: 'control', text: BALANCE_PAGE.open, titles: [c.welcome.title], expectedDocument: first.document }); if (!r?.ok) throw coded('balance-page', `${label}の「${BALANCE_PAGE.open}」を特定できません（${r?.error || '画面が変わりました'}）`); }
+        const until = Date.now() + readMs; let last = coded('balance-page', `${label}の残高照会の画面が開きませんでした`);
+        while (Date.now() < until) { await pause(400); const read = await evaluate(BALANCE_READ, { area: BALANCE_PAGE.area, row: BALANCE_PAGE.row, label: BALANCE_PAGE.label }); if (read) { try { return paypayBalanceOf(read, saved); } catch (error) { last = error; } } }
+        throw last;
+      } finally { saved = null; }
+    },
+    balanceFinish: () => base.finish()
+  };
+}
+/** The 標準 login's balance inquiry (collector/bank-balance.mjs BALANCE_ADAPTERS); its login exits and texts are the routine adapter's. */
+export const standardBalance = Object.freeze({
+  provider: 'paypay', label: 'PayPay銀行', variant: 'standard', hosts: [...HOSTS], loginExits: Object.freeze({ inUse: true, markRefused: true, acceptDirectOnly: true, texts: ROUTINE_TEXT }),
+  source: Object.freeze({ origin: STANDARD_PAGES.origin, path: BALANCE_PAGE.path, labels: Object.freeze([BALANCE_PAGE.label]) }),
+  ui(page, browser, snapshot = null) { return balanceUi(page, browser, this, snapshot); }
+});
 
 /**
  * The standard login (店番号・口座番号), resolved only for a job frozen with variant `standard`. Plan omf-paypay-routine-20261022:

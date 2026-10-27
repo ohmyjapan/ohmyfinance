@@ -549,7 +549,8 @@ export async function observeFromPage(page, browser, adapter, bound, job, root, 
 // ephemeralProfile/browserFor), closed and deleted afterwards. browser.mjs is loaded here, not at import, so the page logic
 // above stays loadable without node_modules (the staged-package check imports it that way). `background` (retrievals): the
 // owned Chrome starts without a window and its page opens in an inactive off-screen window; `reveal` shows that same window.
-async function withBankBrowser(bound, root, batch, onLaunch, fn, { background = false } = {}) {
+// Plan omf-bank-hourly-balances-20261027: exported unchanged for the balance inquiry (collector/bank-balance.mjs), which never reveals it.
+export async function withBankBrowser(bound, root, batch, onLaunch, fn, { background = false } = {}) {
   const { browserFor, ephemeralProfile, removeEphemeral, showWindow } = await import('./browser.mjs');
   const profile = ephemeralProfile(root, bound.ownerId, 'bank', bound.bankAccountId, batch);
   const browser = await browserFor(profile, { ephemeral: true, root, onLaunch, background });

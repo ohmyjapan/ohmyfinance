@@ -5,6 +5,8 @@ import { BankAccount, BankStatement, BankTemplate, BankJob, initializePaymentMat
 import { BANK_PROVIDERS, BANK_LOGIN_VARIANTS, BANK_NATIVE_TEMPLATES, bankCollectionMode, bankCoverageInput, frozenCoverage, jstToday, bankFirstCapture, bankCoverageWindow, bankAccountIdentityInput, bankIdentityRequired } from '../../shared/finance-payment-match.mjs'
 import { ownedBankAccount, acceptBankCapture } from './financeBankStatementService'
 import { bankScheduleBinding, scheduledRunCurrent, jstDayStart } from '../../shared/finance-bank-schedule.mjs'
+import { claimCapabilities } from '../../shared/finance-bank-balance.mjs'
+import { yieldQueuedBalance, recordClaimCapability, balanceClaimScope, balanceClaimCheck } from './financeBankBalanceService'
 // Web-bank collection jobs (plan omf-bank-collection-amended-20261018 A4): the owner's connection and request, the collector's
 // claim/status/upload under its bank scope, and the interpretation frozen on each job at queue time.
 const LEASE_MS=180000,text=(v:any)=>String(v??'').trim(),sid=(v:any)=>String(v??'')
@@ -83,7 +85,8 @@ const missingNote=(snapshot:any)=>snapshot?.missingCoverage?'。銀行で照会�
 export async function queueBankSync(ownerId:string,accountId:string){
  await init();const account=await ownedBankAccount(ownerId,accountId),connection=account.connection;if(!connection?.provider)fail(400,'先に銀行の接続を保存してください。')
  if(!await FinanceCollector.exists({ownerId,bankAccountIds:account._id,revokedAt:null}))fail(409,'PC未接続: この口座の取得を許可した接続済みのPCがありません。')
- const now=new Date();if(await BankJob.exists({ownerId,bankAccountId:account._id,$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$gt:now}}]}))fail(409,'取得はすでに予約・実行中です。')
+ // Plan omf-bank-hourly-balances-20261027: statements first — a balance check no PC received yet yields to this request; one in flight blocks it like any job.
+ const now=new Date();await yieldQueuedBalance(ownerId,account._id,now);if(await BankJob.exists({ownerId,bankAccountId:account._id,$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$gt:now}}]}))fail(409,'取得はすでに予約・実行中です。')
  // A connection without a template is accepted only for the template-free first-capture variant (PayPay銀行 標準); any other is 409 as before.
  const guided=firstCaptureOf(connection.provider,connection.variant)==='unmapped',unmapped=guided&&connection.templateId===null
  const template:any=unmapped?null:await BankTemplate.findOne({_id:id(connection.templateId),ownerId}).lean();if(!template&&!unmapped)fail(409,'接続のテンプレートが見つかりません。接続を保存し直してください。')
@@ -143,11 +146,15 @@ const ACCOUNT_ROLES=['branch','type','number']
 const sameAccount=(snapshot:any,connection:any)=>!!connection&&connection.provider===snapshot?.provider&&(connection.variant??null)===(snapshot?.variant??null)&&!!snapshot?.accountIdentity&&!!connection.accountIdentity&&ACCOUNT_ROLES.every(k=>typeof snapshot.accountIdentity[k]==='string'&&snapshot.accountIdentity[k]!==''&&String(connection.accountIdentity[k]??'')===snapshot.accountIdentity[k])
 const MANUAL_ACCOUNT_CHANGED='取得を予約した後に接続の銀行・口座（支店名・種別・口座番号）が変わったため、この取得は実行しません。今の口座で取得するには、もう一度「取得」を押してください（PCに渡す前に止めたため、銀行へのログインは行っていません）'
 const SCHEDULE_CLOSED:Record<string,string>={'schedule-off':'毎日の自動取得がオフになったため、この予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','connection-changed':'接続の内容が変わったため、この自動取得の予約は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）','setting-changed':'予約した後に自動取得の設定が変わったため、この予約は実行しません。今の設定の時刻に取得します（PCに渡す前に止めたため、銀行へのログインは行っていません）','already-requested-today':'同じ日に別の取得がすでに行われたため、この自動取得は実行しません（PCに渡す前に止めたため、銀行へのログインは行っていません）'}
-export async function claimBankJob(device:any){
+// Plan omf-bank-hourly-balances-20261027: the claim body may advertise {capabilities:['balance-v1']} (an old collector sends {}: it is
+// never handed a balance job, also not on a lease reclaim); a balance job goes only to the PC its setting selected and, when no PC has
+// received it yet, passes balanceClaimCheck first. Every other job is claimed exactly as before; the capability is recorded for the screen.
+export async function claimBankJob(device:any,body:any={}){
  await init()
+ const capable=claimCapabilities(body).balance;await recordClaimCapability(device,capable)
  for(let attempt=0;attempt<20;attempt++){
   const now=new Date()
-  const job:any=await BankJob.findOneAndUpdate({...scopeOf(device),$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$lt:now}}]},{$set:{state:'running',collectorId:device._id,leaseUntil:new Date(now.getTime()+LEASE_MS),lastAttemptAt:now,lastMessage:'取得を開始'}},{new:true,sort:{requestedAt:1}}).lean()
+  const job:any=await BankJob.findOneAndUpdate({...scopeOf(device),$and:[{$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$lt:now}}]},balanceClaimScope(device,capable)]},{$set:{state:'running',collectorId:device._id,leaseUntil:new Date(now.getTime()+LEASE_MS),lastAttemptAt:now,lastMessage:'取得を開始'}},{new:true,sort:{requestedAt:1}}).lean()
   if(!job)return{job:null}
   const account:any=await BankAccount.findOne({_id:job.bankAccountId,ownerId:device.ownerId}).lean(),provider=providerOf(account?.connection?.provider)
   if(job.trigger==='schedule'&&!job.schedule?.claimedAt){
@@ -156,6 +163,7 @@ export async function claimBankJob(device:any){
    if(reason){await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{state:'superseded',open:false,completedAt:now,lastMessage:SCHEDULE_CLOSED[reason],'schedule.supersededDay':job.schedule?.day??null},$unset:{'schedule.day':'',leaseUntil:''}});continue}
    await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{'schedule.claimedAt':now}})
   }
+  if(job.kind==='balance'&&!job.balance?.claimedAt&&await balanceClaimCheck(job,account,device,now))continue
   if(job.trigger!=='schedule'&&job.kind==='retrieve'&&bankIdentityRequired(job.snapshot?.provider,job.snapshot?.variant??null)&&!job.identityCheckedAt){
    if(!sameAccount(job.snapshot,account?.connection)){await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{state:'superseded',open:false,completedAt:now,lastMessage:MANUAL_ACCOUNT_CHANGED},$unset:{leaseUntil:''}});continue} // guard:manual-account-current
    await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{identityCheckedAt:now}}) // guard:manual-account-received
@@ -168,7 +176,10 @@ export async function claimBankJob(device:any){
 export async function bankJobStatus(device:any,body:any){
  await init();if(!body||!['running','verification_required','complete','failed'].includes(body.state)||typeof body.jobId!=='string')fail(400,'Invalid job status')
  const terminal=['complete','failed'].includes(body.state),now=new Date()
- const job=await BankJob.findOneAndUpdate({...scopeOf(device),jobId:body.jobId,collectorId:device._id,state:{$in:['running','verification_required']}},{$set:{state:body.state,leaseUntil:new Date(now.getTime()+LEASE_MS),lastMessage:typeof body.message==='string'?body.message.slice(0,200):'',...(terminal?{completedAt:now,open:false}:{})}},{new:true})
+ // Plan omf-bank-hourly-balances-20261027: a balance job completes only once OMF stored its receipt (balance.snapshotId).
+ const receipt=body.state==='complete'?{$or:[{kind:{$ne:'balance'}},{'balance.snapshotId':{$exists:true}}]}:{} // guard:balance-complete-needs-receipt
+ const job=await BankJob.findOneAndUpdate({...scopeOf(device),jobId:body.jobId,collectorId:device._id,state:{$in:['running','verification_required']},...receipt},{$set:{state:body.state,leaseUntil:new Date(now.getTime()+LEASE_MS),lastMessage:typeof body.message==='string'?body.message.slice(0,200):'',...(terminal?{completedAt:now,open:false}:{})}},{new:true})
+ if(!job&&body.state==='complete'&&await BankJob.exists({...scopeOf(device),jobId:body.jobId,collectorId:device._id,kind:'balance',state:{$in:['running','verification_required']}}))fail(409,'残高の受信をOMFで確認できないため、残高の確認を完了にできません。')
  if(!job)fail(409,'Job is no longer assigned to this collector')
  return{success:true}
 }
@@ -186,6 +197,7 @@ function observationInput(bytes:Buffer){
 export async function acceptBankJobUpload(device:any,query:any,bytes:Buffer,mimeType:string){
  await init();if(typeof query?.jobId!=='string'||!query.jobId)fail(400,'Invalid job')
  const job:any=await BankJob.findOne({...scopeOf(device),jobId:query.jobId}).lean();if(!job)fail(409,'Job is unavailable for this collector')
+ if(job.kind==='balance')fail(409,'残高の確認では明細・観察記録を受け付けません。') // guard:balance-no-statement-upload
  if(query.kind==='observation'){if(mimeType!=='application/json')fail(415,'Observation JSON required');if(query.snapshotHash!==job.snapshotHash)fail(400,'取得時の設定が一致しません。');const observation=observationInput(bytes);await BankJob.updateOne({_id:job._id},{$set:{observation}});return{stored:true,pages:observation.length}}
  if(!['text/csv','text/plain'].includes(mimeType))fail(415,'CSV required')
  const account:any=await BankAccount.findOne({_id:job.bankAccountId,ownerId:job.ownerId}).lean();if(!account)fail(409,'Bank account unavailable')
@@ -194,7 +206,7 @@ export async function acceptBankJobUpload(device:any,query:any,bytes:Buffer,mime
  return result
 }
 export async function storeObservation(device:any,query:any,bytes:Buffer){return acceptBankJobUpload(device,{...query,kind:'observation'},bytes,'application/json')}
-export async function listBankJobs(ownerId:string,accountId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const jobs:any[]=await BankJob.find({ownerId,bankAccountId:account._id}).sort({requestedAt:-1,_id:-1}).limit(50).lean();const statements:any[]=await BankStatement.find({ownerId,'capture.jobId':{$in:jobs.map(j=>j.jobId)}}).lean();return{jobs:jobs.map(j=>({...jobView(j),trigger:j.trigger==='schedule'?'schedule':'manual',scheduledDay:j.schedule?.day??j.schedule?.supersededDay??null,captures:statements.filter(s=>s.capture?.jobId===j.jobId).map(captureView)}))}}
+export async function listBankJobs(ownerId:string,accountId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const jobs:any[]=await BankJob.find({ownerId,bankAccountId:account._id}).sort({requestedAt:-1,_id:-1}).limit(50).lean();const statements:any[]=await BankStatement.find({ownerId,'capture.jobId':{$in:jobs.map(j=>j.jobId)}}).lean();return{jobs:jobs.map(j=>({...jobView(j),trigger:j.trigger==='schedule'?'schedule':'manual',...(j.kind==='balance'?{balanceTrigger:j.balance?.trigger==='hourly'?'hourly':'manual'}:{}),scheduledDay:j.schedule?.day??j.schedule?.supersededDay??null,captures:statements.filter(s=>s.capture?.jobId===j.jobId).map(captureView)}))}}
 // The stored observation of one owned job, read-only (plan omf-rakuten-bank-connector-amended-20261019 R4): the sanctioned
 // input for writing a bank's contract. Another owner's account or an unknown job is 404; nothing is written.
 export async function getBankObservation(ownerId:string,accountId:string,jobId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const job:any=await BankJob.findOne({ownerId,bankAccountId:account._id,jobId:sid(jobId)}).lean();if(!job)fail(404,'取得の記録が見つかりません。');return{jobId:job.jobId,kind:job.kind,state:job.state,requestedAt:job.requestedAt||null,snapshotHash:job.snapshotHash,observation:Array.isArray(job.observation)?job.observation:null}}

@@ -2,6 +2,7 @@ import { defineEventHandler, getHeader, getQuery, setHeader } from 'h3'
 import { financeDevice, fail } from '../../../services/financeService'
 import { boundedBody } from '../../../services/financeDraftService'
 import { claimBankJob, bankJobStatus, acceptBankJobUpload, listCollectorBankAccounts } from '../../../services/financeBankCollectionService'
+import { acceptBalanceReceipt } from '../../../services/financeBankBalanceService'
 // The downloader's bank routes (plan omf-bank-collection-amended-20261018 A2), after the UNCHANGED financeDevice: bank/claim,
 // bank/status and bank/upload, each within the device's bank scope (GUARD g1). A separate file so the shared Amex/Aplus
 // dispatch block in finance/[...path].ts is not edited — the layout finance/collector-connect/ already uses. GET bank/accounts
@@ -13,7 +14,10 @@ export default defineEventHandler(async event=>{
   const device=await financeDevice(event)
   if(parts[0]==='bank'&&parts.length===2&&method==='GET'&&parts[1]==='accounts')return listCollectorBankAccounts(device)
   if(parts[0]==='bank'&&parts.length===2&&method==='POST'){
-   if(parts[1]==='claim')return claimBankJob(device)
+   // Plan omf-bank-hourly-balances-20261027: the claim may advertise {capabilities:['balance-v1']}; an old collector's {} (or an unreadable
+   // body) claims exactly as before and never receives a balance job. bank/balance takes the normalized balance receipt (JSON, ≤20 KB).
+   if(parts[1]==='claim'){let body:any={};try{const raw=(await boundedBody(event,10000)).toString('utf8');body=raw.trim()?JSON.parse(raw):{}}catch(e:any){if(e?.statusCode)throw e;body={}}return claimBankJob(device,body)}
+   if(parts[1]==='balance'){const query=getQuery(event),type=String(getHeader(event,'content-type')||'').split(';')[0].trim().toLowerCase();return acceptBalanceReceipt(device,query,await boundedBody(event,20*1024),type)}
    if(parts[1]==='status'){let body:any;try{body=JSON.parse((await boundedBody(event,10000)).toString('utf8'))}catch(e:any){if(e?.statusCode)throw e;fail(400,'Invalid job status')}return bankJobStatus(device,body)}
    if(parts[1]==='upload'){const query=getQuery(event),type=String(getHeader(event,'content-type')||'').split(';')[0].trim().toLowerCase();return acceptBankJobUpload(device,query,await boundedBody(event,query.kind==='observation'?200*1024:10*1024*1024),type)}
   }

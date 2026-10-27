@@ -38,7 +38,7 @@ template.index({ownerId:1,name:1},{unique:true})
 // One web-bank collection job per request (financebankjobs): kind retrieve|observe, the state and collector lease, and the
 // interpretation frozen at queue time (`snapshot` + sha256 `snapshotHash`). `open` is true while the job blocks another
 // request for the same account (queued, or running with a live lease); jobs are never deleted — captures point back by jobId.
-const job=new Schema({ownerId:{type:oid,required:true},bankAccountId:{type:oid,required:true},jobId:{type:String,required:true},kind:{type:String,enum:['retrieve','observe'],required:true},state:{type:String,enum:['queued','running','verification_required','complete','failed','superseded'],default:'queued'},open:{type:Boolean,default:true},requestedAt:Date,collectorId:oid,leaseUntil:Date,lastAttemptAt:Date,lastMessage:String,snapshot:{type:mixed,required:true},snapshotHash:{type:String,required:true},statementIds:{type:[oid],default:[]},observation:{type:mixed,default:null},completedAt:Date},options)
+const job=new Schema({ownerId:{type:oid,required:true},bankAccountId:{type:oid,required:true},jobId:{type:String,required:true},kind:{type:String,enum:['retrieve','observe','balance'],required:true},state:{type:String,enum:['queued','running','verification_required','complete','failed','superseded'],default:'queued'},open:{type:Boolean,default:true},requestedAt:Date,collectorId:oid,leaseUntil:Date,lastAttemptAt:Date,lastMessage:String,snapshot:{type:mixed,required:true},snapshotHash:{type:String,required:true},statementIds:{type:[oid],default:[]},observation:{type:mixed,default:null},completedAt:Date},options)
 job.index({ownerId:1,jobId:1},{unique:true})
 job.index({ownerId:1,bankAccountId:1},{unique:true,partialFilterExpression:{open:true}})
 job.index({ownerId:1,bankAccountId:1,requestedAt:-1})
@@ -53,6 +53,15 @@ job.index({ownerId:1,bankAccountId:1,'schedule.day':1},{unique:true,partialFilte
 // account on the bank's screen (池田泉州銀行 ビジネスゲート), when a PC first receives it with its frozen account identity still the
 // connection's. Absent on every other job; no default, no index.
 job.add({identityCheckedAt:Date})
+// Plan omf-bank-hourly-balances-20261027: kind `balance` is a read-only bank balance inquiry on this same exclusive queue (the open-job
+// index above keeps it and a statement job of the account apart). Only a balance job carries `balance` {trigger 'hourly'|'manual', the
+// target collectorId, the setting revision and binding it was queued under, slot (JST hour of an automatic run) or supersededSlot,
+// claimedAt once its PC received it, receiptAt/snapshotId once OMF stored its receipt}; never trigger or schedule (no statement day).
+// At most one automatic run per account and JST hour (the partial unique index). The setting lives on the account (`balanceSetting`
+// {enabled, collectorId, intervalMinutes, revision, savedAt, binding}; absent/null = off), apart from `connection` and `schedule`.
+job.add({balance:{type:mixed,default:undefined}})
+job.index({ownerId:1,bankAccountId:1,'balance.slot':1},{unique:true,partialFilterExpression:{'balance.slot':{$type:'string'}}})
+account.add({balanceSetting:{type:mixed,default:null}})
 const anchor=new Schema({ownerId:{type:oid,required:true},paymentKey:{type:String,required:true},aliases:{type:[String],default:[]},kind:String,source:mixed,date:String,amount:Number,currency:String,description:String,revision:{type:Number,default:0},allocations:{type:[mixed],default:[]}},options)
 anchor.index({ownerId:1,paymentKey:1},{unique:true})
 export const BankAccount:mongoose.Model<any>=mongoose.models.FinanceBankAccount||mongoose.model('FinanceBankAccount',account,'financebankaccounts')

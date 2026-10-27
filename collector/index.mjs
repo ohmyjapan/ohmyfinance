@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf, keyName, sealEnvelope, openEnvelope, samePublicKey, replaceVaultFile, DIALOG_TIMEOUT_MS, openCapsule } from './vault.mjs';
 import { collectStatement, collectAplusStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
 import { collectBankStatement, observeBankPortal, guidedAdapterFor } from './bank.mjs';
+import { runBalanceJob } from './bank-balance.mjs';
+import { BALANCE_CAPABILITY, bankBalanceSupported } from '../shared/finance-bank-balance.mjs';
 import { BillingMailbox } from './mail.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
@@ -270,11 +272,13 @@ export function bankUploadQuery(m) {
 }
 // Card jobs keep priority: bank/claim is asked only when no card account was claimed. An OMF without the bank routes answers
 // 404, which means "no bank job" (plan C3); every other failure propagates as before.
+// Plan omf-bank-hourly-balances-20261027: the bank claim advertises balance-v1 (an OMF without it ignores the body; an old collector's {}
+// never receives a balance job).
 export async function claimWork(config,live) {
   const {account,covered}=await api(config,'claim',{},undefined,live);
   if(account)return {account,covered,bank:null};
   let bank=null;
-  try{bank=await api(config,'bank/claim',{},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
+  try{bank=await api(config,'bank/claim',{capabilities:[BALANCE_CAPABILITY]},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
   return {account:null,covered,bank:bank?.job?bank:null};
 }
 // One claimed bank job: drain the retained manifests (each under its own job and snapshot), then retrieve through the adapter
@@ -291,7 +295,10 @@ export async function claimWork(config,live) {
 export const bankRefusal=error=>error?.status===415?'unreadable':error?.status===409&&error?.serverCode==='capture-other-account'?'other-account':null;
 const REFUSAL_REASON={unreadable:'CSV・テキストとして読めないファイル','other-account':'別の口座で受信済みの同じファイル'};
 export const bankRefusalText=reasons=>`OMFが受け付けなかった明細ファイル${reasons.length}件（${[...new Set(reasons)].map(r=>REFUSAL_REASON[r]).join('・')}）はこのPCに残し、再送信しません`;
-export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null}={}) {
+// Plan omf-bank-hourly-balances-20261027: a balance job (kind balance) goes to collector/bank-balance.mjs runBalanceJob — its own
+// balance-only receipt outbox, no statement drain, no CSV; `inquire` is its bank-inquiry seam (the fixture's).
+export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null,inquire=undefined}={}) {
+  if(bank?.job?.kind==='balance')return runBalanceJob(bank,config,live,{status,send,root,onLaunch,batch,signal,now,login,...(inquire?{inquire}:{})}); // guard:balance-delegated
   const {job,account}=bank,refusals=[];
   const sendItem=async(item,own)=>{
     try{return await send(config,account,item,live,{route:'bank/upload',base:BANK_BASE,query:bankUploadQuery(item.manifest)});}
@@ -367,11 +374,16 @@ export function bankLoginFor(bank,config,live,{store=secrets,root=directory,asse
   if(!live||live.mode!=='protected'||!/^[a-f\d]{24}$/.test(id)||!/^[a-f\d]{24}$/.test(ownerId))return null;
   const provider=job?.snapshot?.provider??job?.provider;
   if(!BANK_LOGIN_PROVIDERS.includes(provider)||job?.snapshot?.variant!==BANK_LOGIN_VARIANT[provider])return null;
+  // Plan omf-bank-hourly-balances-20261027: a balance job of exactly these three logins (shared bankBalanceSupported) gets the same handle;
+  // every other kind keeps the rules below.
+  const balance=job?.kind==='balance'&&bankBalanceSupported(provider,job.snapshot.variant); // guard:bank-login-balance
+  if(!balance){
   // 楽天銀行 標準 and (plan omf-ikeda-collector-20261025) 池田泉州銀行 ビジネスゲート: a retrieve job only.
   if((provider==='rakuten'||provider==='ikeda')&&job.kind!=='retrieve')return null;
   // Plan omf-paypay-routine-20261022: a PayPay銀行 標準 job gets the handle when it is a guided observe job (historical first capture) or
   // a retrieve job (routine retrieval); a claim of any other kind never does.
   if(provider==='paypay'&&!(guidedBankJob(job)||job?.kind==='retrieve'))return null; // guard:bank-login-kind
+  }
   const entry=bankEntry(provider,id),marker=bankMarker(provider,id,root);let opened=false;
   const aad=()=>aadFor(live.installationId,provider,{_id:id,ownerId},config);
   return {

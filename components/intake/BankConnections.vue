@@ -58,6 +58,28 @@
         <p v-if="scheduleErrors[a.id]" role="alert" class="break-words text-sm text-red-600 dark:text-red-300" data-bank-schedule-error>{{ scheduleErrors[a.id] }}</p>
         <p class="break-words text-xs leading-relaxed text-gray-500" data-bank-schedule-note>毎日、指定した時刻（日本時間）以降に1回だけ、接続したPCで「取得」と同じ手順で取得します。取得期間は接続に保存した期間です（終了日が空欄なら開始日から取得する日の当日まで）。PCが起動していなかった日の分は、次の1回にまとめて取得します。銀行が追加の確認を求めたときや、保存済みのログインが使えないときは、PCのChromeでお知らせして待ち、保存済みのログインを自動で再送信することはありません。失敗したときはここにお知らせし、翌日も1回だけ自動で取得します。手動の「取得」とCSVの取込はこれまでどおり使えます。</p>
       </div>
+      <div v-if="a.connection && balances[a.id]" class="min-w-0 space-y-2 rounded-xl border border-gray-200 p-3 dark:border-gray-700" data-bank-balance>
+        <p class="text-sm font-medium">銀行残高（1時間ごとに画面の裏で確認）</p>
+        <p class="break-words text-sm" data-bank-balance-amount>{{ balanceAmountText(a) }}</p>
+        <p v-if="latestOf(a) && latestOf(a).available !== null" class="break-words text-sm" data-bank-balance-available>支払可能残高 {{ yen(latestOf(a).available) }}</p>
+        <p v-if="latestOf(a)" class="break-words text-xs" data-bank-balance-asof>{{ latestOf(a).timeLabel || '銀行の時刻' }}（銀行の表示） {{ jst(latestOf(a).asOf) }}（日本時間）</p>
+        <p v-if="latestOf(a)" class="break-words text-xs text-gray-500" data-bank-balance-fetched>最終取得 {{ jst(latestOf(a).receivedAt) }}（日本時間）</p>
+        <p v-if="latestOf(a) && !latestOf(a).fresh" role="alert" class="break-words text-xs text-amber-700 dark:text-amber-300" data-bank-balance-stale>要確認 — 銀行の表示時刻が古いため、今の残高とは異なる可能性があります（銀行の表示 {{ jst(latestOf(a).asOf) }}）。</p>
+        <p class="break-words text-xs" :class="balanceTone(a)" :role="['attention','reconfirm','upgrade'].includes(balances[a.id].status?.state) ? 'alert' : 'status'" :data-bank-balance-state="balances[a.id].status?.state || ''" data-bank-balance-status>{{ balanceStatusText(a) }}</p>
+        <p v-if="balances[a.id].status?.lastFailure" role="alert" class="break-words text-xs text-amber-700 dark:text-amber-300" data-bank-balance-failure>{{ balanceFailureText(a) }}</p>
+        <p class="break-words text-xs" data-bank-balance-saved>{{ balanceSavedText(a) }}</p>
+        <template v-if="balances[a.id].supported && balanceForms[a.id]">
+          <div class="flex min-w-0 flex-wrap items-end gap-3">
+            <label class="flex items-center gap-2 text-sm"><input v-model="balanceForms[a.id].enabled" data-bank-balance-enabled type="checkbox" :disabled="busy">1時間ごとに自動で残高を確認する</label>
+            <label class="min-w-0 text-sm">残高を確認するPC<select v-model="balanceForms[a.id].collectorId" data-bank-balance-collector :class="INPUT" :disabled="busy"><option value="">選択してください</option><option v-for="c in balances[a.id].collectors" :key="c.id" :value="c.id" :disabled="!c.granted">{{ c.name }}{{ !c.granted ? '（この口座の取得が未許可）' : c.capable === false ? '（ダウンローダーの更新が必要）' : '' }}</option></select></label>
+            <button class="btn btn-secondary" :disabled="busy || !balanceDirty(a)" data-bank-balance-save @click="saveBalance(a)">残高の確認の設定を保存</button>
+            <button class="btn btn-secondary" :disabled="busy || !balances[a.id].setting?.collectorId" data-bank-balance-refresh @click="refreshBalance(a)">残高を更新</button>
+          </div>
+          <p v-if="balanceDirty(a)" class="text-xs text-amber-700 dark:text-amber-300" data-bank-balance-unsaved>未保存の変更があります（保存するまで反映されません）</p>
+        </template>
+        <p v-if="balanceErrors[a.id]" role="alert" class="break-words text-sm text-red-600 dark:text-red-300" data-bank-balance-error>{{ balanceErrors[a.id] }}</p>
+        <p class="break-words text-xs leading-relaxed text-gray-500" data-bank-balance-note>{{ balanceNote(a) }}</p>
+      </div>
       <div class="space-y-1"><p class="text-sm font-medium">取得の記録</p><p v-if="!(jobs[a.id] || []).length" class="text-xs text-gray-500">まだ取得はありません。</p><template v-for="j in jobs[a.id] || []" :key="j.jobId"><p class="break-words text-xs" :data-bank-job="j.jobId">{{ j.trigger === 'schedule' ? '毎日の自動取得（' + (j.scheduledDay || '') + '）' : kindName(j.kind, j) }} · {{ stateName(j.state) }}<span v-if="jst(j.requestedAt)"> · {{ jst(j.requestedAt) }}（日本時間）</span><span v-if="j.snapshot?.coverage && !j.snapshot?.requestedCoverage"> · 取得期間（指定） {{ j.snapshot.coverage.from }}〜{{ j.snapshot.coverage.to }}</span><span v-if="j.snapshot?.requestedCoverage" data-bank-job-window> · {{ jobWindowText(j.snapshot) }}</span> · 取得時の設定 {{ (j.snapshotHash || '').slice(0, 8) }}<span v-if="j.lastMessage"> · {{ j.lastMessage }}</span><span v-if="j.hasObservation"> · 観察記録あり{{ eventChannelText(j.eventChannel) }} · <button class="text-primary-main dark:text-primary-light" data-bank-observation-open @click="toggleObservation(a.id, j.jobId)">{{ observations[a.id + ':' + j.jobId] ? '観察記録を閉じる' : '観察記録を見る' }}</button></span></p><pre v-if="observations[a.id + ':' + j.jobId]" data-bank-observation class="max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 p-2 text-xs dark:border-gray-700">{{ observationText(observations[a.id + ':' + j.jobId]) }}</pre></template></div>
       <div class="space-y-1"><p class="text-sm font-medium">受信した明細</p><p v-if="!(captures[a.id] || []).length" class="text-xs text-gray-500">まだありません。</p><div v-for="c in captures[a.id] || []" :key="c.id" class="flex flex-wrap items-center gap-2 text-xs" :data-bank-capture="c.id"><span class="min-w-0 flex-1 break-words">{{ c.name }} · {{ captureState(c.state) }} · 口座照合 {{ labelCheckText(c.labelChecked) }}<span v-if="c.dateRange" data-bank-capture-range> · 明細の日付 {{ c.dateRange.min }}〜{{ c.dateRange.max }}</span><span v-if="c.rows"> · 新規 {{ c.rows.new }} 既存 {{ c.rows.existing }} 差異 {{ c.rows.differs }}</span><span v-if="emptyCapture(c)" class="text-amber-700 dark:text-amber-300" data-bank-capture-empty> · 明細0件（期間内に取引がないのか取得できていないのかは未確認・要確認）</span><span v-if="mappingPending(c)" class="text-amber-700 dark:text-amber-300" data-bank-capture-mapping> · {{ c.dateRange ? '列の割り当て後に取込で割り当て済み（この受信の記録は要確認のまま残ります）' : '列の割り当て待ち（取引はまだ取り込まれていません。「取込で割り当て」から割り当ててください）' }}</span><span v-else-if="c.reason"> · {{ c.reason }}</span></span><button class="text-primary-main dark:text-primary-light" data-bank-capture-map @click="emit('map', c.id)">取込で割り当て</button></div></div>
     </article>
@@ -108,7 +130,7 @@ const testStateText=(a:any)=>{
 }
 const pcStatusText=(a:any)=>{const n=collectors.value.filter((c:any)=>(c.bankAccountIds||[]).map(String).includes(a.id)).length;return n?`取得を許可したPC: ${n}台`:'この口座の取得を許可したPCがありません（下のチェックで許可してください）'}
 const emptyCapture=(c:any)=>c.state==='imported'&&!!c.rows&&Number(c.rows.new||0)+Number(c.rows.existing||0)+Number(c.rows.unchanged||0)===0
-const kindName=(k:string,j?:any)=>k==='retrieve'?'自動取得':j&&guidedOf(j.snapshot)?'ガイド付き取得':'観察取得'
+const kindName=(k:string,j?:any)=>k==='balance'?(j?.balanceTrigger==='hourly'?'残高更新（1時間ごと）':'残高更新（手動）'):k==='retrieve'?'自動取得':j&&guidedOf(j.snapshot)?'ガイド付き取得':'観察取得'
 const stateName=(s:string)=>({queued:'予約',running:'実行中',verification_required:'サインイン・確認待ち（PCのChromeを確認）',complete:'完了',failed:'失敗',superseded:'置き換え済み（未実行）'} as Record<string,string>)[s]||s
 const captureState=(s:string)=>({received:'受信',imported:'取込済み',needs_review:'要確認'} as Record<string,string>)[s]||s
 const labelCheckText=(checked:any)=>['未確認','確認済み'][Number(checked===true)]
@@ -156,7 +178,52 @@ async function saveSchedule(a:any){const f=scheduleForms[a.id],s=schedules[a.id]
  catch(e:any){scheduleErrors[a.id]=e.data?.data?.message||e.data?.statusMessage||e.message;try{schedules[a.id]=await $fetch(api+'accounts/'+a.id+'/schedule',{headers:user.authHeader})}catch{}}
  finally{busy.value=false}}
 async function run(fn:()=>Promise<void>){busy.value=true;error.value='';try{await fn()}catch(e:any){error.value=e.data?.data?.message||e.data?.statusMessage||e.message}finally{busy.value=false}}
-async function loadJobs(id:string){const [j,c,s]:any[]=await Promise.all([$fetch(api+'accounts/'+id+'/jobs',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/captures',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/schedule',{headers:user.authHeader})]);jobs[id]=j.jobs;captures[id]=c.captures;setSchedule(id,s)}
+async function loadJobs(id:string){const [j,c,s,b]:any[]=await Promise.all([$fetch(api+'accounts/'+id+'/jobs',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/captures',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/schedule',{headers:user.authHeader}),$fetch(api+'accounts/'+id+'/balance',{headers:user.authHeader})]);jobs[id]=j.jobs;captures[id]=c.captures;setSchedule(id,s);setBalance(id,b)}
+// Plan omf-bank-hourly-balances-20261027: the bank-reported balance of one account (GET/PUT …/balance, POST …/balance/refresh), apart from
+// the statement connection test, history and daily schedule. The saved setting is shown apart from the unsaved form, which a refresh never
+// resets; while the panel is open OMF's own view is polled every 5 s (never the bank) and the history is reloaded when the balance changes.
+// Amounts are exactly the bank's (no amount or date is invented when none was read); 支払可能残高 only when the bank supplied it.
+const balances=reactive<Record<string,any>>({}),balanceForms=reactive<Record<string,any>>({}),balanceErrors=reactive<Record<string,string>>({})
+const latestOf=(a:any)=>balances[a.id]?.latest||null
+const yen=(n:any)=>Number.isFinite(Number(n))?Number(n).toLocaleString('ja-JP')+'円':''
+const balanceDirty=(a:any)=>{const f=balanceForms[a.id],s=balances[a.id]?.setting;return !!f&&!!s&&(f.enabled!==s.enabled||(f.collectorId||null)!==(s.collectorId||null))}
+function setBalance(id:string,r:any){const f=balanceForms[id],s=balances[id]?.setting,dirty=!!f&&!!s&&(f.enabled!==s.enabled||(f.collectorId||null)!==(s.collectorId||null));balances[id]=r;if(!dirty)balanceForms[id]={enabled:r.setting.enabled,collectorId:r.setting.collectorId||''}}
+const balanceAmountText=(a:any)=>{const l=latestOf(a);return l?'銀行残高 '+yen(l.amount):'まだ残高を取得していません（取得した残高だけを表示します）'}
+const pcName=(a:any,id:any)=>(balances[a.id]?.collectors||[]).find((c:any)=>c.id===id)?.name||''
+const balanceSavedText=(a:any)=>{const s=balances[a.id]?.setting;if(!s)return '';const pc=s.collectorId?'確認するPC '+(pcName(a,s.collectorId)||'（一覧にないPC）'):'確認するPCは未選択';return s.enabled?`保存済みの設定: 1時間ごとに自動で確認 · ${pc}`:`保存済みの設定: 1時間ごとの確認はオフ · ${pc}`}
+const BALANCE_UNSUPPORTED:Record<string,string>={'no-connection':'接続が保存されていないため、残高は確認できません。',unsupported:'この銀行・ログイン方式は残高の確認の対象外です（楽天銀行・PayPay銀行の標準ログインと池田泉州銀行のビジネスゲートが対象です）。','no-identity':'口座の支店名・種別・口座番号が保存されていないため、残高は確認できません。'}
+const balanceStatusText=(a:any)=>{const st=balances[a.id]?.status;if(!st)return '';const j=st.job||{},by=j.trigger==='hourly'?'1時間ごとの確認':'手動の残高更新'
+ switch(st.state){
+  case 'unsupported':return '状態: 対象外 — '+(BALANCE_UNSUPPORTED[st.reason]||'この接続は残高の確認の対象外です。')
+  case 'attention':return `状態: 要対応 — 銀行のサインインの確認待ちです（${by}）`
+  case 'running':return `状態: 残高を確認中（${by} · PCが画面の裏で銀行を確認しています）`
+  case 'interrupted':return `状態: 確認が途中で止まっています（${by}）。同じPCが続きを再開します（銀行へもう一度サインインはしません）`
+  case 'queued':return `状態: 予約済み・PCの受け取り待ち（${by} · ${jst(j.requestedAt)} 予約）。PCが起動していない間は、この予約のまま待ちます`
+  case 'off':return '状態: 1時間ごとの残高の確認はオフです'+(balances[a.id].setting?.collectorId?'（「残高を更新」で今すぐ確認できます）':'')
+  case 'reconfirm':return '状態: 要確認 — 保存したときから接続（銀行・ログイン方式・口座）が変わったため、1時間ごとの確認を止めています。設定を保存し直すと再開します'
+  case 'waiting-pc':return '状態: PC待ち — 選んだPCが、この口座の取得を許可された接続済みのPCではありません'
+  case 'upgrade':return '状態: 要更新 — 選んだPCのダウンローダーが残高の確認に対応していません。ダウンローダーを更新すると始まります'
+  case 'busy':return '状態: 明細の取得を優先しています。終わったあとに残高を確認します'
+  case 'done':return `状態: この1時間の確認は済み · 次回 ${jst(st.nextAt)}（日本時間）以降`
+  case 'due':return '状態: まもなく残高の確認を予約します'
+  default:return '状態: '+st.state}}
+const balanceTone=(a:any)=>{const s=balances[a.id]?.status?.state;return ['attention','reconfirm','upgrade'].includes(s)?'text-amber-700 dark:text-amber-300':['off','unsupported','waiting-pc'].includes(s)?'text-gray-500':'text-gray-700 dark:text-gray-200'}
+const balanceFailureText=(a:any)=>{const f=balances[a.id]?.status?.lastFailure;if(!f)return '';return `要対応 — 前回の残高の確認は失敗しました（${f.trigger==='hourly'?'1時間ごとの確認':'手動の残高更新'} · ${jst(f.completedAt||f.requestedAt)}（日本時間））${f.lastMessage?'：'+f.lastMessage:''}。${latestOf(a)?'最後に取得できた残高をそのまま表示しています。':''}1時間ごとの確認は続けますが、確認できていない保存済みのログインは自動では送信しません`}
+const BALANCE_NOTE:Record<string,string>={rakuten:'銀行残高と支払可能残高は、楽天銀行のMyAccountに表示された値です。',paypay:'PayPay銀行の残高照会に表示された普通預金残高です。支払可能額を示すものではありません。',ikeda:'池田泉州銀行ビジネスゲートの各口座残高（銀行の最終取得日時点の値）です。今この時点の残高や支払可能額を示すものではありません。'}
+const balanceNote=(a:any)=>(BALANCE_NOTE[a.connection?.provider]||'')+'1時間ごとに、選んだPCが画面の裏のChromeで保存済みのログインで銀行にサインインし、残高を読み取ってログアウトします（明細やCSVは取得しません）。前回の確認から1時間はあけ、PCが起動していなかった間の分は次の1回にまとめます。サインインに本人の操作が必要なときは止めてここにお知らせし、Chromeの画面は表示しません。明細の取得が優先されます。'
+async function saveBalance(a:any){const f=balanceForms[a.id],s=balances[a.id]?.setting;if(!f||!s||busy.value)return;busy.value=true;balanceErrors[a.id]=''
+ try{const r:any=await $fetch(api+'accounts/'+a.id+'/balance',{method:'PUT',headers:user.authHeader,body:{enabled:f.enabled,collectorId:f.collectorId||null,revision:s.revision}});balances[a.id]=r;balanceForms[a.id]={enabled:r.setting.enabled,collectorId:r.setting.collectorId||''};messages[a.id]=r.setting.enabled?'残高の確認の設定を保存しました。':'残高の1時間ごとの確認をオフにしました。'}
+ catch(e:any){balanceErrors[a.id]=e.data?.data?.message||e.data?.statusMessage||e.message;try{balances[a.id]=await $fetch(api+'accounts/'+a.id+'/balance',{headers:user.authHeader})}catch{}}
+ finally{busy.value=false}}
+async function refreshBalance(a:any){if(busy.value)return;busy.value=true;balanceErrors[a.id]=''
+ try{const r:any=await $fetch(api+'accounts/'+a.id+'/balance/refresh',{method:'POST',headers:user.authHeader,body:{}});messages[a.id]=r.message;await loadJobs(a.id)}
+ catch(e:any){balanceErrors[a.id]=e.data?.data?.message||e.data?.statusMessage||e.message}
+ finally{busy.value=false}}
+// OMF's view only (never the bank): the balance of each connected account; its history once the balance state or reading changed.
+async function pollBalances(){for(const acc of accounts.value){if(!acc.connection)continue;try{const before=balances[acc.id],r:any=await $fetch(api+'accounts/'+acc.id+'/balance',{headers:user.authHeader});const changed=!before||before.status?.state!==r.status?.state||before.latest?.id!==r.latest?.id||before.status?.lastFailure?.jobId!==r.status?.lastFailure?.jobId;setBalance(acc.id,r);if(changed){const j:any=await $fetch(api+'accounts/'+acc.id+'/jobs',{headers:user.authHeader});jobs[acc.id]=j.jobs}}catch{/* the next poll */}}}
+let balancePoll:any=null
+onMounted(()=>{balancePoll=setInterval(()=>{if(document.visibilityState==='visible')void pollBalances()},5000)})
+onBeforeUnmount(()=>{if(balancePoll)clearInterval(balancePoll)})
 // The per-account form state exists before the account renders (the template reads forms[a.id]); jobs and captures follow.
 async function load(){const [a,t,c]:any[]=await Promise.all([$fetch(api+'accounts',{headers:user.authHeader}),$fetch(api+'templates',{headers:user.authHeader}),$fetch('/api/finance/collectors',{headers:user.authHeader})]);templates.value=t.templates;collectors.value=(c.collectors||[]).filter((x:any)=>!x.revokedAt)
  for(const acc of a.accounts)forms[acc.id]??={provider:acc.connection?.provider||'',templateId:acc.connection?.templateId||'',accountLabel:acc.connection?.accountLabel||'',transactionIdConfirmed:!!acc.connection?.transactionIdConfirmed,variant:acc.connection?.variant||'',coverageFrom:acc.connection?.coverage?.from||'',coverageTo:acc.connection?.coverage?.to||'',identityBranch:acc.connection?.accountIdentity?.branch||'',identityType:acc.connection?.accountIdentity?.type||'',identityNumber:acc.connection?.accountIdentity?.number||''}

@@ -12,9 +12,11 @@
 // person signs in in Chrome as before. Nor does it accept a dialog other than the observed daily-download warning on the armed
 // export surface. A generated JSF id is never pinned. Implemented steps are not a verified connection: that needs an owner-run
 // job (shared/finance-payment-match.mjs bankCapability liveVerified).
-// Imports only ./contract.mjs, ../interaction.mjs and nothing else, so the staged copy loads without node_modules.
+// Imports only ./contract.mjs, ../interaction.mjs and (the balance reader, plan omf-bank-hourly-balances-20261027) the dependency-free
+// shared balance rules, so the staged copy loads without node_modules.
 import { contractUi, validateContract } from './contract.mjs';
 import { pause, poll } from '../interaction.mjs';
+import { findYen, parseBankTime } from '../../shared/finance-bank-balance.mjs';
 
 export const START_CORP = 'https://fes.rakuten-bank.co.jp/XMS/security/RbS?COMMAND=LOGIN&CurrentPageID=START_CORP';
 const PLUS = 'https://fes.rakuten-bank.co.jp/MS/main/RbS?COMMAND=LOGIN&CurrentPageID=START_ACCOUNT_PLUS';
@@ -325,6 +327,95 @@ export const standard = Object.freeze({
   provider: 'rakuten', label: '楽天銀行', variant: 'standard', support: 'verified', contract: STANDARD_CONTRACT,
   start: START_CORP, hosts: [...HOSTS], loginHosts: [...LOGIN_HOSTS],
   ui(page, browser, snapshot = null) { return standardUi(page, browser, this, snapshot); }
+});
+// ── Hourly background balance (plan omf-bank-hourly-balances-20261027) ───────────────────────────────────────────────────────────
+// The parent's owner-observed facts (SAFE-BANK-CONTRACT.json, RAKUTEN-LOGOUT-CONTRACT.json): the authenticated MyAccount home
+// /XMS/inquiry/gns already shows 普通預金残高 and 支払可能残高 in rows matching the recorded selector, each as "1,234 円" or "(1,234円)", and
+// 残高確認時間: YYYY/MM/DD HH:mm (JST). Its ログアウト is the unique visible <a> owning <img alt="ログアウト"> (the generated JSF id is never
+// pinned; the anchor's whitespace text never hides the image label); after the one press the bank shows a visible password form or an
+// explicit logout text with no ログアウト control — closing the browser is never taken for a logout. The statement adapter above is unchanged.
+export const BALANCE_PAGE = Object.freeze({
+  origin: 'https://fes.rakuten-bank.co.jp', path: '/XMS/inquiry/gns', row: 'tr:has(> td > table):has(> td > a):not(:has(tr > td > table))',
+  primary: '普通預金残高', available: '支払可能残高', time: '残高確認時間', logoutAlt: 'ログアウト', loggedOut: 'ログアウトしました|ご利用ありがとうございました'
+});
+// In-page readers (serialized; they use only their argument). The visible text tokens of each recorded row carrying a label and the text
+// around each visible 残高確認時間 — the amounts and time stay in this collector process (the receipt keeps only the normalized values).
+const BALANCE_READ = ({ row, labels, time }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden', norm = t => String(t ?? '').replace(/\s+/g, ' ').trim();
+  const tokens = el => { const out = [], walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n; while ((n = walk.nextNode())) { const p = n.parentElement; if (!p || !visible(p)) continue; const t = norm(n.textContent); if (t) out.push(t.slice(0, 200)); } return out.slice(0, 60); };
+  const rows = [...document.querySelectorAll(row)].filter(visible).map(tokens).filter(t => t.some(x => labels.includes(x)));
+  const holders = [...document.querySelectorAll('body *')].filter(e => visible(e) && norm(e.textContent).includes(time) && ![...e.children].some(ch => norm(ch.textContent).includes(time)));
+  return { origin: location.origin, path: location.pathname, top: window.top === window, rows: rows.slice(0, 20), times: holders.slice(0, 10).map(e => norm((e.parentElement || e).textContent).slice(0, 300)) };
+};
+// GUARD (serialized) — the image ログアウト: exactly one visible <a> owning a visible <img alt="ログアウト">; `press` activates it in this task.
+const LOGOUT = ({ alt, press = false, thanks = '' }) => {
+  const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const anchors = [...document.querySelectorAll('a')].filter(a => visible(a) && [...a.querySelectorAll('img')].some(i => i.getAttribute('alt') === alt && visible(i)));
+  if (!press) return { controls: anchors.length, password: [...document.querySelectorAll('input[type="password"]')].some(visible), thanks: new RegExp(thanks).test(String(document.body?.innerText || '')) };
+  if (anchors.length !== 1) return { ok: false, reason: anchors.length ? 'ambiguous' : 'missing' }; // guard:rakuten-logout-unique
+  const target = anchors[0]; setTimeout(() => target.click(), 0); return { ok: true };
+};
+const fieldError = (code, message) => coded(code, message);
+/**
+ * GUARD — the balance of one MyAccount read (pure): the official origin, path and top document; exactly one 普通預金残高 among the
+ * recorded rows with exactly one amount of the bank's syntax beside it (no other digits in that part of the row) and at most one
+ * 支払可能残高 (when shown, equally exact); exactly one distinct 残高確認時間. Anything else throws a coded error — never a zero.
+ */
+export function rakutenBalanceOf(read, c = BALANCE_PAGE) {
+  const label = '楽天銀行';
+  if (!read || read.origin !== c.origin || read.path !== c.path || read.top !== true) throw fieldError('balance-page', `${label}の残高の画面（MyAccount）を確認できません`);
+  const count = l => read.rows.reduce((n, r) => n + r.filter(t => t === l).length, 0);
+  const amountOf = l => {
+    const row = read.rows.find(r => r.includes(l)); const at = row.indexOf(l), next = row.findIndex((t, i) => i > at && (t === c.primary || t === c.available));
+    const others = row.filter((t, i) => (t === c.primary || t === c.available) && t !== l && i < at), from = others.length ? at + 1 : 0;
+    const part = row.filter((t, i) => t !== l && i >= from && (next < 0 || i < next) && t !== c.primary && t !== c.available).join(' '), hits = findYen(part, 'suffix');
+    if (hits.length !== 1 || /\d/.test(part.slice(0, hits[0].index) + part.slice(hits[0].end))) throw fieldError('balance-field', `${label}の「${l}」の金額を1つに特定できません。残高は保存していません`); // guard:rakuten-amount-exact
+    return hits[0].value;
+  };
+  if (count(c.primary) !== 1) throw fieldError('balance-field', `${label}の「${c.primary}」を1つに特定できません（${count(c.primary)}件）。残高は保存していません`); // guard:rakuten-label-unique
+  if (count(c.available) > 1) throw fieldError('balance-field', `${label}の「${c.available}」を1つに特定できません。残高は保存していません`);
+  const amount = amountOf(c.primary), available = count(c.available) ? amountOf(c.available) : null;
+  const times = [...new Set(read.times.flatMap(t => [...t.matchAll(/残高確認時間[:：]?\s*(\d{4}\/\d{2}\/\d{2})\s+(\d{2}:\d{2})(?![:\d])/g)].map(m => m[1] + ' ' + m[2])))];
+  const asOf = times.length === 1 ? parseBankTime(times[0], 'YYYY/MM/DD HH:mm') : null;
+  if (!asOf) throw fieldError('balance-time', `${label}の「${c.time}」を1つに特定できません（${times.length}件）。残高は保存していません`); // guard:rakuten-time-unique
+  return { amount, available, asOf, source: { origin: c.origin, path: c.path, labels: [c.primary, ...(available !== null ? [c.available] : [])] } };
+}
+/**
+ * The ui of a background balance inquiry: the unchanged standardUi (open/state/loginForm/login/document — the same one saved-login
+ * submission) plus readBalance() (polled within `readMs` until the page reads exactly) and balanceFinish() (the image ログアウト once,
+ * bounded, never accepting a dialog; the result never changes the reading). `options` are the test seams for the read and finish windows.
+ */
+export function balanceUi(page, browser, adapter = standardBalance, snapshot = null, { readMs = 30000, finishMs = 15000 } = {}) {
+  const base = standardUi(page, browser, standard, snapshot), c = BALANCE_PAGE, label = '楽天銀行';
+  const bounded = (promise, ms = 5000) => Promise.race([promise, pause(ms).then(() => null)]);
+  const evaluate = async (fn, arg) => { try { return await bounded(page.evaluate(fn, arg)); } catch { return null; } };
+  return {
+    ...base,
+    async readBalance() {
+      const until = Date.now() + readMs; let last = fieldError('balance-page', `${label}の残高の画面を確認できません`);
+      while (Date.now() < until) {
+        const read = await evaluate(BALANCE_READ, { row: c.row, labels: [c.primary, c.available], time: c.time });
+        if (read) { try { return rakutenBalanceOf(read, c); } catch (error) { last = error; } }
+        await pause(500);
+      }
+      throw last;
+    },
+    async balanceFinish() {
+      const until = Date.now() + finishMs, result = { loggedOut: false };
+      try {
+        const k = (await base.state())?.kind; if (k === 'verification') return { ...result, reason: 'dialog' }; if (!['authenticated', 'statements', 'export_ready'].includes(k)) return { ...result, reason: 'not-signed-in' };
+        const pressed = await evaluate(LOGOUT, { alt: c.logoutAlt, press: true }); if (!pressed?.ok) return { ...result, reason: 'logout' };
+        while (Date.now() < until) { await pause(250); const s = await evaluate(LOGOUT, { alt: c.logoutAlt, thanks: c.loggedOut }); if (s && (s.password || (s.thanks && s.controls === 0))) return { ...result, loggedOut: true }; } // guard:rakuten-logout-confirmed
+        return { ...result, reason: 'timeout' };
+      } catch (error) { return { ...result, reason: String(error?.code || 'error') }; }
+    }
+  };
+}
+/** The 標準 login's balance inquiry (collector/bank-balance.mjs BALANCE_ADAPTERS); its login steps and texts are the statement adapter's. */
+export const standardBalance = Object.freeze({
+  provider: 'rakuten', label: '楽天銀行', variant: 'standard', hosts: [...HOSTS], loginExits: null,
+  source: Object.freeze({ origin: BALANCE_PAGE.origin, path: BALANCE_PAGE.path, labels: Object.freeze([BALANCE_PAGE.primary, BALANCE_PAGE.available]) }),
+  ui(page, browser, snapshot = null) { return balanceUi(page, browser, this, snapshot); }
 });
 export default {
   provider: 'rakuten', label: '楽天銀行', support: 'contract-pending', contract: null,

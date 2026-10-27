@@ -19,6 +19,7 @@ import { FinanceCollector } from '../models/Finance'
 import { BankAccount, BankTemplate, BankJob, BankStatement, initializePaymentMatching } from '../models/FinancePaymentMatch'
 import { ownedBankAccount } from './financeBankStatementService'
 import { queueScheduledBankJob } from './financeBankCollectionService'
+import { yieldQueuedBalance } from './financeBankBalanceService'
 import { frozenCoverage, bankCoverageWindow, bankIdentityRequired } from '../../shared/finance-payment-match.mjs'
 import { bankScheduleInput, storedBankSchedule, bankScheduleBinding, bankScheduleSupport, bankScheduleState, jstDay, jstDayStart, bankArchiveGaps } from '../../shared/finance-bank-schedule.mjs'
 
@@ -49,7 +50,8 @@ async function templateExists(account: any) {
 }
 // What bankScheduleState needs: every active job, the latest job and the latest retrieval requested today (superseded ones excluded).
 async function stateOf(account: any, now: Date) {
-  const scope = { ownerId: account.ownerId, bankAccountId: account._id }, live = { ...scope, state: { $ne: 'superseded' } }
+  // Plan omf-bank-hourly-balances-20261027: a balance check (kind balance) is never a statement run, failure or the day's run.
+  const scope = { ownerId: account.ownerId, bankAccountId: account._id, kind: { $ne: 'balance' } }, live = { ...scope, state: { $ne: 'superseded' } } // guard:schedule-ignores-balance
   const [collectorIds, active, latest, today, template] = await Promise.all([
     scopedCollectors(account),
     BankJob.find({ ...scope, state: { $in: ACTIVE } }).lean(),
@@ -153,6 +155,9 @@ async function scheduleAccount(account: any, now: Date) {
   const day = jstDay(now)
   for (const job of await queuedScheduled(account)) if (job.schedule.day < day && await supersede(job, now, REPLACED_DAY)) result.superseded.push(job.jobId)
   const template: any = await BankTemplate.findOne({ _id: account.connection.templateId, ownerId: account.ownerId }).lean(); if (!template) return result
+  // Statements first (plan omf-bank-hourly-balances-20261027): a balance check no PC received yet yields to the day's run; one in flight is
+  // left alone (the open-job index then keeps the day's run for a later tick).
+  await yieldQueuedBalance(account.ownerId, account._id, now)
   const revision = storedBankSchedule(account.schedule).revision
   const job: any = await queueScheduledBankJob(account, template, { day, now, revision })
   if (!job) return result
