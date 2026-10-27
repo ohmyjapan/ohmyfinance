@@ -13,6 +13,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { execFile } from 'node:child_process';
 import puppeteer from 'rebrowser-puppeteer-core';
 
 const moduleOf = (env, rel) => process.env[env] ? pathToFileURL(process.env[env]).href : new URL(rel, import.meta.url).href;
@@ -28,7 +29,11 @@ const COVERAGE = Object.freeze({ from: '2025-11-01', to: '2026-10-20' });
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const exists = p => access(p).then(() => true, () => false);
 const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-paypay-routine-test-'));
-test.after(async () => { if (path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)) await rm(temp, { recursive: true, force: true }); });
+const profiles = [];
+test.after(async () => {
+  for (const profile of profiles) if (!(await released(profile))) throw new Error('owned Chrome still holds ' + path.basename(profile) + ' at cleanup');
+  if (path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)) await rm(temp, { recursive: true, force: true });
+});
 
 // ── the fake portal ──
 const STYLE = '<style>a,button,input,select{display:inline-block;margin:4px;padding:4px}</style>';
@@ -84,17 +89,45 @@ function bankSite(options = {}) {
   return { s, stats, count, respond };
 }
 // An owned headless Chrome on its own profile, host resolution refused, every page (popups included) intercepted by the fake bank.
+// Fixture-owned Chrome start-up (plan omf-bank-hourly-balances-20261027 build-06: under a saturated machine the launch or the first page's
+// CDP setup timed out — Target.setDiscoverTargets / Network.enable — before any fictional bank page ran). The start-up (launch and the
+// first intercepted page) is retried ONCE, logged, only after the failed Chrome released its profile and before any test step; a profile
+// is removed only once its Chrome left. No timeout is raised and no business assertion is touched.
 async function owned(site, fn) {
-  const profile = path.join(temp, 'profile-' + randomUUID().slice(0, 8));
-  const browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] });
+  for (let attempt = 1; ; attempt++) {
+    const profile = path.join(temp, 'profile-' + randomUUID().slice(0, 8)), t = Date.now(); profiles.push(profile);
+    let browser = null, started = null;
+    try { browser = await puppeteer.launch({ executablePath: findChrome(), pipe: true, headless: true, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost'] }); started = await ownedStart(site, browser); }
+    catch (error) {
+      if (browser) await closeOwned(browser); const free = await released(profile);
+      console.log('# owned Chrome start-up attempt ' + attempt + ' failed after ' + (Date.now() - t) + ' ms (' + (error?.name || 'Error') + ': ' + String(error?.message || '').slice(0, 100) + '); its profile ' + (free ? 'released' : 'STILL HELD'));
+      if (attempt >= 2 || !free) throw error; continue;
+    }
+    if (attempt > 1) console.log('# owned Chrome ready on attempt ' + attempt);
+    try { return await fn({ page: started.page, browser, dialogs: started.dialogs, open: started.open }); }
+    finally { await closeOwned(browser); }
+  }
+}
+const execute = (file, args) => new Promise(resolve => execFile(file, args, { windowsHide: true, timeout: 20000 }, (error, stdout) => resolve(error ? null : String(stdout))));
+async function released(profile, ms = 30000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { const out = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | ForEach-Object { $_.CommandLine }"]); if (out !== null && !out.split(/\r?\n/).some(l => l.includes(profile))) return true; await new Promise(r => setTimeout(r, 500)); }
+  return false;
+}
+async function closeOwned(browser) {
+  const child = browser.process();
+  await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 10000))]);
+  if (child && child.exitCode === null && child.signalCode === null) { try { child.kill(); } catch { /* gone */ } await Promise.race([new Promise(r => child.once('exit', r)), new Promise(r => setTimeout(r, 10000))]); }
+}
+// The original page setup of owned(): interception of every page (popups included) by the fake bank and the dialog record.
+async function ownedStart(site, browser) {
   const dialogs = [];
   const attach = async page => { await page.setRequestInterception(true); page.on('request', r => site.respond(r)); const cdp = await page.createCDPSession(); await cdp.send('Page.enable'); cdp.on('Page.javascriptDialogOpening', e => dialogs.push({ type: e.type, message: e.message, handled: false, cdp })); cdp.on('Page.javascriptDialogClosed', () => { const d = dialogs.findLast(x => !x.handled); if (d) d.closedByCollector = true; }); };
   // one interception per page, awaited by whoever opens it first (a page opened by the test navigates only once it is intercepted)
   const ready = page => (page.__attached ??= attach(page));
   browser.on('targetcreated', async target => { if (target.type() !== 'page') return; try { const page = await target.page(); if (page) await ready(page); } catch { /* closed */ } });
   const open = async () => { const page = await browser.newPage(); await ready(page); return page; };
-  try { const page = await open(); return await fn({ page, browser, dialogs, open }); }
-  finally { await browser.close().catch(() => {}); }
+  return { page: await open(), dialogs, open };
 }
 // A fictional saved login with the interface bank.mjs expects, counting every call.
 function savedLogin(state = 'ready') {

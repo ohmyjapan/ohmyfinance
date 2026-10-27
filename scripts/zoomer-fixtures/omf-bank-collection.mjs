@@ -46,7 +46,9 @@ const run = (args, extra = {}, timeout = 600000, cwd = root) => new Promise(reso
 // ── Server-side mutants: one anchor each in the built server chunks (shape of omf-payment-match.mjs MUTANTS); the
 // integration run under OMF_TEST_BANK_MUTANT must then fail on the named assertion.
 export const SERVER_MUTANTS = [
-  { name: 'M1-scope-filter-dropped', anchor: /bankAccountId:\s*\{\s*\$in:\s*device\.bankAccountIds\s*\|\|\s*\[\]\s*\}/g, replacement: 'bankAccountId:{$exists:true}', expect: 'bank:foreign-device-claims' },
+  // plan omf-bank-hourly-balances-20261027: the balance receipt route has its own device-scope filter; this mutant stays on the collection
+  // service's scopeOf (GUARD g1) only, with the same replacement and expectation
+  { name: 'M1-scope-filter-dropped', anchor: /(?<=scopeOf\s*=\s*\(device(?::any)?\)\s*=>\s*\(\{\s*ownerId:\s*device\.ownerId,\s*)bankAccountId:\s*\{\s*\$in:\s*device\.bankAccountIds\s*\|\|\s*\[\]\s*\}/g, replacement: 'bankAccountId:{$exists:true}', expect: 'bank:foreign-device-claims' },
   { name: 'M3-needs-review-writes-rows', anchor: /if\s*\(planned\d*\.held\)/g, replacement: 'if(false)', expect: 'bank:needs-review-no-rows' },
   { name: 'M5-live-template-read', anchor: /const frozen\s*=\s*interpretationOf\(job\.snapshot\)/g, replacement: 'const frozen=interpretationOf({...job.snapshot,...((await BankTemplate.findOne({_id:job.snapshot.templateId}).lean())||{})})', expect: 'bank:frozen-snapshot' },
   { name: 'M6-differs-updated-silently', anchor: /if\s*\(changed\s*&&\s*collector\)/g, replacement: 'if(false)', expect: 'bank:no-silent-reinterpret' },
