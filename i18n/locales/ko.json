@@ -982,7 +982,11 @@
     "addMore": "추가하기",
     "fileTooLarge": "파일 크기가 10MB를 초과합니다",
     "confirmDelete": "이 영수증을 삭제하시겠습니까?",
-    "viewAll": "전체 보기"
+    "viewAll": "전체 보기",
+    "matchCompanyRequired": "회사 접근 권한을 확인할 수 없습니다. 회사를 선택한 뒤 다시 시도해 주세요.",
+    "matchNotInCompany": "선택한 회사에서 이 영수증 또는 거래를 확인할 수 없습니다. 연결은 저장되지 않았습니다.",
+    "matchChanged": "영수증이 변경되어 연결하지 못했습니다. 최신 목록을 불러왔습니다. 다시 시도해 주세요.",
+    "matchFailedRetry": "연결을 저장하지 못했습니다. 다시 시도해 주세요."
   },
   "transactionUpload": {
     "title": "거래 데이터 가져오기",

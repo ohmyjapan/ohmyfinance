@@ -100,7 +100,10 @@ export async function companyFinanceSummary(organizationId: mongoose.Types.Objec
 
 // ---- Receipts: bounded, whitelisted metadata and extracted facts; the link is reported only when it points at this company.
 const extracted = (e: any) => e ? { merchant: e.merchant || '', amount: e.amount ?? null, currency: currencyCode(e.currency), date: e.date || null, tax: e.tax ?? null, taxRate: e.taxRate ?? null, subtotal: e.subtotal ?? null, receiptNumber: e.receiptNumber || '', items: (e.items || []).slice(0, 50).map((i: any) => ({ description: String(i.description || '').slice(0, 300), quantity: i.quantity ?? null, unitPrice: i.unitPrice ?? null, totalPrice: i.totalPrice ?? null, tax: i.tax ?? null })), itemsTruncated: (e.items?.length || 0) > 50 } : null
-const receiptView = (r: any) => ({ id: String(r._id), merchant: r.merchant || '', receiptDate: r.receiptDate || null, uploadDate: r.uploadDate || null, amount: r.amount ?? null, currency: currencyCode(r.currency), taxAmount: r.taxAmount ?? null, taxRate: r.taxRate ?? null, status: r.status, category: r.category || null, extracted: extracted(r.extractedData), meaning: 'saved receipt and OCR text; not a verified purchase or tax document check' })
+const receiptView = (r: any) => ({ id: String(r._id), merchant: r.merchant || '', receiptDate: r.receiptDate || null, uploadDate: r.uploadDate || null, amount: r.amount ?? null, currency: currencyCode(r.currency), taxAmount: r.taxAmount ?? null, taxRate: r.taxRate ?? null, status: r.status, category: r.category || null, extracted: extracted(r.extractedData), updatedAt: r.updatedAt || null, ...linkSyncView(r.linkSync), meaning: 'saved receipt and OCR text; not a verified purchase or tax document check' })
+// The transaction badge synchronization of the receipt's last link change: synced, pending (automatic recovery), manual_review (with a
+// named reason; an explicit link or unlink of this receipt is the successor) or untracked (a link saved before synchronization existed).
+const linkSyncView = (s: any) => ({ linkSync: !s ? 'untracked' : !s.pending ? 'synced' : s.state === 'manual_review' ? 'manual_review' : 'pending', linkSyncReason: s?.pending && s.state === 'manual_review' ? s.reason || null : null, linkFlagPending: s?.pending === true })
 async function linked(organizationId: mongoose.Types.ObjectId, r: any) {
   if (!r.transactionId) return { linkedTransactionId: null, linkStatus: 'not_linked' }
   return await Transaction.exists({ _id: r.transactionId, organizationId }) ? { linkedTransactionId: String(r.transactionId), linkStatus: 'linked_to_this_company' } : { linkedTransactionId: null, linkStatus: 'link_not_in_this_company' }
@@ -115,14 +118,14 @@ export async function listCompanyReceipts(organizationId: mongoose.Types.ObjectI
     if (args.dateTo) { if (!isRealDateKey(args.dateTo)) bad(400, 'Invalid date'); window.$lt = zonedDayStart(addDayKey(args.dateTo, 1), timeZone) }
     filter.$or = [{ receiptDate: window }, { receiptDate: { $in: [null] }, uploadDate: window }]
   }
-  const rows: any[] = await Receipt.find(filter).select('merchant receiptDate uploadDate amount currency taxAmount taxRate status category transactionId extractedData.merchant extractedData.amount extractedData.currency extractedData.date extractedData.tax extractedData.taxRate extractedData.subtotal extractedData.receiptNumber extractedData.items').sort({ uploadDate: -1, _id: -1 }).skip((page - 1) * limit).limit(limit + 1).lean()
+  const rows: any[] = await Receipt.find(filter).select('merchant receiptDate uploadDate updatedAt amount currency taxAmount taxRate status category transactionId linkSync.pending linkSync.state linkSync.reason extractedData.merchant extractedData.amount extractedData.currency extractedData.date extractedData.tax extractedData.taxRate extractedData.subtotal extractedData.receiptNumber extractedData.items').sort({ uploadDate: -1, _id: -1 }).skip((page - 1) * limit).limit(limit + 1).lean()
   const receipts = []
   for (const r of rows.slice(0, limit)) receipts.push({ ...receiptView(r), ...await linked(organizationId, r) })
   return { receipts, page, limit, hasMore: rows.length > limit }
 }
 export async function getCompanyReceipt(organizationId: mongoose.Types.ObjectId, receiptId: string) {
   await ensureConnection()
-  const r: any = await Receipt.findOne({ ...summaryScope(organizationId), _id: new mongoose.Types.ObjectId(receiptId) }).select('-filePath -fileUrl -thumbnailUrl -extractedData.rawText -extractedData.merchantAddress -extractedData.merchantPhone -metadata -originalFilename -filename').lean()
+  const r: any = await Receipt.findOne({ ...summaryScope(organizationId), _id: new mongoose.Types.ObjectId(receiptId) }).select('-filePath -fileUrl -thumbnailUrl -extractedData.rawText -extractedData.merchantAddress -extractedData.merchantPhone -metadata -originalFilename -filename -naviOperations -linkSync.work -linkSync.claimToken').lean()
   if (!r) bad(404, 'Receipt not found')
   return { receipt: { ...receiptView(r), ...await linked(organizationId, r) } }
 }

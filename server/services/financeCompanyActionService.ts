@@ -9,7 +9,7 @@ import { fail } from './financeService'
 import { canonicalJson } from '../../shared/finance-action-proposal.mjs'
 import { updateCompanyCalendarEntry, calendarUpdateFields } from './companyPaymentWriteService'
 import { applyCompanyKnowledgeWrite, checkCompanyKnowledgeWrite, companyKnowledgeMarker, companyKnowledgeResult } from './companyKnowledgeService'
-import { businessAdapter, recoverBusinessOperation, businessIdKey, invoiceResultValues } from './companyNaviBusinessService'
+import { businessAdapter, recoverBusinessOperation, businessIdKey, invoiceResultValues, receiptLinkActions, receiptLinkPendingOwner } from './companyNaviBusinessService'
 import { businessToolMeta } from '../../shared/finance-navi-business.mjs'
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -21,23 +21,32 @@ const knowledgeAction = (name: string) => companyKnowledgeActions.includes(name)
 const businessAction = (name: string) => !!businessAdapter(name)
 export const companyActionReceipt = (a: any) => ({ operationId: a.operationId, name: a.name, turnId: a.turnId, slot: a.slot, target: businessAction(a.name) ? { [businessIdKey(a.name) as string]: a.resourceId ?? null } : a.name === 'update_company_transaction' ? { transactionId: a.transactionId } : a.name === 'update_company_invoice' ? { invoiceId: a.invoiceId } : knowledgeAction(a.name) ? { knowledgeId: a.knowledgeId } : { paymentId: a.paymentId }, state: a.state === 'claimed' ? 'working' : a.state, requestedFields: a.requestedFields || [], nativeResourceIds: a.nativeResourceIds || null, acceptedRevision: null, completedAt: a.completedAt || null, recoveryOwner: a.recoveryOwner || null, safeError: a.safeError || null, detail: a.detail || null })
 async function knowledgeMarker(c: any, op: any) { const m = await companyKnowledgeMarker(c.organizationId, op.knowledgeId, op.operationId); return m ? { operationId: m.operationId, payloadHash: m.payloadHash, requestedFields: op.requestedFields, appliedAt: m.at } : null }
-async function settle(c: any, turnId: string, op: any, values: any) {
+// A saved receipt link whose transaction badge is still owed (fixed, company-safe texts; never a repeat of the operation).
+const receiptPending = (owner: 'system' | 'user') => ({ state: 'unresolved', completedAt: null, recoveryOwner: owner, safeError: owner === 'system' ? '紐付けは保存されました。取引の領収書表示は自動で反映中です。同じ操作は繰り返していません。' : '紐付けは保存されましたが、取引への反映に確認が必要です。領収書の画面で状態を確認してください。' })
+async function settle(c: any, turnId: string, op: any, values: any, from = 'claimed') {
   const changes = Object.fromEntries(Object.entries(values).map(([key, value]) => ['turns.$[turn].actions.$[action].' + key, value]))
-  await Conversation.updateOne(actionIdentity(c), { $set: changes }, { arrayFilters: [{ 'turn.id': turnId }, { 'action.operationId': op.operationId, 'action.state': 'claimed' }] })
+  await Conversation.updateOne(actionIdentity(c), { $set: changes }, { arrayFilters: [{ 'turn.id': turnId }, { 'action.operationId': op.operationId, 'action.state': from }] })
 }
 // A domain marker proves a completed write even if its HTTP/journal reply was lost. Absence is not proof of failure.
 // Unknown expired operations are never automatically executed again. No financial write happens during reconciliation.
 export async function reconcileCompanyActions(c: any) {
   if (!c) return c
   for (const turn of c.turns || []) for (const op of turn.actions || []) {
-    if (op.state !== 'claimed') continue
+    // Receipt link operations alone may leave unresolved later: only on proof (same company, operation, payload, current marker, no
+    // owed badge work). Every other final receipt stays final.
+    const receiptLink = receiptLinkActions.includes(op.name)
+    if (op.state !== 'claimed' && !(receiptLink && op.state === 'unresolved')) continue
     const knowledge = knowledgeAction(op.name), business = businessAction(op.name)
     const payment: any = knowledge || business ? null : op.name === 'update_company_transaction' ? await Transaction.findOne({ _id: op.transactionId, organizationId: c.organizationId }).select('naviOperation').lean() : op.name === 'update_company_invoice' ? await Invoice.findOne({ _id: op.invoiceId, organizationId: c.organizationId }).select('naviOperation').lean() : await Payment.findOne({ _id: op.paymentId, organizationId: c.organizationId }).select('naviOperation').lean()
     const marker = business ? await recoverBusinessOperation(c, op) : knowledge ? await knowledgeMarker(c, op) : payment?.naviOperation
     if (marker?.operationId === op.operationId && marker.payloadHash === op.payloadHash) {
-      await settle(c, turn.id, op, { state: 'done', requestedFields: marker.requestedFields || op.requestedFields, nativeResourceIds: business ? marker.nativeResourceIds || { [businessIdKey(op.name) as string]: String(op.resourceId) } : op.name === 'update_company_transaction' ? { transactionId: String(op.transactionId) } : op.name === 'update_company_invoice' ? { invoiceId: String(op.invoiceId) } : knowledge ? { knowledgeId: String(op.knowledgeId) } : { paymentId: String(op.paymentId) }, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })
+      await settle(c, turn.id, op, { state: 'done', requestedFields: marker.requestedFields || op.requestedFields, nativeResourceIds: business ? marker.nativeResourceIds || { [businessIdKey(op.name) as string]: String(op.resourceId) } : op.name === 'update_company_transaction' ? { transactionId: String(op.transactionId) } : op.name === 'update_company_invoice' ? { invoiceId: String(op.invoiceId) } : knowledge ? { knowledgeId: String(op.knowledgeId) } : { paymentId: String(op.paymentId) }, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null }, op.state)
+    } else if (receiptLink && op.state === 'unresolved') {
+      const owner = await receiptLinkPendingOwner(c, op)
+      if (owner && owner !== op.recoveryOwner) await settle(c, turn.id, op, receiptPending(owner), 'unresolved')
     } else if (new Date(op.leaseUntil).getTime() < Date.now() - 20000 && !(c.state === 'working' && c.lease === op.lease && new Date(c.leaseUntil).getTime() > Date.now())) {
-      await settle(c, turn.id, op, { state: 'unresolved', recoveryOwner: 'user', safeError: '保存結果を確認できません。同じ操作は自動で繰り返していません。' })
+      const owner = receiptLink ? await receiptLinkPendingOwner(c, op) : null
+      await settle(c, turn.id, op, owner ? receiptPending(owner) : { state: 'unresolved', recoveryOwner: 'user', safeError: '保存結果を確認できません。同じ操作は自動で繰り返していません。' })
     }
   }
   return Conversation.findOne(actionIdentity(c)).lean()
@@ -131,6 +140,12 @@ export async function companyBusinessAction(c: any, body: any, args: any, verify
     await verifyJob()
     const marker = { operationId, payloadHash, appliedAt: new Date(), requestedFields }
     const out = await adapter.run({ c, args, op, marker })
+    if (out.pending) {
+      const values = receiptPending(out.pending)
+      await settle(c, turnId, op, { ...values, nativeResourceIds: out.resourceIds })
+      await verifyJob()
+      return response({ ...op, ...values, nativeResourceIds: out.resourceIds }, out.result)
+    }
     await settle(c, turnId, op, { state: 'done', nativeResourceIds: out.resourceIds, completedAt: marker.appliedAt, recoveryOwner: null, safeError: null })
     await verifyJob()
     return response({ ...op, state: 'done', nativeResourceIds: out.resourceIds, completedAt: marker.appliedAt }, out.result)
@@ -142,6 +157,8 @@ export async function companyBusinessAction(c: any, body: any, args: any, verify
       await verifyJob()
       return response({ ...op, state: 'done', nativeResourceIds, completedAt: marker.appliedAt })
     }
+    const owner = receiptLinkActions.includes(name) ? await receiptLinkPendingOwner(c, op) : null
+    if (owner) { await settle(c, turnId, op, receiptPending(owner)); throw error }
     const state = error?.statusCode || error?.name === 'ValidationError' ? 'failed' : 'unresolved'
     await settle(c, turnId, op, { state, completedAt: state === 'failed' ? new Date() : null, recoveryOwner: state === 'failed' ? 'model' : 'user', safeError: state === 'failed' ? '変更は保存されませんでした。対象と現在の値を確認してください。' : '保存結果を確認できません。同じ操作は自動で繰り返していません。' })
     throw error

@@ -5,6 +5,8 @@ import Transaction from '../models/Transaction'
 import type { ITransaction } from '../models/Transaction'
 import type { IReceipt } from '../models/Receipt'
 import { ensureConnection } from '../config/database'
+import { createError } from 'h3'
+import { newReceiptLinkSync, completeAfterWrite, completePendingReceiptSyncs, receiptLinkStep } from './receiptLinkSyncService'
 
 interface ReceiptFilters {
   status?: string
@@ -268,23 +270,6 @@ function calculateMatchConfidence(receipt: any, transaction: any): { confidence:
   }
 }
 
-/**
- * Find potential transaction matches for a receipt
- */
-export async function findMatchesForReceipt(receiptId: string) {
-  await ensureConnection()
-  try {
-    const receipt = await Receipt.findById(receiptId)
-    if (!receipt) {
-      throw new Error(`Receipt ${receiptId} not found`)
-    }
-    return await receiptMatchCandidates(receipt, {})
-  } catch (error) {
-    console.error(`Failed to find matches for receipt ${receiptId}:`, error)
-    throw error
-  }
-}
-
 // Only this entry supplies company-authorized candidates to the native read API.
 // A persisted assignment is required; never infer ownership from the purchase details.
 export async function findCompanyMatchesForReceipt(receiptId: string, organizationId: mongoose.Types.ObjectId) {
@@ -352,156 +337,137 @@ async function receiptMatchCandidates(receipt: any, transactionScope: Record<str
 }
 
 /**
- * Auto-match unmatched receipts with high-confidence transactions
+ * Auto-match this company's unmatched receipts with its own high-confidence transactions (exactly one candidate at or above the
+ * threshold). Candidates, the link and its badge use the same company-scoped entries as the receipt page and Navi.
  */
-export async function autoMatchReceipts(minConfidence: number = 85) {
+export async function autoMatchReceipts(organizationId: mongoose.Types.ObjectId, minConfidence: number = 85) {
   await ensureConnection()
-  try {
-    // Find all unmatched receipts
-    const unmatchedReceipts = await Receipt.find({ status: 'unmatched' }).lean()
-
-    const results = {
-      processed: 0,
-      matched: 0,
-      skipped: 0,
-      matches: [] as { receiptId: string; transactionId: string; confidence: number }[]
-    }
-
-    for (const receipt of unmatchedReceipts) {
-      results.processed++
-
-      try {
-        const matches = await findMatchesForReceipt(receipt._id.toString())
-
-        // Only auto-match if there's exactly one high-confidence match
-        const highConfidenceMatches = matches.filter(m => m.confidence >= minConfidence)
-
-        if (highConfidenceMatches.length === 1) {
-          const match = highConfidenceMatches[0]
-          await matchReceiptWithTransaction(receipt._id.toString(), match.transactionId)
-          results.matched++
-          results.matches.push({
-            receiptId: receipt._id.toString(),
-            transactionId: match.transactionId,
-            confidence: match.confidence
-          })
-        } else {
-          results.skipped++
-        }
-      } catch (error) {
-        console.error(`Error auto-matching receipt ${receipt._id}:`, error)
+  await completePendingReceiptSyncs(organizationId)
+  const unmatchedReceipts = await Receipt.find({ status: 'unmatched', organizationId }).select('_id').lean()
+  const results = {
+    processed: 0,
+    matched: 0,
+    skipped: 0,
+    matches: [] as { receiptId: string; transactionId: string; confidence: number }[]
+  }
+  for (const receipt of unmatchedReceipts) {
+    results.processed++
+    try {
+      const matches = await findCompanyMatchesForReceipt(receipt._id.toString(), organizationId) || []
+      const highConfidenceMatches = matches.filter(m => m.confidence >= minConfidence)
+      if (highConfidenceMatches.length === 1) {
+        const match = highConfidenceMatches[0]
+        await matchReceiptWithTransaction(receipt._id.toString(), match.transactionId, organizationId)
+        results.matched++
+        results.matches.push({ receiptId: receipt._id.toString(), transactionId: match.transactionId, confidence: match.confidence })
+      } else {
         results.skipped++
       }
+    } catch (error: any) {
+      console.error('Company receipt auto-match skipped one receipt', error?.statusCode || error?.name || 'Error')
+      results.skipped++
     }
+  }
+  return results
+}
 
-    return results
-  } catch (error) {
-    console.error('Failed to auto-match receipts:', error)
-    throw error
+// ---- Saved receipt link/unlink: the one company-scoped writer of the receipt page, auto-match and Navi.
+// One atomic receipt write saves the canonical link and the badge work it owes (conditioned on everything read, so a concurrent change
+// or older owed work is never overwritten); the badge is then completed under the transaction fence (receiptLinkSyncService). Every
+// refusal carries a status: 400 identifiers, 404 not in this company, 409 changed/linked elsewhere.
+export type ReceiptLinkOperation = { expectedUpdatedAt?: string, naviOperation?: Record<string, any> }
+const NAVI_MARKERS = 20
+const fail = (statusCode: number, statusMessage: string): never => { throw createError({ statusCode, statusMessage }) }
+async function scopedReceipt(receiptId: string, organizationId: mongoose.Types.ObjectId, operation?: ReceiptLinkOperation) {
+  if (!mongoose.isValidObjectId(receiptId)) fail(400, 'Invalid receipt identifier')
+  const receipt: any = await Receipt.findOne({ _id: receiptId, organizationId }).select('organizationId status transactionId linkSync updatedAt').lean()
+  if (!receipt) fail(404, 'Receipt not found')
+  if (operation?.expectedUpdatedAt !== undefined && new Date(receipt.updatedAt).toISOString() !== operation.expectedUpdatedAt) fail(409, 'The receipt changed; read it again')
+  return receipt
+}
+// The canonical write is conditioned on the exact state read (status, link, owed-work revision, and the Navi snapshot).
+const readState = (receipt: any, operation?: ReceiptLinkOperation) => ({ _id: receipt._id, organizationId: receipt.organizationId, status: receipt.status, transactionId: receipt.transactionId ?? null, 'linkSync.rev': receipt.linkSync?.rev ?? null, ...(operation?.expectedUpdatedAt !== undefined ? { updatedAt: new Date(operation.expectedUpdatedAt) } : {}) })
+const marker = (operation: ReceiptLinkOperation | undefined, values: Record<string, unknown>) => operation?.naviOperation ? { naviOperations: { $each: [{ ...operation.naviOperation, ...values }], $slice: -NAVI_MARKERS } } : null
+// The transactions of THIS company a write's owed work touches (old owed work included). A legacy pointer to another company's or a
+// missing transaction is never written by the completer and never named as an affected record.
+async function ownedTransactions(organizationId: mongoose.Types.ObjectId, ids: any[]) {
+  const owned: string[] = []
+  for (const id of new Set(ids.filter(Boolean).map(String))) if (mongoose.isValidObjectId(id) && await Transaction.exists({ _id: id, organizationId })) owned.push(id)
+  return owned
+}
+const workIds = (linkSync: any) => (linkSync?.work || []).map((w: any) => w.transactionId)
+async function writeLink(receipt: any, update: any) {
+  const saved = await Receipt.findOneAndUpdate(receipt.filter, update, { new: true }).select('_id').lean()
+  if (saved) return
+  if (!await Receipt.exists({ _id: receipt.filter._id, organizationId: receipt.filter.organizationId })) fail(404, 'Receipt not found')
+  const changed: any = createError({ statusCode: 409, statusMessage: 'The receipt changed; read it again' })
+  changed.receiptChanged = true
+  throw changed
+}
+// A page or batch request (no Navi snapshot) that lost a concurrent change decides again from the new state (a truthful already_*
+// exit or a refusal); a Navi request keeps its exact snapshot and answers 409.
+async function decideAgain<T>(operation: ReceiptLinkOperation | undefined, run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await run() } catch (error: any) { if (!error?.receiptChanged || operation?.expectedUpdatedAt !== undefined || attempt >= 2) throw error }
   }
 }
 
 /**
- * Match a receipt with a transaction
+ * Link a receipt of this company to a transaction of this company. Already linked to it: a harmless truthful exit that still
+ * re-checks the badge (legacy links). Linked to another transaction: 409.
  */
-export async function matchReceiptWithTransaction(receiptId: string, transactionId: string) {
+export async function matchReceiptWithTransaction(receiptId: string, transactionId: string, organizationId: mongoose.Types.ObjectId, operation?: ReceiptLinkOperation) {
   await ensureConnection()
-  try {
-    const receipt = await Receipt.findById(receiptId)
-    if (!receipt) {
-      throw new Error(`Receipt ${receiptId} not found`)
-    }
-
-    const transaction = await Transaction.findById(transactionId)
-    if (!transaction) {
-      throw new Error(`Transaction ${transactionId} not found`)
-    }
-
-    // Update receipt
-    receipt.status = 'matched'
-    receipt.transactionId = transaction._id
-    await receipt.save()
-
-    // Update transaction with receipt data
-    await Transaction.findByIdAndUpdate(transactionId, {
-      receipt: {
-        receiptId: receipt._id,
-        filename: receipt.originalFilename || receipt.filename,
-        size: receipt.size,
-        date: receipt.receiptDate,
-        amount: receipt.amount,
-        merchant: receipt.merchant,
-        url: receipt.fileUrl
-      },
-      $push: {
-        timeline: {
-          $each: [{
-            type: 'receipt_matched',
-            title: 'Receipt Matched',
-            timestamp: new Date(),
-            description: `Receipt ${receipt.originalFilename || receipt.filename} matched to transaction`
-          }],
-          $position: 0
-        }
-      }
-    })
-
-    return {
-      receipt: receipt.toObject(),
-      transaction: await Transaction.findById(transactionId).lean()
-    }
-  } catch (error) {
-    console.error(`Failed to match receipt ${receiptId} with transaction ${transactionId}:`, error)
-    throw error
-  }
+  return decideAgain(operation, () => linkOnce(receiptId, transactionId, organizationId, operation))
+}
+async function linkOnce(receiptId: string, transactionId: string, organizationId: mongoose.Types.ObjectId, operation?: ReceiptLinkOperation) {
+  const receipt = await scopedReceipt(receiptId, organizationId, operation)
+  if (!mongoose.isValidObjectId(transactionId)) fail(400, 'Invalid transaction identifier')
+  const target = new mongoose.Types.ObjectId(transactionId)
+  if (!await Transaction.exists({ _id: target, organizationId })) fail(404, 'Transaction not found')
+  const already = receipt.status === 'matched' && String(receipt.transactionId) === String(target)
+  if (receipt.transactionId && !already) fail(409, 'The receipt is linked to another transaction')
+  const outcome = already ? 'already_linked' : 'linked', ids = { receiptId: String(receipt._id), transactionId: String(target) }
+  const linkSync = newReceiptLinkSync(receipt.linkSync, [{ transactionId: target, event: already ? null : 'receipt_matched' }])
+  const transactionIds = await ownedTransactions(organizationId, [target, ...workIds(linkSync)])
+  const push = marker(operation, { rev: linkSync.rev, outcome, transactionId: String(target), transactionIds })
+  await receiptLinkStep('before-truth', ids)
+  await writeLink({ filter: readState(receipt, operation) }, { $set: { status: 'matched', transactionId: target, linkSync }, ...(push ? { $push: push } : {}) })
+  await receiptLinkStep('after-truth', ids)
+  const synchronization = await completeAfterWrite(receipt._id, organizationId, linkSync.rev)
+  return { outcome, synchronization, ...ids, transactionIds }
 }
 
 /**
- * Unmatch a receipt from a transaction
+ * Unlink a receipt of this company. Not linked: a harmless truthful exit (owed work, if any, is re-armed). The transaction's badge is
+ * recomputed from its remaining receipts and its own receipt file.
  */
-export async function unmatchReceipt(receiptId: string) {
+export async function unmatchReceipt(receiptId: string, organizationId: mongoose.Types.ObjectId, operation?: ReceiptLinkOperation) {
   await ensureConnection()
-  try {
-    const receipt = await Receipt.findById(receiptId)
-    if (!receipt) {
-      throw new Error(`Receipt ${receiptId} not found`)
-    }
-
-    if (receipt.status !== 'matched' || !receipt.transactionId) {
-      throw new Error(`Receipt ${receiptId} is not matched to a transaction`)
-    }
-
-    const transactionId = receipt.transactionId
-
-    // Update receipt
-    receipt.status = 'unmatched'
-    receipt.transactionId = undefined
-    await receipt.save()
-
-    // Update transaction
-    await Transaction.findByIdAndUpdate(transactionId, {
-      receipt: null,
-      $push: {
-        timeline: {
-          $each: [{
-            type: 'receipt_unmatched',
-            title: 'Receipt Unmatched',
-            timestamp: new Date(),
-            description: 'Receipt was unmatched from transaction'
-          }],
-          $position: 0
-        }
-      }
-    })
-
-    return {
-      receipt: receipt.toObject(),
-      transactionId: transactionId.toString()
-    }
-  } catch (error) {
-    console.error(`Failed to unmatch receipt ${receiptId}:`, error)
-    throw error
+  return decideAgain(operation, () => unlinkOnce(receiptId, organizationId, operation))
+}
+async function unlinkOnce(receiptId: string, organizationId: mongoose.Types.ObjectId, operation?: ReceiptLinkOperation) {
+  const receipt = await scopedReceipt(receiptId, organizationId, operation)
+  const previous = receipt.transactionId || null, ids = { receiptId: String(receipt._id), transactionId: previous ? String(previous) : '' }
+  const ownedPrevious = previous && (await ownedTransactions(organizationId, [previous]))[0] || null
+  if (!previous) {
+    const owed = receipt.linkSync?.pending === true
+    if (!owed && !operation?.naviOperation) return { outcome: 'already_unlinked', synchronization: 'synced' as const, receiptId: ids.receiptId, transactionId: null, transactionIds: [] }
+    const linkSync = owed ? newReceiptLinkSync(receipt.linkSync, []) : null
+    const transactionIds = await ownedTransactions(organizationId, workIds(linkSync))
+    const push = marker(operation, { rev: linkSync?.rev || receipt.linkSync?.rev || null, outcome: 'already_unlinked', transactionId: null, transactionIds })
+    await writeLink({ filter: readState(receipt, operation) }, { ...(linkSync ? { $set: { linkSync } } : {}), ...(push ? { $push: push } : {}) })
+    const synchronization = linkSync ? await completeAfterWrite(receipt._id, organizationId, linkSync.rev) : 'synced' as const
+    return { outcome: 'already_unlinked', synchronization, receiptId: ids.receiptId, transactionId: null, transactionIds }
   }
+  const linkSync = newReceiptLinkSync(receipt.linkSync, [{ transactionId: previous, event: 'receipt_unmatched' }])
+  const transactionIds = await ownedTransactions(organizationId, workIds(linkSync))
+  const push = marker(operation, { rev: linkSync.rev, outcome: 'unlinked', transactionId: ownedPrevious, transactionIds })
+  await receiptLinkStep('before-truth', ids)
+  await writeLink({ filter: readState(receipt, operation) }, { $set: { status: 'unmatched', linkSync }, $unset: { transactionId: '' }, ...(push ? { $push: push } : {}) })
+  await receiptLinkStep('after-truth', ids)
+  const synchronization = await completeAfterWrite(receipt._id, organizationId, linkSync.rev)
+  return { outcome: 'unlinked', synchronization, receiptId: ids.receiptId, transactionId: ownedPrevious, transactionIds }
 }
 
 /**

@@ -121,7 +121,7 @@ test('a company tool feature becomes a page in the owner realm with its full com
 
 test('saved receipt reads and candidates, company settings and owner intake templates stay available', () => {
  const id = 'a'.repeat(24), receipts = naviFeature('receipts');
- assert.equal(receipts.disposition, 'navi_tool'); assert.deepEqual(receipts.tools, ['list_company_receipts', 'get_company_receipt', 'find_company_receipt_matches'], 'navi-features:receipt-reads-kept');
+ assert.equal(receipts.disposition, 'navi_tool'); assert.deepEqual(receipts.tools, ['list_company_receipts', 'get_company_receipt', 'find_company_receipt_matches', 'link_company_receipt', 'unlink_company_receipt'], 'navi-features:receipt-reads-kept');
  assert.equal(naviFeatureRoute('receipts'), '/receipts'); assert.equal(naviFeatureRoute('receipts', id), '/receipts/' + id, 'navi-features:receipt-record-link-kept');
  assert.deepEqual(validateCompanyAssistantReply({ ...navReply, navigation: { feature: 'receipts', receiptId: id } }).navigation, { feature: 'receipts', receiptId: id });
  assert.deepEqual(naviRealmFeatures('company', receipts.tools).find(f => f.id === 'receipts').tools, receipts.tools, 'navi-features:company-receipt-tools');

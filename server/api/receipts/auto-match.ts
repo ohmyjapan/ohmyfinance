@@ -2,6 +2,8 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { autoMatchReceipts } from '../../services/receiptService'
 import { requireAuth } from '../../middleware/auth'
+import { ensureConnection } from '../../config/database'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * POST /api/receipts/auto-match
@@ -15,6 +17,9 @@ export default defineEventHandler(async (event) => {
       statusMessage: 'Method not allowed'
     })
   }
+  // Only the selected company of a current member: its receipts against its own transactions.
+  await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
 
   try {
     const body = await readBody(event).catch(() => ({}))
@@ -27,7 +32,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const results = await autoMatchReceipts(minConfidence)
+    const results = await autoMatchReceipts(organizationId, minConfidence)
 
     return {
       success: true,

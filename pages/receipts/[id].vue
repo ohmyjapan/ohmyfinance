@@ -23,6 +23,8 @@
     <p class="mt-5 border-t border-gray-100 pt-4 text-xs leading-relaxed text-gray-500 dark:border-white/10">保存データ・OCRの読み取り結果です。購入内容、税の扱い、インボイスの要件を確認した結果ではありません。</p>
     <NuxtLink v-if="evidence.receipt.linkedTransactionId" :to="'/transactions/'+evidence.receipt.linkedTransactionId" data-receipt-existing-link class="mt-3 inline-flex text-sm text-primary-main underline">紐付け済みの取引を開く ↗</NuxtLink>
     <p v-else class="mt-3 text-xs text-gray-500">{{ evidence.receipt.linkStatus==='link_not_in_this_company' ? '選択中の会社で確認できる紐付けはありません。' : '取引はまだ紐付けられていません。' }}</p>
+    <p v-if="evidence.receipt.linkSync==='pending'" data-receipt-sync="pending" role="status" class="mt-2 text-xs text-gray-500">取引の領収書表示を自動で反映しています。</p>
+    <div v-else-if="evidence.receipt.linkSync==='manual_review'" data-receipt-sync="manual_review" role="alert" class="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"><p>{{ evidence.receipt.linkSyncReason==='transaction_missing' ? '紐付け先の取引がこの会社で見つかりません。紐付けを解除してください。' : '取引の領収書表示を反映できませんでした。もう一度お試しください。' }}</p><button type="button" data-receipt-sync-action class="mt-2 text-primary-main underline" :disabled="syncBusy" @click="resolveSync">{{ syncRetries ? '反映をやり直す' : '紐付けを解除' }}</button><p v-if="syncError" class="mt-1">{{ syncError }}</p></div>
    </section>
 
    <section class="mb-6 rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-white/5 sm:p-6">
@@ -53,7 +55,7 @@ import {useAssistantStore} from '~/stores/assistant'
 import {tokenClaims} from '~/utils/auth-session'
 import {currencyCode} from '~/shared/finance-navi-business.mjs'
 const route=useRoute(),user=useUserStore(),assistant=useAssistantStore()
-const evidence=ref<any>(null),loading=ref(false),error=ref('')
+const evidence=ref<any>(null),loading=ref(false),error=ref(''),syncBusy=ref(false),syncError=ref('')
 const scope=computed(()=>{const c=tokenClaims(user.token);return JSON.stringify([c?.userId||'',c?.organizationId||''])})
 let generation=0
 const statuses:Record<string,string>={matched:'紐付け済み',unmatched:'未紐付け',processing:'読み取り中',error:'読み取りエラー'}
@@ -77,6 +79,16 @@ async function load(){
  catch(e:any){if(current===generation&&key===scope.value)error.value=e.statusCode===404?'この会社で領収書を確認できませんでした。':e.statusCode===403||e.statusCode===401?'この会社の閲覧権限を確認できませんでした。':'領収書を読み込めませんでした。もう一度お試しください。'}
  finally{if(current===generation)loading.value=false}
 }
+// The successor of a receipt whose badge needs the person: the same explicit link again (re-checks the badge) or, when its transaction
+// is gone or it is not linked, the unlink. Fixed company-safe texts; the page reloads the server state afterwards.
+const syncRetries=computed(()=>!!evidence.value?.receipt?.linkedTransactionId&&evidence.value.receipt.linkSyncReason!=='transaction_missing')
+async function resolveSync(){const r=evidence.value?.receipt,key=scope.value;if(!r||syncBusy.value)return;const retry=syncRetries.value;syncBusy.value=true;syncError.value=''
+ try{await ('/api/receipts/'+r.id+'/match',{method:retry?'POST':'DELETE',headers:user.authHeader,...(retry?{body:{transactionId:r.linkedTransactionId}}:{})});if(key===scope.value)await load()}
+ catch(e:any){if(key===scope.value)syncError.value=e.statusCode===409?'領収書が更新されました。再読み込みしてからお試しください。':[401,403].includes(e.statusCode)?'この会社の権限を確認できませんでした。':'もう一度お試しください。'}
+ finally{syncBusy.value=false}
+}
 watch([()=>route.params.id,scope],load,{immediate:true,flush:'sync'})
+// A done Navi receipt link/unlink of this same receipt, actor and company reloads it (other actors/companies are ignored).
+watch(()=>assistant.companyResourceSequence,()=>{const saved=assistant.companyResource,c=tokenClaims(user.token);if(saved&&saved.actorId===c?.userId&&saved.organizationId===c?.organizationId&&saved.kinds.includes('receipt')&&saved.id===String(route.params.id||''))load()})
 onBeforeUnmount(()=>{generation++})
 </script>

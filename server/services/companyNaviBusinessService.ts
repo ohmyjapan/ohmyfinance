@@ -10,6 +10,8 @@ import Invoice from '../models/Invoice'
 import Budget from '../models/Budget'
 import RecurringPayment from '../models/RecurringPayment'
 import { Payment } from '../models/Payment'
+import Receipt from '../models/Receipt'
+import { matchReceiptWithTransaction, unmatchReceipt } from './receiptService'
 import { createCompanyTransaction, deleteTransaction, transactionReferenceModels } from './transactionService'
 import { createCompanyInvoice, deleteCompanyInvoice, invoiceWriteError } from './companyInvoiceWriteService'
 import { createCompanyCalendarEntry, deleteCompanyCalendarEntry } from './companyPaymentWriteService'
@@ -59,7 +61,7 @@ async function assertCurrent(model: any, organizationId: any, id: string, expect
 }
 
 type Run = { c: any, args: any, op: any, marker: Record<string, unknown> }
-type Adapter = { resource?: (args: any, operationId: string) => string, detail?: (args: any) => any, precheck?: (c: any, args: any) => Promise<void>, run: (x: Run) => Promise<{ resourceIds: Record<string, string>, result: any }>, recover: (c: any, op: any) => Promise<any> }
+type Adapter = { resource?: (args: any, operationId: string) => string, detail?: (args: any) => any, precheck?: (c: any, args: any) => Promise<void>, run: (x: Run) => Promise<{ resourceIds: Record<string, string>, result: any, pending?: 'system' | 'user' | null }>, recover: (c: any, op: any) => Promise<any> }
 const created = (model: any) => async (c: any, op: any) => { const m = await markerOf(model, c.organizationId, op.resourceId); return sameMarker(m, op) ? m : null }
 const markedOn = (model: any) => created(model)
 const id = (key: string) => (args: any) => String(args[key])
@@ -68,7 +70,51 @@ const id = (key: string) => (args: any) => String(args[key])
 const exportCriteria = (args: any) => pick(args, [...exportCriteriaKeys])
 const exportRangeOk = (criteria: any) => !(criteria.dateFrom && criteria.dateTo && criteria.dateFrom > criteria.dateTo)
 const exportRecover = async (_c: any, op: any) => op.detail?.format && op.detail?.criteria && exportRangeOk(op.detail.criteria) ? { operationId: op.operationId, payloadHash: op.payloadHash, appliedAt: op.claimedAt, requestedFields: op.requestedFields, nativeResourceIds: { exportId: String(op.operationId) } } : null
+// Saved receipt link/unlink through the same company-scoped writer as the receipt page. The marker is written in the canonical receipt
+// write itself. Done only when the marker is on the receipt AND its badge work is complete; a saved link whose badge is still owed is
+// reported unresolved (system: automatic recovery; user: named manual review) and later becomes done from that same proof, never by
+// running it again.
+export const receiptLinkActions = ['link_company_receipt', 'unlink_company_receipt']
+const receiptMarker = async (c: any, op: any) => {
+  if (!mongoose.isValidObjectId(op.resourceId)) return null
+  const row: any = await Receipt.findOne({ _id: op.resourceId, organizationId: c.organizationId }).select('naviOperations linkSync.pending linkSync.state').lean()
+  const marker = (row?.naviOperations || []).find((m: any) => sameMarker(m, op))
+  return marker ? { marker, pending: row.linkSync?.pending === true, manual: row.linkSync?.state === 'manual_review' } : null
+}
+// Public ids of a receipt link result: the receipt, the primary transaction of THIS company and, when the completion also repaired other
+// owed transactions of this company, all of them (the chat refreshes each open transaction).
+const receiptLinkIds = (receiptId: string, transactionId: any, transactionIds: any[] = []) => { const all = [...new Set((transactionIds || []).map(String))]; return { receiptId: String(receiptId), ...(transactionId ? { transactionId: String(transactionId) } : {}), ...(all.some(t => t !== String(transactionId || '')) ? { affectedTransactionIds: all } : {}) } }
+const receiptLinkRecover = async (c: any, op: any) => {
+  const found = await receiptMarker(c, op)
+  if (!found || found.pending) return null
+  const m = found.marker
+  return { operationId: m.operationId, payloadHash: m.payloadHash, appliedAt: m.appliedAt, requestedFields: m.requestedFields, nativeResourceIds: receiptLinkIds(op.resourceId, m.transactionId, m.transactionIds) }
+}
+// Who owns a saved receipt link whose badge is still owed: the automatic recovery (system) or the person (manual review). Null: no proof.
+export async function receiptLinkPendingOwner(c: any, op: any): Promise<'system' | 'user' | null> { const found = await receiptMarker(c, op); return found?.pending ? (found.manual ? 'user' : 'system') : null }
+const receiptSyncOwner = (synchronization: string) => synchronization === 'synced' ? null : synchronization === 'manual_review' ? 'user' : 'system'
+const receiptLinkResult = async (c: any, out: any, meaning: string) => ({ outcome: out.outcome, synchronization: out.synchronization, receipt: (await getCompanyReceipt(c.organizationId, out.receiptId)).receipt, transaction: out.transactionId ? await getCompanyNaviTransaction(c.organizationId, out.transactionId).catch(() => null) : null, meaning })
+const receiptLinkMeaning = 'saved link between this receipt and this transaction; it proves nothing about the purchase or its tax treatment and moves no money. synchronization synced means the transaction receipt badge is updated; pending means it is being updated automatically; manual_review means it needs the person'
 const adapters: Record<string, Adapter> = {
+  link_company_receipt: {
+    resource: id('receiptId'),
+    detail: args => ({ transactionId: String(args.transactionId) }),
+    precheck: async (_c, args) => { exactSnapshot(args.expectedUpdatedAt) },
+    run: async ({ c, args, marker }) => {
+      const out: any = await matchReceiptWithTransaction(String(args.receiptId), String(args.transactionId), companyOf(c), { expectedUpdatedAt: args.expectedUpdatedAt, naviOperation: { ...marker, values: { transactionId: String(args.transactionId) } } })
+      return { resourceIds: receiptLinkIds(out.receiptId, out.transactionId, out.transactionIds) as any, result: await receiptLinkResult(c, out, receiptLinkMeaning), pending: receiptSyncOwner(out.synchronization) }
+    },
+    recover: receiptLinkRecover
+  },
+  unlink_company_receipt: {
+    resource: id('receiptId'),
+    precheck: async (_c, args) => { exactSnapshot(args.expectedUpdatedAt) },
+    run: async ({ c, args, marker }) => {
+      const out: any = await unmatchReceipt(String(args.receiptId), companyOf(c), { expectedUpdatedAt: args.expectedUpdatedAt, naviOperation: { ...marker, values: {} } })
+      return { resourceIds: receiptLinkIds(out.receiptId, out.transactionId, out.transactionIds) as any, result: await receiptLinkResult(c, out, receiptLinkMeaning), pending: receiptSyncOwner(out.synchronization) }
+    },
+    recover: receiptLinkRecover
+  },
   create_company_transaction: {
     resource: (_args, operationId) => String(createdId(operationId)),
     precheck: async (_c, args) => { for (const [key, model] of Object.entries(transactionReferenceModels)) if (args[key] !== undefined && !await model.exists({ _id: args[key] })) bad(400, 'Choose an existing transaction reference') },

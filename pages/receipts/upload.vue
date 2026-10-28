@@ -474,7 +474,8 @@ const loadReceipts = async () => {
       headers: getAuthHeaders()
     })
     const data = Array.isArray(response) ? response : (response?.receipts || [])
-    receipts.value = data
+    // Saved rows carry _id only; the table, dialog and match request address a receipt by id.
+    receipts.value = data.map((r: any) => ({ ...r, id: r.id || String(r._id) }))
 
     receiptStats.value = {
       total: receipts.value.length,
@@ -541,23 +542,21 @@ const openMatchDialog = (id: string) => {
   }
 }
 
+// The server's company-scoped match: success and a changed record reload the saved list; every refusal is a fixed, company-safe
+// message on the page (never the server's text). The dialog closes either way; the match button is the retry.
 const matchReceipt = async (receiptId: string, transactionId: string) => {
+  errorMessage.value = ''
   try {
     await $fetch(`/api/receipts/${receiptId}/match`, {
       method: 'POST',
       body: { transactionId },
       headers: getAuthHeaders()
     })
-
-    const receipt = receipts.value.find(r => r.id === receiptId || r._id === receiptId)
-    if (receipt) {
-      receipt.status = 'matched'
-      receipt.transactionId = transactionId
-      receiptStats.value.matched++
-      receiptStats.value.unmatched--
-    }
-  } catch (error) {
-    console.error('Failed to match receipt:', error)
+    await loadReceipts()
+  } catch (error: any) {
+    const status = error?.statusCode || error?.status
+    errorMessage.value = [401, 403].includes(status) ? t('receiptUpload.matchCompanyRequired') : status === 404 ? t('receiptUpload.matchNotInCompany') : status === 409 ? t('receiptUpload.matchChanged') : t('receiptUpload.matchFailedRetry')
+    if (status === 409) await loadReceipts()
   }
   showMatchDialog.value = false
 }

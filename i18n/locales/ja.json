@@ -953,7 +953,11 @@
     "addMore": "追加する",
     "fileTooLarge": "ファイルサイズが10MBを超えています",
     "confirmDelete": "この領収書を削除しますか？",
-    "viewAll": "すべて表示"
+    "viewAll": "すべて表示",
+    "matchCompanyRequired": "会社へのアクセスを確認できませんでした。会社を選択して、もう一度お試しください。",
+    "matchNotInCompany": "選択中の会社でこの領収書または取引を確認できませんでした。紐付けは保存されていません。",
+    "matchChanged": "領収書が更新されたため紐付けできませんでした。最新の一覧を読み込みました。もう一度お試しください。",
+    "matchFailedRetry": "紐付けを保存できませんでした。もう一度お試しください。"
   },
   "transactionUpload": {
     "title": "取引データインポート",

@@ -178,6 +178,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useUserStore } from '~/stores/user'
 import {
   FileText,
   Link as LinkIcon,
@@ -189,6 +190,7 @@ import {
 } from 'lucide-vue-next'
 
 const { t, locale } = useI18n()
+const user = useUserStore()
 
 const props = defineProps({
   receipt: {
@@ -212,18 +214,18 @@ onMounted(async () => {
     // First try to get suggested matches for this receipt
     let suggestedMatches: any[] = []
     try {
-      const matchesResult = await $fetch<any>(`/api/receipts/${props.receipt.id || props.receipt._id}/matches`)
+      const matchesResult = await $fetch<any>(`/api/receipts/${props.receipt.id || props.receipt._id}/matches`, { headers: user.authHeader })
       suggestedMatches = matchesResult?.matches || []
     } catch (e) {
       // Ignore if matches endpoint fails
     }
 
     // Fetch unmatched transactions (without receipts)
-    const transactionsData = await $fetch<any[]>('/api/transactions')
+    // The selected company's transactions (the route answers { transactions, total } and requires the session).
+    const transactionsData = await $fetch<any>('/api/transactions', { headers: user.authHeader })
 
-    // Filter to transactions without receipts and format for display
-    transactions.value = (transactionsData || [])
-      .filter((t: any) => !t.hasReceipt)
+    // Every transaction of the company is a legitimate target: one may already have another receipt or its own uploaded file
+    transactions.value = (transactionsData?.transactions || [])
       .map((t: any) => ({
         id: t._id || t.id,
         type: t.type || '支出',
@@ -329,7 +331,7 @@ const getTransactionIconColor = (type: string) => {
 // Match receipt with selected transaction
 const matchReceipt = () => {
   if (selectedTransactionId.value) {
-    emit('match', props.receipt.id, selectedTransactionId.value)
+    emit('match', props.receipt.id || props.receipt._id, selectedTransactionId.value)
   }
 }
 </script>

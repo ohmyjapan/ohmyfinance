@@ -336,11 +336,12 @@
 import {ref,computed,defineComponent,h} from 'vue'
 import {FileText,Upload,Search,Filter,CheckCircle,AlertTriangle,ChevronLeft,ChevronRight,Loader,Image,RefreshCw} from 'lucide-vue-next'
 import {useUserStore} from '~/stores/user'
+import {useAssistantStore} from '~/stores/assistant'
 import {tokenClaims} from '~/utils/auth-session'
 import {currencyCode} from '~/shared/finance-navi-business.mjs'
 type LibraryRow={id:string,filename:string,size:number,uploadDate:string|null,amount:number|null,currency:string|null,merchant:string,status:string}
 type LibraryStats={total:number,matched:number,unmatched:number,processing:number,error:number,matchRate:number}
-const {t,locale}=useI18n(),user=useUserStore(),router=useRouter()
+const {t,locale}=useI18n(),user=useUserStore(),router=useRouter(),assistant=useAssistantStore()
 const receipts=ref<LibraryRow[]>([]),stats=ref<LibraryStats|null>(null),isLoading=ref(false),error=ref(''),exportError=ref(''),searchQuery=ref(''),showAdvancedFilters=ref(false),currentPage=ref(1),itemsPerPage=ref(10)
 const filters=ref({status:'',type:'',currency:'',dateFrom:'',dateTo:'',minAmount:'',maxAmount:'',merchant:''})
 const unknownCurrency=computed(()=>locale.value==='ko'?'통화 미기록':'通貨未記録')
@@ -383,5 +384,7 @@ const FileIcon=defineComponent({props:{filename:{type:String,required:true}},set
 watch([searchQuery,filters],()=>{currentPage.value=1;exportError.value=''},{deep:true})
 watch(totalPages,value=>{currentPage.value=Math.min(currentPage.value,value)})
 watch(scope,()=>{resetFilters();void load()},{immediate:true,flush:'sync'})
+// A done Navi receipt link/unlink for this same actor and company reloads the list (its status column is the saved link).
+watch(()=>assistant.companyResourceSequence,()=>{const saved=assistant.companyResource,c=tokenClaims(user.token);if(saved&&saved.actorId===c?.userId&&saved.organizationId===c?.organizationId&&saved.kinds.includes('receipt'))void load()})
 onBeforeUnmount(()=>{generation++})
 </script>

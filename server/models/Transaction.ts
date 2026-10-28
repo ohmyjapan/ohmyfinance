@@ -17,6 +17,8 @@ export interface ITimelineEvent {
   title: string
   timestamp: Date
   description?: string
+  // Durable identity of a receipt link event (the owing receipt revision): a retry or recovery never appends it twice.
+  key?: string
 }
 
 // Attachment interface
@@ -66,6 +68,9 @@ export interface ITransaction extends Document<mongoose.Types.ObjectId> {
   notes?: string
   tags?: string[]
   naviOperation?: any
+  // Fence of the derived hasReceipt badge (receiptLinkSyncService): rev counts projection requests, applied is the rev a projection
+  // was computed under.
+  receiptSync?: { rev: number, applied?: number, at?: Date }
   cardAccounting?: Record<string, any>
   metadata?: Record<string, any>
   createdAt: Date
@@ -87,7 +92,8 @@ const TimelineEventSchema = new Schema<ITimelineEvent>({
   type: { type: String, required: true },
   title: { type: String, required: true },
   description: { type: String },
-  timestamp: { type: Date, default: Date.now }
+  timestamp: { type: Date, default: Date.now },
+  key: { type: String }
 }, { _id: false })
 
 const AttachmentSchema = new Schema<IAttachment>({
@@ -142,6 +148,7 @@ const TransactionSchema = new Schema<ITransaction>({
   notes: String,
   tags: [String],
   naviOperation: Schema.Types.Mixed,
+  receiptSync: new Schema({ rev: { type: Number, default: 0 }, applied: Number, at: Date }, { _id: false }),
   cardAccounting: Schema.Types.Mixed,
   metadata: Schema.Types.Mixed
 }, {
