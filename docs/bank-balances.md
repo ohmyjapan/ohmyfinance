@@ -67,11 +67,26 @@ observed. Anything unreadable is an error, never zero.
   left and the logout is reported unconfirmed. Why an earlier candidate's logout timed out was not captured.
 - PayPay銀行: the 普通預金残高 is read inside #mainArea; the bank time "YYYY/MM/DD HH:mm:ss 現在" is read once on the whole visible page
   (it is shown outside #mainArea).
+- 池田泉州銀行 (plan `omf-ikeda-balance-freshness-20261028`): only the frozen account's card in 各口座残高 is read, its first ¥ amount
+  (never the 前日比) and its 最終取得日. The first hourly check on 2026-10-27 23:48 JST recorded the 最終取得日 22:47 of the earlier manual
+  check (its receipt was stored stale); the next six hourly checks were current. The reader had returned the first exact card at
+  once. It now treats an exact card whose 最終取得日 already lags the read by more than 60 minutes (the same shared rule OMF uses for
+  the stale flag) as not yet final and keeps reading the same page within its unchanged 45-second budget: no click, reload or second
+  sign-in. The budget is checked between reads, so a read begun just before it may still take its existing 5-second limit. A current
+  card returns at once. If the bank does not advance, the latest exact card is returned at the end of the wait with its own 最終取得日
+  unchanged, and OMF stores and shows it as stale, as before. A later exact old card replaces an earlier one; a later read that shows
+  another account (whatever its amount and time), two cards of the account, no time or another page, or that cannot be taken (a busy
+  page), never replaces or discards it. If no exact card was read at all, the check fails with the reader's error, without a balance,
+  as before. The cadence, the stale and 要確認 rules and the receipt are unchanged. What the real portal showed in that
+  23:48 session was not recorded: a delayed in-page update and a portal that stayed old for the whole session are both consistent with
+  the receipt. This change helps only in the first case; the second still yields an honest stale reading.
 
 ## Verification boundary
 
 The fixture `scripts/zoomer-fixtures/omf-bank-balances.mjs` proves the queue, routes, collector, readers (on fictional pages built from
 the parent's recorded facts) and the screen with synthetic data only. The parent's safe DOM facts recorded the PayPay 残高照会 page title
 for all four actual accounts and the 池田泉州銀行 container tokens; the complete readers against the real bank pages are validated by the
-parent separately; no clock-triggered production run is claimed before release. Activation order: deploy OMF, update the PC's
-collector, then the owner turns the panel on per account.
+parent separately; no clock-triggered production run is claimed before release. The 池田泉州銀行 refresh wait is proven by
+`scripts/zoomer-fixtures/omf-ikeda-balance-freshness.mjs` (collector/test/ikeda-balance-freshness.test.mjs: the real reader in a
+headless Chrome on a fictional page whose card changes on timers) only; the real portal's update order is not observed by it.
+Activation order: deploy OMF, update the PC's collector, then the owner turns the panel on per account.

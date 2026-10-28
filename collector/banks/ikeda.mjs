@@ -23,7 +23,7 @@ import { contractUi } from './contract.mjs';
 import { pause } from '../interaction.mjs';
 import { IKEDA_BANK_NAME, IKEDA_ISSUER, selectBankCertificate } from '../bank-certificate.mjs';
 import { bankAvailableFrom, jstToday } from '../../shared/finance-payment-match.mjs';
-import { findYen, parseBankTime } from '../../shared/finance-bank-balance.mjs';
+import { findYen, parseBankTime, balanceLagStale } from '../../shared/finance-bank-balance.mjs';
 
 const coded = (code, message, report = false) => Object.assign(new Error(message), { code, ...(report ? { report: true } : {}) });
 const LABEL = '池田泉州銀行';
@@ -514,7 +514,14 @@ export function ikedaBalanceOf(read, identity, c = BALANCE_PAGE) {
 }
 /**
  * The ui of a background balance inquiry: the unchanged portalUi (certificate, the one saved-password submission, its finish() with the
- * logout prompt) plus readBalance(): the dashboard read until the frozen account's card is exact (within `readMs`).
+ * logout prompt) plus readBalance(): the dashboard read until the frozen account's card is exact and its bank time current (within `readMs`).
+ * Plan omf-ikeda-balance-freshness-20261028: the card may first show an older 最終取得日 and update later in the same page (reproduced on a
+ * fictional page; the real portal's order was not recorded). An exact card whose bank time already lags the read by more than one
+ * interval (the shared balanceLagStale) is remembered and the read goes on — no click, reload or second sign-in; an exact current card
+ * returns at once. A later exact old card replaces the remembered one; a later read that fails validation (another account, two cards,
+ * no time, another page) or cannot be taken never replaces or forgets it. At the end of the wait the remembered card returns unchanged
+ * (OMF keeps its bank time and marks it stale); with no exact card at all the reader's error stays. The wait is soft: `readMs` is checked
+ * between reads, so a read begun before the deadline may still take its 5-second limit.
  */
 export function portalBalanceUi(page, browser, adapter = portalBalance, snapshot = null, { readMs = 45000, ...options } = {}) {
   const base = portalUi(page, browser, portal, snapshot, options), identity = portalIdentity(snapshot);
@@ -523,8 +530,19 @@ export function portalBalanceUi(page, browser, adapter = portalBalance, snapshot
     ...base,
     async readBalance() {
       if (!identity) throw coded('balance-identity', `${LABEL}の口座（支店名・種別・口座番号）が残高の確認の設定にありません。残高は保存していません`);
-      const until = Date.now() + readMs; let last = coded('balance-unready', `${LABEL}の口座の残高が表示されませんでした。残高は保存していません`);
-      while (Date.now() < until) { const read = await evaluate(BALANCE_READ, { container: BALANCE_PAGE.container, heading: BALANCE_PAGE.heading, identity }); if (read) { try { return ikedaBalanceOf(read, identity); } catch (error) { last = error; } } await pause(500); }
+      const until = Date.now() + readMs; let stale = null, last = coded('balance-unready', `${LABEL}の口座の残高が表示されませんでした。残高は保存していません`);
+      while (Date.now() < until) {
+        const read = await evaluate(BALANCE_READ, { container: BALANCE_PAGE.container, heading: BALANCE_PAGE.heading, identity });
+        if (read) {
+          try {
+            const reading = ikedaBalanceOf(read, identity);
+            if (!balanceLagStale({ asOf: reading.asOf, observedAt: new Date().toISOString() })) return reading; // guard:ikeda-balance-fresh-return
+            stale = reading; // guard:ikeda-balance-stale-latest
+          } catch (error) { last = error; }
+        }
+        await pause(Math.min(500, Math.max(0, until - Date.now()))); // never sleeps past the deadline (7a0 slept up to 500 ms past it)
+      }
+      if (stale) return stale; // guard:ikeda-balance-stale-fallback
       throw last;
     },
     balanceFinish: () => base.finish()
