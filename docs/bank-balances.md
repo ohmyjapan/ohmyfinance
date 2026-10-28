@@ -48,6 +48,14 @@ the receipt. A retained receipt is resent with identical bytes after a crash or 
 that began and left no receipt never signs in again. No CSV, statement, screenshot, page text, cookie, credential or full account number
 is written or sent.
 
+A separate crash (plan `omf-downloader-release-ready-20261028`): on 2026-10-28 the installed collector process ended during a bank page
+because the pinned browser library (rebrowser-puppeteer-core 23.10.3) started an embedded frame's setup without catching its failure
+("Network.enable timed out"); the persistent supervisor started it again and the interrupted PayPay check failed by the one-inquiry rule.
+`collector/puppeteer-frame-init.mjs`, loaded by `collector/browser.mjs`, applies the library's own accepted fix (puppeteer#14701): that
+one failure is now caught and logged only in the library's debug output, and the process keeps running. Nothing else changes: the
+library files stay as installed, a failure of the page itself or of an awaited step is still an error of that check (a failure stays a
+failure; a check that began never signs in again), and any other unexpected error still ends the process for the supervisor.
+
 ## Receipt and storage
 
 `POST /api/finance-payments/collector/bank/balance?jobId&snapshotHash` (JSON): `{v, jobId, snapshotHash, provider, variant, currency:'JPY',
@@ -89,4 +97,8 @@ for all four actual accounts and the 池田泉州銀行 container tokens; the co
 parent separately; no clock-triggered production run is claimed before release. The 池田泉州銀行 refresh wait is proven by
 `scripts/zoomer-fixtures/omf-ikeda-balance-freshness.mjs` (collector/test/ikeda-balance-freshness.test.mjs: the real reader in a
 headless Chrome on a fictional page whose card changes on timers) only; the real portal's update order is not observed by it.
+After the investigation, most later hourly 池田泉州銀行 checks of the installed (unchanged) collector again stored the previous check's
+最終取得日 as stale; whether the real card advances within the wait is measured only after release. The frame-setup fix is proven by
+`scripts/zoomer-fixtures/omf-downloader-protocol-recovery.mjs` (the actual library in separate processes and a headless Chrome on a
+fictional page with an injected protocol failure) only; no bank page was replayed and its live effect is likewise observed after release.
 Activation order: deploy OMF, update the PC's collector, then the owner turns the panel on per account.

@@ -5,6 +5,7 @@ import { access, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'rebrowser-puppeteer-core';
+export { FRAME_INIT_FIX } from './puppeteer-frame-init.mjs'; // pinned-SDK fix, in place before any launch: a failed iframe initialization no longer ends the process (puppeteer#14701)
 import { parseAmex } from '../shared/amex.mjs';
 import { ensureLogin, LoginClaims } from './login.mjs';
 import { LoginMailbox } from './mail.mjs';
