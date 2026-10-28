@@ -13,8 +13,12 @@ module.exports=async({origin,db,ObjectId,A,B,email,password,tokenA,seedFactory,t
  const tQ=T({organizationId:A,amount:5555,hasReceipt:true}),rQ=R({organizationId:A,amount:5555,status:'matched',transactionId:tQ._id});
  const rU3=R({organizationId:A,amount:3333}),rU4=R({organizationId:A,amount:1357}),rP=R({organizationId:A,amount:4444});
  const rL1=R({organizationId:A,amount:3333}),rL2=R({organizationId:A,amount:3333,status:'matched',transactionId:tL2._id}),rU1=R({organizationId:A,amount:2468}),rU2=R({organizationId:A,amount:2468}),rB=R({organizationId:B,amount:2468});
- await tx.insertMany([tL1,tL2,tU1,tB,tF,tP,tQ]);await rec.insertMany([rL1,rL2,rU1,rU2,rB,rU3,rU4,rP,rQ]);
- const directory=await fs.mkdtemp(path.join(os.tmpdir(),'omf-receipt-link-browser-')),errors=[],matchResponses=[];let browser,page,evidenceReads=0,rewrite=null;
+ // F1: receipts in manual review for each reason (a stale badge owed to an existing transaction; a link to a deleted transaction).
+ const review=(reason,transactionId)=>({rev:'rl-review-'+reason,pending:true,state:'manual_review',reason,work:[{transactionId,event:null,key:'rl-review-'+reason}],at:new Date(),attempts:reason==='retries_exhausted'?10:0,nextAttemptAt:new Date(),claimToken:null,claimUntil:null,syncedAt:null});
+ const tM=T({organizationId:A,amount:6666,hasReceipt:false}),goneId=new ObjectId();
+ const rM1=R({organizationId:A,amount:6666,status:'matched',transactionId:tM._id,linkSync:review('retries_exhausted',tM._id)}),rM2=R({organizationId:A,amount:7777,status:'matched',transactionId:goneId,linkSync:review('transaction_missing',goneId)});
+ await tx.insertMany([tL1,tL2,tU1,tB,tF,tP,tQ,tM]);await rec.insertMany([rL1,rL2,rU1,rU2,rB,rU3,rU4,rP,rQ,rM1,rM2]);
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'omf-receipt-link-browser-')),errors=[],matchResponses=[],matchRequests=[];let browser,page,evidenceReads=0,rewrite=null;
  const wait=async(fn,args=[],name='condition',ms=30000)=>{for(let i=0;i<ms/100;i++){if(await page.evaluate(fn,...args))return;await pause(100)}throw new assert.AssertionError({message:L('chrome-passed')+' '+name})};
  const store=name=>`document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('${name}')`;
  const push=to=>page.evaluate(to=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.push(to),to);
@@ -33,6 +37,7 @@ module.exports=async({origin,db,ObjectId,A,B,email,password,tokenA,seedFactory,t
  try{
   browser=await puppeteer.launch({executablePath,userDataDir:path.join(directory,'profile'),pipe:true,headless:true,args:['--lang=ja-JP,ja','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-sync']});
   page=await browser.newPage();await page.setViewport({width:390,height:844});
+  page.on('request',r=>{if(/\/api\/receipts\/[a-f0-9]{24}\/match$/.test(r.url()))matchRequests.push({method:r.method(),url:r.url(),body:r.postData()||null})});
   page.on('pageerror',e=>errors.push(String(e)));page.on('response',r=>{if(/\/match$/.test(r.url()))matchResponses.push(r.status())});page.on('dialog',d=>{if(d.type()==='confirm'){d.accept().catch(()=>{});return}errors.push(d.message());d.dismiss().catch(()=>{})});
   await page.setRequestInterception(true);
   page.on('request',request=>{(async()=>{const url=request.url();if(/\/api\/receipts\/[a-f0-9]{24}\/evidence/.test(url))evidenceReads++;
@@ -84,6 +89,23 @@ module.exports=async({origin,db,ObjectId,A,B,email,password,tokenA,seedFactory,t
    assert.equal(navigations.length,reloads,L('q9-old-transaction-refresh')+' no manual reload');
   }finally{await release('recovery-claimed')}
   await page.click('[data-assistant-close]').catch(()=>{});
+  // 2c. F1: the native successor of a manual review. Click the real button on the detail page; the page must send the right request
+  // and the receipt, page and badge must converge.
+  const successor=async(r,name)=>{
+   await push('/receipts/'+r._id);await wait(()=>!!document.querySelector('[data-receipt-sync="manual_review"] [data-receipt-sync-action]'),[],name+': manual review shown');
+   const sent=matchRequests.length;await page.evaluate(()=>document.querySelector('[data-receipt-sync-action]').click());
+   for(let i=0;i<100&&matchRequests.length===sent;i++)await pause(100);
+   const request=matchRequests[sent];assert.ok(request,L(name)+' the button sends a request');assert.equal(request.url,origin+'/api/receipts/'+r._id+'/match',L(name));
+   await wait(()=>!!document.querySelector('[data-receipt-summary]')&&!document.querySelector('[data-receipt-sync]'),[],name+': page synchronized');
+   return request;
+  };
+  let sent=await successor(rM1,'f1-retries-exhausted');assert.equal(sent.method,'POST',L('f1-retries-exhausted'));assert.deepEqual(JSON.parse(sent.body),{transactionId:String(tM._id)},L('f1-retries-exhausted')+' same transaction');
+  let stored=await rec.findOne({_id:rM1._id});assert.equal(stored.linkSync.pending,false,L('f1-retries-exhausted'));assert.equal(String(stored.transactionId),String(tM._id),L('f1-retries-exhausted'));assert.equal((await tx.findOne({_id:tM._id})).hasReceipt,true,L('f1-retries-exhausted')+' badge converged');
+  assert.ok(await page.$('[data-receipt-existing-link]'),L('f1-retries-exhausted')+' page shows the link');
+  sent=await successor(rM2,'f1-transaction-missing');assert.equal(sent.method,'DELETE',L('f1-transaction-missing'));
+  stored=await rec.findOne({_id:rM2._id});assert.equal(stored.status,'unmatched',L('f1-transaction-missing'));assert.ok(!stored.transactionId,L('f1-transaction-missing'));assert.equal(stored.linkSync.pending,false,L('f1-transaction-missing'));
+  assert.equal(await tx.findOne({_id:goneId}),null,L('f1-transaction-missing')+' deleted target stays absent');
+  assert.ok((await page.$eval('[data-receipt-summary]',e=>e.textContent)).includes('取引はまだ紐付けられていません'),L('f1-transaction-missing')+' page shows unlinked');
   // 3. Receipt list status follows a Navi link.
   await push('/receipts');const row=`[data-library-row][data-library-id="${rL1._id}"]`;await wait(sel=>!!document.querySelector(sel),[row],'list row');
   assert.ok((await page.$eval(row,e=>e.textContent)).includes(ja.receipts.unmatched),L('chrome-passed')+' list unmatched');
@@ -115,6 +137,6 @@ module.exports=async({origin,db,ObjectId,A,B,email,password,tokenA,seedFactory,t
   }
   assert.equal(await rec.countDocuments({transactionId:tL2._id,status:'matched'}),2,L('dialog-second-receipt')+' both receipts kept');await noOverflow('upload');
   assert.deepEqual(errors,[],L('chrome-passed')+' no page errors');
- }finally{if(browser)await browser.close();const target=path.resolve(directory);if(target.startsWith(path.resolve(os.tmpdir())+path.sep)&&path.basename(target).startsWith('omf-receipt-link-browser-'))await fs.rm(target,{recursive:true,force:true});await rec.deleteMany({_id:{$in:[rL1,rL2,rU1,rU2,rB,rU3,rU4,rP,rQ].map(x=>x._id)}});await tx.deleteMany({_id:{$in:[tL1,tL2,tU1,tB,tF,tP,tQ].map(x=>x._id)}})}
+ }finally{if(browser)await browser.close();const target=path.resolve(directory);if(target.startsWith(path.resolve(os.tmpdir())+path.sep)&&path.basename(target).startsWith('omf-receipt-link-browser-'))await fs.rm(target,{recursive:true,force:true});await rec.deleteMany({_id:{$in:[rL1,rL2,rU1,rU2,rB,rU3,rU4,rP,rQ,rM1,rM2].map(x=>x._id)}});await tx.deleteMany({_id:{$in:[tL1,tL2,tU1,tB,tF,tP,tQ,tM].map(x=>x._id)}})}
  async function until(fn,name){for(let i=0;i<150;i++){if(await fn())return;await pause(100)}throw new assert.AssertionError({message:L('chrome-passed')+' '+name})}
 };

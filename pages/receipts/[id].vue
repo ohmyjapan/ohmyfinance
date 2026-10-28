@@ -83,7 +83,7 @@ async function load(){
 // is gone or it is not linked, the unlink. Fixed company-safe texts; the page reloads the server state afterwards.
 const syncRetries=computed(()=>!!evidence.value?.receipt?.linkedTransactionId&&evidence.value.receipt.linkSyncReason!=='transaction_missing')
 async function resolveSync(){const r=evidence.value?.receipt,key=scope.value;if(!r||syncBusy.value)return;const retry=syncRetries.value;syncBusy.value=true;syncError.value=''
- try{await ('/api/receipts/'+r.id+'/match',{method:retry?'POST':'DELETE',headers:user.authHeader,...(retry?{body:{transactionId:r.linkedTransactionId}}:{})});if(key===scope.value)await load()}
+ try{await $fetch('/api/receipts/'+r.id+'/match',{method:retry?'POST':'DELETE',headers:user.authHeader,...(retry?{body:{transactionId:r.linkedTransactionId}}:{})});if(key===scope.value)await load()}
  catch(e:any){if(key===scope.value)syncError.value=e.statusCode===409?'領収書が更新されました。再読み込みしてからお試しください。':[401,403].includes(e.statusCode)?'この会社の権限を確認できませんでした。':'もう一度お試しください。'}
  finally{syncBusy.value=false}
 }
