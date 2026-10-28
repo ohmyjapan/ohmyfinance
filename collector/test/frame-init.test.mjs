@@ -203,14 +203,51 @@ else {
     resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, killed: !!error?.killed, value, stdout: String(stdout), stderr: String(stderr) });
   }));
   const brief = r => { const text = r.stderr || r.stdout, key = text.split(/\r?\n/).filter(l => /Error\b|onAttachedToTarget|addClient/.test(l)).slice(0, 6).join(' | '); return `exit ${r.code}${r.killed ? ' (killed)' : ''}: ${(key || text).replace(/\s+/g, ' ').slice(0, 900)}`; };
-  // Chrome processes of one fictional collector home (its own random temp folder): read from the process list; null when unreadable.
-  const chromesUnder = dir => new Promise(resolve => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | ForEach-Object { $_.ProcessId.ToString() + ' ' + $_.CommandLine }"], { windowsHide: true, timeout: 30000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : String(stdout).split(/\r?\n/).filter(l => l.toLowerCase().includes(dir.toLowerCase())).map(l => Number(l.split(' ')[0])))));
+  // Owned-Chrome teardown (review F1; the collector/windows/browser-process.ps1 -Kill standard). A child that died leaves its Chrome.
+  // The snapshot keeps each chrome.exe whose command line names this test's own random folder with its pid, full command line and
+  // creation time. Immediately before ending one, that ProcessId alone is read again; it is ended only when the re-read is still
+  // chrome.exe with the identical command line (naming this root) and the identical creation time. A process that is gone is 'gone';
+  // a re-read or snapshot that cannot be read is 'unknown' — never released, never counted as zero at the bound.
+  const ps = script => new Promise(resolve => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : String(stdout))));
+  const RECORD = "[pscustomobject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; commandLine = [string]$_.CommandLine; created = $(if ($_.CreationDate) { $_.CreationDate.ToString('o') } else { '' }) }";
+  const snapshotUnder = async dir => {
+    const out = await ps(`$ErrorActionPreference = 'Stop'; ConvertTo-Json -Compress -Depth 3 -InputObject @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" | ForEach-Object { ${RECORD} })`);
+    if (out === null) return null;
+    try { const list = JSON.parse(out.trim() || '[]'); return (Array.isArray(list) ? list : [list]).filter(r => String(r.commandLine).toLowerCase().includes(dir.toLowerCase())); } catch { return null; }
+  };
+  const rereadPid = async pid => {
+    const out = await ps(`$ErrorActionPreference = 'Stop'; $p = @(Get-CimInstance Win32_Process -Filter "ProcessId = ${Number(pid)}"); if ($p.Count -eq 0) { 'MISSING' } else { $p | ForEach-Object { ConvertTo-Json -Compress -InputObject (${RECORD}) } }`);
+    if (out === null) return null;
+    const text = out.trim(); if (text === 'MISSING') return { missing: true };
+    try { const r = JSON.parse(text); return Number(r.pid) === Number(pid) ? r : null; } catch { return null; }
+  };
+  // the decision for one snapshot record and its immediate re-read: 'kill' | 'gone' | 'changed' | 'unknown'
+  const cleanupDecision = (snap, now, dir) => {
+    if (now === null || now === undefined) return 'unknown'; // guard:frame-init-cleanup-unknown
+    if (now.missing === true) return 'gone';
+    if (!snap.created || String(now.name).toLowerCase() !== 'chrome.exe' || now.commandLine !== snap.commandLine || !String(now.commandLine).toLowerCase().includes(dir.toLowerCase()) || now.created !== snap.created) return 'changed'; // guard:frame-init-cleanup-identity
+    return 'kill';
+  };
+  const endLeftover = async (snap, dir, { reread, kill }) => { const decision = cleanupDecision(snap, await reread(snap.pid), dir); if (decision === 'kill') kill(snap.pid); return decision; };
+  // up to 20 rounds 500 ms apart (the bound before F1); released only on a readable, empty snapshot
+  const settleLeftovers = async (dir, { snapshot, reread, kill, wait = sleep, rounds = 20 }) => {
+    const decisions = []; let last = null;
+    for (let i = 0; ; i++) {
+      last = await snapshot(dir);
+      if (last && last.length === 0) return { released: true, unknown: false, decisions, left: [] };
+      if (i >= rounds) break;
+      if (last) for (const snap of last) decisions.push({ pid: snap.pid, decision: await endLeftover(snap, dir, { reread, kill }) });
+      await wait(500);
+    }
+    return { released: false, unknown: last === null, decisions, left: last };
+  };
+  const killOwned = pid => { try { process.kill(pid); } catch { /* ended between the re-read and the call */ } };
   test.after(async () => {
     for (const dir of roots) {
-      let left = await chromesUnder(dir);
-      // a child that died leaves its Chrome; only processes whose command line names this test's own random folder are ended
-      for (let i = 0; left && left.length && i < 20; i++) { for (const pid of left) { try { process.kill(pid); } catch { /* gone */ } } await sleep(500); left = await chromesUnder(dir); }
-      if (!left || left.length) throw new Error('owned test Chrome still running under ' + path.basename(dir) + ': ' + JSON.stringify(left));
+      const r = await settleLeftovers(dir, { snapshot: snapshotUnder, reread: rereadPid, kill: killOwned });
+      const counts = r.decisions.reduce((n, d) => ({ ...n, [d.decision]: (n[d.decision] || 0) + 1 }), {});
+      process.stderr.write('[frame-init-teardown] ' + JSON.stringify({ root: path.basename(dir), released: r.released, unknown: r.unknown, decisions: counts, left: r.left?.length ?? null }) + '\n');
+      if (!r.released) throw new Error((r.unknown ? 'the process list could not be read: owned test Chrome state under ' + path.basename(dir) + ' is unknown' : 'owned test Chrome still running under ' + path.basename(dir)) + ': ' + JSON.stringify({ decisions: counts, left: (r.left || []).map(x => x.pid) }));
     }
     if (path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)) for (let i = 0; ; i++) { try { await rm(temp, { recursive: true, force: true }); break; } catch (error) { if (i >= 10) throw error; await sleep(1000); } }
   });
@@ -277,5 +314,29 @@ else {
     assert.equal(v.concurrentOpen, 2, 'frame-init:chrome-concurrent-owned'); assert.deepEqual(v.openAfter, [0, 0, 0, 0, 0, 0], 'frame-init:chrome-registry-closed');
     assert.equal(v.unrelatedAlive, true, 'frame-init:chrome-unrelated-untouched'); assert.equal(v.launchesInRoot, true, 'frame-init:chrome-profiles-in-home');
     assert.deepEqual(v.foreign, [], 'frame-init:chrome-no-foreign-request'); assert.equal(v.rejectionListeners, 0, 'frame-init:chrome-no-global-handler');
+  });
+
+  test('teardown identity (review F1): a leftover is ended only when its immediate re-read is the same chrome.exe, command line (this test\'s root) and creation time; a changed command or creation is refused, an unreadable re-read stays unknown, a missing one is gone, and an unknown list is never released at the bound', async () => {
+    // fictional records and a recording kill only: no real process is read or ended here
+    const dir = path.join(temp, 'home-fictional'), snap = { pid: 4242, name: 'chrome.exe', commandLine: `"C:\\Fictional\\chrome.exe" --user-data-dir="${dir}\\profiles\\ephemeral\\owner-bank-x-1" --type=renderer`, created: '2026-10-28T10:00:00.1234567+09:00' };
+    const rereads = { matching: { ...snap }, 'changed-command': { ...snap, commandLine: '"C:\\Fictional\\other.exe" --user-data-dir="C:\\Elsewhere"' }, 'changed-command-same-root': { ...snap, commandLine: snap.commandLine + ' --extra' }, 'changed-creation': { ...snap, created: '2026-10-28T10:00:05.0000000+09:00' }, 'changed-name': { ...snap, name: 'notepad.exe' }, unreadable: null, missing: { missing: true } };
+    const out = {};
+    for (const [name, now] of Object.entries(rereads)) {
+      const killed = [], asked = [];
+      const decision = await endLeftover(snap, dir, { reread: async pid => { asked.push(pid); return now; }, kill: pid => { killed.push(pid); } });
+      out[name] = { decision, killed, asked };
+    }
+    assert.deepEqual(out, {
+      matching: { decision: 'kill', killed: [4242], asked: [4242] }, 'changed-command': { decision: 'changed', killed: [], asked: [4242] }, 'changed-command-same-root': { decision: 'changed', killed: [], asked: [4242] },
+      'changed-creation': { decision: 'changed', killed: [], asked: [4242] }, 'changed-name': { decision: 'changed', killed: [], asked: [4242] }, unreadable: { decision: 'unknown', killed: [], asked: [4242] }, missing: { decision: 'gone', killed: [], asked: [4242] }
+    }, 'frame-init:cleanup-identity-decision');
+    // the bound: a matching leftover then a readable empty list is released; a leftover whose re-read stays unreadable is left (never
+    // ended, never released); a list that becomes unreadable is unknown at the bound, never zero
+    const seq = (...lists) => { let i = 0; return async () => lists[Math.min(i++, lists.length - 1)]; }, noWait = async () => {};
+    const killedA = [], a = await settleLeftovers(dir, { snapshot: seq([snap], []), reread: async () => ({ ...snap }), kill: pid => killedA.push(pid), wait: noWait, rounds: 3 });
+    const killedB = [], b = await settleLeftovers(dir, { snapshot: seq([snap]), reread: async () => null, kill: pid => killedB.push(pid), wait: noWait, rounds: 3 });
+    const killedC = [], c = await settleLeftovers(dir, { snapshot: seq([snap], null), reread: async () => ({ ...snap, created: 'later' }), kill: pid => killedC.push(pid), wait: noWait, rounds: 3 });
+    assert.deepEqual({ a: [a.released, a.unknown, killedA], b: [b.released, b.unknown, b.left?.length, killedB, b.decisions.map(d => d.decision)], c: [c.released, c.unknown, c.left, killedC, c.decisions.map(d => d.decision)] },
+      { a: [true, false, [4242]], b: [false, false, 1, [], ['unknown', 'unknown', 'unknown']], c: [false, true, null, [], ['changed']] }, 'frame-init:cleanup-bound-never-released-when-unknown');
   });
 }
