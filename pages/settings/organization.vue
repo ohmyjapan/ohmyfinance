@@ -575,6 +575,7 @@ async function saveAllChanges() {
   if (!currentOrganization.value) return
 
   const orgId = String(currentOrganization.value.id || currentOrganization.value._id)
+  const orgName = currentOrganization.value.name
   const sessionId = userStore.sessionId
   const sameSession = () => userStore.sessionId === sessionId
   const sameEditor = () => String(currentOrganization.value?.id || currentOrganization.value?._id) === orgId
@@ -607,13 +608,13 @@ async function saveAllChanges() {
         isDirty.value = false
         currentOrganization.value = mergeSaved(currentOrganization.value)
       }
-    } else if (sameEditor()) {
-      alert(data.statusMessage || t('common.error'))
+    } else {
+      alert(`${orgName}: ${data.statusMessage || t('common.error')}`)
     }
   } catch (error) {
-    if (sameSession() && sameEditor()) {
+    if (sameSession()) {
       console.error('Failed to save:', error)
-      alert(t('common.error'))
+      alert(`${orgName}: ${t('common.error')}`)
     }
   } finally {
     saving.value = false

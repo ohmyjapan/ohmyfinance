@@ -8,6 +8,7 @@ const { closeOwnedBrowser } = require('./finance-browser-cleanup.cjs');
 const source = path.resolve(__dirname, '..'), root = path.resolve(process.env.OMF_SETTINGS_APP_ROOT || source);
 const pause = ms => new Promise(r => setTimeout(r, ms));
 const saveLabels = ['ja', 'ko'].map(locale => JSON.parse(fs.readFileSync(path.join(source, 'i18n/locales/' + locale + '.json'), 'utf8')).common.save);
+const errorLabels = ['ja', 'ko'].map(locale => JSON.parse(fs.readFileSync(path.join(source, 'i18n/locales/' + locale + '.json'), 'utf8')).common.error);
 async function main() {
   let mongo, app, client, directory, browser, held, failure, checks = 0;
   const pass = text => { checks++; console.log('PASS ' + text); };
@@ -94,11 +95,15 @@ async function main() {
       if (interception && request.method() === 'PUT' && request.url() === origin + '/api/organizations/' + A) {
         const mode = interception; interception = null;
         if (mode.fail) { await request.respond({ status: 500, contentType: 'application/json', body: JSON.stringify({ success: false, statusMessage: 'SYNTHETIC_SAVE_REJECTED' }) }); return; }
+        if (mode.failureMode) {
+          held = { request, status: 500, body: JSON.stringify({ success: false, statusMessage: 'SYNTHETIC_SAVE_REJECTED' }), abort: mode.failureMode === 'network' };
+          mode.ready(); return;
+        }
         try { const r = await api('/api/organizations/' + A, request.headers().authorization?.replace(/^Bearer /, ''), 'PUT', request.postData()); held = { request, status: r.status, body: r.raw }; mode.ready(); } catch (e) { mode.reject(e); }
       } else await request.continue();
     });
-    const delaySave = async zone => { await page.setRequestInterception(true); const pending = new Promise((ready, reject) => { interception = { ready, reject }; }); await editZone(zone); await clickSave(); await pending; assert.equal(held.status, 200, 'settings:held-native-save'); };
-    const release = async () => { const h = held; held = null; await h.request.respond({ status: h.status, contentType: 'application/json', body: h.body }); await frames(); await page.setRequestInterception(false); };
+    const delaySave = async (zone, failureMode) => { await page.setRequestInterception(true); const pending = new Promise((ready, reject) => { interception = { ready, reject, failureMode }; }); await editZone(zone); await clickSave(); await pending; assert.equal(held.status, failureMode ? 500 : 200, 'settings:held-save'); };
+    const release = async () => { const h = held; held = null; if (h.abort) await h.request.abort('failed'); else await h.request.respond({ status: h.status, contentType: 'application/json', body: h.body }); await frames(); await page.setRequestInterception(false); };
 
     await page.goto(origin + '/login', { waitUntil: 'networkidle2' }); await wait(() => !!document.querySelector('#email'), [], 'login');
     await page.type('#email', ownerEmail); await page.type('#password', password); await page.click('button[type=submit]'); await wait(() => location.pathname === '/', [], 'logged in');
@@ -126,10 +131,25 @@ async function main() {
     pass('a delayed former-owner save cannot replace the new actor session or promote the same-company viewer role');
 
     await nativeLogin(ownerEmail); await push('/transactions'); await push('/settings/organization'); await chooseEditor('SETTINGS_A');
-    const zoneBeforeFailure = (await store()).current.settings.timezone; await page.setRequestInterception(true); interception = { fail: true };
+    const failureNotices = [];
+    for (const mode of ['rejection', 'network']) {
+      const stateBefore = await store(), nativeBefore = await savedZone(A), zone = nativeBefore === 'Asia/Tokyo' ? 'America/New_York' : 'Asia/Tokyo', start = dialogs.length;
+      await delaySave(zone, mode); await chooseEditor('SETTINGS_B'); await release();
+      for (let n = 0; n < 100 && dialogs.length === start; n++) await pause(50);
+      const notice = dialogs.slice(start), expected = mode === 'rejection' ? ['SETTINGS_A: SYNTHETIC_SAVE_REJECTED'] : errorLabels.map(label => 'SETTINGS_A: ' + label);
+      failureNotices.push({ mode, singleNamedNotice: notice.length === 1 && expected.includes(notice[0]) });
+      console.log('OBSERVE switched-editor failure ' + JSON.stringify({ mode, dialogCount: notice.length, singleNamedNotice: failureNotices.at(-1).singleNamedNotice }));
+      assert.equal(await zoneValue(), 'America/Los_Angeles', 'settings:failed-switch-keeps-editor-' + mode);
+      assert.deepEqual(await store(), stateBefore, 'settings:failed-switch-keeps-session-' + mode); assert.equal(await savedZone(A), nativeBefore, 'settings:failed-switch-keeps-native-' + mode);
+      await chooseEditor('SETTINGS_A'); await save(zone); await assertSession(zone);
+    }
+    assert.deepEqual(failureNotices, [{ mode: 'rejection', singleNamedNotice: true }, { mode: 'network', singleNamedNotice: true }], 'settings:switched-editor-failure-notices');
+    for (const mode of failureNotices) pass('a held ' + mode.mode + ' failure identifies the saved company after an editor switch, preserves both settings views and allows retry');
+
+    const zoneBeforeFailure = (await store()).current.settings.timezone, dialogBeforeFailure = dialogs.length; await page.setRequestInterception(true); interception = { fail: true };
     await editZone('Asia/Tokyo'); await clickSave(); await wait(() => !!document.querySelector('select'), [], 'failure settled');
-    for (let i = 0; i < 100 && !dialogs.includes('SYNTHETIC_SAVE_REJECTED'); i++) await pause(50);
-    assert.ok(dialogs.includes('SYNTHETIC_SAVE_REJECTED'), 'settings:save-error-visible'); assert.equal((await store()).current.settings.timezone, zoneBeforeFailure, 'settings:failed-save-keeps-cache'); assert.equal(await savedZone(A), zoneBeforeFailure, 'settings:failed-save-keeps-native');
+    for (let i = 0; i < 100 && dialogs.length === dialogBeforeFailure; i++) await pause(50);
+    assert.ok(dialogs.slice(dialogBeforeFailure).some(message => message.endsWith('SYNTHETIC_SAVE_REJECTED')), 'settings:save-error-visible'); assert.equal((await store()).current.settings.timezone, zoneBeforeFailure, 'settings:failed-save-keeps-cache'); assert.equal(await savedZone(A), zoneBeforeFailure, 'settings:failed-save-keeps-native');
     await page.setRequestInterception(false); await save('Asia/Tokyo'); await assertSession('Asia/Tokyo');
     pass('failed save leaves native and shared settings unchanged and the same form can retry successfully');
     assert.equal(await financial(), before, 'settings:no-financial-writes'); assert.deepEqual(errors, [], 'settings:no-page-errors');
