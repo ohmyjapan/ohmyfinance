@@ -26,7 +26,7 @@ export default{name:'omf-card-company',covers:['server/api/finance/[...path].ts'
    await control('intervening-link-ownership-change',{core:raceCore},{OMF_CARD_COMPANY_LINK_RACE:'1'});
    await test('trust-body-company',{core:replace(original.core,'return commitScopedImport(ownerId, importId, body, organizationId);','return commitScopedImport(ownerId, importId, body, body.organizationId);')},'card-company:bound-company');
    const trust='(event.context.auth.organizationId ? { organizationId: new (await import("mongoose")).default.Types.ObjectId(event.context.auth.organizationId) } : await calendarCompany(event))';
-   await test('trust-stale-membership',{route:replace(original.route,'await calendarCompany(event)',trust)},'card-company:current-membership');
+   await test('trust-stale-membership',{route:replace(original.route,'const { organizationId } = await calendarCompany(event);','const { organizationId } = '+trust+';')},'card-company:current-membership');
    const mutable=section(original.core,'async function verifyPostingCompany(', 'async function claimPostingCompany(',s=>replace(replace(s,'!same(binding.organizationId, organizationId)','false'),'postingOrganizationId: { $ne: organizationId }','postingOrganizationId: { $ne: binding.organizationId }'));
    await test('accept-other-selected-company',{core:mutable},'card-company:immutable-company');
    await test('omit-company-reservation',{core:replace(original.core,'...organizationId ? { postingOrganizationId: organizationId } : {},','')},'card-company:posted');

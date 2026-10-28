@@ -27,7 +27,7 @@ export default{name:'omf-company-business',covers:['scripts/finance-browser-clea
    await test('assume-default-currency','const summaryCurrency = (raw) => currencyCode(raw);','const summaryCurrency = (raw) => currencyCode(raw) || "JPY";','business:summary-unknown-currency');
    await test('drop-last-local-day','const end = zonedDayStart(addDayKey(dateTo, 1), timeZone);','const end = zonedDayStart(dateTo, timeZone);','business:summary-end-day');
    await test('receipt-link-unscoped','return await Transaction.exists({ _id: r.transactionId, organizationId }) ?','return await Transaction.exists({ _id: r.transactionId }) ?','business:receipt-link-checked');
-   await test('unchecked-create-reference','if (args[key] !== void 0 && !await model.exists({ _id: args[key] })) bad(400, "Choose an existing transaction reference");','void 0;','business:create-reference-exists');
+   await test('unchecked-create-reference','if (args[key] !== void 0 && !await model.exists(referenceScope(key, args[key], companyOf(c)))) bad(400, "Choose an existing transaction reference");','void 0;','business:create-reference-exists');
    await test('marker-after-insert','if (operation?.naviOperation) transaction.set("naviOperation", operation.naviOperation);','','business:create-marker');
    // Treating an unprovable delete as proven first reports a refused (card-import) delete as done.
    await test('unprovable-delete-reported-done','const unprovableDelete = async () => null;','const unprovableDelete = async (c, op) => ({ operationId: op.operationId, payloadHash: op.payloadHash, appliedAt: /* @__PURE__ */ new Date(), requestedFields: [] });','business:delete-source-protected');

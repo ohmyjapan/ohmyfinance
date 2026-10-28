@@ -12,6 +12,7 @@ import Organization from '../models/Organization'
 import { BANK_CLASSIFICATION_VERSION, UNRESOLVED_LABELS, PURCHASE_ADOPTION_LABELS, classificationValues, journalPreview, normalizePayee, proposalHash, proposeBankClassifications, registrationReady, purchaseAdoption, purchaseAdoptionState, invoiceStatusOf } from '../../shared/finance-bank-classification.mjs'
 import { normalizeMerchant } from '../../shared/finance-draft.mjs'
 import { bankPurchaseLinks } from './financePaymentMatchService'
+import { referenceScope } from './transactionService'
 // Native bank classification (plan omf-rakuten-native-shiwake-20261020 §4-§7). Every function receives the owner (the signed-in
 // user: the bank account and rows are the owner's) and the selected company whose membership the route checked fresh at this
 // request (calendarCompany). Calendar, history and teaching are read for that company only. Reads and generation never post a
@@ -158,8 +159,9 @@ async function viewOne(ownerId: string, organizationId: mongoose.Types.ObjectId,
   const c = await context(ownerId, organizationId, sid(d.bankAccountId)), row = c.rows.find((r: any) => sid(r._id) === sid(d.bankRowId))
   return row ? rowView(row, c) : { rowId: sid(d.bankRowId), state: 'source-missing', superseded: false, otherCompany: false, proposal: null, draft: draftView(d, null, c) }
 }
-async function assertReferences(v: any) {
-  for (const [key, model] of [['accountCategoryId', AccountCategory], ['subAccountCategoryId', AccountCategory], ['taxCategoryId', TaxCategory], ['supplierId', Supplier]] as const) if (v?.[key] && !await (model as any).exists({ _id: v[key] })) fail(400, '存在する勘定科目・税区分・取引先を一覧から選択してください。')
+// The draft's tax category and supplier must belong to the draft's company; account categories stay shared.
+async function assertReferences(v: any, organizationId: mongoose.Types.ObjectId) {
+  for (const [key, model] of [['accountCategoryId', AccountCategory], ['subAccountCategoryId', AccountCategory], ['taxCategoryId', TaxCategory], ['supplierId', Supplier]] as const) if (v?.[key] && !await (model as any).exists(referenceScope(key, v[key], organizationId))) fail(400, '存在する勘定科目・税区分・取引先を一覧から選択してください。')
 }
 const transactionView = (t: any) => ({ id: sid(t._id), date: t.date, amount: t.amount, type: t.type, notes: t.notes || t.productName || '', accountCategoryId: t.accountCategoryId ? sid(t.accountCategoryId) : null, organizationId: sid(t.organizationId), bankClassificationId: t.metadata?.bankClassificationId || null })
 
@@ -203,7 +205,7 @@ export async function updateBankClassification(ownerId: string, organizationId: 
   if (draft.registration) fail(409, '登録済み（または登録中）の仕訳は変更できません。')
   if (body.adoptPurchase !== undefined) return adoptPurchase(ownerId, organizationId, draft, body)
   let values: any; try { values = classificationValues(body.values ?? {}, draft.values) } catch (e: any) { fail(400, e.message) }
-  await assertReferences(values)
+  await assertReferences(values, organizationId)
   const row: any = await BankRow.findOne({ _id: draft.bankRowId, ownerId }).lean(); if (!row) fail(409, '元の明細が見つかりません。')
   const sourceChanged = row.revision !== draft.source?.revision || row.fingerprint !== draft.source?.fingerprint
   if (sourceChanged && body.acceptSource !== true) fail(409, '元の明細が変更されました。変更後の内容を確認して「元の明細の変更を確認」を選んでください。')
@@ -342,7 +344,7 @@ export async function registerBankClassification(ownerId: string, organizationId
   const sourceChanged = row.revision !== draft.source?.revision || row.fingerprint !== draft.source?.fingerprint, superseded = c.superseded.has(sid(row._id)), predecessorRegistered = c.predecessorRegistered.has(sid(row._id))
   const readiness = registrationReady({ values: draft.values, transfer: draft.proposed?.transfer, sourceChanged, superseded, predecessorRegistered, currency: row.currency })
   if (!readiness.ready) fail(409, '登録できません: ' + readiness.reasons.map((r: string) => (UNRESOLVED_LABELS as any)[r] || r).join('・') + ' [' + readiness.reasons.join(',') + ']')
-  await assertReferences(draft.values)
+  await assertReferences(draft.values, organizationId)
   const candidates = await linkCandidates(organizationId, draft)
   if (action === 'create' && candidates.length && body.confirmNew !== true) fail(409, '同じ会社に同じ金額・入出金・日付の取引があります。二重登録を避けるため、既存の取引に紐付けるか、新規登録を確認してください。 [existing-transaction-candidate]')
   const transactionId = draft.reservedTransactionId

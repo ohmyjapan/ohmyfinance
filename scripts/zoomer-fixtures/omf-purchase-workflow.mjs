@@ -102,10 +102,12 @@ async function buildWorld(ctx, label) {
   await db.collection('organizations').insertMany([[A, 'カクウ商店（架空）', owner.id], [B, 'Synthetic second company', owner.id], [C, 'Synthetic other owner company', other.id]].map(([_id, name, userId]) => ({ _id, name, slug: 'pw-' + String(_id), type: 'business', isActive: true, members: [{ userId: new ObjectId(userId), role: 'owner', joinedAt: now }], settings: { defaultCurrency: 'JPY' }, createdAt: now, updatedAt: now })));
   const tA = await owner.forOrg(A), tB = await owner.forOrg(B), tC = await other.forOrg(C);
   const chart = {}; for (const [name, type] of [['仕入高', 'expense'], ['消耗品費', 'expense'], ['支払手数料', 'expense'], ['普通預金', 'asset'], ['未払金', 'liability']]) { chart[name] = new ObjectId(); await db.collection('accountcategories').insertOne({ _id: chart[name], name, type, isActive: true, order: 0 }); }
-  // A pre-existing global Supplier with another number (the owner may select it; adoption never creates one).
-  const otherSupplier = new ObjectId(); await db.collection('suppliers').insertOne({ _id: otherSupplier, name: 'Synthetic existing supplier', companyName: 'Synthetic existing supplier 株式会社', invoiceNumber: 'T5555555555555', createdAt: now, updatedAt: now });
+  // A pre-existing Supplier of company A with another number (the owner may select it; adoption never creates one).
+  const otherSupplier = new ObjectId(); await db.collection('suppliers').insertOne({ _id: otherSupplier, organizationId: A, name: 'Synthetic existing supplier', companyName: 'Synthetic existing supplier 株式会社', invoiceNumber: 'T5555555555555', createdAt: now, updatedAt: now });
   // An already-stored Supplier with exactly P15's number and legal name (adoption may select it), and a decoy with P1's number under another name (never selected).
-  const exactSupplier = new ObjectId(); await db.collection('suppliers').insertMany([{ _id: exactSupplier, name: 'カクウセラーフィフティーン', companyName: 'カクウセラーフィフティーン株式会社', invoiceNumber: 'T1000000000015', createdAt: now, updatedAt: now }, { _id: new ObjectId(), name: 'Decoy', companyName: '別名のテスト会社', invoiceNumber: 'T1000000000001', createdAt: now, updatedAt: now }]);
+  const exactSupplier = new ObjectId(); await db.collection('suppliers').insertMany([{ _id: exactSupplier, organizationId: A, name: 'カクウセラーフィフティーン', companyName: 'カクウセラーフィフティーン株式会社', invoiceNumber: 'T1000000000015', createdAt: now, updatedAt: now }, { _id: new ObjectId(), organizationId: A, name: 'Decoy', companyName: '別名のテスト会社', invoiceNumber: 'T1000000000001', createdAt: now, updatedAt: now }]);
+  // A Supplier of company B (same owner): never an existing reference for a company-A draft.
+  const foreignSupplier = new ObjectId(); await db.collection('suppliers').insertOne({ _id: foreignSupplier, organizationId: B, name: 'Synthetic second-company supplier', companyName: 'Synthetic second-company supplier 株式会社', invoiceNumber: 'T5555555555556', createdAt: now, updatedAt: now });
   const I = (r, o = {}) => call('/api/finance-intake/' + r, { token: owner.token, ...o }), P = (r, o = {}) => call('/api/finance-payments/' + r, { token: owner.token, ...o });
   // The fictional research worker (an existing card account is the worker's required scope).
   const card = ok(await call('/api/finance/accounts', { method: 'POST', token: owner.token, body: { name: 'Synthetic card (fictional)', primaryCard: '12345', cardIdentifiers: ['12345'], otpRecipient: 'original@example.invalid', otpMailbox: 'forwarded@example.invalid' } }), 'card account').account;
@@ -178,7 +180,7 @@ async function buildWorld(ctx, label) {
   ok(await O('bank/files/' + odoc.id + '/import', { method: 'POST', body: { sheet: osheet.sheet, headerRow: osheet.headerRow, mapping: osheet.mapping, bankAccountId: otherBank.id, transactionIdConfirmed: true, confirm: true } }), 'other import');
   const op = ok(await O('payments?account=bank:' + otherBank.id), 'other payments').payments[0];
   ok(await O('payments/bank/' + op.bankRowId + '/allocations', { method: 'POST', body: { confirm: true, requestId: randomUUID(), paymentRevision: op.paymentRevision, target: { kind: 'intake', recordId: otherRec.id }, recordRevision: otherRec.revision, amount: 5500 } }), 'other allocation');
-  return { owner, other, A, B, C, tA, tB, tC, chart, otherSupplier, exactSupplier, card, agent, W, I, P, O, research, readRecord, rec, bank, rowIds, paymentOf, allocate, fileHash, doc, otherBank, otherRec };
+  return { owner, other, A, B, C, tA, tB, tC, chart, otherSupplier, exactSupplier, foreignSupplier, card, agent, W, I, P, O, research, readRecord, rec, bank, rowIds, paymentOf, allocate, fileHash, doc, otherBank, otherRec };
 }
 
 // The classification helpers over a world (company A unless another token is given).
@@ -299,6 +301,7 @@ async function harnessMain(SRC) {
     assert.deepEqual([d.invoice.status, d.adoption], ['entered-unverified', null], 'purchase:manual-edit-clears (number)');
     const cleared = await db.collection('financebankclassifications').findOne({ _id: new ObjectId(d.id) }); assert.equal(cleared.history.at(-1).cleared?.reason, 'invoice-number-changed', 'purchase:clear-recorded');
     r = await row('B12'); d = ok(await adopt(r.draft, linkOf(r, 'P12')), 're-adopt B12').row.draft; assert.equal(d.invoice.status, 'verified-purchase');
+    const foreign = await put(d, { revision: d.revision, values: { supplierId: String(w.foreignSupplier) } }); assert.equal(foreign.status, 400, 'purchase:foreign-company-supplier-refused ' + JSON.stringify(foreign.data).slice(0, 300));
     d = ok(await put(d, { revision: d.revision, values: { supplierId: String(w.otherSupplier) } }), 'other supplier').row.draft; assert.deepEqual([d.invoice.status, d.adoption], ['entered-unverified', null], 'purchase:manual-edit-clears (supplier)');
     r = await row('B12'); d = ok(await adopt(r.draft, linkOf(r, 'P12')), 're-adopt B12 again').row.draft; assert.equal(d.values.supplierId, String(w.otherSupplier), 'adoption never overwrites the owner Supplier');
     assert.equal(d.invoice.status, 'adopted-stale', 'purchase:stale-supplier-number (the selected Supplier carries another number)'); assert.ok(d.adoption.staleReasons.includes('supplier-number-differs'));
