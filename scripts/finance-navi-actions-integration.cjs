@@ -11,7 +11,7 @@ module.exports=async({db,call,upload,token,other,deviceToken,origin,pass,root,cs
  const ledger=async()=>({tx:await db.collection('transactions').countDocuments(),entries:await db.collection('financeentries').countDocuments()});const before=await ledger();
  const refs={account:new ObjectId(),sub:new ObjectId(),category:new ObjectId(),tax:new ObjectId(),customer:new ObjectId()};
  await db.collection('accountcategories').insertMany([{_id:refs.account,name:'Navi 通信費',type:'expense',isActive:true},{_id:refs.sub,name:'Navi 補助',parentId:refs.account,type:'expense',isActive:true}]);
- await db.collection('transactioncategories').insertOne({_id:refs.category,name:'Navi 区分'});await db.collection('taxcategories').insertOne({organizationId:masterOrganizationId,_id:refs.tax,name:'Navi 課税仕入 10%',rate:10});
+ await db.collection('transactioncategories').insertOne({_id:refs.category,name:'Navi 区分'});await db.collection('taxcategories').insertOne({_id:refs.tax,name:'Navi 課税仕入 10%',rate:10});
  await db.collection('customers').insertOne({organizationId:masterOrganizationId,_id:refs.customer,name:'NAVI-CUSTOMER-TEST',isActive:true});
  const X=String(refs.account),Y=String(refs.sub),C=String(refs.category),T=String(refs.tax);
  const imported=await upload(csv([row({0:'2026/08/05',1:'2026/08/07',2:'Navi retailer',5:'1980'}),row({0:'2026/08/09',1:'2026/08/11',2:'Navi retailer',5:'2310'}),row({0:'2026/08/06',1:'2026/08/08',2:'Other navi shop',5:'500'}),row({0:'2026/08/07',1:'2026/08/09',2:'Legacy navi shop',5:'700'}),row({0:'2026/08/08',1:'2026/08/10',2:'Legacy navi shop',5:'710'}),row({0:'2026/08/10',1:'2026/08/12',2:'Navi retailer',5:'999'}),row({0:'2026/08/11',1:'2026/08/13',2:'Navi retailer',5:'1200'})]));

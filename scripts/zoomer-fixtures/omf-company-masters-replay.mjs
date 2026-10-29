@@ -6,7 +6,9 @@
 // verbatim into an empty memory MongoDB; the companion organizations are loaded as exported plus the one addition a company token
 // needs (a synthetic member user and a slug). The entry is the three GET list handlers (and the id handlers) of the BUILT app, driven
 // as each exported company; per row the result records production's outcome (listed to every authenticated caller at 0727c0c), the
-// changed code's outcome, the sends (none: reads only) and `same`. A row no company lists is the plan's intended no-backfill outcome.
+// changed code's outcome, the sends (none: reads only) and `same`. A supplier or customer no company lists is the plan's intended
+// no-backfill outcome. Tax categories are one shared list (fold 3, owner 2026-10-29): a production tax row must be listed to every
+// exported company, carry no company field and stay byte-identical, the same outcome as production (`same: true`).
 // With REPLAY_INPUT unset this fixture exports `covers: []`, passes with the note "no replay input" and grants NO coverage.
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -72,13 +74,20 @@ export default { name: 'omf-company-masters-replay', covers, async run() {
       const stored = await db.collection(name).findOne({ _id: row._id });
       const identical = JSON.stringify(EJSON.serialize(stored)) === JSON.stringify(EJSON.serialize(row));
       const newOutcome = byCompany.length ? 'listed to company ' + byCompany.join(',') : 'listed to no company' + (idReads.length ? ' (id read ' + idReads.join('/') + ')' : '');
+      if (name === 'taxcategories') {
+        // The shared tax list: listed to every exported company, no company field, bytes unchanged — the same as production.
+        const everyCompany = companies.every(c => byCompany.includes(c.id)), noCompany = !!stored && stored.organizationId === undefined, same = identical && everyCompany && noCompany;
+        results.push({ collection: name, id, productionOutcome: 'listed to every authenticated caller (row carries no company at 0727c0c)', newOutcome: newOutcome + (noCompany ? ', no company field' : ', carries a company field'), byteIdentical: identical, sends: [], same,
+          label: same ? 'SAME: tax categories are one shared list (fold 3, owner 2026-10-29); listed to every company as on production' : !identical ? 'UNEXPLAINED: row bytes changed' : !noCompany ? 'UNEXPLAINED: a shared tax category carries a company field' : 'UNEXPLAINED: a company does not list a shared tax category' });
+        continue;
+      }
       results.push({ collection: name, id, productionOutcome: 'listed to every authenticated caller (row carries no company at 0727c0c)', newOutcome, byteIdentical: identical, sends: [], same: false,
         label: !identical ? 'UNEXPLAINED: row bytes changed' : byCompany.length ? 'UNEXPLAINED: a company lists a row that carries no organizationId' : 'INTENDED: plan §2 "No backfill" and §4 replay expect 0 rows listed to either company; the one-time assignment is the owner\'s decision' });
     }
   } catch (error) {
     results.push({ id: null, productionOutcome: null, newOutcome: 'harness error: ' + String(error?.message || error).slice(0, 400), same: false, label: 'UNEXPLAINED: the harness could not run' });
   } finally { if (child) { child.kill(); await child.closed; } if (client) await client.close(); if (mongo) await mongo.stop({ doCleanup: true, force: true }).catch(() => {}); if (directory) await rm(directory, { recursive: true, force: true }).catch(() => {}); }
-  const unexplained = results.filter(r => r.label.startsWith('UNEXPLAINED')).length, intended = results.filter(r => r.label.startsWith('INTENDED')).length;
-  await writeFile(out, JSON.stringify({ source: exported.source, readAt: exported.readAt, exported: rowCount, replayed: results.filter(r => r.id).length, same: 0, intended, unexplained, sends: [...new Set(sends)], companions: { organizations: organizations.length, adjustment: 'each organization loaded as exported plus a slug and one synthetic member user (needed for a company token)' }, inputShape: 'the export carries ids as 24-hex strings and dates as ISO strings; _id, organizationId, createdAt and updatedAt were restored to ObjectId/Date before loading, every other field verbatim', rows: results }, null, 2));
-  return { pass: unexplained === 0 && results.filter(r => r.id).length === rowCount, databaseCoverage: { executed: true, ownedProcess: true }, message: `replayed ${results.filter(r => r.id).length}/${rowCount} rows as ${organizations.length} companies — ${intended} INTENDED different (listed to nobody, byte-identical), ${unexplained} UNEXPLAINED (listed in ${out}; the owner decides)` };
+  const unexplained = results.filter(r => r.label.startsWith('UNEXPLAINED')).length, intended = results.filter(r => r.label.startsWith('INTENDED')).length, same = results.filter(r => r.same === true).length;
+  await writeFile(out, JSON.stringify({ source: exported.source, readAt: exported.readAt, exported: rowCount, replayed: results.filter(r => r.id).length, same, intended, unexplained, sends: [...new Set(sends)], companions: { organizations: organizations.length, adjustment: 'each organization loaded as exported plus a slug and one synthetic member user (needed for a company token)' }, inputShape: 'the export carries ids as 24-hex strings and dates as ISO strings; _id, organizationId, createdAt and updatedAt were restored to ObjectId/Date before loading, every other field verbatim', rows: results }, null, 2));
+  return { pass: unexplained === 0 && results.filter(r => r.id).length === rowCount, databaseCoverage: { executed: true, ownedProcess: true }, message: `replayed ${results.filter(r => r.id).length}/${rowCount} rows as ${organizations.length} companies — ${same} same (shared tax categories listed to every company), ${intended} INTENDED different (listed to nobody, byte-identical), ${unexplained} UNEXPLAINED (listed in ${out}; the owner decides)` };
 } };

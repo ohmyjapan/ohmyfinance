@@ -200,9 +200,9 @@ async function saveTransaction(data: Partial<ITransaction>, organizationId?: mon
  */
 export const transactionReferenceModels: Record<string, any> = { customerId: Customer, supplierId: Supplier, accountCategoryId: AccountCategory, subAccountCategoryId: AccountCategory, taxCategoryId: TaxCategory, transactionCategoryId: TransactionCategory, sourceId: DataSource }
 export const transactionUpdateFields = ['referenceNumber','date','amount','type','status',...Object.keys(transactionReferenceModels),'taxRate','companyInfo','invoiceNumber','receiptNumber','trackingNumber','paymentMethod','cardNumber','productName','productPrice','janCode','hasReceipt','items','notes','tags']
-// Suppliers, customers and tax categories belong to one company: another company's row is not an existing reference here.
-// Account categories, transaction categories and data sources stay shared masters.
-export const scopedReferenceFields = ['customerId', 'supplierId', 'taxCategoryId']
+// Suppliers and customers belong to one company: another company's row is not an existing reference here.
+// Tax categories, account categories, transaction categories and data sources are shared: any existing row is a reference for every company.
+export const scopedReferenceFields = ['customerId', 'supplierId']
 export const referenceScope = (key: string, _id: any, organizationId: any) => scopedReferenceFields.includes(key) ? { _id, organizationId } : { _id }
 export type TransactionOperation = { operationId: string, payloadHash: string, expectedUpdatedAt: string }
 export async function updateTransaction(id: string, data: Partial<ITransaction>, organizationId: mongoose.Types.ObjectId, operation?: TransactionOperation) {

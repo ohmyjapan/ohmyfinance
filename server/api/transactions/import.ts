@@ -76,7 +76,7 @@ export default defineEventHandler(async (event) => {
         // --- Lookup cache: pre-load all reference documents to avoid N+1 queries ---
         const [allAccountCategories, allTaxCategories, allTransactionCategories, allSuppliers, allCustomers] = await Promise.all([
             AccountCategory.find({}).lean(),
-            TaxCategory.find({ organizationId }).lean(),
+            TaxCategory.find({}).lean(),
             TransactionCategory.find({}).lean(),
             Supplier.find({ organizationId }).lean(),
             Customer.find({ organizationId }).lean(),

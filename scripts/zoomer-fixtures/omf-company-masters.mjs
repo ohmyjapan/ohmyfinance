@@ -1,17 +1,21 @@
-// Fixture for plan omf-tenant-masters-20261026 (step 1): supplier, customer and tax-category lists per company, and the
-// オーマイジャパン-only Intras account literal and ISSEY archive tooling out of what a buyer's OMF runs.
+// Fixture for plan omf-tenant-masters-20261026 (step 1): supplier and customer lists per company, tax categories one shared list
+// for every company (fold 3, owner 2026-10-29), and the オーマイジャパン-only Intras account literal and ISSEY archive tooling out of
+// what a buyer's OMF runs.
 // Run ONLY through the hub verifier (never directly; a direct run dropped the hub database on 2026-09-17):
 //   node scripts/zoomer-verify.mjs --run-fixture omf-company-masters.mjs --cwd <this worktree>
-// Legs: 1 the built app (scripts/finance-company-masters-integration.cjs on its own throwaway MongoDB: M1-M7 and W2; NOT RUN and
-// red when .output/server/index.mjs is missing) · 2 the worker units (W1 Intras account, the status report, the ISSEY orders gate,
+// Legs: 1 the built app (scripts/finance-company-masters-integration.cjs on its own throwaway MongoDB: M1-M7, T1 and W2; NOT RUN
+// and red when .output/server/index.mjs is missing) · 2 the worker units (W1 Intras account, the status report, the ISSEY orders gate,
 // W3 tool catalogue / tool call / research prompt / MCP tools/list) plus scripts/finance-issey-archive.test.mjs and
 // scripts/finance-workflow-worker.test.mjs, run as `node --test` in an owned copy of the worker sources that borrows the main
 // checkout's collector package cache as a verified regular copy (a nested worktree has no collector/node_modules; links are refused)
-// · 3 an unchanged packaged copy of the build must pass · 4 the plan's five compiled defects, each required to flip its named leg-1
-// assertion · 5 four worker source defects (restored account literal, ungated tools, unconditional prompt, silent status) in the
-// owned copy, each required to flip its named leg-2 assertion. Synthetic companies, users and rows only; no production database,
-// model, Intras, ISSEY, Slack or mail. Fail-first on 0727c0c: leg 1 at masters:list-isolation (every company sees every row),
-// leg 2 at worker:intras-configured-account / worker:status-connections / worker:orders-gated / worker:issey-tools-gated.
+// · 3 an unchanged packaged copy of the build must pass · 4 eight compiled defects (the plan's five, plus three that make tax
+// categories per company again: the list route, the transaction reference check, the owner-intake references), each required to
+// flip its named leg-1 assertion · 5 four worker source defects (restored account literal, ungated tools, unconditional prompt,
+// silent status) in the owned copy, each required to flip its named leg-2 assertion. Synthetic companies, users and rows only; no
+// production database, model, Intras, ISSEY, Slack or mail. Fail-first on 0727c0c: leg 1 at masters:list-isolation (every company
+// sees every row), leg 2 at worker:intras-configured-account / worker:status-connections / worker:orders-gated /
+// worker:issey-tools-gated. Fail-first of fold 3 on c0d302a: leg 1 at masters:tax-shared (company B does not list the tax category
+// company A made).
 import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readdir, readFile, rm, writeFile, lstat } from 'node:fs/promises';
@@ -23,7 +27,7 @@ export const timeoutMs = 3000000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BUILT = existsSync(path.join(root, '.output', 'server', 'index.mjs'));
 const marker = n => n + ' Company master groups passed';
-const groups = 8;
+const groups = 9;
 const APP_COVERS = ['server/models/Customer.ts', 'server/models/Supplier.ts', 'server/models/TaxCategory.ts', 'server/models/FinanceWorkflow.ts', 'server/api/suppliers/index.ts', 'server/api/suppliers/[id].ts', 'server/api/customers/index.ts', 'server/api/customers/[id].ts', 'server/api/tax-categories/index.ts', 'server/api/vendors/index.ts', 'server/api/transactions/index.ts', 'server/api/transactions/import.ts', 'server/api/transactions/import-preview.ts', 'server/api/seed/index.ts', 'server/services/transactionService.ts', 'server/services/companyNaviBusinessService.ts', 'server/utils/calendarAccess.ts', 'server/services/financeDraftService.ts', 'server/services/financeSupplierService.ts', 'server/services/financeLearningService.ts', 'server/services/financeResearchService.ts', 'server/services/financeBankClassificationService.ts', 'server/services/financeActionService.ts', 'server/services/financeWorkflowService.ts', 'server/api/finance/[...path].ts', 'server/api/finance-research/[...path].ts', 'scripts/finance-company-masters-integration.cjs'];
 const WORKER_COVERS = ['finalization-worker/worker.mjs', 'finalization-worker/intras.mjs', 'research-worker/tools.mjs', 'research-worker/mcp.mjs', 'research-worker/worker.mjs', 'scripts/finance-workflow-worker.test.mjs', 'scripts/zoomer-fixtures/omf-company-masters.mjs'];
 const SOURCE_DIRS = ['shared', 'research-worker', 'teaching-worker', 'collector', 'finalization-worker'];
@@ -94,13 +98,17 @@ test('worker:mcp-tools-gated',async()=>{
 });
 `;
 
-// The plan's five compiled defects: a whitespace-exact anchor in the built nitro chunks, the defect text and the leg-1 assertion.
+// Compiled defects: a whitespace-exact anchor in the built nitro chunks, the defect text and the leg-1 assertion. The plan's five,
+// then three that make tax categories per company again (fold 3: the shared list must catch each one).
 const COMPILED_MUTANTS = [
   { name: 'unscoped-supplier-list', anchor: 'const suppliers = await Supplier.find({ ...searchQuery, organizationId })', replacement: 'const suppliers = await Supplier.find({ ...searchQuery })', assertion: 'masters:list-isolation suppliers' },
   { name: 'trust-body-company-on-create', anchor: 'const supplier = new Supplier({ ...body, organizationId });', replacement: 'const supplier = new Supplier({ ...body, organizationId: body.organizationId || organizationId });', assertion: 'masters:body-company-ignored suppliers' },
   { name: 'unscoped-supplier-id', anchor: 'const supplier = await Supplier.findOne({ _id: id, organizationId }).lean();', replacement: 'const supplier = await Supplier.findOne({ _id: id }).lean();', assertion: 'masters:id-isolation GET suppliers' },
   { name: 'unscoped-reference-exists', anchor: 'const referenceScope = (key, _id, organizationId) => scopedReferenceFields.includes(key) ? { _id, organizationId } : { _id };', replacement: 'const referenceScope = (key, _id, organizationId) => ({ _id });', assertion: 'masters:foreign-create supplierId' },
-  { name: 'restored-intras-literal', anchor: 'const providerAccount = config.workerIntrasAccount;', replacement: 'const providerAccount = "ohmyjapan1";', assertion: 'worker:provider-account' }
+  { name: 'restored-intras-literal', anchor: 'const providerAccount = config.workerIntrasAccount;', replacement: 'const providerAccount = "ohmyjapan1";', assertion: 'worker:provider-account' },
+  { name: 'rescoped-tax-list', anchor: 'const categories = await TaxCategory.find(searchQuery).sort({ name: 1 }).lean();', replacement: 'const categories = await TaxCategory.find({ ...searchQuery, organizationId: event.context.auth.organizationId }).sort({ name: 1 }).lean();', assertion: 'masters:tax-shared' },
+  { name: 'rescoped-tax-reference', anchor: 'const scopedReferenceFields = ["customerId", "supplierId"];', replacement: 'const scopedReferenceFields = ["customerId", "supplierId", "taxCategoryId"];', assertion: 'masters:tax-reference-shared create' },
+  { name: 'rescoped-intake-tax', anchor: 'TaxCategory.find({}).select("name rate").sort({ name: 1 }).lean()', replacement: 'TaxCategory.find({ organizationId: { $in: companies } }).select("name rate").sort({ name: 1 }).lean()', assertion: 'masters:intake-references-shared tax' }
 ];
 // Worker source defects in the owned copy: each must flip its named leg-2 assertion.
 const SOURCE_MUTANTS = [
@@ -148,5 +156,5 @@ export default { name: 'omf-company-masters', covers: BUILT ? [...APP_COVERS, ..
   } catch (e) { pass = false; lines.push('setup error: ' + String(e.message)); }
   finally { const cache = path.join(directory, 'src', 'collector', 'node_modules'); let linked = false; try { linked = (await lstat(cache)).isSymbolicLink(); } catch {} if (linked) throw Error('Owned copy cache became a link; not removing'); await rm(directory, { recursive: true, force: true }); }
   const expected = COMPILED_MUTANTS.length + SOURCE_MUTANTS.length;
-  return { pass: pass && controls.length === 1 && mutants.length === expected && mutants.every(m => m.detected) && provision?.equal === true, databaseCoverage: { executed: !!positive && positive.code === 0, ownedProcess: !!positive && positive.code === 0 }, message: JSON.stringify({ lines, controls, mutants, provision: provision ? { from: provision.from, files: provision.want.count, equal: provision.equal } : null, limits: 'Seven built-app groups (company isolation of list/id/create/update/delete, body company ignored, vendors/import-preview/import/seed scoped, foreign references refused on REST and Navi create, owner intake by member companies, legacy rows listed to nobody and byte-identical, worker-reported Intras account stored and used), five worker unit tests plus the two existing worker test files, one packaged control, five compiled and four source defects. Not exercised: saveResearchSupplier stamping (needs a live research job; reviewed by reading) and the bank classification adoption read (needs a bank draft with an adoption); no real Intras, ISSEY, model or production call.' }) };
+  return { pass: pass && controls.length === 1 && mutants.length === expected && mutants.every(m => m.detected) && provision?.equal === true, databaseCoverage: { executed: !!positive && positive.code === 0, ownedProcess: !!positive && positive.code === 0 }, message: JSON.stringify({ lines, controls, mutants, provision: provision ? { from: provision.from, files: provision.want.count, equal: provision.equal } : null, limits: 'Nine built-app groups (company access required for supplier/customer lists, company isolation of supplier/customer list/id/create/update/delete, tax categories one shared list listed to every company and stored without a company, body company ignored, vendors/import-preview/import scoped with the import reading and the seed writing the shared tax list, foreign suppliers/customers refused on REST and Navi create while every tax category is accepted, owner intake by member companies with shared tax categories, legacy suppliers/customers listed to nobody and all legacy rows byte-identical, worker-reported Intras account stored and used), five worker unit tests plus the two existing worker test files, one packaged control, eight compiled and four source defects. Not exercised: saveResearchSupplier stamping (needs a live research job; reviewed by reading) and the bank classification adoption read (needs a bank draft with an adoption); no real Intras, ISSEY, model or production call.' }) };
 } };

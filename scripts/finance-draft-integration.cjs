@@ -10,7 +10,7 @@ module.exports = async function draftChecks({ db, call, request, upload, token, 
   await db.collection('customers').insertMany([{organizationId:masterOrganizationId, _id: refs.customer, name: 'DRAFT-A-Synthetic', isActive: true }, {organizationId:masterOrganizationId, _id: refs.otherCustomer, name: 'DRAFT-B-Synthetic', isActive: true }]);
   await db.collection('accountcategories').insertMany([{ _id: refs.account, name: 'Synthetic expense', type: 'expense', isActive: true }, { _id: refs.sub, name: 'Synthetic subcategory', parentId: refs.account, type: 'expense', isActive: true }, { _id: refs.unrelated, name: 'Different account', type: 'expense', isActive: true }]);
   await db.collection('transactioncategories').insertOne({ _id: refs.category, name: 'Synthetic classification' });
-  await db.collection('taxcategories').insertOne({organizationId:masterOrganizationId, _id: refs.tax, name: 'Synthetic input tax', rate: 8 });
+  await db.collection('taxcategories').insertOne({ _id: refs.tax, name: 'Synthetic input tax', rate: 8 });
   await db.collection('suppliers').insertOne({organizationId:masterOrganizationId, _id: refs.supplier, name: 'Draft shop', companyInfo: 'Synthetic supplier information', invoiceNumber: 'T0000000000000' });
   await db.collection('datasources').insertOne({ _id: refs.source, name: 'Synthetic source', type: 'synthetic-draft', isActive: true, config: { token: 'synthetic-secret-must-never-be-returned' } });
   const imported = await upload(csv([row({ 0: '2026/08/10', 1: '2026/08/12', 2: 'Draft shop', 5: '2160' }), row({ 0: '2026/08/11', 1: '2026/08/13', 2: 'Draft shop', 5: '2160' }), row({ 0: '2026/08/12', 1: '2026/08/14', 2: 'Draft shop', 5: '2160' }), row({ 0: '2026/08/13', 1: '2026/08/15', 2: '前回分口座振替金額', 5: '-2160' })]));

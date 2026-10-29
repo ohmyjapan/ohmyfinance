@@ -159,7 +159,7 @@ async function viewOne(ownerId: string, organizationId: mongoose.Types.ObjectId,
   const c = await context(ownerId, organizationId, sid(d.bankAccountId)), row = c.rows.find((r: any) => sid(r._id) === sid(d.bankRowId))
   return row ? rowView(row, c) : { rowId: sid(d.bankRowId), state: 'source-missing', superseded: false, otherCompany: false, proposal: null, draft: draftView(d, null, c) }
 }
-// The draft's tax category and supplier must belong to the draft's company; account categories stay shared.
+// The draft's supplier must belong to the draft's company; account categories and tax categories are shared.
 async function assertReferences(v: any, organizationId: mongoose.Types.ObjectId) {
   for (const [key, model] of [['accountCategoryId', AccountCategory], ['subAccountCategoryId', AccountCategory], ['taxCategoryId', TaxCategory], ['supplierId', Supplier]] as const) if (v?.[key] && !await (model as any).exists(referenceScope(key, v[key], organizationId))) fail(400, '存在する勘定科目・税区分・取引先を一覧から選択してください。')
 }

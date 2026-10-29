@@ -36,7 +36,7 @@ async function main(){
    for(let i=0;i<3;i++){
     const input={name:'REFERENCE_'+field+'_'+i,...(field==='accountCategoryId'||field==='subAccountCategoryId'?{type:'expense',code:'SYN'}:{}),...(field==='taxCategoryId'?{rate:10}:{}),...(field==='customerId'?{email:'synthetic@example.invalid'}:{})};
     const created=field==='sourceId'?(await Source.create({...input,type:'synthetic-source-'+i})).toObject():(await ok(referenceEndpoints[field],tokenA,'POST',input)).data;
-    refs[field].push(new ObjectId(String(created._id)));const stored=await db.collection(collection).findOne({_id:refs[field][i]});assert.equal(stored.organizationId?.toString(),['customerId','supplierId','taxCategoryId'].includes(field)?String(A):undefined,'transaction:real-reference-company-scope');assert.equal(stored.name,input.name);
+    refs[field].push(new ObjectId(String(created._id)));const stored=await db.collection(collection).findOne({_id:refs[field][i]});assert.equal(stored.organizationId?.toString(),['customerId','supplierId'].includes(field)?String(A):undefined,'transaction:real-reference-company-scope');assert.equal(stored.name,input.name);
    }
    refs[field].push(new ObjectId()); // Ordinary missing reference: native populate must return null.
   }

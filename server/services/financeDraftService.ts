@@ -38,8 +38,8 @@ const TransactionCategory = TransactionCategoryModel as mongoose.Model<any>
 const TaxCategory = TaxCategoryModel as mongoose.Model<any>
 const DataSource = DataSourceModel as mongoose.Model<any>
 
-// Owner intake has no selected company at read time: customers, suppliers and tax categories of every company the owner currently
-// belongs to, nothing else; the other reference records are shared masters. Never expose source credentials.
+// Owner intake has no selected company at read time: customers and suppliers of every company the owner currently belongs to,
+// nothing else; tax categories and the other reference records are shared masters (every row). Never expose source credentials.
 export async function draftReferences(ownerId: string) {
   const companies = await memberCompanies(ownerId)
   const [customers, suppliers, accountCategories, transactionCategories, taxCategories, sources] = await Promise.all([
@@ -47,13 +47,14 @@ export async function draftReferences(ownerId: string) {
     supplierReferences(ownerId),
     AccountCategory.find({ isActive: { $ne: false } }).select('name code parentId type').sort({ order: 1, name: 1 }).lean(),
     TransactionCategory.find({}).select('name').sort({ name: 1 }).lean(),
-    TaxCategory.find({ organizationId: { $in: companies } }).select('name rate').sort({ name: 1 }).lean(),
+    TaxCategory.find({}).select('name rate').sort({ name: 1 }).lean(),
     DataSource.find({ isActive: { $ne: false } }).select('name type').sort({ name: 1 }).lean()
   ])
   return { customers, suppliers, accountCategories, transactionCategories, taxCategories, sources }
 }
-const scopedDraftReferenceFields = ['customerId', 'supplierId', 'taxCategoryId']
-// A created customer, supplier or tax category belongs to the token's selected company (the posting company); the match is within it.
+const scopedDraftReferenceFields = ['customerId', 'supplierId']
+// A created customer or supplier belongs to the token's selected company (the posting company); the match is within it. A created tax
+// category is shared: stored without a company and matched by name and rate across every company.
 export async function createDraftReference(ownerId: string, importId: string, body: any, organizationId: mongoose.Types.ObjectId) {
   await ownedImport(ownerId, importId)
   if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 100 || /[\x00-\x1f]/.test(body.name)) fail(400, '名称を入力してください（100文字以内）。')
