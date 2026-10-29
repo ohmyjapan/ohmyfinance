@@ -7,7 +7,7 @@ const {spawn}=require('node:child_process'),{MongoMemoryServer}=require('mongodb
 const {createRequire}=require('node:module');
 const root=path.resolve(process.env.OMF_EXPORT_APP_ROOT||path.join(__dirname,'..')),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const EXPENSE='\u652f\u51fa',INCOME='\u5165\u91d1';
-const HEADER='取引ID,参照番号,日付,区別,ステータス,金額,勘定科目,補助科目,税区分,税率,仕入れ先,顧客,区分,法人情報,インボイス番号,領収書番号,商品名,商品価格,JANコード,領収書,備考,タグ,貸方勘定科目（カード）,貸方補助科目（カード）,貸方税区分（カード）';
+const HEADER='取引ID,参照番号,日付,区別,ステータス,金額,勘定科目,補助科目,税区分,税率,軽減税率,仕入れ先,顧客,区分,法人情報,インボイス番号,領収書番号,商品名,商品価格,JANコード,領収書,備考,タグ,貸方勘定科目（カード）,貸方補助科目（カード）,貸方税区分（カード）';
 const TOOL='prepare_company_transaction_export';
 async function main(){let mongo,child,client,directory,logs='',checks=0;const pass=s=>{checks++;console.log('PASS '+s)};
  try{

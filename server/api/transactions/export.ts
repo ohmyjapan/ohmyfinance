@@ -2,6 +2,7 @@
 import { defineEventHandler, getQuery, setHeader, createError } from 'h3'
 import { exportTransactionRows } from '../../services/transactionExportService'
 import { exportCriteriaFromQuery } from '../../../shared/finance-transaction-export.mjs'
+import { reducedRateMark } from '../../../shared/finance-reduced-rate.mjs'
 import { requireAuth } from '../../middleware/auth'
 import { ensureConnection } from '../../config/database'
 import { calendarCompany } from '../../utils/calendarAccess'
@@ -33,7 +34,7 @@ export default defineEventHandler(async (event) => {
     const fields = [
       'id', 'referenceNumber', 'date', 'type', 'status',
       'amount', 'accountCategory', 'subAccountCategory',
-      'taxCategory', 'taxRate', 'supplier', 'customer',
+      'taxCategory', 'taxRate', 'reducedMark', 'supplier', 'customer',
       'transactionCategory', 'companyInfo', 'invoiceNumber',
       'receiptNumber', 'productName', 'productPrice', 'janCode',
       'hasReceipt', 'notes', 'tags', 'cardAccountCategory', 'cardSubAccountCategory', 'cardTaxCategory'
@@ -50,6 +51,7 @@ export default defineEventHandler(async (event) => {
       subAccountCategory: '補助科目',
       taxCategory: '税区分',
       taxRate: '税率',
+      reducedMark: '軽減税率',
       supplier: '仕入れ先',
       customer: '顧客',
       transactionCategory: '区分',
@@ -76,6 +78,7 @@ export default defineEventHandler(async (event) => {
       subAccountCategory: transaction.subAccountCategoryId?.name || '',
       taxCategory: transaction.taxCategoryId?.name || '',
       taxRate: transaction.taxRate === null || transaction.taxRate === undefined ? '' : String(transaction.taxRate) + '%',
+      reducedMark: reducedRateMark(transaction),
       supplier: transaction.supplierId?.name || '',
       customer: transaction.customerId?.name || '',
       transactionCategory: transaction.transactionCategoryId?.name || '',

@@ -227,7 +227,7 @@
               <div class="p-3 rounded-xl bg-gray-50 dark:bg-white/[0.03]">
                 <dt class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">{{ t('transactionDetail.productName') }}</dt>
                 <dd class="text-sm font-medium text-gray-900 dark:text-white">
-                  {{ transaction.productName || '-' }}
+                  {{ transaction.productName || '-' }} <span data-reduced-rate class="font-medium text-amber-700 dark:text-amber-300">{{ reducedRateMark(transaction) }}</span>
                 </dd>
               </div>
 
@@ -398,6 +398,7 @@ import {
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
 import { tokenClaims } from '~/utils/auth-session'
+import { reducedRateMark } from '~/shared/finance-reduced-rate.mjs'
 import DocumentList from '~/components/finance/DocumentList.vue'
 
 const { t } = useI18n()

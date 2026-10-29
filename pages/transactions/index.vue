@@ -258,7 +258,7 @@
             <div class="text-sm text-gray-900">
               {{ transaction.supplierId?.name || transaction.supplierName || transaction.customerId?.name || transaction.customerName || '-' }}
             </div>
-            <div class="text-xs text-gray-500">{{ transaction.productName || '' }}</div>
+            <div class="text-xs text-gray-500">{{ transaction.productName || '' }} <span data-reduced-rate class="font-medium text-amber-700 dark:text-amber-300">{{ reducedRateMark(transaction) }}</span></div>
           </td>
           <td class="px-6 py-4 whitespace-nowrap">
             <div v-if="transaction.hasReceipt" class="text-sm">
@@ -408,6 +408,7 @@ import { useUserStore } from '~/stores/user'
 import { tokenClaims } from '~/utils/auth-session'
 import { ref, computed, onMounted } from 'vue'
 import { useTransactions } from '~/composables/useTransactions'
+import { reducedRateMark } from '~/shared/finance-reduced-rate.mjs'
 import {
   Search,
   Filter,
