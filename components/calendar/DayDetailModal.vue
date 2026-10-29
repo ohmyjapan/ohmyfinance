@@ -91,15 +91,16 @@
                     {{ categoryLabel(payment.category) }}
                   </span>
                 </div>
-                <!-- Status Badge -->
+                <!-- Status Badge: the shared presentation (an explicitly unverified row reads 銀行照合待ち, never red) -->
                 <div class="flex items-center gap-2 mt-0.5">
                   <span
+                    :data-calendar-badge="calendarPresentation(payment).badge"
                     :class="[
                       'text-[10px] font-medium px-1.5 py-0.5 rounded',
-                      getStatusClass(payment.status)
+                      getStatusClass(calendarPresentation(payment).badge)
                     ]"
                   >
-                    {{ t(`paymentModal.statuses.${payment.status}`) }}
+                    {{ t(`paymentModal.statuses.${calendarPresentation(payment).badge}`) }}
                   </span>
                   <span v-if="payment.recurring" class="text-[10px] text-gray-400 dark:text-gray-500">
                     {{ t(`recurring.frequencies.${payment.recurringFrequency || 'monthly'}`) }}
@@ -155,6 +156,7 @@
 
 <script setup lang="ts">
 import { formatCalendarMoney } from '~/shared/finance-calendar-money.mjs'
+import { calendarPresentation } from '~/shared/finance-calendar-verification.mjs'
 import { computed } from 'vue'
 import { X, Check, Plus } from 'lucide-vue-next'
 import type { Payment } from '~/types/calendar'
@@ -254,6 +256,8 @@ const getStatusClass = (status: string): string => {
     case 'completed': return 'bg-success-light dark:bg-success-dark/30 text-success-dark dark:text-success-light'
     case 'overdue': return 'bg-error-light dark:bg-error-dark/30 text-error-dark dark:text-error-light'
     case 'cancelled': return 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-gray-400'
+    // Awaiting bank verification: neutral gray-blue, never the overdue red.
+    case 'bankWait': return 'bg-slate-100 dark:bg-slate-500/20 text-slate-600 dark:text-slate-300'
     default: return 'bg-gray-100 dark:bg-white/5 text-gray-500'
   }
 }

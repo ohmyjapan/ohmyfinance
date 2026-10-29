@@ -176,6 +176,9 @@
                 <option value="overdue">{{ t('paymentModal.statuses.overdue') }}</option>
                 <option value="cancelled">{{ t('paymentModal.statuses.cancelled') }}</option>
               </select>
+              <!-- Supplier originals and the owner's verification of this saved row (plan omf-calendar-evidence-20261029): their own
+                   routes, outside this form's save; the page runs the verification with the row's exact snapshot. -->
+              <CalendarEvidencePanel v-if="payment" :payment="payment" @verify="emit('verify', $event)" />
             </div>
 
             <!-- Recurring -->
@@ -323,6 +326,7 @@ import { X, ChevronDown, ChevronRight, Camera, Loader2 } from 'lucide-vue-next'
 import type { Payment, PaymentFormData, BankTransferInfo } from '~/types/calendar'
 import { PAYMENT_CATEGORIES, CURRENCIES, DEFAULT_CURRENCY } from '~/types/calendar'
 import { useSettingsStore } from '~/stores/settings'
+import CalendarEvidencePanel from '~/components/calendar/CalendarEvidencePanel.vue'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -349,6 +353,7 @@ const emit = defineEmits<{
   (e: 'close'): void
   (e: 'submit', data: PaymentFormData): void
   (e: 'delete'): void
+  (e: 'verify', data: { state: 'unconfirmed' | 'owner_confirmed', reason: string }): void
 }>()
 
 const isEditing = ref(false)

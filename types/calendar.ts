@@ -24,6 +24,17 @@ export interface PaymentSource {
   adopted?: boolean
 }
 
+// The owner's statement about a saved payment's bank settlement (server/models/Payment.ts IPaymentVerification): 'unconfirmed' shows
+// a pending/overdue row as 銀行照合待ち (never red); 'owner_confirmed' is the owner's own word, never a bank match. Saved only through
+// its own route (PUT /api/payments/:id/verification), never by the calendar edit.
+export interface PaymentVerification {
+  state: 'unconfirmed' | 'owner_confirmed'
+  reason?: string
+  basis?: string
+  updatedAt: string
+  operationId?: string
+}
+
 export interface Payment {
   id: string
   title: string
@@ -40,6 +51,7 @@ export interface Payment {
   organizationId?: string
   source?: PaymentSource
   settledAt?: string
+  paymentVerification?: PaymentVerification
   createdAt: string
   updatedAt: string
 }

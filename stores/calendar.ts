@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { Payment, PaymentFormData, MonthlyStats } from '~/types/calendar'
 import { useUserStore } from '~/stores/user'
 import { calendarCurrencyTotals } from '~/shared/finance-calendar-money.mjs'
+import { awaitingVerification } from '~/shared/finance-calendar-verification.mjs'
 import { tokenClaims } from '~/utils/auth-session'
 
 // Calendar list reads of this tab (client stale-response guard). Only the latest read, still for the actor/company it was requested for,
@@ -65,7 +66,8 @@ export const useCalendarStore = defineStore('calendar', {
       return {
         byCurrency: calendarCurrencyTotals(payments),
         pendingPayments: payments.filter(p => p.status === 'pending').length,
-        overduePayments: payments.filter(p => p.status === 'overdue').length
+        // An explicitly unknown historical row (銀行照合待ち) is not a confirmed overdue bill (plan omf-calendar-evidence-20261029).
+        overduePayments: payments.filter(p => p.status === 'overdue' && !awaitingVerification(p)).length
       }
     },
 
@@ -92,8 +94,16 @@ export const useCalendarStore = defineStore('calendar', {
       return state.payments
         .filter(p => {
           const dueDateStr = p.dueDate.split('T')[0]
-          return dueDateStr < todayStr && p.status === 'pending'
+          return dueDateStr < todayStr && p.status === 'pending' && !awaitingVerification(p)
         })
+        .sort((a, b) => a.dueDate.split('T')[0].localeCompare(b.dueDate.split('T')[0]))
+    },
+
+    // Rows the owner explicitly marked as awaiting bank verification (unconfirmed, still a plan): shown in their own neutral block,
+    // never as overdue (plan omf-calendar-evidence-20261029).
+    awaitingVerificationPayments: (state): Payment[] => {
+      return state.payments
+        .filter(p => awaitingVerification(p))
         .sort((a, b) => a.dueDate.split('T')[0].localeCompare(b.dueDate.split('T')[0]))
     }
   },
@@ -170,6 +180,28 @@ export const useCalendarStore = defineStore('calendar', {
       }
     },
 
+    // The owner's statement about a saved row's bank settlement (plan omf-calendar-evidence-20261029): its own route beside the
+    // calendar edit (whose whitelist never carries the record), with the exact updatedAt of the row shown (a stale row is a visible
+    // 409, never a silent overwrite). The server echo replaces the row like updatePayment; status, amount and dates come back as saved.
+    async setVerification(id: string, body: { state: 'unconfirmed' | 'owner_confirmed', reason?: string, expectedUpdatedAt: string }) {
+      this.error = null
+      try {
+        const response = await $fetch<Payment>(`/api/payments/${id}/verification`, {
+          method: 'PUT',
+          body,
+          headers: this._getAuthHeaders()
+        })
+        const index = this.payments.findIndex(p => p.id === id)
+        if (index !== -1) {
+          this.payments[index] = response
+        }
+        return response
+      } catch (error: any) {
+        this.error = error.message || 'Failed to save the verification'
+        throw error
+      }
+    },
+
     // Delete a payment
     async deletePayment(id: string) {
       this.isLoading = true
@@ -236,8 +268,10 @@ export const useCalendarStore = defineStore('calendar', {
       today.setHours(0, 0, 0, 0)
       const todayStr = formatLocalDate(today)
 
+      // GUARD (plan omf-calendar-evidence-20261029): a row the owner explicitly marked unconfirmed (銀行照合待ち) is not flipped to
+      // overdue; a legacy row without the field keeps today's flip.
       this.payments.forEach(payment => {
-        if (payment.status === 'pending') {
+        if (payment.status === 'pending' && !awaitingVerification(payment)) {
           const dueDateStr = payment.dueDate.split('T')[0]
           if (dueDateStr < todayStr) {
             payment.status = 'overdue'

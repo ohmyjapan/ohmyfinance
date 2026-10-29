@@ -21,6 +21,8 @@ import { getCompanyNaviTransaction, transactionNaviView } from './companyTransac
 import { companyProfile, companyFinanceSummary, listCompanyReceipts, getCompanyReceipt, findCompanyReceiptMatches } from './companyNaviSummaryService'
 import { readInvoiceCalendar, scheduleInvoicePayment, invoicePaymentId, invoiceLinkSummary } from './companyInvoiceCalendarService'
 import { exportTransactionRows } from './transactionExportService'
+import { listPaymentEvidence, getCalendarEvidence, linkCalendarEvidence, unlinkCalendarEvidence, setPaymentVerification, calendarEvidenceLinkMarker } from './companyCalendarEvidenceService'
+import { verificationSummary } from '../../shared/finance-calendar-verification.mjs'
 import { businessToolMeta, businessFields } from '../../shared/finance-navi-business.mjs'
 import { exportCriteriaKeys } from '../../shared/finance-transaction-export.mjs'
 
@@ -49,7 +51,7 @@ const validation = (error: any): never => { if (error?.name === 'ValidationError
 // ---- Safe projections (no creator/company/marker, contacts, bank text or private metadata)
 export const invoiceResultValues = (values: any) => ({ ...Object.fromEntries(Object.entries(values || {}).filter(([k]) => !['bankDetails', 'from', 'to', 'items', 'naviOperation'].includes(k))), ...(values?.from ? { from: { name: values.from.name, taxId: values.from.taxId || '' } } : {}), ...(values?.to ? { to: { name: values.to.name } } : {}), ...(values?.items ? { itemCount: values.items.length } : {}), ...(values?.bankDetails !== undefined ? { bankDetails: values.bankDetails ? 'saved_not_shown' : 'cleared' } : {}) })
 const invoiceSummary = (v: any) => ({ id: String(v._id), invoiceNumber: v.invoiceNumber, status: v.status, issueDate: v.issueDate, dueDate: v.dueDate, currency: v.currency, subtotal: v.subtotal, taxRate: v.taxRate, taxAmount: v.taxAmount, total: v.total, from: { name: v.from?.name, taxId: v.from?.taxId || '' }, to: { name: v.to?.name }, itemCount: v.items?.length || 0, hasBankDetails: !!v.bankDetails, transactionId: v.transactionId ? String(v.transactionId) : null, updatedAt: v.updatedAt, delivery: 'not_sent_saved_record_only' })
-const entryView = (v: any) => ({ id: String(v._id), title: v.title, amount: v.amount, currency: v.currency, dueDate: v.dueDate, type: v.type, status: v.status, category: v.category, recurring: v.recurring === true, recurringFrequency: v.recurringFrequency || null, notes: v.notes || '', source: v.source ? { kind: v.source.kind, adopted: v.source.adopted === true } : null, invoiceLink: invoiceLinkSummary(v.invoiceLink), updatedAt: v.updatedAt, moneyMovement: 'none_internal_plan_only' })
+const entryView = (v: any) => ({ id: String(v._id), title: v.title, amount: v.amount, currency: v.currency, dueDate: v.dueDate, type: v.type, status: v.status, category: v.category, recurring: v.recurring === true, recurringFrequency: v.recurringFrequency || null, notes: v.notes || '', source: v.source ? { kind: v.source.kind, adopted: v.source.adopted === true } : null, invoiceLink: invoiceLinkSummary(v.invoiceLink), verification: verificationSummary(v.paymentVerification), updatedAt: v.updatedAt, moneyMovement: 'none_internal_plan_only' })
 const budgetView = (v: any) => { if (!v) return v; const { organizationId: _o, createdBy: _c, naviOperation: _m, __v: _v, _id, ...rest } = v; return { ...rest, id: String(_id || v.id) } }
 const recurringView = (v: any) => v ? { id: String(v._id || v.id), name: v.name, description: v.description || '', amount: v.amount, currency: v.currency || null, transactionType: v.transactionType || null, frequency: v.frequency, dayOfMonth: v.dayOfMonth ?? null, dayOfWeek: v.dayOfWeek ?? null, startDate: v.startDate, endDate: v.endDate || null, nextDueDate: v.nextDueDate, lastGeneratedDate: v.lastGeneratedDate || null, status: v.status, payeeName: v.customer?.name || '', category: v.category || '', notes: v.notes || '', autoGenerate: v.autoGenerate !== false, generatedCount: (v.generatedTransactionIds || []).length, updatedAt: v.updatedAt } : v
 const recurringBody = (args: any) => { const body: any = pick(args, businessFields.recurring.filter(k => k !== 'payeeName')); if (args.status !== undefined) body.status = args.status; if (args.payeeName !== undefined) body.customer = { name: args.payeeName }; return body }
@@ -94,6 +96,9 @@ const receiptLinkRecover = async (c: any, op: any) => {
 export async function receiptLinkPendingOwner(c: any, op: any): Promise<'system' | 'user' | null> { const found = await receiptMarker(c, op); return found?.pending ? (found.manual ? 'user' : 'system') : null }
 const receiptSyncOwner = (synchronization: string) => synchronization === 'synced' ? null : synchronization === 'manual_review' ? 'user' : 'system'
 const receiptLinkResult = async (c: any, out: any, meaning: string) => ({ outcome: out.outcome, synchronization: out.synchronization, receipt: (await getCompanyReceipt(c.organizationId, out.receiptId)).receipt, transaction: out.transactionId ? await getCompanyNaviTransaction(c.organizationId, out.transactionId).catch(() => null) : null, meaning })
+// Calendar evidence link/unlink: public ids of the pair; recovery reads the marker the one link write left on the link row.
+const evidenceIds = (args: any) => ({ paymentId: String(args.paymentId), evidenceId: String(args.evidenceId) })
+const evidenceLinkRecover = async (c: any, op: any) => { const m: any = await calendarEvidenceLinkMarker(c.organizationId, String(op.detail?.evidenceId || ''), String(op.resourceId || '')); return sameMarker(m, op) ? { ...m, nativeResourceIds: { paymentId: String(op.resourceId), evidenceId: String(op.detail.evidenceId) } } : null }
 const receiptLinkMeaning = 'saved link between this receipt and this transaction; it proves nothing about the purchase or its tax treatment and moves no money. synchronization synced means the transaction receipt badge is updated; pending means it is being updated automatically; manual_review means it needs the person'
 const adapters: Record<string, Adapter> = {
   link_company_receipt: {
@@ -243,6 +248,39 @@ const adapters: Record<string, Adapter> = {
       return { operationId: op.operationId, payloadHash: op.payloadHash, appliedAt: forecast.createdAt, requestedFields: op.requestedFields, nativeResourceIds: { recurringPaymentId, transactionId: String(forecast._id) } }
     }
   },
+  // Supplier originals and the owner's verification of a saved calendar entry (plan omf-calendar-evidence-20261029 §2) through the
+  // one native service. The entry's exact snapshot is checked before the claim (a stale read leaves no receipt); the marker rides in
+  // the single link/unlink write (link row) or in the verification write (Payment), so a lost reply settles done only from that
+  // marker; an already_linked / already_unlinked reply writes nothing and stays unresolved for the user, as a schedule's existing does.
+  link_company_payment_evidence: {
+    resource: id('paymentId'),
+    detail: args => ({ evidenceId: String(args.evidenceId) }),
+    precheck: async (c, args) => { exactSnapshot(args.expectedUpdatedAt); await assertCurrent(Payment, c.organizationId, args.paymentId, args.expectedUpdatedAt, 'Payment not found') },
+    run: async ({ c, args, marker }) => {
+      const r: any = await linkCalendarEvidence(companyOf(c), String(args.evidenceId), String(args.paymentId), { actorId: String(c.ownerId), naviOperation: { ...marker, values: { evidenceId: String(args.evidenceId) } } })
+      return { resourceIds: evidenceIds(args), result: { outcome: r.outcome, ...await listPaymentEvidence(companyOf(c), String(args.paymentId)) } }
+    },
+    recover: evidenceLinkRecover
+  },
+  unlink_company_payment_evidence: {
+    resource: id('paymentId'),
+    detail: args => ({ evidenceId: String(args.evidenceId) }),
+    precheck: async (c, args) => { exactSnapshot(args.expectedUpdatedAt); await assertCurrent(Payment, c.organizationId, args.paymentId, args.expectedUpdatedAt, 'Payment not found') },
+    run: async ({ c, args, marker }) => {
+      const r: any = await unlinkCalendarEvidence(companyOf(c), String(args.evidenceId), String(args.paymentId), { actorId: String(c.ownerId), naviOperation: { ...marker, values: { evidenceId: String(args.evidenceId) } } })
+      return { resourceIds: evidenceIds(args), result: { outcome: r.outcome, ...await listPaymentEvidence(companyOf(c), String(args.paymentId)) } }
+    },
+    recover: evidenceLinkRecover
+  },
+  confirm_company_payment_verification: {
+    resource: id('paymentId'),
+    precheck: async (c, args) => { exactSnapshot(args.expectedUpdatedAt); await assertCurrent(Payment, c.organizationId, args.paymentId, args.expectedUpdatedAt, 'Payment not found') },
+    run: async ({ c, args, marker }) => {
+      const doc: any = await setPaymentVerification(companyOf(c), String(args.paymentId), { state: args.state, reason: args.reason, expectedUpdatedAt: args.expectedUpdatedAt }, { actorId: String(c.ownerId), naviOperation: { ...marker, values: pick(args, ['state', 'reason']) } })
+      return { resourceIds: { paymentId: String(args.paymentId) }, result: { entry: entryView(doc.toObject ? doc.toObject() : doc), meaning: 'the owner\'s verification statement saved on this entry; its status, amount and dates are unchanged; never a bank match' } }
+    },
+    recover: markedOn(Payment)
+  },
   // The export recipe of the transactions page, prepared from the conversation: the frozen criteria and format are the journal
   // entry's detail; the result holds the resolved window and the count of currently matching records, never a row. The browser
   // downloads it from the conversation card through the existing export route; nothing is saved and no record changes.
@@ -271,6 +309,8 @@ export async function businessRead(c: any, name: string, args: any) {
   if (name === 'get_company_receipt') return getCompanyReceipt(organizationId, args.receiptId)
   if (name === 'find_company_receipt_matches') return findCompanyReceiptMatches(organizationId, args.receiptId)
   if (name === 'get_company_invoice_calendar') return readInvoiceCalendar(companyOf(c), String(args.invoiceId))
+  if (name === 'list_company_payment_evidence') return listPaymentEvidence(companyOf(c), String(args.paymentId))
+  if (name === 'get_company_calendar_evidence') return getCalendarEvidence(companyOf(c), String(args.evidenceId))
   if (name === 'list_company_budgets') { const rows = await listCompanyBudgets(companyOf(c), { active: args.active === true ? 'true' : undefined, period: args.period }); return { budgets: rows.slice(0, 100).map(budgetView), truncated: rows.length > 100 } }
   if (name === 'get_company_budget') { const v = await getCompanyBudget(companyOf(c), args.budgetId); if (!v) bad(404, 'Budget not found'); return { budget: budgetView(v) } }
   if (name === 'list_company_recurring_payments') { const rows = await getRecurringPayments(companyOf(c), pick(args, ['status', 'frequency', 'search'])); return { recurringPayments: rows.slice(0, 100).map(recurringView), truncated: rows.length > 100 } }

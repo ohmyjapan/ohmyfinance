@@ -42,6 +42,19 @@ export interface IPaymentInvoiceLink {
   linkedBy?: mongoose.Types.ObjectId
 }
 
+// The owner's explicit statement about a saved payment's bank settlement (plan omf-calendar-evidence-20261029 §2): written only by
+// companyCalendarEvidenceService, never by a request body or a calendar edit (not in calendarUpdateFields), and never the lifecycle
+// status. 'unconfirmed' is 銀行照合待ち (a historical payment nobody has matched to a bank line yet); 'owner_confirmed' is the owner's own
+// word, not a bank match. No bank_matched/conflict until a bank unit exists, so Mongoose is the only validator of a state.
+export interface IPaymentVerification {
+  state: 'unconfirmed' | 'owner_confirmed'
+  reason?: string
+  basis?: string
+  updatedAt: Date
+  updatedBy?: mongoose.Types.ObjectId
+  operationId?: string
+}
+
 export const calendarCurrencies = ['JPY', 'USD', 'EUR', 'GBP', 'KRW', 'CNY']
 
 export interface IPayment extends Document {
@@ -60,6 +73,7 @@ export interface IPayment extends Document {
   source?: IPaymentSource
   invoiceLink?: IPaymentInvoiceLink
   naviOperation?: any
+  paymentVerification?: IPaymentVerification
   settledAt?: Date
   // A sourced bill the owner removed from the calendar keeps its row (B3): hidden from every calendar reader, never
   // recreated by a later notice or statement; only an explicit, freshly authorized action restores it.
@@ -107,6 +121,15 @@ const PaymentInvoiceLinkSchema = new Schema({
   },
   linkedAt: { type: Date, required: true },
   linkedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+}, { _id: false })
+
+const PaymentVerificationSchema = new Schema({
+  state: { type: String, enum: ['unconfirmed', 'owner_confirmed'], required: true },
+  reason: { type: String, maxlength: 300 },
+  basis: { type: String, maxlength: 120 },
+  updatedAt: { type: Date, required: true },
+  updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  operationId: { type: String }
 }, { _id: false })
 
 const PaymentSchema = new Schema<IPayment>({
@@ -171,6 +194,9 @@ const PaymentSchema = new Schema<IPayment>({
     type: PaymentInvoiceLinkSchema
   },
   naviOperation: { type: Schema.Types.Mixed },
+  paymentVerification: {
+    type: PaymentVerificationSchema
+  },
   settledAt: {
     type: Date
   },

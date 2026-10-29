@@ -74,6 +74,29 @@
           </div>
         </div>
 
+        <!-- Awaiting bank verification (plan omf-calendar-evidence-20261029): explicitly unknown historical rows, neutral, never overdue -->
+        <div v-if="calendarStore.awaitingVerificationPayments.length > 0" data-calendar-awaiting class="bg-slate-100 dark:bg-slate-500/20 rounded-lg p-4">
+          <div class="flex items-start">
+            <FileText class="h-5 w-5 text-slate-500 dark:text-slate-300 mt-0.5" />
+            <div class="ml-3 min-w-0">
+              <h4 class="text-sm font-medium text-slate-700 dark:text-slate-200">
+                {{ t('calendar.awaitingVerification', { count: calendarStore.awaitingVerificationPayments.length }) }}
+              </h4>
+              <div class="mt-2 space-y-1">
+                <div
+                  v-for="payment in calendarStore.awaitingVerificationPayments.slice(0, 3)"
+                  :key="payment.id"
+                  :data-calendar-awaiting-row="payment.id"
+                  @click="openEditModal(payment)"
+                  class="text-sm text-slate-700 dark:text-slate-200 cursor-pointer hover:underline break-words"
+                >
+                  {{ payment.title }} - {{ formatCurrency(payment.amount, payment.currency) }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Quick Actions (OMF style) -->
         <div class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 backdrop-blur-sm p-4">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">{{ t('calendar.quickAdd') }}</h3>
@@ -146,6 +169,7 @@
       @close="closeModal"
       @submit="handleSubmit"
       @delete="handleDelete"
+      @verify="handleVerify"
     />
   </div>
 </template>
@@ -290,6 +314,18 @@ const handleSubmit = async (data: PaymentFormData) => {
     closeModal()
   } catch (error) {
     console.error('Error saving payment:', error)
+  }
+}
+
+// The owner's verification statement on the selected row (plan omf-calendar-evidence-20261029): the store's own action with the
+// exact updatedAt of the row shown; the returned row replaces the selection so the editor and its panel show the saved record. A
+// stale row is a visible 409 in the panel, never a silent overwrite. markAsPaid is never involved.
+const handleVerify = async (data: { state: 'unconfirmed' | 'owner_confirmed', reason: string }) => {
+  if (!selectedPayment.value) return
+  try {
+    selectedPayment.value = await calendarStore.setVerification(selectedPayment.value.id, { ...data, expectedUpdatedAt: selectedPayment.value.updatedAt })
+  } catch (error) {
+    console.error('Error saving the verification:', error)
   }
 }
 

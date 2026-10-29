@@ -598,6 +598,7 @@
     "trackPayments": "支払いの追跡と予定管理",
     "addPayment": "支払いを追加",
     "overduePayments": "期限切れの支払い",
+    "awaitingVerification": "銀行照合待ちの支払い",
     "quickAdd": "クイック追加",
     "addRent": "家賃を追加",
     "addUtility": "光熱費を追加",
@@ -1019,7 +1020,42 @@
       "paid": "支払済み",
       "overdue": "期限超過",
       "cancelled": "キャンセル",
-      "completed": "完了"
+      "completed": "完了",
+      "bankWait": "銀行照合待ち"
+    },
+    "verification": {
+      "title": "支払いの確認状態",
+      "none": "確認記録はありません",
+      "states": {
+        "unconfirmed": "銀行照合待ち",
+        "owner_confirmed": "所有者確認済み"
+      },
+      "reason": "理由",
+      "reasonPlaceholder": "例: 通帳で振込を確認",
+      "markConfirmed": "確認済みにする",
+      "markUnconfirmed": "銀行照合待ちに戻す",
+      "meaning": "所有者の申告です。銀行照合ではなく、予定の状態・金額・日付は変わりません。"
+    },
+    "evidence": {
+      "title": "請求書原本",
+      "none": "紐付けられた原本はありません",
+      "loading": "読み込み中...",
+      "period": "対象期間",
+      "issuedOn": "発行日",
+      "receivedAt": "受信日",
+      "open": "開く",
+      "download": "ダウンロード",
+      "showEmail": "メール本文を表示",
+      "hideEmail": "メール本文を隠す",
+      "showVersions": "以前の版を表示",
+      "hideVersions": "以前の版を隠す",
+      "superseded": "差し替え済み",
+      "errors": {
+        "forbidden": "この会社へのアクセスを確認できません。",
+        "notFound": "記録が見つかりません。",
+        "conflict": "記録が変更されました。読み直してください。",
+        "failed": "読み込みに失敗しました。"
+      }
     }
   },
   "profile": {
