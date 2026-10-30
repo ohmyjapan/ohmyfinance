@@ -2,16 +2,17 @@
 // Part A (always): the real collector/browser.mjs wrappers over a recording stand-in for rebrowser's launch (the module's own
 // launch is replaced in this process; no Chrome starts), the real login.mjs/aplus.mjs UIs on fake pages, and the unchanged
 // showWindow bytes. Part B (OMF_CARD_NATIVE=1, serialized with the other Chrome suites): the real wrappers start real stock Chrome
-// headed in the background (no startup window, an inactive off-screen page) on intercepted synthetic issuer pages; every page request
-// is answered from synthetic HTML or aborted, the foreground window is read (never changed) and the reveal is a recording stand-in:
-// the real showWindow is NEVER called here, because it would move a window on the owner's desktop.
+// headed in the background (no startup window, an inactive, minimized off-screen page) on intercepted synthetic issuer pages; every page
+// request is answered from synthetic HTML or aborted, the foreground window is read (never changed), a passive recorder keeps the owned
+// Chrome's window events for the whole run, and the reveal is a recording stand-in: the real showWindow is NEVER called on a headed
+// window here, because it would move a window on the owner's desktop (its restore from minimized is proven in headless Chrome).
 // OMF_TEST_BROWSER_MODULE / OMF_TEST_LOGIN_MODULE / OMF_TEST_APLUS_MODULE point at a mutant copy beside the original.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -121,7 +122,7 @@ test('custom UI seams unchanged: an injected login UI or Aplus UI is used as giv
   await assert.rejects(P.collectAplusFromPage(null, null, APLUS_ACCOUNT, {}, await owned('aplus-custom'), async () => {}, { ui: aplusUi, reveal: async () => { revealed.push(1); }, loginTimeoutMs: 5000, now: () => t, wait: async ms => { t += ms; } }), /needs attention/);
   assert.deepEqual([shown, revealed.length], [['custom', 'custom-aplus'], 0], 'card-reveal:custom-seams');
 });
-test('Amex wrapper: background launch (no startup window, inactive off-screen page), ownership first, attention revealed on that page, cleanup', { skip: WINDOWS, timeout: 120000 }, async () => {
+test('Amex wrapper: background launch (no startup window, inactive, minimized off-screen page), ownership first, attention revealed on that page, cleanup', { skip: WINDOWS, timeout: 120000 }, async () => {
   const events = [], stand = recordingLaunch(() => fakeAmexPage(events, { refuse: true })), dir = await owned('amex-wrapper'), revealed = [], order = [];
   await withLaunch(stand.launch, () => assert.rejects(B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'bg', onLaunch: async () => { order.push('own'); }, reveal: async page => { order.push('reveal'); revealed.push(page); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED)));
   const [options] = stand.record.launches;
@@ -130,6 +131,7 @@ test('Amex wrapper: background launch (no startup window, inactive off-screen pa
   assert.ok(!options.args.some(a => /--headless|--no-sandbox|--disable-web-security|--remote-debugging-port/.test(a)), 'card-background:forbidden-flag');
   const created = stand.record.cdp.filter(([m]) => m === 'Target.createTarget');
   assert.equal(created.length, 1); assert.ok(offscreen(created[0][1]), 'card-background:amex-offscreen-target ' + JSON.stringify(created[0][1]));
+  assert.equal(created[0][1].windowState, 'minimized', 'card-background:amex-minimized-window ' + JSON.stringify(created[0][1]));
   assert.equal(stand.record.defaultPages, 0, 'card-background:amex-no-foreground-page');
   assert.deepEqual(order, ['own', 'reveal'], 'card-background:amex-ownership-before-attention');
   assert.deepEqual([revealed.length, revealed[0] === stand.record.pages[0], events.includes('bringToFront')], [1, true, false], 'card-reveal:amex-wrapper-routes');
@@ -144,6 +146,7 @@ test('Aplus wrapper: the same background launch and attention routing, cleanup',
   assert.deepEqual([options.headless, options.args.includes('--no-startup-window'), options.waitForInitialPage], [false, true, false], 'card-background:aplus-launch ' + JSON.stringify(options));
   const created = stand.record.cdp.filter(([m]) => m === 'Target.createTarget');
   assert.ok(created.length === 1 && offscreen(created[0][1]), 'card-background:aplus-offscreen-target');
+  assert.equal(created[0][1].windowState, 'minimized', 'card-background:aplus-minimized-window ' + JSON.stringify(created[0][1]));
   assert.equal(stand.record.defaultPages, 0, 'card-background:aplus-no-foreground-page');
   assert.deepEqual([revealed.length, revealed[0] === stand.record.pages[0], events.includes('bringToFront')], [1, true, false], 'card-reveal:aplus-wrapper-routes');
   assert.equal(stand.record.closed, 1); assert.deepEqual(B.ownedBrowsers(), [], 'card-background:aplus-registry-empty');
@@ -265,6 +268,98 @@ public static class OmfCardBg {
 }
 const intersects = (r, s) => r[0] < s[2] && r[2] > s[0] && r[1] < s[3] && r[3] > s[1];
 const onScreen = facts => facts.windows.filter(w => w.cls === 'Chrome_WidgetWin_1' && !w.iconic && intersects(w.rect, facts.screen) && w.rect[2] - w.rect[0] > 200 && w.rect[3] - w.rect[1] > 200);
+const minimized = facts => facts.windows.some(w => w.cls === 'Chrome_WidgetWin_1' && w.iconic);
+// A passive, read-only recorder of ONE owned process's window events for a whole native run (sampling alone could miss a short
+// foreground): out-of-context WinEvent hooks for foreground changes (another process's foreground is kept only as the bare fact, without
+// identity), minimize start/end, show/hide and moves of the owned process's top-level windows, plus a 250 ms sample of whether the
+// foreground window is owned and whether the system foreground lock is open (the user idle longer than its timeout: an activation
+// would then succeed). Nothing is moved, shown or activated and no input is sent.
+const RECORDER = `using System; using System.IO; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
+public static class OmfCardFocus {
+  delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+  [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
+  [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+  [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc proc, uint pid, uint tid, uint flags);
+  [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr h);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO p);
+  [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint ini);
+  [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m, IntPtr h, uint a, uint b, uint remove);
+  [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+  [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+  [DllImport("user32.dll")] static extern uint MsgWaitForMultipleObjectsEx(uint n, IntPtr handles, uint ms, uint mask, uint flags);
+  static readonly string Q = ((char)34).ToString();
+  static StreamWriter w; static uint owned; static WinEventProc keep;
+  static string Now() { return ((long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds).ToString(); }
+  static string P(string k, string v) { return Q + k + Q + ":" + v; }
+  static string S(string v) { return Q + v.Replace(Q, "").Replace("\\\\", "") + Q; }
+  static string B(bool v) { return v ? "true" : "false"; }
+  static void Line(List<string> parts) { w.WriteLine("{" + string.Join(",", parts) + "}"); }
+  static void Window(List<string> parts, IntPtr h) {
+    RECT r; GetWindowRect(h, out r); var c = new StringBuilder(64); GetClassName(h, c, 64);
+    int x = GetSystemMetrics(76), y = GetSystemMetrics(77), right = x + GetSystemMetrics(78), bottom = y + GetSystemMetrics(79);
+    parts.Add(P("cls", S(c.ToString()))); parts.Add(P("iconic", B(IsIconic(h)))); parts.Add(P("onScreen", B(r.L < right && r.R > x && r.T < bottom && r.B > y))); parts.Add(P("rect", "[" + r.L + "," + r.T + "," + r.R + "," + r.B + "]"));
+  }
+  static void OnEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
+    if (hwnd == IntPtr.Zero) return;
+    uint pid; GetWindowThreadProcessId(hwnd, out pid);
+    var parts = new List<string> { P("t", Now()) };
+    if (ev == 0x3) { if (pid != owned) { parts.Add(P("ev", S("foreground-other"))); Line(parts); return; } parts.Add(P("ev", S("foreground"))); Window(parts, hwnd); Line(parts); return; }
+    if (pid != owned || idObject != 0 || idChild != 0 || GetAncestor(hwnd, 2) != hwnd) return;
+    parts.Add(P("ev", S(ev == 0x16 ? "minimizestart" : ev == 0x17 ? "minimizeend" : ev == 0x8002 ? "show" : ev == 0x8003 ? "hide" : "location"))); parts.Add(P("hwnd", S(hwnd.ToInt64().ToString("x")))); Window(parts, hwnd); Line(parts);
+  }
+  public static void Run(int ownedPid, string outFile, string stopFile, int maxMs) {
+    owned = (uint)ownedPid; w = new StreamWriter(outFile, false, new UTF8Encoding(false)); w.AutoFlush = true; keep = OnEvent;
+    uint lockMs = 0; SystemParametersInfo(0x2000, 0, ref lockMs, 0);
+    IntPtr[] hooks = { SetWinEventHook(0x3, 0x3, IntPtr.Zero, keep, 0, 0, 2), SetWinEventHook(0x16, 0x17, IntPtr.Zero, keep, owned, 0, 2), SetWinEventHook(0x8002, 0x8003, IntPtr.Zero, keep, owned, 0, 2), SetWinEventHook(0x800B, 0x800B, IntPtr.Zero, keep, owned, 0, 2) };
+    int n = 0; foreach (var h in hooks) if (h != IntPtr.Zero) n++;
+    Line(new List<string> { P("t", Now()), P("ev", S("ready")), P("hooks", n.ToString()), P("lockTimeoutMs", lockMs.ToString()) });
+    var started = DateTime.UtcNow; var last = DateTime.MinValue;
+    try {
+      while (true) {
+        MsgWaitForMultipleObjectsEx(0, IntPtr.Zero, 50, 0x04FF, 0x4);
+        MSG m; while (PeekMessage(out m, IntPtr.Zero, 0, 0, 1)) { TranslateMessage(ref m); DispatchMessage(ref m); }
+        if ((DateTime.UtcNow - last).TotalMilliseconds >= 250) {
+          last = DateTime.UtcNow; uint fp; GetWindowThreadProcessId(GetForegroundWindow(), out fp);
+          var li = new LASTINPUTINFO(); li.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)); GetLastInputInfo(ref li);
+          Line(new List<string> { P("t", Now()), P("ev", S("sample")), P("fgOwned", B(fp == owned)), P("lockOpen", B(unchecked((uint)Environment.TickCount - li.dwTime) >= lockMs)) });
+        }
+        if (File.Exists(stopFile) || (DateTime.UtcNow - started).TotalMilliseconds > maxMs) break;
+      }
+    } finally { foreach (var h in hooks) if (h != IntPtr.Zero) UnhookWinEvent(h); Line(new List<string> { P("t", Now()), P("ev", S("stopped")) }); w.Close(); }
+  }
+}`;
+async function watchWindows(pid) {
+  const dir = await owned('windows'), out = path.join(dir, 'events.jsonl'), stop = path.join(dir, 'stop'), literal = s => "'" + s.replaceAll("'", "''") + "'";
+  const script = `Add-Type -TypeDefinition @'\n${RECORDER}\n'@\n[OmfCardFocus]::Run(${Number(pid)}, ${literal(out)}, ${literal(stop)}, 900000)`;
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: 'ignore' });
+  const read = async () => { try { return (await readFile(out, 'utf8')).split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)); } catch { return []; } };
+  for (let i = 0; i < 300 && child.exitCode === null && !(await read()).some(e => e.ev === 'ready'); i++) await new Promise(r => setTimeout(r, 100));
+  return { async stop() { await writeFile(stop, 'stop').catch(() => {}); if (child.exitCode === null) await Promise.race([new Promise(r => child.once('exit', r)), new Promise(r => setTimeout(r, 10000))]); if (child.exitCode === null) child.kill(); return read(); } };
+}
+// The continuous no-focus evidence of one native run, read after its Chrome is gone: the owned Chrome never had the foreground (no
+// foreground event, no owned sample), its window was minimized once created and never restored, and no window of it was shown on screen
+// after that. The one show at Chrome's default bounds before Target.createTarget applies the off-screen bounds and the minimize is
+// Chrome's own creation order (unchanged by the repair): measured and reported, not asserted.
+async function assertNoFocus(seen, label) {
+  const events = await seen.windows.stop(), ready = events.find(e => e.ev === 'ready'), samples = events.filter(e => e.ev === 'sample');
+  assert.equal(ready?.hooks, 4, 'card-background:native-recorder-ready ' + label);
+  assert.deepEqual(events.filter(e => e.ev === 'foreground' || (e.ev === 'sample' && e.fgOwned)), [], 'card-background:native-never-foreground ' + label);
+  const at = events.findIndex(e => e.ev === 'minimizestart');
+  assert.ok(at >= 0, 'card-background:native-minimized ' + label + ' ' + JSON.stringify(events.filter(e => e.ev !== 'sample')));
+  assert.deepEqual(events.filter(e => e.ev === 'minimizeend'), [], 'card-background:native-never-restored ' + label);
+  assert.deepEqual(events.slice(at).filter(e => ['show', 'location', 'foreground'].includes(e.ev) && e.onScreen && !e.iconic), [], 'card-background:native-never-on-screen-after-minimize ' + label);
+  const shown = events.find(e => e.ev === 'show' && e.onScreen);
+  return { creationShownMs: shown ? events[at].t - shown.t : null, samples: samples.length, lockOpen: samples.filter(s => s.lockOpen).length, otherForeground: events.filter(e => e.ev === 'foreground-other').length };
+}
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
 const waitGone = async pid => { for (let i = 0; i < 40 && alive(pid); i++) await new Promise(r => setTimeout(r, 200)); return !alive(pid); };
 // The synthetic issuer pages; every other page request is aborted (counted).
@@ -275,7 +370,7 @@ const SYNTHETIC = {
 };
 function nativeOnLaunch(seen, site = SYNTHETIC) {
   return async ({ pid, browser }) => {
-    seen.pid = pid; seen.command = await commandLineOf(pid);
+    seen.pid = pid; seen.command = await commandLineOf(pid); seen.windows = await watchWindows(pid); // ready before the page's window exists
     const open = browser.newPage.bind(browser);
     browser.newPage = async () => {
       const page = await open();
@@ -313,7 +408,7 @@ for (const [lane, run, fulfilledKey, profileOf] of [
   ['Amex', (dir, options) => B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'native', ...options }), AMEX_LOGIN, dir => B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'native')],
   ['Aplus', (dir, options) => B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'native', ...options }), APLUS + '/login/id/input', dir => B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, 'native')]
 ]) {
-  test(`native ${lane}: real background Chrome on synthetic pages — no startup page, off-screen inactive window, foreground kept, attention routed to the same page, no issuer request, closed and removed`, { skip: NATIVE, timeout: 240000 }, async () => {
+  test(`native ${lane}: real background Chrome on synthetic pages — no startup page, minimized off-screen inactive window, foreground kept, attention routed to the same page, no issuer request, closed and removed`, { skip: NATIVE, timeout: 240000 }, async t => {
     const dir = await owned('native-' + lane.toLowerCase()), seen = { fulfilled: [], aborted: [] }, facts = [];
     await assert.rejects(run(dir, { onLaunch: nativeOnLaunch(seen), reveal: async page => { facts.push({ url: page.url(), facts: await windowFacts(seen.pid) }); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED));
     assert.ok(seen.command.includes('--no-startup-window') && seen.command.includes('--remote-debugging-pipe') && !seen.command.includes('--headless'), 'card-background:native-flags ' + seen.command.slice(0, 300));
@@ -323,9 +418,11 @@ for (const [lane, run, fulfilledKey, profileOf] of [
     assert.ok(url.startsWith(fulfilledKey), 'card-reveal:native-same-page ' + url);
     assert.notEqual(at.foregroundPid, seen.pid, 'card-background:native-foreground-kept');
     assert.deepEqual(onScreen(at), [], 'card-background:native-offscreen ' + JSON.stringify(at.windows));
+    assert.ok(minimized(at), 'card-background:native-minimized-at-attention ' + JSON.stringify(at.windows));
     assert.ok(seen.fulfilled.includes(fulfilledKey), 'synthetic page served ' + JSON.stringify(seen));
     assert.ok(await waitGone(seen.pid), 'card-background:native-closed'); assert.equal(existsSync(profileOf(dir)), false, 'card-background:native-profile-removed');
     assert.deepEqual(B.ownedBrowsers(), []);
+    t.diagnostic('window events ' + lane + ': ' + JSON.stringify(await assertNoFocus(seen, lane)));
   });
 }
 // P4/P4b natively: the real aplusUi through statement, code and unbilled capture in the background wrapper. `person`: the recording reveal
@@ -339,20 +436,21 @@ async function nativeAplus(label, { codeSource = null, person = false, signal = 
     reveal: async page => { timeline.push(['reveal']); revealed.push({ url: page.url(), facts: await windowFacts(seen.pid) }); if (person) await page.evaluate(code => { document.getElementById('elem1-1').value = code; setTimeout(() => document.getElementById('go').click(), 0); }, '4821'); } }).then(r => r, error => ({ error }));
   assert.ok(await waitGone(seen.pid), 'card-background:native-aplus-closed'); assert.deepEqual(B.ownedBrowsers(), []);
   assert.equal(existsSync(B.ephemeralProfile(dir, account.ownerId, 'aplus', account._id, label)), false, 'card-background:native-aplus-profile-removed');
-  return { result, revealed, seen, timeline };
+  return { result, revealed, seen, timeline, focus: await assertNoFocus(seen, 'aplus-' + label) };
 }
 const attention = timeline => timeline.filter(e => e[0] === 'reveal' || e[1] === 'verification_required' || e[2] === AUTO_TEXT).map(e => e[0] === 'reveal' ? 'reveal' : e[2] === AUTO_TEXT ? 'auto' : 'ask:' + e[2]);
-test('native Aplus statement code read automatically: the real page completes statement and unbilled capture with the window never revealed and the person never asked (P4, P4b)', { skip: NATIVE, timeout: 300000 }, async () => {
+test('native Aplus statement code read automatically: the real page completes statement and unbilled capture with the window never revealed and the person never asked (P4, P4b)', { skip: NATIVE, timeout: 300000 }, async t => {
   const claims = [], during = [];
-  const { result, revealed, seen, timeline } = await nativeAplus('auto', { codeSource: owned => ({ async messages({ requestedAt }) { during.push({ pid: owned.pid, facts: await windowFacts(owned.pid) }); return [SMS('src:native', requestedAt, '2468')]; }, async claim(id) { claims.push(id); } }) });
+  const { result, revealed, seen, timeline, focus } = await nativeAplus('auto', { codeSource: owned => ({ async messages({ requestedAt }) { during.push({ pid: owned.pid, facts: await windowFacts(owned.pid) }); return [SMS('src:native', requestedAt, '2468')]; }, async claim(id) { claims.push(id); } }) });
   assert.equal(result.items?.length, 1, 'statement collected ' + JSON.stringify(result.failed ?? result.error?.message)); assert.ok(result.pending, 'unbilled captured');
   assert.deepEqual(revealed, [], 'card-reveal:native-auto-code-hidden ' + JSON.stringify(revealed.map(r => r.url)));
   assert.deepEqual(attention(timeline), ['auto'], 'card-reveal:native-auto-no-person-state ' + JSON.stringify(timeline));
   assert.deepEqual([seen.codes, claims], [['2468'], ['src:native']], 'the automatic code was typed once');
   assert.ok(during.length >= 1, 'window facts sampled while the code was read');
-  for (const { pid, facts } of during) { assert.notEqual(facts.foregroundPid, pid, 'card-background:native-aplus-foreground-kept'); assert.deepEqual(onScreen(facts), [], 'card-background:native-aplus-offscreen'); }
+  for (const { pid, facts } of during) { assert.notEqual(facts.foregroundPid, pid, 'card-background:native-aplus-foreground-kept'); assert.deepEqual(onScreen(facts), [], 'card-background:native-aplus-offscreen'); assert.ok(minimized(facts), 'card-background:native-aplus-minimized ' + JSON.stringify(facts.windows)); }
+  t.diagnostic('window events aplus-auto: ' + JSON.stringify(focus));
 });
-test('native Aplus without a code source, or with a failing reader: the person is asked, then the window is revealed exactly once, on the code page, and the person completes it (P4, P4b controls)', { skip: NATIVE, timeout: 300000 }, async () => {
+test('native Aplus without a code source, or with a failing reader: the person is asked, then the window is revealed exactly once, on the code page, and the person completes it (P4, P4b controls)', { skip: NATIVE, timeout: 300000 }, async t => {
   const none = await nativeAplus('manual', { person: true });
   assert.equal(none.revealed.length, 1, 'card-reveal:native-no-source-shown-once'); assert.ok(none.revealed[0].url.endsWith('/authentication/otp/sms'), 'revealed on the code page ' + none.revealed[0].url);
   assert.deepEqual(attention(none.timeline), ['ask:' + ASK_TEXT, 'reveal'], 'card-reveal:native-manual-asks-person-once ' + JSON.stringify(none.timeline));
@@ -361,18 +459,43 @@ test('native Aplus without a code source, or with a failing reader: the person i
   const failing = await nativeAplus('failing', { person: true, codeSource: { async messages() { reads++; throw new Error('adb: device unauthorized'); }, async claim() { throw new Error('never'); } } });
   assert.equal(failing.revealed.length, 1, 'card-reveal:native-reader-failure-shown-once'); assert.ok(reads >= 1); assert.deepEqual([failing.result.items?.length, failing.seen.codes], [1, ['4821']], 'completed ' + (failing.result.error?.message || ''));
   assert.deepEqual(attention(failing.timeline), ['auto', 'ask:' + ASK_TEXT, 'reveal'], 'card-reveal:native-failing-asks-after-progress ' + JSON.stringify(failing.timeline));
-  for (const r of [...none.revealed, ...failing.revealed]) assert.deepEqual(onScreen(r.facts), [], 'the recording reveal never moved the window');
+  for (const r of [...none.revealed, ...failing.revealed]) { assert.deepEqual(onScreen(r.facts), [], 'the recording reveal never moved the window'); assert.ok(minimized(r.facts), 'card-background:native-minimized-at-attention ' + JSON.stringify(r.facts.windows)); }
+  t.diagnostic('window events aplus-manual/failing: ' + JSON.stringify([none.focus, failing.focus]));
 });
-test('native Aplus cancellation while the code is read: the job ends cancelled, the person is never asked and nothing is revealed; Chrome and profile removed (P4b)', { skip: NATIVE, timeout: 240000 }, async () => {
+test('native Aplus cancellation while the code is read: the job ends cancelled, the person is never asked and nothing is revealed; Chrome and profile removed (P4b)', { skip: NATIVE, timeout: 240000 }, async t => {
   const controller = new AbortController();
-  const { result, revealed, timeline } = await nativeAplus('abort', { signal: controller.signal, codeSource: { async messages() { controller.abort(); return []; }, async claim() { throw new Error('never'); } } });
+  const { result, revealed, timeline, focus } = await nativeAplus('abort', { signal: controller.signal, codeSource: { async messages() { controller.abort(); return []; }, async claim() { throw new Error('never'); } } });
   assert.equal(result.error?.name, 'AbortError', 'cancelled ' + (result.error?.message || JSON.stringify(result)));
   assert.deepEqual([attention(timeline), revealed.length], [['auto'], 0], 'card-reveal:native-abort-neither ' + JSON.stringify(timeline));
+  t.diagnostic('window events aplus-abort: ' + JSON.stringify(focus));
 });
-test('native session loss: closing the owned browsers while the person is needed ends the job; no Chrome or profile is left', { skip: NATIVE, timeout: 240000 }, async () => {
+test('native session loss: closing the owned browsers while the person is needed ends the job; no Chrome or profile is left', { skip: NATIVE, timeout: 240000 }, async t => {
   const dir = await owned('native-loss'), seen = { fulfilled: [], aborted: [] };
   await assert.rejects(B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'loss', onLaunch: nativeOnLaunch(seen), reveal: async () => { await B.closeOwnedBrowsers(); } }));
   assert.ok(await waitGone(seen.pid), 'card-background:native-loss-closed');
   assert.equal(existsSync(B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, 'loss')), false, 'card-background:native-loss-profile');
   assert.deepEqual(B.ownedBrowsers(), []);
+  t.diagnostic('window events session-loss: ' + JSON.stringify(await assertNoFocus(seen, 'session-loss')));
+});
+// The reveal of the minimized background window with the REAL backgroundPage and the REAL showWindow, in HEADLESS Chrome only (no window
+// of the owner's desktop exists or moves): the launch is made headless beneath the wrapper's own options, so browserFor installs the
+// background page exactly as for a headed batch; the page opens minimized off-screen and hidden, and showWindow brings that SAME page to a
+// normal window at its usable bounds (the headless screen), visible, with no other page. The headed geometry stays excluded (B8).
+const realLaunch = puppeteer.launch.bind(puppeteer);
+test('native reveal geometry in HEADLESS Chrome: the real background page opens minimized and hidden; the real showWindow restores that same page to a normal window at usable bounds', { skip: NATIVE, timeout: 120000 }, async () => {
+  const dir = await owned('reveal-headless'), profile = B.ephemeralProfile(dir, ACCOUNT.ownerId, 'reveal', ACCOUNT._id, 'headless'), launches = [];
+  const browser = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true }); }, () => B.browserFor(profile, { ephemeral: true, root: dir, background: true }));
+  try {
+    assert.deepEqual([launches.length, launches[0].headless, launches[0].args.includes('--no-startup-window')], [1, false, true], 'the wrapper asked for the headed background launch');
+    const page = await browser.newPage(), session = await page.createCDPSession();
+    const created = (await session.send('Browser.getWindowForTarget')).bounds;
+    assert.deepEqual([created.windowState, created.left, created.top, await page.evaluate(() => document.visibilityState)], ['minimized', -32000, -32000, 'hidden'], 'card-background:headless-created-minimized ' + JSON.stringify(created));
+    await B.showWindow(page);
+    const shown = (await session.send('Browser.getWindowForTarget')).bounds, area = await page.evaluate(() => ({ left: screen.availLeft, top: screen.availTop, width: screen.availWidth, height: screen.availHeight }));
+    assert.deepEqual([shown.windowState, shown.left, shown.top, shown.width, shown.height], ['normal', area.left + 40, area.top + 40, Math.max(800, Math.min(1280, area.width - 80)), Math.max(600, Math.min(900, area.height - 80))], 'card-reveal:headless-restored-at-usable-bounds ' + JSON.stringify({ shown, area }));
+    assert.equal(await page.evaluate(() => document.visibilityState), 'visible', 'card-reveal:headless-page-visible');
+    const pages = await browser.pages(); assert.ok(pages.length === 1 && pages[0] === page, 'card-reveal:headless-same-page');
+    await session.detach().catch(() => {});
+  } finally { await B.closeOwnedBrowsers(); }
+  assert.equal(existsSync(profile), false, 'card-background:headless-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
 });

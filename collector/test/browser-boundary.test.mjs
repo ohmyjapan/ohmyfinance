@@ -257,7 +257,7 @@ export async function runBrowserBoundaryLegs({ tmpdir = os.tmpdir() } = {}) {
     });
 
     // The one HEADED leg: background/attention behaviour exists only for a real window. The page stays on a local document.
-    await leg('B8 background bank launch (headed): no startup window; the page opens in an inactive off-screen window — foreground and cursor unchanged, input still delivered; showWindow brings the SAME window on screen at usable bounds; same sandbox/pipe/no-port flags; closure and the unrelated Chrome as before', async () => {
+    await leg('B8 background bank launch (headed): no startup window; the page opens in an inactive, minimized off-screen window — foreground and cursor unchanged, input still delivered; showWindow restores the SAME window on screen at usable bounds; same sandbox/pipe/no-port flags; closure and the unrelated Chrome as before', async () => {
       check(typeof showWindow === 'function', 'browser.mjs exports no showWindow');
       const profile = ephemeralProfile(D, 'owner', 'bank', 'account', 'b8'), before = await windowFacts(0);
       const browser = await browserFor(profile, { ephemeral: true, root: D, background: true });
@@ -273,6 +273,7 @@ export async function runBrowserBoundaryLegs({ tmpdir = os.tmpdir() } = {}) {
       const quiet = await windowFacts(pid);
       check(quiet.foregroundPid !== pid, `the background Chrome ${pid} took the foreground`);
       check(onScreen(quiet).length === 0, `a background window is on screen: ${JSON.stringify(quiet.windows)}`);
+      check(quiet.windows.some(w => w.cls === 'Chrome_WidgetWin_1' && w.iconic), `the background window is not minimized: ${JSON.stringify(quiet.windows)}`);
       check(JSON.stringify(quiet.cursor) === JSON.stringify(before.cursor), `the cursor moved ${JSON.stringify(before.cursor)} → ${JSON.stringify(quiet.cursor)}`);
       await showWindow(page); await sleep(800);
       const shown = await windowFacts(pid), visible = onScreen(shown);

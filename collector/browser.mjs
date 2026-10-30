@@ -60,11 +60,19 @@ export function ownedBrowsers() { return [...owned.values()].map(entry => ({ pid
 // (Target.createTarget background:true), so a job never takes the foreground, and the page receives its input through the
 // DevTools pipe, never the system cursor or keyboard. showWindow(page) moves that SAME window to usable bounds on the primary work
 // area when the person is needed. No other process's window is ever touched.
+// Focus repair (case omf-background-focus-repair-20261030): that window is also MINIMIZED (windowState) right after Chrome creates it.
+// An inactive normal window, even off-screen, stays an ordinary top-level window that Windows itself can hand the foreground to (a
+// native control sampled the foreground on the owned Chrome while it read the statement code; Chrome 155 requests no activation on
+// this path); Windows does not choose a minimized window when it activates one on its own, and an activation Chrome itself requested
+// would first restore it (off-screen; the native tests record any restore). Chrome 155 shows the window inactive once at its default
+// bounds, moves it to the off-screen bounds (kept as its restore bounds) and minimizes it. While minimized the page is hidden: DevTools
+// input, navigation, timers and downloads work; animation frames, IntersectionObserver and CSS transitions wait until it is shown.
+// showWindow restores the same window before moving it on screen.
 export const BACKGROUND_ARGS = Object.freeze(['--no-startup-window']);
 const OFFSCREEN = Object.freeze({ left: -32000, top: -32000, width: 1280, height: 900 });
 async function backgroundPage(browser) {
   const session = await browser.target().createCDPSession(); let targetId;
-  try { ({ targetId } = await session.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true, ...OFFSCREEN })); }
+  try { ({ targetId } = await session.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true, windowState: 'minimized', ...OFFSCREEN })); }
   finally { await session.detach().catch(() => {}); }
   const target = await browser.waitForTarget(t => t._targetId === targetId, { timeout: 30000 });
   const page = await target.page();
@@ -91,7 +99,7 @@ export async function showWindow(page, { margin = 40 } = {}) {
  * options: ephemeral (the profile is deleted at closure; needs root), root (the collector directory), headless
  * (false = the visible window of the first release; tests use true), onLaunch({pid, browser}) — the collector
  * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows. background (headed
- * only; bank retrievals): no startup window, and this browser's newPage() opens an inactive off-screen window (see above).
+ * only; bank retrievals): no startup window, and this browser's newPage() opens an inactive, minimized off-screen window (see above).
  */
 export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null, background = false } = {}) {
   const key = keyOf(profile);
@@ -193,7 +201,7 @@ export async function selectLatestStatement(page, primaryCard) {
  * deleted at closure; retained profiles are never opened. `settings` are the credentials opened inside the batch (none in
  * the manual lane); `gmail` the mailbox grant opened inside the batch; `onLaunch` the ownership hand-over; `origin` binds
  * the outbox manifest to the paired OMF. Plan omf-card-handover-20261030: the routine download runs in the background owned
- * Chrome of the bank jobs (no startup window, an inactive off-screen page, input only through DevTools); when the person is
+ * Chrome of the bank jobs (no startup window, an inactive, minimized off-screen page, input only through DevTools); when the person is
  * needed the login UI calls `reveal` (default showWindow) on that SAME page — never another window, never a global input.
  */
 export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', reveal = showWindow } = {}) {

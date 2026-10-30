@@ -13,8 +13,9 @@
 // is the staged lock's version and integrity; packageProof(…, { install: true }) runs the production `npm ci --omit=dev --ignore-scripts`
 // instead — too slow for the hub's 15-minute cap, so it is run and kept separately), the suite passes on the STAGED browser module and
 // lane, the staged package with the catch removed fails the survival assertion, and a stage allowlist without the helper fails its
-// named manifest check; B a byte proof that browser.mjs differs from 5b7ef2c6 by the one export line only (launch flags, ownership,
-// closure, geometry, showWindow unchanged) and the reversible test-only copy of the browser-boundary legs B1-B7 (B8 calls showWindow
+// named manifest check; B a byte proof that browser.mjs differs from 5b7ef2c6 by the one export line, the two card wrappers and the
+// focus repair's windowState insertion in backgroundPage only (launch flags, ownership, closure, showWindow unchanged; every other
+// top-level statement compared) and the reversible test-only copy of the browser-boundary legs B1-B7 (B8 calls showWindow
 // and brings a window to the front: excluded by the owner's no-foreground order, never run, never counted). The copy's headless
 // Chrome legs are timing-bound and varied between runs under other sessions' load (fixture-01/03/04), so they are not part of this
 // verdict: they run separately, interleaved on this tree and on an exported 5b7ef2c6 tree (boundaryCopy(temp, tree), containHook);
@@ -207,20 +208,31 @@ export async function boundaryCopy(temp, tree = root) {
 async function boundaryProof(temp, assert) {
   // browser.mjs = 5b7ef2c6 + the one export line + the card-handover wrappers (plan omf-card-handover-20261030: collectStatement and
   // collectAplusStatement start the background owned Chrome and route attention to that page; scripts/zoomer-fixtures/omf-card-handover.mjs
-  // proves them). Launch flags, ownership, closure, geometry and showWindow stay byte-identical to 5b7ef2c6, each declaration whole.
+  // proves them) + the focus repair's one insertion in backgroundPage. Launch flags, ownership, closure and showWindow stay byte-identical
+  // to 5b7ef2c6, each declaration whole.
   const head = (await run('git', ['show', BASE + ':' + BROWSER])).stdout.replace(/\r\n/g, '\n'), now = (await readFile(path.join(root, BROWSER), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(now.split('\n').filter(l => l === EXPORT_LINE).length, 1, 'frame-init:one-export-line');
   const declaration = (text, name) => { const lines = text.split('\n'), i = lines.findIndex(l => new RegExp('^(export )?(async )?function ' + name + '\\(').test(l) || new RegExp('^(export )?const ' + name + ' = ').test(l)); if (i < 0) return null; if (/^(export )?const /.test(lines[i])) return lines[i]; const j = lines.findIndex((l, k) => k > i && l === '}'); return j < 0 ? null : lines.slice(i, j + 1).join('\n'); };
-  for (const name of ['LAUNCH_ARGS', 'BACKGROUND_ARGS', 'OFFSCREEN', 'ephemeralProfile', 'assertEphemeralPath', 'assertPlainDirectory', 'probeProfile', 'backgroundPage', 'showWindow', 'browserFor', 'closeEntry', 'closeOwnedBrowsers', 'removeEphemeral', 'recoverEphemeral']) { const was = declaration(head, name); assert.ok(was, 'frame-init:pinned-declaration ' + name); assert.equal(declaration(now, name), was, 'frame-init:unchanged-function ' + name); }
+  // The focus repair (case omf-background-focus-repair-20261030) changes ONE pinned declaration on purpose: backgroundPage creates its
+  // window minimized. Its pin is the 5b7ef2c6 declaration with exactly that one insertion (anchor once, else a harness failure); the other
+  // 13 declarations stay byte-identical to 5b7ef2c6.
+  const repaired = text => { const [from, to] = ['background: true, ...OFFSCREEN', "background: true, windowState: 'minimized', ...OFFSCREEN"], hits = text.split(from).length - 1; if (hits !== 1) throw new Error('FAIL focus-repair anchor hits ' + hits); return text.replace(from, () => to); };
+  for (const name of ['LAUNCH_ARGS', 'BACKGROUND_ARGS', 'OFFSCREEN', 'ephemeralProfile', 'assertEphemeralPath', 'assertPlainDirectory', 'probeProfile', 'backgroundPage', 'showWindow', 'browserFor', 'closeEntry', 'closeOwnedBrowsers', 'removeEphemeral', 'recoverEphemeral']) {
+    const was = declaration(head, name); assert.ok(was, 'frame-init:pinned-declaration ' + name);
+    if (name === 'backgroundPage') assert.equal(declaration(now, name), repaired(was), 'frame-init:focus-repaired-function ' + name);
+    else assert.equal(declaration(now, name), was, 'frame-init:unchanged-function ' + name);
+  }
   // Keep every executable top-level statement outside the two deliberately changed card wrappers unchanged as well: declaration
-  // pins alone would miss an added side effect or a changed import. The one new loginUi import is the only allowed import addition.
+  // pins alone would miss an added side effect or a changed import. The one new loginUi import is the only allowed import addition;
+  // backgroundPage is compared with its repaired pin, never left out.
   const ts = createRequire(path.join(root, 'package.json'))('typescript'), printer = ts.createPrinter({ removeComments: true });
   const core = text => { const sf = ts.createSourceFile('browser.mjs', text.split('\n').filter(l => l !== EXPORT_LINE).join('\n'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS); assert.equal(sf.parseDiagnostics.length, 0, 'frame-init:browser-parses'); const wrappers = sf.statements.filter(s => ts.isFunctionDeclaration(s) && ['collectStatement', 'collectAplusStatement'].includes(s.name?.text)); assert.equal(wrappers.length, 2, 'frame-init:two-card-wrappers'); return sf.statements.filter(s => !wrappers.includes(s)).map(s => { const printed = printer.printNode(ts.EmitHint.Unspecified, s, sf); return ts.isImportDeclaration(s) && s.moduleSpecifier.text === './login.mjs' ? printed.replace(/, loginUi(?= } from)/, '') : printed; }).join('\n'); };
-  assert.equal(core(now), core(head), 'frame-init:browser-outside-card-wrappers-unchanged');
+  const pinned = declaration(head, 'backgroundPage');
+  assert.equal(core(now), core(head.replace(pinned, () => repaired(pinned))), 'frame-init:browser-outside-card-wrappers-unchanged');
   // the reversible test-only copy the separate A/B runner executes (B8 excluded) is generated and proven here; Chrome is not launched
   const copy = await boundaryCopy(temp);
   assert.equal(copy.unchangedFromHead, true, 'frame-init:boundary-test-unchanged');
-  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers (launch flags, ownership, closure, geometry and showWindow byte-identical); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
+  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers + backgroundPage's one windowState 'minimized' insertion (13 pinned declarations byte-identical, backgroundPage equal to its repaired pin; launch flags, ownership, closure and showWindow unchanged); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
 }
 
 // ── C: every production importer of collector/browser.mjs is classified ──

@@ -39,7 +39,9 @@ result — a failure stays a failure, and a balance check never counts as a stat
 
 The collector advertises `balance-v1` in `bank/claim`. An older collector never receives a balance job (also not on a lease reclaim);
 the screen shows 要更新 once that PC claims without it. Only the selected PC receives the account's balance jobs. The check runs in the
-protected session's owned, ephemeral, background Chrome — never shown, no cursor — signing in once with the account's own saved login
+protected session's owned, ephemeral, background Chrome — never shown, no cursor; its window is minimized at creation, so Windows does
+not hand it the foreground on its own, and its page is hidden meanwhile (no animation frames, IntersectionObserver or CSS transitions
+until shown; not yet checked against the real bank pages) — signing in once with the account's own saved login
 through the existing one-attempt journal and pending markers. Where a statement job would ask the person (no saved login, a blocked or
 refused key, additional verification, an unconfirmed sign-in, another active session), the balance check stops with that reason
 instead. It reads exactly the bank's field, retains the normalized balance-only receipt in `outbox/balance/<account>/<job>/` before the
