@@ -33,6 +33,22 @@ Deletion: a done Navi deletion or an issuer card bill's suppression (the existin
 
 ## Server
 
+### Calendar source facts and read provenance
+
+Navi's list/detail calendar reads include a checked `supplierOriginals` summary, batch-loaded through the selected company's link,
+invoice and active-source records. It names linked invoice identities and compact active file metadata (at most10 identities and5
+file names each); counts and truncation remain explicit, and unresolved links are distinguished from an empty result. Full email
+text and superseded versions stay in `list_company_payment_evidence` / `get_company_calendar_evidence`. No file contents, filesystem
+paths or other companies' records are added to the calendar response. Registration metadata is not file-integrity or bank-settlement
+verification. The legacy `invoiceLink` is preserved and labelled `issued_invoice_income_schedule`: a null value does not mean no
+supplier original exists.
+
+Executed company record reads retain at most100 diagnostic events on their exact current turn: tool name, slot, time, HTTP status,
+and hashes of arguments and results. They retain no raw arguments, financial result values, source text or credentials. Successful
+reads and native read errors are recorded; validation and authorization refusals before read execution are outside this trace.
+Recording is best effort, stays within the existing live agent/lease/company/turn filter and preserves the original result/error.
+It changes no conversation revision, payment, original or mutation receipt. Public-reader events are outside this record-read trace.
+
 `server/services/financeCompanyAssistantService.ts`:
 
 - `selection()` accepts `budgetId` only on `budgets` and `recurringPaymentId` only on `recurring` (strict id syntax), like the existing invoice/calendar/transaction/receipt pointers. They are part of the frozen target and request identity, handed to the claiming worker as `job.target` and `facts.selection`.

@@ -113,6 +113,29 @@ export async function registerCalendarEvidence(organizationId: mongoose.Types.Ob
 }
 
 // ---- Reads
+// Compact relationship facts for Navi's normal calendar reads. Full email text, file ids and superseded versions remain in the
+// explicit original reader. Every join is scoped to this company; an unresolved link is reported as unresolved, never as no link.
+export async function paymentEvidenceSummaries(organizationId: mongoose.Types.ObjectId, paymentIds: mongoose.Types.ObjectId[]) {
+  await init()
+  const links: any[] = await CalendarEvidenceLink.find({ organizationId, paymentId: { $in: paymentIds }, unlinkedAt: null }).select('paymentId invoiceId linkedAt').sort({ linkedAt: 1, _id: 1 }).lean()
+  const invoices: any[] = await CalendarEvidenceInvoice.find({ organizationId, _id: { $in: links.map(l => l.invoiceId) } }).select('supplier invoiceNumber servicePeriod currency activeSourceId').lean()
+  const sources: any[] = await CalendarEvidenceSource.find({ organizationId, invoiceId: { $in: invoices.map(i => i._id) }, _id: { $in: invoices.map(i => i.activeSourceId).filter(Boolean) } }).select('invoiceId issuedOn totalAmount files').lean()
+  const byInvoice = new Map(invoices.map(i => [String(i._id), i])), bySource = new Map(sources.map(s => [String(s.invoiceId) + ':' + String(s._id), s]))
+  const checkedAt = new Date().toISOString()
+  return new Map(paymentIds.map(paymentId => {
+    const linked = links.filter(l => String(l.paymentId) === String(paymentId))
+    const resolved = linked.map(l => ({ link: l, invoice: byInvoice.get(String(l.invoiceId)) })).filter(v => !!v.invoice)
+    const values = resolved.slice(0, 10).map(({ link: l, invoice: i }) => {
+      const source = bySource.get(String(i._id) + ':' + String(i.activeSourceId))
+      return { evidenceId: String(i._id), supplier: i.supplier, invoiceNumber: i.invoiceNumber, servicePeriod: i.servicePeriod, currency: i.currency, linkedAt: iso(l.linkedAt),
+        activeSource: source ? { issuedOn: source.issuedOn || null, totalAmount: source.totalAmount ?? null, fileCount: (source.files || []).length,
+          files: (source.files || []).slice(0, 5).map((f: any) => ({ name: f.name, kind: f.kind, mimeType: f.mimeType, size: f.size })), filesTruncated: (source.files || []).length > 5 } : null }
+    })
+    return [String(paymentId), { checkedAt, linkedInvoiceCount: linked.length, resolvedInvoiceCount: resolved.length, unresolvedInvoiceCount: linked.length - resolved.length,
+      invoices: values, truncated: resolved.length > values.length, detailTool: 'list_company_payment_evidence', meaning: 'Company-scoped stored supplier-original links, separate from an issued-invoice income schedule. Registered metadata only; no file integrity check or bank payment confirmation. An unresolved link is not evidence that an original is absent.' }]
+  }))
+}
+
 export async function listPaymentEvidence(organizationId: mongoose.Types.ObjectId, paymentId: string) {
   await init()
   const payment: any = await Payment.findOne({ _id: paymentObjectId(paymentId), organizationId, suppressedAt: { $exists: false } }).select('status updatedAt paymentVerification').lean()
