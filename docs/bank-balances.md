@@ -89,6 +89,46 @@ observed. Anything unreadable is an error, never zero.
   23:48 session was not recorded: a delayed in-page update and a portal that stayed old for the whole session are both consistent with
   the receipt. This change helps only in the first case; the second still yields an honest stale reading.
 
+## 池田泉州銀行 sign-in diagnostics (plan `omf-ikeda-trace-20261030`)
+
+Why one hourly 池田泉州銀行 check (job ed791288, 2026-10-29) failed with the generic 証明書の選択後にパスワードの画面が表示されませんでした
+is still unknown: that reason is set by more than one path, and the job kept no certificate-helper result, page state or network timeline.
+A later healthy probe reached the password form and explains nothing about the old failure. This change only records what actual jobs
+do from now on; it repairs nothing.
+
+Every 池田泉州銀行 ビジネスゲート statement job and balance check now leaves one private record in
+`<collector dir>/diagnostics/bank/<account>/<job>-<time>-<random>.json`. This is the same folder and the same `bank-diagnostic-1` record
+as the PayPay銀行 diagnostics, outside the outbox, never uploaded, and never read by recovery or receipts. The record is written even when
+the sign-in itself fails or is cancelled (`step: login`). For a balance check, `step` is `login`, `balance` or `complete`. The record adds
+one field, `auth`:
+
+- `events`: at most 40 entries; later ones are only counted in `dropped`. Each entry has the same fields: a category (`open`, `entry`,
+  `press`, `helper`, `helper-result`, `race`, `moved`, `open-end`, `open-error`, `state`, `login-form`, `submitted`, `settle`), the
+  milliseconds since the adapter started, and where it applies: the page surface (`portal`, `portal-statements`, `certificate-entry`,
+  `auth-other`, `password-form`, `cc-other`, `bank-site`, `frame`, `other`), the page kind, the certificate helper's outcome
+  (`selected`, `no-dialog`, `attention`, `aborted`) and value-free reason, whether the page or the helper answered first, whether a
+  new document was recognized, the number of new documents seen, whether the page could be read, and capped counts of visible password
+  fields, certificate controls and ログアウト.
+- `attention`: the value-free reason the person would be asked (for example `certificate-unconfirmed`).
+- `current`: the same category and counts for the page as it was when the sign-in ended or failed, read once before any logout.
+
+Every value is re-checked against a fixed list in `collector/bank.mjs`. Anything else becomes `other`, and counts are capped. No URL,
+session parameter, title, page text, field or option value, certificate name, account, amount, error text, cookie or credential is
+written. With these records a future `certificate-unconfirmed` can be told apart: the helper never answered, it selected while the
+page stayed on the certificate entry, it selected while the page moved to an unrecognized document, or the page stopped responding.
+
+What does not change: the result, error and text of every job; the one-submission journal and pending markers; that a balance check is
+never shown and never asks a person; the stale-reading rule; the receipt and its retries; and when logout runs. A failed or cancelled
+sign-in gets no finish() or ログアウト. Recording adds no click, wait, password attempt or bank request; its only own page access is one
+bounded read of the current page. Reading and writing are each limited to 3 seconds and ignore their own errors, so a broken reader or
+an unwritable folder changes nothing except the missing record. PayPay銀行 records keep exactly their earlier fields; 楽天銀行 and
+every other adapter write nothing.
+
+Proof is synthetic only (`collector/test/ikeda-diagnostics.test.mjs`, fixture `scripts/zoomer-fixtures/omf-ikeda-diagnostics.mjs`):
+the real modules in a headless Chrome on the fictional BusinessGate, with a fictional certificate helper. It shows which records are
+written, that private data stays out of them and that job outcomes do not change. It does not show what the real portal or the real
+chooser does, and it is not a live reliability measurement.
+
 ## Verification boundary
 
 The fixture `scripts/zoomer-fixtures/omf-bank-balances.mjs` proves the queue, routes, collector, readers (on fictional pages built from

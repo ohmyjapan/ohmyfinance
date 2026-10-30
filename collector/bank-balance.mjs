@@ -15,7 +15,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { access, link, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pause } from './interaction.mjs';
-import { ensureBankLogin, withBankBrowser, providerLabel } from './bank.mjs';
+import { ensureBankLogin, withBankBrowser, providerLabel, diagnosticRead, diagnosticWrite, diagnosticCode } from './bank.mjs';
 import { standardBalance as rakuten } from './banks/rakuten.mjs';
 import { standardBalance as paypay } from './banks/paypay.mjs';
 import { portalBalance as ikeda } from './banks/ikeda.mjs';
@@ -88,24 +88,35 @@ export async function inquireFromPage(page, browser, adapter, bound, job, root, 
   const quiet = async (state, text) => { if (state === 'verification_required') throw coded('balance-attention', text); await status('running', text); }; // guard:balance-never-asks
   const jobDir = path.join(outbox(root, bound.bankAccountId), bound.jobId);
   const journal = { seen: () => exists(path.join(jobDir, 'login.json')), async mark() { await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ ...bound, submittedAt: new Date(now()).toISOString() }, null, 2), { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error; }); } };
-  let signed = false, logout = null;
+  let signed = false, logout = null, code = null;
   const steps = async () => {
     let result;
     try { result = await ensureBankLogin(ui, quiet, { label, login, journal: login ? journal : null, now, wait, timeoutMs: loginTimeoutMs, signal, exits: adapter.loginExits ?? null }); }
-    catch (error) { if (error?.code === 'balance-attention' || error?.code === 'login-refused') return { failed: BALANCE_TEXT.attention(label, error.message), reading: null }; throw error; }
+    catch (error) { code = diagnosticCode(error); if (error?.code === 'balance-attention' || error?.code === 'login-refused') return { failed: BALANCE_TEXT.attention(label, error.message), reading: null }; throw error; }
     signed = true;
     if (!result?.direct) return { failed: BALANCE_TEXT.notDirect(label), reading: null }; // guard:balance-direct-only
     signal?.throwIfAborted();
     await status('running', `${label}の残高を確認中`);
     let reading = null;
     try { reading = await ui.readBalance({ signal }); }
-    catch (error) { if (signal?.aborted || error?.name === 'AbortError') throw error; return { failed: /^balance-/.test(String(error?.code)) ? String(error.message) : BALANCE_TEXT.unread(label), reading: null }; }
-    if (onReading) { try { await onReading(reading); } catch (error) { if (!/^balance-/.test(String(error?.code))) throw error; return { failed: BALANCE_TEXT.unread(label) + '（' + String(error.message) + '）', reading: null }; } }
+    catch (error) { code = diagnosticCode(error); if (signal?.aborted || error?.name === 'AbortError') throw error; return { failed: /^balance-/.test(String(error?.code)) ? String(error.message) : BALANCE_TEXT.unread(label), reading: null }; }
+    if (onReading) { try { await onReading(reading); } catch (error) { code = diagnosticCode(error); if (!/^balance-/.test(String(error?.code))) throw error; return { failed: BALANCE_TEXT.unread(label) + '（' + String(error.message) + '）', reading: null }; } }
     return { failed: null, reading };
   };
+  // Plan omf-ikeda-trace-20261030: an adapter ui with the optional sign-in trace (authDiagnostic: 池田泉州銀行 ビジネスゲート) gets one private,
+  // value-free record per inquiry (bank.mjs diagnosticRecord, <root>/diagnostics/bank/<bankAccountId>/, never the balance outbox), also when
+  // the sign-in failed: the trace is read once after the steps and before the logout below, the record written after it; both bounded,
+  // errors ignored. The result, the logout rule and what is thrown stay as they were; every other adapter writes nothing.
+  const traced = typeof ui.authDiagnostic === 'function'; let auth;
+  const run = async () => { try { return await steps(); } catch (error) { code ??= diagnosticCode(error); throw error; } finally { if (traced) auth = await diagnosticRead(() => ui.authDiagnostic()); } };
   let out;
-  try { out = await steps(); }
-  finally { if (signed) logout = await Promise.race([Promise.resolve().then(() => ui.balanceFinish()).catch(() => null), pause(finishMs).then(() => null)]); } // guard:balance-logout
+  try {
+    try { out = await run(); }
+    finally { if (signed) logout = await Promise.race([Promise.resolve().then(() => ui.balanceFinish()).catch(() => null), pause(finishMs).then(() => null)]); } // guard:balance-logout
+  } finally {
+    const direct = signed && out?.failed !== BALANCE_TEXT.notDirect(label);
+    if (traced) await diagnosticWrite(root, bound, { variant: adapter.variant ?? null, at: new Date(now()).toISOString(), outcome: out && !out.failed ? 'completed' : 'failed', step: !direct ? 'login' : out && !out.failed ? 'complete' : 'balance', code: signed && !direct ? 'not-direct' : out && !out.failed ? null : code ?? 'uncoded', finish: logout, auth }); // guard:balance-auth-diagnostic
+  }
   return { ...out, logout };
 }
 /** One balance inquiry in an owned, ephemeral, background Chrome (bank.mjs withBankBrowser; its window is never revealed). */

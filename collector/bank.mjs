@@ -258,18 +258,38 @@ async function completedAttempt(jobDir, bound, adapter, manifestOf, { now, wait,
 // outcome — never a title, text, URL, field or option value, account number, cookie, token or credential. It lives in
 // <root>/diagnostics/bank/<bankAccountId>/, outside the outbox: pendingBank, the attempt marker, recovery and uploads never see it. Reading
 // and writing are each bounded and swallow every error, so a broken reader or write never changes the job's result or delays cleanup
-// beyond the bound.
+// beyond the bound. Plan omf-ikeda-trace-20261030: an adapter ui with the optional sign-in trace reader `authDiagnostic()` (池田泉州銀行
+// ビジネスゲート) gets the same record with one more whitelisted field, `auth`, also for a failed or cancelled sign-in (step 'login').
 export const DIAGNOSTIC_SCHEMA = 'bank-diagnostic-1';
 const DIAGNOSTIC_MS = 3000;
 const DIAGNOSTIC_TITLES = ['welcome', 'statements', 'login', 'downloading', 'other-bank'];
 const DIAGNOSTIC_KINDS = ['login', 'verification', 'authenticated', 'statements', 'export_ready', 'error_page', 'unknown'];
-const DIAGNOSTIC_STEPS = ['statements', 'period', 'snapshot', 'export', 'manifest', 'complete'];
+const DIAGNOSTIC_STEPS = ['login', 'statements', 'period', 'snapshot', 'export', 'manifest', 'balance', 'complete'];
 const within = (fn, ms) => Promise.race([Promise.resolve().then(fn).catch(() => null), pause(ms).then(() => null)]);
 const one = (value, list) => value == null ? null : list.includes(value) ? value : 'other';
 const count = (value, max = 99) => Number.isSafeInteger(value) && value >= 0 ? Math.min(value, max) : null;
 const flag = value => typeof value === 'boolean' ? value : null;
+// Plan omf-ikeda-trace-20261030: the optional sign-in trace (`auth`) of an adapter ui that offers authDiagnostic() (池田泉州銀行 ビジネスゲート,
+// banks/ikeda.mjs portalUi). Only these categories pass; every other value becomes 'other', every count is capped, at most AUTH_EVENTS_MAX events.
+const AUTH_EVENTS_MAX = 40;
+const AUTH_EVENTS = ['open', 'entry', 'press', 'helper', 'helper-result', 'race', 'moved', 'open-end', 'open-error', 'state', 'login-form', 'submitted', 'settle'];
+const AUTH_SURFACES = ['portal', 'portal-statements', 'certificate-entry', 'auth-other', 'password-form', 'cc-other', 'bank-site', 'frame', 'other'];
+const AUTH_OUTCOMES = ['selected', 'no-dialog', 'attention', 'aborted', 'helper', 'page', 'authenticated', 'rejected'];
+const AUTH_CAUSES = ['process', 'missing', 'ambiguous', 'ambiguous-chooser', 'not-in-store', 'expired', 'no-private-key', 'not-selected', 'issuer', 'helper-error', 'unreadable', 'unconfirmed', 'no-chooser', 'control'];
+const AUTH_ATTENTIONS = AUTH_CAUSES.map(r => 'certificate-' + r);
+const AUTH_REASONS = [...AUTH_CAUSES, ...AUTH_ATTENTIONS, 'surface', 'fields', 'password', 'form', 'action', 'keyboard', 'dialog', 'readonly', 'disabled'];
+const authShape = x => ({ readable: flag(x?.readable), dialog: flag(x?.dialog), surface: one(x?.surface, AUTH_SURFACES), kind: one(x?.kind, DIAGNOSTIC_KINDS), password: count(x?.password), certificate: count(x?.certificate), logout: count(x?.logout) });
+function authRecord(a) {
+  if (!a || typeof a !== 'object') return null;
+  const list = Array.isArray(a.events) ? a.events : [];
+  return {
+    attention: one(a.attention, AUTH_ATTENTIONS), dropped: count((Number.isSafeInteger(a.dropped) && a.dropped > 0 ? a.dropped : 0) + Math.max(0, list.length - AUTH_EVENTS_MAX), 9999),
+    events: list.slice(0, AUTH_EVENTS_MAX).map(e => ({ event: one(e?.event, AUTH_EVENTS), ms: count(e?.ms, 3600000), outcome: one(e?.outcome, AUTH_OUTCOMES), reason: one(e?.reason, AUTH_REASONS), ok: flag(e?.ok), documents: count(e?.documents), ...authShape(e) })),
+    current: a.current && typeof a.current === 'object' ? authShape(a.current) : null
+  };
+}
 /** The fixed diagnostic record (pure): every field is re-derived from the whitelist, so unknown keys and raw strings never pass. */
-export function diagnosticRecord({ bound, variant = null, at, outcome, step, code = null, page = null, finish = null }) {
+export function diagnosticRecord({ bound, variant = null, at, outcome, step, code = null, page = null, finish = null, auth = undefined }) {
   const p = page && typeof page === 'object' ? page : null, f = finish && typeof finish === 'object' ? finish : null, c = p?.controls && typeof p.controls === 'object' ? p.controls : {};
   return {
     schema: DIAGNOSTIC_SCHEMA, at: String(at).slice(0, 40), provider: one(bound?.provider, Object.keys(ADAPTERS)), variant: typeof variant === 'string' && /^[a-z]{1,20}$/.test(variant) ? variant : null,
@@ -284,7 +304,9 @@ export function diagnosticRecord({ bound, variant = null, at, outcome, step, cod
       panelClose: flag(p.panelClose), frames: { total: count(p.frames?.total), sameOrigin: count(p.frames?.sameOrigin) },
       lastPress: one(p.lastPress, ['open', 'period', 'query', 'export', 'logout']), changedSincePress: flag(p.changedSincePress)
     } : null,
-    finish: f ? { settled: true, loggedOut: flag(f.loggedOut), downloadTabsClosed: count(f.downloadTabsClosed, 20), reason: one(f.reason, ['dialog', 'not-signed-in', 'timeout', 'logout', 'error']) } : { settled: false, loggedOut: null, downloadTabsClosed: null, reason: null }
+    finish: f ? { settled: true, loggedOut: flag(f.loggedOut), downloadTabsClosed: count(f.downloadTabsClosed, 20), reason: one(f.reason, ['dialog', 'not-signed-in', 'timeout', 'logout', 'error']) } : { settled: false, loggedOut: null, downloadTabsClosed: null, reason: null },
+    // only a record of an adapter with the sign-in trace carries `auth` (null: its reader failed); every other record keeps the earlier keys
+    ...(auth === undefined ? {} : { auth: authRecord(auth) })
   };
 }
 async function persistDiagnostic(root, bound, record) {
@@ -292,6 +314,12 @@ async function persistDiagnostic(root, bound, record) {
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, `${record.jobId || 'job'}-${record.at.replace(/[^0-9]/g, '')}-${randomUUID().slice(0, 8)}.json`), JSON.stringify(record, null, 2), { flag: 'wx', mode: 0o600 });
 }
+/** Plan omf-ikeda-trace-20261030: an optional reader, bounded; any error or a late answer is null (also used by bank-balance.mjs). */
+export const diagnosticRead = fn => within(fn, DIAGNOSTIC_MS);
+/** One fixed record (diagnosticRecord fields) into the private diagnostics folder, bounded; a failed write is ignored (also bank-balance.mjs). */
+export const diagnosticWrite = (root, bound, fields) => within(() => persistDiagnostic(root, bound, diagnosticRecord({ bound, ...fields })), DIAGNOSTIC_MS);
+/** The code a record keeps for a thrown error: a cancellation is 'aborted'; diagnosticRecord keeps only a short lowercase code. */
+export const diagnosticCode = error => error?.name === 'AbortError' ? 'aborted' : error?.code ?? 'uncoded';
 
 /**
  * One retrieve job on an open page: sign-in intervention, then the routine steps automated — open the statements, select the
@@ -324,7 +352,12 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
   if (typeof adapter.precheck === 'function') { const reason = adapter.precheck(job?.snapshot ?? null, now()); if (reason) return { items: [], failed: reason }; } // guard:adapter-precheck
   // The job's sign-in journal: written (exclusively, bound to the job, no credential) before the one automatic submission.
   const journal = { seen: () => exists(path.join(jobDir, 'login.json')), async mark() { await mkdir(jobDir, { recursive: true }); await writeFile(path.join(jobDir, 'login.json'), JSON.stringify({ ...bound, submittedAt: stamp() }, null, 2), { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error; }); } };
-  try { await ensureBankLogin(ui, status, { label: adapter.label, login, journal: login ? journal : null, now, wait, timeoutMs: loginTimeoutMs, signal, exits: adapter.loginExits ?? null }); }
+  // Plan omf-ikeda-trace-20261030: an adapter ui with the optional sign-in trace (authDiagnostic) also gets a record when the sign-in itself
+  // fails or is cancelled — written (bounded, errors ignored) before the same error goes on unchanged; nothing is signed in, so no finish()
+  // or ログアウト runs for it. Every other adapter (PayPay銀行, 楽天銀行, the contract-pending defaults) writes nothing here, as before.
+  const traced = typeof ui.authDiagnostic === 'function';
+  const loginFailed = async error => { if (!traced) return; const auth = await diagnosticRead(() => ui.authDiagnostic()); await diagnosticWrite(root, bound, { variant: adapter.variant ?? null, at: stamp(), outcome: 'failed', step: 'login', code: diagnosticCode(error), auth }); };
+  try { await ensureBankLogin(ui, status, { label: adapter.label, login, journal: login ? journal : null, now, wait, timeoutMs: loginTimeoutMs, signal, exits: adapter.loginExits ?? null }).catch(async error => { await loginFailed(error); throw error; }); }
   catch (error) { if (error?.code === 'login-refused') return { items: [], failed: error.message }; throw error; }
   // Plan omf-paypay-routine-20261022 Phase C: once signed in, an adapter's `finish` (PayPay銀行: close its download tab, ログアウト) runs
   // after the steps below whatever their outcome — bounded, errors ignored, never changing the result (楽天銀行 declares none).
@@ -379,9 +412,11 @@ export async function collectBankFromPage(page, browser, adapter, bound, job, ro
     // outcome is kept; the record is written last, still before withBankBrowser closes the browser. Each part is bounded and swallows errors.
     const reader = typeof ui.diagnostic === 'function';
     const page = reader && !completed ? await within(() => ui.diagnostic(), DIAGNOSTIC_MS) : null; // guard:diagnostic-before-finish
+    const auth = traced ? await diagnosticRead(() => ui.authDiagnostic()) : undefined; // the sign-in trace, also read before finish()
     let finished = null;
     if (typeof ui.finish === 'function') finished = await Promise.race([Promise.resolve().then(() => ui.finish()).catch(() => null), pause(15000).then(() => null)]); // guard:finish-after-login
     if (reader) await within(() => persistDiagnostic(root, bound, diagnosticRecord({ bound, variant: adapter.variant ?? null, at: stamp(), outcome: completed ? 'completed' : 'failed', step, code, page, finish: finished })), DIAGNOSTIC_MS); // guard:diagnostic-persisted
+    if (traced && !reader) await diagnosticWrite(root, bound, { variant: adapter.variant ?? null, at: stamp(), outcome: completed ? 'completed' : 'failed', step, code, page: null, finish: finished, auth }); // guard:auth-diagnostic-persisted
   }
 }
 

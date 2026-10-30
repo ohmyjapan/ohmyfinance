@@ -277,6 +277,14 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
   const bounded = (promise, ms = 5000) => Promise.race([promise, pause(ms).then(() => null)]);
   const evaluate = async (fn, arg, ms = 5000) => { try { return (await bounded(page.evaluate(fn, arg), ms)) || null; } catch { return null; } };
   let dialogs = null, waiting = false, attentionReason = null, searched = null, before = null, logout = null;
+  // Plan omf-ikeda-trace-20261030: the value-free sign-in trace of this ui (authDiagnostic() below; collector/bank.mjs and bank-balance.mjs
+  // record it through their fixed whitelist). Each event is a category, the milliseconds since this ui was made and small counts from reads
+  // and helper answers that happen anyway — no URL, title, text, field, certificate, account or error text, and no read, click, wait or
+  // request of its own. At most TRACE_MAX events are kept; later ones are only counted.
+  const TRACE_MAX = 40, since = Date.now(), trace = []; let traceDropped = 0, traceKind = null;
+  const note = (event, fields = {}) => { if (trace.length < TRACE_MAX) trace.push({ event, ms: Date.now() - since, ...fields }); else traceDropped++; };
+  const surfaceOf = x => x.top !== true ? 'frame' : x.origin === c.portal ? (x.path === c.statementsPath ? 'portal-statements' : 'portal') : x.origin === c.auth ? (x.path === c.authPath ? 'certificate-entry' : 'auth-other') : x.origin === c.cc ? (x.path === c.ccPath ? 'password-form' : 'cc-other') : x.origin === c.bank ? 'bank-site' : 'other';
+  const shapeOf = x => x ? { readable: true, surface: surfaceOf(x), kind: classifyPortalPage(x, c), password: x.password, certificate: x.certificate, logout: x.logout } : { readable: false, dialog: waiting };
   const accept = () => dialogs?.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {});
   const logoutConfirm = event => {
     const scope = logout; if (!scope || scope.seen || Date.now() > scope.until) return; scope.seen = true;
@@ -313,24 +321,38 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
   const verifyAccount = async () => { const now = await evaluate(FILTER, { c, op: 'accounts' }), choice = now?.ok ? portalAccountChoice(now.options, identity) : { index: -1 }; if (choice.index < 0 || now.selected !== choice.index) throw fail('account-unidentified', '選んだ口座が接続に保存した口座と一致しなくなりました。明細は出力していません'); }; // guard:portal-account-selected
   const ui = {
     async open() {
+      note('open');
+      try {
       await watch(); attentionReason = null;
       await page.goto(adapter?.start || c.start, { waitUntil: 'domcontentloaded', timeout: 60000 });
       // The SPA renders after DOMContentLoaded: wait (bounded) for the public certificate control or an already signed-in page.
       let r = null; const until = Date.now() + openMs;
       while (Date.now() < until) { r = waiting ? null : await read(); if (r && (r.certificate >= 1 || classifyPortalPage(r, c) !== 'unknown')) break; await pause(250); }
+      note('entry', shapeOf(r));
       if (!r || r.certificate < 1 || classifyPortalPage(r, c) !== 'unknown') return;
       const pressed = await evaluate(PRESS, { c, origin: c.auth, certificate: true, expectedDocument: r.document });
+      note('press', { ok: pressed?.ok === true, reason: pressed?.reason ?? null });
       if (!pressed?.ok) { attentionReason = 'certificate-control'; return; }
       // The chooser of the owned Chrome: the helper answers it while the page itself moves on to the password form (or is already there).
+      note('helper');
       const abort = new AbortController(), helper = Promise.resolve().then(() => certificate(browser, { issuer: IKEDA_ISSUER, bankName: IKEDA_BANK_NAME, timeoutMs: certificateMs, signal: abort.signal })).catch(() => ({ outcome: 'attention', reason: 'helper-error' }));
-      const moved = async ms => { const end = Date.now() + ms; while (Date.now() < end && !abort.signal.aborted) { const x = waiting ? null : await read(); if (x && x.document !== r.document && classifyPortalPage(x, c) !== 'unknown') return true; await pause(250); } return false; };
+      void helper.then(v => note('helper-result', { outcome: v?.outcome ?? null, reason: v?.reason ?? null })); // also when it answers after the page decided
+      // `documents`: how many documents other than the certificate entry this wait saw; a wait that ends by the abort below notes nothing.
+      const moved = async ms => {
+        const end = Date.now() + ms, seen = new Set(); let x = null;
+        while (Date.now() < end && !abort.signal.aborted) { x = waiting ? null : await read(); if (x && x.document !== r.document) seen.add(x.document); if (x && x.document !== r.document && classifyPortalPage(x, c) !== 'unknown') { note('moved', { ok: true, ...shapeOf(x), documents: seen.size }); return true; } await pause(250); }
+        if (!abort.signal.aborted) note('moved', { ok: false, ...shapeOf(x), documents: seen.size });
+        return false;
+      };
       const first = await Promise.race([helper.then(v => ({ helper: v })), moved(certificateMs + 25000).then(v => ({ moved: v }))]);
+      note('race', { outcome: first.moved !== undefined ? 'page' : 'helper' });
       if (first.moved !== undefined) { abort.abort(); if (!first.moved) attentionReason = 'certificate-unconfirmed'; return; }
       const outcome = first.helper?.outcome;
       if (outcome === 'selected' || outcome === 'no-dialog') { const ok = await moved(outcome === 'selected' ? 25000 : 5000); abort.abort(); if (!ok) attentionReason = outcome === 'selected' ? 'certificate-unconfirmed' : 'certificate-no-chooser'; return; }
       abort.abort(); attentionReason = 'certificate-' + (first.helper?.reason || 'process'); // the chooser stays for the person in this window
+      } catch (error) { note('open-error'); throw error; } finally { note('open-end', { reason: attentionReason }); }
     },
-    async state() { return { kind: await kind() }; },
+    async state() { const k = await kind(); if (k !== traceKind) { traceKind = k; note('state', { kind: k }); } return { kind: k }; },
     async show() { await bounded(page.bringToFront(), 3000); },
     /** The value-free reason the person is asked (null: the ordinary sign-in), for bank.mjs ensureBankLogin's text. */
     attention: () => attentionReason,
@@ -351,6 +373,7 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
     async login(secret, { signal = null } = {}) {
       const { password } = portalLoginSecret(secret, label);
       const form = await ui.loginForm();
+      note('login-form', { ok: form.ok === true, reason: form.reason ?? null });
       if (!form.ok) throw coded('login-form', `${label}のログイン画面が確認済みの形と異なります（${form.reason}）`);
       signal?.throwIfAborted();
       if (form.keyboard || !form.editable) {
@@ -373,9 +396,10 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
         if (!ready.enabled) throw coded('login-form', `${label}のログインボタンが押せる状態になりません`);
         const clicked = await evaluate(LOGIN_FORM, { c, expectedDocument: form.document, submit: true });
         if (!clicked?.ok || clicked.document !== form.document) throw coded(clicked?.reason === 'disabled' ? 'login-form' : 'login-changed', `${label}のログイン画面が送信前に変わりました`);
-        submitted = true;
+        submitted = true; note('submitted');
       } finally { if (filled && !submitted) await evaluate(LOGIN_FORM, { c, expectedDocument: form.document, clear: true }); }
-      return { outcome: await ui.settle(form.document), document: form.document };
+      const settled = await ui.settle(form.document); note('settle', { outcome: settled });
+      return { outcome: settled, document: form.document };
     },
     // After the one submission: a NEW document classified authenticated → 'authenticated'; the exact form on a new document → 'rejected';
     // an open dialog, or another new page that stays put for `stableMs` (a notice, a password change, an error) → 'attention'. A portal page
@@ -461,6 +485,16 @@ export function portalUi(page, browser, adapter = portal, snapshot = null, { cer
         } finally { if (logout === scope) logout = null; }
       } catch (error) { return { ...result, reason: String(error?.code || 'error') }; }
       finally { try { await before?.dispose?.(); } catch { /* gone */ } }
+    },
+    /**
+     * Plan omf-ikeda-trace-20261030: the optional sign-in trace reader collector/bank.mjs (statement) and bank-balance.mjs (balance) call
+     * once, after the sign-in ended or failed and before finish() (ログアウト). The events above, the value-free attention reason and one
+     * bounded read of the current page's category and counts (nothing is evaluated under an open JS dialog). It never acts on the page or
+     * decides anything; the callers bound it and whitelist every field.
+     */
+    async authDiagnostic() {
+      const current = waiting ? null : await evaluate(READ, c, 2500);
+      return { attention: attentionReason, events: trace.slice(), dropped: traceDropped, current: { readable: !!current, dialog: waiting, ...(current ? shapeOf(current) : {}) } };
     },
     async downloadSession(jobDir) {
       const session = await page.browser().target().createCDPSession();
