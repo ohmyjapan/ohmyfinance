@@ -22,6 +22,7 @@
 // C every production importer of collector/browser.mjs is in the declared caller table. M, P and B run only on a green U.
 // Test processes run at Normal through the Ikeda fixture's proven scoped preload and non-blocking sampler (imported, unchanged).
 import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -204,14 +205,22 @@ export async function boundaryCopy(temp, tree = root) {
   return { file: target, unchangedFromHead: blob === hashed, blob, substitutions: pairs.length, metaCount, checks: checks(before).length };
 }
 async function boundaryProof(temp, assert) {
-  // browser.mjs differs from 5b7ef2c6 by exactly the one export line: launch flags, ownership, geometry and showWindow are unchanged
+  // browser.mjs = 5b7ef2c6 + the one export line + the card-handover wrappers (plan omf-card-handover-20261030: collectStatement and
+  // collectAplusStatement start the background owned Chrome and route attention to that page; scripts/zoomer-fixtures/omf-card-handover.mjs
+  // proves them). Launch flags, ownership, closure, geometry and showWindow stay byte-identical to 5b7ef2c6, each declaration whole.
   const head = (await run('git', ['show', BASE + ':' + BROWSER])).stdout.replace(/\r\n/g, '\n'), now = (await readFile(path.join(root, BROWSER), 'utf8')).replace(/\r\n/g, '\n');
-  assert.equal(now.split('\n').filter(l => l === EXPORT_LINE).length, 1, 'frame-init:one-export-line'); assert.equal(now.split('\n').filter(l => l !== EXPORT_LINE).join('\n'), head, 'frame-init:browser-otherwise-unchanged');
-  for (const name of ['showWindow', 'backgroundPage', 'browserFor', 'closeEntry', 'recoverEphemeral']) assert.ok(head.includes('function ' + name + '(') && now.includes('function ' + name + '('), 'frame-init:unchanged-function ' + name);
+  assert.equal(now.split('\n').filter(l => l === EXPORT_LINE).length, 1, 'frame-init:one-export-line');
+  const declaration = (text, name) => { const lines = text.split('\n'), i = lines.findIndex(l => new RegExp('^(export )?(async )?function ' + name + '\\(').test(l) || new RegExp('^(export )?const ' + name + ' = ').test(l)); if (i < 0) return null; if (/^(export )?const /.test(lines[i])) return lines[i]; const j = lines.findIndex((l, k) => k > i && l === '}'); return j < 0 ? null : lines.slice(i, j + 1).join('\n'); };
+  for (const name of ['LAUNCH_ARGS', 'BACKGROUND_ARGS', 'OFFSCREEN', 'ephemeralProfile', 'assertEphemeralPath', 'assertPlainDirectory', 'probeProfile', 'backgroundPage', 'showWindow', 'browserFor', 'closeEntry', 'closeOwnedBrowsers', 'removeEphemeral', 'recoverEphemeral']) { const was = declaration(head, name); assert.ok(was, 'frame-init:pinned-declaration ' + name); assert.equal(declaration(now, name), was, 'frame-init:unchanged-function ' + name); }
+  // Keep every executable top-level statement outside the two deliberately changed card wrappers unchanged as well: declaration
+  // pins alone would miss an added side effect or a changed import. The one new loginUi import is the only allowed import addition.
+  const ts = createRequire(path.join(root, 'package.json'))('typescript'), printer = ts.createPrinter({ removeComments: true });
+  const core = text => { const sf = ts.createSourceFile('browser.mjs', text.split('\n').filter(l => l !== EXPORT_LINE).join('\n'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS); assert.equal(sf.parseDiagnostics.length, 0, 'frame-init:browser-parses'); const wrappers = sf.statements.filter(s => ts.isFunctionDeclaration(s) && ['collectStatement', 'collectAplusStatement'].includes(s.name?.text)); assert.equal(wrappers.length, 2, 'frame-init:two-card-wrappers'); return sf.statements.filter(s => !wrappers.includes(s)).map(s => { const printed = printer.printNode(ts.EmitHint.Unspecified, s, sf); return ts.isImportDeclaration(s) && s.moduleSpecifier.text === './login.mjs' ? printed.replace(/, loginUi(?= } from)/, '') : printed; }).join('\n'); };
+  assert.equal(core(now), core(head), 'frame-init:browser-outside-card-wrappers-unchanged');
   // the reversible test-only copy the separate A/B runner executes (B8 excluded) is generated and proven here; Chrome is not launched
   const copy = await boundaryCopy(temp);
   assert.equal(copy.unchangedFromHead, true, 'frame-init:boundary-test-unchanged');
-  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line (launch flags, ownership, closure, geometry and showWindow byte-identical); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
+  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers (launch flags, ownership, closure, geometry and showWindow byte-identical); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
 }
 
 // ── C: every production importer of collector/browser.mjs is classified ──
