@@ -70,9 +70,13 @@ export async function captureUnbilled(ui, { now = Date.now } = {}) {
  * person to type; a cancellation (`signal`) propagates — it is rechecked after every awaited read and claim, before
  * anything is typed, and never becomes a manual-fallback null. Expiry throws {code:'timeout'}; there is never a second
  * request here. `label` names the site in the messages (default My APLUS; collector/bank.mjs passes the bank's label).
+ * `onManual` (plan omf-card-handover-20261030, parent fold P4; the background card wrapper only): called once, while the
+ * verification page shows, when the person must type the code — no source, a failed read, or the code's validity elapsed —
+ * so a routine automatic code never reveals the window. Absent (bank, direct and custom-UI callers): nothing changes.
  */
-export async function awaitDownload({ jobDir, session = null, request, state, onVerification = null, code = null, codeSource = null, requestedAt = null, signal = null, codePollMs = 5000, timeoutMs = 300000, extensionMs = 300000, pollMs = 1000, now = Date.now, wait = pause, label = LABEL }) {
-  let guid = null, completed = null, canceled = false, multiple = false;
+export async function awaitDownload({ jobDir, session = null, request, state, onVerification = null, onManual = null, code = null, codeSource = null, requestedAt = null, signal = null, codePollMs = 5000, timeoutMs = 300000, extensionMs = 300000, pollMs = 1000, now = Date.now, wait = pause, label = LABEL }) {
+  let guid = null, completed = null, canceled = false, multiple = false, manual = false;
+  const person = async () => { if (!onManual || manual) return; manual = true; await onManual(); };
   session?.on('Browser.downloadWillBegin', event => { if (guid) multiple = true; else guid = event.guid; });
   session?.on('Browser.downloadProgress', event => { if (!guid || event.guid !== guid) return; if (event.state === 'completed') completed = guid; if (event.state === 'canceled') canceled = true; });
   signal?.throwIfAborted();
@@ -96,11 +100,12 @@ export async function awaitDownload({ jobDir, session = null, request, state, on
     if (current?.kind === 'verification') {
       if (!noticed) { noticed = true; if (onVerification) await onVerification(); }
       if (!extended) { extended = true; deadline += extensionMs; }
+      if (!(codeSource && code) || now() - requestedAt > STATEMENT_CODE_VALIDITY_MS) await person(); // guard:aplus-manual-attention
       if (codeSource && code && !typed && now() - requestedAt <= STATEMENT_CODE_VALIDITY_MS && now() >= nextPoll) {
         nextPoll = now() + codePollMs;
         let match = null;
         try { match = matchStatementCode(await codeSource.messages({ requestedAt, signal }), { requestedAt, now: now() }); }
-        catch (error) { if (signal?.aborted || error?.name === 'AbortError') throw error; match = null; } // a failed read: the person types
+        catch (error) { if (signal?.aborted || error?.name === 'AbortError') throw error; match = null; await person(); } // a failed read: the person types
         signal?.throwIfAborted();
         if (match) { await codeSource.claim(match.id); signal?.throwIfAborted(); await code(match.code); typed = true; }
       }
@@ -183,10 +188,15 @@ async function ensureAplusLogin(ui, credentials, status, { now, wait, timeoutMs 
  * first; one attempt marker per month per job, written before the click; never a second request after a timeout), then
  * capture the unbilled page unless this job already holds one. Artifacts and manifests go to
  * outbox/<accountId>/<jobId>-<month> and outbox/<accountId>/<jobId>-pending. `ui` is injectable (fixture); the default is
- * the real page. Returns { items, pending, nothing, unavailable, failed, skipped }.
+ * the real page, whose show() uses `reveal(page)` when given (plan omf-card-handover-20261030: the background wrapper shows this
+ * SAME owned window) and otherwise brings the tab to the front as before. Returns { items, pending, nothing, unavailable, failed, skipped }.
  */
-export async function collectAplusFromPage(page, browser, account, settings, directory, status, { ui = null, covered = [], codeSource = null, signal = null, jobId = account?.jobId, now = Date.now, wait = pause, origin = '', loginTimeoutMs = 300000, downloadTimeoutMs = 300000, extensionMs = 300000, pollMs = 1000 } = {}) {
-  ui ||= aplusUi(page, browser);
+export async function collectAplusFromPage(page, browser, account, settings, directory, status, { ui = null, reveal = null, covered = [], codeSource = null, signal = null, jobId = account?.jobId, now = Date.now, wait = pause, origin = '', loginTimeoutMs = 300000, downloadTimeoutMs = 300000, extensionMs = 300000, pollMs = 1000 } = {}) {
+  // Parent folds P4/P4b: on the background wrapper's own page (reveal given, no injected ui) the statement-code notice is ordinary
+  // progress while the configured source may still type the code, and the window stays hidden; the person is asked (verification_required,
+  // then the window, once) only when they must type it (awaitDownload onManual). Direct and injected-ui callers ask at the notice, as before.
+  const quiet = !ui && !!reveal;
+  ui ||= aplusUi(page, browser, { reveal });
   if (!/^[a-f\d]{24}$/.test(String(account?._id ?? '')) || typeof jobId !== 'string' || !jobId) throw new Error('A claimed account with a job is required');
   await ensureAplusLogin(ui, settings, status, { now, wait, timeoutMs: loginTimeoutMs });
   const outbox = path.join(directory, 'outbox', account._id), stamp = () => new Date(now()).toISOString();
@@ -217,10 +227,13 @@ export async function collectAplusFromPage(page, browser, account, settings, dir
     let filename;
     try {
       await status('running', month + ' の確定明細をダウンロード');
-      // The notice is given once; the code source is read inside awaitDownload's bounded wait, cancelled with `signal`.
+      // The notice is given once; the code source is read inside awaitDownload's bounded wait, cancelled with `signal`. The quiet notice
+      // reports progress only while awaitDownload itself will read the source (a source, within the code's validity).
+      const ask = async () => { await status('verification_required', 'My APLUSの認証コードをChromeで入力してください'); await ui.show(); };
       filename = await awaitDownload({ jobDir, session, request: async () => { await ui.save(); await ui.csv(); }, state: () => ui.state(), now, wait, pollMs, timeoutMs: downloadTimeoutMs, extensionMs,
         codeSource, requestedAt, signal, code: value => ui.code(value),
-        onVerification: async () => { await status('verification_required', 'My APLUSの認証コードをChromeで入力してください'); await ui.show(); } });
+        onVerification: quiet ? async () => { if (codeSource && now() - requestedAt <= STATEMENT_CODE_VALIDITY_MS) await status('running', 'My APLUSの認証コードをSMSから自動で入力します'); } : ask, // guard:aplus-quiet-notice
+        ...(quiet ? { onManual: ask } : {}) }); // guard:aplus-manual-ask
     } catch (error) {
       if (error?.code !== 'timeout') throw error;
       failed = 'ダウンロードが完了しませんでした。再度「確定明細を取得」を押してください';
@@ -270,13 +283,18 @@ const contentChanged = (page, previous, selector) => page.evaluate((old, s) => {
   const nodes = [...document.querySelectorAll(s)];
   return nodes.length !== old.length || nodes.some((node, i) => node !== old[i].node || node.textContent !== old[i].text || node.childNodes.length !== old[i].children.length || [...node.childNodes].some((child, n) => child !== old[i].children[n]));
 }, previous, selector);
-function aplusUi(page, browser) {
+// A read the page's own navigation interrupted (the document was replaced while it was read), as interaction.mjs poll() treats it.
+const NAVIGATED = /Execution context was destroyed|Cannot find context with specified id/;
+function aplusUi(page, browser, { reveal = null } = {}) {
   const paths = { loginPath: LOGIN_PATH, otpPath: OTP_PATH, detailsPath: DETAILS_PATH, unbilledPath: UNBILLED_PATH };
   const ui = {
     async open() { await page.goto(APLUS + '/', { waitUntil: 'domcontentloaded', timeout: 60000 }); },
+    // A document a navigation replaces while it is read (the CSV click opening the statement-code page, the typed code returning to the
+    // statement, a sign-in) is an unknown page for this poll; the caller reads again on its next poll, within its own deadline. Any other
+    // failure (a closed target, a lost session) still ends the job.
     async state() {
       if (!onSurface(page, APLUS)) return { kind: 'unknown' };
-      return page.evaluate(({ loginPath, otpPath, detailsPath, unbilledPath }) => {
+      try { return await page.evaluate(({ loginPath, otpPath, detailsPath, unbilledPath }) => {
         const visible = e => e.getClientRects().length > 0, texts = [...document.querySelectorAll('button, a')].filter(visible).map(e => e.innerText.trim()), p = location.pathname;
         if (p === otpPath && document.querySelector('#elem1-1') && texts.includes('認証する')) return { kind: 'verification' };
         if (p === loginPath && document.querySelector('#elem1-1') && document.querySelector('#elem1-2') && texts.includes('ログイン')) return { kind: 'login' };
@@ -285,7 +303,7 @@ function aplusUi(page, browser) {
         if (p === unbilledPath && document.querySelector('.m-listDetails__item')) return { kind: 'unbilled' };
         if (texts.includes('ログアウト')) return { kind: 'authenticated' };
         return { kind: 'unknown' };
-      }, paths);
+      }, paths); } catch (error) { if (NAVIGATED.test(String(error?.message))) return { kind: 'unknown' }; throw error; } // guard:aplus-state-navigation
     },
     async login(credentials) {
       await fill(page, '#elem1-1', credentials.username, APLUS, LOGIN_PATH, LABEL);
@@ -293,7 +311,7 @@ function aplusUi(page, browser) {
       await click(page, 'button', 'ログイン', APLUS, LOGIN_PATH, LABEL);
     },
     async returnToLogin() { await click(page, 'button', 'ログインに戻る', APLUS, null, LABEL); },
-    async show() { await page.bringToFront(); },
+    async show() { if (reveal) await reveal(page); else await page.bringToFront(); }, // guard:aplus-reveal
     async openDetails() {
       const menu = await page.evaluate(() => { const e = [...document.querySelectorAll('a, button, li, span, div, p')].find(e => e.getClientRects().length && e.childElementCount === 0 && e.textContent.trim() === '利用明細・利用可能額'); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
       if (!menu) throw new Error('The My APLUS menu 利用明細・利用可能額 was not found');

@@ -3,7 +3,7 @@ import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { calendarCompany } from '../../utils/calendarAccess'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
+import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, AUTO_SYNC_PROVIDERS, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
 import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
 
 // A JSON artifact of the collector (notice, mail receipt): bounded by csvBody, parsed once, never echoed back.
@@ -70,9 +70,11 @@ export default defineEventHandler(async event => {
         return { fiscalPeriod }
       }
       if (parts[2] === 'auto-sync' && parts.length === 3 && method === 'PUT') {
-        if (account.provider !== 'aplus') fail(400, 'Aplus account required')
-        // The shared native setting write (dotted paths: the schedule's own lastQueuedDay is kept); same input rule and response.
-        return await saveAutoSync(ownerId, account, await readBody(event))
+        // Every provider the daily schedule queues (plan omf-card-handover-20261030: Amex, latest CLOSED statement only; Aplus), opted
+        // into explicitly: the shared write keeps its Aplus-only default for the owner Navi action. Same shared write (dotted paths: the
+        // schedule's own lastQueuedDay is kept), input rule and response.
+        if (!AUTO_SYNC_PROVIDERS.includes(account.provider)) fail(400, 'Amex or Aplus account required')
+        return await saveAutoSync(ownerId, account, await readBody(event), null, { providers: AUTO_SYNC_PROVIDERS })
       }
       // The payment-calendar company of this account (GUARD: current membership of the chosen company). Existing bills stay
       // in the company they were created in; unfinished notice and statement work is re-run under the new binding.

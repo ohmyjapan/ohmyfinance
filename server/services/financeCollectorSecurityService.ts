@@ -247,3 +247,36 @@ export async function endGrant(token:string,grantToken:string){
   await CollectorGrant.updateOne({_id:hash(grantToken),collectorId:device._id,ownerId:device.ownerId,revokedAt:null},{$set:{revokedAt:new Date()}})
   return {locked:true}
 }
+// The previous card setup on the same PC (plan omf-card-handover-20261030). The connected collector's explicit import of its previous
+// setup's saved card logins asks here under its UNCHANGED active grant: with an empty body before the previous setup is decrypted, and
+// with legacyTokenHash after it — the SHA-256 this database already stores for a collector token (the token itself never leaves the PC).
+// The answer is the grant's owner and origin and card account ids only: the grant's card scope ∩ the device's ∩ live, active, owned
+// Amex/Aplus accounts, and for a hash whether it names a collector of the SAME owner in THIS database (then only that collector's card
+// ids within the same set). The old collector is identity evidence only (parent fold P1): it may since have been revoked — the authority
+// is exclusively the CURRENT active grant, checked before the lookup and again after it — and nothing about it is restored or trusted
+// beyond its owner and card scope. Unknown and foreign tokens answer matched:false with no id. Nothing is written and no grant or key is
+// created: an old HTTP and a new HTTPS address of one OMF are related only by this same-database proof. Each `// legacy:<name>` line is
+// one guard the card-handover integration removes in turn.
+async function permittedCards(context:any,candidates?:any[]){
+  const {grant,device}=context,has=(list:any[],id:string)=>(list||[]).some((v:any)=>String(v)===id)
+  let ids:string[]=[...new Set<string>((grant.accountIds||[]).map(String))]
+  ids=ids.filter(id=>has(device.accountIds,id)) // legacy:device-scope
+  if(candidates)ids=ids.filter(id=>has(candidates,id)) // legacy:legacy-scope
+  const live=new Set((await FinancialAccount.find({_id:{$in:ids},ownerId:grant.ownerId,active:true,provider:{$in:['amex','aplus']}}).select('_id').lean()).map((a:any)=>String(a._id)))
+  ids=ids.filter(id=>live.has(id)) // legacy:account-live
+  return ids.sort()
+}
+export async function legacyOwner(token:string,grantToken:string,body:any,origin:string){
+  let context=await activeGrant(token,grantToken)
+  const keys=Object.keys(body),tokenHash=keys.length?body.legacyTokenHash:undefined
+  if(keys.some(k=>k!=='legacyTokenHash')||(keys.length&&(typeof tokenHash!=='string'||!hex.test(tokenHash))))deny('Invalid request.',400)
+  if(context.grant.origin!==origin)deny('Collector access expired or changed. Reconnect this PC if automatic renewal fails.',401) // legacy:origin
+  await throttle('legacy:'+context.device._id,30,60000)
+  const view=async(c:any,matched?:boolean,candidates?:any[])=>({ownerId:String(c.grant.ownerId),origin:c.grant.origin,...(matched===undefined?{}:{matched}),accountIds:matched===false?[]:await permittedCards(c,candidates)})
+  if(tokenHash===undefined)return view(context)
+  const previous:any=await FinanceCollector.findOne({tokenHash}).select('ownerId accountIds').lean()
+  context=await activeGrant(token,grantToken) // legacy:recheck
+  let matched=!!previous
+  if(String(previous?.ownerId)!==String(context.grant.ownerId))matched=false // legacy:same-owner
+  return view(context,matched,previous?.accountIds||[])
+}

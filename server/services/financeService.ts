@@ -132,21 +132,29 @@ export async function queueSync(ownerId: string, account: any, operation?: { ope
   if (!updated) fail(409, 'A synchronization is already queued or running')
   return updated
 }
-// The automatic-collection setting write, shared by the native settings route and the owner Navi action: Aplus only, the same input
-// rule, dotted paths so the schedule's own lastQueuedDay is kept. An owner Navi action's operation is recorded in the same write.
-export async function saveAutoSync(ownerId: string, account: any, body: any, operation?: { operationId: string } | null) {
-  if (account.provider !== 'aplus') fail(400, 'Aplus account required')
+// The automatic-collection setting write, shared by the native settings route and the owner Navi action: the same input rule, dotted
+// paths so the schedule's own lastQueuedDay is kept. An owner Navi action's operation is recorded in the same write. `providers` is the
+// caller's explicit allowlist: Aplus only by default (the owner Navi action passes none); the native settings route opts into
+// AUTO_SYNC_PROVIDERS (plan omf-card-handover-20261030) so an Amex account's daily setting is saved from the カード連携 page only.
+export async function saveAutoSync(ownerId: string, account: any, body: any, operation?: { operationId: string } | null, { providers = ['aplus'] }: { providers?: readonly string[] } = {}) {
+  if (!providers.includes(account.provider)) fail(400, providers.includes('amex') ? 'Amex or Aplus account required' : 'Aplus account required') // guard:auto-sync-providers
   const input = autoSyncInput(body)
   await FinancialAccount.updateOne({ _id: account._id, ownerId }, { $set: { 'autoSync.enabled': input.enabled, 'autoSync.hour': input.hour, ...(operation ? { autoSyncOperation: { operationId: operation.operationId, enabled: input.enabled, hour: input.hour, at: new Date() } } : {}) } })
   return { autoSync: input }
 }
+// The card providers the daily schedule may queue (plan omf-card-handover-20261030), exactly the providers the collector claim
+// serves: Aplus (finalized statements and the unbilled page) and Amex (the latest CLOSED statement only; Amex unbilled activity is
+// not collected). The scheduler's pre-filter, the atomic enqueue below and the native settings route read this one list; the owner Navi
+// action keeps saveAutoSync's Aplus-only default. Amex settings stay off until the person turns them on, so an Amex account is queued
+// only once its setting is on.
+export const AUTO_SYNC_PROVIDERS: readonly string[] = Object.freeze(['amex', 'aplus'])
 // The scheduled enqueue: ONE atomic write whose filter carries every eligibility predicate at write time — the account is
-// still an active Aplus account with 自動取得 on, its hour has passed, it was not queued today, no job is queued or running,
+// still an active Amex or Aplus account with 自動取得 on, its hour has passed, it was not queued today, no job is queued or running,
 // and no job was attempted today (a manual claim sets lastAttemptAt). A disable, a later hour or a manual job between the
 // scan and this write makes it a no-op; two schedulers cannot both pass lastQueuedDay ≠ day. A running job with an expired
 // lease is NOT re-queued (a re-claim continues the same jobId). Returns the queued document or null, never 409.
 export async function queueScheduledSync(account: any, { day, hour, dayStartUtc, now = new Date() }: { day: string; hour: number; dayStartUtc: Date; now?: Date }) {
-  return FinancialAccount.findOneAndUpdate({ _id: account._id, provider: 'aplus', active: true, 'autoSync.enabled': true, 'autoSync.hour': { $lte: hour }, 'autoSync.lastQueuedDay': { $ne: day }, jobState: { $nin: ['queued','running','verification_required'] }, $or: [{ lastAttemptAt: { $exists: false } }, { lastAttemptAt: { $lt: dayStartUtc } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: now, lastMessage: '自動取得を予約しました', 'autoSync.lastQueuedDay': day }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true }).lean()
+  return FinancialAccount.findOneAndUpdate({ _id: account._id, provider: { $in: [...AUTO_SYNC_PROVIDERS] }, active: true, 'autoSync.enabled': true, 'autoSync.hour': { $lte: hour }, 'autoSync.lastQueuedDay': { $ne: day }, jobState: { $nin: ['queued','running','verification_required'] }, $or: [{ lastAttemptAt: { $exists: false } }, { lastAttemptAt: { $lt: dayStartUtc } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: now, lastMessage: '自動取得を予約しました', 'autoSync.lastQueuedDay': day }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true }).lean() // guard:schedule-providers-atomic
 }
 export async function csvBody(event: H3Event): Promise<Buffer> {
   if (Number(getHeader(event, 'content-length') || 0) > MAX_BYTES) fail(413, 'CSV exceeds 5MB')

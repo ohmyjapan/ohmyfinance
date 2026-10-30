@@ -11,7 +11,7 @@
         <li><strong>取得する口座をまとめて選択</strong><p>このPCで扱う口座を選び、カード会社のログイン情報をPC側の設定画面で保存します。認証コードを求められたらChromeで入力します。</p></li>
         <li><strong>明細をOMFで確認</strong><p>PCが利用できる間に明細を取得し、OMFへ送信します。内容や分類の確認は、これまでどおりOMFのブラウザ画面で行います。</p></li>
       </ol>
-      <p>現在、自動取得はAmexとAplusに対応しています。Aplusは確定明細と未請求明細を取得し、明細ファイルの取り込みも引き続き利用できます。一般向けインストーラーは準備中です。</p>
+      <p>現在、自動取得はAmexとAplusに対応しています。Amexは最新の確定明細を、Aplusは確定明細と未請求明細を取得し、明細ファイルの取り込みも引き続き利用できます。一般向けインストーラーは準備中です。</p>
       <details><summary>取得のタイミングと保存される情報</summary>
         <p>自動取得には、ダウンローダーが起動し、Windowsにサインイン済みでロックされていないPCが必要です。電源が切れている間やスリープ中は取得せず、利用可能になってから再開します。カード会社が追加認証を求めた場合は、操作が必要になることがあります。</p>
         <p>保存したカード会社のID・パスワードは、そのPCで暗号化して保管します。取得した明細はOMFに送信し、マッピングや取引の確認に使います。</p>
@@ -32,11 +32,11 @@
             <button class="btn btn-secondary" :disabled="busy">会計期間を保存</button>
           </form>
         </details>
-        <details v-if="account.provider === 'aplus' && autoSyncInputs[account._id]"><summary>自動取得：{{ account.autoSync?.enabled ? '毎日 ' + account.autoSync.hour + ':00 以降（PCが利用可能なとき）' : 'オフ' }}</summary>
+        <details v-if="dailyProviders.includes(account.provider) && autoSyncInputs[account._id]"><summary>自動取得：{{ account.autoSync?.enabled ? '毎日 ' + account.autoSync.hour + ':00 以降（PCが利用可能なとき）' : 'オフ' }}</summary>
           <form @submit.prevent="run(() => saveAutoSync(account._id))">
             <label class="check"><input v-model="autoSyncInputs[account._id].enabled" type="checkbox"> 毎日自動で取得する</label>
             <label>取得を始める時刻<select v-model.number="autoSyncInputs[account._id].hour"><option v-for="h in 24" :key="h - 1" :value="h - 1">{{ h - 1 }}:00</option></select></label>
-            <p>PCが起動・サインイン済み・ロック解除のときに取得します。取得できなかった日は、次に利用可能になったとき1回だけ取得します。認証コードは、PC側でSMS読み取り元を設定していればダウンローダーが入力します。未設定の間はChromeで入力してください。</p>
+            <p>PCが起動・サインイン済み・ロック解除のときに取得します。取得できなかった日は、次に利用可能になったとき1回だけ取得します。<template v-if="account.provider === 'aplus'">認証コードは、PC側でSMS読み取り元を設定していればダウンローダーが入力します。未設定の間はChromeで入力してください。</template><template v-else>Amexは最新の確定明細だけを取得し、未確定のご利用分は取得しません。ログイン時の確認コードはメールで届きます。PC側でメールボックスを設定していればダウンローダーが入力し、未設定の間はChromeで入力してください。</template></p>
             <button class="btn btn-secondary" :disabled="busy">自動取得を保存</button>
           </form>
         </details>
@@ -144,6 +144,9 @@ const user = useUserStore(), assistant = useAssistantStore()
 const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), notices = ref<any[]>([]), selected = ref<any>(null), selectedCalendar = ref<any>(null)
 const fiscalInputs = reactive<Record<string, { start: string; end: string }>>({})
 const autoSyncInputs = reactive<Record<string, { enabled: boolean; hour: number }>>({})
+// The providers the server's daily schedule queues (financeService AUTO_SYNC_PROVIDERS): Amex fetches its latest closed statement, Aplus
+// its finalized and unbilled statements. Navi's schedule action stays Aplus-only.
+const dailyProviders = ['amex', 'aplus']
 const calendarInputs = reactive<Record<string, string>>({})
 const billingMailInputs = reactive<Record<string, { enabled: boolean; mailbox: string }>>({})
 const busy = ref(false), message = ref('')
@@ -167,7 +170,7 @@ async function run(action: () => Promise<any>) { if (busy.value) return; busy.va
 async function refresh() {
   const [a,c,i] = await Promise.all([api('accounts'),api('collectors'),api('imports')]); accounts.value = a.accounts; collectors.value = c.collectors; imports.value = i.imports
   for (const account of a.accounts) if (account.provider === 'aplus' && !fiscalInputs[account._id]) fiscalInputs[account._id] = { start: account.fiscalPeriod?.start || '', end: account.fiscalPeriod?.end || '' }
-  for (const account of a.accounts) if (account.provider === 'aplus' && !autoSyncInputs[account._id]) autoSyncInputs[account._id] = { enabled: !!account.autoSync?.enabled, hour: account.autoSync?.hour ?? 9 }
+  for (const account of a.accounts) if (dailyProviders.includes(account.provider) && !autoSyncInputs[account._id]) autoSyncInputs[account._id] = { enabled: !!account.autoSync?.enabled, hour: account.autoSync?.hour ?? 9 }
   for (const account of a.accounts) if (account.provider === 'aplus' && calendarInputs[account._id] === undefined) calendarInputs[account._id] = account.organizationId ? String(account.organizationId) : ''
   for (const account of a.accounts) if (account.provider === 'aplus' && !billingMailInputs[account._id]) billingMailInputs[account._id] = { enabled: !!account.billingMail?.enabled, mailbox: account.billingMail?.mailbox || '' }
   const lists = await Promise.all(a.accounts.filter((x: any) => x.provider === 'aplus').map(async (x: any) => ((await api('notices', { query: { accountId: x._id } })).notices || []).map((n: any) => ({ ...n, accountId: x._id }))))

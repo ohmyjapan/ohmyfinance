@@ -60,9 +60,55 @@ function showProtection(data) {
   $('#yayoi-open').disabled=!protectedBatch || !!data.busy || !data.yayoi?.hasCredentials;
   $('#mailbox-saved').textContent=data.mailbox?.hasCredentials?'Mailbox access saved: the Amex login code is read automatically during a download.':'Login codes: manual. Amex emails a code at each download; enter it in the Chrome window when asked. Mailbox access is not saved on this PC.';
 }
+// The previous card setup (plan omf-card-handover-20261030): shown only when /status finds the previous downloader's directory of this
+// Windows user. Check and import are explicit actions inside the protected connection; this page receives account names, outcomes and
+// counts only (never a login, token, address or digest), holds one check at a time and forgets it when the connection ends or an import
+// ran. Every outcome other than a saved login names the next step: enter that login in its own section below.
+const LEGACY_STATES={'legacy-ready':'The previous downloader on this PC saved card logins. Check them to see which cards of this connection can use them; nothing is read until you press Check previous logins.','legacy-protected':'The previous downloader on this PC already uses protected storage, so its logins cannot be imported here. Enter the card logins below.','legacy-unsafe':'The previous downloader’s folder is a link or is not private to this Windows user, so it is not read. Enter the card logins below.','legacy-unreadable':'The previous downloader’s saved logins cannot be read here. Enter the card logins below.'};
+const LEGACY_ACTIONS={import:'can be saved on this PC',existing:'already saved on this PC — kept',unmatched:'no matching card in this connection — enter it below',ambiguous:'more than one matching card — enter it below',unsupported:'not a complete login — enter it below',unproven:'not confirmed as this OMF account — enter it below',imported:'saved on this PC','not-checked':'not part of the check — check again'};
+let legacyCheck=null;
+function legacyLine(label,text){const item=document.createElement('li'),name=document.createElement('b');name.textContent=label+': ';item.append(name,document.createTextNode(text));return item;}
+function legacyCounts(counts){
+  const c=counts||{},manual=(c.unmatched||0)+(c.ambiguous||0)+(c.unsupported||0)+(c.unproven||0)+(c.notImported||0);
+  return [c.import!==undefined?`${c.import} can be saved on this PC`:`${c.imported||0} saved on this PC`,`${c.existing||0} already saved here`,`${manual} to enter below`].join(' · ');
+}
+function legacyNotes(view){
+  return (view.owner==='unproven'?' OMF could not confirm that the previous setup belongs to this OMF account (it may have been disconnected in OMF), so its logins were not used.':'')+(view.notTransferred?.includes('yayoi')?' The Yayoi login is not transferred; save it in the Yayoi section.':'');
+}
+function showLegacy(data) {
+  const state=(data.legacyCards||{}).state||'legacy-none',protectedBatch=!!data.unlocked&&data.mode==='protected'&&!data.authorizing&&!data.locking;
+  $('#legacy-cards').classList.toggle('hidden',state==='legacy-none'||state==='legacy-same');
+  if(!protectedBatch)legacyCheck=null;
+  const list=$('#legacy-items');list.replaceChildren();
+  if(legacyCheck){
+    for(const item of legacyCheck.items)list.append(legacyLine(item.name||(item.provider==='aplus'?'My APLUS':'Amex'),LEGACY_ACTIONS[item.action]||item.action));
+    if(legacyCheck.mailbox)list.append(legacyLine('Login-code mailbox',LEGACY_ACTIONS[legacyCheck.mailbox]||legacyCheck.mailbox));
+  }
+  $('#legacy-message').textContent=legacyCheck?`Checked: ${legacyCounts(legacyCheck.counts)}.${legacyNotes(legacyCheck)}`:(LEGACY_STATES[state]||'')+(state==='legacy-ready'&&!protectedBatch?' Connect this PC first.':'');
+  $('#legacy-preview').classList.toggle('hidden',state!=='legacy-ready');
+  $('#legacy-preview').disabled=!protectedBatch||!!data.busy;
+  const count=legacyCheck?legacyCheck.counts.import:0,confirm=$('#legacy-import');
+  confirm.classList.toggle('hidden',!count);confirm.disabled=!protectedBatch||!!data.busy||!count;
+  confirm.textContent=`Use ${count} login${count===1?'':'s'} on this PC`;
+}
+$('#legacy-preview').onclick=async()=>{
+  $('#legacy-preview').disabled=true;$('#legacy-import').disabled=true;legacyCheck=null;$('#legacy-items').replaceChildren();
+  $('#legacy-message').textContent='Confirming this PC with OMF, then checking the previous logins…';
+  let failure=null;
+  try{legacyCheck=await call('/legacy-cards/preview',{});}catch(error){failure=error;legacyCheck=null;}
+  showLegacy(current);if(failure)$('#legacy-message').textContent=failure.message;
+};
+$('#legacy-import').onclick=async()=>{
+  const checked=legacyCheck;if(!checked)return;
+  $('#legacy-import').disabled=true;$('#legacy-preview').disabled=true;legacyCheck=null;
+  let text;
+  try{const result=await call('/legacy-cards/import',{previewId:checked.previewId});text=`Done: ${legacyCounts(result.counts)}.${legacyNotes(result)}`;}
+  catch(error){text=error.message;}
+  await refresh().catch(()=>{});$('#legacy-message').textContent=text;
+};
 async function refresh() {
   const data=await call('/status');current=data;
-  showProtection(data);showYayoi(data.yayoi,data.busy,data);showAplus(data.aplus,data.busy,data);showSmsSource(data.smsSource,data.busy,data);
+  showProtection(data);showLegacy(data);showYayoi(data.yayoi,data.busy,data);showAplus(data.aplus,data.busy,data);showSmsSource(data.smsSource,data.busy,data);
   const main=$('#accounts');main.replaceChildren();
   if(data.protected && !data.accounts.length) {
     const section=document.createElement('section'),title=document.createElement('h2'),note=document.createElement('p');
@@ -217,8 +263,18 @@ $('#yayoi-open').onclick=async()=>{
   try{await call('/yayoi/open',{});await refreshYayoi();}catch(error){showYayoiError(error);button.disabled=false;}
 };
 let aplusTimer;
+// Parent folds P6/P6b: an Aplus account's own saved login (its section above, or the previous setup's import) is used instead of this
+// shared login; say which accounts are covered, never ask for a first login that already exists, and never imply every account is
+// covered. An account's hasCredentials is its own entry only (/status reads <provider>-<id>, never the shared fallback).
+function aplusSavedText(shared,accounts) {
+  const aplus=(accounts||[]).filter(a=>a.provider==='aplus'),own=aplus.filter(a=>a.hasCredentials).map(a=>a.name),missing=aplus.filter(a=>!a.hasCredentials).map(a=>a.name);
+  if(shared)return 'Login saved. Enter both fields to replace it.'+(own.length?` ${own.join(', ')} ${own.length===1?'uses its own saved login':'use their own saved logins'} instead.`:'');
+  if(!own.length)return 'Enter the login you use for My APLUS.';
+  if(!missing.length)return `Every My APLUS account of this PC has its own saved login (${own.join(', ')}). This shared login is optional.`;
+  return `Saved on this PC for ${own.join(', ')}. ${missing.join(', ')} ${missing.length===1?'has':'have'} no saved login yet: enter it in ${missing.length===1?'its':'their'} own section above.`;
+}
 function showAplus(data,busy,all=current) {
-  $('#aplus-saved').textContent=data.hasCredentials?'Login saved. Enter both fields to replace it.':'Enter the login you use for My APLUS.';
+  $('#aplus-saved').textContent=aplusSavedText(!!data.hasCredentials,all.accounts);
   $('#aplus-save').disabled=!!busy || !(all.unlocked && all.mode==='protected');
   clearTimeout(aplusTimer);
   if(busy)aplusTimer=setTimeout(()=>refreshAplus().catch(error=>{$('#aplus-status').textContent=error.message;}),2000);

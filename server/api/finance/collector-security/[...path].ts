@@ -1,7 +1,7 @@
 import { defineEventHandler, createError, getHeader, setHeader } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import { requireAuth } from '../../../middleware/auth'
-import { initializeSecurity,createRequest,readRequest,approveRequest,exchangeRequest,putKey,getKey,endGrant,readInstallation,cancelRequest,resumeSession } from '../../../services/financeCollectorSecurityService'
+import { initializeSecurity,createRequest,readRequest,approveRequest,exchangeRequest,putKey,getKey,endGrant,readInstallation,cancelRequest,resumeSession,legacyOwner } from '../../../services/financeCollectorSecurityService'
 
 // Separate from ordinary finance routes: a polling token is never sufficient to read keys.
 export default defineEventHandler(async event=>{
@@ -40,5 +40,7 @@ export default defineEventHandler(async event=>{
   if(route.length===1&&route[0]==='keys'&&event.method==='POST')return putKey(token,grant,await body())
   if(route.length===2&&route[0]==='keys'&&event.method==='GET')return getKey(token,grant,route[1])
   if(route.length===1&&route[0]==='lock'&&event.method==='POST')return endGrant(token,grant)
+  // The previous card setup's owner proof (plan omf-card-handover-20261030): the same token, grant, origin and body rules as keys.
+  if(route.length===1&&route[0]==='legacy-owner'&&event.method==='POST')return legacyOwner(token,grant,await body(),origin)
   throw createError({statusCode:404,statusMessage:'Collector approval endpoint not found'})
 })

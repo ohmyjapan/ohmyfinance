@@ -16,11 +16,16 @@ import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
 import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin, connectWithOmf, acknowledgeWithOmf, cancelConnectWithOmf, launch } from './omf-authorization.mjs';
 import { AdbSmsSource, smsSourceInput, findAdb } from './sms-source.mjs';
+import { inspectSource, previewLegacyCards, importLegacyCards, legacyReply, standardSource } from './legacy-card-import.mjs';
 
 // Saved bank/mail credentials open only during an authorized session. Remembered-PC access renews silently;
 // idle ticks, status and uploads do not open bank/mail credentials. Once v3 activation completes, the DPAPI blob
-// holds connection metadata and its collector token. Legacy credentials are read only by /protect after OMF approval.
+// holds connection metadata and its collector token. Legacy credentials are read only by /protect after OMF approval,
+// and a previous directory's card logins only by the explicit /legacy-cards check and import inside a protected session.
 const directory=path.resolve(process.env.OMF_COLLECTOR_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(),'OhMyFinance','collector'));
+// The previous card setup of this Windows user (plan omf-card-handover-20261030): the standard directory, never a submitted path.
+const LEGACY_SOURCE=standardSource();
+let legacyCheck=null;      // the last explicit check of LEGACY_SOURCE: {id, session, sourceHash, entries, at}; no login or token
 const vault=new Vault(directory), secrets=new SplitStore(directory), setupKey=randomBytes(32).toString('hex');
 const STATE_FILE=path.join(directory,'vault-state.json'), ACL_SCRIPT=fileURLToPath(new URL('./windows/private-acl.ps1',import.meta.url));
 const TICK_MS=Math.max(1000,Number(process.env.OMF_COLLECTOR_TICK_MS)||10000), BATCH_MS=Math.max(5000,Number(process.env.OMF_COLLECTOR_BATCH_MS)||20*60*1000);
@@ -201,6 +206,26 @@ async function startSession(mode,{interactive=true}={}) {
 const ownBrowser=live=>async({pid})=>{ assertSession(live);live.browsers.add(pid);const reply=await live.broker.request('own',{pid},30000);assertSession(live);if(!reply.ok)throw new Error('The batch could not take ownership of the browser'); };
 function requireProtectedSession() { const live=liveSession();if(!live || live.mode!=='protected') throw coded('forbidden','Connect this PC before saving a login.'); return live; }
 const writeSecret=(live,id,aad,value)=>secrets.withLock(()=>{assertSession(live);return secrets.save(id,aad,value,live.broker);});
+// The previous card setup's import (plan omf-card-handover-20261030) inside one live protected session: the session's own key service
+// proves the grant and the previous owner, OMF's live card list maps the logins, and each entry is sealed exactly like /credentials
+// (or /mailbox) under the writer lease — the session asserted, an entry already present kept, the sealed value opened back and compared.
+// For an Aplus account the shared aplus entry counts as present too (parent fold P2b): a manual shared save that reached the lease
+// after the plan was made stays the one the job uses (credentialEntryFor prefers aplus-<id>, so writing it would shadow that save).
+function legacyCardDeps(live,config){
+  const owners=[...new Set((config.accountInfo||[]).map(a=>String(a.ownerId||'')))];
+  return {source:LEGACY_SOURCE,target:directory,remote:live.broker.remote,origin:config.baseUrl,ownerId:owners.length===1?owners[0]:'',
+    accounts:async()=>(await api(config,'accounts',undefined,undefined,live)).accounts,existing:async()=>new Set(await secrets.list()),assertLive:()=>assertSession(live),
+    write:item=>secrets.withLock(async()=>{
+      assertSession(live);
+      if(await secrets.has(item.entry))return 'existing'; // guard:legacy-no-overwrite
+      if(item.account?.provider==='aplus'&&await secrets.has('aplus'))return 'existing'; // guard:legacy-shared-aplus-kept
+      const aad=aadFor(live.installationId,item.account?item.account.provider:'gmail',item.account||null,config);
+      await secrets.save(item.entry,aad,item.value,live.broker);
+      const back=await secrets.open(item.entry,aad,live.broker);assertSession(live);
+      if(JSON.stringify(back)!==JSON.stringify(item.value))throw new Error('The saved login did not verify');
+      return 'imported';
+    })};
+}
 async function runYayoi(credentials,live) {
   running=true;activeAction=true;
   const status=async(state,message)=>{yayoiState={state,message};};
@@ -956,7 +981,9 @@ export async function startCollector({openSetup=false,open=launch}={}) {
           const envelope=supported?await savedBankLogin(secrets,bankEntry(b.provider,id),aadFor(state?.installationId,b.provider,{_id:id,ownerId},config)).catch(()=>null):null;
           const pending=envelope?pendingOf(b.provider,await bankMarkerOf(bankMarker(b.provider,id)),envelope):null;
           return {bankAccountId:id,name:String(b?.name||''),provider:b?.provider||null,variant:b?.variant??null,supported,hasCredentials:!!envelope,refused:!!pending,pending};}));
-        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},smsSource:{serial:config.smsSource?.serial??null,adbFound:!!findAdb()},accounts,banks});
+        // The previous card setup: file metadata only (legacy-card-import.mjs inspectSource), never decrypted here.
+        const previous=await inspectSource(LEGACY_SOURCE,directory).catch(()=>({available:false,code:'legacy-unsafe'}));
+        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},smsSource:{serial:config.smsSource?.serial??null,adbFound:!!findAdb()},accounts,banks,legacyCards:{available:previous.available,state:previous.code}});
       }
       if(req.method==='POST' && ['/connect','/connect/resume'].includes(req.url)) { await json(req).catch(()=>({})); try { return reply(200,await connect({resume:req.url==='/connect/resume'})); } catch(error) { return reply(codeOf(error),{error:error.message,keyLost}); } }
       if(req.method==='POST' && req.url==='/pair') {
@@ -986,6 +1013,22 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         const provider=info.provider||'amex';
         await writeSecret(live,provider+'-'+info._id,aadOf({installationId:live.installationId,origin:config.baseUrl,ownerId:info.ownerId,provider,accountId:info._id}),{username:body.username,password:body.password});
         return reply(200,{saved:true});
+      }
+      if(req.method==='POST' && ['/legacy-cards/preview','/legacy-cards/import'].includes(req.url)) {
+        // The previous card setup (plan omf-card-handover-20261030): its saved card/mailbox logins move into this connection only through
+        // these two explicit actions inside the protected session — check (OMF confirms the grant before anything is read, then the read,
+        // the same-owner proof and the plan) and confirm of that exact check. The action slot is reserved before the first await; nothing
+        // runs at startup, on a tick or on /status. Replies carry account ids, names and outcomes, or a fixed message (legacyReply).
+        let release;try{release=reserveAction();}catch(error){return reply(409,{error:error.message});}
+        try{
+          const check=req.url==='/legacy-cards/preview',body=await json(req).catch(()=>null);
+          if(!body||typeof body!=='object'||Array.isArray(body)||(check?Object.keys(body).length>0:Object.keys(body).some(k=>k!=='previewId')||!/^[a-f\d]{32}$/.test(String(body.previewId))))return reply(400,{error:'Check the previous logins first, then confirm the import.'});
+          const live=requireProtectedSession(),deps=legacyCardDeps(live,await metadata());
+          if(check){legacyCheck=null;const {preview,record}=await previewLegacyCards(deps);legacyCheck={...record,session:live.id};return reply(200,preview);}
+          const record=legacyCheck&&legacyCheck.id===body.previewId&&legacyCheck.session===live.id?legacyCheck:null;legacyCheck=null; // guard:legacy-one-confirm
+          return reply(200,(await importLegacyCards(deps,record)).result);
+        }catch(error){const {status,body}=legacyReply(error);return reply(status,body);}
+        finally{release();}
       }
       if(req.method==='POST' && req.url==='/bank/credentials') {
         // The one-time bank standard login (plans omf-rakuten-auto-login-20261021 §3, omf-paypay-four-accounts-20261021): body shape

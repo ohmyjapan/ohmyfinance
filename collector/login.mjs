@@ -32,7 +32,9 @@ export class LoginClaims {
   }
 }
 
-export function loginUi(page) {
+// `reveal` (plan omf-card-handover-20261030): the background card wrapper's way to show the person this SAME owned page when they are
+// needed (collector/browser.mjs showWindow); without it show() keeps bringing the tab to the front, as every other caller expects.
+export function loginUi(page, { reveal = null } = {}) {
   return {
     async state() {
       if (onSurface(page, GLOBAL)) {
@@ -65,7 +67,7 @@ export function loginUi(page) {
     async choose(channel) { await click(page, 'label[for=' + JSON.stringify(channel.id) + ']', null, WWW, VERIFY_PATH); },
     async next() { await click(page, 'button', '次へ', WWW, VERIFY_PATH); },
     async code(value) { await fill(page, '#question-input', value, WWW, VERIFY_PATH); },
-    async show() { await page.bringToFront(); }
+    async show() { if (reveal) await reveal(page); else await page.bringToFront(); } // guard:login-reveal
   };
 }
 

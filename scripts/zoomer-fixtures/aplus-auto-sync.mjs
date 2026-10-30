@@ -199,9 +199,11 @@ try {
   await FinancialAccount.updateOne({ _id: account._id }, { $set: { 'autoSync.hour': 0 } });
   assert.deepEqual(await scheduler.runSyncSchedule(at('2026-10-14T15:00:00Z')), { queued: [String(account._id)] });
   row = await read(); assert.equal(row.autoSync.lastQueuedDay, '2026-10-15'); assert.equal(row.jobRequestedAt.toISOString(), '2026-10-14T15:00:00.000Z');
-  const due = scheduler.dueAccounts([{ provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'idle' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9, lastQueuedDay: '2026-10-14' }, jobState: 'idle' }, { provider: 'amex', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'idle' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 11 }, jobState: 'idle' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'queued' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'complete', lastAttemptAt: at('2026-10-14T00:30:00Z') }], tenJst);
-  assert.equal(due.length, 1);
-  pass('S1 JST midnight: 23:59:59 same day no-op, 00:00 next day due only once the hour has passed; dueAccounts pre-filter keeps only the due row');
+  // Plan omf-card-handover-20261030: an enabled Amex account is due like Aplus (its job is the latest CLOSED statement); a provider the
+  // collector claim does not serve is the unsupported-provider control.
+  const due = scheduler.dueAccounts([{ provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'idle' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9, lastQueuedDay: '2026-10-14' }, jobState: 'idle' }, { provider: 'amex', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'idle' }, { provider: 'unsupported-card', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'idle' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 11 }, jobState: 'idle' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'queued' }, { provider: 'aplus', active: true, autoSync: { enabled: true, hour: 9 }, jobState: 'complete', lastAttemptAt: at('2026-10-14T00:30:00Z') }], tenJst);
+  assert.deepEqual(due.map(r => r.provider), ['aplus', 'amex'], 'dueAccounts keeps the due Aplus and Amex rows and drops the unsupported provider: ' + JSON.stringify(due.map(r => r.provider)));
+  pass('S1 JST midnight: 23:59:59 same day no-op, 00:00 next day due only once the hour has passed; dueAccounts pre-filter keeps only the due Aplus and Amex rows (an unsupported provider is excluded)');
   // S2 — the route.
   const app = createApp(); app.use(auth); app.use(route);
   server = http.createServer(toNodeListener(app)); await new Promise(r => server.listen(0, '127.0.0.1', r)); const origin = 'http://127.0.0.1:' + server.address().port;
@@ -218,15 +220,24 @@ try {
   row = await read(); assert.equal(row.autoSync.enabled, true); assert.equal(row.autoSync.hour, 7); assert.equal(row.autoSync.lastQueuedDay, '2026-10-01');
   for (const body of [{ enabled: true, hour: 24 }, { enabled: true, hour: '9' }, { enabled: 'yes', hour: 9 }, { enabled: true, hour: -1 }, { enabled: true, hour: 9.5 }, {}]) { const r = await call('accounts/' + id + '/auto-sync', { method: 'PUT', body }); assert.equal(r.status, 400, JSON.stringify(body) + ' → ' + r.status); assert.equal(r.message, '自動取得の時刻は0〜23で指定してください'); }
   const amex: any = await FinancialAccount.create({ ownerId, name: 'Synthetic Amex', provider: 'amex', primaryCard: '12345', cardIdentifiers: ['12345'], otpRecipient: 'a@example.invalid', otpMailbox: 'a@example.invalid' });
-  const refused = await call('accounts/' + String(amex._id) + '/auto-sync', { method: 'PUT', body: { enabled: true, hour: 9 } }); assert.equal(refused.status, 400); assert.equal(refused.message, 'Aplus account required');
+  // Plan omf-card-handover-20261030: the route saves an Amex account's daily setting (its job is the latest CLOSED statement) with the same
+  // input rule; the shared write without the route's opt-in (the owner Navi action) stays Aplus-only; a provider the schedule does not
+  // queue is the unsupported-provider control.
+  assert.deepEqual((await FinancialAccount.findById(amex._id).lean() as any).autoSync, { enabled: false, hour: 9 });
+  const amexSaved = await call('accounts/' + String(amex._id) + '/auto-sync', { method: 'PUT', body: { enabled: true, hour: 8 } }); assert.equal(amexSaved.status, 200, JSON.stringify(amexSaved)); assert.deepEqual(amexSaved.data, { autoSync: { enabled: true, hour: 8 } });
+  for (const body of [{ enabled: true, hour: 24 }, { enabled: 'yes', hour: 9 }]) { const r = await call('accounts/' + String(amex._id) + '/auto-sync', { method: 'PUT', body }); assert.equal(r.status, 400, 'Amex ' + JSON.stringify(body) + ' → ' + r.status); assert.equal(r.message, '自動取得の時刻は0〜23で指定してください'); }
+  await assert.rejects(service.saveAutoSync(ownerId, await FinancialAccount.findById(amex._id).lean(), { enabled: false, hour: 9 }), (e: any) => e?.statusCode === 400 && e?.statusMessage === 'Aplus account required');
+  const unsupported = (await FinancialAccount.collection.insertOne({ ownerId: new mongoose.Types.ObjectId(ownerId), provider: 'unsupported-card', name: 'Synthetic unsupported card', primaryCard: '99999', cardIdentifiers: ['99999'], active: true })).insertedId;
+  const refused = await call('accounts/' + String(unsupported) + '/auto-sync', { method: 'PUT', body: { enabled: true, hour: 9 } }); assert.equal(refused.status, 400); assert.equal(refused.message, 'Amex or Aplus account required');
+  assert.equal((await FinancialAccount.collection.findOne({ _id: unsupported }) as any).autoSync, undefined);
   assert.equal((await call('accounts/' + id + '/auto-sync', { method: 'PUT', token: '', body: { enabled: true, hour: 9 } })).status, 401);
   const foreign: any = await FinancialAccount.create({ ownerId: new mongoose.Types.ObjectId(), name: 'Synthetic other owner', provider: 'aplus', primaryCard: '9999', cardIdentifiers: ['9999'] });
   assert.equal((await call('accounts/' + String(foreign._id) + '/auto-sync', { method: 'PUT', body: { enabled: true, hour: 9 } })).status, 404);
   assert.equal((await FinancialAccount.findById(foreign._id).lean() as any).autoSync.enabled, false);
   const listed = await call('accounts'); assert.equal(listed.status, 200);
   assert.deepEqual(listed.data.accounts.find((a: any) => a._id === id).autoSync, { enabled: true, hour: 7, lastQueuedDay: '2026-10-01' });
-  assert.deepEqual(listed.data.accounts.find((a: any) => a._id === String(amex._id)).autoSync, { enabled: false, hour: 9 });
-  pass('S2 PUT auto-sync saves enabled/hour by dotted $set (lastQueuedDay kept), refuses hour 24, "9", a non-boolean, Amex, no token and a foreign account; GET accounts carries autoSync');
+  assert.deepEqual(listed.data.accounts.find((a: any) => a._id === String(amex._id)).autoSync, { enabled: true, hour: 8 });
+  pass('S2 PUT auto-sync saves enabled/hour by dotted $set (lastQueuedDay kept) for Aplus and, by plan omf-card-handover-20261030, Amex; refuses hour 24, "9", a non-boolean, an unsupported provider, no token and a foreign account; the shared write without the route opt-in (owner Navi) stays Aplus-only; GET accounts carries autoSync');
   const fiscal = { start: '2026-11-01', end: '2027-10-31' };
   const setting = await call('accounts/' + id + '/fiscal-period', { method: 'PUT', body: fiscal }); assert.equal(setting.status, 200, JSON.stringify(setting));
   assert.deepEqual((await read()).accounting.fiscalPeriod, fiscal); assert.equal((await read()).autoSync.hour, 7);

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import puppeteer from 'rebrowser-puppeteer-core';
 export { FRAME_INIT_FIX } from './puppeteer-frame-init.mjs'; // pinned-SDK fix, in place before any launch: a failed iframe initialization no longer ends the process (puppeteer#14701)
 import { parseAmex } from '../shared/amex.mjs';
-import { ensureLogin, LoginClaims } from './login.mjs';
+import { ensureLogin, LoginClaims, loginUi } from './login.mjs';
 import { LoginMailbox } from './mail.mjs';
 import { click, onSurface, poll } from './interaction.mjs';
 import { latestClosed, statementSnapshot, STATEMENT, verifyStatement } from './statement.mjs';
@@ -192,14 +192,16 @@ export async function selectLatestStatement(page, primaryCard) {
  * One batch's statement download in an owned, ephemeral, sandboxed Chrome: profiles/ephemeral/<owner>-amex-<account>-<batch>,
  * deleted at closure; retained profiles are never opened. `settings` are the credentials opened inside the batch (none in
  * the manual lane); `gmail` the mailbox grant opened inside the batch; `onLaunch` the ownership hand-over; `origin` binds
- * the outbox manifest to the paired OMF.
+ * the outbox manifest to the paired OMF. Plan omf-card-handover-20261030: the routine download runs in the background owned
+ * Chrome of the bank jobs (no startup window, an inactive off-screen page, input only through DevTools); when the person is
+ * needed the login UI calls `reveal` (default showWindow) on that SAME page — never another window, never a global input.
  */
-export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '' } = {}) {
+export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', reveal = showWindow } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);
-  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch });
+  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true }); // guard:card-background-amex
   try {
     const page=await amexPage(browser);
-    return await collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin });
+    return await collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin, ui: loginUi(page, { reveal }) }); // guard:card-reveal-amex
   } finally {
     const entry=owned.get(browser.process()?.pid);
     if(entry)await closeEntry(entry);
@@ -207,7 +209,8 @@ export async function collectStatement(account, settings, directory, status, { g
 }
 
 // `ui` (optional): a login UI for ensureLogin in place of its own default loginUi(page) — the cloud probe's adapter
-// (cloud-probe/run.mjs cloudLoginUi). Undefined = the Windows collector's login, unchanged; collectStatement never passes one.
+// (cloud-probe/run.mjs cloudLoginUi). Undefined = the Windows collector's login, unchanged; collectStatement passes that same
+// default loginUi with its background reveal callback.
 /** @param {any} page @param {any} browser @param {any} account @param {any} settings @param {string} directory @param {any} status @param {{ mailbox?: any, claims?: any, ui?: any, origin?: string }} [options] */
 export async function collectFromPage(page, browser, account, settings, directory, status, { mailbox = null, claims = null, ui, origin = '' } = {}) {
   await ensureLogin(page, settings, status, { account, mailbox, claims, ui });
@@ -265,14 +268,15 @@ export async function collectFromPage(page, browser, account, settings, director
  * batch (none → the person signs in); `covered` the finalized months OMF or the outbox already holds; `jobId` the claimed
  * job; `codeSource` the statement-code SMS source and `signal` the session's abort (plan omf-auto-sync-build-20261014 §2
  * A10); `ui` the same test seam collectFromPage has (undefined = the real page). The page logic lives in ./aplus.mjs (no
- * node_modules), so this is the lane's only puppeteer touchpoint.
+ * node_modules), so this is the lane's only puppeteer touchpoint. Plan omf-card-handover-20261030: background owned Chrome as
+ * collectStatement; the real page's show() calls `reveal` (default showWindow) on that SAME page when the person is needed.
  */
-export async function collectAplusStatement(account, settings, directory, status, { batch = 'batch', onLaunch = null, origin = '', covered = [], jobId = account.jobId, codeSource = null, signal = null, ui = undefined } = {}) {
+export async function collectAplusStatement(account, settings, directory, status, { batch = 'batch', onLaunch = null, origin = '', covered = [], jobId = account.jobId, codeSource = null, signal = null, ui = undefined, reveal = showWindow } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'aplus', account._id, batch);
-  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch });
+  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true }); // guard:card-background-aplus
   try {
     const page = await browser.newPage();
-    return await collectAplusFromPage(page, browser, account, settings, directory, status, { covered, jobId, origin, codeSource, signal, ui });
+    return await collectAplusFromPage(page, browser, account, settings, directory, status, { covered, jobId, origin, codeSource, signal, ui, reveal }); // guard:card-reveal-aplus
   } finally {
     const entry = owned.get(browser.process()?.pid);
     if (entry) await closeEntry(entry);

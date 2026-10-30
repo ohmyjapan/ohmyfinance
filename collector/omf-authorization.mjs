@@ -155,6 +155,17 @@ export function keyService(config,approval,signal,{renew,call=securityCall,now=D
     get until(){return expiry;},refresh,
     async put(record){await refresh();check();const response=await call(config,'keys',{body:record,grant:current.grant,signal});check();if(response.keyId!==record.keyId||response.generation!==current.generation)throw new Error('OMF key registration did not match.');return response;},
     async get(keyId){await refresh();check();const response=await call(config,'keys/'+keyId,{grant:current.grant,signal});check();if(response.keyId!==keyId||response.generation!==current.generation)throw new Error('OMF returned a different key record.');return response;},
+    // The previous card setup's owner proof (plan omf-card-handover-20261030) under this same grant, which never leaves this closure: no
+    // argument — the grant's owner, origin and permitted card ids (asked before the previous setup is decrypted); a token hash — whether
+    // that previous token is this owner's in this OMF, and which of its card ids are permitted now. The previous token itself is never sent.
+    async legacyOwner(tokenHash){
+      if(tokenHash!==undefined&&!/^[a-f0-9]{64}$/.test(String(tokenHash)))throw new Error('Invalid previous setup proof.');
+      await refresh();check();
+      const response=await call(config,'legacy-owner',{body:tokenHash===undefined?{}:{legacyTokenHash:tokenHash},grant:current.grant,signal});check();
+      const ids=Array.isArray(response?.accountIds)?response.accountIds:null;
+      if(!/^[a-f\d]{24}$/.test(String(response?.ownerId))||typeof response.origin!=='string'||!ids||ids.length>100||ids.some(id=>!/^[a-f\d]{24}$/.test(String(id)))||(tokenHash===undefined?response.matched!==undefined:typeof response.matched!=='boolean'||(!response.matched&&ids.length>0)))throw new Error('OMF returned an invalid previous setup proof.');
+      return {ownerId:response.ownerId,origin:response.origin,accountIds:ids.map(String),...(tokenHash===undefined?{}:{matched:response.matched})};
+    },
     async end(){if(ended)return;ended=true;const grant=current.grant;current.grant=null;await revoke(grant);},check
   };
 }
