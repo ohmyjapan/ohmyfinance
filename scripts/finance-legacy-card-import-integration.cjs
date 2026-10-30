@@ -414,9 +414,20 @@ async function main() {
       await page.setRequestInterception(true);
       page.on('request', r => { const o = new URL(r.url()); if (o.origin === E.local || ['about:', 'data:'].includes(o.protocol)) return r.continue(); return r.abort(); });
       page.on('response', async r => { try { if (r.url().startsWith(E.local)) bodies.push(await r.text()); } catch { /* no body */ } });
-      await page.goto(E.link, { waitUntil: 'networkidle2' });
-      const until = async (fn, label, ms = 30000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await page.evaluate(fn)) return; await pause(150); } throw new Error('UI timed out: ' + label); };
-      await until(() => !document.querySelector('#legacy-cards').classList.contains('hidden') && !document.querySelector('#legacy-preview').disabled, 'previous setup section enabled');
+      // A timed-out wait names the page's last /status flags and the section's controls (value-free), so a failure shows its precondition.
+      const shown = () => page.evaluate(() => { const c = current || {}; return { busy: !!c.busy, unlocked: !!c.unlocked, mode: c.mode || null, authorizing: !!c.authorizing, locking: !!c.locking, legacy: c.legacyCards?.state || null, hidden: document.querySelector('#legacy-cards').classList.contains('hidden'), checkDisabled: document.querySelector('#legacy-preview').disabled }; }).catch(error => ({ unreadable: String(error?.message || error).slice(0, 80) }));
+      const until = async (fn, label, ms = 30000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await page.evaluate(fn)) return; await pause(150); } throw new Error('UI timed out: ' + label + ' ' + JSON.stringify(await shown())); };
+      // The collector's own tick (every 10 s here) reads its vault and asks OMF for work while /status reports it busy, so a page can open in
+      // that window. Deterministically: the tick's claim is held at OMF (the owned proxy) while the page opens; Check is disabled while the
+      // collector is busy and must become usable without a reload once the tick ends (case omf-background-focus-repair-20261030: the page
+      // rendered this section once, so an opening during a tick left Check disabled — the C-leg and MU1 timeouts at this wait).
+      const tick = E.holdNext(x => x.method === 'POST' && x.path === '/api/finance/collector/claim');
+      if (!await Promise.race([tick.held.then(() => true), pause(30000).then(() => false)])) { tick.release(); throw new Error('SETUP the collector tick did not reach OMF within 30 s'); }
+      try {
+        await page.goto(E.link, { waitUntil: 'networkidle2' });
+        assert.deepEqual(await page.evaluate(() => [current.busy, document.querySelector('#legacy-preview').disabled]), [true, true], 'ui:legacy-disabled-while-busy ' + JSON.stringify(await shown()));
+      } finally { tick.release(); }
+      await until(() => !document.querySelector('#legacy-cards').classList.contains('hidden') && !document.querySelector('#legacy-preview').disabled, 'previous setup section enabled once the collector is idle (ui:legacy-busy-reread)');
       await page.evaluate(() => document.querySelector('#legacy-preview').click());
       await until(() => /^Checked:/.test(document.querySelector('#legacy-message').textContent), 'checked');
       const listed = await page.evaluate(() => document.querySelector('#legacy-items').textContent);

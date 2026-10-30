@@ -66,7 +66,7 @@ function showProtection(data) {
 // ran. Every outcome other than a saved login names the next step: enter that login in its own section below.
 const LEGACY_STATES={'legacy-ready':'The previous downloader on this PC saved card logins. Check them to see which cards of this connection can use them; nothing is read until you press Check previous logins.','legacy-protected':'The previous downloader on this PC already uses protected storage, so its logins cannot be imported here. Enter the card logins below.','legacy-unsafe':'The previous downloader’s folder is a link or is not private to this Windows user, so it is not read. Enter the card logins below.','legacy-unreadable':'The previous downloader’s saved logins cannot be read here. Enter the card logins below.'};
 const LEGACY_ACTIONS={import:'can be saved on this PC',existing:'already saved on this PC — kept',unmatched:'no matching card in this connection — enter it below',ambiguous:'more than one matching card — enter it below',unsupported:'not a complete login — enter it below',unproven:'not confirmed as this OMF account — enter it below',imported:'saved on this PC','not-checked':'not part of the check — check again'};
-let legacyCheck=null;
+let legacyCheck=null,legacyTimer;
 function legacyLine(label,text){const item=document.createElement('li'),name=document.createElement('b');name.textContent=label+': ';item.append(name,document.createTextNode(text));return item;}
 function legacyCounts(counts){
   const c=counts||{},manual=(c.unmatched||0)+(c.ambiguous||0)+(c.unsupported||0)+(c.unproven||0)+(c.notImported||0);
@@ -90,6 +90,9 @@ function showLegacy(data) {
   const count=legacyCheck?legacyCheck.counts.import:0,confirm=$('#legacy-import');
   confirm.classList.toggle('hidden',!count);confirm.disabled=!protectedBatch||!!data.busy||!count;
   confirm.textContent=`Use ${count} login${count===1?'':'s'} on this PC`;
+  // While the collector is busy (its own tick reads the vault and asks OMF for work every few seconds) Check and Use wait; this section
+  // alone is re-read until it is idle, as the bank, Aplus and Yayoi sections are, so a page opened during a tick never stays disabled.
+  clearTimeout(legacyTimer);if(data.busy&&state==='legacy-ready')legacyTimer=setTimeout(()=>call('/status').then(next=>{current=next;showLegacy(next);}).catch(()=>{}),2000);
 }
 $('#legacy-preview').onclick=async()=>{
   $('#legacy-preview').disabled=true;$('#legacy-import').disabled=true;legacyCheck=null;$('#legacy-items').replaceChildren();

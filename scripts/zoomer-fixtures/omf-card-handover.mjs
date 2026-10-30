@@ -15,7 +15,9 @@
 //      with their named findings (no importer, no keyService.legacyOwner, visible launch, unrouted attention, a navigation-interrupted
 //      Aplus page read ending the job, no owner-proof route, no local routes, Amex not scheduled, the Amex daily setting refused,
 //      importer not staged); and the revision 5e5ce0f before the settings-route and page-read corrections must fail L6 (the Amex save
-//      refused with 400) and the Aplus page-read test.
+//      refused with 400) and the Aplus page-read test; and the revision d067126 before the focus repair (case
+//      omf-background-focus-repair-20261030) must fail the setup page opened while the collector's tick is busy (Check left disabled),
+//      in owned headless Chrome.
 //   U  node --test collector/test/legacy-card-import.test.mjs (planner/importer; real DPAPI and ACL helpers on owned roots).
 //   K  node --test collector/test/card-background.test.mjs (Part A: the real wrappers over a recording launch; no Chrome).
 //   N  the same file with OMF_CARD_NATIVE=1 (real background Chrome on synthetic pages). OMF_CARD_NATIVE=0 → NOT RUN (red).
@@ -42,6 +44,9 @@ const root = path.resolve(path.dirname(SELF), '..', '..');
 export const BASE = '74f49b348eaf402e19360f17f027b8eedfde78a0';
 // The build revision before the settings-route admission and the Aplus page-read correction (card-handover/SETTINGS-ROUTE-COMPLETION.json).
 export const PRE = '5e5ce0ff9f5e56798b83c43827dfb4f0b8d20849';
+// The release candidate before the focus repair (focus-repair/6-build.md): its setup page renders the previous-setup section once, so a
+// page opened during the collector's tick keeps Check disabled.
+export const FOCUS = 'd067126af15fd9df3bbde56843dd2d7886963bb7';
 const execute = promisify(execFile);
 const sha256 = v => createHash('sha256').update(v).digest('hex');
 const EVIDENCE = process.env.OMF_CARD_EVIDENCE || '';
@@ -112,7 +117,9 @@ export const MUTANTS = [
   ['MR4-shared-default-widened', SERVICE, [["{ providers = ['aplus'] }", '{ providers = AUTO_SYNC_PROVIDERS }']], 'S', 'L6', /navi:(shared-default-aplus-only|amex-refused)/],
   // the Aplus page read a navigation interrupts (the native N failures at 5e5ce0f): an unknown page for that poll, never a broader catch
   ['MA8-aplus-navigation-read-fails', 'collector/aplus.mjs', [["} catch (error) { if (NAVIGATED.test(String(error?.message))) return { kind: 'unknown' }; throw error; } // guard:aplus-state-navigation", '} catch (error) { throw error; }']], 'K', '^Aplus page read', /card-aplus:navigation-read-is-unknown/],
-  ['MA9-aplus-any-read-failure-ignored', 'collector/aplus.mjs', [["if (NAVIGATED.test(String(error?.message))) return { kind: 'unknown' }; throw error; } // guard:aplus-state-navigation", "return { kind: 'unknown' }; }"]], 'K', '^Aplus page read', /card-aplus:closed-target-ends-job/]
+  ['MA9-aplus-any-read-failure-ignored', 'collector/aplus.mjs', [["if (NAVIGATED.test(String(error?.message))) return { kind: 'unknown' }; throw error; } // guard:aplus-state-navigation", "return { kind: 'unknown' }; }"]], 'K', '^Aplus page read', /card-aplus:closed-target-ends-job/],
+  // the focus repair (focus-repair/6-build.md): the previous-setup section re-read while the collector's own tick is busy
+  ['MU3-legacy-busy-not-reread', 'collector/setup.js', [["clearTimeout(legacyTimer);if(data.busy&&state==='legacy-ready')legacyTimer=setTimeout(()=>call('/status').then(next=>{current=next;showLegacy(next);}).catch(()=>{}),2000);", '']], 'C', 'L3,L4', /ui:legacy-busy-reread/]
 ];
 
 function runChild(args, env, timeout) {
@@ -199,7 +206,7 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
   const leg = async (name, fn) => { const key = name.split(' ')[0]; if (!want(key)) return; const t = Date.now(); try { lines.push(name + ': ' + await fn() + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); green.add(key); } catch (e) { pass = false; const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 2400); lines.push(name + ': ' + (/^(SETUP|NOT RUN)/.test(msg) ? '' : 'RED ') + msg); } };
   const unitGreen = (r, t, what) => { if (r.code !== 0 || t.fail || !t.pass) throw new Error(t.fail + ' failed: ' + t.failures.join(' | ') + ' — ' + t.message + (/Cannot find module|ERR_MODULE_NOT_FOUND/.test(t.out) ? ' (' + what + ' absent)' : '')); };
   try {
-    await leg('F fail-first on the base revision ' + BASE.slice(0, 7) + ' (each changed module in its defect seam) and on ' + PRE.slice(0, 7) + ' before the settings-route and page-read corrections', async () => {
+    await leg('F fail-first on the base revision ' + BASE.slice(0, 7) + ' (each changed module in its defect seam), on ' + PRE.slice(0, 7) + ' before the settings-route and page-read corrections and on ' + FOCUS.slice(0, 7) + ' before the focus repair', async () => {
       const found = [];
       // U: no importer, keyService without legacyOwner
       { const authorization = await baseText('collector/omf-authorization.mjs'); const r = await withCopy('collector/omf-authorization.mjs', 'base', authorization, copy => unit(UNIT, { OMF_TEST_IMPORT_MODULE: path.join(root, 'collector', '.zoomer-card-base-absent-legacy-card-import.mjs'), OMF_TEST_AUTHORIZATION_MODULE: copy })), t = tests(r); await keep('F-U', t.out);
@@ -228,6 +235,13 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
       { const r = await withCopy('collector/aplus.mjs', 'pre', await baseText('collector/aplus.mjs', PRE), a => unit(BACKGROUND, { OMF_TEST_APLUS_MODULE: a, OMF_CARD_NATIVE: '0' }, '^Aplus page read')), t = tests(r); await keep('F-PRE-K', t.out);
         if (t.fail !== 1 || !t.out.includes('card-aplus:navigation-read-is-unknown Execution context was destroyed')) throw new Error('the Aplus page read did not fail first on ' + PRE.slice(0, 7) + ': fail ' + t.fail + ' ' + t.message);
         counts.failFirst.PRE_K = t.fail + '/' + (t.pass + t.fail); found.push(PRE.slice(0, 7) + ' K red (card-aplus:navigation-read-is-unknown)'); }
+      // FOCUS: d067126's setup page, opened while the collector's tick is held at OMF, keeps Check disabled after the tick ends (L4, headless
+      // Chrome).
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + FOCUS.slice(0, 7) + ' setup-page fail-first needs owned headless Chrome');
+        const index = await readFile(path.join(root, 'collector/index.mjs'), 'utf8');
+        const r = await withCopy('collector/setup.js', 'focus', await baseText('collector/setup.js', FOCUS), setupCopy => withCopy('collector/index.mjs', 'focus', mutate(index, [["'./setup.js'", "'./" + path.basename(setupCopy) + "'"]], 'focus index'), indexCopy => harness({ OMF_TEST_INDEX_MODULE: indexCopy, OMF_CARD_ONLY: 'L3,L4', OMF_CARD_NATIVE: '1' }, true))); executed = true; await keep('F-FOCUS-C', r.text + '\n--- stderr ---\n' + r.stderr);
+        if (r.receipt?.pass || r.fails.length !== 1 || !/^FAIL L4 .*UI timed out: previous setup section enabled once the collector is idle \(ui:legacy-busy-reread\) \{"busy":true/.test(r.fails[0])) throw new Error('the setup page did not fail first on ' + FOCUS.slice(0, 7) + ': ' + (r.fails.join(' | ') || r.stderr.slice(-400)).slice(0, 700));
+        counts.failFirst.FOCUS_C = 'L4 red (Check left disabled after the busy tick)'; found.push(FOCUS.slice(0, 7) + ' L4 red (ui:legacy-busy-reread: the page kept its busy render)'); }
       // P: the base allowlist does not stage the importer
       { const stage = await baseText('collector/package/stage.mjs'); let failure = null;
         await withCopy('collector/package/stage.mjs', 'base', stage, async copy => { try { await stageCheck(copy); } catch (e) { failure = String(e.message); } });
