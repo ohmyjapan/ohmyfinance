@@ -2,13 +2,14 @@
 // Part A (always): the real collector/browser.mjs wrappers over a recording stand-in for rebrowser's launch (the module's own
 // launch is replaced in this process; no Chrome starts), the real login.mjs/aplus.mjs UIs on fake pages, and the unchanged
 // showWindow bytes; and the real bank callers of the same launch (bank.mjs collectBankStatement and observeBankPortal, bank-balance.mjs
-// inquireBalance) over that recording launch: only the card wrappers ask for the minimized window (case omf-card-only-focus-fold-20261030).
+// inquireBalance) over that recording launch: only the card wrappers ask for the minimized window (case omf-card-only-focus-fold-20261030)
+// and only their page keeps rendering through the focus emulation of its own page session (case omf-card-rendering-20261031).
 // Part B (OMF_CARD_NATIVE=1, serialized with the other Chrome suites): the real wrappers start real stock Chrome
-// headed in the background (no startup window, an inactive, minimized off-screen page) on intercepted synthetic issuer pages; every page
-// request is answered from synthetic HTML or aborted, the foreground window is read (never changed), a passive recorder keeps the owned
-// Chrome's window events for the whole run, and the reveal is a recording stand-in: the real showWindow is NEVER called on a headed
-// window here, because it would move a window on the owner's desktop (its restore from minimized, and the bank callers' window that is
-// not minimized, are proven in headless Chrome).
+// headed in the background (no startup window, an inactive, minimized off-screen page that keeps rendering) on intercepted synthetic
+// issuer pages; every page request is answered from synthetic HTML or aborted, the foreground window is read (never changed), a passive
+// recorder keeps the owned Chrome's window events for the whole run, and the reveal is a recording stand-in: the real showWindow is NEVER
+// called on a headed window here, because it would move a window on the owner's desktop (its restore from minimized, and the bank
+// callers' window that is not minimized, are proven in headless Chrome).
 // OMF_TEST_BROWSER_MODULE / OMF_TEST_LOGIN_MODULE / OMF_TEST_APLUS_MODULE point at a mutant copy beside the original;
 // OMF_TEST_BANK_MODULE / OMF_TEST_BALANCE_MODULE at copies of bank.mjs / bank-balance.mjs routed to that browser.mjs copy (without them
 // a browser.mjs copy skips the bank caller tests, with that reason).
@@ -24,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import puppeteer from 'rebrowser-puppeteer-core';
 import { HEADERS as APLUS_HEADERS } from '../../shared/aplus.mjs';
+import { click, poll } from '../interaction.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const load = (env, file) => import(pathToFileURL(process.env[env] ? path.resolve(process.env[env]) : path.join(here, '..', file)).href);
@@ -42,9 +44,10 @@ const PERSON_NEEDED = 'synthetic stop: the person would be shown the window here
 const aplusCsv = () => Buffer.from('﻿' + [APLUS_HEADERS, ['≪****-****-****-1234≫', '20260901', 'Synthetic shop', '2400', 'Ｓ', '1', '01', '2400', '']].map(row => row.map(v => '"' + String(v).replaceAll('"', '""') + '"').join(',')).join('\r\n'));
 // The statement-code texts of collector/aplus.mjs: the person is asked (verification_required) / the source is still typing it (running).
 const ASK_TEXT = 'My APLUSの認証コードをChromeで入力してください', AUTO_TEXT = 'My APLUSの認証コードをSMSから自動で入力します';
-const roots = [];
+const roots = [], recorders = [];
 async function owned(label) { const dir = await mkdtemp(path.join(os.tmpdir(), 'omf-card-bg-' + label + '-')); roots.push(dir); return dir; }
-test.after(async () => { try { await B.closeOwnedBrowsers(); } catch { /* best effort */ } for (const dir of roots) await rm(dir, { recursive: true, force: true }).catch(() => {}); });
+// A native leg that failed before its own recorder read leaves the recorder to this closure (it stops at once, never at its 15-minute cap).
+test.after(async () => { try { await B.closeOwnedBrowsers(); } catch { /* best effort */ } for (const recorder of recorders) await recorder.stop().catch(() => {}); for (const dir of roots) await rm(dir, { recursive: true, force: true }).catch(() => {}); });
 
 // ── fake pages: the issuer surfaces the real login UIs read (no credentials saved → the person is needed) ───────────────────────────
 // `refuse`: in a wrapper the page is a background window, so bringToFront would activate it (a foreground action); it fails at once.
@@ -59,17 +62,29 @@ function fakeAplusPage(events, { refuse = false } = {}) {
   return { label: 'aplus-page', url: () => url, async goto(target) { events.push('goto'); url = target; }, async evaluate() { return url.startsWith(APLUS) ? { kind: 'login' } : { kind: 'unknown' }; }, bringToFront: front(events, refuse) };
 }
 // ── a recording stand-in for rebrowser's launch: the options, the CDP calls and a browser whose pages are the fake pages ────────────
-function recordingLaunch(makePage) {
-  const record = { launches: [], cdp: [], defaultPages: 0, closed: 0, pages: [] };
+// A page Target.createTarget opened also records its own page sessions (case omf-card-rendering-20261031: the card page's rendering
+// session) and its navigations; `sequence` keeps those steps, the window creation and the closure in order. `rendering` makes that page
+// session fail: 'session' — it cannot be opened, 'command' — Chrome refuses Emulation.setFocusEmulationEnabled.
+function recordingLaunch(makePage, { rendering = null } = {}) {
+  const record = { launches: [], cdp: [], defaultPages: 0, closed: 0, pages: [], pageSessions: [], sequence: [] };
+  const pageSession = page => async () => {
+    if (rendering === 'session') { record.sequence.push('page-session refused'); throw new Error('synthetic: the page session could not be opened'); }
+    const session = { page, sent: [], detached: 0 }; record.pageSessions.push(session); record.sequence.push('page-session');
+    return {
+      async send(method, params) { session.sent.push([method, params]); record.sequence.push(method + ' ' + JSON.stringify(params)); if (rendering === 'command' && method === 'Emulation.setFocusEmulationEnabled') throw new Error('synthetic: ' + method + ' refused'); return {}; },
+      async detach() { session.detached++; record.sequence.push('page-session detached'); }
+    };
+  };
   const launch = async options => {
     record.launches.push(options);
     const targets = new Map(), pages = [], child = { pid: 41000 + record.launches.length, exitCode: 0, signalCode: null, kill() {}, once() {} };
+    const opened = () => { const page = makePage(), goto = page.goto; page.createCDPSession = pageSession(page); if (goto) page.goto = async (...args) => { record.sequence.push('goto'); return goto.apply(page, args); }; return page; };
     const browser = {
       connected: true, process: () => child,
-      async close() { record.closed++; browser.connected = false; },
+      async close() { record.closed++; record.sequence.push('close'); browser.connected = false; },
       async pages() { return pages.slice(); },
       async newPage() { record.defaultPages++; const page = makePage(); pages.push(page); record.pages.push(page); return page; },
-      target: () => ({ createCDPSession: async () => ({ async send(method, params) { record.cdp.push([method, params]); if (method !== 'Target.createTarget') return {}; const id = 'target-' + record.cdp.length, page = makePage(); targets.set(id, page); pages.push(page); record.pages.push(page); return { targetId: id }; }, async detach() {} }) }),
+      target: () => ({ createCDPSession: async () => ({ async send(method, params) { record.cdp.push([method, params]); if (method !== 'Target.createTarget') return {}; record.sequence.push(method); const id = 'target-' + record.cdp.length, page = opened(); targets.set(id, page); pages.push(page); record.pages.push(page); return { targetId: id }; }, async detach() {} }) }),
       async waitForTarget(predicate) { for (const [id, page] of targets) { const target = { _targetId: id, page: async () => page }; if (predicate(target)) return target; } throw new Error('no such target'); }
     };
     return browser;
@@ -169,9 +184,38 @@ test('protected session loss: closing the owned browsers mid-job ends the wrappe
   assert.equal(stand.record.closed, 1, 'card-background:session-loss-closed-once');
   assert.deepEqual(B.ownedBrowsers(), []); assert.equal(existsSync(B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, 'loss')), false, 'card-background:session-loss-profile');
 });
+// ── the minimized card page keeps rendering (case omf-card-rendering-20261031): the page's own DevTools session sends Chrome's focus
+// emulation once, before the first page step, and the collector never detaches it (Chrome ends it with the page or the browser). A page
+// that cannot keep rendering ends the job at page setup with one fixed message: before any navigation, so before any login is typed. ────
+const RENDERING = 'Emulation.setFocusEmulationEnabled {"enabled":true}';
+const RENDERING_FAILED = 'The minimized card window could not keep its page rendering';
+const FICTIONAL_LOGIN = { username: 'omf-fictional-user', password: 'omf-fictional-pass' };
+for (const [lane, makePage, run, profileOf] of [
+  ['Amex', fakeAmexPage, (dir, settings, options) => B.collectStatement(ACCOUNT, settings, dir, async () => {}, options), (dir, batch) => B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, batch)],
+  ['Aplus', fakeAplusPage, (dir, settings, options) => B.collectAplusStatement(APLUS_ACCOUNT, settings, dir, async () => {}, options), (dir, batch) => B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, batch)]
+]) {
+  const tag = lane.toLowerCase();
+  test(`card rendering (${lane} wrapper): the minimized page's own session sends the focus emulation once, before the first page step, and the collector never detaches it`, { skip: WINDOWS, timeout: 120000 }, async () => {
+    const events = [], stand = recordingLaunch(() => makePage(events, { refuse: true })), dir = await owned('rendering-' + tag);
+    await withLaunch(stand.launch, () => assert.rejects(run(dir, {}, { batch: 'rendering', reveal: async () => { stand.record.sequence.push('reveal'); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED)));
+    assert.deepEqual(stand.record.sequence, ['Target.createTarget', 'page-session', RENDERING, 'goto', 'reveal', 'close'], `card-rendering:${tag}-renders-before-first-step ` + JSON.stringify(stand.record.sequence));
+    assert.deepEqual(stand.record.pageSessions.map(s => [s.page === stand.record.pages[0], s.sent.length, s.detached]), [[true, 1, 0]], `card-rendering:${tag}-session-kept`);
+    assert.deepEqual([existsSync(profileOf(dir, 'rendering')), B.ownedBrowsers()], [false, []], `card-rendering:${tag}-closed`);
+  });
+  test(`card rendering setup failure (${lane} wrapper): a page session that cannot be opened or a refused focus emulation ends the job at page setup with the fixed message, before any navigation or typed login; browser closed, profile removed`, { skip: WINDOWS, timeout: 120000 }, async () => {
+    for (const [point, opened] of [['session', ['page-session refused']], ['command', ['page-session', RENDERING]]]) {
+      const events = [], revealed = [], stand = recordingLaunch(() => makePage(events, { refuse: true }), { rendering: point }), dir = await owned('rendering-' + tag + '-' + point);
+      const outcome = await withLaunch(stand.launch, () => run(dir, FICTIONAL_LOGIN, { batch: 'refused', reveal: async page => { revealed.push(page); throw new Error(PERSON_NEEDED); } }).then(() => null, error => error));
+      assert.equal(outcome?.message, RENDERING_FAILED, `card-rendering:setup-failure-${tag}-${point} ` + outcome?.message);
+      assert.deepEqual(stand.record.sequence, ['Target.createTarget', ...opened, 'close'], `card-rendering:setup-failure-${tag}-${point}-before-any-page-step ` + JSON.stringify(stand.record.sequence));
+      assert.deepEqual([events, revealed.length, stand.record.closed, existsSync(profileOf(dir, 'refused')), B.ownedBrowsers()], [[], 0, 1, false, []], `card-rendering:setup-failure-${tag}-${point}-cleanup`);
+    }
+  });
+}
 // ── the bank callers of the same background launch (case omf-card-only-focus-fold-20261030, final review F1): only the two card wrappers
 // ask for the minimized window; statement retrieval, the guided PayPay observe and the hourly balance keep the live-accepted creation
-// without windowState (Chrome 155 does not show the 池田泉州銀行 client-certificate chooser while the page is hidden). The real
+// without windowState and without the card page's focus emulation (Chrome 155 does not show the 池田泉州銀行 client-certificate chooser
+// while the page is hidden; the bank behaviour accepted live stays exactly as it is). The real
 // bank.mjs / bank-balance.mjs entry points run over the recording launch on owned roots, each stopped at its first page step (a
 // synthetic adapter or UI, or the balance precheck of a synthetic snapshot without an account); the browser registry proves they launched
 // through the browser.mjs under test.
@@ -185,7 +229,7 @@ async function bankCaller(batch, call) {
   const outcome = await withLaunch(stand.launch, () => call({ bank, balance, dir, bound: { ...BANK, jobId: randomUUID() } })).then(value => ({ value }), error => ({ error }));
   const profile = B.ephemeralProfile(dir, BANK.ownerId, 'bank', BANK.bankAccountId, batch), routed = B.ownedBrowsers().some(e => e.profile === profile);
   await B.closeOwnedBrowsers();
-  return { outcome, routed, launches: stand.record.launches, created: stand.record.cdp.filter(([m]) => m === 'Target.createTarget').map(([, p]) => JSON.stringify(p)), defaultPages: stand.record.defaultPages, closed: stand.record.closed, profileLeft: existsSync(profile) };
+  return { outcome, routed, launches: stand.record.launches, created: stand.record.cdp.filter(([m]) => m === 'Target.createTarget').map(([, p]) => JSON.stringify(p)), emulation: stand.record.pageSessions.flatMap(s => s.sent).filter(([method]) => method.startsWith('Emulation.')), sequence: stand.record.sequence, defaultPages: stand.record.defaultPages, closed: stand.record.closed, profileLeft: existsSync(profile) };
 }
 const ended = run => run.outcome.error ? 'threw ' + run.outcome.error.message : 'returned ' + JSON.stringify(run.outcome.value);
 function assertBankBackground(run, label) {
@@ -194,6 +238,9 @@ function assertBankBackground(run, label) {
   assert.ok(run.routed, 'bank-background:routed ' + label + ': the bank module did not launch through the browser.mjs under test');
   assert.deepEqual([options.headless, options.args.includes('--no-startup-window'), options.waitForInitialPage], [false, true, false], 'bank-background:' + label + '-launch ' + JSON.stringify(options));
   assert.deepEqual(run.created, [BANK_TARGET], 'bank-background:' + label + '-target ' + JSON.stringify(run.created));
+  // case omf-card-rendering-20261031: no page session of the bank page sends any Emulation command (the card page's focus emulation
+  // included); the bank modules' own page sessions (the guided observe's Runtime binding, the dialog watchers) are theirs, unchanged
+  assert.deepEqual(run.emulation, [], 'bank-background:' + label + '-no-emulation ' + JSON.stringify(run.sequence));
   assert.deepEqual([run.defaultPages, run.closed, run.profileLeft], [0, 1, false], 'bank-background:' + label + '-closed');
 }
 test('bank caller statement retrieval (bank.mjs collectBankStatement): its background window keeps the live-accepted creation, no windowState', { skip: WINDOWS || UNROUTED, timeout: 120000 }, async () => {
@@ -404,7 +451,8 @@ async function watchWindows(pid) {
   const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: 'ignore' });
   const read = async () => { try { return (await readFile(out, 'utf8')).split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)); } catch { return []; } };
   for (let i = 0; i < 300 && child.exitCode === null && !(await read()).some(e => e.ev === 'ready'); i++) await new Promise(r => setTimeout(r, 100));
-  return { async stop() { await writeFile(stop, 'stop').catch(() => {}); if (child.exitCode === null) await Promise.race([new Promise(r => child.once('exit', r)), new Promise(r => setTimeout(r, 10000))]); if (child.exitCode === null) child.kill(); return read(); } };
+  const recorder = { async stop() { await writeFile(stop, 'stop').catch(() => {}); if (child.exitCode === null) await Promise.race([new Promise(r => child.once('exit', r)), new Promise(r => setTimeout(r, 10000))]); if (child.exitCode === null) child.kill(); return read(); } };
+  recorders.push(recorder); return recorder;
 }
 // The continuous no-focus evidence of one native run, read after its Chrome is gone: the owned Chrome never had the foreground (no
 // foreground event, no owned sample), its window was minimized once created and never restored, and no window of it was shown on screen
@@ -429,34 +477,66 @@ const SYNTHETIC = {
   [APLUS + '/']: { redirect: APLUS + '/login/id/input' },
   [APLUS + '/login/id/input']: { body: '<!doctype html><title>Synthetic My APLUS login</title><input id="elem1-1"><input id="elem1-2" type="password"><button>ログイン</button>' }
 };
+// Answers every page request of `page` from `site` (synthetic HTML or a redirect) or aborts it (counted).
+async function serve(page, site, seen) {
+  await page.setRequestInterception(true);
+  page.on('request', request => {
+    const url = new URL(request.url()), key = url.origin + url.pathname, synthetic = site[key];
+    if (url.protocol === 'about:' || url.protocol === 'data:' || url.protocol === 'blob:') return request.continue();
+    if (!synthetic) { seen.aborted.push(url.origin); return request.abort(); }
+    seen.fulfilled.push(key); synthetic.seen?.(url);
+    if (synthetic.redirect) return request.respond({ status: 302, headers: { location: synthetic.redirect }, body: '' });
+    return request.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: synthetic.body });
+  });
+}
 function nativeOnLaunch(seen, site = SYNTHETIC) {
   return async ({ pid, browser }) => {
     seen.pid = pid; seen.command = await commandLineOf(pid); seen.windows = await watchWindows(pid); // ready before the page's window exists
     const open = browser.newPage.bind(browser);
-    browser.newPage = async () => {
-      const page = await open();
-      await page.setRequestInterception(true);
-      page.on('request', request => {
-        const url = new URL(request.url()), key = url.origin + url.pathname, synthetic = site[key];
-        if (url.protocol === 'about:' || url.protocol === 'data:' || url.protocol === 'blob:') return request.continue();
-        if (!synthetic) { seen.aborted.push(url.origin); return request.abort(); }
-        seen.fulfilled.push(key); synthetic.seen?.(url);
-        if (synthetic.redirect) return request.respond({ status: 302, headers: { location: synthetic.redirect }, body: '' });
-        return request.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: synthetic.body });
-      });
-      return page;
-    };
+    browser.newPage = async () => { const page = await open(); await serve(page, site, seen); return page; };
   };
 }
+// ── rendering of the minimized card page (case omf-card-rendering-20261031) ──────────────────────────────────────────────────────────
+// The animation frames the page itself runs within `ms`, and its visibility then. A hidden page runs none. Frames progressing is the claim,
+// not a display rate: on the minimized card page Chrome 155 ran ~85 frames a second while nothing on the page changed but about one a
+// second while the page animated, in headless and headed Chrome alike (measured 2026-10-31 on this real background page; a normal
+// window rendered the same animation at full rate), so two frames within four seconds is the bound.
+const framesWithin = (page, ms = 4000) => page.evaluate(ms => new Promise(resolve => { let frames = 0, done = false; requestAnimationFrame(function tick() { if (done) return; frames++; requestAnimationFrame(tick); }); setTimeout(() => { done = true; resolve({ visibility: document.visibilityState, frames }); }, ms); }), ms);
+const rendering = sample => sample.visibility === 'visible' && sample.frames >= 2;
+// A next state that needs rendering (synthetic, the card rendering case): `chain` starts a CSS transition in an animation frame; its end
+// arms an IntersectionObserver whose observation calls `then`. A hidden page runs no frame, so it never gets there. window.__omfRender
+// keeps what happened (frames, transitionEnded, intersected) for the assertion messages.
+const RENDER_STYLE = '#panel{opacity:0;transition:opacity 80ms linear}#panel.shown{opacity:1}#marker{height:40px}';
+const renderScript = body => 'window.__omfRender={frames:0,transitionEnded:false,intersected:false};requestAnimationFrame(function tick(){window.__omfRender.frames++;requestAnimationFrame(tick);});'
+  + 'const chain=then=>requestAnimationFrame(()=>{const panel=document.getElementById("panel");panel.addEventListener("transitionend",()=>{window.__omfRender.transitionEnded=true;new IntersectionObserver((entries,observer)=>{if(entries.some(e=>e.isIntersecting)){observer.disconnect();window.__omfRender.intersected=true;then();}}).observe(document.getElementById("marker"));},{once:true});panel.classList.add("shown");});' + body;
+const renderPage = (title, controls, body) => '<!doctype html><html lang="ja"><meta charset="utf-8"><title>' + title + '</title><style>' + RENDER_STYLE + '</style><body>' + controls + '<div id="panel">Synthetic panel</div><div id="marker"></div><script>' + renderScript(body) + '</script></body></html>';
+// Two sites: on A the button leads on (to NEXT, same site) only through that chain; NEXT and B run the chain when they load.
+const RENDER_A = 'https://www.americanexpress.com/omf-synthetic/render', RENDER_NEXT = 'https://www.americanexpress.com/omf-synthetic/next', RENDER_B = 'https://myaplus.aplus.co.jp/omf-synthetic/render';
+const RENDER_SITE = {
+  [RENDER_A]: { body: renderPage('Synthetic render A', '<button id="go">次へ</button>', 'document.getElementById("go").onclick=()=>chain(()=>{location.href=' + JSON.stringify(RENDER_NEXT) + ';});') },
+  [RENDER_NEXT]: { body: renderPage('Synthetic render next', '', 'chain(()=>{});') },
+  [RENDER_B]: { body: renderPage('Synthetic render B (another site)', '', 'chain(()=>{});') }
+};
+// The Amex sign-in on a login page whose submit needs rendering: both fields filled, ログイン starts the chain and only its end opens the
+// verification page (one masked e-mail channel: without a saved mailbox the person is asked there). Synthetic: it shows the minimized page
+// now reaches a next state that needs rendering; it is NOT a copy of the real issuer page and says nothing about why the real first
+// sign-ins stayed on the login page.
+const AMEX_VERIFY = 'https://www.americanexpress.com/ja-jp/account/reauth/verify';
+const AMEX_RENDER_SITE = {
+  [AMEX_LOGIN]: { body: renderPage('Synthetic Amex login', '<input id="eliloUserID"><input id="eliloPassword" type="password"><button id="loginSubmit">ログイン</button>', 'document.getElementById("loginSubmit").onclick=()=>{if(!document.getElementById("eliloUserID").value||!document.getElementById("eliloPassword").value)return;chain(()=>{location.href=' + JSON.stringify(AMEX_VERIFY) + ';});};') },
+  [AMEX_VERIFY]: { body: '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Synthetic Amex verification</title><body><label for="channel-mail">s*****@example.invalid</label><input type="radio" id="channel-mail" name="channel"><button>次へ</button></body></html>' }
+};
 // A synthetic My APLUS on the issuer's origin for the REAL aplusUi (collector/aplus.mjs): signed in at /, the statement page of 2026/09
 // (2,400円, card -1234) with 保存 → CSV, the statement-code page, a CSV download after the code, and the unbilled page (1 row, 1,200円).
 // The code page returns to the statement page with the typed code, which is recorded from that intercepted navigation; the page then
-// downloads the CSV from a blob it makes itself (as aplus-readiness.mjs does), so no download request can leave the browser.
+// downloads the CSV from a blob it makes itself (as aplus-readiness.mjs does), so no download request can leave the browser. The 保存 menu
+// shows its CSV link in the next animation frame (case omf-card-rendering-20261031: a next state that needs rendering; synthetic, not
+// the issuer's own code), so a hidden page never reaches the statement code.
 function aplusSite(record) {
   const html = (title, body) => '<!doctype html><html lang="ja"><meta charset="utf-8"><title>' + title + '</title><body>' + body + '</body></html>';
   const csv = JSON.stringify(aplusCsv().toString('utf8'));
   const details = html('Synthetic statement', '<button>Synthetic カード ****-1234</button><div class="m-navDate"><button class="m-navDate__chooseButton">2026/09</button><select class="m-navDate__chooseSelect"><option value="2026/09" selected>2026/09</option></select><div class="m-navDate__next"><a href="/cards/billing/unbilled">2026/10以降</a></div></div><div class="m-particularsOverview"><p>お支払い金額</p><p class="m-particularsOverview__price">2,400円</p><p>確定</p></div><button id="save">保存</button> <a id="csv" href="#" style="display:none">CSV</a>'
-    + '<script>document.getElementById("save").onclick=()=>{document.getElementById("csv").style.display="inline"};document.getElementById("csv").onclick=e=>{e.preventDefault();location.href="/authentication/otp/sms"};const code=new URLSearchParams(location.search).get("download");if(code){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([' + csv + '],{type:"text/csv"}));a.download="aplus_meisai.csv";document.body.append(a);a.click();}</script>');
+    + '<script>document.getElementById("save").onclick=()=>{requestAnimationFrame(()=>{document.getElementById("csv").style.display="inline"})};document.getElementById("csv").onclick=e=>{e.preventDefault();location.href="/authentication/otp/sms"};const code=new URLSearchParams(location.search).get("download");if(code){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([' + csv + '],{type:"text/csv"}));a.download="aplus_meisai.csv";document.body.append(a);a.click();}</script>');
   return {
     [APLUS + '/']: { body: html('Synthetic My APLUS', '<a href="/logout">ログアウト</a><nav><span>利用明細・利用可能額</span> <a href="/cards/billing/details">明細</a></nav>') },
     [APLUS + '/cards/billing/details']: { body: details, seen: url => { const code = url.searchParams.get('download'); if (code !== null) record.codes.push(code); } },
@@ -469,21 +549,22 @@ for (const [lane, run, fulfilledKey, profileOf] of [
   ['Amex', (dir, options) => B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'native', ...options }), AMEX_LOGIN, dir => B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'native')],
   ['Aplus', (dir, options) => B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'native', ...options }), APLUS + '/login/id/input', dir => B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, 'native')]
 ]) {
-  test(`native ${lane}: real background Chrome on synthetic pages — no startup page, minimized off-screen inactive window, foreground kept, attention routed to the same page, no issuer request, closed and removed`, { skip: NATIVE, timeout: 240000 }, async t => {
+  test(`native ${lane}: real background Chrome on synthetic pages — no startup page, minimized off-screen inactive window whose page keeps rendering, foreground kept, attention routed to the same page, no issuer request, closed and removed`, { skip: NATIVE, timeout: 240000 }, async t => {
     const dir = await owned('native-' + lane.toLowerCase()), seen = { fulfilled: [], aborted: [] }, facts = [];
-    await assert.rejects(run(dir, { onLaunch: nativeOnLaunch(seen), reveal: async page => { facts.push({ url: page.url(), facts: await windowFacts(seen.pid) }); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED));
+    await assert.rejects(run(dir, { onLaunch: nativeOnLaunch(seen), reveal: async page => { facts.push({ url: page.url(), facts: await windowFacts(seen.pid), rendering: await framesWithin(page) }); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED));
     assert.ok(seen.command.includes('--no-startup-window') && seen.command.includes('--remote-debugging-pipe') && !seen.command.includes('--headless'), 'card-background:native-flags ' + seen.command.slice(0, 300));
     for (const flag of ['--no-sandbox', '--disable-web-security', '--remote-debugging-port']) assert.ok(!seen.command.includes(flag), 'card-background:native-forbidden ' + flag);
     assert.equal(facts.length, 1, 'card-reveal:native-attention-once');
-    const [{ url, facts: at }] = facts;
+    const [{ url, facts: at, rendering: sample }] = facts;
     assert.ok(url.startsWith(fulfilledKey), 'card-reveal:native-same-page ' + url);
     assert.notEqual(at.foregroundPid, seen.pid, 'card-background:native-foreground-kept');
     assert.deepEqual(onScreen(at), [], 'card-background:native-offscreen ' + JSON.stringify(at.windows));
     assert.ok(minimized(at), 'card-background:native-minimized-at-attention ' + JSON.stringify(at.windows));
+    assert.ok(rendering(sample), `card-rendering:native-${lane.toLowerCase()}-rendering-at-attention ` + JSON.stringify(sample));
     assert.ok(seen.fulfilled.includes(fulfilledKey), 'synthetic page served ' + JSON.stringify(seen));
     assert.ok(await waitGone(seen.pid), 'card-background:native-closed'); assert.equal(existsSync(profileOf(dir)), false, 'card-background:native-profile-removed');
     assert.deepEqual(B.ownedBrowsers(), []);
-    t.diagnostic('window events ' + lane + ': ' + JSON.stringify(await assertNoFocus(seen, lane)));
+    t.diagnostic('window events ' + lane + ': ' + JSON.stringify(await assertNoFocus(seen, lane)) + '; frames in 4 s at attention ' + sample.frames);
   });
 }
 // P4/P4b natively: the real aplusUi through statement, code and unbilled capture in the background wrapper. `person`: the recording reveal
@@ -538,25 +619,82 @@ test('native session loss: closing the owned browsers while the person is needed
   assert.deepEqual(B.ownedBrowsers(), []);
   t.diagnostic('window events session-loss: ' + JSON.stringify(await assertNoFocus(seen, 'session-loss')));
 });
+// The minimized card page natively (case omf-card-rendering-20261031), with the REAL browserFor/backgroundPage of the card wrappers
+// (background, minimized) in headed Chrome: the collector's own DevTools input (interaction.mjs click) presses the button of a synthetic
+// page that leads on only through an animation frame, a CSS transition and an IntersectionObserver; the next document, a cross-site
+// document after it and the window state are read while the passive recorder runs. The window is never shown, restored or moved.
+test('native card rendering: the real minimized background page keeps rendering in headed Chrome — a next state that needs animation frames, a CSS transition and an IntersectionObserver is reached, also after a cross-site navigation, while the window stays minimized off-screen, never restored or foreground; closed and removed', { skip: NATIVE, timeout: 240000 }, async t => {
+  const dir = await owned('native-rendering'), profile = B.ephemeralProfile(dir, ACCOUNT.ownerId, 'rendering', ACCOUNT._id, 'native'), seen = { fulfilled: [], aborted: [] }, cadence = {};
+  const browser = await B.browserFor(profile, { ephemeral: true, root: dir, background: true, minimized: true, onLaunch: nativeOnLaunch(seen, RENDER_SITE) });
+  try {
+    const page = await browser.newPage(), windows = await page.createCDPSession();
+    const read = async () => ({ url: page.url(), state: await page.evaluate(() => ({ visibility: document.visibilityState, ...window.__omfRender })).catch(error => ({ error: error.message })), windowState: (await windows.send('Browser.getWindowForTarget')).bounds.windowState, facts: await windowFacts(seen.pid) });
+    const physical = at => at.windowState === 'minimized' && minimized(at.facts) && onScreen(at.facts).length === 0 && at.facts.foregroundPid !== seen.pid;
+    const settled = () => poll(() => page.evaluate(() => !!(window.__omfRender?.transitionEnded && window.__omfRender.intersected)), 20000);
+    await page.goto(RENDER_A, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await click(page, '#go', null, new URL(RENDER_A).origin, new URL(RENDER_A).pathname, 'Synthetic');
+    const reached = await poll(async () => page.url() === RENDER_NEXT && await settled(), 20000), next = await read();
+    assert.ok(reached, 'card-rendering:native-next-state ' + JSON.stringify(next));
+    const nextFrames = await framesWithin(page); cadence.next = nextFrames.frames;
+    assert.ok(rendering(nextFrames), 'card-rendering:native-visible-while-minimized ' + JSON.stringify(nextFrames));
+    assert.ok(physical(next), 'card-rendering:native-minimized-offscreen-background ' + JSON.stringify(next));
+    await page.goto(RENDER_B, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const crossed = await settled(), other = await read(), otherFrames = await framesWithin(page); cadence.crossSite = otherFrames.frames;
+    assert.ok(crossed && rendering(otherFrames), 'card-rendering:native-cross-site-navigation-keeps-rendering ' + JSON.stringify({ other, otherFrames }));
+    assert.ok(physical(other), 'card-rendering:native-minimized-offscreen-background ' + JSON.stringify(other));
+    await windows.detach().catch(() => {});
+  } finally { await B.closeOwnedBrowsers(); }
+  assert.ok(await waitGone(seen.pid), 'card-rendering:native-closed'); assert.equal(existsSync(profile), false, 'card-rendering:native-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
+  assert.deepEqual([...new Set(seen.fulfilled)].sort(), [RENDER_A, RENDER_B, RENDER_NEXT].sort(), 'only the synthetic pages were served ' + JSON.stringify(seen));
+  t.diagnostic('window events rendering: ' + JSON.stringify(await assertNoFocus(seen, 'rendering')) + '; frames in 4 s ' + JSON.stringify(cadence));
+});
+// The real Amex wrapper signs in with a FICTIONAL login on the synthetic login page whose submit needs rendering (AMEX_RENDER_SITE):
+// typed and pressed once through DevTools, the minimized page reaches the verification page, where the person would be asked.
+test('native Amex sign-in on a login page whose next state needs rendering: the real wrapper types the fictional login through DevTools and presses ログイン once; the minimized page reaches the verification page, where the person would be asked; never restored or foreground; closed and removed', { skip: NATIVE, timeout: 300000 }, async t => {
+  const dir = await owned('native-amex-signin'), seen = { fulfilled: [], aborted: [] }, statuses = [], facts = [];
+  await assert.rejects(B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { batch: 'signin', onLaunch: nativeOnLaunch(seen, AMEX_RENDER_SITE), reveal: async page => { facts.push({ url: page.url(), facts: await windowFacts(seen.pid), rendering: await framesWithin(page) }); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED));
+  assert.equal(facts.length, 1, 'card-reveal:native-attention-once');
+  const [{ url, facts: at, rendering: sample }] = facts;
+  assert.ok(url.startsWith(AMEX_VERIFY), 'card-rendering:native-amex-next-state-after-submit ' + JSON.stringify({ url, sample, statuses }));
+  assert.deepEqual(statuses.map(s => s[0]), ['running', 'verification_required'], 'one sign-in, then the person: ' + JSON.stringify(statuses));
+  assert.ok(rendering(sample), 'card-rendering:native-amex-signin-rendering-at-attention ' + JSON.stringify(sample));
+  assert.notEqual(at.foregroundPid, seen.pid, 'card-background:native-foreground-kept');
+  assert.deepEqual(onScreen(at), [], 'card-background:native-offscreen ' + JSON.stringify(at.windows)); assert.ok(minimized(at), 'card-background:native-minimized-at-attention ' + JSON.stringify(at.windows));
+  assert.deepEqual(seen.fulfilled, [AMEX_LOGIN, AMEX_VERIFY], 'the login page once, then the verification page ' + JSON.stringify(seen));
+  assert.ok(await waitGone(seen.pid), 'card-background:native-closed'); assert.equal(existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'signin')), false, 'card-background:native-profile-removed');
+  assert.deepEqual(B.ownedBrowsers(), []);
+  t.diagnostic('window events amex-signin: ' + JSON.stringify(await assertNoFocus(seen, 'amex-signin')) + '; frames in 4 s at attention ' + sample.frames);
+});
 // The reveal of the minimized background window with the REAL backgroundPage and the REAL showWindow, in HEADLESS Chrome only (no window
 // of the owner's desktop exists or moves): the launch is made headless beneath the wrapper's own options, so browserFor installs the
-// background page exactly as for a headed batch; with the card wrappers' `minimized` the page opens minimized off-screen and hidden, and
-// showWindow brings that SAME page to a normal window at its usable bounds (the headless screen), visible, with no other page. Without
-// the option (the bank callers) the page opens as before the focus repair: a normal off-screen window, its page visible. The headed
-// geometry stays excluded (B8).
+// background page exactly as for a headed batch; with the card wrappers' `minimized` the page opens minimized off-screen and keeps
+// rendering (case omf-card-rendering-20261031; before it the page was hidden), across a same-site and a cross-site document, and
+// showWindow brings that SAME page to a normal window at its usable bounds (the headless screen), visible and rendering, with no other
+// page. Without the option (the bank callers) the page opens as before the focus repair: a normal off-screen window, its page visible.
+// The headed geometry stays excluded (B8).
 const realLaunch = puppeteer.launch.bind(puppeteer);
-test('native reveal geometry in HEADLESS Chrome: the real background page of the card wrappers opens minimized and hidden; the real showWindow restores that same page to a normal window at usable bounds', { skip: NATIVE, timeout: 120000 }, async () => {
-  const dir = await owned('reveal-headless'), profile = B.ephemeralProfile(dir, ACCOUNT.ownerId, 'reveal', ACCOUNT._id, 'headless'), launches = [];
+test('native reveal geometry in HEADLESS Chrome: the real background page of the card wrappers opens minimized and keeps rendering, also across a same-site and a cross-site navigation; the real showWindow restores that same page to a normal window at usable bounds, still rendering', { skip: NATIVE, timeout: 120000 }, async () => {
+  const dir = await owned('reveal-headless'), profile = B.ephemeralProfile(dir, ACCOUNT.ownerId, 'reveal', ACCOUNT._id, 'headless'), launches = [], seen = { fulfilled: [], aborted: [] };
   const browser = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true }); }, () => B.browserFor(profile, { ephemeral: true, root: dir, background: true, minimized: true }));
   try {
     assert.deepEqual([launches.length, launches[0].headless, launches[0].args.includes('--no-startup-window')], [1, false, true], 'the wrapper asked for the headed background launch');
     const page = await browser.newPage(), session = await page.createCDPSession();
     const created = (await session.send('Browser.getWindowForTarget')).bounds;
-    assert.deepEqual([created.windowState, created.left, created.top, await page.evaluate(() => document.visibilityState)], ['minimized', -32000, -32000, 'hidden'], 'card-background:headless-created-minimized ' + JSON.stringify(created));
+    assert.deepEqual([created.windowState, created.left, created.top], ['minimized', -32000, -32000], 'card-background:headless-created-minimized ' + JSON.stringify(created));
+    const blank = await framesWithin(page);
+    assert.ok(rendering(blank), 'card-rendering:headless-visible-while-minimized ' + JSON.stringify(blank));
+    await serve(page, RENDER_SITE, seen);
+    for (const url of [RENDER_NEXT, RENDER_B]) {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const settled = await poll(() => page.evaluate(() => !!(window.__omfRender?.transitionEnded && window.__omfRender.intersected)), 15000), sample = await framesWithin(page), bounds = (await session.send('Browser.getWindowForTarget')).bounds;
+      assert.ok(settled && rendering(sample) && bounds.windowState === 'minimized', 'card-rendering:headless-navigation-keeps-rendering ' + url + ' ' + JSON.stringify({ settled, sample, bounds }));
+    }
     await B.showWindow(page);
     const shown = (await session.send('Browser.getWindowForTarget')).bounds, area = await page.evaluate(() => ({ left: screen.availLeft, top: screen.availTop, width: screen.availWidth, height: screen.availHeight }));
     assert.deepEqual([shown.windowState, shown.left, shown.top, shown.width, shown.height], ['normal', area.left + 40, area.top + 40, Math.max(800, Math.min(1280, area.width - 80)), Math.max(600, Math.min(900, area.height - 80))], 'card-reveal:headless-restored-at-usable-bounds ' + JSON.stringify({ shown, area }));
     assert.equal(await page.evaluate(() => document.visibilityState), 'visible', 'card-reveal:headless-page-visible');
+    const restored = await framesWithin(page);
+    assert.ok(rendering(restored), 'card-reveal:headless-restored-still-rendering ' + JSON.stringify(restored));
     const pages = await browser.pages(); assert.ok(pages.length === 1 && pages[0] === page, 'card-reveal:headless-same-page');
     await session.detach().catch(() => {});
   } finally { await B.closeOwnedBrowsers(); }

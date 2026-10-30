@@ -66,11 +66,16 @@ export function ownedBrowsers() { return [...owned.values()].map(entry => ({ pid
 // to (a native control sampled the foreground on the owned Chrome while it read the statement code; Chrome 155 requests no activation on
 // this path); Windows does not choose a minimized window when it activates one on its own, and an activation Chrome itself requested
 // would first restore it (off-screen; the native tests record any restore). Chrome 155 shows the window inactive once at its default
-// bounds, moves it to the off-screen bounds (kept as its restore bounds) and minimizes it. While minimized the page is hidden: DevTools
-// input, navigation, timers and downloads work; animation frames, IntersectionObserver and CSS transitions wait until it is shown.
+// bounds, moves it to the off-screen bounds (kept as its restore bounds) and minimizes it. A minimized window's page alone is hidden
+// (animation frames, IntersectionObserver and CSS transitions wait until it is shown), so with `minimized` the page's own DevTools session
+// also sends Emulation.setFocusEmulationEnabled before the page is returned (case omf-card-rendering-20261031): Chrome 155 then counts the
+// page as visibly captured (WebContentsImpl::IncrementCapturerCount, stay_hidden false) and emulates its focus, so it renders while the
+// window stays minimized; neither the command nor that count restores, shows, moves or activates a window. The emulation belongs to that
+// session, which is kept on purpose: Chrome keeps it across the page's navigations and ends it with the page or the browser, and
+// detaching it would undo the rendering. If Chrome refuses it, the page setup fails with a fixed message before the first navigation.
 // showWindow restores the same window before moving it on screen. The bank callers (bank.mjs withBankBrowser: statements, the guided
-// observe, the hourly balance) pass no option and keep the live-accepted creation without windowState: Chrome 155 does not show a
-// client-certificate chooser (池田泉州銀行) while the page is hidden, and the balance check never reveals its window.
+// observe, the hourly balance) pass no option and keep the live-accepted creation without windowState or focus emulation: Chrome 155
+// does not show a client-certificate chooser (池田泉州銀行) while the page is hidden, and the balance check never reveals its window.
 export const BACKGROUND_ARGS = Object.freeze(['--no-startup-window']);
 const OFFSCREEN = Object.freeze({ left: -32000, top: -32000, width: 1280, height: 900 });
 async function backgroundPage(browser, { minimized = false } = {}) {
@@ -80,6 +85,10 @@ async function backgroundPage(browser, { minimized = false } = {}) {
   const target = await browser.waitForTarget(t => t._targetId === targetId, { timeout: 30000 });
   const page = await target.page();
   if (!page) throw new Error('The background bank window did not open');
+  if (minimized) { // guard:card-rendering
+    try { const rendering = await page.createCDPSession(); await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); }
+    catch { throw new Error('The minimized card window could not keep its page rendering'); }
+  }
   return page;
 }
 /** Shows the owned window of `page` at normal, usable bounds on the primary work area and brings its tab to the front. */
@@ -103,7 +112,7 @@ export async function showWindow(page, { margin = 40 } = {}) {
  * (false = the visible window of the first release; tests use true), onLaunch({pid, browser}) — the collector
  * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows. background (headed
  * only; bank and card retrievals): no startup window, and this browser's newPage() opens an inactive off-screen window (see above).
- * minimized (with background; the two card wrappers only, default off): that window is created minimized.
+ * minimized (with background; the two card wrappers only, default off): that window is created minimized and its page keeps rendering.
  */
 export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null, background = false, minimized = false } = {}) {
   const key = keyOf(profile);

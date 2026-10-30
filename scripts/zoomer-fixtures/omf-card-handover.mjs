@@ -24,12 +24,17 @@
 //      window created minimized) while its card wrappers and the visible observe pass; its reverse control, the live-accepted d067126, must
 //      pass the four bank callers (the expected creation is the one it sends) while its card wrappers fail (not minimized); and in owned
 //      headless Chrome (OMF_CARD_NATIVE=1, else NOT RUN) ef038a9's bank default page must be minimized and hidden.
+//   F2 fail-first of the card rendering correction (case omf-card-rendering-20261031) on 6947394, whose minimized card page is hidden: by
+//      recording, its card pages open no page session and send no focus emulation, and it has no setup-failure exit, while the four bank
+//      callers pass; and in owned native Chrome (OMF_CARD_NATIVE=1, else NOT RUN; its card window is minimized, so no window of the owner's
+//      desktop is shown) its card page is hidden in headless Chrome and, headed, reaches no next state that needs rendering (the synthetic
+//      page, the Amex sign-in, the My APLUS CSV link).
 //   U  node --test collector/test/legacy-card-import.test.mjs (planner/importer; real DPAPI and ACL helpers on owned roots).
 //   K  node --test collector/test/card-background.test.mjs (Part A: the real wrappers and the real bank callers over a recording launch;
 //      no Chrome).
 //   N  the same file with OMF_CARD_NATIVE=1 (real background Chrome on synthetic pages, a passive recorder of the owned Chrome's window
-//      events, and in headless Chrome the reveal from minimized and the bank callers' window that is not minimized). OMF_CARD_NATIVE=0 →
-//      NOT RUN (red).
+//      events, the minimized card page rendering a next state that needs it, and in headless Chrome the reveal from minimized and the bank
+//      callers' window that is not minimized). OMF_CARD_NATIVE=0 → NOT RUN (red).
 //   S  scripts/finance-legacy-card-import-integration.cjs (service, route, the real collector over TLS, schedule, guard mutants).
 //   C  the same with --ui and OMF_CARD_NATIVE=1: the setup page (L4) and the built connections page (L8, needs .output) in owned
 //      headless Chrome. OMF_CARD_NATIVE=0 → NOT RUN (red).
@@ -37,7 +42,7 @@
 //      without node_modules, no test code staged.
 //   R  affected existing collector suites without Chrome; RN (native) the Chrome-launching collector suites of the shared browser lane.
 //   M  reintroduced defects through their own legs (an unchanged copy of each selection first).
-// Selection: OMF_CARD_LEGS (comma list of F,F1,U,K,N,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
+// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,U,K,N,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -59,6 +64,9 @@ export const FOCUS = 'd067126af15fd9df3bbde56843dd2d7886963bb7';
 // The release candidate before the card-only fold (card-only-focus-fold/6-build.md, final review F1): every background window is
 // minimized, the bank callers' included.
 export const FOLD = 'ef038a9a200c4ff127532aed42392d683b3d0edd';
+// The release candidate before the card rendering correction (card-rendering-20261031): its minimized card page is hidden (no animation
+// frame, IntersectionObserver or CSS transition until the window is shown).
+export const RENDER = '6947394bcd700bd88f0b91da0bbfb48794d7eb80';
 const execute = promisify(execFile);
 const sha256 = v => createHash('sha256').update(v).digest('hex');
 const EVIDENCE = process.env.OMF_CARD_EVIDENCE || '';
@@ -139,6 +147,13 @@ export const MUTANTS = [
   ['MB8-bank-default-minimized', BR, [['background = false, minimized = false } = {}) {', 'background = false, minimized = true } = {}) {']], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-target/],
   ['MB9-every-window-minimized', BR, [["...(minimized ? { windowState: 'minimized' } : {}), ", "windowState: 'minimized', "]], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-target/],
   ['MB10-option-not-passed', BR, [['backgroundPage(browser, { minimized }); // guard:background-window', 'backgroundPage(browser); // guard:background-window']], 'K', '^(Amex|Aplus) wrapper', /card-background:(amex|aplus)-minimized-window/],
+  // the card rendering correction (card-rendering-20261031): the minimized card page keeps rendering through the focus emulation of its
+  // own page session, kept for the page's lifetime; the bank default never gets it; a page that cannot keep rendering ends at page setup
+  ['MC1-renderer-setup-missing', BR, [["  if (minimized) { // guard:card-rendering\n    try { const rendering = await page.createCDPSession(); await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); }\n    catch { throw new Error('The minimized card window could not keep its page rendering'); }\n  }\n", '']], 'K', '^card rendering \\((Amex|Aplus) wrapper\\)', /card-rendering:(amex|aplus)-renders-before-first-step/],
+  ['MC2-rendering-session-detached-early', BR, [["await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); }", "await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); await rendering.detach(); }"]], 'K', '^card rendering \\((Amex|Aplus) wrapper\\)', /card-rendering:(amex|aplus)-(renders-before-first-step|session-kept)/],
+  ['MC2N-rendering-session-detached-early-native', BR, [["await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); }", "await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); await rendering.detach(); }"]], 'N', '^native card rendering', /card-rendering:native-(next-state|visible-while-minimized)/],
+  ['MC3-bank-default-emulated', BR, [['  if (minimized) { // guard:card-rendering', '  if (true) { // guard:card-rendering']], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-no-emulation/],
+  ['MC4-setup-failure-ignored', BR, [["catch { throw new Error('The minimized card window could not keep its page rendering'); }", 'catch { /* the failure ignored */ }']], 'K', '^card rendering setup failure', /card-rendering:setup-failure-(amex|aplus)-(session|command)/],
   ['MU3-legacy-busy-not-reread', 'collector/setup.js', [["clearTimeout(legacyTimer);if(data.busy&&state==='legacy-ready')legacyTimer=setTimeout(()=>call('/status').then(next=>{current=next;showLegacy(next);}).catch(()=>{}),2000);", '']], 'C', 'L3,L4', /ui:legacy-busy-reread/]
 ];
 
@@ -308,12 +323,28 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         counts.failFirst.FOLD_N = 'headless bank default minimized and hidden'; found.push(FOLD.slice(0, 7) + ' headless red (bank-background:headless-normal-visible: the bank default page minimized and hidden)'); }
       return found.join('; ');
     });
+    // F2: the card rendering correction (case omf-card-rendering-20261031) on 6947394, whose minimized card page is hidden: first by
+    // recording (no Chrome), its browser.mjs in the defect seam with the bank modules routed to it; then natively, in owned headless Chrome
+    // and in owned headed Chrome whose card window 6947394 itself minimizes (the defect is a hidden page, never a window on the desktop).
+    await leg('F2 fail-first of the card rendering correction on ' + RENDER.slice(0, 7) + ' (its minimized card page hidden: no page session, no focus emulation, no setup-failure exit), by recording and in owned minimized native Chrome', async () => {
+      const found = [], text = await baseText(BR, RENDER); if (!text) throw new Error('SETUP ' + RENDER + ' is not readable here');
+      { const t = tests(await withCopy(BR, 'render', text, copy => withBankRoute(copy, 'render', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, '^(card rendering|bank caller)')))); await keep('F2-RENDER-K', t.out);
+        const named = ['card-rendering:amex-renders-before-first-step', 'card-rendering:aplus-renders-before-first-step', 'card-rendering:setup-failure-amex-session', 'card-rendering:setup-failure-aplus-session'].filter(x => t.out.includes(x));
+        if (t.fail !== 4 || t.pass !== 4 || named.length !== 4) throw new Error('the card rendering did not fail first on ' + RENDER.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.RENDER_K = t.fail + '/' + (t.pass + t.fail); found.push(RENDER.slice(0, 7) + ' K red (' + named.join(', ') + '); its four bank callers green'); }
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + RENDER.slice(0, 7) + ' native rendering fail-first needs owned Chrome');
+        const r = await withCopy(BR, 'render', text, copy => unit(BACKGROUND, { OMF_TEST_BROWSER_MODULE: copy, OMF_CARD_NATIVE: '1' }, '^native (card rendering|Amex sign-in|reveal geometry in HEADLESS|Aplus statement code read automatically)')), t = tests(r); await keep('F2-RENDER-N', t.out);
+        const named = ['card-rendering:native-next-state', 'card-rendering:native-amex-next-state-after-submit', 'card-rendering:headless-visible-while-minimized', 'The My APLUS CSV option did not appear'].filter(x => t.out.includes(x));
+        if (t.fail !== 4 || t.pass !== 0 || named.length !== 4 || !t.out.includes('"visibility":"hidden"')) throw new Error('the minimized card page did not fail first natively on ' + RENDER.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.RENDER_N = t.fail + '/' + (t.pass + t.fail); found.push(RENDER.slice(0, 7) + ' native red (' + named.join(', ') + '; its page "hidden")'); }
+      return found.join('; ');
+    });
     await leg('U node --test ' + UNIT, async () => { const r = await unit(UNIT), t = tests(r); await keep('U', t.out); counts.unitTests = t.pass; unitGreen(r, t, 'the importer'); return t.pass + ' tests green'; });
     await leg('K node --test ' + BACKGROUND + ' (Part A, no Chrome)', async () => { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }), t = tests(r); await keep('K', t.out); counts.backgroundTests = t.pass; unitGreen(r, t, 'the wrappers'); return t.pass + ' tests green, ' + t.skipped + ' skipped (geometry excluded; native legs are leg N)'; });
     await leg('N native background Chrome (OMF_CARD_NATIVE=1)', async () => {
       if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native background coverage is claimed');
       const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^native'), t = tests(r); await keep('N', t.out); counts.nativeTests = t.pass; unitGreen(r, t, 'the wrappers');
-      if (t.pass !== 8) throw new Error('expected the 8 native legs (6 headed background; headless: the card reveal and the bank default), ran ' + t.pass);
+      if (t.pass !== 10) throw new Error('expected the 10 native legs (8 headed background, 2 of them the card rendering; headless: the card reveal and the bank default), ran ' + t.pass);
       return t.pass + ' native legs green (' + [...t.out.matchAll(/ℹ window events [^\n]*/g)].length + ' with their window-event summaries)';
     });
     await leg('S services, route, the real collector over TLS, schedule and the service guard mutants (L1-L3, L5-L7)', async () => {

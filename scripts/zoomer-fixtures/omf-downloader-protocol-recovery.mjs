@@ -14,9 +14,10 @@
 // instead — too slow for the hub's 15-minute cap, so it is run and kept separately), the suite passes on the STAGED browser module and
 // lane, the staged package with the catch removed fails the survival assertion, and a stage allowlist without the helper fails its
 // named manifest check; B a byte proof that browser.mjs differs from 5b7ef2c6 by the one export line, the two card wrappers and the
-// card-only fold's `minimized` option in backgroundPage and browserFor only (launch flags, ownership, closure, showWindow unchanged; a call
-// without the option creates the 5b7ef2c6 window; every other top-level statement compared) and the reversible test-only copy of the
-// browser-boundary legs B1-B7 (B8 calls showWindow
+// card-only fold's `minimized` option in backgroundPage and browserFor only, with, for that option only, the card page's rendering in
+// backgroundPage (case omf-card-rendering-20261031: the focus emulation of the page's own session) (launch flags, ownership, closure,
+// showWindow unchanged; a call without the option creates the 5b7ef2c6 window and page; every other top-level statement compared) and the
+// reversible test-only copy of the browser-boundary legs B1-B7 (B8 calls showWindow
 // and brings a window to the front: excluded by the owner's no-foreground order, never run, never counted). The copy's headless
 // Chrome legs are timing-bound and varied between runs under other sessions' load (fixture-01/03/04), so they are not part of this
 // verdict: they run separately, interleaved on this tree and on an exported 5b7ef2c6 tree (boundaryCopy(temp, tree), containHook);
@@ -216,11 +217,14 @@ async function boundaryProof(temp, assert) {
   const declaration = (text, name) => { const lines = text.split('\n'), i = lines.findIndex(l => new RegExp('^(export )?(async )?function ' + name + '\\(').test(l) || new RegExp('^(export )?const ' + name + ' = ').test(l)); if (i < 0) return null; if (/^(export )?const /.test(lines[i])) return lines[i]; const j = lines.findIndex((l, k) => k > i && l === '}'); return j < 0 ? null : lines.slice(i, j + 1).join('\n'); };
   // The card-only fold (case omf-card-only-focus-fold-20261030, final review F1; it replaces the focus repair's insertion that minimized
   // every background window) changes TWO pinned declarations on purpose: backgroundPage adds windowState 'minimized' only with its new
-  // `minimized` option, and browserFor takes that option (default off) and passes it on. Each pin is the 5b7ef2c6 declaration with exactly
-  // these anchored edits (each anchor once, else a harness failure), so a call without the option (every bank caller) creates the
-  // 5b7ef2c6 window; the other 12 declarations stay byte-identical to 5b7ef2c6.
+  // `minimized` option, and browserFor takes that option (default off) and passes it on. The card rendering correction (case
+  // omf-card-rendering-20261031) adds one more anchored edit to backgroundPage only: with that option, before the page is returned, the
+  // page's own session sends Chrome's focus emulation and stays open (a refusal is the fixed page-setup error). Each pin is the 5b7ef2c6
+  // declaration with exactly these anchored edits (each anchor once, else a harness failure), so a call without the option (every bank
+  // caller) creates the 5b7ef2c6 window and page; the other 12 declarations stay byte-identical to 5b7ef2c6.
+  const RENDERING = "  if (minimized) { // guard:card-rendering\n    try { const rendering = await page.createCDPSession(); await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); }\n    catch { throw new Error('The minimized card window could not keep its page rendering'); }\n  }\n";
   const FOLD = {
-    backgroundPage: [['async function backgroundPage(browser) {', 'async function backgroundPage(browser, { minimized = false } = {}) {'], ['background: true, ...OFFSCREEN', "background: true, ...(minimized ? { windowState: 'minimized' } : {}), ...OFFSCREEN"]],
+    backgroundPage: [['async function backgroundPage(browser) {', 'async function backgroundPage(browser, { minimized = false } = {}) {'], ['background: true, ...OFFSCREEN', "background: true, ...(minimized ? { windowState: 'minimized' } : {}), ...OFFSCREEN"], ['  return page;', RENDERING + '  return page;']],
     browserFor: [['onLaunch = null, background = false } = {}) {', 'onLaunch = null, background = false, minimized = false } = {}) {'], ['browser.newPage = () => backgroundPage(browser);', 'browser.newPage = () => backgroundPage(browser, { minimized });']]
   };
   const folded = (name, text) => FOLD[name].reduce((out, [from, to]) => { const hits = out.split(from).length - 1; if (hits !== 1) throw new Error('FAIL card-only-fold anchor hits ' + hits + ' in ' + name + ': ' + from); return out.replace(from, () => to); }, text);
@@ -239,13 +243,13 @@ async function boundaryProof(temp, assert) {
   // the reversible test-only copy the separate A/B runner executes (B8 excluded) is generated and proven here; Chrome is not launched
   const copy = await boundaryCopy(temp);
   assert.equal(copy.unchangedFromHead, true, 'frame-init:boundary-test-unchanged');
-  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers + the card-only fold's minimized option (backgroundPage and browserFor equal to their pins, so a call without the option creates the ${BASE.slice(0, 8)} window; the other 12 pinned declarations byte-identical: launch flags, ownership, closure and showWindow unchanged); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
+  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers + the card-only fold's minimized option + the card page's rendering for that option only (backgroundPage and browserFor equal to their pins, so a call without the option creates the ${BASE.slice(0, 8)} window and page; the other 12 pinned declarations byte-identical: launch flags, ownership, closure and showWindow unchanged); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
 }
 
 // ── C: every production importer of collector/browser.mjs is classified ──
 export const CALLERS = {
-  'collector/index.mjs': 'Amex/Aplus statement collection, startup recovery, lock/expiry/locked closure: U (fault/healthy SDK), P (staged index graph), B1-B7 through startCollector in the separate candidate/baseline A/B runs; its card wrappers pass the minimized option (card fixture K/N)',
-  'collector/bank.mjs': 'bank statement/observe/guided setup and balance (withBankBrowser, dynamic): U real-Chrome lane runs bank-balance/ensureBankLogin through the same launcher; no minimized option, so its background window is the 5b7ef2c6 one (pinned here; card fixture K bank caller recordings)',
+  'collector/index.mjs': 'Amex/Aplus statement collection, startup recovery, lock/expiry/locked closure: U (fault/healthy SDK), P (staged index graph), B1-B7 through startCollector in the separate candidate/baseline A/B runs; its card wrappers pass the minimized option, whose page keeps rendering (card fixture K/N)',
+  'collector/bank.mjs': 'bank statement/observe/guided setup and balance (withBankBrowser, dynamic): U real-Chrome lane runs bank-balance/ensureBankLogin through the same launcher; no minimized option, so its background window and page are the 5b7ef2c6 ones, without focus emulation (pinned here; card fixture K bank caller recordings)',
   'collector/yayoi.mjs': 'Yayoi export (dynamic browserFor): same launcher and SDK instance; no own SDK callback; proven by mechanism, not run',
   'cloud-probe/run.mjs': 'Railway Amex probe container (amexPage/collectFromPage); its image copies collector/*.mjs (helper included); excluded from execution',
   'research-worker/browser.mjs': 'public research reader (browserFor): same launcher and SDK instance; public network; proven by mechanism, not run',
