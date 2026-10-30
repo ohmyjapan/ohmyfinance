@@ -19,10 +19,17 @@
 //      omf-background-focus-repair-20261030) must fail the recorded background window (not minimized) and the setup page opened while
 //      the collector's tick is busy (Check left disabled) — by recording and headless Chrome only: the d067126 headed background window is
 //      never launched again on the owner's desktop.
+//   F1 fail-first of the card-only fold (case omf-card-only-focus-fold-20261030, final review F1), by recording: the revision ef038a9
+//      must fail the three background bank callers by name (statement retrieval, the guided PayPay observe, the hourly balance: their
+//      window created minimized) while its card wrappers and the visible observe pass; its reverse control, the live-accepted d067126, must
+//      pass the four bank callers (the expected creation is the one it sends) while its card wrappers fail (not minimized); and in owned
+//      headless Chrome (OMF_CARD_NATIVE=1, else NOT RUN) ef038a9's bank default page must be minimized and hidden.
 //   U  node --test collector/test/legacy-card-import.test.mjs (planner/importer; real DPAPI and ACL helpers on owned roots).
-//   K  node --test collector/test/card-background.test.mjs (Part A: the real wrappers over a recording launch; no Chrome).
+//   K  node --test collector/test/card-background.test.mjs (Part A: the real wrappers and the real bank callers over a recording launch;
+//      no Chrome).
 //   N  the same file with OMF_CARD_NATIVE=1 (real background Chrome on synthetic pages, a passive recorder of the owned Chrome's window
-//      events, and the reveal from minimized in headless Chrome). OMF_CARD_NATIVE=0 → NOT RUN (red).
+//      events, and in headless Chrome the reveal from minimized and the bank callers' window that is not minimized). OMF_CARD_NATIVE=0 →
+//      NOT RUN (red).
 //   S  scripts/finance-legacy-card-import-integration.cjs (service, route, the real collector over TLS, schedule, guard mutants).
 //   C  the same with --ui and OMF_CARD_NATIVE=1: the setup page (L4) and the built connections page (L8, needs .output) in owned
 //      headless Chrome. OMF_CARD_NATIVE=0 → NOT RUN (red).
@@ -30,7 +37,7 @@
 //      without node_modules, no test code staged.
 //   R  affected existing collector suites without Chrome; RN (native) the Chrome-launching collector suites of the shared browser lane.
 //   M  reintroduced defects through their own legs (an unchanged copy of each selection first).
-// Selection: OMF_CARD_LEGS (comma list of F,U,K,N,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
+// Selection: OMF_CARD_LEGS (comma list of F,F1,U,K,N,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -49,6 +56,9 @@ export const PRE = '5e5ce0ff9f5e56798b83c43827dfb4f0b8d20849';
 // The release candidate before the focus repair (focus-repair/6-build.md): its background window is not minimized and its setup page
 // renders the previous-setup section once, so a page opened during the collector's tick keeps Check disabled.
 export const FOCUS = 'd067126af15fd9df3bbde56843dd2d7886963bb7';
+// The release candidate before the card-only fold (card-only-focus-fold/6-build.md, final review F1): every background window is
+// minimized, the bank callers' included.
+export const FOLD = 'ef038a9a200c4ff127532aed42392d683b3d0edd';
 const execute = promisify(execFile);
 const sha256 = v => createHash('sha256').update(v).digest('hex');
 const EVIDENCE = process.env.OMF_CARD_EVIDENCE || '';
@@ -86,8 +96,8 @@ export const MUTANTS = [
   ['MI13-raw-token-sent', I, [['proof = await remote.legacyOwner(sha256(blob.token));', 'proof = await remote.legacyOwner(blob.token);']], 'U', '^same-owner proof', /proof:hash-only/],
   ['MI14-other-owner-grant-accepted', I, [["if (grant.ownerId !== ownerId || grant.origin !== origin) throw legacyError('legacy-owner'); // guard:legacy-owner-match", '']], 'U', '^grant-first', /grant-first:another (owner|origin) touched the previous setup/],
   ['MI15-parent-link-followed', I, [["if (keyOf(real) !== keyOf(source) || keyOf(realFile) !== keyOf(file)) throw legacyError('legacy-unsafe'); // guard:legacy-plain", '']], 'U', '^source:', /expected legacy-unsafe but it resolved|source:parent junction/],
-  ['MB1-amex-visible-launch', BR, [['onLaunch, background: true }); // guard:card-background-amex', 'onLaunch });']], 'K', '^Amex wrapper', /card-background:amex-launch/],
-  ['MB2-aplus-visible-launch', BR, [['onLaunch, background: true }); // guard:card-background-aplus', 'onLaunch });']], 'K', '^Aplus wrapper', /card-background:aplus-launch/],
+  ['MB1-amex-visible-launch', BR, [['onLaunch, background: true, minimized: true }); // guard:card-background-amex', 'onLaunch });']], 'K', '^Amex wrapper', /card-background:amex-launch/],
+  ['MB2-aplus-visible-launch', BR, [['onLaunch, background: true, minimized: true }); // guard:card-background-aplus', 'onLaunch });']], 'K', '^Aplus wrapper', /card-background:aplus-launch/],
   ['MB3-amex-attention-unrouted', BR, [[', ui: loginUi(page, { reveal }) }); // guard:card-reveal-amex', ' });']], 'K', '^Amex wrapper', /FOREGROUND/],
   ['MB4-aplus-attention-unrouted', BR, [['signal, ui, reveal }); // guard:card-reveal-aplus', 'signal, ui });']], 'K', '^Aplus wrapper', /FOREGROUND/],
   ['ML1-login-ui-ignores-reveal', 'collector/login.mjs', [['async show() { if (reveal) await reveal(page); else await page.bringToFront(); } // guard:login-reveal', 'async show() { await page.bringToFront(); }']], 'K', '^login UI', /card-reveal:login-ui-routes/],
@@ -120,9 +130,15 @@ export const MUTANTS = [
   // the Aplus page read a navigation interrupts (the native N failures at 5e5ce0f): an unknown page for that poll, never a broader catch
   ['MA8-aplus-navigation-read-fails', 'collector/aplus.mjs', [["} catch (error) { if (NAVIGATED.test(String(error?.message))) return { kind: 'unknown' }; throw error; } // guard:aplus-state-navigation", '} catch (error) { throw error; }']], 'K', '^Aplus page read', /card-aplus:navigation-read-is-unknown/],
   ['MA9-aplus-any-read-failure-ignored', 'collector/aplus.mjs', [["if (NAVIGATED.test(String(error?.message))) return { kind: 'unknown' }; throw error; } // guard:aplus-state-navigation", "return { kind: 'unknown' }; }"]], 'K', '^Aplus page read', /card-aplus:closed-target-ends-job/],
-  // the focus repair (focus-repair/6-build.md): the shared background window minimized at creation (recorded only: a window that is not
+  // the focus repair (focus-repair/6-build.md), narrowed to the card wrappers by the card-only fold (card-only-focus-fold/6-build.md):
+  // the card windows minimized at creation and the bank callers' window kept as live-accepted (recorded only: a card window that is not
   // minimized is never launched natively again), and the previous-setup section re-read while the collector's own tick is busy
-  ['MB5-background-window-not-minimized', BR, [["background: true, windowState: 'minimized', ...OFFSCREEN", 'background: true, ...OFFSCREEN']], 'K', '^(Amex|Aplus) wrapper', /card-background:(amex|aplus)-minimized-window/],
+  ['MB5-card-window-not-minimized', BR, [["...(minimized ? { windowState: 'minimized' } : {}), ", '']], 'K', '^(Amex|Aplus) wrapper', /card-background:(amex|aplus)-minimized-window/],
+  ['MB6-amex-not-minimized', BR, [['background: true, minimized: true }); // guard:card-background-amex', 'background: true }); // guard:card-background-amex']], 'K', '^Amex wrapper', /card-background:amex-minimized-window/],
+  ['MB7-aplus-not-minimized', BR, [['background: true, minimized: true }); // guard:card-background-aplus', 'background: true }); // guard:card-background-aplus']], 'K', '^Aplus wrapper', /card-background:aplus-minimized-window/],
+  ['MB8-bank-default-minimized', BR, [['background = false, minimized = false } = {}) {', 'background = false, minimized = true } = {}) {']], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-target/],
+  ['MB9-every-window-minimized', BR, [["...(minimized ? { windowState: 'minimized' } : {}), ", "windowState: 'minimized', "]], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-target/],
+  ['MB10-option-not-passed', BR, [['backgroundPage(browser, { minimized }); // guard:background-window', 'backgroundPage(browser); // guard:background-window']], 'K', '^(Amex|Aplus) wrapper', /card-background:(amex|aplus)-minimized-window/],
   ['MU3-legacy-busy-not-reread', 'collector/setup.js', [["clearTimeout(legacyTimer);if(data.busy&&state==='legacy-ready')legacyTimer=setTimeout(()=>call('/status').then(next=>{current=next;showLegacy(next);}).catch(()=>{}),2000);", '']], 'C', 'L3,L4', /ui:legacy-busy-reread/]
 ];
 
@@ -164,12 +180,25 @@ async function withCopy(file, label, text, fn) {
   await writeFile(copy, text); try { return await fn(copy); } finally { await rm(copy, { force: true }).catch(() => {}); }
 }
 // A copy of aplus.mjs reaches the wrapper legs (Part B native Aplus) only through browser.mjs: a browser.mjs copy importing that copy is
-// loaded as well, so the native legs run the copy. Other files: their own test seam only. Returns the env of the seams.
+// loaded as well, so the native legs run the copy. A copy of browser.mjs routes copies of the bank modules to itself (withBankRoute).
+// Other files: their own test seam only. Returns the env of the seams.
 async function withRouted(file, label, text, fn) {
   return withCopy(file, label, text, async copy => {
+    if (file === BR) return withBankRoute(copy, label, fn);
     if (file !== 'collector/aplus.mjs') return fn({ [ENV[file]]: copy });
     const browserText = mutate(await readFile(path.join(root, BR), 'utf8'), [["from './aplus.mjs';", "from './" + path.basename(copy) + "';"]], label + ' browser route');
     return withCopy(BR, label, browserText, browserCopy => fn({ [ENV[file]]: copy, [ENV[BR]]: browserCopy }));
+  });
+}
+// A browser.mjs copy reaches the bank callers of the card-background test (bank.mjs collectBankStatement/observeBankPortal, bank-balance.mjs
+// inquireBalance) only through copies of those two modules routed to it: bank.mjs loads ./browser.mjs lazily and bank-balance.mjs imports
+// ./bank.mjs. Returns the env of the three seams; the test proves the route through the browser registry.
+const BANK_MODULE = 'collector/bank.mjs', BALANCE_MODULE = 'collector/bank-balance.mjs';
+async function withBankRoute(browserCopy, label, fn) {
+  const bank = mutate(await readFile(path.join(root, BANK_MODULE), 'utf8'), [["await import('./browser.mjs')", "await import('./" + path.basename(browserCopy) + "')"]], label + ' bank route');
+  return withCopy(BANK_MODULE, label, bank, async bankCopy => {
+    const balance = mutate(await readFile(path.join(root, BALANCE_MODULE), 'utf8'), [["from './bank.mjs';", "from './" + path.basename(bankCopy) + "';"]], label + ' balance route');
+    return withCopy(BALANCE_MODULE, label, balance, balanceCopy => fn({ [ENV[BR]]: browserCopy, OMF_TEST_BANK_MODULE: bankCopy, OMF_TEST_BALANCE_MODULE: balanceCopy }));
   });
 }
 // A copy of server/ + shared/ (inside the worktree so dependencies resolve) with the given files replaced.
@@ -258,12 +287,33 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         counts.failFirst.P = failure; found.push('P red (' + failure.slice(0, 80) + ')'); }
       return found.join('; ');
     });
+    // F1: the card-only fold (case omf-card-only-focus-fold-20261030, final review F1), first by recording (no Chrome): each revision's
+    // browser.mjs in the defect seam with the bank modules routed to it, the card wrappers and the bank callers selected together.
+    await leg('F1 fail-first of the card-only fold on ' + FOLD.slice(0, 7) + ' (every background window minimized, the bank callers included) and its reverse control on the live-accepted ' + FOCUS.slice(0, 7), async () => {
+      const found = [], select = '^(Amex wrapper|Aplus wrapper|bank caller)';
+      const at = async (revision, tag) => { const text = await baseText(BR, revision); if (!text) throw new Error('SETUP ' + revision + ' is not readable here'); return tests(await withCopy(BR, tag, text, copy => withBankRoute(copy, tag, seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, select)))); };
+      { const t = await at(FOLD, 'fold'); await keep('F1-FOLD-K', t.out);
+        const named = ['bank-background:statement-target', 'bank-background:guided-observe-target', 'bank-background:balance-target'].filter(x => t.out.includes(x));
+        if (t.fail !== 3 || t.pass !== 3 || named.length !== 3) throw new Error('the bank callers did not fail first on ' + FOLD.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.FOLD_K = t.fail + '/' + (t.pass + t.fail); found.push(FOLD.slice(0, 7) + ' K red (' + named.join(', ') + '); its two card wrappers and the visible observe green'); }
+      { const t = await at(FOCUS, 'focus'); await keep('F1-FOCUS-K', t.out);
+        const named = ['card-background:amex-minimized-window', 'card-background:aplus-minimized-window'].filter(x => t.out.includes(x));
+        if (t.fail !== 2 || t.pass !== 4 || named.length !== 2) throw new Error('the reverse control on ' + FOCUS.slice(0, 7) + ' did not hold: pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.FOCUS_BANK_K = t.pass + ' green / ' + t.fail + ' red'; found.push(FOCUS.slice(0, 7) + ' K: the four bank callers green (the live-accepted creation it sends), its card wrappers red (' + named.join(', ') + ')'); }
+      // what that creation does to the page, in HEADLESS Chrome only (no window of the owner's desktop): ef038a9's bank default page is
+      // minimized and hidden
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + FOLD.slice(0, 7) + ' headless bank-default fail-first needs owned headless Chrome');
+        const text = await baseText(BR, FOLD), r = await withCopy(BR, 'fold', text, copy => unit(BACKGROUND, { OMF_TEST_BROWSER_MODULE: copy, OMF_CARD_NATIVE: '1' }, '^native bank default in HEADLESS')), t = tests(r); await keep('F1-FOLD-N', t.out);
+        if (t.fail !== 1 || t.pass !== 0 || !t.out.includes('bank-background:headless-normal-visible') || !t.out.includes('"windowState":"minimized"') || !/'hidden'/.test(t.out)) throw new Error('the headless bank default did not fail first on ' + FOLD.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
+        counts.failFirst.FOLD_N = 'headless bank default minimized and hidden'; found.push(FOLD.slice(0, 7) + ' headless red (bank-background:headless-normal-visible: the bank default page minimized and hidden)'); }
+      return found.join('; ');
+    });
     await leg('U node --test ' + UNIT, async () => { const r = await unit(UNIT), t = tests(r); await keep('U', t.out); counts.unitTests = t.pass; unitGreen(r, t, 'the importer'); return t.pass + ' tests green'; });
     await leg('K node --test ' + BACKGROUND + ' (Part A, no Chrome)', async () => { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }), t = tests(r); await keep('K', t.out); counts.backgroundTests = t.pass; unitGreen(r, t, 'the wrappers'); return t.pass + ' tests green, ' + t.skipped + ' skipped (geometry excluded; native legs are leg N)'; });
     await leg('N native background Chrome (OMF_CARD_NATIVE=1)', async () => {
       if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native background coverage is claimed');
       const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^native'), t = tests(r); await keep('N', t.out); counts.nativeTests = t.pass; unitGreen(r, t, 'the wrappers');
-      if (t.pass !== 7) throw new Error('expected the 7 native legs (6 headed background, 1 headless reveal), ran ' + t.pass);
+      if (t.pass !== 8) throw new Error('expected the 8 native legs (6 headed background; headless: the card reveal and the bank default), ran ' + t.pass);
       return t.pass + ' native legs green (' + [...t.out.matchAll(/ℹ window events [^\n]*/g)].length + ' with their window-event summaries)';
     });
     await leg('S services, route, the real collector over TLS, schedule and the service guard mutants (L1-L3, L5-L7)', async () => {

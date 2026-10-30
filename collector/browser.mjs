@@ -60,19 +60,22 @@ export function ownedBrowsers() { return [...owned.values()].map(entry => ({ pid
 // (Target.createTarget background:true), so a job never takes the foreground, and the page receives its input through the
 // DevTools pipe, never the system cursor or keyboard. showWindow(page) moves that SAME window to usable bounds on the primary work
 // area when the person is needed. No other process's window is ever touched.
-// Focus repair (case omf-background-focus-repair-20261030): that window is also MINIMIZED (windowState) right after Chrome creates it.
-// An inactive normal window, even off-screen, stays an ordinary top-level window that Windows itself can hand the foreground to (a
-// native control sampled the foreground on the owned Chrome while it read the statement code; Chrome 155 requests no activation on
+// Card wrappers only (case omf-background-focus-repair-20261030, narrowed to the cards by omf-card-only-focus-fold-20261030):
+// collectStatement and collectAplusStatement pass `minimized`, so their window is also MINIMIZED (windowState) right after Chrome
+// creates it. An inactive normal window, even off-screen, stays an ordinary top-level window that Windows itself can hand the foreground
+// to (a native control sampled the foreground on the owned Chrome while it read the statement code; Chrome 155 requests no activation on
 // this path); Windows does not choose a minimized window when it activates one on its own, and an activation Chrome itself requested
 // would first restore it (off-screen; the native tests record any restore). Chrome 155 shows the window inactive once at its default
 // bounds, moves it to the off-screen bounds (kept as its restore bounds) and minimizes it. While minimized the page is hidden: DevTools
 // input, navigation, timers and downloads work; animation frames, IntersectionObserver and CSS transitions wait until it is shown.
-// showWindow restores the same window before moving it on screen.
+// showWindow restores the same window before moving it on screen. The bank callers (bank.mjs withBankBrowser: statements, the guided
+// observe, the hourly balance) pass no option and keep the live-accepted creation without windowState: Chrome 155 does not show a
+// client-certificate chooser (池田泉州銀行) while the page is hidden, and the balance check never reveals its window.
 export const BACKGROUND_ARGS = Object.freeze(['--no-startup-window']);
 const OFFSCREEN = Object.freeze({ left: -32000, top: -32000, width: 1280, height: 900 });
-async function backgroundPage(browser) {
+async function backgroundPage(browser, { minimized = false } = {}) {
   const session = await browser.target().createCDPSession(); let targetId;
-  try { ({ targetId } = await session.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true, windowState: 'minimized', ...OFFSCREEN })); }
+  try { ({ targetId } = await session.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true, ...(minimized ? { windowState: 'minimized' } : {}), ...OFFSCREEN })); }
   finally { await session.detach().catch(() => {}); }
   const target = await browser.waitForTarget(t => t._targetId === targetId, { timeout: 30000 });
   const page = await target.page();
@@ -99,9 +102,10 @@ export async function showWindow(page, { margin = 40 } = {}) {
  * options: ephemeral (the profile is deleted at closure; needs root), root (the collector directory), headless
  * (false = the visible window of the first release; tests use true), onLaunch({pid, browser}) — the collector
  * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows. background (headed
- * only; bank retrievals): no startup window, and this browser's newPage() opens an inactive, minimized off-screen window (see above).
+ * only; bank and card retrievals): no startup window, and this browser's newPage() opens an inactive off-screen window (see above).
+ * minimized (with background; the two card wrappers only, default off): that window is created minimized.
  */
-export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null, background = false } = {}) {
+export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null, background = false, minimized = false } = {}) {
   const key = keyOf(profile);
   for (const entry of owned.values()) if (entry.key === key && entry.browser.connected) return entry.browser;
   if (ephemeral) { assertEphemeralPath(profile, root); await mkdir(ephemeralRoot(root), { recursive: true }); await assertPlainDirectory(ephemeralRoot(root)); }
@@ -113,7 +117,7 @@ export async function browserFor(profile, { ephemeral = false, root = /** @type 
   if (!executablePath) throw new Error('Google Chrome was not found in its standard locations on this PC');
   const quiet = background && !headless;
   const browser = await puppeteer.launch({ executablePath, pipe: true, headless, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, ...(quiet ? BACKGROUND_ARGS : [])], ...(quiet ? { ignoreDefaultArgs: ['about:blank'], waitForInitialPage: false } : {}) });
-  if (quiet) browser.newPage = () => backgroundPage(browser); // guard:background-window
+  if (quiet) browser.newPage = () => backgroundPage(browser, { minimized }); // guard:background-window
   const child = browser.process(), pid = child && child.pid ? child.pid : -1;
   const entry = { key, profile, ephemeral, root, pid, browser, child };
   owned.set(pid, entry);
@@ -201,12 +205,13 @@ export async function selectLatestStatement(page, primaryCard) {
  * deleted at closure; retained profiles are never opened. `settings` are the credentials opened inside the batch (none in
  * the manual lane); `gmail` the mailbox grant opened inside the batch; `onLaunch` the ownership hand-over; `origin` binds
  * the outbox manifest to the paired OMF. Plan omf-card-handover-20261030: the routine download runs in the background owned
- * Chrome of the bank jobs (no startup window, an inactive, minimized off-screen page, input only through DevTools); when the person is
- * needed the login UI calls `reveal` (default showWindow) on that SAME page — never another window, never a global input.
+ * Chrome of the bank jobs (no startup window, an inactive off-screen page that only the card wrappers ask to be minimized, input only
+ * through DevTools); when the person is needed the login UI calls `reveal` (default showWindow) on that SAME page — never another
+ * window, never a global input.
  */
 export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', reveal = showWindow } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);
-  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true }); // guard:card-background-amex
+  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true, minimized: true }); // guard:card-background-amex
   try {
     const page=await amexPage(browser);
     return await collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin, ui: loginUi(page, { reveal }) }); // guard:card-reveal-amex
@@ -281,7 +286,7 @@ export async function collectFromPage(page, browser, account, settings, director
  */
 export async function collectAplusStatement(account, settings, directory, status, { batch = 'batch', onLaunch = null, origin = '', covered = [], jobId = account.jobId, codeSource = null, signal = null, ui = undefined, reveal = showWindow } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'aplus', account._id, batch);
-  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true }); // guard:card-background-aplus
+  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true, minimized: true }); // guard:card-background-aplus
   try {
     const page = await browser.newPage();
     return await collectAplusFromPage(page, browser, account, settings, directory, status, { covered, jobId, origin, codeSource, signal, ui, reveal }); // guard:card-reveal-aplus

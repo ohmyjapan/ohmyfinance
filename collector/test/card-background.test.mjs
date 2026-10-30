@@ -1,12 +1,17 @@
 // collector/test/card-background.test.mjs — routine Amex and Aplus downloads in the background owned Chrome (plan omf-card-handover-20261030).
 // Part A (always): the real collector/browser.mjs wrappers over a recording stand-in for rebrowser's launch (the module's own
 // launch is replaced in this process; no Chrome starts), the real login.mjs/aplus.mjs UIs on fake pages, and the unchanged
-// showWindow bytes. Part B (OMF_CARD_NATIVE=1, serialized with the other Chrome suites): the real wrappers start real stock Chrome
+// showWindow bytes; and the real bank callers of the same launch (bank.mjs collectBankStatement and observeBankPortal, bank-balance.mjs
+// inquireBalance) over that recording launch: only the card wrappers ask for the minimized window (case omf-card-only-focus-fold-20261030).
+// Part B (OMF_CARD_NATIVE=1, serialized with the other Chrome suites): the real wrappers start real stock Chrome
 // headed in the background (no startup window, an inactive, minimized off-screen page) on intercepted synthetic issuer pages; every page
 // request is answered from synthetic HTML or aborted, the foreground window is read (never changed), a passive recorder keeps the owned
 // Chrome's window events for the whole run, and the reveal is a recording stand-in: the real showWindow is NEVER called on a headed
-// window here, because it would move a window on the owner's desktop (its restore from minimized is proven in headless Chrome).
-// OMF_TEST_BROWSER_MODULE / OMF_TEST_LOGIN_MODULE / OMF_TEST_APLUS_MODULE point at a mutant copy beside the original.
+// window here, because it would move a window on the owner's desktop (its restore from minimized, and the bank callers' window that is
+// not minimized, are proven in headless Chrome).
+// OMF_TEST_BROWSER_MODULE / OMF_TEST_LOGIN_MODULE / OMF_TEST_APLUS_MODULE point at a mutant copy beside the original;
+// OMF_TEST_BANK_MODULE / OMF_TEST_BALANCE_MODULE at copies of bank.mjs / bank-balance.mjs routed to that browser.mjs copy (without them
+// a browser.mjs copy skips the bank caller tests, with that reason).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
@@ -73,6 +78,10 @@ function recordingLaunch(makePage) {
 }
 async function withLaunch(stand, fn) { const original = puppeteer.launch; puppeteer.launch = stand; try { return await fn(); } finally { puppeteer.launch = original; } }
 const offscreen = params => params?.newWindow === true && params?.background === true && params.left === -32000 && params.top === -32000 && params.url === 'about:blank';
+// The Target.createTarget parameters of the background window as JSON (the serialization the DevTools message carries, key order
+// included): the bank callers' live-accepted creation (5b7ef2c6, unchanged through d067126) and the card wrappers' minimized one (b047c86).
+const BANK_TARGET = '{"url":"about:blank","newWindow":true,"background":true,"left":-32000,"top":-32000,"width":1280,"height":900}';
+const CARD_TARGET = '{"url":"about:blank","newWindow":true,"background":true,"windowState":"minimized","left":-32000,"top":-32000,"width":1280,"height":900}';
 
 // ═══ Part A ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 test('login UI: the reveal callback receives the SAME page; without one show() still brings the tab to the front', async () => {
@@ -132,6 +141,7 @@ test('Amex wrapper: background launch (no startup window, inactive, minimized of
   const created = stand.record.cdp.filter(([m]) => m === 'Target.createTarget');
   assert.equal(created.length, 1); assert.ok(offscreen(created[0][1]), 'card-background:amex-offscreen-target ' + JSON.stringify(created[0][1]));
   assert.equal(created[0][1].windowState, 'minimized', 'card-background:amex-minimized-window ' + JSON.stringify(created[0][1]));
+  assert.equal(JSON.stringify(created[0][1]), CARD_TARGET, 'card-background:amex-target-exact');
   assert.equal(stand.record.defaultPages, 0, 'card-background:amex-no-foreground-page');
   assert.deepEqual(order, ['own', 'reveal'], 'card-background:amex-ownership-before-attention');
   assert.deepEqual([revealed.length, revealed[0] === stand.record.pages[0], events.includes('bringToFront')], [1, true, false], 'card-reveal:amex-wrapper-routes');
@@ -147,6 +157,7 @@ test('Aplus wrapper: the same background launch and attention routing, cleanup',
   const created = stand.record.cdp.filter(([m]) => m === 'Target.createTarget');
   assert.ok(created.length === 1 && offscreen(created[0][1]), 'card-background:aplus-offscreen-target');
   assert.equal(created[0][1].windowState, 'minimized', 'card-background:aplus-minimized-window ' + JSON.stringify(created[0][1]));
+  assert.equal(JSON.stringify(created[0][1]), CARD_TARGET, 'card-background:aplus-target-exact');
   assert.equal(stand.record.defaultPages, 0, 'card-background:aplus-no-foreground-page');
   assert.deepEqual([revealed.length, revealed[0] === stand.record.pages[0], events.includes('bringToFront')], [1, true, false], 'card-reveal:aplus-wrapper-routes');
   assert.equal(stand.record.closed, 1); assert.deepEqual(B.ownedBrowsers(), [], 'card-background:aplus-registry-empty');
@@ -157,6 +168,56 @@ test('protected session loss: closing the owned browsers mid-job ends the wrappe
   await withLaunch(stand.launch, () => assert.rejects(B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'loss', reveal: async () => { await B.closeOwnedBrowsers(); } }), /Target closed/));
   assert.equal(stand.record.closed, 1, 'card-background:session-loss-closed-once');
   assert.deepEqual(B.ownedBrowsers(), []); assert.equal(existsSync(B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, 'loss')), false, 'card-background:session-loss-profile');
+});
+// ── the bank callers of the same background launch (case omf-card-only-focus-fold-20261030, final review F1): only the two card wrappers
+// ask for the minimized window; statement retrieval, the guided PayPay observe and the hourly balance keep the live-accepted creation
+// without windowState (Chrome 155 does not show the 池田泉州銀行 client-certificate chooser while the page is hidden). The real
+// bank.mjs / bank-balance.mjs entry points run over the recording launch on owned roots, each stopped at its first page step (a
+// synthetic adapter or UI, or the balance precheck of a synthetic snapshot without an account); the browser registry proves they launched
+// through the browser.mjs under test.
+const BANK_STOP = 'synthetic stop: the bank page is not part of this test';
+const BANK = { ownerId: 'a1'.repeat(12), bankAccountId: 'b2'.repeat(12), snapshotHash: 'd4'.repeat(32) };
+const STOP_UI = { async open() { throw new Error(BANK_STOP); }, async state() { throw new Error(BANK_STOP); }, async show() { throw new Error(BANK_STOP); } };
+const UNROUTED = process.env.OMF_TEST_BROWSER_MODULE && !process.env.OMF_TEST_BANK_MODULE ? 'the browser.mjs copy has no routed bank modules (OMF_TEST_BANK_MODULE / OMF_TEST_BALANCE_MODULE)' : false;
+async function bankCaller(batch, call) {
+  const stand = recordingLaunch(() => ({ label: 'bank-page', url: () => 'about:blank' })), dir = await owned('bank-' + batch);
+  const bank = await load('OMF_TEST_BANK_MODULE', 'bank.mjs'), balance = await load('OMF_TEST_BALANCE_MODULE', 'bank-balance.mjs');
+  const outcome = await withLaunch(stand.launch, () => call({ bank, balance, dir, bound: { ...BANK, jobId: randomUUID() } })).then(value => ({ value }), error => ({ error }));
+  const profile = B.ephemeralProfile(dir, BANK.ownerId, 'bank', BANK.bankAccountId, batch), routed = B.ownedBrowsers().some(e => e.profile === profile);
+  await B.closeOwnedBrowsers();
+  return { outcome, routed, launches: stand.record.launches, created: stand.record.cdp.filter(([m]) => m === 'Target.createTarget').map(([, p]) => JSON.stringify(p)), defaultPages: stand.record.defaultPages, closed: stand.record.closed, profileLeft: existsSync(profile) };
+}
+const ended = run => run.outcome.error ? 'threw ' + run.outcome.error.message : 'returned ' + JSON.stringify(run.outcome.value);
+function assertBankBackground(run, label) {
+  const [options] = run.launches;
+  assert.equal(run.launches.length, 1, 'bank-background:' + label + ' launched once; ' + ended(run));
+  assert.ok(run.routed, 'bank-background:routed ' + label + ': the bank module did not launch through the browser.mjs under test');
+  assert.deepEqual([options.headless, options.args.includes('--no-startup-window'), options.waitForInitialPage], [false, true, false], 'bank-background:' + label + '-launch ' + JSON.stringify(options));
+  assert.deepEqual(run.created, [BANK_TARGET], 'bank-background:' + label + '-target ' + JSON.stringify(run.created));
+  assert.deepEqual([run.defaultPages, run.closed, run.profileLeft], [0, 1, false], 'bank-background:' + label + '-closed');
+}
+test('bank caller statement retrieval (bank.mjs collectBankStatement): its background window keeps the live-accepted creation, no windowState', { skip: WINDOWS || UNROUTED, timeout: 120000 }, async () => {
+  const run = await bankCaller('statement', ({ bank, dir, bound }) => bank.collectBankStatement(bound, { provider: 'synthetic', snapshot: { provider: 'synthetic', variant: null } }, dir, async () => {}, { adapter: { label: 'Synthetic bank', support: 'verified', ui() { throw new Error(BANK_STOP); } }, batch: 'statement' }));
+  assertBankBackground(run, 'statement');
+  assert.equal(run.outcome.error?.message, BANK_STOP, 'stopped at its first page step; ' + ended(run));
+});
+test('bank caller guided PayPay observe (bank.mjs observeBankPortal, PayPay銀行 standard): its background window keeps the live-accepted creation, no windowState', { skip: WINDOWS || UNROUTED, timeout: 120000 }, async () => {
+  const run = await bankCaller('observe', ({ bank, dir, bound }) => bank.observeBankPortal(bound, { provider: 'paypay', snapshot: { provider: 'paypay', variant: 'standard' } }, dir, async () => {}, { batch: 'observe', ui: STOP_UI }));
+  assertBankBackground(run, 'guided-observe');
+  assert.equal(run.outcome.error?.message, BANK_STOP, 'stopped at its first page step; ' + ended(run));
+});
+test('bank caller hourly balance (bank-balance.mjs inquireBalance, 池田泉州銀行 ビジネスゲート): its background window keeps the live-accepted creation, no windowState', { skip: WINDOWS || UNROUTED, timeout: 120000 }, async () => {
+  const run = await bankCaller('balance', ({ balance, dir, bound }) => balance.inquireBalance(bound, { kind: 'balance', provider: 'ikeda', snapshot: { provider: 'ikeda', variant: 'portal' } }, dir, async () => {}, { batch: 'balance' }));
+  assertBankBackground(run, 'balance');
+  assert.match(String(run.outcome.value?.failed), /残高の確認の設定にありません/, 'stopped at the balance precheck (a synthetic snapshot without an account); ' + ended(run));
+});
+test('bank caller observe without a guided adapter (PayPay銀行, no variant): the visible default lane is unchanged, no background launch and no Target.createTarget', { skip: WINDOWS || UNROUTED, timeout: 120000 }, async () => {
+  const run = await bankCaller('visible', ({ bank, dir, bound }) => bank.observeBankPortal(bound, { provider: 'paypay', snapshot: { provider: 'paypay', variant: null } }, dir, async () => {}, { batch: 'visible', ui: STOP_UI }));
+  const [options] = run.launches;
+  assert.equal(run.launches.length, 1, 'bank-background:visible launched once; ' + ended(run));
+  assert.ok(run.routed, 'bank-background:routed visible: the bank module did not launch through the browser.mjs under test');
+  assert.deepEqual([options.headless, options.args.includes('--no-startup-window'), 'waitForInitialPage' in options, run.created, run.defaultPages, run.closed, run.profileLeft], [false, false, false, [], 1, 1, false], 'bank-background:visible-lane-unchanged ' + JSON.stringify({ options, created: run.created }));
+  assert.equal(run.outcome.error?.message, BANK_STOP, 'stopped at its first page step; ' + ended(run));
 });
 // ── P4 (parent fold): the statement-code wait of the background wrapper — awaitDownload's onManual on a virtual clock ──────────────
 const SMS = (id, receivedAt, code = '4821') => ({ id, sender: '0570-008-789', receivedAt, body: '【My APLUS】ご利用明細書ダウンロードの認証コードは ' + code + ' です。有効期限は5分です。' });
@@ -479,12 +540,14 @@ test('native session loss: closing the owned browsers while the person is needed
 });
 // The reveal of the minimized background window with the REAL backgroundPage and the REAL showWindow, in HEADLESS Chrome only (no window
 // of the owner's desktop exists or moves): the launch is made headless beneath the wrapper's own options, so browserFor installs the
-// background page exactly as for a headed batch; the page opens minimized off-screen and hidden, and showWindow brings that SAME page to a
-// normal window at its usable bounds (the headless screen), visible, with no other page. The headed geometry stays excluded (B8).
+// background page exactly as for a headed batch; with the card wrappers' `minimized` the page opens minimized off-screen and hidden, and
+// showWindow brings that SAME page to a normal window at its usable bounds (the headless screen), visible, with no other page. Without
+// the option (the bank callers) the page opens as before the focus repair: a normal off-screen window, its page visible. The headed
+// geometry stays excluded (B8).
 const realLaunch = puppeteer.launch.bind(puppeteer);
-test('native reveal geometry in HEADLESS Chrome: the real background page opens minimized and hidden; the real showWindow restores that same page to a normal window at usable bounds', { skip: NATIVE, timeout: 120000 }, async () => {
+test('native reveal geometry in HEADLESS Chrome: the real background page of the card wrappers opens minimized and hidden; the real showWindow restores that same page to a normal window at usable bounds', { skip: NATIVE, timeout: 120000 }, async () => {
   const dir = await owned('reveal-headless'), profile = B.ephemeralProfile(dir, ACCOUNT.ownerId, 'reveal', ACCOUNT._id, 'headless'), launches = [];
-  const browser = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true }); }, () => B.browserFor(profile, { ephemeral: true, root: dir, background: true }));
+  const browser = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true }); }, () => B.browserFor(profile, { ephemeral: true, root: dir, background: true, minimized: true }));
   try {
     assert.deepEqual([launches.length, launches[0].headless, launches[0].args.includes('--no-startup-window')], [1, false, true], 'the wrapper asked for the headed background launch');
     const page = await browser.newPage(), session = await page.createCDPSession();
@@ -498,4 +561,17 @@ test('native reveal geometry in HEADLESS Chrome: the real background page opens 
     await session.detach().catch(() => {});
   } finally { await B.closeOwnedBrowsers(); }
   assert.equal(existsSync(profile), false, 'card-background:headless-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
+});
+test('native bank default in HEADLESS Chrome: the real background page without the card option opens as before, a normal off-screen window whose page is visible', { skip: NATIVE, timeout: 120000 }, async () => {
+  const dir = await owned('bank-headless'), profile = B.ephemeralProfile(dir, BANK.ownerId, 'bank', BANK.bankAccountId, 'headless'), launches = [];
+  const browser = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true }); }, () => B.browserFor(profile, { ephemeral: true, root: dir, background: true }));
+  try {
+    assert.deepEqual([launches.length, launches[0].headless, launches[0].args.includes('--no-startup-window')], [1, false, true], 'the bank callers\' options asked for the headed background launch');
+    const page = await browser.newPage(), session = await page.createCDPSession();
+    const created = (await session.send('Browser.getWindowForTarget')).bounds;
+    assert.deepEqual([created.windowState, created.left, created.top, created.width, created.height, await page.evaluate(() => document.visibilityState)], ['normal', -32000, -32000, 1280, 900, 'visible'], 'bank-background:headless-normal-visible ' + JSON.stringify(created));
+    const pages = await browser.pages(); assert.ok(pages.length === 1 && pages[0] === page, 'bank-background:headless-one-page');
+    await session.detach().catch(() => {});
+  } finally { await B.closeOwnedBrowsers(); }
+  assert.equal(existsSync(profile), false, 'bank-background:headless-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
 });
