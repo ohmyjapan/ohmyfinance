@@ -100,6 +100,17 @@ export function loginUi(page, { reveal = null, trace = null } = {}) {
 //    sent or answered; it proves no authentication or rejection, and an answer of any other endpoint (an analytics 4xx) is 'other'.
 //  - On the state() reads ensureLogin already makes, at most SAMPLE_AT.length per phase: fixed page flags (fields present or emptied,
 //    alerts, invalid fields, dialogs, frames, busy markers and the reCAPTCHA container cloud-probe/run.mjs observed).
+//  - The login API's network detail (case omf-amex-network-detail-01). A real job's six login POSTs failed (net::ERR_FAILED) with no
+//    answer the page could see, which cannot tell an answer Chrome withheld by CORS from no HTTP answer at all. Chrome's own Network events
+//    can: loadingFailed carries the CORS error and the blocked reason, responseReceivedExtraInfo the network stack's status even when CORS
+//    hides responseReceived (devtools-protocol Network). They are read by passive listeners on the page's existing DevTools session
+//    (page._client(): puppeteer enabled Network there for its own events); no command is sent on that session, no domain is enabled, nothing
+//    is intercepted and it is never detached. Only the login API is described (endpointOf, the URL parsed here and not kept), per request in
+//    order of first sight, up to DETAIL_REQUESTS (all counted): method, phase, ms, the status the page saw and the network stack's (each an
+//    allowlisted status and its class; null: none arrived), finished or failed, the CORS error and the blocked reason as the pinned
+//    protocol's values (another value: 'other'). Chrome's request id is a transient key for this association and never leaves the trace,
+//    nor does a header, cookie, body, error text, failedParameter or URL. An ExtraInfo may arrive before or after the request's other events,
+//    so the detail is reported once, in the end event (network.detail); without that session it is unavailable (listening false).
 // Each step is bounded by TRACE_MS and swallows its own failure; the trace never clicks, types, waits, polls, retries or decides
 // anything, so the login's attempts, deadlines, statuses and attention are those of ensureLogin alone. The sink's errors are ignored.
 // Its listeners end at authentication or at stopTrace(), which the wrapper awaits before the owned page closes.
@@ -118,6 +129,13 @@ const READY_STATES = ['loading', 'interactive', 'complete'], VISIBILITIES = ['vi
 const FOCUS = ['body', 'user', 'password', 'submit', 'other'];
 const FAILURES = [[/^net::ERR_ABORTED$/, 'aborted'], [/^net::ERR_BLOCKED_BY_[A-Z_]+$/, 'blocked'], [/^net::ERR_(?:CONNECTION_)?TIMED_OUT$/, 'timeout'], [/^net::ERR_(?:CONNECTION_[A-Z_]+|EMPTY_RESPONSE)$/, 'connection'], [/^net::ERR_NAME_NOT_RESOLVED$/, 'dns'], [/^net::ERR_(?:INTERNET_DISCONNECTED|NETWORK_CHANGED|ADDRESS_UNREACHABLE)$/, 'offline'], [/^net::ERR_(?:CERT|SSL)_[A-Z_]+$/, 'tls'], [/^net::ERR_TOO_MANY_REDIRECTS$/, 'redirects'], [/^net::ERR_FAILED$/, 'failed']];
 const LOGIN_ERRORS = [[/input unavailable/, 'input-unavailable'], [/page changed/, 'surface'], [/did not uniquely match/, 'not-unique'], [/covered by another element/, 'covered']];
+// The network detail's bounds and values: DETAIL_REQUESTS login API requests described, at most DETAIL_EARLY network-stack statuses waiting
+// for a request not yet seen (oldest out first), and Network.CorsError / Network.BlockedReason of devtools-protocol 0.0.1367902, the
+// protocol this SDK pins (Chrome may add values; those are 'other').
+const DETAIL_REQUESTS = 24, DETAIL_EARLY = 64;
+const DETAIL_EVENTS = ['Network.requestWillBeSent', 'Network.responseReceivedExtraInfo', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed'];
+const CORS_ERRORS = ['DisallowedByMode', 'InvalidResponse', 'WildcardOriginNotAllowed', 'MissingAllowOriginHeader', 'MultipleAllowOriginValues', 'InvalidAllowOriginValue', 'AllowOriginMismatch', 'InvalidAllowCredentials', 'CorsDisabledScheme', 'PreflightInvalidStatus', 'PreflightDisallowedRedirect', 'PreflightWildcardOriginNotAllowed', 'PreflightMissingAllowOriginHeader', 'PreflightMultipleAllowOriginValues', 'PreflightInvalidAllowOriginValue', 'PreflightAllowOriginMismatch', 'PreflightInvalidAllowCredentials', 'PreflightMissingAllowExternal', 'PreflightInvalidAllowExternal', 'PreflightMissingAllowPrivateNetwork', 'PreflightInvalidAllowPrivateNetwork', 'InvalidAllowMethodsPreflightResponse', 'InvalidAllowHeadersPreflightResponse', 'MethodDisallowedByPreflightResponse', 'HeaderDisallowedByPreflightResponse', 'RedirectContainsCredentials', 'InsecurePrivateNetwork', 'InvalidPrivateNetworkAccess', 'UnexpectedPrivateNetworkAccess', 'NoCorsRedirectModeNotFollow', 'PreflightMissingPrivateNetworkAccessId', 'PreflightMissingPrivateNetworkAccessName', 'PrivateNetworkAccessPermissionUnavailable', 'PrivateNetworkAccessPermissionDenied'];
+const BLOCKED_REASONS = ['other', 'csp', 'mixed-content', 'origin', 'inspector', 'subresource-filter', 'content-type', 'coep-frame-resource-needs-coep-header', 'coop-sandboxed-iframe-cannot-navigate-to-coop-page', 'corp-not-same-origin', 'corp-not-same-origin-after-defaulted-to-same-origin-by-coep', 'corp-not-same-origin-after-defaulted-to-same-origin-by-dip', 'corp-not-same-origin-after-defaulted-to-same-origin-by-coep-and-dip', 'corp-not-same-site'];
 
 const within = (fn, ms = TRACE_MS) => { let timer; return Promise.race([Promise.resolve().then(fn).catch(() => null), new Promise(resolve => { timer = setTimeout(resolve, ms, null); })]).finally(() => clearTimeout(timer)); };
 const flag = value => typeof value === 'boolean' ? value : null;
@@ -252,6 +270,51 @@ function loginTrace(page, sink) {
   const attached = [];
   try { if (typeof page.on === 'function' && typeof page.off === 'function') for (const [name, handler] of handlers) { page.on(name, handler); attached.push([name, handler]); } } catch { /* no page events */ }
   listening = attached.length === handlers.length;
+  // ── the login API's network detail: Chrome's events on the page's own DevTools session, read in place (see above); every handler
+  // swallows its failure, so neither the session's other listeners nor the login ever see one. `ids` (login API requests described)
+  // and `early` (statuses whose request is not yet seen) are the only places a request id is held, both bounded and emptied at the end.
+  const detail = { listening: false, seen: 0, dropped: 0, requests: [] }, ids = new Map(), early = new Map(), sdkAttached = [];
+  const statusOf = raw => [STATUSES.includes(raw) ? raw : null, classOf(raw)];
+  const known = id => typeof id === 'string' ? ids.get(id) : undefined;
+  // Each handler reads everything it needs before it changes a record, so a field that cannot be read leaves the record as it was.
+  const sdkHandlers = [
+    // a request's first sight: the login API only (its URL parsed here, never kept) gets a record, with a status that arrived before it
+    [DETAIL_EVENTS[0], e => { try {
+      const id = e?.requestId; if (typeof id !== 'string') return;
+      const waiting = early.get(id); early.delete(id);
+      if (ids.has(id) || endpointOf(e.request?.url) !== 'login-api') return;
+      const method = one(e.request?.method, METHODS);
+      detail.seen++; if (detail.requests.length >= DETAIL_REQUESTS) { detail.dropped++; return; }
+      const r = { ordinal: detail.requests.length + 1, ms: ms(), phase, method, responseStatus: null, responseClass: null, extraStatus: null, extraClass: null, outcome: null, cors: null, blocked: null };
+      if (waiting) [r.extraStatus, r.extraClass] = waiting;
+      detail.requests.push(r); ids.set(id, r);
+    } catch { /* unreadable */ } }],
+    // the network stack's status, sent also when CORS keeps the answer from the page, before or after the request's other events
+    [DETAIL_EVENTS[1], e => { try {
+      const id = e?.requestId; if (typeof id !== 'string') return;
+      const status = statusOf(e.statusCode), r = ids.get(id);
+      if (r) [r.extraStatus, r.extraClass] = status;
+      else { early.delete(id); early.set(id, status); if (early.size > DETAIL_EARLY) early.delete(early.keys().next().value); }
+    } catch { /* unreadable */ } }],
+    [DETAIL_EVENTS[2], e => { try { const r = known(e?.requestId); if (r) [r.responseStatus, r.responseClass] = statusOf(e.response?.status); } catch { /* unreadable */ } }],
+    [DETAIL_EVENTS[3], e => { try { const r = known(e?.requestId); if (r) r.outcome = 'finished'; } catch { /* unreadable */ } }],
+    [DETAIL_EVENTS[4], e => { try {
+      const r = known(e?.requestId); if (!r) return;
+      const cors = one(e.corsErrorStatus?.corsError, CORS_ERRORS), blocked = one(e.blockedReason, BLOCKED_REASONS);
+      r.outcome = 'failed'; r.cors = cors; r.blocked = blocked;
+    } catch { /* unreadable */ } }]
+  ];
+  // Attached once, to the session as it is when the trace starts; inert after the end even where the session refuses their removal.
+  let sdk = null, detailOpen = true;
+  try { // guard:login-detail-passive
+    const client = typeof page._client === 'function' ? page._client() : null;
+    if (client && typeof client.on === 'function' && typeof client.off === 'function') {
+      sdk = client;
+      for (const [name, handler] of sdkHandlers) { const listener = e => { if (detailOpen) handler(e); }; client.on(name, listener); sdkAttached.push([name, listener]); }
+    }
+  } catch { /* no page session: the detail is unavailable */ }
+  detail.listening = sdkAttached.length === sdkHandlers.length;
+  if (!detail.listening) { detailOpen = false; for (const [name, listener] of sdkAttached.splice(0)) { try { sdk.off(name, listener); } catch { /* gone */ } } } // all or none
   // ── the isolated world: its own DevTools session; every command bounded, a late session is detached when it arrives
   const isolated = (declaration, args = []) => context === null ? Promise.resolve(null) : within(async () => {
     const r = await session.send('Runtime.callFunctionOn', { functionDeclaration: declaration.toString(), executionContextId: context, arguments: args.map(value => ({ value })), returnByValue: true, awaitPromise: true, silent: true });
@@ -280,9 +343,13 @@ function loginTrace(page, sink) {
   const end = reason => {
     ending ??= (async () => {
       for (const [name, handler] of attached) { try { page.off(name, handler); } catch { /* gone */ } }
+      detailOpen = false;
+      for (const [name, listener] of sdkAttached) { try { sdk.off(name, listener); } catch { /* gone */ } } // only the trace's own listeners
+      ids.clear(); early.clear();
       if (session) { if (context !== null) { await readNative(); await isolated(UNLISTEN); } await within(() => session.detach()); }
       session = null; context = null;
-      emit({ event: 'end', ms: ms(), reason, submitted, states: { ...states }, stateErrors: count(stateErrors, 9999), samples, native: lastNative, network: { listening, before: capped(net.before), after: capped(net.after), events: networkEvents, dropped: count(networkDropped, 99999), loginApiEvents: loginEvents, loginApiDropped: count(loginDropped, 99999) }, dropped: count(dropped, 99999) });
+      const networkDetail = { listening: detail.listening, seen: count(detail.seen, 99999), dropped: count(detail.dropped, 99999), requests: detail.requests.map(r => ({ ...r })) };
+      emit({ event: 'end', ms: ms(), reason, submitted, states: { ...states }, stateErrors: count(stateErrors, 9999), samples, native: lastNative, network: { listening, before: capped(net.before), after: capped(net.after), events: networkEvents, dropped: count(networkDropped, 99999), loginApiEvents: loginEvents, loginApiDropped: count(loginDropped, 99999), detail: networkDetail }, dropped: count(dropped, 99999) });
     })().catch(() => {});
     return ending;
   };

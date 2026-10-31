@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -98,7 +99,9 @@ const HOME_URL = 'https://global.americanexpress.com/dashboard', MASKED = 'o****
 const LOGIN_API = 'https://global.americanexpress.com/myca/logon/japa/action/login';
 const SECRET = Object.freeze({ username: 'omfFictionalUserQz7w', password: 'OmfFictional-Pass-Kv9x' }), CODE = '864213';
 const SECRET_TEXTS = [SECRET.username, SECRET.password, CODE, ...[SECRET.username, SECRET.password].flatMap(s => [s.slice(0, 6), s.slice(-6), createHash('sha256').update(s).digest('hex').slice(0, 16), Buffer.from(s).toString('base64').slice(0, 12), encodeURIComponent(s)])];
-const RAW_TEXTS = ['http', 'americanexpress', 'example.invalid', 'evil', 'beacon', 'logon', 'myca', 'japa', 'token', '?', 'net::', 'ERR_', 'synthetic', 'Target closed', 'Session closed', 'context with', 'destroyed', 'WebCrypto'];
+const RAW_TEXTS = ['http', 'americanexpress', 'example.invalid', 'evil', 'beacon', 'logon', 'myca', 'japa', 'token', '?', 'net::', 'ERR_', 'synthetic', 'Target closed', 'Session closed', 'context with', 'destroyed', 'WebCrypto', 'omf-rid', 'set-cookie', 'HTTP/1.1'];
+// The Network events of the page's own DevTools session the network detail listens to (network-detail-01).
+const SDK_EVENTS = ['Network.requestWillBeSent', 'Network.responseReceivedExtraInfo', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed'];
 // Every form in which the two logins could leave this process towards the browser: the values and their parts (SECRET_TEXTS without the
 // code, which the comparison never has), and SHA-256 of their UTF-8 and UTF-16LE bytes, plain and under every 64-hex nonce the trace sent,
 // in hex and base64 and their prefixes.
@@ -133,11 +136,43 @@ const HOSTILE = { readyState: SECRET.password, visibility: LOGIN_URL, focused: '
 
 // `replaced`: at the comparison, the isolated world's context number names another document whose fields hold the same values ('origin':
 // another site; 'path': the verification page); `subtle`: that world's WebCrypto (null: none); `alter`: what a field keeps of a typed value.
-function fakeLoginPage({ afterSubmit = 'stay', submitFires = true, prevented = true, covered = false, maxPassword = null, react = true, hostile = false, cdp = 'ok', events = 'ok', network = [], closeAfterSubmit = false, replaced = null, subtle = undefined, alter = null } = {}) {
-  let url = 'about:blank', surface = 'blank', focused = null, ctrl = false, selectAll = false, pending = null, documentId = 0, selected = false, closed = false, world = null;
+// The page's own DevTools session (page._client(), network-detail-01) carries the network: puppeteer's NetworkManager listener is registered
+// on each Network event first (at page creation) and turns the events into the page events, so `exchange` sends each request's events
+// there in Chrome's order. An item's `extra` is its network-stack status (responseReceivedExtraInfo), sent before its request (`extraAt`
+// 'early'), before its answer or failure ('before', the default) or after them ('late'); a failure is never answered and carries `cors`
+// (corsErrorStatus.corsError) and `blocked` (blockedReason). Every other field of those events — headers, cookies, bodies, error text,
+// failedParameter, initiator, document URL — is a forbidden read (recorded; the fictional secrets are in them). The session's emit runs
+// its listeners in order and hands a listener's exception back to the dispatch, as puppeteer's emitter does (counted in sdkOwn.thrown).
+// `sdk`: false — no such session; 'not-function' / 'throws' / 'null' / 'no-off' — page._client is no function, throws, answers null or
+// a session without off; 'on-throws' — its third listener is refused; 'off-throws' — every removal throws. `sdkHostile`: after each
+// request's events, events whose reads throw (on unknown requests, and on that request where a read precedes any change).
+function fakeLoginPage({ afterSubmit = 'stay', submitFires = true, prevented = true, covered = false, maxPassword = null, react = true, hostile = false, cdp = 'ok', events = 'ok', network = [], closeAfterSubmit = false, replaced = null, subtle = undefined, alter = null, sdk = 'ok', sdkHostile = false } = {}) {
+  let url = 'about:blank', surface = 'blank', focused = null, ctrl = false, selectAll = false, pending = null, documentId = 0, selected = false, closed = false, world = null, rid = 0;
   const values = { '#eliloUserID': '', '#eliloPassword': '', '#question-input': '' }, view = { alerts: 0 };
   const calls = [], cdpCalls = [], forbidden = [], listeners = new Map(), sessions = [], frame = { url: () => url }, returned = [], foreign = [];
   const emit = (name, payload) => { for (const handler of [...(listeners.get(name) || [])]) handler(payload); };
+  const sdkCalls = [], sdkListeners = new Map(), sdkOwn = { calls: 0, thrown: 0 }, own = () => { sdkOwn.calls++; };
+  for (const name of SDK_EVENTS) sdkListeners.set(name, [own]);
+  const sdkSession = {
+    on(name, handler) { sdkCalls.push(['on', name]); if (sdk === 'on-throws' && sdkCalls.filter(c => c[0] === 'on').length === 3) throw new Error('synthetic: listener refused ' + SECRET.password); if (!sdkListeners.has(name)) sdkListeners.set(name, []); sdkListeners.get(name).push(handler); return sdkSession; },
+    off(name, handler) { sdkCalls.push(['off', name, typeof handler]); if (sdk === 'off-throws') throw new Error('synthetic: listener removal refused ' + SECRET.password); const list = sdkListeners.get(name) || []; if (handler === undefined) list.length = 0; else if (list.lastIndexOf(handler) >= 0) list.splice(list.lastIndexOf(handler), 1); return sdkSession; },
+    emit(name, params) { try { for (const handler of [...(sdkListeners.get(name) || [])]) handler(params); } catch (error) { sdkOwn.thrown++; throw error; } return true; },
+    async send(method) { sdkCalls.push(['send', method]); return {}; }, async detach() { sdkCalls.push(['detach']); },
+    removeAllListeners() { sdkCalls.push(['removeAllListeners']); sdkListeners.clear(); return sdkSession; }, listenerCount: name => (sdkListeners.get(name) || []).length
+  };
+  const watched = (target, allowed, label) => new Proxy(target, { get(object, key, receiver) { if (typeof key === 'string' && !allowed.includes(key)) forbidden.push(label + '.' + key); return Reflect.get(object, key, receiver); } });
+  const raw = {
+    request: (requestId, target, method, type) => watched({ requestId, loaderId: 'omf-rid-loader', documentURL: url, timestamp: 1, wallTime: 1, type, frameId: 'synthetic-main-frame', hasUserGesture: false, redirectHasExtraInfo: false, initiator: { type: 'script', url: LOGIN_URL + '&token=' + SECRET.password },
+      request: watched({ url: target, method, headers: { cookie: 'pw=' + SECRET.password }, postData: 'user=' + SECRET.username, hasPostData: true, initialPriority: 'High', referrerPolicy: 'strict-origin-when-cross-origin' }, ['url', 'method'], 'request') }, ['requestId', 'request'], 'requestWillBeSent'),
+    extra: (requestId, statusCode) => watched({ requestId, statusCode, headers: { 'set-cookie': 'pw=' + SECRET.password }, headersText: 'HTTP/1.1 ' + statusCode + '\r\nset-cookie: pw=' + SECRET.password, blockedCookies: [], resourceIPAddressSpace: 'Public', cookiePartitionKey: { topLevelSite: WWW } }, ['requestId', 'statusCode'], 'responseReceivedExtraInfo'),
+    response: (requestId, target, status, type) => watched({ requestId, loaderId: 'omf-rid-loader', timestamp: 2, type, hasExtraInfo: true, frameId: 'synthetic-main-frame', response: watched({ url: target, status, statusText: 'synthetic ' + SECRET.password, headers: { 'set-cookie': 'pw=' + SECRET.password }, mimeType: 'application/json', remoteIPAddress: '192.0.2.1' }, ['status'], 'response') }, ['requestId', 'response'], 'responseReceived'),
+    finished: requestId => watched({ requestId, timestamp: 3, encodedDataLength: 1234 }, ['requestId'], 'loadingFinished'),
+    failed: (requestId, errorText, cors, blocked) => watched({ requestId, timestamp: 3, type: 'Fetch', errorText, canceled: false, ...(cors === undefined ? {} : { corsErrorStatus: watched({ corsError: cors, failedParameter: 'https://evil.example/?pw=' + SECRET.password }, ['corsError'], 'corsErrorStatus') }), ...(blocked === undefined ? {} : { blockedReason: blocked }) }, ['requestId', 'corsErrorStatus', 'blockedReason'], 'loadingFailed')
+  };
+  const throwing = () => { throw new Error('synthetic hostile DevTools event ' + SECRET.password + ' ' + LOGIN_URL); };
+  const hostileEvents = id => [...SDK_EVENTS.map(name => [name, new Proxy({}, { get: throwing })]), ...SDK_EVENTS.map(name => [name, null]), [SDK_EVENTS[0], { requestId: 'omf-rid-hostile', get request() { return throwing(); } }],
+    [SDK_EVENTS[0], { requestId: 'omf-rid-hostile', request: { url: LOGIN_API, get method() { return throwing(); } } }], [SDK_EVENTS[1], { requestId: id, get statusCode() { return throwing(); } }], [SDK_EVENTS[2], { requestId: id, get response() { return throwing(); } }],
+    [SDK_EVENTS[4], { requestId: id, corsErrorStatus: { corsError: 'MissingAllowOriginHeader' }, get blockedReason() { return throwing(); } }]];
   const request = (target, { method = 'GET', type = 'xhr', navigation = false, failure = null } = {}) => ({
     url: () => target, method: () => method, resourceType: () => type, isNavigationRequest: () => navigation, frame: () => frame,
     failure: () => failure === null ? null : { errorText: failure },
@@ -147,9 +182,17 @@ function fakeLoginPage({ afterSubmit = 'stay', submitFires = true, prevented = t
   const answer = (req, status) => ({ request: () => req, status: () => status, url: () => req.url(), ok: () => status < 400,
     headers() { forbidden.push('response.headers'); return { 'set-cookie': SECRET.password }; }, async text() { forbidden.push('text'); return SECRET.password; },
     async json() { forbidden.push('json'); return { token: SECRET.password }; }, async buffer() { forbidden.push('buffer'); return Buffer.from(SECRET.password); } });
-  const exchange = ({ url: target, method, type, status, failure, navigation }) => {
-    const req = request(target, { method, type, navigation, failure: failure ?? null }); emit('request', req);
-    if (failure) emit('requestfailed', req); else emit('response', answer(req, status));
+  // puppeteer's listener runs first on each event (here: the page event), then the session's other listeners (the trace's detail)
+  const exchange = ({ url: target, method, type, status, failure, navigation, extra = null, extraAt = 'before', cors, blocked }) => {
+    const req = request(target, { method, type, navigation, failure: failure ?? null }), id = 'omf-rid-' + (++rid), kind = req.resourceType(), cdpType = kind === 'xhr' ? 'XHR' : kind[0].toUpperCase() + kind.slice(1);
+    const send = (name, params) => sdkSession.emit(name, params);
+    if (extra !== null && extraAt === 'early') send(SDK_EVENTS[1], raw.extra(id, extra));
+    emit('request', req); send(SDK_EVENTS[0], raw.request(id, target, req.method(), cdpType));
+    if (extra !== null && extraAt === 'before') send(SDK_EVENTS[1], raw.extra(id, extra));
+    if (failure) { emit('requestfailed', req); send(SDK_EVENTS[4], raw.failed(id, failure, cors, blocked)); }
+    else { emit('response', answer(req, status)); send(SDK_EVENTS[2], raw.response(id, target, status, cdpType)); send(SDK_EVENTS[3], raw.finished(id)); }
+    if (extra !== null && extraAt === 'late') send(SDK_EVENTS[1], raw.extra(id, extra));
+    if (sdkHostile) for (const [name, params] of hostileEvents(id)) send(name, params);
   };
   const navigate = (target, kind) => {
     exchange({ url: target, method: 'GET', type: 'document', status: 200, navigation: true });
@@ -172,6 +215,7 @@ function fakeLoginPage({ afterSubmit = 'stay', submitFires = true, prevented = t
   };
   const page = {
     url: () => url, mainFrame: () => frame,
+    ...(sdk === false ? {} : { _client: sdk === 'not-function' ? sdkSession : () => { calls.push(['sdk']); if (sdk === 'throws') throw new Error('synthetic: no page session ' + SECRET.password); return sdk === 'null' ? null : sdk === 'no-off' ? { on: sdkSession.on, send: sdkSession.send } : sdkSession; } }),
     async goto(target) { gone(); calls.push(['goto']); navigate(target, new URL(target).pathname === '/ja-jp/account/login' ? 'login' : 'other'); },
     async evaluate(fn, arg) {
       gone();
@@ -250,7 +294,8 @@ function fakeLoginPage({ afterSubmit = 'stay', submitFires = true, prevented = t
       sessions.push(session); return session;
     }
   };
-  return { page, calls, cdpCalls, forbidden, sessions, listeners: () => [...listeners.values()].reduce((n, set) => n + set.size, 0), world: () => world, values, emit, exchange, returned, foreign, close() { closed = true; } };
+  return { page, calls, cdpCalls, forbidden, sessions, listeners: () => [...listeners.values()].reduce((n, set) => n + set.size, 0), world: () => world, values, emit, exchange, returned, foreign, close() { closed = true; },
+    sdkCalls, sdkOwn, raw, sdkEmit: (name, params) => sdkSession.emit(name, params), sdkListeners: () => Object.fromEntries(SDK_EVENTS.map(name => [name, sdkSession.listenerCount(name)])) };
 }
 // One sign-in through the REAL ensureLogin on a virtual clock: the default 300 s window, the 150 s attention, 1.5 s between reads.
 // `mailbox` may be a function of the virtual clock ({ advance }) so a mail can arrive late; `profile` replaces the account's recipients.
@@ -262,14 +307,16 @@ async function signIn(fake, { trace = undefined, credentials = SECRET, mailbox =
   return { ui, outcome, statuses, events: sunk };
 }
 // The auth-relevant page actions in order (navigation, typing targets, key strokes, the resolved click points and every state read):
-// everything but the trace's own reads, events and DevTools session.
-const actions = calls => calls.filter(c => !['on', 'off', 'session'].includes(c[0]) && !(c[0] === 'evaluate' && String(c[1]).startsWith('trace-'))).map(c => c.join(':'));
-const traceCalls = calls => calls.filter(c => ['on', 'off', 'session'].includes(c[0]) || (c[0] === 'evaluate' && String(c[1]).startsWith('trace-')));
+// everything but the trace's own reads, events and DevTools sessions (its own, and the look-up of the page's: 'sdk').
+const actions = calls => calls.filter(c => !['on', 'off', 'session', 'sdk'].includes(c[0]) && !(c[0] === 'evaluate' && String(c[1]).startsWith('trace-'))).map(c => c.join(':'));
+const traceCalls = calls => calls.filter(c => ['on', 'off', 'session', 'sdk'].includes(c[0]) || (c[0] === 'evaluate' && String(c[1]).startsWith('trace-')));
 
 // The closed schema: every event is exactly one of these shapes (no other key, no other value), deeply frozen.
 const isMs = v => Number.isSafeInteger(v) && v >= 0 && v <= 86400000, isBool = v => v === null || typeof v === 'boolean', isFlag = v => typeof v === 'boolean';
 const upTo = max => v => v === null || (Number.isSafeInteger(v) && v >= 0 && v <= max), oneOf = list => v => v === null || list.includes(v);
 const nullable = shape => Object.assign(Object.create(null), { nullable: shape });
+// `optional`: a key that may be absent and, present, has exactly this shape; `listOf`: a frozen array of at most `max` such items.
+const optional = shape => Object.assign(Object.create(null), { optional: shape }), listOf = (shape, max) => Object.assign(Object.create(null), { listOf: shape, max });
 const SURFACE = oneOf(['blank', 'login', 'verify', 'www', 'global', 'amex', 'other']), PHASE = oneOf(['before', 'after']);
 const FIELD = { present: isBool, visible: isBool, enabled: isBool, editable: isBool, react: isBool }, VALUE = { matches: isBool, empty: isBool, valid: isBool, ariaInvalid: isBool };
 const NATIVE = { readable: isFlag, clicks: upTo(999), trusted: upTo(999), buttonClicks: upTo(999), submits: upTo(999), prevented: upTo(999), bubbled: upTo(999), invalid: upTo(999) };
@@ -279,6 +326,13 @@ const METHOD = oneOf(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'
 const ENDPOINT = v => v === 'login-api' || v === 'other';
 const STATUS = oneOf([200, 201, 202, 204, 206, 301, 302, 303, 304, 307, 308, 400, 401, 403, 404, 405, 406, 408, 409, 410, 412, 413, 415, 422, 423, 428, 429, 431, 451, 500, 501, 502, 503, 504]);
 const KIND = oneOf(['authenticated', 'login', 'channels', 'code', 'unknown', 'other']), READY_STATE = oneOf(['loading', 'interactive', 'complete', 'other']), VISIBILITY = oneOf(['visible', 'hidden', 'other']), BUTTON = oneOf(['submit', 'button', 'reset', 'other']);
+// The network detail (network-detail-01) of the end event: wherever it appears it has exactly this shape. Its CORS errors and blocked
+// reasons are those of the protocol this SDK pins (collector/node_modules/devtools-protocol, locked 0.0.1367902) or 'other'. It is
+// optional here so the earlier tests also describe the trace before it; the detail tests require it.
+const PROTOCOL = (() => { const network = createRequire(import.meta.url)('devtools-protocol/json/browser_protocol.json').domains.find(d => d.domain === 'Network'), list = id => network.types.find(t => t.id === id).enum; return { cors: list('CorsError'), blocked: list('BlockedReason') }; })();
+const CLASS = oneOf(['2xx', '3xx', '4xx', '5xx', 'other']);
+const DETAIL_REQUEST = { ordinal: v => Number.isSafeInteger(v) && v >= 1 && v <= 24, ms: isMs, phase: PHASE, method: METHOD, responseStatus: STATUS, responseClass: CLASS, extraStatus: STATUS, extraClass: CLASS, outcome: oneOf(['finished', 'failed']), cors: oneOf([...PROTOCOL.cors, 'other']), blocked: oneOf([...PROTOCOL.blocked, 'other']) };
+const DETAIL = { listening: isFlag, seen: upTo(99999), dropped: upTo(99999), requests: listOf(DETAIL_REQUEST, 24) };
 const SCHEMA = {
   open: { ms: isMs, surface: SURFACE }, 'open-end': { ms: isMs, outcome: oneOf(['ok', 'timeout', 'error']), surface: SURFACE },
   state: { ms: isMs, phase: PHASE, kind: KIND, surface: SURFACE },
@@ -293,16 +347,18 @@ const SCHEMA = {
   navigated: { ms: isMs, phase: PHASE, surface: SURFACE }, lifecycle: { ms: isMs, phase: PHASE, kind: oneOf(['domcontentloaded', 'load', 'close']) },
   step: { ms: isMs, step: oneOf(['choose', 'next', 'code']), outcome: oneOf(['ok', 'error']) }, show: { ms: isMs, phase: PHASE, surface: SURFACE },
   end: { ms: isMs, reason: oneOf(['authenticated', 'stopped']), submitted: isFlag, states: Object.fromEntries(['authenticated', 'login', 'channels', 'code', 'unknown', 'other'].map(k => [k, v => Number.isSafeInteger(v) && v >= 0])),
-    stateErrors: upTo(9999), samples: upTo(16), native: nullable(NATIVE), network: { listening: isFlag, before: COUNTS, after: COUNTS, events: upTo(60), dropped: upTo(99999), loginApiEvents: upTo(40), loginApiDropped: upTo(99999) }, dropped: upTo(99999) }
+    stateErrors: upTo(9999), samples: upTo(16), native: nullable(NATIVE), network: { listening: isFlag, before: COUNTS, after: COUNTS, events: upTo(60), dropped: upTo(99999), loginApiEvents: upTo(40), loginApiDropped: upTo(99999), detail: optional(DETAIL) }, dropped: upTo(99999) }
 };
 const ZERO = Object.freeze({ sent: 0, '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0, other: 0, failed: 0 });
 function conforms(value, shape, where) {
   if (typeof shape === 'function') { assert.ok(shape(value), 'login-trace:schema value ' + where + ' = ' + JSON.stringify(value)); return; }
   if (shape.nullable) { if (value !== null) conforms(value, shape.nullable, where); return; }
+  if (shape.listOf) { assert.ok(Array.isArray(value) && Object.isFrozen(value) && value.length <= shape.max, 'login-trace:schema list ' + where + ' ' + JSON.stringify(value)); value.forEach((item, i) => conforms(item, shape.listOf, where + '[' + i + ']')); return; }
   assert.ok(value && typeof value === 'object' && !Array.isArray(value), 'login-trace:schema object ' + where);
   assert.ok(Object.isFrozen(value), 'login-trace:frozen ' + where);
-  assert.deepEqual(Object.keys(value).sort(), Object.keys(shape).sort(), 'login-trace:schema keys ' + where);
-  for (const key of Object.keys(shape)) conforms(value[key], shape[key], where + '.' + key);
+  const keys = Object.keys(shape).filter(key => !(shape[key].optional && !Object.hasOwn(value, key)));
+  assert.deepEqual(Object.keys(value).sort(), keys.sort(), 'login-trace:schema keys ' + where);
+  for (const key of keys) conforms(value[key], shape[key].optional ?? shape[key], where + '.' + key);
 }
 function assertClosed(events, label) {
   assert.ok(events.length > 0, 'login-trace:events ' + label);
@@ -605,6 +661,132 @@ test('login trace (comparison failures): WebCrypto missing, refusing or answerin
     await same.ui.stopTrace?.(); await other.ui.stopTrace?.();
     const filledOf = r => named(r.events, 'filled')[0];
     assert.deepEqual([filledOf(same)?.user?.matches, filledOf(same)?.password?.matches, filledOf(other)?.user?.matches, filledOf(other)?.password?.matches], [true, true, true, false], 'login-trace:utf16-exact');
+    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(rejections.map(String), [], 'login-trace:no-unhandled-rejection');
+  } finally { process.off('unhandledRejection', onRejection); }
+});
+
+// ═══ The login API's network detail (case omf-amex-network-detail-01) ══════════════════════════════════════════════════════════════
+// The real job on 172eba8 (the case's OBSERVED-FACTS): one native submit; the login module's two preflights answered 200 and its six POSTs
+// failed net::ERR_FAILED with no answer the page saw, which the page events cannot tell from no HTTP answer at all. Here every POST was
+// answered 403 by the network (its ExtraInfo) and withheld from the page by CORS (MissingAllowOriginHeader, the public empty POST's error):
+// the pattern only, every value fictional. Around it: an analytics 403 and login-path lookalikes with CORS errors and a blocked reason.
+const PREFLIGHT_200 = Object.freeze({ url: LOGIN_API, method: 'OPTIONS', type: 'other', status: 200, extra: 200 });
+const POST_403_HIDDEN = Object.freeze({ url: LOGIN_API, method: 'POST', type: 'fetch', failure: 'net::ERR_FAILED', extra: 403, cors: 'MissingAllowOriginHeader' });
+const HIDDEN_BY_CORS = [PREFLIGHT_200, POST_403_HIDDEN, POST_403_HIDDEN, POST_403_HIDDEN, POST_403_HIDDEN, PREFLIGHT_200, POST_403_HIDDEN, POST_403_HIDDEN,
+  { url: WWW + '/omf-synthetic/analytics?u=' + SECRET.username, method: 'POST', type: 'xhr', status: 403, extra: 403 },
+  { url: 'https://www.americanexpress.com.evil.example/myca/logon/japa/action/login', method: 'POST', type: 'fetch', failure: 'net::ERR_FAILED', extra: 403, cors: 'MissingAllowOriginHeader' },
+  { url: 'http://global.americanexpress.com/myca/logon/japa/action/login', method: 'POST', type: 'fetch', failure: 'net::ERR_FAILED', extra: 401, cors: 'AllowOriginMismatch' },
+  { url: 'https://global.americanexpress.com/myca/logon/japa/action/LogLogonHandler?token=' + SECRET.password, method: 'POST', type: 'fetch', failure: 'net::ERR_BLOCKED_BY_RESPONSE', extra: 403, blocked: 'corp-not-same-origin' }];
+const OPTIONS_200 = Object.freeze({ phase: 'after', method: 'OPTIONS', responseStatus: 200, responseClass: '2xx', extraStatus: 200, extraClass: '2xx', outcome: 'finished', cors: null, blocked: null });
+const POST_HIDDEN = Object.freeze({ phase: 'after', method: 'POST', responseStatus: null, responseClass: null, extraStatus: 403, extraClass: '4xx', outcome: 'failed', cors: 'MissingAllowOriginHeader', blocked: null });
+const HIDDEN_DETAIL = [OPTIONS_200, POST_HIDDEN, POST_HIDDEN, POST_HIDDEN, POST_HIDDEN, OPTIONS_200, POST_HIDDEN, POST_HIDDEN].map((r, i) => ({ ordinal: i + 1, ...r }));
+const detailOf = events => named(events, 'end')[0]?.network?.detail;
+const withoutMs = requests => Array.isArray(requests) ? requests.map(({ ms: _ms, ...r }) => r) : requests;
+// The listeners and calls the page's own session must show: puppeteer's own listener alone on each event, and from the trace only its
+// own listeners added and removed (no command, no detach, no listener removed without naming it, nothing else removed).
+const SDK_ONLY_OWN = Object.fromEntries(SDK_EVENTS.map(name => [name, 1]));
+const sdkUntouched = calls => calls.every(c => (c[0] === 'on' && SDK_EVENTS.includes(c[1])) || (c[0] === 'off' && SDK_EVENTS.includes(c[1]) && c[2] === 'function'));
+
+test('login trace (network detail, hidden by CORS): from the page\'s own DevTools session each login API request of the observed pattern is recorded with the status the page saw and the one the network answered, finished or failed, and its CORS error — the preflights 200, the POSTs a 403 withheld by CORS; analytics and lookalikes stay out; the session gets no command and keeps its own listeners, the trace\'s are gone; the sign-in is unchanged', async () => {
+  const fake = fakeLoginPage({ network: HIDDEN_BY_CORS }), { ui, outcome, statuses, events } = await signIn(fake);
+  const during = fake.sdkListeners();
+  await ui.stopTrace?.();
+  const detail = detailOf(events);
+  assert.ok(detail && typeof detail === 'object', 'login-trace:detail-reported ' + JSON.stringify(named(events, 'end')[0]?.network));
+  conforms(detail, DETAIL, 'detail');
+  assert.deepEqual([detail.listening, detail.seen, detail.dropped, withoutMs(detail.requests)], [true, 8, 0, HIDDEN_DETAIL], 'login-trace:detail-hidden-by-cors ' + JSON.stringify(detail));
+  assert.ok(detail.requests.every((r, i, all) => i === 0 || r.ms >= all[i - 1].ms), 'login-trace:detail-ms-order ' + JSON.stringify(detail.requests.map(r => r.ms)));
+  // the page-level events are exactly those of the same sign-in without the page's session: only the end event's detail differs
+  const bare = fakeLoginPage({ network: HIDDEN_BY_CORS, sdk: false }), b = await signIn(bare); await b.ui.stopTrace?.();
+  const strip = list => list.map(({ ms: _ms, ...e }) => e.event === 'end' ? { ...e, network: { ...e.network, detail: null } } : e);
+  assert.deepEqual(strip(events), strip(b.events), 'login-trace:detail-page-events-unchanged');
+  assert.deepEqual([detailOf(b.events)?.listening, detailOf(b.events)?.seen, detailOf(b.events)?.requests], [false, 0, []], 'login-trace:detail-unavailable-without-session');
+  // the session: listeners only, removed at the end; puppeteer's own listener still runs afterwards, and nothing more is recorded
+  assert.deepEqual(during, Object.fromEntries(SDK_EVENTS.map(name => [name, 2])), 'login-trace:detail-listening-during ' + JSON.stringify(during));
+  assert.ok(sdkUntouched(fake.sdkCalls) && fake.sdkCalls.filter(c => c[0] === 'off').length === 5, 'login-trace:detail-sdk-untouched (listeners only: no command, no detach, nothing removed but its own) ' + JSON.stringify(fake.sdkCalls));
+  assert.deepEqual(fake.sdkListeners(), SDK_ONLY_OWN, 'login-trace:detail-listeners-removed ' + JSON.stringify(fake.sdkListeners()));
+  const own = fake.sdkOwn.calls, length = events.length; fake.exchange(POST_403_HIDDEN);
+  assert.ok(fake.sdkOwn.calls > own && fake.sdkOwn.thrown === 0 && events.length === length, 'login-trace:detail-sdk-listeners-kept (puppeteer\'s own still run after the end; nothing recorded)');
+  // the sign-in: the same page actions, statuses and ending as without the trace, which never looks the session up
+  const plain = fakeLoginPage({ network: HIDDEN_BY_CORS }), p = await signIn(plain, { trace: null });
+  assert.deepEqual([actions(fake.calls), statuses, String(outcome?.message)], [actions(plain.calls), p.statuses, String(p.outcome?.message)], 'login-trace:detail-sign-in-unchanged');
+  assert.deepEqual([plain.calls.filter(c => c[0] === 'sdk').length, plain.sdkCalls, plain.sdkListeners()], [0, [], SDK_ONLY_OWN], 'login-trace:detail-default-untouched');
+  assert.equal(fake.calls.filter(c => c[0] === 'mouse-click' && c[1] === '#loginSubmit').length, 1, 'login-trace:one-password-submit');
+  assert.deepEqual(fake.forbidden, [], 'login-trace:detail-no-raw-read (headers, cookies, bodies, error text, failedParameter, other URLs) ' + JSON.stringify(fake.forbidden));
+  assert.ok(!JSON.stringify(events).includes('omf-rid'), 'login-trace:detail-no-request-id');
+  assertClosed(events, 'detail-hidden');
+});
+
+test('login trace (network detail, arrival order and bounds): a network-stack status before its request, before its failure or after it lands on that request and a request without one stays unanswered; every pinned CORS error and blocked reason is kept and any other value is other; malformed events change nothing; 24 requests are described and every one counted; 64 early statuses wait, the oldest leaving first', { timeout: 60000 }, async () => {
+  const traced = async fn => {
+    const fake = fakeLoginPage({ afterSubmit: 'none' }), sunk = [], ui = loginUi(fake.page, { trace: event => { sunk.push(event); } });
+    await ui.open(); await ui.state(); await ui.login(SECRET); fn(fake); await ui.stopTrace?.();
+    assertClosed(sunk, 'detail-order'); assert.deepEqual(fake.forbidden, [], 'login-trace:detail-no-raw-read ' + JSON.stringify(fake.forbidden)); assert.equal(fake.sdkOwn.thrown, 0, 'login-trace:detail-contained');
+    return { fake, detail: detailOf(sunk) };
+  };
+  const post = (fields = {}) => ({ url: LOGIN_API, method: 'POST', type: 'fetch', failure: 'net::ERR_FAILED', ...fields });
+  const unanswered = { phase: 'after', method: 'POST', responseStatus: null, responseClass: null, extraStatus: null, extraClass: null, outcome: 'failed', cors: null, blocked: null };
+  const order = await traced(fake => {
+    fake.exchange(post({ extra: 403, extraAt: 'early', cors: 'PreflightMissingAllowOriginHeader' }));
+    fake.exchange(post({ extra: 502, extraAt: 'late', blocked: 'corp-not-same-origin' }));
+    fake.exchange({ url: LOGIN_API, method: 'OPTIONS', type: 'preflight', status: 204, extra: 204, extraAt: 'late' });
+    fake.exchange(post({ failure: 'net::ERR_CONNECTION_RESET' }));
+  });
+  assert.deepEqual(withoutMs(order.detail?.requests), [
+    { ordinal: 1, ...unanswered, extraStatus: 403, extraClass: '4xx', cors: 'PreflightMissingAllowOriginHeader' },
+    { ordinal: 2, ...unanswered, extraStatus: 502, extraClass: '5xx', blocked: 'corp-not-same-origin' },
+    { ordinal: 3, ...OPTIONS_200, responseStatus: 204, extraStatus: 204 },
+    { ordinal: 4, ...unanswered }
+  ], 'login-trace:detail-arrival-order ' + JSON.stringify(order.detail));
+  // every value of the pinned protocol passes unchanged; any other value, an unlisted status or method and a non-numeric status are classes only
+  for (const [field, values] of [['cors', PROTOCOL.cors], ['blocked', PROTOCOL.blocked]]) for (let at = 0; at < values.length; at += 24) {
+    const chunk = values.slice(at, at + 24), r = await traced(fake => { for (const value of chunk) fake.exchange(post({ [field]: value })); });
+    assert.deepEqual(r.detail?.requests?.map(q => q[field]), chunk, 'login-trace:detail-pinned-' + field + ' ' + JSON.stringify(r.detail?.requests?.map(q => q[field])));
+  }
+  const odd = await traced(fake => {
+    fake.exchange(post({ extra: 599, cors: 'FutureCorsError ' + SECRET.password, blocked: 'future-reason ' + SECRET.password }));
+    fake.exchange({ url: LOGIN_API, method: 'TRACE', type: 'fetch', status: 418, extra: '403' });
+    // malformed or foreign events: no request id or another type of one, no request, no URL, events of requests never seen
+    for (const [name, params] of [[SDK_EVENTS[0], null], [SDK_EVENTS[0], undefined], [SDK_EVENTS[0], 7], [SDK_EVENTS[0], { request: { url: LOGIN_API, method: 'POST' } }], [SDK_EVENTS[0], { requestId: 7, request: { url: LOGIN_API, method: 'POST' } }],
+      [SDK_EVENTS[0], { requestId: 'omf-rid-malformed', request: null }], [SDK_EVENTS[0], { requestId: 'omf-rid-malformed-url', request: { url: 7, method: 'POST' } }], [SDK_EVENTS[1], { requestId: 'omf-rid-unseen', statusCode: Number.NaN }], [SDK_EVENTS[1], {}],
+      [SDK_EVENTS[2], { requestId: 'omf-rid-unseen', response: { status: 403 } }], [SDK_EVENTS[3], { requestId: 'omf-rid-unseen' }], [SDK_EVENTS[4], { requestId: 'omf-rid-unseen', corsErrorStatus: 'MissingAllowOriginHeader', blockedReason: {} }]]) fake.sdkEmit(name, params);
+  });
+  assert.deepEqual([odd.detail?.seen, withoutMs(odd.detail?.requests)], [2, [
+    { ordinal: 1, ...unanswered, extraClass: '5xx', cors: 'other', blocked: 'other' },
+    { ordinal: 2, phase: 'after', method: 'other', responseStatus: null, responseClass: '4xx', extraStatus: null, extraClass: 'other', outcome: 'finished', cors: null, blocked: null }
+  ]], 'login-trace:detail-closed-values ' + JSON.stringify(odd.detail));
+  const many = await traced(fake => { for (let i = 0; i < 30; i++) fake.exchange(POST_403_HIDDEN); });
+  assert.deepEqual([many.detail?.listening, many.detail?.seen, many.detail?.dropped, many.detail?.requests?.length, many.detail?.requests?.at(-1)?.ordinal], [true, 30, 6, 24, 24], 'login-trace:detail-bounded ' + JSON.stringify({ seen: many.detail?.seen, dropped: many.detail?.dropped }));
+  // an ExtraInfo before its request waits among at most 64 statuses of requests not yet seen; the 65th pushes out the oldest
+  for (const [others, kept] of [[63, true], [64, false]]) {
+    const r = await traced(fake => {
+      fake.sdkEmit(SDK_EVENTS[1], fake.raw.extra('omf-rid-early', 403));
+      for (let i = 0; i < others; i++) fake.sdkEmit(SDK_EVENTS[1], fake.raw.extra('omf-rid-other-' + i, 200));
+      fake.sdkEmit(SDK_EVENTS[0], fake.raw.request('omf-rid-early', LOGIN_API, 'POST', 'Fetch'));
+    });
+    assert.deepEqual([r.detail?.requests?.length, r.detail?.requests?.[0]?.extraStatus], [1, kept ? 403 : null], 'login-trace:detail-early-' + (kept ? 'kept' : 'bounded') + ' ' + JSON.stringify(r.detail));
+  }
+});
+
+test('login trace (network detail, best effort): no page DevTools session, one that cannot be looked up or refuses a listener or its removal, and events whose reads throw leave the detail unavailable or unchanged — never an exception in the session\'s dispatch, a listener left behind, a command to the session or a change to the sign-in', { timeout: 60000 }, async () => {
+  const reference = fakeLoginPage({ network: HIDDEN_BY_CORS }), base = await signIn(reference, { trace: null });
+  const rejections = []; const onRejection = reason => { rejections.push(reason); }; process.on('unhandledRejection', onRejection);
+  try {
+    for (const [label, options, listening] of [['no-session', { sdk: false }, false], ['not-a-function', { sdk: 'not-function' }, false], ['look-up-throws', { sdk: 'throws' }, false], ['no-session-object', { sdk: 'null' }, false],
+      ['no-off', { sdk: 'no-off' }, false], ['listener-refused', { sdk: 'on-throws' }, false], ['removal-refused', { sdk: 'off-throws' }, true], ['hostile-events', { sdkHostile: true }, true]]) {
+      const fake = fakeLoginPage({ network: HIDDEN_BY_CORS, ...options }), r = await signIn(fake);
+      await r.ui.stopTrace?.();
+      assert.deepEqual([actions(fake.calls), r.statuses, String(r.outcome?.message)], [actions(reference.calls), base.statuses, String(base.outcome?.message)], 'login-trace:detail-best-effort ' + label);
+      const detail = detailOf(r.events);
+      assert.equal(detail?.listening, listening, 'login-trace:detail-listening ' + label + ' ' + JSON.stringify(detail));
+      assert.deepEqual(listening ? withoutMs(detail?.requests) : [detail?.seen, detail?.requests], listening ? HIDDEN_DETAIL : [0, []], 'login-trace:detail-' + (listening ? 'unchanged ' : 'unavailable ') + label + ' ' + JSON.stringify(detail));
+      assert.equal(fake.sdkOwn.thrown, 0, 'login-trace:detail-contained ' + label + ' (an exception reached the session\'s dispatch)');
+      assert.ok(sdkUntouched(fake.sdkCalls), 'login-trace:detail-sdk-untouched ' + label + ' ' + JSON.stringify(fake.sdkCalls));
+      if (label !== 'removal-refused') assert.deepEqual(fake.sdkListeners(), SDK_ONLY_OWN, 'login-trace:detail-no-listener-left ' + label + ' ' + JSON.stringify(fake.sdkListeners()));
+      assert.deepEqual(fake.forbidden, [], 'login-trace:detail-no-raw-read ' + label + ' ' + JSON.stringify(fake.forbidden));
+      assertClosed(r.events, 'detail-' + label);
+    }
     for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(rejections.map(String), [], 'login-trace:no-unhandled-rejection');
   } finally { process.off('unhandledRejection', onRejection); }

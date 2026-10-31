@@ -33,6 +33,10 @@
 //      in the login.test.mjs seam fails every new trace test by name while the earlier login tests stay green; its browser.mjs (routed
 //      to that login.mjs and to the bank modules) writes no record, so the recorded wrapper trace tests fail by name while the Aplus control
 //      stays green; and in owned HEADLESS Chrome (OMF_CARD_NATIVE=1, else NOT RUN) the native trace test finds no record.
+//   F4 fail-first of the trace's network detail (case omf-amex-network-detail-01) on 172eba8, whose trace cannot tell a login POST the
+//      network answered but CORS withheld from one with no answer: its login.mjs in the login.test.mjs seam fails exactly the three detail
+//      tests by name while the 21 earlier tests stay green; and in owned HEADLESS Chrome (OMF_CARD_NATIVE=1, else NOT RUN) the native detail
+//      test, that login.mjs routed into this tree's browser.mjs, sees the real loopback exchange and the page-level pattern but no detail.
 //   U  node --test collector/test/legacy-card-import.test.mjs (planner/importer; real DPAPI and ACL helpers on owned roots).
 //   K  node --test collector/test/card-background.test.mjs (Part A: the real wrappers and the real bank callers over a recording launch;
 //      no Chrome).
@@ -40,8 +44,9 @@
 //      events, the minimized card page rendering a next state that needs it, and in headless Chrome the reveal from minimized and the bank
 //      callers' window that is not minimized). OMF_CARD_NATIVE=0 → NOT RUN (red).
 //   T  the Amex login trace: node --test collector/test/login.test.mjs (the real loginUi and ensureLogin on fake pages, fictional
-//      logins), the recorded wrapper trace tests of card-background.test.mjs, and its one native trace test in owned HEADLESS Chrome
-//      (never a headed window; OMF_CARD_NATIVE=0 → NOT RUN, red).
+//      logins), the recorded wrapper trace tests of card-background.test.mjs, and its native trace test and native network-detail test in
+//      owned HEADLESS Chrome (never a headed window; the detail test's owned loopback TLS server answers the two Amex host names inside
+//      that Chrome only; OMF_CARD_NATIVE=0 → NOT RUN, red).
 //   S  scripts/finance-legacy-card-import-integration.cjs (service, route, the real collector over TLS, schedule, guard mutants).
 //   C  the same with --ui and OMF_CARD_NATIVE=1: the setup page (L4) and the built connections page (L8, needs .output) in owned
 //      headless Chrome. OMF_CARD_NATIVE=0 → NOT RUN (red).
@@ -51,7 +56,7 @@
 //   M  reintroduced defects through their own legs (an unchanged copy of each selection first). The Amex login trace's defects run through
 //      L (login.test.mjs), K (the recorded wrapper) and NT (the native trace test, HEADLESS Chrome only); a login.mjs copy reaches the
 //      wrapper through a browser.mjs copy that imports it.
-// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,F3,U,K,N,T,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
+// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,F3,F4,U,K,N,T,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -79,6 +84,9 @@ export const RENDER = '6947394bcd700bd88f0b91da0bbfb48794d7eb80';
 // The release candidate before the Amex login trace (amex-login-fix-20261031): its login UI observes nothing and its wrapper writes no
 // record (actual job 4303ee7f stayed on the login page with no observation of why).
 export const TRACE = 'fbb09d3611bbd3a90aa66368d2d898c062060550';
+// The release before the trace's network detail (amex-network-detail-01): its actual job's six login POSTs failed with no page-level
+// answer, and its trace cannot tell an answer CORS withheld from none.
+export const DETAIL = '172eba8d28341db59ebd2553d090210c86c894f2';
 const execute = promisify(execFile);
 const sha256 = v => createHash('sha256').update(v).digest('hex');
 const EVIDENCE = process.env.OMF_CARD_EVIDENCE || '';
@@ -200,7 +208,31 @@ export const MUTANTS = [
   ['MT25-digest-recorded', LOGIN, [['focus: one(r?.focus, FOCUS) });', 'focus: one(r?.focus, FOCUS), digests: r?.digests });']], 'L', '^login trace \\(email code', /login-trace:(schema keys|no-leak)/],
   ['MT26-wrong-context-compared', LOGIN, [['  if (location.origin !== origin || location.pathname !== pathname) return null;\n', '']], 'L', '^login trace \\(context replaced', /login-trace:context-replaced-unknown/],
   ['MT27-unavailable-is-mismatch', LOGIN, [["? timingSafeEqual(Buffer.from(hex, 'hex'), expected) : null;", "? timingSafeEqual(Buffer.from(hex, 'hex'), expected) : false;"]], 'L', '^login trace \\(comparison failures', /login-trace:crypto-unknown/],
-  ['MT28-expected-digest-to-browser', LOGIN, [["await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH]);", "await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH, digestOf(nonce, password).toString('hex')]);"]], 'L', '^login trace \\(context replaced', /login-trace:context-replaced-no-secret/]
+  ['MT28-expected-digest-to-browser', LOGIN, [["await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH]);", "await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH, digestOf(nonce, password).toString('hex')]);"]], 'L', '^login trace \\(context replaced', /login-trace:context-replaced-no-secret/],
+  // The trace's network detail (amex-network-detail-01): the facts kept, the values closed, the page's own DevTools session left as it was
+  // (listeners only, removed at the end, no command, no detach, puppeteer's listeners kept) and no failure reaching it or the login. L: the
+  // detail tests of login.test.mjs; NT: the native detail test, HEADLESS Chrome only.
+  ['MT29-detail-cors-dropped', LOGIN, [["r.outcome = 'failed'; r.cors = cors; r.blocked = blocked;", "r.outcome = 'failed'; r.cors = null; r.blocked = blocked;"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-hidden-by-cors/],
+  ['MT30-detail-hidden-status-dropped', LOGIN, [['if (r) [r.extraStatus, r.extraClass] = status;', 'if (r) [r.extraStatus, r.extraClass] = [null, null];']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-hidden-by-cors/],
+  ['MT31-detail-analytics-as-login', LOGIN, [["if (ids.has(id) || endpointOf(e.request?.url) !== 'login-api') return;", "if (ids.has(id) || traceSurface(e.request?.url) === 'other') return;"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-hidden-by-cors/],
+  ['MT32-detail-failed-parameter-recorded', LOGIN, [['const cors = one(e.corsErrorStatus?.corsError, CORS_ERRORS),', 'const cors = e.corsErrorStatus?.failedParameter ?? one(e.corsErrorStatus?.corsError, CORS_ERRORS),']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:(schema value|detail-no-raw-read|no-leak)/],
+  ['MT33-detail-url-recorded', LOGIN, [['const r = { ordinal: detail.requests.length + 1, ms: ms(), phase, method, ', 'const r = { ordinal: detail.requests.length + 1, ms: ms(), phase, method, url: e.request.url, ']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:(schema keys|no-leak)/],
+  ['MT34-detail-request-id-recorded', LOGIN, [['const r = { ordinal: detail.requests.length + 1, ms: ms(), phase, method, ', 'const r = { ordinal: detail.requests.length + 1, ms: ms(), phase, method, id, ']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:(schema keys|detail-no-request-id|no-leak)/],
+  ['MT35-detail-sdk-detached', LOGIN, [["catch { /* gone */ } } // only the trace's own listeners", "catch { /* gone */ } } try { sdk?.detach?.()?.catch?.(() => {}); } catch { /* gone */ } // only the trace's own listeners"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-sdk-untouched/],
+  ['MT36-detail-domain-enabled', LOGIN, [['      sdk = client;\n', "      sdk = client; client.send('Network.enable')?.catch?.(() => {});\n"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-sdk-untouched/],
+  ['MT37N-detail-domain-enabled-native', LOGIN, [['      sdk = client;\n', "      sdk = client; client.send('Network.enable')?.catch?.(() => {});\n"]], 'NT', '^Amex login trace network detail in HEADLESS', /amex-trace:native-detail-sdk-untouched/],
+  ['MT38-detail-listeners-kept', LOGIN, [["      for (const [name, listener] of sdkAttached) { try { sdk.off(name, listener); } catch { /* gone */ } } // only the trace's own listeners\n", '']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-(sdk-untouched|listeners-removed)/],
+  ['MT39N-detail-listeners-kept-native', LOGIN, [["      for (const [name, listener] of sdkAttached) { try { sdk.off(name, listener); } catch { /* gone */ } } // only the trace's own listeners\n", '']], 'NT', '^Amex login trace network detail in HEADLESS', /amex-trace:native-detail-sdk-listeners/],
+  ['MT40-detail-others-listeners-removed', LOGIN, [["try { sdk.off(name, listener); } catch { /* gone */ } } // only the trace's own listeners", "try { sdk.off(name); } catch { /* gone */ } } // only the trace's own listeners"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-(sdk-untouched|listeners-removed)/],
+  ['MT41-detail-failure-reaches-session', LOGIN, [['    [DETAIL_EVENTS[4], e => { try {\n', '    [DETAIL_EVENTS[4], e => { {\n'], ["      r.outcome = 'failed'; r.cors = cors; r.blocked = blocked;\n    } catch { /* unreadable */ } }]", "      r.outcome = 'failed'; r.cors = cors; r.blocked = blocked;\n    } }]"]], 'L', '^login trace \\(network detail, best effort', /login-trace:detail-(best-effort|contained) hostile-events/],
+  ['MT42-detail-late-status-dropped', LOGIN, [['if (r) [r.extraStatus, r.extraClass] = status;', 'if (r && r.outcome === null) [r.extraStatus, r.extraClass] = status;']], 'L', '^login trace \\(network detail, arrival order', /login-trace:detail-arrival-order/],
+  ['MT43-detail-early-status-dropped', LOGIN, [['      if (waiting) [r.extraStatus, r.extraClass] = waiting;\n', '']], 'L', '^login trace \\(network detail, arrival order', /login-trace:detail-arrival-order/],
+  ['MT44-detail-requests-unbounded', LOGIN, [['detail.seen++; if (detail.requests.length >= DETAIL_REQUESTS) { detail.dropped++; return; }', 'detail.seen++;']], 'L', '^login trace \\(network detail, arrival order', /login-trace:(schema list|schema value|detail-bounded)/],
+  ['MT45-detail-early-unbounded', LOGIN, [[' if (early.size > DETAIL_EARLY) early.delete(early.keys().next().value);', '']], 'L', '^login trace \\(network detail, arrival order', /login-trace:detail-early-bounded/],
+  ['MT46-detail-header-read', LOGIN, [['const status = statusOf(e.statusCode), r = ids.get(id);', 'const status = statusOf(e.headers && e.statusCode), r = ids.get(id);']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-no-raw-read/],
+  ['MT47-detail-unknown-value-kept', LOGIN, [['one(e.corsErrorStatus?.corsError, CORS_ERRORS)', '(e.corsErrorStatus?.corsError ?? null)']], 'L', '^login trace \\(network detail, arrival order', /login-trace:(schema value|no-leak|detail-closed-values)/],
+  ['MT48-detail-partial-attach-kept', LOGIN, [["  if (!detail.listening) { detailOpen = false; for (const [name, listener] of sdkAttached.splice(0)) { try { sdk.off(name, listener); } catch { /* gone */ } } } // all or none\n", '']], 'L', '^login trace \\(network detail, best effort', /login-trace:detail-unavailable listener-refused/],
+  ['MT49-detail-default-looked-up', LOGIN, [["const t = typeof trace === 'function' ? loginTrace(page, trace) : null; // guard:login-trace-optional", "const t = typeof trace === 'function' ? loginTrace(page, trace) : (page._client?.(), null); // guard:login-trace-optional"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-default-untouched/]
 ];
 
 function runChild(args, env, timeout) {
@@ -398,10 +430,11 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
     // tests, by recording and, in owned HEADLESS Chrome, natively.
     await leg('F3 fail-first of the Amex login trace on ' + TRACE.slice(0, 7) + ' (no field, value, click, submit or response observation and no record)', async () => {
       const found = [], login = await baseText(LOGIN, TRACE), browser = await baseText(BR, TRACE); if (!login || !browser) throw new Error('SETUP ' + TRACE + ' is not readable here');
-      const LOGIN_NAMED = ['login-trace:traced-run-observed', 'login-trace:events refused', 'login-trace:events no-submit', 'login-trace:events mismatch', 'login-trace:events success', 'login-trace:two-reads-each', 'login-trace:listen-unavailable session-throws', 'login-trace:events bounded', 'login-trace:cancel-disposed', 'login-trace:events code-wrong-recipient', 'login-trace:login-api-preflight-only', 'login-trace:analytics-unrelated', 'login-trace:context-replaced-no-secret', 'login-trace:crypto-unknown'];
+      // the three network-detail tests (amex-network-detail-01) fail here too: fbb09d3 has no trace at all
+      const LOGIN_NAMED = ['login-trace:traced-run-observed', 'login-trace:events refused', 'login-trace:events no-submit', 'login-trace:events mismatch', 'login-trace:events success', 'login-trace:two-reads-each', 'login-trace:listen-unavailable session-throws', 'login-trace:events bounded', 'login-trace:cancel-disposed', 'login-trace:events code-wrong-recipient', 'login-trace:login-api-preflight-only', 'login-trace:analytics-unrelated', 'login-trace:context-replaced-no-secret', 'login-trace:crypto-unknown', 'login-trace:detail-reported', 'login-trace:events detail-order', 'login-trace:detail-listening no-session'];
       { const t = tests(await withCopy(LOGIN, 'trace-base', login, copy => unit(LOGIN_TEST, { OMF_TEST_LOGIN_MODULE: copy }))); await keep('F3-L', t.out);
         const named = LOGIN_NAMED.filter(x => t.out.includes(x));
-        if (t.fail !== 14 || t.pass !== 7 || named.length !== LOGIN_NAMED.length) throw new Error('the login trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        if (t.fail !== 17 || t.pass !== 7 || named.length !== LOGIN_NAMED.length) throw new Error('the login trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
         counts.failFirst.TRACE_L = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' login.test red (' + named.join(', ') + '); its 7 earlier login tests green'); }
       const WRAPPER_NAMED = ['amex-trace:record-written-before-close', 'amex-trace:hang-recorded', 'amex-trace:retention-new-record', 'amex-trace:cancel-stopped-and-written'];
       { const t = tests(await withCopy(LOGIN, 'trace-base', login, copy => withLoginRoute(copy, 'trace-base', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, '^Amex login trace'), browser))); await keep('F3-K', t.out);
@@ -414,6 +447,22 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         counts.failFirst.TRACE_NT = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' headless red (amex-trace:native-one-record: no record)'); }
       return found.join('; ');
     });
+    // F4: the trace's network detail (amex-network-detail-01) on 172eba8, whose actual job's six login POSTs failed with no page-level answer
+    // and whose trace cannot tell an answer CORS withheld from none: its login.mjs in the login.test.mjs seam, then routed into this tree's
+    // browser.mjs (and the bank modules) under the native detail test in owned HEADLESS Chrome.
+    await leg('F4 fail-first of the network detail on ' + DETAIL.slice(0, 7) + ' (no network-stack status, CORS error or blocked reason for the login API)', async () => {
+      const found = [], login = await baseText(LOGIN, DETAIL); if (!login) throw new Error('SETUP ' + DETAIL + ' is not readable here');
+      const DETAIL_NAMED = ['login-trace:detail-reported', 'login-trace:detail-arrival-order', 'login-trace:detail-listening no-session'];
+      { const t = tests(await withCopy(LOGIN, 'detail-base', login, copy => unit(LOGIN_TEST, { OMF_TEST_LOGIN_MODULE: copy }))); await keep('F4-L', t.out);
+        const named = DETAIL_NAMED.filter(x => t.out.includes(x));
+        if (t.fail !== 3 || t.pass !== 21 || named.length !== DETAIL_NAMED.length) throw new Error('the network detail did not fail first on ' + DETAIL.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.DETAIL_L = t.fail + '/' + (t.pass + t.fail); found.push(DETAIL.slice(0, 7) + ' login.test red (' + named.join(', ') + '); its 21 earlier login tests green'); }
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + DETAIL.slice(0, 7) + ' native detail fail-first needs owned headless Chrome');
+        const t = tests(await withCopy(LOGIN, 'detail-base', login, copy => withLoginRoute(copy, 'detail-base', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '1' }, '^Amex login trace network detail in HEADLESS')))); await keep('F4-NT', t.out);
+        if (t.fail !== 1 || t.pass !== 0 || !t.out.includes('amex-trace:native-detail (a hidden 403')) throw new Error('the native detail did not fail first on ' + DETAIL.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
+        counts.failFirst.DETAIL_NT = t.fail + '/' + (t.pass + t.fail); found.push(DETAIL.slice(0, 7) + ' headless red (amex-trace:native-detail: the real exchange and page-level pattern seen, no detail)'); }
+      return found.join('; ');
+    });
     await leg('U node --test ' + UNIT, async () => { const r = await unit(UNIT), t = tests(r); await keep('U', t.out); counts.unitTests = t.pass; unitGreen(r, t, 'the importer'); return t.pass + ' tests green'; });
     await leg('K node --test ' + BACKGROUND + ' (Part A, no Chrome)', async () => { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }), t = tests(r); await keep('K', t.out); counts.backgroundTests = t.pass; unitGreen(r, t, 'the wrappers'); return t.pass + ' tests green, ' + t.skipped + ' skipped (geometry excluded; native legs are leg N)'; });
     await leg('N native background Chrome (OMF_CARD_NATIVE=1)', async () => {
@@ -422,12 +471,13 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
       if (t.pass !== 10) throw new Error('expected the 10 native legs (8 headed background, 2 of them the card rendering; headless: the card reveal and the bank default), ran ' + t.pass);
       return t.pass + ' native legs green (' + [...t.out.matchAll(/ℹ window events [^\n]*/g)].length + ' with their window-event summaries)';
     });
-    await leg('T the Amex login trace: login.test.mjs, the recorded wrapper trace tests and the native trace test in owned HEADLESS Chrome', async () => {
+    await leg('T the Amex login trace: login.test.mjs, the recorded wrapper trace tests and the native trace and network-detail tests in owned HEADLESS Chrome', async () => {
       const done = [];
-      { const r = await unit(LOGIN_TEST), t = tests(r); await keep('T-L', t.out); unitGreen(r, t, 'the login UI'); if (t.pass !== 21) throw new Error('expected the 21 login tests (7 earlier, 14 of the trace), ran ' + t.pass); counts.traceTests += t.pass; done.push('login.test ' + t.pass + '/21'); }
+      { const r = await unit(LOGIN_TEST), t = tests(r); await keep('T-L', t.out); unitGreen(r, t, 'the login UI'); if (t.pass !== 24) throw new Error('expected the 24 login tests (7 earlier, 14 of the trace, 3 of its network detail), ran ' + t.pass); counts.traceTests += t.pass; done.push('login.test ' + t.pass + '/24'); }
       { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }, '^Amex login trace'), t = tests(r); await keep('T-K', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 5) throw new Error('expected the 5 recorded wrapper trace tests, ran ' + t.pass); counts.traceTests += t.pass; done.push('recorded wrapper ' + t.pass + '/5'); }
       { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native trace coverage is claimed (' + done.join('; ') + ')');
-        const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace in HEADLESS'), t = tests(r); await keep('T-NT', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 1) throw new Error('expected the 1 native headless trace test, ran ' + t.pass); counts.traceTests += t.pass; done.push('native headless ' + t.pass + '/1'); }
+        const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace in HEADLESS'), t = tests(r); await keep('T-NT', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 1) throw new Error('expected the 1 native headless trace test, ran ' + t.pass); counts.traceTests += t.pass; done.push('native headless ' + t.pass + '/1');
+        const d = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace network detail in HEADLESS'), dt = tests(d); await keep('T-ND', dt.out); unitGreen(d, dt, 'the Amex wrapper'); if (dt.pass !== 1) throw new Error('expected the 1 native headless network-detail test, ran ' + dt.pass); counts.traceTests += dt.pass; done.push('native headless detail ' + dt.pass + '/1'); }
       return done.join('; ') + ' green';
     });
     await leg('S services, route, the real collector over TLS, schedule and the service guard mutants (L1-L3, L5-L7)', async () => {

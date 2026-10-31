@@ -19,6 +19,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -922,4 +923,80 @@ test('Amex login trace in HEADLESS Chrome: the real wrapper\'s isolated world se
   assert.ok(seen.fulfilled.includes(AMEX_LOGIN) && seen.fulfilled.includes(AMEX_VERIFY), 'only synthetic pages served ' + JSON.stringify(seen.fulfilled));
   t.diagnostic('trace record (leak-checked above): ' + text);
   t.diagnostic('login API page events (puppeteer, in order): ' + JSON.stringify(seen.api));
+});
+// The login API's network detail natively (case omf-amex-network-detail-01), in HEADLESS Chrome only. The real wrapper signs in on a
+// synthetic login page that an owned loopback TLS server answers for both Amex host names, mapped to it inside this Chrome alone (every
+// other name resolves nowhere; the server's throwaway certificate is accepted by this Chrome alone and nothing is intercepted), so Chrome's
+// own network stack answers and checks CORS: the page's request to the login API is preflighted (answered 200 with the CORS grant) and its
+// POST answered 403 without Access-Control-Allow-Origin, which Chrome withholds from the page (net::ERR_FAILED: the real job's page-level
+// pattern). The record must tell that hidden 403 and its CORS error apart from no answer, and the page's own DevTools session (where
+// puppeteer enabled Network) must get no command from the trace and no detach, keep puppeteer's listeners and lose the trace's before Chrome
+// closes. Synthetic: it proves the seam on Chrome 155, not what the issuer answers to a real login.
+const OPENSSL = 'C:/Program Files/Git/usr/bin/openssl.exe';
+const DETAIL_EVENTS = ['Network.requestWillBeSent', 'Network.responseReceivedExtraInfo', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed'];
+async function corsSite(dir, record) {
+  const key = path.join(dir, 'key.pem'), cert = path.join(dir, 'cert.pem');
+  await execute(OPENSSL, ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', '/CN=omf-synthetic.invalid'], { windowsHide: true, timeout: 30000 });
+  const login = '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Synthetic Amex login</title><body><form id="login"><input id="eliloUserID"><input id="eliloPassword" type="password"><button id="loginSubmit" type="submit">ログイン</button></form><script>document.getElementById("login").addEventListener("submit",e=>{e.preventDefault();fetch(' + JSON.stringify(LOGIN_API) + ',{method:"POST",credentials:"include",headers:{"Content-Type":"application/json",challengeable:"ON"},body:"{}"}).catch(()=>null).then(()=>{location.href=' + JSON.stringify(AMEX_VERIFY) + ';});});</script></body></html>';
+  const server = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
+    const host = String(req.headers.host).split(':')[0], { pathname } = new URL(req.url, 'https://' + host); req.resume(); record.push([host, req.method, pathname]);
+    if (host === 'www.americanexpress.com' && req.method === 'GET' && pathname === new URL(AMEX_LOGIN).pathname) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(login); }
+    if (host === 'www.americanexpress.com' && req.method === 'GET' && pathname === new URL(AMEX_VERIFY).pathname) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(AMEX_RENDER_SITE[AMEX_VERIFY].body); }
+    if (host === 'global.americanexpress.com' && pathname === new URL(LOGIN_API).pathname && req.method === 'OPTIONS') { res.writeHead(200, { 'access-control-allow-origin': 'https://www.americanexpress.com', 'access-control-allow-credentials': 'true', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type, challengeable' }); return res.end(); }
+    if (host === 'global.americanexpress.com' && pathname === new URL(LOGIN_API).pathname && req.method === 'POST') { res.writeHead(403, { 'content-type': 'text/html' }); return res.end('<html><body>Access Denied</body></html>'); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  return { port: server.address().port, close: () => new Promise(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); }) };
+}
+test('Amex login trace network detail in HEADLESS Chrome: the real wrapper\'s record tells the login API\'s POST answered 403 but withheld by CORS (MissingAllowOriginHeader) from its preflight answered 200, read in place from the page\'s own DevTools session, which gets no command or detach from the trace, keeps puppeteer\'s listeners and loses the trace\'s before Chrome closes', { skip: NATIVE, timeout: 180000 }, async t => {
+  const dir = await owned('trace-detail'), served = [], site = await corsSite(dir, served), statuses = [], launches = [], traceSent = [], digests = [];
+  const seen = { api: [], ids: new Set(), sdkSent: [], detached: 0, client: null, before: null, during: null, atClose: null }; let pid = null;
+  const counts = client => Object.fromEntries(DETAIL_EVENTS.map(name => [name, client.listenerCount(name)]));
+  const onLaunch = async ({ pid: launched, browser }) => {
+    pid = launched; const open = browser.newPage.bind(browser), close = browser.close.bind(browser);
+    browser.newPage = async () => {
+      const page = await open(), client = page._client(); recordSessions(page, traceSent, digests);
+      // this test's own recorders on the page's session, registered before its listener counts are taken: the login API's request ids
+      // (for the leak check), every command sent on it from now on and any detach
+      client.on('Network.requestWillBeSent', e => { if (String(e.request?.url).startsWith(LOGIN_API)) seen.ids.add(e.requestId); });
+      const send = client.send.bind(client), detach = client.detach.bind(client);
+      client.send = (method, ...rest) => { seen.sdkSent.push(method); return send(method, ...rest); };
+      client.detach = (...rest) => { seen.detached++; return detach(...rest); };
+      for (const name of ['request', 'requestfailed', 'response']) page.on(name, item => { const r = name === 'response' ? item.request() : item; if (r.url().startsWith(LOGIN_API)) seen.api.push([name, r.method(), r.resourceType(), name === 'requestfailed' ? r.failure()?.errorText : name === 'response' ? item.status() : null]); });
+      seen.client = client; seen.before = counts(client); return page;
+    };
+    browser.close = async () => { if (seen.client) seen.atClose = counts(seen.client); return close(); };
+  };
+  let outcome;
+  try {
+    outcome = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true, args: [...options.args, '--host-resolver-rules=MAP www.americanexpress.com 127.0.0.1:' + site.port + ', MAP global.americanexpress.com 127.0.0.1:' + site.port + ', MAP * ~NOTFOUND', '--ignore-certificate-errors'] }); },
+      () => B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { batch: 'trace-detail', onLaunch, reveal: async page => { seen.revealedAt = page.url(); seen.during = counts(seen.client); throw new Error(PERSON_NEEDED); } })).then(() => null, error => error);
+  } finally { await site.close(); }
+  assert.equal(outcome?.message, PERSON_NEEDED, 'the person would be asked on the verification page: ' + outcome?.message);
+  assert.deepEqual([launches.length, launches[0]?.headless, statuses.map(s => s[0])], [1, false, ['running', 'verification_required']], 'one background launch (made headless here) and one sign-in');
+  assert.ok(String(seen.revealedAt).startsWith(AMEX_VERIFY), 'amex-trace:native-detail-reached-verification ' + seen.revealedAt);
+  const api = served.filter(([host, , pathname]) => host === 'global.americanexpress.com' && pathname === new URL(LOGIN_API).pathname).map(([, method]) => method);
+  assert.deepEqual(api, ['OPTIONS', 'POST'], 'amex-trace:native-detail-real-exchange (the loopback server answered one preflight and one POST) ' + JSON.stringify(served));
+  assert.deepEqual(seen.api.map(e => e.join(':')).sort(), ['request:OPTIONS:other:', 'request:POST:fetch:', 'requestfailed:POST:fetch:net::ERR_FAILED', 'response:OPTIONS:other:200'], 'amex-trace:native-detail-page-level-pattern (the real job\'s: a preflight answered 200, a POST failed with no answer the page saw) ' + JSON.stringify(seen.api));
+  assert.ok(await waitGone(pid), 'amex-trace:native-detail-closed'); assert.deepEqual(B.ownedBrowsers(), []);
+  const [file, ...more] = await traceFiles(dir);
+  assert.ok(file && !more.length && TRACE_NAME.test(file), 'amex-trace:native-detail-one-record');
+  const text = await readFile(path.join(traceDir(dir), file), 'utf8'), record = JSON.parse(text), end = record.events.at(-1), detail = end?.network?.detail;
+  const answered = { phase: 'after', method: 'OPTIONS', responseStatus: 200, responseClass: '2xx', extraStatus: 200, extraClass: '2xx', outcome: 'finished', cors: null, blocked: null };
+  const hidden = { phase: 'after', method: 'POST', responseStatus: null, responseClass: null, extraStatus: 403, extraClass: '4xx', outcome: 'failed', cors: 'MissingAllowOriginHeader', blocked: null };
+  const requests = Array.isArray(detail?.requests) ? detail.requests.map(({ ms: _ms, ordinal: _ordinal, ...r }) => r).sort((a, b) => a.method.localeCompare(b.method)) : null;
+  assert.deepEqual([detail?.listening, detail?.seen, detail?.dropped, requests, (detail?.requests || []).map(r => r.ordinal).sort()], [true, 2, 0, [answered, hidden], [1, 2]], 'amex-trace:native-detail (a hidden 403 with its CORS error, apart from the answered preflight) ' + JSON.stringify(end?.network));
+  assert.deepEqual([end?.event, end?.reason, end?.network?.after?.login], ['end', 'stopped', { options: { ...ZERO_CELL, sent: 1, '2xx': 1 }, post: { ...ZERO_CELL, sent: 1, failed: 1 }, other: ZERO_CELL }], 'amex-trace:native-detail-page-counts ' + JSON.stringify(end?.network?.after?.login));
+  // the page's own session: the trace's five listeners while the person was needed, none of them when Chrome closed, puppeteer's own kept
+  const plus = Object.fromEntries(Object.entries(seen.before || {}).map(([name, n]) => [name, n + 1]));
+  assert.ok(seen.before && Object.values(seen.before).every(n => n >= 1), 'amex-trace:native-detail-sdk-own-listeners ' + JSON.stringify(seen.before));
+  assert.deepEqual([seen.during, seen.atClose], [plus, seen.before], 'amex-trace:native-detail-sdk-listeners (added for the sign-in, removed before close) ' + JSON.stringify({ before: seen.before, during: seen.during, atClose: seen.atClose }));
+  const commands = seen.sdkSent.filter(method => /\.enable$/.test(method) || /^(Network|Fetch|Log|Audits)\./.test(method));
+  assert.deepEqual([seen.detached, commands], [0, []], 'amex-trace:native-detail-sdk-untouched (no detach, no domain enabled, no Network/Fetch command on the page\'s session) ' + JSON.stringify([...new Set(seen.sdkSent)]));
+  assert.ok(traceSent.every(c => ['Page.getFrameTree', 'Page.createIsolatedWorld', 'Runtime.callFunctionOn'].includes(c.method)), 'amex-trace:native-detail-own-session-unchanged ' + JSON.stringify([...new Set(traceSent.map(c => c.method))]));
+  assert.ok(seen.ids.size === 2 && [...seen.ids].every(id => !text.includes(id)), 'amex-trace:native-detail-no-request-id ' + seen.ids.size);
+  for (const leak of TRACE_LEAKS) assert.ok(!text.includes(leak), 'amex-trace:native-detail-no-leak ' + leak);
+  t.diagnostic('network detail (leak-checked above): ' + JSON.stringify(detail));
+  t.diagnostic('page session commands during the job (puppeteer\'s): ' + JSON.stringify([...new Set(seen.sdkSent)]));
 });
