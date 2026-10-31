@@ -475,6 +475,7 @@ const getRoleBadgeClass = (role: string) => {
   const classes: Record<string, string> = {
     owner: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
     admin: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
+    accountant: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
     member: 'bg-gray-100 text-gray-800 dark:bg-white/10 dark:text-gray-300',
     viewer: 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400'
   }
@@ -483,10 +484,11 @@ const getRoleBadgeClass = (role: string) => {
 
 const getRoleLabel = (role: string) => {
   const labels: Record<string, string> = {
-    owner: t('organization.owner'),
-    admin: t('organization.admin'),
-    member: t('organization.member'),
-    viewer: t('organization.viewer')
+    owner: t('roles.owner'),
+    admin: t('roles.admin'),
+    accountant: t('roles.accountant'),
+    member: t('roles.member'),
+    viewer: t('roles.viewer')
   }
   return labels[role] || role
 }

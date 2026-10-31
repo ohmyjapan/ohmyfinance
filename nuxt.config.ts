@@ -10,7 +10,7 @@ export default defineNuxtConfig({
   nitro: {
     preset: 'node-server',
     rollupConfig: {
-      external: ['papaparse', 'yahoo-finance2', '@google/generative-ai']
+      external: ['papaparse', 'yahoo-finance2', '@google/generative-ai', 'puppeteer-core']
     },
     esbuild: {
       options: {

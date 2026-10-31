@@ -2,7 +2,7 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export type OrganizationType = 'personal' | 'business' | 'enterprise'
-export type MemberRole = 'owner' | 'admin' | 'member' | 'viewer'
+export type MemberRole = 'owner' | 'admin' | 'accountant' | 'member' | 'viewer'
 
 export interface IOrgMember {
   userId: mongoose.Types.ObjectId
@@ -48,7 +48,7 @@ const OrgMemberSchema = new Schema<IOrgMember>({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   role: {
     type: String,
-    enum: ['owner', 'admin', 'member', 'viewer'],
+    enum: ['owner', 'admin', 'accountant', 'member', 'viewer'],
     default: 'member'
   },
   joinedAt: { type: Date, default: Date.now },

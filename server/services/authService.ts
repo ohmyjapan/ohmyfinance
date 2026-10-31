@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken'
 import { v4 as uuidv4 } from 'uuid'
 import User from '../models/User'
 import Organization from '../models/Organization'
+import { INVITABLE_ROLES, type InviteRole } from '../models/Invite'
 import { addToBlacklist, isBlacklisted } from './tokenBlacklistService'
 import { logAudit } from '../utils/audit'
 import { hashDeviceId } from './twoFactorService'
@@ -418,8 +419,10 @@ export async function inviteUser(
   organizationId: string,
   inviterUserId: string,
   email: string,
-  role: 'admin' | 'member' | 'viewer' = 'member'
+  role: InviteRole = 'member'
 ): Promise<{ inviteToken: string; email: string }> {
+  // GUARD (plan R4): only an invitable role is ever minted, so no invite can make anyone an owner.
+  if (!(INVITABLE_ROLES as readonly string[]).includes(role)) throw new Error('Invalid role')
   const organization = await Organization.findById(organizationId)
   if (!organization) {
     throw new Error('Organization not found')
@@ -468,6 +471,8 @@ export async function acceptInvite(inviteToken: string, userData?: {
   if (!payload || payload.type !== 'invite') {
     throw new Error('Invalid or expired invite')
   }
+  // GUARD (plan R4): an invite minted before the fix may carry owner or another role outside the invitable list.
+  if (!(INVITABLE_ROLES as readonly string[]).includes(payload.role)) throw new Error('Invalid invite role')
 
   const organization = await Organization.findById(payload.organizationId)
   if (!organization || !organization.isActive) {

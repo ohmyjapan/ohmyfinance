@@ -2,6 +2,8 @@ import mongoose from 'mongoose'
 import { createError } from 'h3'
 import Invoice from '../models/Invoice'
 import Transaction from '../models/Transaction'
+import Organization from '../models/Organization'
+import { invoiceTotals, isRegistrationNumber, normalizeRegistrationNumber } from '../../shared/finance-invoice.mjs'
 
 export const invoiceUpdateFields = ['invoiceNumber','status','issueDate','dueDate','paidDate','from','to','items','taxRate','currency','notes','terms','bankDetails','transactionId']
 export type InvoiceOperation = { operationId: string, payloadHash: string, expectedUpdatedAt: string }
@@ -12,6 +14,14 @@ async function fields(organizationId: mongoose.Types.ObjectId, body: any, previo
   if (values.transactionId === '') values.transactionId = null
   if (values.transactionId != null && (!mongoose.isValidObjectId(values.transactionId) || !await Transaction.exists({ _id: values.transactionId, organizationId }))) throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
   for (const key of ['issueDate','dueDate','paidDate']) if (values[key] != null) { const date = new Date(values[key]); if (!Number.isFinite(date.getTime())) invalid('Invalid invoice date'); values[key] = date }
+  // A6: whenever the issuer block is written, its 登録番号 is the company's own saved number when that is T + 13 digits, and nothing
+  // else: a value in the body is ignored, and a missing or invalid saved number leaves the field out.
+  if (values.from && typeof values.from === 'object' && !Array.isArray(values.from)) {
+    const { taxId: _ignored, ...from } = values.from
+    const company: any = await Organization.findById(organizationId).select('taxId').lean()
+    const number = normalizeRegistrationNumber(company?.taxId)
+    values.from = isRegistrationNumber(number) ? { ...from, taxId: number } : from
+  }
   if (body.items !== undefined || body.taxRate !== undefined) {
     const rate = Number(body.taxRate ?? previous.taxRate ?? 10)
     if (!Number.isFinite(rate) || rate < 0 || rate > 100) invalid('Invalid invoice tax rate')
@@ -26,9 +36,9 @@ async function fields(organizationId: mongoose.Types.ObjectId, body: any, previo
       })
       values.items = items
     }
-    const subtotal = items.reduce((sum: number, item: any) => sum + Number(item.amount ?? item.quantity * item.unitPrice), 0)
-    if (!Number.isFinite(subtotal)) invalid('Invalid invoice subtotal')
-    values.subtotal = subtotal; values.taxRate = rate; values.taxAmount = Math.round(subtotal * rate / 100); values.total = subtotal + values.taxAmount
+    const totals = invoiceTotals(items, rate)
+    if (!Number.isFinite(totals.subtotal)) invalid('Invalid invoice subtotal')
+    values.subtotal = totals.subtotal; values.taxRate = rate; values.taxAmount = totals.taxAmount; values.total = totals.total
   }
   return values
 }

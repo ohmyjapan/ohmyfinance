@@ -177,10 +177,13 @@
             <input
               v-model="orgForm.taxId"
               type="text"
+              data-organization-tax-id
+              placeholder="T1234567890123"
               :disabled="!canEdit"
               @input="markDirty"
               class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm disabled:bg-gray-100 dark:disabled:bg-gray-800"
             />
+            <p v-if="taxIdInvalid" data-registration-number-error class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ t('invoices.registrationNumberInvalid') }}</p>
           </div>
 
           <div class="md:col-span-2">
@@ -288,8 +291,8 @@
                   </div>
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap">
-                  <span :class="getRoleBadgeClass(member.role)" class="px-2 py-1 text-xs rounded-full">
-                    {{ member.role }}
+                  <span :class="getRoleBadgeClass(member.role)" class="px-2 py-1 text-xs rounded-full" data-member-role>
+                    {{ roleLabel(member.role) }}
                   </span>
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
@@ -302,10 +305,12 @@
                       :value="member.role"
                       @change="updateMemberRole(member.userId, ($event.target as HTMLSelectElement).value)"
                       class="text-xs rounded border-gray-300 dark:border-white/10 dark:bg-white/5"
+                      data-member-role-select
                     >
-                      <option value="admin">Admin</option>
-                      <option value="member">Member</option>
-                      <option value="viewer">Viewer</option>
+                      <option value="admin">{{ t('roles.admin') }}</option>
+                      <option value="accountant">{{ t('roles.accountant') }}</option>
+                      <option value="member">{{ t('roles.member') }}</option>
+                      <option value="viewer">{{ t('roles.viewer') }}</option>
                     </select>
                     <button
                       v-if="member.role !== 'owner'"
@@ -319,7 +324,39 @@
               </tr>
             </tbody>
           </table>
+          <p data-roles-help class="mt-3 text-xs text-gray-500 dark:text-gray-400">{{ t('roles.help') }}</p>
         </div>
+
+        <!-- Pending invites (plan R5): a lost link is cancelled here and the person invited again. -->
+        <div v-if="canInvite" data-pending-invites class="mt-6">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">{{ t('roles.pendingInvites') }}</h3>
+          <p v-if="pendingInvites.length === 0" class="text-xs text-gray-500 dark:text-gray-400">{{ t('roles.noPendingInvites') }}</p>
+          <ul v-else class="divide-y divide-gray-200 dark:divide-white/10">
+            <li v-for="invite in pendingInvites" :key="String(invite.id)" data-pending-invite class="py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span class="text-gray-900 dark:text-white break-all">{{ invite.email }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ roleLabel(invite.role) }} · {{ t('roles.expires') }} {{ formatDate(invite.expiresAt) }}</span>
+              <button type="button" data-invite-cancel @click="cancelInvite(invite.id)" class="text-xs text-red-600 hover:text-red-800">{{ t('roles.cancelInvite') }}</button>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Invoice mail (Gmail), plan C6: the session company's connection; owners, admins and 経理担当 connect or disconnect it. -->
+      <div data-gmail-card class="bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 p-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">{{ t('invoices.gmail.title') }}</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">{{ t('invoices.gmail.description') }}</p>
+        <p v-if="!gmailForThisCompany" class="text-sm text-gray-500 dark:text-gray-400">{{ t('invoices.gmail.otherCompany') }}</p>
+        <template v-else-if="gmail">
+          <p data-gmail-state class="text-sm font-medium" :class="gmail.connected && gmail.state === 'ok' && gmail.labelsGranted ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'">{{ gmailStateText }}</p>
+          <p v-if="gmail.connected" data-gmail-address class="text-sm text-gray-700 dark:text-gray-300 break-all">{{ gmail.address }}</p>
+          <p v-if="!gmail.configured" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('invoices.gmail.serverNotConfigured') }}</p>
+          <p v-if="gmailResult" data-gmail-result class="mt-2 text-sm text-gray-700 dark:text-gray-300">{{ gmailResult }}</p>
+          <div v-if="gmail.canSend" class="mt-4 flex flex-wrap gap-2">
+            <button v-if="gmail.configured && (!gmail.connected || gmail.state !== 'ok' || !gmail.labelsGranted)" type="button" data-gmail-connect :disabled="gmailBusy" @click="connectGmail" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm">{{ gmail.connected ? t('invoices.gmail.reconnect') : t('invoices.gmail.connect') }}</button>
+            <button v-if="gmail.connected" type="button" data-gmail-disconnect :disabled="gmailBusy" @click="disconnectGmail" class="px-4 py-2 border border-gray-300 dark:border-white/10 rounded-md text-sm text-gray-700 dark:text-gray-300 disabled:opacity-50">{{ t('invoices.gmail.disconnect') }}</button>
+          </div>
+          <p v-else class="mt-3 text-xs text-gray-500 dark:text-gray-400">{{ t('invoices.gmail.senderOnly') }}</p>
+        </template>
       </div>
 
       <!-- Switch Organization -->
@@ -340,7 +377,7 @@
           >
             <div class="font-medium text-gray-900 dark:text-white">{{ org.name }}</div>
             <div class="text-sm text-gray-500 dark:text-gray-400 capitalize">{{ org.type }}</div>
-            <div class="text-xs text-gray-400 mt-1">{{ t('organizationPage.role') }}: {{ org.role }}</div>
+            <div class="text-xs text-gray-400 mt-1">{{ t('organizationPage.role') }}: {{ roleLabel(org.role) }}</div>
           </button>
         </div>
       </div>
@@ -396,14 +433,19 @@
               v-model="inviteForm.role"
               class="mt-1 block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 shadow-sm focus:border-primary-main focus:ring-primary-main sm:text-sm"
             >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-              <option value="viewer">Viewer</option>
+              <option value="member">{{ t('roles.member') }}</option>
+              <option value="accountant">{{ t('roles.accountant') }}</option>
+              <option value="admin">{{ t('roles.admin') }}</option>
+              <option value="viewer">{{ t('roles.viewer') }}</option>
             </select>
           </div>
 
-          <div v-if="inviteResult" class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-3">
-            <p class="text-sm text-green-800 dark:text-green-200">{{ inviteResult }}</p>
+          <div v-if="inviteResult" data-invite-result class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-3 space-y-2">
+            <p class="text-sm text-green-800 dark:text-green-200">{{ t('roles.inviteLinkCreated') }}</p>
+            <div class="flex items-start gap-2">
+              <code data-invite-link class="flex-1 min-w-0 break-all text-xs text-gray-800 dark:text-gray-200 bg-white/70 dark:bg-black/20 rounded px-2 py-1 select-all">{{ inviteResult }}</code>
+              <button type="button" data-invite-copy @click="copyInviteLink" class="shrink-0 px-2 py-1 text-xs rounded border border-green-300 dark:border-green-700 text-green-800 dark:text-green-200">{{ inviteCopied ? t('roles.copied') : t('roles.copy') }}</button>
+            </div>
           </div>
 
           <div class="flex justify-end gap-3 mt-6">
@@ -432,6 +474,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { Save } from 'lucide-vue-next'
 import { useUserStore } from '~/stores/user'
+import { tokenClaims } from '~/utils/auth-session'
+import { normalizeRegistrationNumber, isRegistrationNumber } from '~/shared/finance-invoice.mjs'
 
 const { t, locale } = useI18n()
 
@@ -483,8 +527,12 @@ const settingsForm = ref({
 
 const inviteForm = ref({
   email: '',
-  role: 'member' as 'admin' | 'member' | 'viewer'
+  role: 'member' as 'admin' | 'accountant' | 'member' | 'viewer'
 })
+const inviteCopied = ref(false)
+const pendingInvites = ref<any[]>([])
+// A4: shown while the field holds something that is not T + 13 digits (a saved 法人番号 still saves unchanged, but is not a 登録番号).
+const taxIdInvalid = computed(() => { const value = normalizeRegistrationNumber(orgForm.value.taxId); return !!value && !isRegistrationNumber(value) })
 
 const canEdit = computed(() => {
   return currentOrganization.value?.role === 'owner' || currentOrganization.value?.role === 'admin'
@@ -694,22 +742,19 @@ async function sendInvite() {
 
   inviting.value = true
   inviteResult.value = ''
+  inviteCopied.value = false
   try {
     const orgId = currentOrganization.value.id || currentOrganization.value._id
-    const response = await fetch(`/api/organizations/${orgId}/invite`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeader()
-      },
-      body: JSON.stringify(inviteForm.value)
-    })
+    // An Invite row (random token, role checked, a pending duplicate refused). OMF emails nothing: the inviter sends the link.
+    const response = await fetch(`/api/organizations/${orgId}/invites`, {method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ email: inviteForm.value.email, role: inviteForm.value.role, sendEmailNotification: false })})
     const data = await response.json()
-    if (data.success) {
-      inviteResult.value = data.message
+    const token = data.success && data.inviteUrl ? new URL(data.inviteUrl, window.location.origin).searchParams.get('token') : null
+    if (token) {
+      inviteResult.value = `${window.location.origin}/auth/accept-invite?token=${encodeURIComponent(token)}`
       inviteForm.value = { email: '', role: 'member' }
+      loadPendingInvites()
     } else {
-      alert(data.statusMessage || t('common.error'))
+      alert(data.message || data.statusMessage || t('common.error'))
     }
   } catch (error) {
     console.error('Failed to send invite:', error)
@@ -718,6 +763,71 @@ async function sendInvite() {
     inviting.value = false
   }
 }
+
+async function copyInviteLink() {
+  try { await navigator.clipboard.writeText(inviteResult.value); inviteCopied.value = true } catch { inviteCopied.value = false }
+}
+
+async function loadPendingInvites() {
+  if (!currentOrganization.value || !canInvite.value) { pendingInvites.value = []; return }
+  try {
+    const orgId = currentOrganization.value.id || currentOrganization.value._id
+    const response = await fetch(`/api/organizations/${orgId}/invites`, { headers: getAuthHeader() })
+    const data = await response.json()
+    pendingInvites.value = data.success ? data.invites : []
+  } catch (error) {
+    console.error('Failed to load invites:', error)
+  }
+}
+
+async function cancelInvite(inviteId: string) {
+  if (!currentOrganization.value || !confirm(t('roles.cancelInviteConfirm'))) return
+  try {
+    const orgId = currentOrganization.value.id || currentOrganization.value._id
+    const response = await fetch(`/api/organizations/${orgId}/invites/${encodeURIComponent(String(inviteId))}`, { method: 'DELETE', headers: getAuthHeader() })
+    const data = await response.json()
+    if (!data.success) alert(data.message || data.statusMessage || t('common.error'))
+  } catch (error) {
+    console.error('Failed to cancel invite:', error)
+    alert(t('common.error'))
+  } finally {
+    await loadPendingInvites()
+  }
+}
+
+// The invoice Gmail card (plan C6) shows the connection of the company the session works in.
+const route = useRoute()
+const gmail = ref<any>(null)
+const gmailBusy = ref(false)
+const gmailResult = ref(route.query.gmail === 'connected' ? t('invoices.gmail.resultConnected') : route.query.gmail === 'denied' ? t('invoices.gmail.resultDenied') : route.query.gmail === 'failed' ? t('invoices.gmail.resultFailed', { reason: String(route.query.gmailMessage || '') }) : '')
+const gmailForThisCompany = computed(() => !!currentOrganization.value && String(currentOrganization.value.id || currentOrganization.value._id) === String(tokenClaims(userStore.token)?.organizationId || ''))
+const gmailStateText = computed(() => {
+  const g = gmail.value
+  if (!g || !g.connected) return t('invoices.gmail.unset')
+  if (g.state === 'reconnect_required') return t('invoices.gmail.reconnectRequired')
+  if (!g.labelsGranted) return t('invoices.gmail.noLabels')
+  return t('invoices.gmail.connected')
+})
+async function loadGmail() {
+  if (!gmailForThisCompany.value) { gmail.value = null; return }
+  try { gmail.value = await $fetch<any>('/api/company-mail/gmail', { headers: getAuthHeader() }) } catch (error) { console.error('Failed to load the Gmail status:', error) }
+}
+async function connectGmail() {
+  gmailBusy.value = true
+  try {
+    const started = await $fetch<any>('/api/company-mail/gmail', { method: 'POST', headers: getAuthHeader(), body: { action: 'start' } })
+    window.location.href = started.url
+  } catch (error: any) {
+    gmailResult.value = t('invoices.gmail.resultFailed', { reason: error?.data?.message || error?.data?.statusMessage || t('common.error') })
+    gmailBusy.value = false
+  }
+}
+async function disconnectGmail() {
+  if (!confirm(t('invoices.gmail.disconnectConfirm'))) return
+  gmailBusy.value = true
+  try { await $fetch<any>('/api/company-mail/gmail', { method: 'DELETE', headers: getAuthHeader() }); gmailResult.value = '' } catch (error: any) { gmailResult.value = error?.data?.message || t('common.error') } finally { gmailBusy.value = false; await loadGmail() }
+}
+watch([currentOrganization, () => userStore.token], () => { loadPendingInvites(); loadGmail() })
 
 async function switchOrganization(orgId: string): Promise<boolean> {
   try {
@@ -747,10 +857,15 @@ function getRoleBadgeClass(role: string) {
   const classes: Record<string, string> = {
     owner: 'bg-primary-main/20 text-primary-dark dark:bg-primary-main/20 dark:text-primary-light',
     admin: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+    accountant: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
     member: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
     viewer: 'bg-gray-100 text-gray-800 dark:bg-white/5 dark:text-gray-300'
   }
   return classes[role] || classes.viewer
+}
+
+function roleLabel(role: string) {
+  return ['owner', 'admin', 'accountant', 'member', 'viewer'].includes(role) ? t(`roles.${role}`) : role
 }
 
 function formatDate(date: string) {

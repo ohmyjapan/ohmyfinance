@@ -63,7 +63,7 @@
             </div>
             <div class="flex justify-between">
               <dt class="text-blue-600 dark:text-blue-400">{{ t('organization.yourRole') }}:</dt>
-              <dd class="text-blue-900 dark:text-blue-100 capitalize">{{ inviteDetails.role }}</dd>
+              <dd class="text-blue-900 dark:text-blue-100">{{ ['admin', 'accountant', 'member', 'viewer'].includes(inviteDetails.role) ? t(`roles.${inviteDetails.role}`) : inviteDetails.role }}</dd>
             </div>
           </dl>
         </div>

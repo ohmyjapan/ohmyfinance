@@ -3,7 +3,9 @@ import mongoose, { Schema, Document } from 'mongoose'
 import crypto from 'crypto'
 
 export type InviteStatus = 'pending' | 'accepted' | 'expired' | 'cancelled'
-export type InviteRole = 'admin' | 'member' | 'viewer'
+// The roles an invite or a role change may give; nobody is ever invited or promoted to owner (plan omf-invoice-tnumber-20261030 R1/R4).
+export const INVITABLE_ROLES = ['admin', 'accountant', 'member', 'viewer'] as const
+export type InviteRole = typeof INVITABLE_ROLES[number]
 
 export interface IInvite extends Document {
   email: string
@@ -35,7 +37,7 @@ const InviteSchema = new Schema<IInvite>({
   },
   role: {
     type: String,
-    enum: ['admin', 'member', 'viewer'],
+    enum: [...INVITABLE_ROLES],
     default: 'member'
   },
   token: {

@@ -31,7 +31,7 @@ export const naviFeatures=Object.freeze([
  f('receipt-upload','receipts','領収書のアップロード','영수증 업로드','/receipts/upload','unsupported','領収書のアップロード画面は、まだ会社ごとに対応していません。ファイルは先に保存されますが、会社の指定がないため領収書の記録は作成できません。会社ごとの修正（元の機能側）ができるまで Navi はこの画面を案内しません。保存済みの領収書は領収書管理で確認でき、会社の会話の Navi が読み取って取引候補と比べられます。','pages/receipts/upload.vue'),
  f('vendors','parties','取引先','거래처','/vendors','unsupported','取引先（仕入先）の画面は、会社ごとに分かれていない共通のデータを扱います。一覧と登録・編集は他の会社の取引先も対象になり、集計の更新は全社の取引から作られます。会社ごとの修正（元の機能側）ができるまで Navi はこの画面を案内しません。この会社の取引で使われた取引先は、会社の会話の Navi が取引の記録から確認できます。','pages/vendors/index.vue'),
  f('settings','settings','一般設定','일반 설정','/settings','page_handoff','表示・通貨・通知などの一般設定は画面で行います。Navi は設定画面をご案内します。','pages/settings/index.vue'),
- f('organization-settings','settings','組織設定','조직 설정','/settings/organization','page_handoff','メンバーと権限の管理は画面で行います。Navi は会社名・住所・登録番号・通貨・期首月・タイムゾーンを読むだけで、メンバーや権限は読まず変えません。','pages/settings/organization.vue',{sensitive:true}),
+ f('organization-settings','settings','組織設定','조직 설정','/settings/organization','page_handoff','メンバーと権限の管理は画面で行います。Navi は会社名・住所・登録番号・通貨・期首月・タイムゾーンを読むだけで、メンバーや権限は読まず変えません。','pages/settings/organization.vue, pages/settings/gmail-callback.vue',{sensitive:true}),
  f('organization-switch','settings','会社の作成・参加','회사 생성·참여',null,'unsupported','会社の作成・参加・切替は本人が設定画面で行います。Navi は別の会社へ移動しません。','pages/settings/organization/new.vue, pages/settings/organization/join.vue',{sensitive:true}),
  f('security','settings','セキュリティ','보안','/settings/security','page_handoff','パスワード・二段階認証などは本人が画面で設定します。Navi は認証情報を扱いません。','pages/settings/security.vue',{sensitive:true}),
  f('api-settings','settings','API 設定','API 설정','/settings/api','page_handoff','API キーと連携の設定は本人が画面で行います。Navi はキーを読みません。','pages/settings/api.vue',{sensitive:true}),

@@ -245,9 +245,10 @@ const currentUserEmail = computed(() => userStore.user?.email || '')
 
 const getRoleLabel = (role: string) => {
   const roleLabels: Record<string, string> = {
-    admin: t('admin.roleAdmin'),
-    member: t('admin.roleMember'),
-    viewer: t('admin.roleViewer')
+    admin: t('roles.admin'),
+    accountant: t('roles.accountant'),
+    member: t('roles.member'),
+    viewer: t('roles.viewer')
   }
   return roleLabels[role] || role
 }

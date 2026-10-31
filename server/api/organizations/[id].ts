@@ -3,6 +3,7 @@ import { defineEventHandler, readBody, createError, getRouterParam } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Organization from '../../models/Organization'
 import { requireAuth } from '../../middleware/auth'
+import { normalizeRegistrationNumber, isRegistrationNumber } from '../../../shared/finance-invoice.mjs'
 
 export default defineEventHandler(async (event) => {
   const auth = requireAuth(event)
@@ -63,7 +64,15 @@ export default defineEventHandler(async (event) => {
       if (email !== undefined) organization.email = email
       if (phone !== undefined) organization.phone = phone
       if (address !== undefined) organization.address = address
-      if (taxId !== undefined) organization.taxId = taxId
+      // 登録番号 (plan A3): stored normalized, and only when it changed. GUARD: a changed, non-empty value must be T and 13 digits;
+      // an unchanged saved value (a 13-digit 法人番号 saved earlier) never blocks, because the page sends every field.
+      if (taxId !== undefined) {
+        const next = normalizeRegistrationNumber(taxId)
+        if (next !== normalizeRegistrationNumber(organization.taxId)) {
+          if (next && !isRegistrationNumber(next)) throw createError({ statusCode: 400, message: '登録番号は T と13桁の数字で入力してください。' })
+          organization.taxId = next
+        }
+      }
       if (settings !== undefined) {
         organization.settings = { ...organization.settings, ...settings }
       }
@@ -78,6 +87,7 @@ export default defineEventHandler(async (event) => {
         }
       }
     } catch (error: any) {
+      if (error.statusCode) throw error
       throw createError({ statusCode: 500, statusMessage: error.message })
     }
   }

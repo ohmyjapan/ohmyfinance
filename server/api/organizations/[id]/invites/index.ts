@@ -2,7 +2,7 @@
 import { defineEventHandler, readBody, createError, getRouterParam } from 'h3'
 import { ensureConnection } from '../../../../config/database'
 import Organization from '../../../../models/Organization'
-import Invite from '../../../../models/Invite'
+import Invite, { INVITABLE_ROLES } from '../../../../models/Invite'
 import User from '../../../../models/User'
 import { requireAuth } from '../../../../middleware/auth'
 import { sendEmail } from '../../../../services/emailService'
@@ -97,7 +97,7 @@ export default defineEventHandler(async (event) => {
       }
 
       // Validate role
-      if (!['admin', 'member', 'viewer'].includes(role)) {
+      if (!(INVITABLE_ROLES as readonly string[]).includes(role)) {
         throw createError({ statusCode: 400, statusMessage: 'Invalid role' })
       }
 

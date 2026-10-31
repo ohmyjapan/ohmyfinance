@@ -60,9 +60,15 @@ module.exports=async({root,origin,worker,claim,actOk,finish,A,invoiceId,invoiceN
   await page.evaluate(day=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar').setCurrentMonth(new Date(day+'T12:00:00Z')),invoiceDueDate);
   await wait(()=>!!document.querySelector('[data-calendar-summary="income"] [data-calendar-currency="USD"]'),[],'per-currency-summary');
   const totals=await page.evaluate(()=>Array.from(document.querySelectorAll('[data-calendar-summary="income"] [data-calendar-currency]')).map(e=>({currency:e.getAttribute('data-calendar-currency'),text:e.textContent.trim()})));
-  assert.match(totals.find(x=>x.currency==='USD')?.text||'',/125\.50/,'invoice-calendar-ui:usd-summary');
-  assert.match(totals.find(x=>x.currency==='JPY')?.text||'',/12,760/,'invoice-calendar-ui:jpy-summary');
-  assert.ok(totals.every(x=>!x.text.includes('12,886')&&!x.text.includes('12,885')),'invoice-calendar-ui:no-mixed-currency-sum '+JSON.stringify(totals));
+  // The month total follows the invoice's own month: the invoice is due today + 3 (the upcoming list needs it within 7 days), so other
+  // income rows of this run may share that month. Expected per currency = the saved non-cancelled income rows of that month the page
+  // loaded (USD with its cents), never a mixed-currency sum.
+  const month=invoiceDueDate.slice(0,7),rows=await page.evaluate(()=>document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('calendar').payments.map(p=>({currency:p.currency,amount:p.amount,type:p.type,status:p.status,day:String(p.dueDate).split('T')[0]})));
+  const income=c=>rows.filter(p=>p.day.slice(0,7)===month&&p.type==='income'&&p.status!=='cancelled'&&p.currency===c).reduce((s,p)=>s+p.amount,0),money=(v,d)=>v.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}),usd=income('USD'),jpy=income('JPY');
+  assert.ok(usd>=125.5&&jpy>=12760,'invoice-calendar-ui:month-rows '+JSON.stringify({month,usd,jpy}));
+  assert.ok((totals.find(x=>x.currency==='USD')?.text||'').includes(money(usd,2)),'invoice-calendar-ui:usd-summary '+money(usd,2)+' '+JSON.stringify(totals));
+  assert.ok((totals.find(x=>x.currency==='JPY')?.text||'').includes(money(jpy,0)),'invoice-calendar-ui:jpy-summary '+money(jpy,0)+' '+JSON.stringify(totals));
+  assert.ok(totals.every(x=>!x.text.includes(money(Math.round(usd+jpy),0))&&!x.text.includes(money(Math.floor(usd+jpy),0))),'invoice-calendar-ui:no-mixed-currency-sum '+JSON.stringify(totals));
   const paymentBefore=(await linked(invoiceId))[0],paymentId=String(paymentBefore._id);
   const upcoming=await page.$eval('[data-calendar-upcoming="'+paymentId+'"]',e=>e.textContent);assert.match(upcoming,/125\.50/,'invoice-calendar-ui:upcoming-cents');
   await page.$eval('[data-calendar-day="'+invoiceDueDate+'"]',e=>e.click());await wait(()=>!!document.querySelector('[data-calendar-day-detail]'),[],'day-detail');

@@ -9,6 +9,29 @@ export interface IInvoiceItem {
   tax?: number
 }
 
+// One Gmail send of the invoice (plan omf-invoice-tnumber-20261030 C4). Written only by the send service and its restart recovery,
+// never by the invoice editors (it is in neither invoiceUpdateFields nor Navi's list).
+export interface IInvoiceDelivery {
+  sendId: string
+  bootId?: string
+  from?: string
+  to?: string
+  subject?: string
+  state: 'sending' | 'sent' | 'failed' | 'unknown'
+  confirmedBy?: 'gmail_id' | 'sent_count'
+  gmailMessageId?: string
+  gmailThreadId?: string
+  error?: string
+  retryAfter?: Date
+  sentCountBefore?: number | null
+  sentCountAfter?: number | null
+  postStartedAt?: Date
+  attempts?: number
+  sentBy?: mongoose.Types.ObjectId
+  startedAt?: Date
+  finishedAt?: Date
+}
+
 export interface IInvoice extends Document<mongoose.Types.ObjectId> {
   organizationId: mongoose.Types.ObjectId
   invoiceNumber: string
@@ -51,6 +74,7 @@ export interface IInvoice extends Document<mongoose.Types.ObjectId> {
   bankDetails?: string
 
   naviOperation?: any
+  deliveries?: IInvoiceDelivery[]
   createdBy?: mongoose.Types.ObjectId
   createdAt: Date
   updatedAt: Date
@@ -62,6 +86,27 @@ const InvoiceItemSchema = new Schema<IInvoiceItem>({
   unitPrice: { type: Number, required: true },
   amount: { type: Number, required: true },
   tax: Number
+}, { _id: false })
+
+const InvoiceDeliverySchema = new Schema<IInvoiceDelivery>({
+  sendId: { type: String, required: true },
+  bootId: String,
+  from: String,
+  to: String,
+  subject: String,
+  state: { type: String, enum: ['sending', 'sent', 'failed', 'unknown'], required: true },
+  confirmedBy: { type: String, enum: ['gmail_id', 'sent_count'] },
+  gmailMessageId: String,
+  gmailThreadId: String,
+  error: String,
+  retryAfter: Date,
+  sentCountBefore: Number,
+  sentCountAfter: Number,
+  postStartedAt: Date,
+  attempts: { type: Number, default: 0 },
+  sentBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  startedAt: Date,
+  finishedAt: Date
 }, { _id: false })
 
 const InvoiceSchema = new Schema<IInvoice>({
@@ -93,6 +138,7 @@ const InvoiceSchema = new Schema<IInvoice>({
   },
 
   items: [InvoiceItemSchema],
+  deliveries: { type: [InvoiceDeliverySchema], default: undefined },
 
   subtotal: { type: Number, required: true },
   taxRate: { type: Number, default: 10 },

@@ -39,6 +39,9 @@ export default defineEventHandler(async (event) => {
       inviteToken: result.inviteToken // Remove this in production
     }
   } catch (error: any) {
+    if (error.message === 'Invalid role') {
+      throw createError({ statusCode: 400, statusMessage: 'Invalid role' })
+    }
     if (error.message.includes('Not authorized') || error.message.includes('already')) {
       throw createError({ statusCode: 403, statusMessage: error.message })
     }
