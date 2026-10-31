@@ -12,16 +12,28 @@ const READY=300000,EXPENSE='\u652f\u51fa';
  const env={};for(const k of ['PATH','Path','PATHEXT','SystemRoot','SystemDrive','WINDIR','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH','LOCALAPPDATA','APPDATA','PROGRAMDATA','ComSpec','NODE_OPTIONS','SECRET_VAULT_DIR'])if(process.env[k])env[k]=process.env[k];
  Object.assign(env,{MONGO_URI:appUri.toString(),MONGODB_URI:appUri.toString(),NUXT_MONGO_URI:appUri.toString(),OMF_DATA_DIR:directory,JWT_SECRET:crypto.randomBytes(32).toString('hex'),NODE_ENV:'production',HOST:'127.0.0.1',NITRO_HOST:'127.0.0.1',PORT:String(port),NITRO_PORT:String(port),OMF_SYNC_SCHEDULE_MS:'0',OMF_BANK_SCHEDULE_MS:'0',ANTHROPIC_API_KEY:'disabled-owned-test',OPENAI_API_KEY:'disabled-owned-test',SLACK_BOT_TOKEN:'disabled-owned-test'});
  let appRoot=root;
- if(process.env.NAVI_TRACE_MUTATION){
-  const mutation=process.env.NAVI_TRACE_MUTATION;assert.ok(['expired-lease','successor-turn'].includes(mutation),'SETUP known trace mutation');assert.ok(!process.env.NAVI_REAL_REPLAY_SNAPSHOT,'SETUP mutations never run product models');
+ if(process.env.NAVI_TRACE_MUTATION||process.env.NAVI_CALENDAR_VIEW_MUTATION){
+  assert.ok(!(process.env.NAVI_TRACE_MUTATION&&process.env.NAVI_CALENDAR_VIEW_MUTATION),'SETUP one owned compiled mutation at a time');
+  assert.ok(!process.env.NAVI_REAL_REPLAY_SNAPSHOT,'SETUP mutations never run product models');
   appRoot=path.join(directory,'mutated-app');await fsp.cp(path.join(root,'.output'),path.join(appRoot,'.output'),{recursive:true,dereference:true});
   const walk=async dir=>{const rows=await fsp.readdir(dir,{withFileTypes:true}),files=[];for(const row of rows){const file=path.join(dir,row.name);if(row.isDirectory())files.push(...await walk(file));else if(row.name.endsWith('.mjs'))files.push(file)}return files};
+  if(process.env.NAVI_CALENDAR_VIEW_MUTATION){
+   assert.equal(process.env.NAVI_CALENDAR_VIEW_MUTATION,'1','SETUP known calendar-view mutation');
+   const anchor='invoiceLink: invoiceLinkSummary(v.invoiceLink), invoiceLinkKind: "issued_invoice_income_schedule"',matches=[];
+   for(const file of await walk(path.join(appRoot,'.output/server/chunks'))){const code=await fsp.readFile(file,'utf8');if(code.includes(anchor))matches.push({file,code})}
+   assert.equal(matches.length,1,'SETUP exactly one compiled Navi calendar view');
+   const {file,code}=matches[0];assert.equal(code.split(anchor).length,2,'SETUP exactly one issued-link projection');
+   const changed=code.replace(anchor,'invoiceLink: null, invoiceLinkKind: "issued_invoice_income_schedule"');await fsp.writeFile(file,changed);
+   console.log('NAVI_CALENDAR_VIEW_MUTATION '+JSON.stringify({file:path.relative(appRoot,file),originalSha256:sha(code),mutantSha256:sha(changed)}));
+  }else{
+  const mutation=process.env.NAVI_TRACE_MUTATION;assert.ok(['expired-lease','successor-turn'].includes(mutation),'SETUP known trace mutation');assert.ok(!process.env.NAVI_REAL_REPLAY_SNAPSHOT,'SETUP mutations never run product models');
   const matches=[];for(const file of await walk(path.join(appRoot,'.output/server/chunks'))){const code=await fsp.readFile(file,'utf8');if(code.includes('async function recordCompanyRead('))matches.push({file,code})}assert.equal(matches.length,1,'SETUP exactly one compiled trace writer');
   const {file,code}=matches[0],start=code.indexOf('async function recordCompanyRead('),end=code.indexOf('\nasync function ',start+1);assert.ok(end>start,'SETUP compiled function boundary');const section=code.slice(start,end);
   const from=mutation==='expired-lease'?'...jobFilter(agent, String(c._id), body.lease),':'currentId: c.currentId';
   const to=mutation==='expired-lease'?'...jobFilter(agent, String(c._id), body.lease), leaseUntil: { $exists: true },':'';
   assert.equal(section.split(from).length,2,'SETUP exactly one trace-filter mutation');const changed=code.slice(0,start)+section.replace(from,to)+code.slice(end);await fsp.writeFile(file,changed);
   console.log('NAVI_TRACE_MUTATION '+JSON.stringify({mutation,file:path.relative(appRoot,file),originalSha256:sha(code),mutantSha256:sha(changed)}));
+  }
  }
  app=spawn(process.execPath,['.output/server/index.mjs'],{cwd:appRoot,windowsHide:true,env,stdio:['ignore','pipe','pipe']});app.closed=new Promise(r=>app.once('close',r));for(const p of[app.stdout,app.stderr])p.on('data',b=>logs=(logs+b).slice(-16000));
  let healthy=false;const began=Date.now();while(Date.now()-began<READY){try{const r=await fetch(origin+'/api/health',{signal:AbortSignal.timeout(1000)}),v=await r.json();if(v.database?.connected){assert.equal(v.database.name,name);healthy=true;break}}catch(e){if(e.code==='ERR_ASSERTION')throw e}await pause(200)}assert.ok(healthy,'SETUP owned app ready '+logs);console.log('OWNED_DATABASE_CONNECTED');
@@ -44,14 +56,20 @@ const READY=300000,EXPENSE='\u652f\u51fa';
  const payments=db.collection('payments'),links=db.collection('calendarevidencelinks'),invoices=db.collection('calendarevidenceinvoices'),sources=db.collection('calendarevidencesources');
  const linked=new ObjectId(),empty=new ObjectId(),foreignPayment=new ObjectId(),orphanPayment=new ObjectId(),manyPayment=new ObjectId();
  await payments.insertMany([[linked,A],[empty,A],[orphanPayment,A],[manyPayment,A],[foreignPayment,B]].map(([id,organizationId])=>({_id:id,organizationId,title:'Synthetic invoice plan',amount:12345,currency:'JPY',dueDate:new Date('2026-10-23T12:00:00Z'),type:'expense',status:'paid',category:'Invoice',settledAt:new Date('2026-10-23T03:00:00Z'),createdAt:now,updatedAt:now})));
- await payments.insertMany(Array.from({length:96},(_,i)=>({_id:new ObjectId(),organizationId:A,title:'Synthetic full calendar '+i,amount:1000+i,currency:'JPY',dueDate:new Date('2026-10-23T12:00:00Z'),type:'expense',status:'pending',category:'Invoice',createdAt:now,updatedAt:now})));
+ await payments.insertMany(Array.from({length:95},(_,i)=>({_id:new ObjectId(),organizationId:A,title:'Synthetic full calendar '+i,amount:1000+i,currency:'JPY',dueDate:new Date('2026-10-23T12:00:00Z'),type:'expense',status:'pending',category:'Invoice',createdAt:now,updatedAt:now})));
+ // Native setup creates a genuine issued-invoice schedule. A separate stored supplier association below must not replace it.
+ const issued=(await ok('/api/invoices',tokenA,'POST',{invoiceNumber:'SYN-ISSUED-01',from:{name:'Synthetic issuer',taxId:'T1234567890123'},to:{name:'Synthetic client'},items:[{description:'Synthetic work',quantity:1,unitPrice:2000}],taxRate:10,currency:'JPY',issueDate:'2026-10-08',dueDate:'2026-10-23',status:'sent'})).invoice;
+ const issuedId=new ObjectId(String(issued._id||issued.id)),issuedStored=await db.collection('invoices').findOne({_id:issuedId});
+ const scheduled=await ok('/api/invoices/'+issuedId+'/calendar',tokenA,'POST',{expectedUpdatedAt:issuedStored.updatedAt.toISOString()});
+ const mixedPayment=new ObjectId(scheduled.entry.id);assert.equal(scheduled.outcome,'created','SETUP genuine issued schedule created');
  const invoice=new ObjectId(),active=new ObjectId(),old=new ObjectId(),foreignInvoice=new ObjectId(),foreignSource=new ObjectId();
  const file=(name,kind='invoice-pdf')=>({fileId:sha(name),name,mimeType:'application/pdf',kind,size:123});
  await invoices.insertMany([{_id:invoice,organizationId:A,supplier:'Synthetic supplier',invoiceNumber:'SYN-09',servicePeriod:{from:'2026-09-01',to:'2026-09-30'},currency:'JPY',activeSourceId:active,createdAt:now,updatedAt:now},{_id:foreignInvoice,organizationId:B,supplier:'PRIVATE_SUPPLIER_B',invoiceNumber:'PRIVATE_INVOICE_B',servicePeriod:{from:'2026-09-01',to:'2026-09-30'},currency:'JPY',activeSourceId:foreignSource,createdAt:now,updatedAt:now}]);
  await sources.insertMany([{_id:active,organizationId:A,invoiceId:invoice,status:'active',provider:'synthetic',messageId:'synthetic-a',receivedAt:now,issuedOn:'2026-10-08',totalAmount:12345,email:{name:'private-email.eml',text:'PRIVATE_EMAIL_BODY_MUST_NOT_APPEAR_IN_SUMMARY',sha256:sha('email'),size:20},files:Array.from({length:8},(_,i)=>file('SYN-A-'+i+'.pdf')),createdAt:now,updatedAt:now},{_id:old,organizationId:A,invoiceId:invoice,status:'superseded',provider:'synthetic',messageId:'old',receivedAt:now,email:{text:'SUPERSEDED_EMAIL'},files:[file('SUPERSEDED_FILE.pdf')],createdAt:now,updatedAt:now},{_id:foreignSource,organizationId:B,invoiceId:foreignInvoice,status:'active',provider:'synthetic',messageId:'private',receivedAt:now,email:{text:'PRIVATE_EMAIL_B'},files:[file('PRIVATE_FILE_B.pdf')],createdAt:now,updatedAt:now}]);
  await links.insertMany([{organizationId:A,paymentId:linked,invoiceId:invoice,linkedAt:now,unlinkedAt:null,createdAt:now,updatedAt:now},{organizationId:B,paymentId:foreignPayment,invoiceId:foreignInvoice,linkedAt:now,unlinkedAt:null,createdAt:now,updatedAt:now},{organizationId:A,paymentId:orphanPayment,invoiceId:foreignInvoice,linkedAt:now,unlinkedAt:null,createdAt:now,updatedAt:now},{organizationId:B,paymentId:linked,invoiceId:foreignInvoice,linkedAt:now,unlinkedAt:null,createdAt:now,updatedAt:now}]);
  for(let i=0;i<13;i++){const _id=new ObjectId();await invoices.insertOne({_id,organizationId:A,supplier:'Synthetic batch',invoiceNumber:'SYN-BATCH-'+i,servicePeriod:{from:'2026-09-01',to:'2026-09-30'},currency:'JPY',activeSourceId:null,createdAt:now,updatedAt:now});await links.insertOne({organizationId:A,paymentId:manyPayment,invoiceId:_id,linkedAt:now,unlinkedAt:null,createdAt:now,updatedAt:now})}
- const savedBefore=JSON.stringify(await payments.find({}).sort({_id:1}).toArray()),sourceBefore=JSON.stringify(await sources.find({}).sort({_id:1}).toArray());
+ await links.insertOne({organizationId:A,paymentId:mixedPayment,invoiceId:invoice,linkedAt:now,unlinkedAt:null,createdAt:now,updatedAt:now});
+ const savedBefore=JSON.stringify(await payments.find({}).sort({_id:1}).toArray()),sourceBefore=JSON.stringify(await sources.find({}).sort({_id:1}).toArray()),issuedBefore=JSON.stringify(await db.collection('invoices').find({}).sort({_id:1}).toArray());
  const job=await ask();
  // Actual stdio discovery: a trusted per-tool text-result allowance must survive the MCP catalogue projection. Ordinary
  // owner/purchase tools retain their original three fields; private server fields still never reach the model.
@@ -60,7 +78,16 @@ const READY=300000,EXPENSE='\u652f\u51fa';
  await new ProbeVault(probeDir).update(()=>({token:agent.token}));
  const probeTools=job.tools.map(t=>({...t,...(t.name==='list_company_calendar_entries'?{_meta:{'anthropic/maxResultSizeChars':200000},privateProbeOnly:'NOT_MODEL_DATA'}:{})}));
  const probeFile=path.join(probeJobDir,'job.json');await fsp.writeFile(probeFile,JSON.stringify({endpoint:origin+'/api/finance-chat/worker/workspace/'+job.id+'/actions',lease:job.lease,tools:probeTools,nextSlot:1}));
- const probe=spawn(process.execPath,[path.join(root,'teaching-worker/actions-mcp.mjs')],{cwd:root,windowsHide:true,env:{...env,OMF_ACTIONS_DIR:probeDir,OMF_ACTIONS_JOB_FILE:probeFile},stdio:['pipe','pipe','pipe']});const probeClosed=new Promise(r=>probe.once('close',r));
+ let actionsMcp=path.join(root,'teaching-worker/actions-mcp.mjs');
+ if(process.env.NAVI_MCP_CATALOGUE_MUTATION){
+  assert.equal(process.env.NAVI_MCP_CATALOGUE_MUTATION,'1','SETUP known MCP catalogue mutation');assert.ok(!process.env.NAVI_REAL_REPLAY_SNAPSHOT,'SETUP catalogue mutation never runs product models');
+  const original=await fsp.readFile(actionsMcp,'utf8'),anchor=', _meta: t._meta';assert.equal(original.split(anchor).length,2,'SETUP exactly one metadata projection');
+  const vaultImport="import { Vault } from '../collector/vault.mjs';";assert.equal(original.split(vaultImport).length,2,'SETUP one Vault import');
+  const mutated=original.replace(anchor,'').replace(vaultImport,'import { Vault } from '+JSON.stringify(asFileUrl(path.join(root,'collector/vault.mjs')).href)+';');
+  actionsMcp=path.join(directory,'actions-mcp-negative.mjs');await fsp.writeFile(actionsMcp,mutated);
+  console.log('NAVI_MCP_CATALOGUE_MUTATION '+JSON.stringify({originalSha256:sha(original),mutantSha256:sha(mutated)}));
+ }
+ const probe=spawn(process.execPath,[actionsMcp],{cwd:root,windowsHide:true,env:{...env,OMF_ACTIONS_DIR:probeDir,OMF_ACTIONS_JOB_FILE:probeFile},stdio:['pipe','pipe','pipe']});const probeClosed=new Promise(r=>probe.once('close',r));
  let probeBuffer='',probeSeq=0,probeError='';const waiting=new Map();probe.stderr.on('data',b=>probeError+=b);probe.stdout.setEncoding('utf8');probe.stdout.on('data',chunk=>{probeBuffer+=chunk;let i;while((i=probeBuffer.indexOf('\n'))>=0){const line=probeBuffer.slice(0,i);probeBuffer=probeBuffer.slice(i+1);let message;try{message=JSON.parse(line)}catch{continue}const done=waiting.get(message.id);if(done){waiting.delete(message.id);done(message)}}});
  const rpc=(method,params={})=>new Promise((resolve,reject)=>{const id=++probeSeq,timer=setTimeout(()=>{waiting.delete(id);reject(Error('SETUP MCP discovery timed out '+probeError.slice(0,200)))},15000);waiting.set(id,value=>{clearTimeout(timer);resolve(value)});probe.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n')});
  try{
@@ -77,6 +104,13 @@ const READY=300000,EXPENSE='\u652f\u51fa';
  console.log('NAVI_CALENDAR_RESPONSE_SIZE '+JSON.stringify({entries:list.entries.length,chars:JSON.stringify(list).length,bytes:Buffer.byteLength(JSON.stringify(list))}));
  assert.ok(row.supplierOriginals,'navi-calendar:source-summary-missing');
  assert.equal(row.invoiceLink,null,'navi-calendar:issued-invoice-link-is-separate');assert.equal(row.invoiceLinkKind,'issued_invoice_income_schedule');
+ const mixed=list.entries.find(p=>p.id===String(mixedPayment));assert.ok(mixed,'navi-calendar:mixed-schedule-in-full-list');
+ assert.ok(mixed.invoiceLink,'navi-calendar:mixed-issued-link-preserved');
+ assert.equal(mixed.invoiceLink.invoiceId,String(issuedId),'navi-calendar:mixed-issued-identity');assert.equal(mixed.invoiceLink.invoiceNumber,'SYN-ISSUED-01');
+ assert.equal(mixed.invoiceLinkKind,'issued_invoice_income_schedule');assert.equal(mixed.invoiceLink.snapshot.total,2200);assert.equal(mixed.invoiceLink.snapshot.status,'sent');assert.equal(mixed.invoiceLink.meaning,'initial_saved_invoice_snapshot_not_synced_not_settlement');
+ assert.equal(mixed.amount,2200);assert.equal(mixed.type,'income');assert.equal(mixed.status,'pending');
+ assert.equal(mixed.supplierOriginals.linkedInvoiceCount,1,'navi-calendar:mixed-supplier-link-preserved');assert.equal(mixed.supplierOriginals.invoices[0].evidenceId,String(invoice));assert.equal(mixed.supplierOriginals.invoices[0].invoiceNumber,'SYN-09');assert.equal(mixed.supplierOriginals.invoices[0].activeSource.totalAmount,12345,'navi-calendar:mixed-amounts-independent');
+ assert.notEqual(mixed.invoiceLink.invoiceId,mixed.supplierOriginals.invoices[0].evidenceId,'navi-calendar:mixed-identities-independent');
  assert.equal(row.supplierOriginals.linkedInvoiceCount,1,'navi-calendar:linked-count');assert.equal(row.supplierOriginals.resolvedInvoiceCount,1);
  const original=row.supplierOriginals.invoices[0];assert.equal(original.invoiceNumber,'SYN-09');assert.equal(original.supplier,'Synthetic supplier');assert.equal(original.activeSource.totalAmount,12345);assert.equal(original.activeSource.fileCount,8);assert.equal(original.activeSource.files.length,5);assert.equal(original.activeSource.filesTruncated,true);
  assert.ok(!JSON.stringify(row).includes('PRIVATE_'),'navi-calendar:no-private-body-or-company');assert.ok(!JSON.stringify(row).includes('SUPERSEDED_'),'navi-calendar:active-source-only');
@@ -86,6 +120,7 @@ const READY=300000,EXPENSE='\u652f\u51fa';
  assert.ok(many.invoices.every(i=>i.activeSource===null),'navi-calendar:missing-active-source-stays-null');
  assert.ok(!list.entries.some(p=>p.id===String(foreignPayment)),'navi-calendar:no-foreign-payment');
  const detail=await read(job,'get_company_calendar_entry',{paymentId:String(linked)});assert.deepEqual(detail.entry.supplierOriginals.invoices,row.supplierOriginals.invoices,'navi-calendar:detail-matches-list');
+ const mixedDetail=await read(job,'get_company_calendar_entry',{paymentId:String(mixedPayment)});assert.deepEqual(mixedDetail.entry.invoiceLink,mixed.invoiceLink,'navi-calendar:mixed-detail-issued-link');assert.deepEqual(mixedDetail.entry.supplierOriginals,mixed.supplierOriginals,'navi-calendar:mixed-detail-supplier-link');assert.equal(mixedDetail.entry.invoiceLinkKind,mixed.invoiceLinkKind);
  assert.ok(job.context.capabilities.every(x=>!x.includes('No other invoice/calendar association exists')),'navi-calendar:server-capability-old-clause-removed');
  const full=await read(job,'list_company_payment_evidence',{paymentId:String(linked)});assert.equal(full.evidence[0].active.files.length,8,'navi-calendar:full-reader-still-available');
  assert.equal((await act(job,'get_company_calendar_entry',{paymentId:String(foreignPayment)})).status,404,'navi-calendar:foreign-detail-denied');
@@ -137,6 +172,8 @@ const READY=300000,EXPENSE='\u652f\u51fa';
  try{assert.equal((await act(job,'get_company_calendar_entry',{paymentId:String(empty)})).status,500,'navi-calendar:unexpected-read-error-500');const failed=await chats.findOne({_id:new ObjectId(job.id)});assert.equal(failed.turns.find(t=>t.id===failed.currentId).readTrace.at(-1).status,500,'navi-calendar:fallback-status-recorded')}
  finally{await admin.command({configureFailPoint:'failCommand',mode:'off'})}
  await links.updateOne({organizationId:A,paymentId:linked,invoiceId:invoice},{$set:{unlinkedAt:new Date()}});const removed=await read(job,'get_company_calendar_entry',{paymentId:String(linked)});assert.equal(removed.entry.supplierOriginals.linkedInvoiceCount,0,'navi-calendar:unlinked-not-returned');
+  await links.updateOne({organizationId:A,paymentId:mixedPayment,invoiceId:invoice},{$set:{unlinkedAt:new Date()}});const mixedUnlinked=await read(job,'get_company_calendar_entry',{paymentId:String(mixedPayment)});assert.equal(mixedUnlinked.entry.supplierOriginals.linkedInvoiceCount,0,'navi-calendar:mixed-supplier-unlinked');assert.deepEqual(mixedUnlinked.entry.invoiceLink,mixed.invoiceLink,'navi-calendar:mixed-unlink-keeps-issued-link');
+  assert.equal(JSON.stringify(await db.collection('invoices').find({}).sort({_id:1}).toArray()),issuedBefore,'navi-calendar:issued-invoices-unchanged');
  assert.equal(JSON.stringify(await payments.find({}).sort({_id:1}).toArray()),savedBefore,'navi-calendar:payment-values-unchanged');assert.equal(JSON.stringify(await sources.find({}).sort({_id:1}).toArray()),sourceBefore,'navi-calendar:source-originals-unchanged');assert.equal(await db.collection('transactions').countDocuments(),0,'navi-calendar:no-ledger-effects');
  assert.equal((await worker('workspace/'+job.id+'/result',{lease:job.lease,proposal:{kind:'unclear',summary:'Synthetic reply.',patch:{},quotes:{}}})).status,200);
  const finished=await db.collection('financecompanyassistants').findOne({_id:new ObjectId(job.id)});assert.equal(finished.turns.at(-1).readTrace.length,100,'navi-calendar:trace-survives-finish');
