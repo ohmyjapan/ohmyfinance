@@ -43,11 +43,24 @@ paths or other companies' records are added to the calendar response. Registrati
 verification. The legacy `invoiceLink` is preserved and labelled `issued_invoice_income_schedule`: a null value does not mean no
 supplier original exists.
 
+The response carries `supplierOriginalsContext` once: the check time, full-detail reader and the meaning/limits of the stored
+metadata. Each row keeps only its counts, bounded invoice identities and truncation flag. The actual company worker prompt names
+both association families and the original readers; a confirmed stored association is never inferred from amounts, titles or dates.
+The calendar-list tool declares `_meta["anthropic/maxResultSizeChars"]: 200000`; the owned MCP server preserves this trusted
+catalogue metadata. This widens that tool's default 50,000-character inline-result threshold, so a normal 100-row list is not replaced
+with an inaccessible file reference. It grants no filesystem access, changes no global CLI setting and leaves unannotated tools
+unchanged. Results beyond the declared bound can still be offloaded; this is not unlimited list delivery. The explicit native replay
+checks the complete result hash in the model's actual inline tool-result message, not only the upstream HTTP response.
+
 Executed company record reads retain at most100 diagnostic events on their exact current turn: tool name, slot, time, HTTP status,
 and hashes of arguments and results. They retain no raw arguments, financial result values, source text or credentials. Successful
 reads and native read errors are recorded; validation and authorization refusals before read execution are outside this trace.
 Recording is best effort, stays within the existing live agent/lease/company/turn filter and preserves the original result/error.
 It changes no conversation revision, payment, original or mutation receipt. Public-reader events are outside this record-read trace.
+The stored trace is excluded from both the live browser conversation and archived conversation responses. It is retained internally
+when the conversation is archived. An admitted read finishing after its lease expires or its current turn changes preserves its original
+result or existing lease/scope refusal, and cannot append a diagnostic to the stale turn or its successor. Default fixtures use owned data only; native-model
+replays are explicit manual checks, including an unfiltered 100-row calendar read. These are scoped regressions, not a reliability rate.
 
 `server/services/financeCompanyAssistantService.ts`:
 

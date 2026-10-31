@@ -17,7 +17,7 @@ const archiveScope = (ownerId: any, organizationId: any, archiveId: any) => ({ _
 const busy = (c: any) => ['queued', 'working'].includes(c.state)
 const claimedAction = (c: any) => (c.turns || []).some((t: any) => (t.actions || []).some((a: any) => a.state === 'claimed'))
 const preview = (text: any) => String(text || '').slice(0, 80)
-const turnView = (t: any) => ({ ...t, ...(t.actions ? { actions: t.actions.map(companyActionReceipt) } : {}) })
+const turnView = ({ readTrace: _readTrace, ...t }: any) => ({ ...t, ...(t.actions ? { actions: t.actions.map(companyActionReceipt) } : {}) })
 const listView = (a: any) => ({ id: String(a._id), segment: a.segment, turnCount: a.turnCount, firstAt: a.firstAt, lastAt: a.lastAt, archivedAt: a.createdAt, preview: preview(a.turns?.[0]?.text) })
 const busyRefusal = '回答を作成中です。完了するか、失敗した場合は「もう一度取得する」の後に新しい会話を始めてください。'
 const claimedRefusal = '保存処理の結果をまだ確認中です。結果が出てから新しい会話を始めてください。'

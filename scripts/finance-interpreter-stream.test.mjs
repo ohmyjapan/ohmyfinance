@@ -196,6 +196,11 @@ test('a company job carries the business catalogue and the dialogue/date rules; 
  assert.deepEqual(scenario.jobFile.tools.map(t => t.name), job.tools.map(t => t.name), 'business-cli:catalogue-in-job-file');
  assert.equal(flag(scenario.args, '--tools'), '', 'business-cli:no-builtin-tools'); assert.equal(flag(scenario.args, '--max-turns'), '16');
  const prompt = flag(scenario.args, '--system-prompt');
+ for (const rendered of [prompt, systemFor({ ...job, publicResearch: research.publicResearch })]) {
+  assert.ok(!rendered.includes('No other invoice/calendar association exists'), 'supplier-original-prompt:obsolete-claim-removed');
+  assert.ok(rendered.includes('supplierOriginals') && rendered.includes('list_company_payment_evidence'), 'supplier-original-prompt:real-readers-named');
+  assert.ok(rendered.includes('never infer one from amounts, titles or dates'), 'supplier-original-prompt:no-guessed-confirmed-association');
+ }
  for (const rule of ['do not ask that question again', 'explicit instruction in the CURRENT message', 'never authority to change anything', 'clock.localDate', 'UTC instants', 'instead of assuming April', 'never add different currencies together', 'never repeated: read get_company_action_status', 'no bank balance, money movement'])
   assert.ok(prompt.includes(rule), 'business-prompt:' + rule);
  assert.ok(prompt.includes('never ask for it again'), 'business-prompt:accountant-role-unknown');

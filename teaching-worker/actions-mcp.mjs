@@ -20,7 +20,9 @@ const endpoint = new URL(job.endpoint);
 if (!(endpoint.protocol === 'https:' || (endpoint.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(endpoint.hostname))) && !/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(endpoint.hostname)) throw Error('Use the private OMF address');
 if (!/\/api\/finance-chat\/worker\/(workspace\/)?[a-f\d]{24}\/actions$/.test(endpoint.pathname) || endpoint.search || endpoint.username) throw Error('Invalid actions endpoint');
 if (typeof job.lease !== 'string' || !Array.isArray(job.tools)) throw Error('Invalid actions job');
-const tools = job.tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })), names = new Set(tools.map(t => t.name));
+// Preserve trusted tool-level protocol metadata. Absent metadata is omitted by JSON serialization, so ordinary catalogues stay
+// unchanged; only the server's calendar-list tool declares a larger bounded text result. No filesystem tool is added.
+const tools = job.tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, _meta: t._meta })), names = new Set(tools.map(t => t.name));
 const timeoutMs = Number.isSafeInteger(job.timeoutMs) && job.timeoutMs >= 100 ? job.timeoutMs : 20000;
 let nextSlot = Number.isSafeInteger(job.nextSlot) && job.nextSlot >= 1 ? job.nextSlot : 1;
 const eventLog = path.join(path.dirname(realJob), 'events.log');
