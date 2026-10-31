@@ -37,6 +37,10 @@
 //      network answered but CORS withheld from one with no answer: its login.mjs in the login.test.mjs seam fails exactly the three detail
 //      tests by name while the 21 earlier tests stay green; and in owned HEADLESS Chrome (OMF_CARD_NATIVE=1, else NOT RUN) the native detail
 //      test, that login.mjs routed into this tree's browser.mjs, sees the real loopback exchange and the page-level pattern but no detail.
+//   F5 fail-first of the Amex language preference (case omf-amex-locale-01) on 9c71012, whose Amex launch passes the q-weighted
+//      --accept-lang that Chrome gives the page as is: its browser.mjs in the defect seam (routed to the bank modules) fails the recorded
+//      wrapper language test by name while the recorded defaults control stays green; and in owned HEADLESS Chrome (OMF_CARD_NATIVE=1, else
+//      NOT RUN) its Amex login page gets the weighted fragments as language tags while the native defaults control stays green.
 //   U  node --test collector/test/legacy-card-import.test.mjs (planner/importer; real DPAPI and ACL helpers on owned roots).
 //   K  node --test collector/test/card-background.test.mjs (Part A: the real wrappers and the real bank callers over a recording launch;
 //      no Chrome).
@@ -47,6 +51,9 @@
 //      logins), the recorded wrapper trace tests of card-background.test.mjs, and its native trace test and native network-detail test in
 //      owned HEADLESS Chrome (never a headed window; the detail test's owned loopback TLS server answers the two Amex host names inside
 //      that Chrome only; OMF_CARD_NATIVE=0 → NOT RUN, red).
+//   AL the Amex language preference: the recorded wrapper and defaults language tests of card-background.test.mjs, and its native wrapper and
+//      defaults language tests in owned HEADLESS Chrome (an owned loopback TLS server answers the Amex login host inside that Chrome only;
+//      OMF_CARD_NATIVE=0 → NOT RUN, red).
 //   S  scripts/finance-legacy-card-import-integration.cjs (service, route, the real collector over TLS, schedule, guard mutants).
 //   C  the same with --ui and OMF_CARD_NATIVE=1: the setup page (L4) and the built connections page (L8, needs .output) in owned
 //      headless Chrome. OMF_CARD_NATIVE=0 → NOT RUN (red).
@@ -55,8 +62,9 @@
 //   R  affected existing collector suites without Chrome; RN (native) the Chrome-launching collector suites of the shared browser lane.
 //   M  reintroduced defects through their own legs (an unchanged copy of each selection first). The Amex login trace's defects run through
 //      L (login.test.mjs), K (the recorded wrapper) and NT (the native trace test, HEADLESS Chrome only); a login.mjs copy reaches the
-//      wrapper through a browser.mjs copy that imports it.
-// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,F3,F4,U,K,N,T,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
+//      wrapper through a browser.mjs copy that imports it. The Amex language preference's defects run through K (the recorded language
+//      tests) and NT (its native wrapper language test, HEADLESS Chrome only).
+// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,F3,F4,F5,U,K,N,T,AL,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -87,6 +95,9 @@ export const TRACE = 'fbb09d3611bbd3a90aa66368d2d898c062060550';
 // The release before the trace's network detail (amex-network-detail-01): its actual job's six login POSTs failed with no page-level
 // answer, and its trace cannot tell an answer CORS withheld from none.
 export const DETAIL = '172eba8d28341db59ebd2553d090210c86c894f2';
+// The release before the Amex language preference (amex-locale-01): its Amex launch passes the q-weighted --accept-lang, which Chrome gives
+// the page as its language tags (navigator.languages ja-JP, ja;q=0.9, en;q=0.8, rejected by Intl.getCanonicalLocales).
+export const LOCALE = '9c71012c188d57066dc53609b3893a2ec4df86fd';
 const execute = promisify(execFile);
 const sha256 = v => createHash('sha256').update(v).digest('hex');
 const EVIDENCE = process.env.OMF_CARD_EVIDENCE || '';
@@ -232,7 +243,19 @@ export const MUTANTS = [
   ['MT46-detail-header-read', LOGIN, [['const status = statusOf(e.statusCode), r = ids.get(id);', 'const status = statusOf(e.headers && e.statusCode), r = ids.get(id);']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-no-raw-read/],
   ['MT47-detail-unknown-value-kept', LOGIN, [['one(e.corsErrorStatus?.corsError, CORS_ERRORS)', '(e.corsErrorStatus?.corsError ?? null)']], 'L', '^login trace \\(network detail, arrival order', /login-trace:(schema value|no-leak|detail-closed-values)/],
   ['MT48-detail-partial-attach-kept', LOGIN, [["  if (!detail.listening) { detailOpen = false; for (const [name, listener] of sdkAttached.splice(0)) { try { sdk.off(name, listener); } catch { /* gone */ } } } // all or none\n", '']], 'L', '^login trace \\(network detail, best effort', /login-trace:detail-unavailable listener-refused/],
-  ['MT49-detail-default-looked-up', LOGIN, [["const t = typeof trace === 'function' ? loginTrace(page, trace) : null; // guard:login-trace-optional", "const t = typeof trace === 'function' ? loginTrace(page, trace) : (page._client?.(), null); // guard:login-trace-optional"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-default-untouched/]
+  ['MT49-detail-default-looked-up', LOGIN, [["const t = typeof trace === 'function' ? loginTrace(page, trace) : null; // guard:login-trace-optional", "const t = typeof trace === 'function' ? loginTrace(page, trace) : (page._client?.(), null); // guard:login-trace-optional"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-default-untouched/],
+  // The Amex language preference (amex-locale-01): only the Amex wrapper launches with the plain tags; the release's arguments of every other
+  // launch and the Amex launch's other arguments stay as they were. K: the recorded language tests; NT: the native wrapper language test,
+  // HEADLESS Chrome only.
+  ['MG1-amex-plain-languages-omitted', BR, [['root: directory, plainLanguages: true, onLaunch', 'root: directory, onLaunch']], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
+  ['MG2-weighted-tags-restored', BR, [["? '--accept-lang=ja-JP,ja,en' : arg", "? '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8' : arg"]], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
+  ['MG2N-weighted-tags-restored-native', BR, [["? '--accept-lang=ja-JP,ja,en' : arg", "? '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8' : arg"]], 'NT', '^Amex language preference in HEADLESS Chrome \\(wrapper', /amex-locale:native-languages/],
+  ['MG3-option-ignored', BR, [['args: [...(plainLanguages ? PLAIN_LANGUAGE_ARGS : LAUNCH_ARGS), ', 'args: [...LAUNCH_ARGS, ']], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
+  ['MG4-global-language-changed', BR, [["'--accept-lang=ja-JP,ja;q=0.9,en;q=0.8'", "'--accept-lang=ja-JP,ja,en'"]], 'K', '^Amex language preference \\(defaults', /amex-locale:default-constant-preserved/],
+  ['MG5-default-plain', BR, [['headless = false, plainLanguages = false, onLaunch', 'headless = false, plainLanguages = true, onLaunch']], 'K', '^Amex language preference \\(defaults', /amex-locale:(aplus|bank|yayoi|research|headless|factory)-default-preserved/],
+  ['MG6-aplus-plain', BR, [['root: directory, onLaunch, background: true, minimized: true }); // guard:card-background-aplus', 'root: directory, plainLanguages: true, onLaunch, background: true, minimized: true }); // guard:card-background-aplus']], 'K', '^Amex language preference \\(defaults', /amex-locale:aplus-default-preserved/],
+  ['MG7-amex-flag-added', BR, [["? '--accept-lang=ja-JP,ja,en' : arg));", "? '--accept-lang=ja-JP,ja,en' : arg).concat('--disable-web-security'));"]], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
+  ['MG8-amex-lang-switch-replaced', BR, [["arg.startsWith('--accept-lang=') ?", "arg.startsWith('--lang=') || arg.startsWith('--accept-lang=') ?"]], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/]
 ];
 
 function runChild(args, env, timeout) {
@@ -334,7 +357,7 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
   const chosenMutants = (process.env.OMF_CARD_MUTANTS || '').split(',').map(s => s.trim()).filter(Boolean);
   const unknown = chosenMutants.filter(x => !MUTANTS.some(mm => mm[0] === x)); if (unknown.length) return { pass: false, databaseCoverage: { executed: false, ownedProcess: false }, message: 'RED unknown OMF_CARD_MUTANTS: ' + unknown.join(', ') };
   const MUTANTS_RUN = chosenMutants.length ? MUTANTS.filter(mm => chosenMutants.includes(mm[0])) : MUTANTS;
-  const counts = { unitTests: 0, backgroundTests: 0, nativeTests: 0, traceTests: 0, harnessLegs: 0, serviceGuardMutants: '', ui: 0, existing: {}, failFirst: {}, mutantsCaught: 0, mutantsTotal: MUTANTS_RUN.length, native: NATIVE };
+  const counts = { unitTests: 0, backgroundTests: 0, nativeTests: 0, traceTests: 0, languageTests: 0, harnessLegs: 0, serviceGuardMutants: '', ui: 0, existing: {}, failFirst: {}, mutantsCaught: 0, mutantsTotal: MUTANTS_RUN.length, native: NATIVE };
   const want = name => !LEGS.length || LEGS.includes(name);
   const keep = async (name, text) => { if (EVIDENCE) { await mkdir(EVIDENCE, { recursive: true }); await writeFile(path.join(EVIDENCE, 'leg-' + name + '.txt'), text); } };
   const leg = async (name, fn) => { const key = name.split(' ')[0]; if (!want(key)) return; const t = Date.now(); try { lines.push(name + ': ' + await fn() + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); green.add(key); } catch (e) { pass = false; const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 2400); lines.push(name + ': ' + (/^(SETUP|NOT RUN)/.test(msg) ? '' : 'RED ') + msg); } };
@@ -463,6 +486,20 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         counts.failFirst.DETAIL_NT = t.fail + '/' + (t.pass + t.fail); found.push(DETAIL.slice(0, 7) + ' headless red (amex-trace:native-detail: the real exchange and page-level pattern seen, no detail)'); }
       return found.join('; ');
     });
+    // F5: the Amex language preference (amex-locale-01) on 9c71012, whose Amex launch passes the q-weighted --accept-lang that Chrome gives
+    // the page as is: its browser.mjs in the defect seam (routed to the bank modules) under the recorded language tests, then natively in owned
+    // HEADLESS Chrome; in both, the defaults control of the same selection stays green.
+    await leg('F5 fail-first of the Amex language preference on ' + LOCALE.slice(0, 7) + ' (the weighted list reaches the Amex page as its language tags)', async () => {
+      const found = [], text = await baseText(BR, LOCALE); if (!text) throw new Error('SETUP ' + LOCALE + ' is not readable here');
+      { const t = tests(await withCopy(BR, 'locale', text, copy => withBankRoute(copy, 'locale', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, '^Amex language preference \\((wrapper|defaults)\\)')))); await keep('F5-K', t.out);
+        if (t.fail !== 1 || t.pass !== 1 || !t.out.includes('amex-locale:proper-language-preferences')) throw new Error('the recorded language test did not fail first on ' + LOCALE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
+        counts.failFirst.LOCALE_K = t.fail + '/' + (t.pass + t.fail); found.push(LOCALE.slice(0, 7) + ' K red (amex-locale:proper-language-preferences: the weighted list launched); its defaults control green'); }
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + LOCALE.slice(0, 7) + ' native language fail-first needs owned headless Chrome');
+        const t = tests(await withCopy(BR, 'locale', text, copy => unit(BACKGROUND, { OMF_TEST_BROWSER_MODULE: copy, OMF_CARD_NATIVE: '1' }, '^Amex language preference in HEADLESS'))); await keep('F5-NT', t.out);
+        if (t.fail !== 1 || t.pass !== 1 || !t.out.includes('amex-locale:native-languages') || !t.out.includes('ja;q=0.9')) throw new Error('the native language test did not fail first on ' + LOCALE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
+        counts.failFirst.LOCALE_NT = t.fail + '/' + (t.pass + t.fail); found.push(LOCALE.slice(0, 7) + ' headless red (amex-locale:native-languages: the Amex page got ja;q=0.9 and en;q=0.8 as language tags); its native defaults control green'); }
+      return found.join('; ');
+    });
     await leg('U node --test ' + UNIT, async () => { const r = await unit(UNIT), t = tests(r); await keep('U', t.out); counts.unitTests = t.pass; unitGreen(r, t, 'the importer'); return t.pass + ' tests green'; });
     await leg('K node --test ' + BACKGROUND + ' (Part A, no Chrome)', async () => { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }), t = tests(r); await keep('K', t.out); counts.backgroundTests = t.pass; unitGreen(r, t, 'the wrappers'); return t.pass + ' tests green, ' + t.skipped + ' skipped (geometry excluded; native legs are leg N)'; });
     await leg('N native background Chrome (OMF_CARD_NATIVE=1)', async () => {
@@ -478,6 +515,13 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
       { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native trace coverage is claimed (' + done.join('; ') + ')');
         const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace in HEADLESS'), t = tests(r); await keep('T-NT', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 1) throw new Error('expected the 1 native headless trace test, ran ' + t.pass); counts.traceTests += t.pass; done.push('native headless ' + t.pass + '/1');
         const d = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace network detail in HEADLESS'), dt = tests(d); await keep('T-ND', dt.out); unitGreen(d, dt, 'the Amex wrapper'); if (dt.pass !== 1) throw new Error('expected the 1 native headless network-detail test, ran ' + dt.pass); counts.traceTests += dt.pass; done.push('native headless detail ' + dt.pass + '/1'); }
+      return done.join('; ') + ' green';
+    });
+    await leg('AL the Amex language preference: the recorded wrapper and defaults tests and, in owned HEADLESS Chrome, the native wrapper and defaults tests', async () => {
+      const done = [];
+      { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }, '^Amex language preference \\((wrapper|defaults)\\)'), t = tests(r); await keep('AL-K', t.out); unitGreen(r, t, 'the card wrappers'); if (t.pass !== 2) throw new Error('expected the 2 recorded language tests, ran ' + t.pass); counts.languageTests += t.pass; done.push('recorded ' + t.pass + '/2'); }
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native language coverage is claimed (' + done.join('; ') + ')');
+        const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex language preference in HEADLESS'), t = tests(r); await keep('AL-NT', t.out); unitGreen(r, t, 'the card wrappers'); if (t.pass !== 2) throw new Error('expected the 2 native headless language tests, ran ' + t.pass); counts.languageTests += t.pass; done.push('native headless ' + t.pass + '/2'); }
       return done.join('; ') + ' green';
     });
     await leg('S services, route, the real collector over TLS, schedule and the service guard mutants (L1-L3, L5-L7)', async () => {

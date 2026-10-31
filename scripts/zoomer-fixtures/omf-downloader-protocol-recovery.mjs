@@ -15,8 +15,10 @@
 // lane, the staged package with the catch removed fails the survival assertion, and a stage allowlist without the helper fails its
 // named manifest check; B a byte proof that browser.mjs differs from 5b7ef2c6 by the one export line, the two card wrappers and the
 // card-only fold's `minimized` option in backgroundPage and browserFor only, with, for that option only, the card page's rendering in
-// backgroundPage (case omf-card-rendering-20261031: the focus emulation of the page's own session) (launch flags, ownership, closure,
-// showWindow unchanged; a call without the option creates the 5b7ef2c6 window and page; every other top-level statement compared) and the
+// backgroundPage (case omf-card-rendering-20261031: the focus emulation of the page's own session), and the Amex wrapper's `plainLanguages`
+// option in browserFor with its one PLAIN_LANGUAGE_ARGS line (case omf-amex-locale-01) (LAUNCH_ARGS, ownership, closure, showWindow
+// unchanged; a call without the options creates the 5b7ef2c6 window and page with the 5b7ef2c6 arguments; every other top-level statement
+// compared) and the
 // reversible test-only copy of the browser-boundary legs B1-B7 (B8 calls showWindow
 // and brings a window to the front: excluded by the owner's no-foreground order, never run, never counted). The copy's headless
 // Chrome legs are timing-bound and varied between runs under other sessions' load (fixture-01/03/04), so they are not part of this
@@ -228,28 +230,39 @@ async function boundaryProof(temp, assert) {
     browserFor: [['onLaunch = null, background = false } = {}) {', 'onLaunch = null, background = false, minimized = false } = {}) {'], ['browser.newPage = () => backgroundPage(browser);', 'browser.newPage = () => backgroundPage(browser, { minimized });']]
   };
   const folded = (name, text) => FOLD[name].reduce((out, [from, to]) => { const hits = out.split(from).length - 1; if (hits !== 1) throw new Error('FAIL card-only-fold anchor hits ' + hits + ' in ' + name + ': ' + from); return out.replace(from, () => to); }, text);
+  // The Amex language preference (case omf-amex-locale-01) changes browserFor once more, only for its new option: `plainLanguages` (default
+  // off; collectStatement alone passes it) launches with PLAIN_LANGUAGE_ARGS in place of LAUNCH_ARGS. LAUNCH_ARGS stays the 5b7ef2c6
+  // declaration, PLAIN_LANGUAGE_ARGS is pinned to this one line right after it (LAUNCH_ARGS with --accept-lang as the plain tags ja-JP,ja,en),
+  // and a call without the option launches with the 5b7ef2c6 arguments. Its two anchored edits apply after the card-only fold's.
+  const LOCALE = { browserFor: [['headless = false, onLaunch = null, ', 'headless = false, plainLanguages = false, onLaunch = null, '], ['args: [...LAUNCH_ARGS, ', 'args: [...(plainLanguages ? PLAIN_LANGUAGE_ARGS : LAUNCH_ARGS), ']] };
+  const PLAIN_LANGUAGE_ARGS = "export const PLAIN_LANGUAGE_ARGS = Object.freeze(LAUNCH_ARGS.map(arg => arg.startsWith('--accept-lang=') ? '--accept-lang=ja-JP,ja,en' : arg));";
+  const anchored = (label, text, edits) => edits.reduce((out, [from, to]) => { const hits = out.split(from).length - 1; if (hits !== 1) throw new Error('FAIL ' + label + ' anchor hits ' + hits + ': ' + from); return out.replace(from, () => to); }, text);
+  const pinned = (name, was) => anchored('amex-locale ' + name, FOLD[name] ? folded(name, was) : was, LOCALE[name] || []);
   for (const name of ['LAUNCH_ARGS', 'BACKGROUND_ARGS', 'OFFSCREEN', 'ephemeralProfile', 'assertEphemeralPath', 'assertPlainDirectory', 'probeProfile', 'backgroundPage', 'showWindow', 'browserFor', 'closeEntry', 'closeOwnedBrowsers', 'removeEphemeral', 'recoverEphemeral']) {
     const was = declaration(head, name); assert.ok(was, 'frame-init:pinned-declaration ' + name);
-    if (FOLD[name]) assert.equal(declaration(now, name), folded(name, was), 'frame-init:card-only-fold-function ' + name);
+    if (FOLD[name] || LOCALE[name]) assert.equal(declaration(now, name), pinned(name, was), 'frame-init:' + (LOCALE[name] ? 'card-only-fold-and-amex-locale' : 'card-only-fold') + '-function ' + name);
     else assert.equal(declaration(now, name), was, 'frame-init:unchanged-function ' + name);
   }
+  assert.equal(declaration(now, 'PLAIN_LANGUAGE_ARGS'), PLAIN_LANGUAGE_ARGS, 'frame-init:amex-locale-args');
   // Keep every executable top-level statement outside the two deliberately changed card wrappers unchanged as well: declaration
-  // pins alone would miss an added side effect or a changed import. The one new loginUi import is the only allowed import addition;
-  // backgroundPage and browserFor are compared with their pins, never left out.
+  // pins alone would miss an added side effect or a changed import. The one new loginUi import is the only allowed import addition and
+  // the one PLAIN_LANGUAGE_ARGS line right after LAUNCH_ARGS the only allowed statement addition; backgroundPage and browserFor are
+  // compared with their pins, never left out.
   const ts = createRequire(path.join(root, 'package.json'))('typescript'), printer = ts.createPrinter({ removeComments: true });
   const core = text => { const sf = ts.createSourceFile('browser.mjs', text.split('\n').filter(l => l !== EXPORT_LINE).join('\n'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS); assert.equal(sf.parseDiagnostics.length, 0, 'frame-init:browser-parses'); const wrappers = sf.statements.filter(s => ts.isFunctionDeclaration(s) && ['collectStatement', 'collectAplusStatement'].includes(s.name?.text)); assert.equal(wrappers.length, 2, 'frame-init:two-card-wrappers'); return sf.statements.filter(s => !wrappers.includes(s)).map(s => { const printed = printer.printNode(ts.EmitHint.Unspecified, s, sf); return ts.isImportDeclaration(s) && s.moduleSpecifier.text === './login.mjs' ? printed.replace(/, loginUi(?= } from)/, '') : printed; }).join('\n'); };
-  const expected = Object.keys(FOLD).reduce((text, name) => { const was = declaration(head, name); return text.replace(was, () => folded(name, was)); }, head);
+  const launchArgs = declaration(head, 'LAUNCH_ARGS'), changed = [...new Set([...Object.keys(FOLD), ...Object.keys(LOCALE)])];
+  const expected = anchored('amex-locale LAUNCH_ARGS', changed.reduce((text, name) => { const was = declaration(head, name); return text.replace(was, () => pinned(name, was)); }, head), [[launchArgs + '\n', launchArgs + '\n' + PLAIN_LANGUAGE_ARGS + '\n']]);
   assert.equal(core(now), core(expected), 'frame-init:browser-outside-card-wrappers-unchanged');
   // the reversible test-only copy the separate A/B runner executes (B8 excluded) is generated and proven here; Chrome is not launched
   const copy = await boundaryCopy(temp);
   assert.equal(copy.unchangedFromHead, true, 'frame-init:boundary-test-unchanged');
-  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers + the card-only fold's minimized option + the card page's rendering for that option only (backgroundPage and browserFor equal to their pins, so a call without the option creates the ${BASE.slice(0, 8)} window and page; the other 12 pinned declarations byte-identical: launch flags, ownership, closure and showWindow unchanged); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
+  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers + the card-only fold's minimized option + the card page's rendering for that option only + the Amex wrapper's plainLanguages option with its one PLAIN_LANGUAGE_ARGS line (backgroundPage and browserFor equal to their pins, so a call without the options creates the ${BASE.slice(0, 8)} window and page with the ${BASE.slice(0, 8)} arguments; PLAIN_LANGUAGE_ARGS equal to its pin; the other 12 pinned declarations byte-identical: LAUNCH_ARGS, ownership, closure and showWindow unchanged); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
 }
 
 // ── C: every production importer of collector/browser.mjs is classified ──
 export const CALLERS = {
-  'collector/index.mjs': 'Amex/Aplus statement collection, startup recovery, lock/expiry/locked closure: U (fault/healthy SDK), P (staged index graph), B1-B7 through startCollector in the separate candidate/baseline A/B runs; its card wrappers pass the minimized option, whose page keeps rendering (card fixture K/N)',
-  'collector/bank.mjs': 'bank statement/observe/guided setup and balance (withBankBrowser, dynamic): U real-Chrome lane runs bank-balance/ensureBankLogin through the same launcher; no minimized option, so its background window and page are the 5b7ef2c6 ones, without focus emulation (pinned here; card fixture K bank caller recordings)',
+  'collector/index.mjs': 'Amex/Aplus statement collection, startup recovery, lock/expiry/locked closure: U (fault/healthy SDK), P (staged index graph), B1-B7 through startCollector in the separate candidate/baseline A/B runs; its card wrappers pass the minimized option, whose page keeps rendering (card fixture K/N), and the Amex wrapper alone passes plainLanguages (card fixture K/AL)',
+  'collector/bank.mjs': 'bank statement/observe/guided setup and balance (withBankBrowser, dynamic): U real-Chrome lane runs bank-balance/ensureBankLogin through the same launcher; no minimized or plainLanguages option, so its background window and page are the 5b7ef2c6 ones, without focus emulation, launched with LAUNCH_ARGS (pinned here; card fixture K bank caller recordings)',
   'collector/yayoi.mjs': 'Yayoi export (dynamic browserFor): same launcher and SDK instance; no own SDK callback; proven by mechanism, not run',
   'cloud-probe/run.mjs': 'Railway Amex probe container (amexPage/collectFromPage); its image copies collector/*.mjs (helper included); excluded from execution',
   'research-worker/browser.mjs': 'public research reader (browserFor): same launcher and SDK instance; public network; proven by mechanism, not run',

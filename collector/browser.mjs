@@ -21,6 +21,12 @@ const GLOBAL = 'https://global.americanexpress.com', STATEMENT_PATH = '/activity
 // rebrowser-puppeteer-core with the pipe transport — no --no-sandbox, no --disable-web-security, no TCP debugging
 // port — on a profile no other Chrome is using. The collector never attaches to an existing browser.
 export const LAUNCH_ARGS = Object.freeze(['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync']);
+// Case omf-amex-locale-01, the Amex wrapper only: Chrome takes --accept-lang as its language preference list as given, so the q weights
+// above reach the page literally (navigator.languages ja-JP, ja;q=0.9, en;q=0.8, which Intl.getCanonicalLocales rejects) and Chrome weights
+// that list again for the Accept-Language header (owned headless Chrome 155 sent ja-JP,ja;q=0.9,ja;q=0.9;q=0.8,en;q=0.8;q=0.7). With
+// browserFor's plainLanguages the launch uses these arguments instead: LAUNCH_ARGS with that one switch as plain tags, which Chrome exposes
+// as ja-JP, ja, en and weights itself (ja-JP,ja;q=0.9,en;q=0.8). Only collectStatement asks for it; every other launch keeps LAUNCH_ARGS.
+export const PLAIN_LANGUAGE_ARGS = Object.freeze(LAUNCH_ARGS.map(arg => arg.startsWith('--accept-lang=') ? '--accept-lang=ja-JP,ja,en' : arg));
 /** @type {Map<number, { key: string, profile: string, ephemeral: boolean, root: string|null, pid: number, browser: any, child: any }>} */
 const owned = new Map();
 
@@ -113,8 +119,9 @@ export async function showWindow(page, { margin = 40 } = {}) {
  * hands the process to the batch's broker (job object) here; a failure closes the browser and rethrows. background (headed
  * only; bank and card retrievals): no startup window, and this browser's newPage() opens an inactive off-screen window (see above).
  * minimized (with background; the two card wrappers only, default off): that window is created minimized and its page keeps rendering.
+ * plainLanguages (the Amex wrapper only, default off): Chrome is launched with PLAIN_LANGUAGE_ARGS in place of LAUNCH_ARGS (see above).
  */
-export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, onLaunch = null, background = false, minimized = false } = {}) {
+export async function browserFor(profile, { ephemeral = false, root = /** @type {string|null} */ (null), headless = false, plainLanguages = false, onLaunch = null, background = false, minimized = false } = {}) {
   const key = keyOf(profile);
   for (const entry of owned.values()) if (entry.key === key && entry.browser.connected) return entry.browser;
   if (ephemeral) { assertEphemeralPath(profile, root); await mkdir(ephemeralRoot(root), { recursive: true }); await assertPlainDirectory(ephemeralRoot(root)); }
@@ -125,7 +132,7 @@ export async function browserFor(profile, { ephemeral = false, root = /** @type 
   const executablePath = findChrome();
   if (!executablePath) throw new Error('Google Chrome was not found in its standard locations on this PC');
   const quiet = background && !headless;
-  const browser = await puppeteer.launch({ executablePath, pipe: true, headless, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...LAUNCH_ARGS, ...(quiet ? BACKGROUND_ARGS : [])], ...(quiet ? { ignoreDefaultArgs: ['about:blank'], waitForInitialPage: false } : {}) });
+  const browser = await puppeteer.launch({ executablePath, pipe: true, headless, userDataDir: profile, defaultViewport: null, protocolTimeout: 30000, args: [...(plainLanguages ? PLAIN_LANGUAGE_ARGS : LAUNCH_ARGS), ...(quiet ? BACKGROUND_ARGS : [])], ...(quiet ? { ignoreDefaultArgs: ['about:blank'], waitForInitialPage: false } : {}) });
   if (quiet) browser.newPage = () => backgroundPage(browser, { minimized }); // guard:background-window
   const child = browser.process(), pid = child && child.pid ? child.pid : -1;
   const entry = { key, profile, ephemeral, root, pid, browser, child };
@@ -223,10 +230,11 @@ export async function selectLatestStatement(page, primaryCard) {
  * (schema amex-login-trace-1, created exclusively inside the private directory, as the bank diagnostics are), the 20 newest kept per
  * account. It is outside the outbox: pending(), the upload and recovery never read it, and no route serves it. Stopping and writing are
  * bounded together (5 s) and every error is ignored, so the job's result, its statuses and the closure are those it had without the trace.
+ * Case omf-amex-locale-01: this launch alone asks for plainLanguages, so Chrome gives the Amex pages the language preference ja-JP, ja, en.
  */
 export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', reveal = showWindow } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);
-  const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true, minimized: true }); // guard:card-background-amex
+  const browser = await browserFor(profile, { ephemeral: true, root: directory, plainLanguages: true, onLaunch, background: true, minimized: true }); // guard:card-background-amex
   const events = []; let ui = null, outcome = 'failed', overflow = 0;
   try {
     const page=await amexPage(browser);

@@ -349,6 +349,61 @@ test('showWindow and the background flags are unchanged: attention reuses the ba
 });
 test('actual reveal geometry on the owner desktop', { skip: 'EXCLUDED by the owner no-foreground order: the real showWindow moves a window onto the owner\'s screen; its geometry is the unchanged bank lane (browser-boundary B8), pinned here by its bytes' }, () => {});
 
+// ── the Amex language preference (case omf-amex-locale-01) ───────────────────────────────────────────────────────────────────────────
+// Chrome takes --accept-lang as its language preference list as given, so the release's q-weighted switch reached the Amex pages literally
+// (navigator.languages ja-JP, ja;q=0.9, en;q=0.8). Only the Amex wrapper launches with the plain tags ja-JP, ja, en; every other launch of the
+// same launcher (the Aplus wrapper, the bank callers, the visible bank lane, Yayoi's and the public research reader's options, a headless
+// default) keeps the release's arguments byte for byte. Both lists are pinned literally here, so a change of either is a change of this file.
+const RELEASE_LAUNCH_ARGS = ['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync'];
+const AMEX_LAUNCH_ARGS = ['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja,en', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync'];
+const AMEX_LANGUAGES = ['ja-JP', 'ja', 'en'];
+// The language list of a launch's --accept-lang, and what Intl.getCanonicalLocales makes of a list (its error's name when it rejects one).
+const acceptTags = args => String(args?.find(arg => arg.startsWith('--accept-lang=')) ?? '').slice('--accept-lang='.length).split(',');
+const canonical = tags => { try { return Intl.getCanonicalLocales(tags); } catch (error) { return String(error?.name); } };
+// The two card wrappers over the recording launch, each stopped where the person would be asked; their one launch's options.
+async function cardLaunch(lane) {
+  const [makePage, run] = lane === 'amex' ? [fakeAmexPage, dir => B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'language', reveal: async () => { throw new Error(PERSON_NEEDED); } })] : [fakeAplusPage, dir => B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'language', reveal: async () => { throw new Error(PERSON_NEEDED); } })];
+  const stand = recordingLaunch(() => makePage([], { refuse: true })), dir = await owned('language-' + lane);
+  await withLaunch(stand.launch, () => assert.rejects(run(dir), new RegExp(PERSON_NEEDED)));
+  assert.equal(stand.record.launches.length, 1, 'amex-locale:recorded-only ' + lane);
+  return stand.record.launches[0];
+}
+test('Amex language preference (wrapper): the real collectStatement launches with the plain tags ja-JP, ja, en in place of the weighted list; every other launch option is the Aplus wrapper\'s', { skip: WINDOWS, timeout: 120000 }, async () => {
+  const amex = await cardLaunch('amex'), aplus = await cardLaunch('aplus');
+  assert.deepEqual(amex.args, [...AMEX_LAUNCH_ARGS, '--no-startup-window'], 'amex-locale:proper-language-preferences ' + JSON.stringify(amex.args));
+  assert.deepEqual(canonical(acceptTags(amex.args)), AMEX_LANGUAGES, 'amex-locale:valid-tags');
+  const rest = ({ args: _args, userDataDir: _profile, ...options }) => options;
+  assert.deepEqual(rest(amex), rest(aplus), 'amex-locale:other-launch-options-unchanged ' + JSON.stringify([rest(amex), rest(aplus)]));
+  assert.deepEqual(B.ownedBrowsers(), [], 'amex-locale:registry-empty');
+});
+test('Amex language preference (defaults): every other launch keeps the release\'s arguments byte for byte — the Aplus wrapper, the bank statement, guided observe and hourly balance callers, the visible bank lane, and direct launches with Yayoi\'s, the public reader\'s, a headless and a background default\'s options', { skip: WINDOWS || UNROUTED, timeout: 180000 }, async () => {
+  assert.deepEqual([...B.LAUNCH_ARGS], RELEASE_LAUNCH_ARGS, 'amex-locale:default-constant-preserved');
+  const seen = { aplus: [(await cardLaunch('aplus')).args] };
+  for (const [lane, call] of [
+    ['statement', ({ bank, dir, bound }) => bank.collectBankStatement(bound, { provider: 'synthetic', snapshot: { provider: 'synthetic', variant: null } }, dir, async () => {}, { adapter: { label: 'Synthetic bank', support: 'verified', ui() { throw new Error(BANK_STOP); } }, batch: 'language-statement' })],
+    ['guided-observe', ({ bank, dir, bound }) => bank.observeBankPortal(bound, { provider: 'paypay', snapshot: { provider: 'paypay', variant: 'standard' } }, dir, async () => {}, { batch: 'language-guided-observe', ui: STOP_UI })],
+    ['balance', ({ balance, dir, bound }) => balance.inquireBalance(bound, { kind: 'balance', provider: 'ikeda', snapshot: { provider: 'ikeda', variant: 'portal' } }, dir, async () => {}, { batch: 'language-balance' })],
+    ['visible', ({ bank, dir, bound }) => bank.observeBankPortal(bound, { provider: 'paypay', snapshot: { provider: 'paypay', variant: null } }, dir, async () => {}, { batch: 'language-visible', ui: STOP_UI })]
+  ]) {
+    const run = await bankCaller('language-' + lane, call);
+    assert.ok(run.routed, 'amex-locale:bank-routed ' + lane + ': the bank module did not launch through the browser.mjs under test; ' + ended(run));
+    seen[lane] = run.launches.map(launch => launch.args);
+  }
+  for (const [lane, options] of [['yayoi', dir => ({ ephemeral: true, root: dir, onLaunch: async () => {} })], ['research', () => undefined], ['headless', () => ({ headless: true })], ['factory-background', () => ({ background: true })]]) {
+    const stand = recordingLaunch(() => fakeAmexPage([])), dir = await owned('language-' + lane), given = options(dir);
+    const profile = given?.ephemeral ? B.ephemeralProfile(dir, BANK.ownerId, 'language', lane, 'direct') : path.join(dir, 'profile');
+    await withLaunch(stand.launch, async () => { try { await B.browserFor(profile, given); } finally { await B.closeOwnedBrowsers(); } });
+    seen[lane] = stand.record.launches.map(launch => launch.args);
+  }
+  const background = [...RELEASE_LAUNCH_ARGS, '--no-startup-window'], all = JSON.stringify(seen);
+  assert.deepEqual(seen.aplus, [background], 'amex-locale:aplus-default-preserved ' + all);
+  for (const lane of ['statement', 'guided-observe', 'balance']) assert.deepEqual(seen[lane], [background], 'amex-locale:bank-default-preserved ' + lane + ' ' + all);
+  assert.deepEqual(seen.visible, [RELEASE_LAUNCH_ARGS], 'amex-locale:bank-default-preserved visible ' + all);
+  for (const lane of ['yayoi', 'research', 'headless']) assert.deepEqual(seen[lane], [RELEASE_LAUNCH_ARGS], 'amex-locale:' + lane + '-default-preserved ' + all);
+  assert.deepEqual(seen['factory-background'], [background], 'amex-locale:factory-default-preserved ' + all);
+  assert.deepEqual(B.ownedBrowsers(), [], 'amex-locale:registry-empty');
+});
+
 // ── the value-free login trace of the Amex wrapper (case omf-amex-login-fix-20261031) ─────────────────────────────────────────────────
 // The REAL collectStatement over the recording launch, with a fake issuer page the real loginUi signs in on: the fictional login typed,
 // ログイン pressed once, the login module's CORS preflight to its login API failing (its POST never sent), an unrelated synthetic POST
@@ -999,4 +1054,65 @@ test('Amex login trace network detail in HEADLESS Chrome: the real wrapper\'s re
   for (const leak of TRACE_LEAKS) assert.ok(!text.includes(leak), 'amex-trace:native-detail-no-leak ' + leak);
   t.diagnostic('network detail (leak-checked above): ' + JSON.stringify(detail));
   t.diagnostic('page session commands during the job (puppeteer\'s): ' + JSON.stringify([...new Set(seen.sdkSent)]));
+});
+// The Amex language preference natively (case omf-amex-locale-01), in HEADLESS Chrome only (no window of the owner's desktop exists). Each
+// launch is made headless beneath its own options, and an owned loopback TLS server answers the Amex login host inside that Chrome alone (a
+// throwaway certificate accepted by that Chrome alone, every other name resolves nowhere, nothing intercepted): the login page's own world
+// reads the language preference Chrome gives it, and the server keeps the Accept-Language header Chrome sent for that document. Synthetic:
+// it shows what Chrome makes of each launch's switch, not what the issuer does with it.
+const LANGUAGE_FACTS = () => { let canonical; try { canonical = Intl.getCanonicalLocales(navigator.languages); } catch (error) { canonical = String(error?.name); } return { language: navigator.language, languages: [...navigator.languages], canonical, intlLocale: Intl.DateTimeFormat().resolvedOptions().locale }; };
+// An Accept-Language value whose every item is one language tag with at most one weight (RFC 9110 12.5.4), and those tags in order.
+const LANGUAGE_ITEM = /^([A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*)(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?$/;
+const acceptLanguage = header => { const items = String(header ?? '').split(',').map(item => LANGUAGE_ITEM.exec(item.trim())); return { wellFormed: typeof header === 'string' && items.every(Boolean), tags: items.map(m => m?.[1] ?? null) }; };
+async function languageSite(dir, record) {
+  const key = path.join(dir, 'key.pem'), cert = path.join(dir, 'cert.pem');
+  await execute(OPENSSL, ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', '/CN=omf-synthetic.invalid'], { windowsHide: true, timeout: 30000 });
+  const server = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
+    const host = String(req.headers.host).split(':')[0], { pathname } = new URL(req.url, 'https://' + host); req.resume();
+    record.push({ host, method: req.method, pathname, acceptLanguage: req.headers['accept-language'] ?? null });
+    if (host === 'www.americanexpress.com' && req.method === 'GET' && pathname === new URL(AMEX_LOGIN).pathname) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(SYNTHETIC[AMEX_LOGIN].body); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  return { port: server.address().port, close: () => new Promise(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); }) };
+}
+const languageLaunch = (site, launches) => async options => { launches.push(options); return realLaunch({ ...options, headless: true, args: [...options.args, '--host-resolver-rules=MAP www.americanexpress.com 127.0.0.1:' + site.port + ', MAP * ~NOTFOUND', '--ignore-certificate-errors'] }); };
+const loginDocument = (served, from = 0) => served.slice(from).find(r => r.host === 'www.americanexpress.com' && r.method === 'GET' && r.pathname === new URL(AMEX_LOGIN).pathname);
+test('Amex language preference in HEADLESS Chrome (wrapper): the real wrapper\'s login page gets the plain tags ja-JP, ja, en, all canonical, and Chrome sends a well-formed Accept-Language for that document', { skip: NATIVE, timeout: 180000 }, async t => {
+  const dir = await owned('language-amex-headless'), served = [], site = await languageSite(dir, served), launches = [], seen = {};
+  let outcome;
+  try {
+    outcome = await withLaunch(languageLaunch(site, launches), () => B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'language-headless', onLaunch: async ({ pid, browser }) => { seen.pid = pid; seen.chrome = await browser.version(); }, reveal: async page => { seen.url = page.url(); seen.facts = await page.evaluate(LANGUAGE_FACTS); throw new Error(PERSON_NEEDED); } })).then(() => null, error => error);
+  } finally { await site.close(); }
+  const document = loginDocument(served), header = acceptLanguage(document?.acceptLanguage);
+  t.diagnostic('Amex lane (' + seen.chrome + '): ' + JSON.stringify({ facts: seen.facts, acceptLanguage: document?.acceptLanguage ?? null }));
+  assert.equal(outcome?.message, PERSON_NEEDED, 'the person would be asked on the login page: ' + outcome?.message);
+  assert.ok(String(seen.url).startsWith(AMEX_LOGIN), 'amex-locale:native-login-page ' + seen.url);
+  assert.deepEqual(seen.facts?.languages, AMEX_LANGUAGES, 'amex-locale:native-languages ' + JSON.stringify(seen.facts));
+  assert.deepEqual([seen.facts?.language, seen.facts?.canonical], ['ja-JP', AMEX_LANGUAGES], 'amex-locale:native-canonical ' + JSON.stringify(seen.facts));
+  assert.ok(header.wellFormed && header.tags[0] === 'ja-JP' && new Set(header.tags).size === header.tags.length && JSON.stringify(canonical(header.tags)) === JSON.stringify(header.tags), 'amex-locale:native-accept-language ' + JSON.stringify(document));
+  assert.deepEqual([launches.length, launches[0]?.headless, launches[0]?.args], [1, false, [...AMEX_LAUNCH_ARGS, '--no-startup-window']], 'amex-locale:native-one-launch (made headless here) ' + JSON.stringify(launches.map(l => l.args)));
+  assert.ok(await waitGone(seen.pid), 'amex-locale:native-closed'); assert.equal(existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'language-headless')), false, 'amex-locale:native-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
+});
+test('Amex language preference in HEADLESS Chrome (defaults): launches without the option, with the bank callers\' and the Aplus wrapper\'s options, give their page exactly the list of the release\'s --accept-lang, as before', { skip: NATIVE, timeout: 180000 }, async t => {
+  const dir = await owned('language-defaults-headless'), served = [], site = await languageSite(dir, served), seen = [];
+  try {
+    for (const [lane, options] of [['bank', { background: true }], ['aplus', { background: true, minimized: true }]]) {
+      const launches = [], profile = B.ephemeralProfile(dir, BANK.ownerId, 'language', lane, 'headless'), from = served.length;
+      const browser = await withLaunch(languageLaunch(site, launches), () => B.browserFor(profile, { ephemeral: true, root: dir, ...options }));
+      try {
+        const page = await browser.newPage();
+        await page.goto(AMEX_LOGIN, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        seen.push({ lane, chrome: await browser.version(), args: launches.map(l => l.args), facts: await page.evaluate(LANGUAGE_FACTS), acceptLanguage: loginDocument(served, from)?.acceptLanguage ?? null });
+      } finally { await B.closeOwnedBrowsers(); }
+      assert.equal(existsSync(profile), false, 'amex-locale:native-default-profile-removed ' + lane);
+    }
+  } finally { await site.close(); }
+  t.diagnostic('default lanes: ' + JSON.stringify(seen));
+  assert.equal(seen.length, 2, 'amex-locale:native-default-lanes');
+  for (const s of seen) {
+    assert.deepEqual(s.args, [[...RELEASE_LAUNCH_ARGS, '--no-startup-window']], 'amex-locale:native-default-launch ' + s.lane + ' ' + JSON.stringify(s.args));
+    assert.deepEqual(s.facts.languages, acceptTags(RELEASE_LAUNCH_ARGS), 'amex-locale:native-default-unchanged ' + s.lane + ' ' + JSON.stringify(s.facts));
+  }
+  assert.deepEqual(B.ownedBrowsers(), []);
 });
