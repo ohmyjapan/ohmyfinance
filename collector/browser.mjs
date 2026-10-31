@@ -217,14 +217,39 @@ export async function selectLatestStatement(page, primaryCard) {
  * Chrome of the bank jobs (no startup window, an inactive off-screen page that only the card wrappers ask to be minimized, input only
  * through DevTools); when the person is needed the login UI calls `reveal` (default showWindow) on that SAME page — never another
  * window, never a global input.
+ * Case omf-amex-login-fix-20261031: that login UI also carries the value-free login trace (login.mjs loginUi `trace`). Its events are
+ * kept in memory (at most 250) and, before the owned browser closes — completed, failed or cancelled — the trace is stopped (its listeners
+ * removed, its DevTools session detached) and ONE private record is written: <directory>/diagnostics/amex/<accountId>/<jobId>-<ms>.json
+ * (schema amex-login-trace-1, created exclusively inside the private directory, as the bank diagnostics are), the 20 newest kept per
+ * account. It is outside the outbox: pending(), the upload and recovery never read it, and no route serves it. Stopping and writing are
+ * bounded together (5 s) and every error is ignored, so the job's result, its statuses and the closure are those it had without the trace.
  */
 export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', reveal = showWindow } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);
   const browser = await browserFor(profile, { ephemeral: true, root: directory, onLaunch, background: true, minimized: true }); // guard:card-background-amex
+  const events = []; let ui = null, outcome = 'failed', overflow = 0;
   try {
     const page=await amexPage(browser);
-    return await collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin, ui: loginUi(page, { reveal }) }); // guard:card-reveal-amex
+    ui = loginUi(page, { reveal, trace: event => { if (events.length < 250) events.push(event); else overflow++; } }); // guard:amex-login-trace
+    const item = await collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin, ui }); // guard:card-reveal-amex
+    outcome = 'completed';
+    return item;
   } finally {
+    if (ui) { // guard:amex-trace-flush
+      let timer;
+      const flush = async () => {
+        await ui.stopTrace?.();
+        const accountId = String(account?._id ?? ''), jobId = /^[A-Za-z0-9-]{1,64}$/.test(String(account?.jobId ?? '')) ? String(account.jobId) : null, at = Date.now();
+        if (!/^[a-f\d]{24}$/.test(accountId)) return;
+        const dir = path.join(directory, 'diagnostics', 'amex', accountId), stamp = name => Number(/^[A-Za-z0-9-]{1,64}-(\d{13})\.json$/.exec(name)?.[1] ?? NaN);
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, `${jobId || 'job'}-${at}.json`), JSON.stringify({ schema: 'amex-login-trace-1', accountId, jobId, at: new Date(at).toISOString(), outcome, events, overflow }), { flag: 'wx', mode: 0o600 });
+        const kept = (await readdir(dir)).filter(name => Number.isSafeInteger(stamp(name))).sort((a, b) => stamp(b) - stamp(a));
+        for (const name of kept.slice(20)) await rm(path.join(dir, name), { force: true });
+      };
+      await Promise.race([flush().catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, 5000); })]);
+      clearTimeout(timer);
+    }
     const entry=owned.get(browser.process()?.pid);
     if(entry)await closeEntry(entry);
   }

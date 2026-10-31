@@ -29,20 +29,29 @@
 //      callers pass; and in owned native Chrome (OMF_CARD_NATIVE=1, else NOT RUN; its card window is minimized, so no window of the owner's
 //      desktop is shown) its card page is hidden in headless Chrome and, headed, reaches no next state that needs rendering (the synthetic
 //      page, the Amex sign-in, the My APLUS CSV link).
+//   F3 fail-first of the Amex login trace (case omf-amex-login-fix-20261031) on fbb09d3, whose login UI observes nothing: its login.mjs
+//      in the login.test.mjs seam fails every new trace test by name while the earlier login tests stay green; its browser.mjs (routed
+//      to that login.mjs and to the bank modules) writes no record, so the recorded wrapper trace tests fail by name while the Aplus control
+//      stays green; and in owned HEADLESS Chrome (OMF_CARD_NATIVE=1, else NOT RUN) the native trace test finds no record.
 //   U  node --test collector/test/legacy-card-import.test.mjs (planner/importer; real DPAPI and ACL helpers on owned roots).
 //   K  node --test collector/test/card-background.test.mjs (Part A: the real wrappers and the real bank callers over a recording launch;
 //      no Chrome).
 //   N  the same file with OMF_CARD_NATIVE=1 (real background Chrome on synthetic pages, a passive recorder of the owned Chrome's window
 //      events, the minimized card page rendering a next state that needs it, and in headless Chrome the reveal from minimized and the bank
 //      callers' window that is not minimized). OMF_CARD_NATIVE=0 → NOT RUN (red).
+//   T  the Amex login trace: node --test collector/test/login.test.mjs (the real loginUi and ensureLogin on fake pages, fictional
+//      logins), the recorded wrapper trace tests of card-background.test.mjs, and its one native trace test in owned HEADLESS Chrome
+//      (never a headed window; OMF_CARD_NATIVE=0 → NOT RUN, red).
 //   S  scripts/finance-legacy-card-import-integration.cjs (service, route, the real collector over TLS, schedule, guard mutants).
 //   C  the same with --ui and OMF_CARD_NATIVE=1: the setup page (L4) and the built connections page (L8, needs .output) in owned
 //      headless Chrome. OMF_CARD_NATIVE=0 → NOT RUN (red).
 //   P  the collector package: the importer staged with its repo hash, the staged graph resolves from index.mjs, the staged importer loads
 //      without node_modules, no test code staged.
 //   R  affected existing collector suites without Chrome; RN (native) the Chrome-launching collector suites of the shared browser lane.
-//   M  reintroduced defects through their own legs (an unchanged copy of each selection first).
-// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,U,K,N,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
+//   M  reintroduced defects through their own legs (an unchanged copy of each selection first). The Amex login trace's defects run through
+//      L (login.test.mjs), K (the recorded wrapper) and NT (the native trace test, HEADLESS Chrome only); a login.mjs copy reaches the
+//      wrapper through a browser.mjs copy that imports it.
+// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,F3,U,K,N,T,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -67,6 +76,9 @@ export const FOLD = 'ef038a9a200c4ff127532aed42392d683b3d0edd';
 // The release candidate before the card rendering correction (card-rendering-20261031): its minimized card page is hidden (no animation
 // frame, IntersectionObserver or CSS transition until the window is shown).
 export const RENDER = '6947394bcd700bd88f0b91da0bbfb48794d7eb80';
+// The release candidate before the Amex login trace (amex-login-fix-20261031): its login UI observes nothing and its wrapper writes no
+// record (actual job 4303ee7f stayed on the login page with no observation of why).
+export const TRACE = 'fbb09d3611bbd3a90aa66368d2d898c062060550';
 const execute = promisify(execFile);
 const sha256 = v => createHash('sha256').update(v).digest('hex');
 const EVIDENCE = process.env.OMF_CARD_EVIDENCE || '';
@@ -75,8 +87,9 @@ const NATIVE = process.env.OMF_CARD_NATIVE !== '0';
 // Parent fold P5: a selected (OMF_CARD_LEGS / OMF_CARD_MUTANTS) or non-native run is development evidence and exports no coverage;
 // only the complete run with its native legs may claim the covered files (the verifier reads `covers` at load).
 export const PARTIAL = LEGS.length > 0 || !!process.env.OMF_CARD_MUTANTS || !NATIVE;
-const COVERS = ['pages/connections.vue', 'server/api/finance/[...path].ts', 'collector/legacy-card-import.mjs', 'collector/index.mjs', 'collector/setup.html', 'collector/setup.js', 'collector/omf-authorization.mjs', 'collector/browser.mjs', 'collector/login.mjs', 'collector/aplus.mjs', 'collector/package/stage.mjs', 'server/api/finance/collector-security/[...path].ts', 'server/services/financeCollectorSecurityService.ts', 'server/services/financeService.ts', 'server/services/financeSyncScheduler.ts', 'docs/amex-connector.md', 'collector/test/legacy-card-import.test.mjs', 'collector/test/card-background.test.mjs', 'scripts/finance-legacy-card-import-integration.cjs', 'scripts/zoomer-fixtures/omf-card-handover.mjs'];
+const COVERS = ['pages/connections.vue', 'server/api/finance/[...path].ts', 'collector/legacy-card-import.mjs', 'collector/index.mjs', 'collector/setup.html', 'collector/setup.js', 'collector/omf-authorization.mjs', 'collector/browser.mjs', 'collector/login.mjs', 'collector/aplus.mjs', 'collector/package/stage.mjs', 'server/api/finance/collector-security/[...path].ts', 'server/services/financeCollectorSecurityService.ts', 'server/services/financeService.ts', 'server/services/financeSyncScheduler.ts', 'docs/amex-connector.md', 'collector/test/legacy-card-import.test.mjs', 'collector/test/card-background.test.mjs', 'collector/test/login.test.mjs', 'scripts/finance-legacy-card-import-integration.cjs', 'scripts/zoomer-fixtures/omf-card-handover.mjs'];
 const UNIT = 'collector/test/legacy-card-import.test.mjs', BACKGROUND = 'collector/test/card-background.test.mjs', INTEGRATION = 'scripts/finance-legacy-card-import-integration.cjs';
+const LOGIN = 'collector/login.mjs', LOGIN_TEST = 'collector/test/login.test.mjs';
 // Existing collector suites that exercise the changed modules: no Chrome (R) and the Chrome-launching shared browser lane (RN, native).
 const EXISTING = ['collector/test/login.test.mjs', 'collector/test/mail.test.mjs', 'collector/test/omf-authorization.test.mjs', 'collector/test/sealed-vault.test.mjs', 'collector/test/split-vault.test.mjs', 'collector/test/vault.test.mjs', 'collector/test/statement.test.mjs', 'collector/test/aplus-setup.test.mjs', 'collector/test/yayoi.test.mjs', 'collector/test/yayoi-setup.test.mjs', 'collector/test/startup.test.mjs'];
 // paypay-setup/rakuten-setup drive the real setup.html + setup.js (changed) in owned headless Chrome against a stub /status.
@@ -106,7 +119,9 @@ export const MUTANTS = [
   ['MI15-parent-link-followed', I, [["if (keyOf(real) !== keyOf(source) || keyOf(realFile) !== keyOf(file)) throw legacyError('legacy-unsafe'); // guard:legacy-plain", '']], 'U', '^source:', /expected legacy-unsafe but it resolved|source:parent junction/],
   ['MB1-amex-visible-launch', BR, [['onLaunch, background: true, minimized: true }); // guard:card-background-amex', 'onLaunch });']], 'K', '^Amex wrapper', /card-background:amex-launch/],
   ['MB2-aplus-visible-launch', BR, [['onLaunch, background: true, minimized: true }); // guard:card-background-aplus', 'onLaunch });']], 'K', '^Aplus wrapper', /card-background:aplus-launch/],
-  ['MB3-amex-attention-unrouted', BR, [[', ui: loginUi(page, { reveal }) }); // guard:card-reveal-amex', ' });']], 'K', '^Amex wrapper', /FOREGROUND/],
+  // the same defect as before the Amex login trace (the wrapper's login UI, with its reveal, not handed to collectFromPage, so ensureLogin
+  // makes its own); amex-login-fix-20261031 moved that UI into a variable (it also carries the trace), so the anchor is that call's tail
+  ['MB3-amex-attention-unrouted', BR, [[', origin, ui }); // guard:card-reveal-amex', ', origin }); // guard:card-reveal-amex']], 'K', '^Amex wrapper', /FOREGROUND/],
   ['MB4-aplus-attention-unrouted', BR, [['signal, ui, reveal }); // guard:card-reveal-aplus', 'signal, ui });']], 'K', '^Aplus wrapper', /FOREGROUND/],
   ['ML1-login-ui-ignores-reveal', 'collector/login.mjs', [['async show() { if (reveal) await reveal(page); else await page.bringToFront(); } // guard:login-reveal', 'async show() { await page.bringToFront(); }']], 'K', '^login UI', /card-reveal:login-ui-routes/],
   ['MA1-aplus-ui-ignores-reveal', 'collector/aplus.mjs', [['async show() { if (reveal) await reveal(page); else await page.bringToFront(); }, // guard:aplus-reveal', 'async show() { await page.bringToFront(); },']], 'K', '^Aplus default UI', /card-reveal:aplus-ui-background/],
@@ -154,7 +169,38 @@ export const MUTANTS = [
   ['MC2N-rendering-session-detached-early-native', BR, [["await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); }", "await rendering.send('Emulation.setFocusEmulationEnabled', { enabled: true }); await rendering.detach(); }"]], 'N', '^native card rendering', /card-rendering:native-(next-state|visible-while-minimized)/],
   ['MC3-bank-default-emulated', BR, [['  if (minimized) { // guard:card-rendering', '  if (true) { // guard:card-rendering']], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-no-emulation/],
   ['MC4-setup-failure-ignored', BR, [["catch { throw new Error('The minimized card window could not keep its page rendering'); }", 'catch { /* the failure ignored */ }']], 'K', '^card rendering setup failure', /card-rendering:setup-failure-(amex|aplus)-(session|command)/],
-  ['MU3-legacy-busy-not-reread', 'collector/setup.js', [["clearTimeout(legacyTimer);if(data.busy&&state==='legacy-ready')legacyTimer=setTimeout(()=>call('/status').then(next=>{current=next;showLegacy(next);}).catch(()=>{}),2000);", '']], 'C', 'L3,L4', /ui:legacy-busy-reread/]
+  ['MU3-legacy-busy-not-reread', 'collector/setup.js', [["clearTimeout(legacyTimer);if(data.busy&&state==='legacy-ready')legacyTimer=setTimeout(()=>call('/status').then(next=>{current=next;showLegacy(next);}).catch(()=>{}),2000);", '']], 'C', 'L3,L4', /ui:legacy-busy-reread/],
+  // the Amex login trace (amex-login-fix-20261031): privacy, lifecycle, bounds and no effect on the sign-in, in login.mjs (L: login.test.mjs;
+  // NT: the native trace test, HEADLESS Chrome only, for the code that runs in the page) and in the wrapper (K: the recorded wrapper)
+  ['MT1-default-traced', LOGIN, [["const t = typeof trace === 'function' ? loginTrace(page, trace) : null; // guard:login-trace-optional", "const t = loginTrace(page, typeof trace === 'function' ? trace : () => {}); // guard:login-trace-optional"]], 'L', '^login trace \\(default unchanged', /login-trace:default-(shape|no-trace-calls|no-session)/],
+  ['MT2-url-recorded', LOGIN, [['surface: traceSurface(frame.url()) });', 'surface: traceSurface(frame.url()), url: frame.url() });']], 'L', '^login trace \\(refused', /login-trace:(schema keys|no-leak)/],
+  ['MT3-page-answer-unsanitized', LOGIN, [['focus: one(r?.focus, FOCUS) });', 'focus: r?.focus ?? null });']], 'L', '^login trace \\(best effort', /login-trace:(schema value|no-leak|hostile-world-sanitized)/],
+  ['MT4-request-body-read', LOGIN, [['const describe = request => { const method = one(request.method(), METHODS)', 'const describe = request => { request.postData?.(); const method = one(request.method(), METHODS)']], 'L', '^login trace \\(refused', /login-trace:no-body-or-header-read/],
+  ['MT5-error-text-recorded', LOGIN, [["return hit ? hit[1] : 'other'; };", 'return hit ? hit[1] : String(text); };']], 'L', '^login trace \\(refused', /login-trace:(schema value|no-leak)/],
+  ['MT6-listeners-kept', LOGIN, [['      for (const [name, handler] of attached) { try { page.off(name, handler); } catch { /* gone */ } }\n', '']], 'L', '^login trace \\((email code|cancellation)', /login-trace:(listeners-removed-at-authentication|nothing-after-end|cancel-disposed)/],
+  ['MT7-session-kept', LOGIN, [['await within(() => session.detach()); }', '}']], 'L', '^login trace \\(email code', /login-trace:session-detached/],
+  ['MT8-credentials-retained', LOGIN, [['if (t) await t.filled(credentials.username, credentials.password); // booleans only; the values are not kept', 'if (t) await t.filled(credentials); // booleans only; the values are not kept'], ['    async filled(user, password) {\n      try {', '    async filled(kept) {\n      try {\n        globalThis.__omfMutantKept = kept; const user = kept.username, password = kept.password;'], ['    samples++;\n', '    samples++; void globalThis.__omfMutantKept?.password;\n']], 'L', '^login trace \\(no retention', /login-trace:no-credential-read-after-login/],
+  ['MT9-trace-resubmits', LOGIN, [['      if (t) await t.submitted(); // the clicks and submit events the page received', "      if (t) { await t.submitted(); await click(page, '#loginSubmit', null, WWW, LOGIN_PATH); } // the clicks and submit events the page received"]], 'L', '^login trace \\((default unchanged|fill mismatch)', /login-trace:(same-page-actions|one-password-submit|mismatch-not-gated)/],
+  ['MT10-sink-failure-reaches-login', LOGIN, [["    try { const result = sink(freeze(event)); if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {}); } catch { /* the sink's failure never reaches the login */ }", "    const result = sink(freeze(event)); if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});"]], 'L', '^login trace \\(best effort', /login-trace:best-effort sink-throws/],
+  ['MT11-events-unbounded', LOGIN, [['    else if (emitted >= TRACE_EVENTS - 1) { dropped++; return; }\n', '']], 'L', '^login trace \\(bounded', /login-trace:event-caps/],
+  ['MT12-step-unbounded', LOGIN, [['const within = (fn, ms = TRACE_MS) => { let timer; return Promise.race([Promise.resolve().then(fn).catch(() => null), new Promise(resolve => { timer = setTimeout(resolve, ms, null); })]).finally(() => clearTimeout(timer)); };', 'const within = fn => Promise.resolve().then(fn).catch(() => null);']], 'L', '^login trace \\(best effort', /test timed out after 60000ms|login-trace:best-effort/],
+  ['MT13-trace-not-written', BR, [['    if (ui) { // guard:amex-trace-flush', '    if (false) { // guard:amex-trace-flush']], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:record-written-before-close/],
+  ['MT14-written-before-stop', BR, [['        await ui.stopTrace?.();\n', '']], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:stopped-before-close/],
+  ['MT15-record-in-outbox', BR, [["path.join(directory, 'diagnostics', 'amex', accountId)", "path.join(directory, 'outbox', accountId, 'trace')"]], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:(record-written-before-close|outside-outbox)/],
+  ['MT16-records-unbounded', BR, [['for (const name of kept.slice(20))', 'for (const name of kept.slice(kept.length))']], 'K', '^Amex login trace \\(wrapper\\): only the 20 newest', /amex-trace:retention-20-newest/],
+  ['MT17-store-failure-reaches-job', BR, [['await Promise.race([flush().catch(() => {}),', 'await Promise.race([flush(),']], 'K', '^Amex login trace \\(wrapper\\): a store', /amex-trace:best-effort-unchanged store-refused/],
+  ['MT18-wrapper-trace-unwired', BR, [['ui = loginUi(page, { reveal, trace: event => { if (events.length < 250) events.push(event); else overflow++; } }); // guard:amex-login-trace', 'ui = loginUi(page, { reveal }); // guard:amex-login-trace']], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:(stopped-before-close|record-has|record-observations)/],
+  ['MT19-record-unbound', BR, [["JSON.stringify({ schema: 'amex-login-trace-1', accountId, jobId, at:", "JSON.stringify({ schema: 'amex-login-trace-1', accountId, jobId: null, at:"]], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:record-bound/],
+  ['MT20N-value-comparison-inverted', LOGIN, [["? timingSafeEqual(Buffer.from(hex, 'hex'), expected) : null;", "? !timingSafeEqual(Buffer.from(hex, 'hex'), expected) : null;"]], 'NT', '^Amex login trace in HEADLESS', /amex-trace:native-filled/],
+  ['MT21N-submit-not-counted', LOGIN, [['const onSubmit = () => { n.submits++; }', 'const onSubmit = () => {}']], 'NT', '^Amex login trace in HEADLESS', /amex-trace:native-submit/],
+  // Parent network/context findings: preserve endpoint discrimination, unavailable comparisons and the protected-process boundary.
+  ['MT22-login-preflight-hidden', LOGIN, [['endpoint = endpointOf(request.url())', "endpoint = method === 'OPTIONS' ? 'other' : endpointOf(request.url())"]], 'L', '^login trace \\(login API, preflight only', /login-trace:login-api-preflight-only/],
+  ['MT23-analytics-treated-as-login', LOGIN, [["(u.origin === WWW || u.origin === GLOBAL) && LOGIN_API.test(u.pathname)", '(u.origin === WWW || u.origin === GLOBAL)']], 'L', '^login trace \\(login API answered', /login-trace:analytics-unrelated/],
+  ['MT24-expected-secret-to-browser', LOGIN, [["await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH]);", "await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH, user, password]);"]], 'L', '^login trace \\(context replaced', /login-trace:context-replaced-no-secret/],
+  ['MT25-digest-recorded', LOGIN, [['focus: one(r?.focus, FOCUS) });', 'focus: one(r?.focus, FOCUS), digests: r?.digests });']], 'L', '^login trace \\(email code', /login-trace:(schema keys|no-leak)/],
+  ['MT26-wrong-context-compared', LOGIN, [['  if (location.origin !== origin || location.pathname !== pathname) return null;\n', '']], 'L', '^login trace \\(context replaced', /login-trace:context-replaced-unknown/],
+  ['MT27-unavailable-is-mismatch', LOGIN, [["? timingSafeEqual(Buffer.from(hex, 'hex'), expected) : null;", "? timingSafeEqual(Buffer.from(hex, 'hex'), expected) : false;"]], 'L', '^login trace \\(comparison failures', /login-trace:crypto-unknown/],
+  ['MT28-expected-digest-to-browser', LOGIN, [["await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH]);", "await isolated(FILLED, [nonce.toString('hex'), WWW, LOGIN_PATH, digestOf(nonce, password).toString('hex')]);"]], 'L', '^login trace \\(context replaced', /login-trace:context-replaced-no-secret/]
 ];
 
 function runChild(args, env, timeout) {
@@ -196,10 +242,13 @@ async function withCopy(file, label, text, fn) {
 }
 // A copy of aplus.mjs reaches the wrapper legs (Part B native Aplus) only through browser.mjs: a browser.mjs copy importing that copy is
 // loaded as well, so the native legs run the copy. A copy of browser.mjs routes copies of the bank modules to itself (withBankRoute).
+// A copy of login.mjs (amex-login-fix-20261031) likewise reaches the Amex wrapper only through a browser.mjs copy importing it (its two
+// imports), itself routed to the bank modules; login.test.mjs and the login UI tests load it through their own seam.
 // Other files: their own test seam only. Returns the env of the seams.
 async function withRouted(file, label, text, fn) {
   return withCopy(file, label, text, async copy => {
     if (file === BR) return withBankRoute(copy, label, fn);
+    if (file === LOGIN) return withLoginRoute(copy, label, fn);
     if (file !== 'collector/aplus.mjs') return fn({ [ENV[file]]: copy });
     const browserText = mutate(await readFile(path.join(root, BR), 'utf8'), [["from './aplus.mjs';", "from './" + path.basename(copy) + "';"]], label + ' browser route');
     return withCopy(BR, label, browserText, browserCopy => fn({ [ENV[file]]: copy, [ENV[BR]]: browserCopy }));
@@ -215,6 +264,11 @@ async function withBankRoute(browserCopy, label, fn) {
     const balance = mutate(await readFile(path.join(root, BALANCE_MODULE), 'utf8'), [["from './bank.mjs';", "from './" + path.basename(bankCopy) + "';"]], label + ' balance route');
     return withCopy(BALANCE_MODULE, label, balance, balanceCopy => fn({ [ENV[BR]]: browserCopy, OMF_TEST_BANK_MODULE: bankCopy, OMF_TEST_BALANCE_MODULE: balanceCopy }));
   });
+}
+// A login.mjs copy routed into a copy of `browserText` (default: this tree's browser.mjs), that copy routed to the bank modules.
+async function withLoginRoute(loginCopy, label, fn, browserText = null) {
+  const routed = mutate(browserText ?? await readFile(path.join(root, BR), 'utf8'), [["LoginClaims, loginUi } from './login.mjs';", "LoginClaims, loginUi } from './" + path.basename(loginCopy) + "';"], ["export { ensureLogin, LOGIN } from './login.mjs';", "export { ensureLogin, LOGIN } from './" + path.basename(loginCopy) + "';"]], label + ' login route');
+  return withCopy(BR, label, routed, browserCopy => withBankRoute(browserCopy, label, seams => fn({ ...seams, [ENV[LOGIN]]: loginCopy })));
 }
 // A copy of server/ + shared/ (inside the worktree so dependencies resolve) with the given files replaced.
 async function withTree(label, replace, fn) {
@@ -248,7 +302,7 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
   const chosenMutants = (process.env.OMF_CARD_MUTANTS || '').split(',').map(s => s.trim()).filter(Boolean);
   const unknown = chosenMutants.filter(x => !MUTANTS.some(mm => mm[0] === x)); if (unknown.length) return { pass: false, databaseCoverage: { executed: false, ownedProcess: false }, message: 'RED unknown OMF_CARD_MUTANTS: ' + unknown.join(', ') };
   const MUTANTS_RUN = chosenMutants.length ? MUTANTS.filter(mm => chosenMutants.includes(mm[0])) : MUTANTS;
-  const counts = { unitTests: 0, backgroundTests: 0, nativeTests: 0, harnessLegs: 0, serviceGuardMutants: '', ui: 0, existing: {}, failFirst: {}, mutantsCaught: 0, mutantsTotal: MUTANTS_RUN.length, native: NATIVE };
+  const counts = { unitTests: 0, backgroundTests: 0, nativeTests: 0, traceTests: 0, harnessLegs: 0, serviceGuardMutants: '', ui: 0, existing: {}, failFirst: {}, mutantsCaught: 0, mutantsTotal: MUTANTS_RUN.length, native: NATIVE };
   const want = name => !LEGS.length || LEGS.includes(name);
   const keep = async (name, text) => { if (EVIDENCE) { await mkdir(EVIDENCE, { recursive: true }); await writeFile(path.join(EVIDENCE, 'leg-' + name + '.txt'), text); } };
   const leg = async (name, fn) => { const key = name.split(' ')[0]; if (!want(key)) return; const t = Date.now(); try { lines.push(name + ': ' + await fn() + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); green.add(key); } catch (e) { pass = false; const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 2400); lines.push(name + ': ' + (/^(SETUP|NOT RUN)/.test(msg) ? '' : 'RED ') + msg); } };
@@ -339,6 +393,27 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         counts.failFirst.RENDER_N = t.fail + '/' + (t.pass + t.fail); found.push(RENDER.slice(0, 7) + ' native red (' + named.join(', ') + '; its page "hidden")'); }
       return found.join('; ');
     });
+    // F3: the Amex login trace (amex-login-fix-20261031) on fbb09d3, whose login UI observes nothing and whose wrapper writes no record: its
+    // login.mjs in the login.test.mjs seam, then its browser.mjs routed to that login.mjs (and to the bank modules) under the wrapper trace
+    // tests, by recording and, in owned HEADLESS Chrome, natively.
+    await leg('F3 fail-first of the Amex login trace on ' + TRACE.slice(0, 7) + ' (no field, value, click, submit or response observation and no record)', async () => {
+      const found = [], login = await baseText(LOGIN, TRACE), browser = await baseText(BR, TRACE); if (!login || !browser) throw new Error('SETUP ' + TRACE + ' is not readable here');
+      const LOGIN_NAMED = ['login-trace:traced-run-observed', 'login-trace:events refused', 'login-trace:events no-submit', 'login-trace:events mismatch', 'login-trace:events success', 'login-trace:two-reads-each', 'login-trace:listen-unavailable session-throws', 'login-trace:events bounded', 'login-trace:cancel-disposed', 'login-trace:events code-wrong-recipient', 'login-trace:login-api-preflight-only', 'login-trace:analytics-unrelated', 'login-trace:context-replaced-no-secret', 'login-trace:crypto-unknown'];
+      { const t = tests(await withCopy(LOGIN, 'trace-base', login, copy => unit(LOGIN_TEST, { OMF_TEST_LOGIN_MODULE: copy }))); await keep('F3-L', t.out);
+        const named = LOGIN_NAMED.filter(x => t.out.includes(x));
+        if (t.fail !== 14 || t.pass !== 7 || named.length !== LOGIN_NAMED.length) throw new Error('the login trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.TRACE_L = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' login.test red (' + named.join(', ') + '); its 7 earlier login tests green'); }
+      const WRAPPER_NAMED = ['amex-trace:record-written-before-close', 'amex-trace:hang-recorded', 'amex-trace:retention-new-record', 'amex-trace:cancel-stopped-and-written'];
+      { const t = tests(await withCopy(LOGIN, 'trace-base', login, copy => withLoginRoute(copy, 'trace-base', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, '^Amex login trace'), browser))); await keep('F3-K', t.out);
+        const named = WRAPPER_NAMED.filter(x => t.out.includes(x));
+        if (t.fail !== 4 || t.pass !== 1 || named.length !== WRAPPER_NAMED.length) throw new Error('the wrapper trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.TRACE_K = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' K red (' + named.join(', ') + '); its Aplus control green'); }
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + TRACE.slice(0, 7) + ' native trace fail-first needs owned headless Chrome');
+        const t = tests(await withCopy(LOGIN, 'trace-base', login, copy => withLoginRoute(copy, 'trace-base', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '1' }, '^Amex login trace in HEADLESS'), browser))); await keep('F3-NT', t.out);
+        if (t.fail !== 1 || t.pass !== 0 || !t.out.includes('amex-trace:native-one-record')) throw new Error('the native trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
+        counts.failFirst.TRACE_NT = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' headless red (amex-trace:native-one-record: no record)'); }
+      return found.join('; ');
+    });
     await leg('U node --test ' + UNIT, async () => { const r = await unit(UNIT), t = tests(r); await keep('U', t.out); counts.unitTests = t.pass; unitGreen(r, t, 'the importer'); return t.pass + ' tests green'; });
     await leg('K node --test ' + BACKGROUND + ' (Part A, no Chrome)', async () => { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }), t = tests(r); await keep('K', t.out); counts.backgroundTests = t.pass; unitGreen(r, t, 'the wrappers'); return t.pass + ' tests green, ' + t.skipped + ' skipped (geometry excluded; native legs are leg N)'; });
     await leg('N native background Chrome (OMF_CARD_NATIVE=1)', async () => {
@@ -346,6 +421,14 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
       const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^native'), t = tests(r); await keep('N', t.out); counts.nativeTests = t.pass; unitGreen(r, t, 'the wrappers');
       if (t.pass !== 10) throw new Error('expected the 10 native legs (8 headed background, 2 of them the card rendering; headless: the card reveal and the bank default), ran ' + t.pass);
       return t.pass + ' native legs green (' + [...t.out.matchAll(/ℹ window events [^\n]*/g)].length + ' with their window-event summaries)';
+    });
+    await leg('T the Amex login trace: login.test.mjs, the recorded wrapper trace tests and the native trace test in owned HEADLESS Chrome', async () => {
+      const done = [];
+      { const r = await unit(LOGIN_TEST), t = tests(r); await keep('T-L', t.out); unitGreen(r, t, 'the login UI'); if (t.pass !== 21) throw new Error('expected the 21 login tests (7 earlier, 14 of the trace), ran ' + t.pass); counts.traceTests += t.pass; done.push('login.test ' + t.pass + '/21'); }
+      { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }, '^Amex login trace'), t = tests(r); await keep('T-K', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 5) throw new Error('expected the 5 recorded wrapper trace tests, ran ' + t.pass); counts.traceTests += t.pass; done.push('recorded wrapper ' + t.pass + '/5'); }
+      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native trace coverage is claimed (' + done.join('; ') + ')');
+        const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace in HEADLESS'), t = tests(r); await keep('T-NT', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 1) throw new Error('expected the 1 native headless trace test, ran ' + t.pass); counts.traceTests += t.pass; done.push('native headless ' + t.pass + '/1'); }
+      return done.join('; ') + ' green';
     });
     await leg('S services, route, the real collector over TLS, schedule and the service guard mutants (L1-L3, L5-L7)', async () => {
       const r = await harness(); executed = true; await keep('S', r.text + '\n--- stderr ---\n' + r.stderr); counts.harnessLegs = r.passes.length; counts.serviceGuardMutants = r.mutants;
@@ -380,12 +463,12 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
       const harnessed = r => { executed = true; return { ok: r.code === 0 && !r.fails.length && r.passes.length > 0, out: r.fails.join(' | ') || r.stderr.slice(-400) }; };
       const through = async (file, via, select, label, text) => {
         if (via === 'P') { let failure = null; await withCopy(file, label, text, async copy => { try { await stageCheck(copy); } catch (e) { failure = String(e.message); } }); return { ok: !failure, out: failure || '' }; }
-        if ((via === 'N' || via === 'C') && !NATIVE) return { ok: false, out: 'NOT RUN: OMF_CARD_NATIVE=0 (a native defect leg)' };
+        if ((via === 'N' || via === 'NT' || via === 'C') && !NATIVE) return { ok: false, out: 'NOT RUN: OMF_CARD_NATIVE=0 (a native defect leg)' };
         // setup.js reaches the page through index.mjs: a copy of index.mjs serving the copied setup.js, the setup page in owned headless Chrome
         if (via === 'C') return withCopy(file, label, text, async setupCopy => withCopy('collector/index.mjs', label, mutate(await readFile(path.join(root, 'collector/index.mjs'), 'utf8'), [["'./setup.js'", "'./" + path.basename(setupCopy) + "'"]], label + ' index'), async indexCopy => harnessed(await harness({ OMF_TEST_INDEX_MODULE: indexCopy, OMF_CARD_ONLY: select, OMF_CARD_NATIVE: '1' }, true))));
         if (via === 'S' && file.startsWith('server/')) return harnessed(await withTree(label, { [file]: text }, dir => harness({ OMF_CARD_SRC: dir, OMF_CARD_ONLY: select })));
         if (via === 'S') return harnessed(await withCopy(file, label, text, copy => harness({ [ENV[file]]: copy, OMF_CARD_ONLY: select })));
-        const r = await withRouted(file, label, text, seams => unit(via === 'U' ? UNIT : BACKGROUND, { ...seams, OMF_CARD_NATIVE: via === 'N' ? '1' : '0' }, select)), t = tests(r);
+        const r = await withRouted(file, label, text, seams => unit(via === 'U' ? UNIT : via === 'L' ? LOGIN_TEST : BACKGROUND, { ...seams, OMF_CARD_NATIVE: via === 'N' || via === 'NT' ? '1' : '0' }, select)), t = tests(r);
         return { ok: r.code === 0 && !t.fail && t.pass > 0, out: t.out };
       };
       for (const [label, file, pairs, via, select, expect] of MUTANTS_RUN) {
