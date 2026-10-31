@@ -45,6 +45,7 @@ const failureOf=text=>((text.match(/AssertionError[^\n]*/)||[])[0]||text.split(/
 // 2026-10-23 (plan omf-navi-agent-replay-20261022): the conversation chunk was re-minified by later folds; forced-scroll, covered-ack,
 // stale-scope (both edits), expired-indicator-working and blank-text-rect carry the current minified names with the same edits
 // (refreshed, not new faults; each anchor unique in the combined 885517d build).
+// 2026-11-01: refresh the six stale client literals for the retained b456fc7 runtime build; assertions and single-match checks stay.
 export const DEFECTS=[
  // A failed final reply advances the reply version: a failure would become a new arrival.
  {name:'version-on-failure',only:'workspace',assertion:'status:failure-no-version',kind:'server',edits:[['"turns.$[turn].actions": receipts }, $inc: { revision: 1, ...proposal ? { "turns.$[turn].replyVersion": 1 } : {} }','"turns.$[turn].actions": receipts }, $inc: { revision: 1, "turns.$[turn].replyVersion": 1 }']]},
@@ -65,18 +66,18 @@ export const DEFECTS=[
  // The reply visibility check ignores a hidden tab.
  {name:'hidden-ack',only:'gui-hidden',assertion:'gui:hidden-no-ack',kind:'client',edits:[['document.visibilityState!=="visible"','!1']]},
  // An unsolicited arrival always scrolls to the latest (the original forced scroll), moving an older reader.
- {name:'forced-scroll',only:'gui-reader',assertion:'gui:older-reader-position',kind:'client',edits:[['u.pinned?W(C?.()):l.value=ve().length>0','W(C?.())']]},
+ {name:'forced-scroll',only:'gui-reader',assertion:'gui:older-reader-position',kind:'client',edits:[["c.pinned?G(S?.()):i.value=ke().length>0","G(S?.())"]]},
  // Covered reply text counts as seen (no hit test).
- {name:'covered-ack',only:'gui-purchase',assertion:'gui:covered-no-ack',kind:'client',edits:[['return!!S&&(S===C||C.contains(S))','return!0']]},
+ {name:'covered-ack',only:'gui-purchase',assertion:'gui:covered-no-ack',kind:'client',edits:[["return!!C&&(C===S||S.contains(C))","return!0"]]},
  // A late status read of the previous company is accepted as the current one (no staleness check, stored under the current key).
- {name:'stale-scope',only:'gui-scope',assertion:'gui:stale-scope-dropped',kind:'client',edits:[['const A=()=>!w&&j.ticket===b&&j.key===u.value&&j.sequence===l.naviStatusSequence;','const A=()=>!0;'],['l.receiveNaviStatus(j.key,F)','l.receiveNaviStatus(u.value,F)']]},
+ {name:'stale-scope',only:'gui-scope',assertion:'gui:stale-scope-dropped',kind:'client',edits:[["const q=()=>!I&&O.ticket===_&&O.key===c.value&&O.sequence===i.naviStatusSequence;","const q=()=>!0;"],["i.receiveNaviStatus(O.key,F)","i.receiveNaviStatus(c.value,F)"]]},
  // The status ignores the native deadline: a claim, confirmation, research or apply whose deadline passed is reported in progress.
  {name:'expired-work-active',only:'lease',assertion:'status:expired-not-active',kind:'server',edits:[["if(deadline>now)return 'active'","if(true)return 'active'"]]},
  // The launcher ignores the server's work state: a reply whose deadline passed keeps showing "回答を作成しています" with a fresh worker.
- {name:'expired-indicator-working',only:'gui-closed',assertion:'gui:expired-work-not-active',kind:'client',edits:[['l==="working"?u==="active"?c.connected?','l==="working"?!0?c.connected?']]},
+ {name:'expired-indicator-working',only:'gui-closed',assertion:'gui:expired-work-not-active',kind:'client',edits:[["i===\"working\"?c===\"active\"?d.connected?","i===\"working\"?!0?d.connected?"]]},
  // Reply visibility from the reply element's whole block rectangle instead of its text ranges (dwell, scope and hit test kept):
  // exposed blank lines of a reply would count as seen.
- {name:'blank-text-rect',only:'gui-text',assertion:'gui:blank-lines-no-ack',kind:'client',edits:[['for(const be of Me.getClientRects())if(ie(be))return!0','for(const be of[C.getBoundingClientRect()])if(ie(be))return!0']]}
+ {name:'blank-text-rect',only:'gui-text',assertion:'gui:blank-lines-no-ack',kind:'client',edits:[["for(const _e of Fe.getClientRects())if(de(_e))return!0","for(const _e of[S.getBoundingClientRect()])if(de(_e))return!0"]]}
 ];
 async function filesOf(dir,ext){const out=[];if(!existsSync(dir))return out;for(const e of await readdir(dir,{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())out.push(...await filesOf(f,ext));else if(f.endsWith(ext))out.push(f)}return out}
 export default {name:'omf-navi-status',covers:['server/api/finance-chat/[...path].ts','server/services/financeNaviStatusService.ts','server/services/financeAssistantService.ts','server/services/financeCompanyAssistantService.ts','server/services/financeChatService.ts','server/services/financeDraftService.ts','server/models/FinanceResearch.ts','server/services/financeResearchService.ts','shared/finance-navi-status.mjs','composables/useNaviStatus.ts','composables/useNaviReplyVisibility.ts','components/finance/AssistantPanel.vue','components/finance/AssistantConversation.vue','components/finance/PurchaseChat.vue','stores/assistant.ts','scripts/finance-navi-status-integration.cjs','scripts/finance-navi-status-browser.cjs','scripts/zoomer-fixtures/omf-navi-status.mjs'],async run(){
