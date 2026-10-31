@@ -117,7 +117,7 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   // ---- 6. Navi read and explicit schedule through the same service
   const inv6=await invoice({dueDate:'2026-12-01'});
   let job=await turn(tokenA,'この請求書の入金予定をカレンダーに追加して。',{page:'invoices',invoiceId:String(inv6._id)});const names=job.tools.map(t=>t.name);
-  assert.ok(names.includes('get_company_invoice_calendar')&&names.includes('schedule_company_invoice_payment'),'invoice-calendar:catalogue');assert.equal(job.tools.length,46,'invoice-calendar:catalogue');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
+  assert.ok(names.includes('get_company_invoice_calendar')&&names.includes('schedule_company_invoice_payment'),'invoice-calendar:catalogue');assert.equal(job.tools.length,53,'invoice-calendar:catalogue');assert.ok(job.tools.every(t=>t.inputSchema.additionalProperties===false));
   const scheduleTool=job.tools.find(t=>t.name==='schedule_company_invoice_payment');assert.deepEqual(Object.keys(scheduleTool.inputSchema.properties).sort(),['expectedUpdatedAt','invoiceId'],'invoice-calendar:finite-arguments');assert.deepEqual(scheduleTool.inputSchema.required.slice().sort(),['expectedUpdatedAt','invoiceId']);
   r=await actOk(job,'get_company_invoice_calendar',{invoiceId:String(inv6._id)});assert.equal(r.effect,'read');assert.equal(r.result.state,'not_linked');assert.equal(r.result.invoice.updatedAt,inv6.updatedAt.toISOString());assert.notEqual(r.result.calendarInvoiceLink,'not_established','invoice-calendar:read-flag-truthful');
   const args6={invoiceId:String(inv6._id),expectedUpdatedAt:r.result.invoice.updatedAt};
@@ -137,7 +137,7 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   const invN=await invoice();await ok(calendarOf(invN._id),tokenA,'POST',{expectedUpdatedAt:invN.updatedAt.toISOString()});r=await actOk(job,'schedule_company_invoice_payment',{invoiceId:String(invN._id),expectedUpdatedAt:invN.updatedAt.toISOString()},2,'native-then-navi');assert.equal(r.result.outcome,'existing','invoice-calendar:native-then-navi');
   const invM=await invoice();await actOk(job,'schedule_company_invoice_payment',{invoiceId:String(invM._id),expectedUpdatedAt:invM.updatedAt.toISOString()},3,'navi-then-native');assert.equal((await schedule(invM)).data.outcome,'existing','invoice-calendar:navi-then-native');
   const invX=await invoice();const mixed=await Promise.all([schedule(invX),act(job,'schedule_company_invoice_payment',{invoiceId:String(invX._id),expectedUpdatedAt:invX.updatedAt.toISOString()},4),schedule(invX),schedule(invX)]);assert.ok(mixed.every(x=>x.status===200),'invoice-calendar:concurrent-mixed '+mixed.map(x=>x.status+':'+x.raw.slice(0,120)).join(' | '));assert.equal((await linked(invX._id)).length,1,'invoice-calendar:concurrent-mixed');
-  pass('Navi: finite read/schedule tools within the exact 45-tool strict catalogue, the same service and exact snapshot, marker on the one created row, same-turn intent coalesced, changed slot refused, forged/link arguments refused, stale and foreign invoices refused with failed receipts, later turns and native/Navi in either order or concurrently meet the same one entry');
+  pass('Navi: finite read/schedule tools within the exact 53-tool strict catalogue, the same service and exact snapshot, marker on the one created row, same-turn intent coalesced, changed slot refused, forged/link arguments refused, stale and foreign invoices refused with failed receipts, later turns and native/Navi in either order or concurrently meet the same one entry');
 
   // ---- 7. Lost replies, unknown outcomes and revoked authority
   await setOp(job,repeatOp,{state:'claimed'});assert.equal((await opOf(job,repeatOp)).state,'working','invoice-calendar:existing-unproven-live');
@@ -165,9 +165,14 @@ async function main(){let mongo,child,client,directory,logs='',groups=0;const pa
   pass('card bill and hand rows unchanged; no transaction, ledger, draft or receipt written; native and Navi calendar create cannot carry an invoice link; one company-scoped unique link index');
 
   if(process.env.OMF_INVOICE_CALENDAR_BROWSER==='1'){
-   const ui=await invoice({invoiceNumber:'INV-CAL-UI-001',currency:'USD',taxRate:0,items:[{description:'Synthetic USD cents',quantity:1,unitPrice:125.5}],dueDate:new Date(Date.now()+3*86400000).toISOString().slice(0,10)});
-   const jpyControl=await ok('/api/payments',tokenA,'POST',{title:'JPY_CALENDAR_CONTROL',amount:12760,currency:'JPY',dueDate:ui.dueDate.toISOString().slice(0,10),type:'income',category:'Invoice'});
-   await require('./finance-invoice-calendar-browser.cjs')({root,origin,ok,worker,claim,actOk,finish,A:String(A),invoiceId:String(ui._id),invoiceNumber:ui.invoiceNumber,invoiceDueDate:ui.dueDate.toISOString().slice(0,10),jpyPaymentId:jpyControl.id,ledgerRows:()=>db.collection('transactions').find({organizationId:A}).toArray(),linked,pause,pass});
+   // The browser's upcoming date moves with today; the native cases use fixed dates. Keep their companies separate so a
+   // month boundary cannot add the earlier USD100 and JPY plans to this case's exact per-currency totals.
+   const uiCompany=new ObjectId();await db.collection('organizations').insertOne({_id:uiCompany,name:'Synthetic calendar UI',slug:'calendar-ui',type:'business',isActive:true,members:[members[0]],settings:{defaultCurrency:'JPY',fiscalYearStart:4,timezone:'Asia/Tokyo'}});
+   const uiToken=await switchTo(ownerToken,uiCompany);
+   const ui=await invoice({invoiceNumber:'INV-CAL-UI-001',currency:'USD',taxRate:0,items:[{description:'Synthetic USD cents',quantity:1,unitPrice:125.5}],dueDate:new Date(Date.now()+3*86400000).toISOString().slice(0,10)},uiToken);
+   const jpyControl=await ok('/api/payments',uiToken,'POST',{title:'JPY_CALENDAR_CONTROL',amount:12760,currency:'JPY',dueDate:ui.dueDate.toISOString().slice(0,10),type:'income',category:'Invoice'});
+   await finish(await turn(uiToken,'Synthetic completed browser preparation.',{page:'calendar'}));
+   await require('./finance-invoice-calendar-browser.cjs')({root,origin,ok,worker,claim,actOk,finish,A:String(uiCompany),invoiceId:String(ui._id),invoiceNumber:ui.invoiceNumber,invoiceDueDate:ui.dueDate.toISOString().slice(0,10),jpyPaymentId:jpyControl.id,ledgerRows:()=>db.collection('transactions').find({organizationId:uiCompany}).toArray(),linked,pause,pass});
    assert.equal((await linked(ui._id)).length,1,'invoice-calendar-ui:single-row');assert.deepEqual(await counts(),{...ledgerBefore,transactions:ledgerBefore.transactions+1},'invoice-calendar-ui:only-explicit-jpy-control-posts');
   }
   console.log(groups+' Invoice calendar groups passed');

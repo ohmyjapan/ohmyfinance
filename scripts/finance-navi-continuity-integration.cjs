@@ -98,7 +98,7 @@ async function main(){
   assert.ok((r.result.earlierReceipts||[]).some(a=>a.operationId===created.operationId&&a.state==='done'),'continuity:status-earlier-list');assert.equal(r.result.earlierReceiptsTruncated,false,'continuity:status-earlier-list');seen('status|current-and-earlier-list');
   noInternal(JSON.stringify(r.result),'continuity:status-projection');
   // The live-history reader is one more strict, finite tool; the worker's model input carries the earlier outcome and the history facts.
-  assert.equal(job.tools.length,45,'continuity:catalogue');
+  assert.equal(job.tools.length,53,'continuity:catalogue');
   const reader=job.tools.find(t=>t.name==='get_company_conversation_turns');
   assert.ok(reader,'continuity:catalogue');assert.deepEqual(Object.keys(reader.inputSchema.properties).sort(),['beforeTurnId','limit','search'],'continuity:catalogue');
   assert.equal(reader.inputSchema.additionalProperties,false,'continuity:catalogue');assert.equal(reader.inputSchema.properties.limit.maximum,20,'continuity:catalogue');seen('catalogue|finite-reader');
