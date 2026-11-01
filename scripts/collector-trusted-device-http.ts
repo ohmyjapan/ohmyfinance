@@ -146,9 +146,14 @@ async function main(){
     // This existing synthetic Amex tab is selected by the collector; every request is intercepted.
     const pages=await browser.pages();for(const p of pages)if(p!==empty)await p.close()
     const duplicate=await browser.newPage();await duplicate.setRequestInterception(true);duplicate.on('request',(r:any)=>r.respond({status:200,contentType:'text/html',body:'<!doctype html><title>Synthetic duplicate tab</title>'}));await duplicate.goto('https://global.americanexpress.com/activity/statement')
-    await assert.rejects(collectStatement({...account.toObject(),_id:String(account._id),ownerId:String(user._id)},{},bankRoot,async()=>{}, {batch:'failure',origin:baseUrl}))
-    assert.equal(ownedBrowsers().length,0);browser=null
-    pass('failed statement attempt closes its owned Chrome and removes its ephemeral profile; bank navigation intercepted')
+    // Case omf-amex-native-runtime-01: the Amex download (its native helper, not this launcher) never attaches to a Chrome on its profile: it
+    // is refused before its helper starts; that owned Chrome is untouched, and its own closure removes the ephemeral profile.
+    let helperStarted=false
+    await assert.rejects(collectStatement({...account.toObject(),_id:String(account._id),ownerId:String(user._id)},{},bankRoot,async()=>{}, {batch:'failure',origin:baseUrl,onLaunch:async()=>{helperStarted=true}}),/already using this profile/)
+    assert.equal(helperStarted,false);assert.equal(ownedBrowsers().length,1)
+    await closeOwnedBrowsers();browser=null
+    assert.equal(ownedBrowsers().length,0);assert.equal(await readdir(path.dirname(bankProfile)).then(names=>names.includes(path.basename(bankProfile)),()=>false),false)
+    pass('a statement attempt on a profile an owned Chrome is using is refused before its helper starts; that Chrome closes and its ephemeral profile is removed; bank navigation intercepted')
     const config={baseUrl,token:device.token,accountInfo:[{_id:String(account._id),ownerId:String(user._id),name:account.name,primaryCard:'12345'}],accounts:{}}
     const legacy={...config,accounts:{12345:{username:'legacy-user',password:'Legacy-bank-secret',profile:'retained-profile'}},services:{yayoi:{username:'legacy@example.invalid',password:'Legacy-yayoi-secret'},unknown:{password:'Legacy-unknown-secret'}},gmail:{refreshToken:'Legacy-mail-secret'}}
     await vault.update(()=>legacy)

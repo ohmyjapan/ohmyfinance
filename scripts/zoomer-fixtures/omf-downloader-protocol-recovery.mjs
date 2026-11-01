@@ -16,7 +16,8 @@
 // named manifest check; B a byte proof that browser.mjs differs from 5b7ef2c6 by the one export line, the two card wrappers and the
 // card-only fold's `minimized` option in backgroundPage and browserFor only, with, for that option only, the card page's rendering in
 // backgroundPage (case omf-card-rendering-20261031: the focus emulation of the page's own session), and the Amex wrapper's `plainLanguages`
-// option in browserFor with its one PLAIN_LANGUAGE_ARGS line (case omf-amex-locale-01) (LAUNCH_ARGS, ownership, closure, showWindow
+// option in browserFor with its one PLAIN_LANGUAGE_ARGS line (case omf-amex-locale-01), and the one import of the Amex wrapper's native
+// delegation (case omf-amex-native-runtime-01; PIN_DEFECTS, reintroduced in memory, must each be refused) (LAUNCH_ARGS, ownership, closure, showWindow
 // unchanged; a call without the options creates the 5b7ef2c6 window and page with the 5b7ef2c6 arguments; every other top-level statement
 // compared) and the
 // reversible test-only copy of the browser-boundary legs B1-B7 (B8 calls showWindow
@@ -209,13 +210,36 @@ export async function boundaryCopy(temp, tree = root) {
   const ev = process.env.OMF_DOWNLOADER_RECOVERY_EVIDENCE_DIR; if (ev) await writeFile(path.join(ev, path.basename(target) + '.source.json'), JSON.stringify({ original: BOUNDARY, headBlob: blob, originalGitBlob: hashed, copySha256: sha256(text), pairs, importMetaUrlRelocated: metaCount, reversibleToOriginalBytes: true, checkLinesUnchanged: checks(before).length, excluded: ['B8'] }, null, 2) + '\n', { flag: 'wx' }).catch(() => {});
   return { file: target, unchangedFromHead: blob === hashed, blob, substitutions: pairs.length, metaCount, checks: checks(before).length };
 }
+// Case omf-amex-native-runtime-01: collectStatement (one of the two card wrappers, left out of the comparison) now hands the Amex job to
+// collector/amex-native.mjs, so browser.mjs gains exactly one import, NATIVE_IMPORT; it is the only import allowed beside the pinned ones
+// and must be there exactly once. PIN_DEFECTS are reintroduced into the candidate's text in memory: the pin must refuse each.
+export const NATIVE_IMPORT = "import { collectStatementNative } from './amex-native.mjs';";
+export const PIN_DEFECTS = [
+  ['NP1-second-import-beside-the-native-one', [[NATIVE_IMPORT, NATIVE_IMPORT + "\nimport { pause } from './interaction.mjs';"]]],
+  ['NP2-native-import-from-another-module', [[NATIVE_IMPORT, "import { collectStatementNative } from './amex-native-other.mjs';"]]],
+  ['NP3-native-import-twice', [[NATIVE_IMPORT, NATIVE_IMPORT + '\n' + NATIVE_IMPORT.replace('collectStatementNative', 'collectStatementNative as again')]]],
+  ['NP4-top-level-side-effect', [[NATIVE_IMPORT, NATIVE_IMPORT + '\nglobalThis.omfNativeDefect = true;']]],
+  ['NP5-launch-args-changed', [["'--disable-sync']);", "'--disable-sync', '--enable-automation']);"]]],
+  ['NP6-closure-changed', [['  owned.delete(entry.pid);\n', '']]]
+];
 async function boundaryProof(temp, assert) {
   // browser.mjs = 5b7ef2c6 + the one export line + the card-handover wrappers (plan omf-card-handover-20261030: collectStatement and
   // collectAplusStatement start the background owned Chrome and route attention to that page; scripts/zoomer-fixtures/omf-card-handover.mjs
   // proves them) + the card-only fold's `minimized` option in backgroundPage and browserFor. Launch flags, ownership, closure and
   // showWindow stay byte-identical to 5b7ef2c6, each declaration whole.
   const head = (await run('git', ['show', BASE + ':' + BROWSER])).stdout.replace(/\r\n/g, '\n'), now = (await readFile(path.join(root, BROWSER), 'utf8')).replace(/\r\n/g, '\n');
+  const proven = browserPin(head, now, assert);
+  // the pin's own fault proof: each reintroduced defect must be refused
+  const caught = [];
+  for (const [name, edits] of PIN_DEFECTS) { let refused = null; try { browserPin(head, edit(now, edits), assert); } catch (e) { refused = String(e?.message || e).split('\n')[0].slice(0, 90); } if (!refused) throw new Error('frame-init:pin-defect-not-caught ' + name); caught.push(name + '→' + refused); }
+  // the reversible test-only copy the separate A/B runner executes (B8 excluded) is generated and proven here; Chrome is not launched
+  const copy = await boundaryCopy(temp);
+  assert.equal(copy.unchangedFromHead, true, 'frame-init:boundary-test-unchanged');
+  return proven + `; boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here; pin defects refused ${caught.length}/${PIN_DEFECTS.length}: ${caught.join('; ')}`;
+}
+function browserPin(head, now, assert) {
   assert.equal(now.split('\n').filter(l => l === EXPORT_LINE).length, 1, 'frame-init:one-export-line');
+  assert.equal(now.split('\n').filter(l => l === NATIVE_IMPORT).length, 1, 'frame-init:one-native-import');
   const declaration = (text, name) => { const lines = text.split('\n'), i = lines.findIndex(l => new RegExp('^(export )?(async )?function ' + name + '\\(').test(l) || new RegExp('^(export )?const ' + name + ' = ').test(l)); if (i < 0) return null; if (/^(export )?const /.test(lines[i])) return lines[i]; const j = lines.findIndex((l, k) => k > i && l === '}'); return j < 0 ? null : lines.slice(i, j + 1).join('\n'); };
   // The card-only fold (case omf-card-only-focus-fold-20261030, final review F1; it replaces the focus repair's insertion that minimized
   // every background window) changes TWO pinned declarations on purpose: backgroundPage adds windowState 'minimized' only with its new
@@ -245,23 +269,21 @@ async function boundaryProof(temp, assert) {
   }
   assert.equal(declaration(now, 'PLAIN_LANGUAGE_ARGS'), PLAIN_LANGUAGE_ARGS, 'frame-init:amex-locale-args');
   // Keep every executable top-level statement outside the two deliberately changed card wrappers unchanged as well: declaration
-  // pins alone would miss an added side effect or a changed import. The one new loginUi import is the only allowed import addition and
+  // pins alone would miss an added side effect or a changed import. The one new loginUi import and NATIVE_IMPORT (asserted once above) are
+  // the only allowed import additions, and
   // the one PLAIN_LANGUAGE_ARGS line right after LAUNCH_ARGS the only allowed statement addition; backgroundPage and browserFor are
   // compared with their pins, never left out.
   const ts = createRequire(path.join(root, 'package.json'))('typescript'), printer = ts.createPrinter({ removeComments: true });
-  const core = text => { const sf = ts.createSourceFile('browser.mjs', text.split('\n').filter(l => l !== EXPORT_LINE).join('\n'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS); assert.equal(sf.parseDiagnostics.length, 0, 'frame-init:browser-parses'); const wrappers = sf.statements.filter(s => ts.isFunctionDeclaration(s) && ['collectStatement', 'collectAplusStatement'].includes(s.name?.text)); assert.equal(wrappers.length, 2, 'frame-init:two-card-wrappers'); return sf.statements.filter(s => !wrappers.includes(s)).map(s => { const printed = printer.printNode(ts.EmitHint.Unspecified, s, sf); return ts.isImportDeclaration(s) && s.moduleSpecifier.text === './login.mjs' ? printed.replace(/, loginUi(?= } from)/, '') : printed; }).join('\n'); };
+  const core = text => { const sf = ts.createSourceFile('browser.mjs', text.split('\n').filter(l => l !== EXPORT_LINE && l !== NATIVE_IMPORT).join('\n'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS); assert.equal(sf.parseDiagnostics.length, 0, 'frame-init:browser-parses'); const wrappers = sf.statements.filter(s => ts.isFunctionDeclaration(s) && ['collectStatement', 'collectAplusStatement'].includes(s.name?.text)); assert.equal(wrappers.length, 2, 'frame-init:two-card-wrappers'); return sf.statements.filter(s => !wrappers.includes(s)).map(s => { const printed = printer.printNode(ts.EmitHint.Unspecified, s, sf); return ts.isImportDeclaration(s) && s.moduleSpecifier.text === './login.mjs' ? printed.replace(/, loginUi(?= } from)/, '') : printed; }).join('\n'); };
   const launchArgs = declaration(head, 'LAUNCH_ARGS'), changed = [...new Set([...Object.keys(FOLD), ...Object.keys(LOCALE)])];
   const expected = anchored('amex-locale LAUNCH_ARGS', changed.reduce((text, name) => { const was = declaration(head, name); return text.replace(was, () => pinned(name, was)); }, head), [[launchArgs + '\n', launchArgs + '\n' + PLAIN_LANGUAGE_ARGS + '\n']]);
   assert.equal(core(now), core(expected), 'frame-init:browser-outside-card-wrappers-unchanged');
-  // the reversible test-only copy the separate A/B runner executes (B8 excluded) is generated and proven here; Chrome is not launched
-  const copy = await boundaryCopy(temp);
-  assert.equal(copy.unchangedFromHead, true, 'frame-init:boundary-test-unchanged');
-  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers + the card-only fold's minimized option + the card page's rendering for that option only + the Amex wrapper's plainLanguages option with its one PLAIN_LANGUAGE_ARGS line (backgroundPage and browserFor equal to their pins, so a call without the options creates the ${BASE.slice(0, 8)} window and page with the ${BASE.slice(0, 8)} arguments; PLAIN_LANGUAGE_ARGS equal to its pin; the other 12 pinned declarations byte-identical: LAUNCH_ARGS, ownership, closure and showWindow unchanged); boundary copy of blob ${copy.blob.slice(0, 12)}… reversible (${copy.substitutions} substitutions + ${copy.metaCount} import.meta.url, ${copy.checks} check lines unchanged, B8 excluded); its headless B1-B7 legs run in the separate candidate/baseline A/B runs, not here`;
+  return `browser.mjs = ${BASE.slice(0, 8)} + the one export line + the card-handover wrappers + the card-only fold's minimized option + the card page's rendering for that option only + the Amex wrapper's plainLanguages option with its one PLAIN_LANGUAGE_ARGS line + the one native import of the Amex wrapper's delegation (case omf-amex-native-runtime-01) (backgroundPage and browserFor equal to their pins, so a call without the options creates the ${BASE.slice(0, 8)} window and page with the ${BASE.slice(0, 8)} arguments; PLAIN_LANGUAGE_ARGS equal to its pin; the other 12 pinned declarations byte-identical: LAUNCH_ARGS, ownership, closure and showWindow unchanged)`;
 }
 
 // ── C: every production importer of collector/browser.mjs is classified ──
 export const CALLERS = {
-  'collector/index.mjs': 'Amex/Aplus statement collection, startup recovery, lock/expiry/locked closure: U (fault/healthy SDK), P (staged index graph), B1-B7 through startCollector in the separate candidate/baseline A/B runs; its card wrappers pass the minimized option, whose page keeps rendering (card fixture K/N), and the Amex wrapper alone passes plainLanguages (card fixture K/AL)',
+  'collector/index.mjs': 'Amex/Aplus statement collection, startup recovery, lock/expiry/locked closure: U (fault/healthy SDK), P (staged index graph), B1-B7 through startCollector in the separate candidate/baseline A/B runs; its Aplus wrapper passes the minimized option, whose page keeps rendering (card fixture K/N); its Amex wrapper (case omf-amex-native-runtime-01) launches nothing here: collectStatement hands the job to amex-native.mjs (scripts/zoomer-fixtures/omf-amex-native.mjs)',
   'collector/bank.mjs': 'bank statement/observe/guided setup and balance (withBankBrowser, dynamic): U real-Chrome lane runs bank-balance/ensureBankLogin through the same launcher; no minimized or plainLanguages option, so its background window and page are the 5b7ef2c6 ones, without focus emulation, launched with LAUNCH_ARGS (pinned here; card fixture K bank caller recordings)',
   'collector/yayoi.mjs': 'Yayoi export (dynamic browserFor): same launcher and SDK instance; no own SDK callback; proven by mechanism, not run',
   'cloud-probe/run.mjs': 'Railway Amex probe container (amexPage/collectFromPage); its image copies collector/*.mjs (helper included); excluded from execution',

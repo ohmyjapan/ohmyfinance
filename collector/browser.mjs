@@ -12,6 +12,7 @@ import { LoginMailbox } from './mail.mjs';
 import { click, onSurface, poll } from './interaction.mjs';
 import { latestClosed, statementSnapshot, STATEMENT, verifyStatement } from './statement.mjs';
 import { collectAplusFromPage } from './aplus.mjs';
+import { collectStatementNative } from './amex-native.mjs';
 export { ensureLogin, LOGIN } from './login.mjs';
 
 const execute = promisify(execFile), realpathNative = promisify(realpathCallback.native);
@@ -217,50 +218,30 @@ export async function selectLatestStatement(page, primaryCard) {
 }
 
 /**
- * One batch's statement download in an owned, ephemeral, sandboxed Chrome: profiles/ephemeral/<owner>-amex-<account>-<batch>,
- * deleted at closure; retained profiles are never opened. `settings` are the credentials opened inside the batch (none in
- * the manual lane); `gmail` the mailbox grant opened inside the batch; `onLaunch` the ownership hand-over; `origin` binds
- * the outbox manifest to the paired OMF. Plan omf-card-handover-20261030: the routine download runs in the background owned
- * Chrome of the bank jobs (no startup window, an inactive off-screen page that only the card wrappers ask to be minimized, input only
- * through DevTools); when the person is needed the login UI calls `reveal` (default showWindow) on that SAME page — never another
- * window, never a global input.
- * Case omf-amex-login-fix-20261031: that login UI also carries the value-free login trace (login.mjs loginUi `trace`). Its events are
- * kept in memory (at most 250) and, before the owned browser closes — completed, failed or cancelled — the trace is stopped (its listeners
- * removed, its DevTools session detached) and ONE private record is written: <directory>/diagnostics/amex/<accountId>/<jobId>-<ms>.json
- * (schema amex-login-trace-1, created exclusively inside the private directory, as the bank diagnostics are), the 20 newest kept per
- * account. It is outside the outbox: pending(), the upload and recovery never read it, and no route serves it. Stopping and writing are
- * bounded together (5 s) and every error is ignored, so the job's result, its statuses and the closure are those it had without the trace.
- * Case omf-amex-locale-01: this launch alone asks for plainLanguages, so Chrome gives the Amex pages the language preference ja-JP, ja, en.
+ * One batch's Amex statement download (case omf-amex-native-runtime-01): stock Chrome without automation, driven through Windows UI
+ * Automation by collector/amex-native.mjs and its helper collector/windows/amex-native.ps1 — never this module's DevTools launcher, whose
+ * automation mode Amex refused. The profile rules are this module's: profiles/ephemeral/<owner>-amex-<account>-<batch>, a profile another
+ * Chrome is using is refused (nothing attaches to it), and the profile is deleted after the job. `settings` are the credentials opened
+ * inside the batch (none in the manual lane); `gmail` the mailbox grant; `onLaunch` the ownership hand-over (required: the batch's broker
+ * owns the helper before Chrome exists); `origin` binds the outbox manifest to the paired OMF; `attended` (index.mjs: a manual batch, or the
+ * attended download the person armed for this card's next job) shows Chrome on the person's desktop instead of the private one. Returns
+ * { directory, manifest }. The shared launcher, its owned registry and its closure are not used: the broker's job, the helper's own job
+ * and the helper's closure end this Chrome (lock, expiry, batch end, broker or collector crash), and recoverEphemeral removes a leftover.
  */
-export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', reveal = showWindow } = {}) {
+export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', attended = false } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);
-  const browser = await browserFor(profile, { ephemeral: true, root: directory, plainLanguages: true, onLaunch, background: true, minimized: true }); // guard:card-background-amex
-  const events = []; let ui = null, outcome = 'failed', overflow = 0;
-  try {
-    const page=await amexPage(browser);
-    ui = loginUi(page, { reveal, trace: event => { if (events.length < 250) events.push(event); else overflow++; } }); // guard:amex-login-trace
-    const item = await collectFromPage(page, browser, account, settings, directory, status, { mailbox: gmail ? new LoginMailbox(gmail) : null, claims: new LoginClaims(directory), origin, ui }); // guard:card-reveal-amex
-    outcome = 'completed';
-    return item;
-  } finally {
-    if (ui) { // guard:amex-trace-flush
-      let timer;
-      const flush = async () => {
-        await ui.stopTrace?.();
-        const accountId = String(account?._id ?? ''), jobId = /^[A-Za-z0-9-]{1,64}$/.test(String(account?.jobId ?? '')) ? String(account.jobId) : null, at = Date.now();
-        if (!/^[a-f\d]{24}$/.test(accountId)) return;
-        const dir = path.join(directory, 'diagnostics', 'amex', accountId), stamp = name => Number(/^[A-Za-z0-9-]{1,64}-(\d{13})\.json$/.exec(name)?.[1] ?? NaN);
-        await mkdir(dir, { recursive: true });
-        await writeFile(path.join(dir, `${jobId || 'job'}-${at}.json`), JSON.stringify({ schema: 'amex-login-trace-1', accountId, jobId, at: new Date(at).toISOString(), outcome, events, overflow }), { flag: 'wx', mode: 0o600 });
-        const kept = (await readdir(dir)).filter(name => Number.isSafeInteger(stamp(name))).sort((a, b) => stamp(b) - stamp(a));
-        for (const name of kept.slice(20)) await rm(path.join(dir, name), { force: true });
-      };
-      await Promise.race([flush().catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, 5000); })]);
-      clearTimeout(timer);
-    }
-    const entry=owned.get(browser.process()?.pid);
-    if(entry)await closeEntry(entry);
-  }
+  assertEphemeralPath(profile, directory);
+  await mkdir(ephemeralRoot(directory), { recursive: true }); await assertPlainDirectory(ephemeralRoot(directory));
+  await mkdir(profile, { recursive: true });
+  const probe = await probeProfile(profile), existingProfile = await access(path.join(profile, 'Default')).then(() => true, () => false);
+  if (probe.matches.length || (existingProfile && probe.unreadable.length)) throw new Error('Close the Chrome window that is already using this profile before retrying; the collector never attaches to an existing browser');
+  let result, failure = null;
+  try { result = await collectStatementNative(account, settings, directory, status, { profile, chrome: findChrome(), gmail, onLaunch, origin, attended }); } // guard:amex-native
+  catch (error) { failure = error; }
+  // the profile is removed after the job; a removal failure is reported only when the job itself did not fail (startup recovery retries)
+  try { await removeEphemeral(profile, directory); } catch (error) { failure ??= error; }
+  if (failure) throw failure;
+  return result;
 }
 
 // `ui` (optional): a login UI for ensureLogin in place of its own default loginUi(page) — the cloud probe's adapter

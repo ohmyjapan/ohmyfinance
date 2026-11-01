@@ -1,4 +1,7 @@
 // collector/test/card-background.test.mjs — routine Amex and Aplus downloads in the background owned Chrome (plan omf-card-handover-20261030).
+// Case omf-amex-native-runtime-01: the Amex wrapper no longer uses this launcher. Its legs here pin the native contract (the helper is started
+// through amex-native.mjs nativeHost.spawn, here a scripted stand-in; this launcher refuses every launch of those legs, so a fallback to it fails
+// by name) and the real helper runs in scripts/zoomer-fixtures/omf-amex-native.mjs; the Amex DevTools legs (window, rendering, trace, language) retired.
 // Part A (always): the real collector/browser.mjs wrappers over a recording stand-in for rebrowser's launch (the module's own
 // launch is replaced in this process; no Chrome starts), the real login.mjs/aplus.mjs UIs on fake pages, and the unchanged
 // showWindow bytes; and the real bank callers of the same launch (bank.mjs collectBankStatement and observeBankPortal, bank-balance.mjs
@@ -24,7 +27,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import vm from 'node:vm';
+import { EventEmitter } from 'node:events';
+import { PassThrough, Writable } from 'node:stream';
 import puppeteer from 'rebrowser-puppeteer-core';
 import { HEADERS as APLUS_HEADERS } from '../../shared/aplus.mjs';
 import { click, poll } from '../interaction.mjs';
@@ -34,6 +38,8 @@ const load = (env, file) => import(pathToFileURL(process.env[env] ? path.resolve
 const B = await load('OMF_TEST_BROWSER_MODULE', 'browser.mjs');
 const L = await load('OMF_TEST_LOGIN_MODULE', 'login.mjs');
 const P = await load('OMF_TEST_APLUS_MODULE', 'aplus.mjs');
+const N = await load('OMF_TEST_NATIVE_MODULE', 'amex-native.mjs');
+N.nativeHost.spawn = () => { throw new Error('NATIVE: the real Amex helper may not start in this suite'); }; // a leg puts its stand-in
 const execute = promisify(execFile);
 const WINDOWS = process.platform === 'win32' ? false : 'Windows only';
 const AMEX_LOGIN = 'https://www.americanexpress.com/ja-jp/account/login', APLUS = 'https://myaplus.aplus.co.jp';
@@ -150,23 +156,73 @@ test('custom UI seams unchanged: an injected login UI or Aplus UI is used as giv
   await assert.rejects(P.collectAplusFromPage(null, null, APLUS_ACCOUNT, {}, await owned('aplus-custom'), async () => {}, { ui: aplusUi, reveal: async () => { revealed.push(1); }, loginTimeoutMs: 5000, now: () => t, wait: async ms => { t += ms; } }), /needs attention/);
   assert.deepEqual([shown, revealed.length], [['custom', 'custom-aplus'], 0], 'card-reveal:custom-seams');
 });
-test('Amex wrapper: background launch (no startup window, inactive, minimized off-screen page), ownership first, attention revealed on that page, cleanup', { skip: WINDOWS, timeout: 120000 }, async () => {
-  const events = [], stand = recordingLaunch(() => fakeAmexPage(events, { refuse: true })), dir = await owned('amex-wrapper'), revealed = [], order = [];
-  await withLaunch(stand.launch, () => assert.rejects(B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'bg', onLaunch: async () => { order.push('own'); }, reveal: async page => { order.push('reveal'); revealed.push(page); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED)));
-  const [options] = stand.record.launches;
-  assert.equal(stand.record.launches.length, 1);
-  assert.deepEqual([options.headless, options.pipe, options.args.includes('--no-startup-window'), JSON.stringify(options.ignoreDefaultArgs), options.waitForInitialPage], [false, true, true, '["about:blank"]', false], 'card-background:amex-launch ' + JSON.stringify(options));
-  assert.ok(!options.args.some(a => /--headless|--no-sandbox|--disable-web-security|--remote-debugging-port/.test(a)), 'card-background:forbidden-flag');
-  const created = stand.record.cdp.filter(([m]) => m === 'Target.createTarget');
-  assert.equal(created.length, 1); assert.ok(offscreen(created[0][1]), 'card-background:amex-offscreen-target ' + JSON.stringify(created[0][1]));
-  assert.equal(created[0][1].windowState, 'minimized', 'card-background:amex-minimized-window ' + JSON.stringify(created[0][1]));
-  assert.equal(JSON.stringify(created[0][1]), CARD_TARGET, 'card-background:amex-target-exact');
-  assert.equal(stand.record.defaultPages, 0, 'card-background:amex-no-foreground-page');
-  assert.deepEqual(order, ['own', 'reveal'], 'card-background:amex-ownership-before-attention');
-  assert.deepEqual([revealed.length, revealed[0] === stand.record.pages[0], events.includes('bringToFront')], [1, true, false], 'card-reveal:amex-wrapper-routes');
-  assert.equal(stand.record.closed, 1, 'card-background:amex-closed');
-  assert.equal(existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'bg')), false, 'card-background:amex-profile-removed');
-  assert.deepEqual(B.ownedBrowsers(), [], 'card-background:amex-registry-empty');
+// ── the Amex wrapper (case omf-amex-native-runtime-01): collectStatement runs the native helper of collector/amex-native.mjs (stock Chrome
+// without automation, read and driven through Windows UI Automation by windows/amex-native.ps1) — never this launcher. Here the helper is a
+// scripted stand-in at the module's spawn seam and this launcher refuses every launch of these legs: a wrapper that falls back to it fails
+// by name (amex-native:no-automated-factory) before anything starts. The real helper runs in scripts/zoomer-fixtures/omf-amex-native.mjs.
+const FALLBACK = 'FALLBACK: the Amex wrapper started the DevTools launcher (automation mode)';
+const NATIVE_LOGIN = Object.freeze({ username: 'omf-fictional-native-user', password: 'omf-fictional-native-pass' });
+const refusingLaunch = launches => async options => { launches.push(options.args); throw new Error(FALLBACK); };
+// A scripted helper: ready, the launch, the login page, one sign-in, the e-mail channel (its code cannot be read: no mailbox), and `show`
+// answered before the helper ends (the person closed Chrome). It records its arguments, each request's op and whether a login value
+// reached any request but the sign-in.
+function nativeStandIn(order) {
+  const record = { spawns: [], ops: [], valueElsewhere: false };
+  let surface = 'login', chosen = false;
+  const reply = r => r.op === 'launch' ? { ok: true, pid: 61002 } : r.op === 'wait-ready' ? { ok: true, surface: 'www' }
+    : r.op === 'state' ? (surface === 'login' ? { ok: true, kind: 'login' } : { ok: true, kind: 'channels', channels: [{ id: 'channel-mail', text: 'c***s@example.invalid', checked: chosen }] })
+    : r.op === 'login' ? (surface = 'channels', { ok: true, submitted: 1 }) : r.op === 'choose' ? (chosen = true, { ok: true, chosen: 1 })
+    : r.op === 'show' ? { ok: true, restored: false } : r.op === 'close' ? { ok: true, gracefulExit: true } : { ok: false, code: 'unknown_op' };
+  const spawn = args => {
+    record.spawns.push(args);
+    const child = new EventEmitter(), out = new PassThrough(); let buffer = '', ended = false;
+    const finish = () => { if (ended) return; ended = true; out.end(JSON.stringify({ event: 'end', reason: 'closed', chromeEnded: true, desktopClosed: true }) + '\n'); setImmediate(() => child.emit('close', 0)); };
+    Object.assign(child, { pid: 53001, stdout: out, stderr: new PassThrough(), kill() { finish(); return true; } });
+    child.stdin = new Writable({
+      write(chunk, _encoding, callback) {
+        buffer += chunk; let i;
+        while ((i = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, i); buffer = buffer.slice(i + 1); const r = JSON.parse(line); record.ops.push(r.op); order.push(r.op);
+          if (r.op !== 'login' && (line.includes(NATIVE_LOGIN.password) || line.includes(NATIVE_LOGIN.username))) record.valueElsewhere = true;
+          if (!ended) out.write(JSON.stringify({ id: r.id, ...reply(r) }) + '\n');
+          if (r.op === 'close' || r.op === 'show') finish();
+        }
+        callback();
+      },
+      final(callback) { finish(); callback(); }
+    });
+    setImmediate(() => out.write(JSON.stringify({ event: 'ready', pid: child.pid, mode: args[args.indexOf('-Mode') + 1] }) + '\n'));
+    return child;
+  };
+  return { record, spawn, mail: { async verify() { throw new Error('synthetic: no mailbox'); }, async find() { return null; } } };
+}
+async function withNative(standIn, fn) { const saved = { ...N.nativeHost }; Object.assign(N.nativeHost, { spawn: standIn.spawn, mailbox: () => standIn.mail }); try { return await fn(); } finally { Object.assign(N.nativeHost, saved); } }
+test('Amex native wrapper: collectStatement starts the native helper, never the DevTools launcher; the batch owns the helper before Chrome launches; a routine job runs private and an Amex check it cannot complete ends it without showing anything; profile removed, shared registry empty, private record written', { skip: WINDOWS, timeout: 120000 }, async () => {
+  const dir = await owned('amex-native'), launches = [], order = [], statuses = [], standIn = nativeStandIn(order);
+  const outcome = await withNative(standIn, () => withLaunch(refusingLaunch(launches), () => B.collectStatement(ACCOUNT, NATIVE_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { gmail: {}, batch: 'native', onLaunch: async ({ pid, browser }) => { order.push('own:' + (pid === 53001) + ':' + browser); } }))).then(() => null, error => error);
+  assert.deepEqual(launches, [], 'amex-native:no-automated-factory ' + JSON.stringify(launches));
+  assert.equal(outcome?.message, N.PRIVATE_ATTENTION, 'amex-native:private-check-ends-job ' + outcome?.message);
+  const args = standIn.record.spawns[0] || [];
+  assert.deepEqual([standIn.record.spawns.length, args[args.indexOf('-Mode') + 1], args[args.indexOf('-ProfileDir') + 1]], [1, 'private', B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'native')], 'amex-native:helper-private-on-the-ephemeral-profile');
+  assert.deepEqual(order.slice(0, 2), ['own:true:null', 'launch'], 'amex-native:own-before-launch ' + order.join(','));
+  assert.deepEqual([statuses.filter(s => s[0] === 'verification_required').length, standIn.record.ops.filter(o => o === 'show').length, standIn.record.ops.filter(o => o === 'login').length, standIn.record.valueElsewhere], [0, 0, 1, false], 'amex-native:private-nothing-shown-one-login ' + standIn.record.ops.join(','));
+  assert.equal(args.some(a => String(a).includes(NATIVE_LOGIN.password) || String(a).includes(NATIVE_LOGIN.username)), false, 'amex-native:no-value-in-arguments');
+  assert.deepEqual([existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'native')), B.ownedBrowsers()], [false, []], 'amex-native:profile-removed-registry-empty');
+  const records = await readdir(path.join(dir, 'diagnostics', 'amex', ACCOUNT._id)).catch(() => []);
+  assert.equal(records.length, 1, 'amex-native:record-written ' + JSON.stringify(records));
+  const record = JSON.parse(await readFile(path.join(dir, 'diagnostics', 'amex', ACCOUNT._id, records[0]), 'utf8'));
+  assert.deepEqual([record.schema, record.mode, record.outcome], ['amex-native-trace-1', 'private', 'failed'], 'amex-native:record');
+  assert.deepEqual(await readdir(path.join(dir, 'outbox', ACCOUNT._id, ACCOUNT.jobId)), [], 'amex-native:outbox-untouched');
+});
+test('Amex native wrapper: an attended job (index.mjs: a manual batch, or the card the person armed) starts the helper on the person\'s desktop; the person is asked once and that same window is shown once', { skip: WINDOWS, timeout: 120000 }, async () => {
+  const dir = await owned('amex-native-attended'), launches = [], order = [], statuses = [], standIn = nativeStandIn(order);
+  const outcome = await withNative(standIn, () => withLaunch(refusingLaunch(launches), () => B.collectStatement(ACCOUNT, NATIVE_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { gmail: {}, batch: 'attended', attended: true, onLaunch: async () => {} }))).then(() => null, error => error);
+  assert.deepEqual(launches, [], 'amex-native:no-automated-factory ' + JSON.stringify(launches));
+  const args = standIn.record.spawns[0] || [];
+  assert.equal(args[args.indexOf('-Mode') + 1], 'input', 'amex-native:attended-input-desktop');
+  assert.deepEqual([statuses.filter(s => s[0] === 'verification_required').length, standIn.record.ops.filter(o => o === 'show').length], [1, 1], 'amex-native:attended-asked-once ' + standIn.record.ops.join(','));
+  assert.equal(outcome?.message, N.HELPER_ENDED, 'amex-native:attended-person-closed-chrome ' + outcome?.message);
+  assert.deepEqual([existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'attended')), B.ownedBrowsers()], [false, []], 'amex-native:attended-cleanup');
 });
 test('Aplus wrapper: the same background launch and attention routing, cleanup', { skip: WINDOWS, timeout: 120000 }, async () => {
   const events = [], stand = recordingLaunch(() => fakeAplusPage(events, { refuse: true })), dir = await owned('aplus-wrapper'), revealed = [];
@@ -195,7 +251,6 @@ const RENDERING = 'Emulation.setFocusEmulationEnabled {"enabled":true}';
 const RENDERING_FAILED = 'The minimized card window could not keep its page rendering';
 const FICTIONAL_LOGIN = { username: 'omf-fictional-user', password: 'omf-fictional-pass' };
 for (const [lane, makePage, run, profileOf] of [
-  ['Amex', fakeAmexPage, (dir, settings, options) => B.collectStatement(ACCOUNT, settings, dir, async () => {}, options), (dir, batch) => B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, batch)],
   ['Aplus', fakeAplusPage, (dir, settings, options) => B.collectAplusStatement(APLUS_ACCOUNT, settings, dir, async () => {}, options), (dir, batch) => B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, batch)]
 ]) {
   const tag = lane.toLowerCase();
@@ -351,31 +406,21 @@ test('actual reveal geometry on the owner desktop', { skip: 'EXCLUDED by the own
 
 // ── the Amex language preference (case omf-amex-locale-01) ───────────────────────────────────────────────────────────────────────────
 // Chrome takes --accept-lang as its language preference list as given, so the release's q-weighted switch reached the Amex pages literally
-// (navigator.languages ja-JP, ja;q=0.9, en;q=0.8). Only the Amex wrapper launches with the plain tags ja-JP, ja, en; every other launch of the
-// same launcher (the Aplus wrapper, the bank callers, the visible bank lane, Yayoi's and the public research reader's options, a headless
+// (navigator.languages ja-JP, ja;q=0.9, en;q=0.8). The Amex wrapper (case omf-amex-native-runtime-01) no longer uses this launcher: its native helper
+// starts Chrome with the plain tags ja-JP, ja, en (scripts/zoomer-fixtures/omf-amex-native.mjs reads them on the page and in the Accept-Language
+// header). Every launch of this launcher (the Aplus wrapper, the bank callers, the visible bank lane, Yayoi's and the public research reader's options, a headless
 // default) keeps the release's arguments byte for byte. Both lists are pinned literally here, so a change of either is a change of this file.
 const RELEASE_LAUNCH_ARGS = ['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync'];
-const AMEX_LAUNCH_ARGS = ['--lang=ja-JP,ja', '--accept-lang=ja-JP,ja,en', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync'];
-const AMEX_LANGUAGES = ['ja-JP', 'ja', 'en'];
 // The language list of a launch's --accept-lang, and what Intl.getCanonicalLocales makes of a list (its error's name when it rejects one).
 const acceptTags = args => String(args?.find(arg => arg.startsWith('--accept-lang=')) ?? '').slice('--accept-lang='.length).split(',');
-const canonical = tags => { try { return Intl.getCanonicalLocales(tags); } catch (error) { return String(error?.name); } };
-// The two card wrappers over the recording launch, each stopped where the person would be asked; their one launch's options.
+// The Aplus wrapper over the recording launch, stopped where the person would be asked; its one launch's options.
 async function cardLaunch(lane) {
-  const [makePage, run] = lane === 'amex' ? [fakeAmexPage, dir => B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'language', reveal: async () => { throw new Error(PERSON_NEEDED); } })] : [fakeAplusPage, dir => B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'language', reveal: async () => { throw new Error(PERSON_NEEDED); } })];
+  const [makePage, run] = [fakeAplusPage, dir => B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'language', reveal: async () => { throw new Error(PERSON_NEEDED); } })];
   const stand = recordingLaunch(() => makePage([], { refuse: true })), dir = await owned('language-' + lane);
   await withLaunch(stand.launch, () => assert.rejects(run(dir), new RegExp(PERSON_NEEDED)));
   assert.equal(stand.record.launches.length, 1, 'amex-locale:recorded-only ' + lane);
   return stand.record.launches[0];
 }
-test('Amex language preference (wrapper): the real collectStatement launches with the plain tags ja-JP, ja, en in place of the weighted list; every other launch option is the Aplus wrapper\'s', { skip: WINDOWS, timeout: 120000 }, async () => {
-  const amex = await cardLaunch('amex'), aplus = await cardLaunch('aplus');
-  assert.deepEqual(amex.args, [...AMEX_LAUNCH_ARGS, '--no-startup-window'], 'amex-locale:proper-language-preferences ' + JSON.stringify(amex.args));
-  assert.deepEqual(canonical(acceptTags(amex.args)), AMEX_LANGUAGES, 'amex-locale:valid-tags');
-  const rest = ({ args: _args, userDataDir: _profile, ...options }) => options;
-  assert.deepEqual(rest(amex), rest(aplus), 'amex-locale:other-launch-options-unchanged ' + JSON.stringify([rest(amex), rest(aplus)]));
-  assert.deepEqual(B.ownedBrowsers(), [], 'amex-locale:registry-empty');
-});
 test('Amex language preference (defaults): every other launch keeps the release\'s arguments byte for byte — the Aplus wrapper, the bank statement, guided observe and hourly balance callers, the visible bank lane, and direct launches with Yayoi\'s, the public reader\'s, a headless and a background default\'s options', { skip: WINDOWS || UNROUTED, timeout: 180000 }, async () => {
   assert.deepEqual([...B.LAUNCH_ARGS], RELEASE_LAUNCH_ARGS, 'amex-locale:default-constant-preserved');
   const seen = { aplus: [(await cardLaunch('aplus')).args] };
@@ -404,142 +449,7 @@ test('Amex language preference (defaults): every other launch keeps the release\
   assert.deepEqual(B.ownedBrowsers(), [], 'amex-locale:registry-empty');
 });
 
-// ── the value-free login trace of the Amex wrapper (case omf-amex-login-fix-20261031) ─────────────────────────────────────────────────
-// The REAL collectStatement over the recording launch, with a fake issuer page the real loginUi signs in on: the fictional login typed,
-// ログイン pressed once, the login module's CORS preflight to its login API failing (its POST never sent), an unrelated synthetic POST
-// answered 403, then the verification page, where the person is needed (no mailbox). The trace's isolated world is answered by the page
-// itself through the recording page session (`devtools`), which runs the REAL source of the trace's field comparison on the typed values
-// (network-fold-01); every URL the page shows carries the fictional login in its query. As on a real page, the submit's requests and the
-// next document come after the click returned (here: at the page's next read). The record is read from the owned directory; `onClose` sees
-// what the job left when the browser closed.
-const traceDir = dir => path.join(dir, 'diagnostics', 'amex', ACCOUNT._id);
-const traceFiles = async dir => { try { return (await readdir(traceDir(dir))).sort(); } catch { return []; } };
-const TRACE_NAME = new RegExp('^' + ACCOUNT.jobId + '-\\d{13}\\.json$');
-const TRACE_LEAKS = [FICTIONAL_LOGIN.username, FICTIONAL_LOGIN.password, 'http', '?', 'americanexpress', 'example.invalid', 'omf-synthetic', 'Target closed', 'synthetic', 'logon', 'myca', 'japa'];
-// The login request of the issuer's public login module (POST /myca/logon/<region>/action/login; ja-JP: japa), on the global origin.
-const LOGIN_API = 'https://global.americanexpress.com/myca/logon/japa/action/login';
-const ZERO_CELL = Object.freeze({ sent: 0, '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0, other: 0, failed: 0 });
-// Every form in which the fictional login could reach the browser through `calls` (DevTools [method, params]): its values, and the 16-hex /
-// 12-base64 prefixes of SHA-256 of their UTF-8 and UTF-16LE bytes, plain and under every 64-hex nonce those calls carried.
-const loginForms = calls => [FICTIONAL_LOGIN.username, FICTIONAL_LOGIN.password].flatMap(s => [s, ...[null, ...calls.flatMap(c => (c.params?.arguments || []).map(a => a.value)).filter(v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v))]
-  .flatMap(nonce => ['utf8', 'utf16le'].map(encoding => createHash('sha256').update(nonce ? Buffer.from(nonce, 'hex') : Buffer.alloc(0)).update(Buffer.from(s, encoding)).digest())).flatMap(d => [d.toString('hex').slice(0, 16), d.toString('base64').slice(0, 12)])]);
-const handedLogin = calls => { const forms = loginForms(calls); return calls.filter(c => forms.some(form => JSON.stringify(c.params ?? {}).includes(form))).map(c => c.method); };
-// Runs the trace's field comparison from its REAL source as Runtime.callFunctionOn would (awaited, by value) on the fake page's fields.
-async function inFakeWorld(source, args, { values, href }) {
-  const element = selector => ({ value: values[selector] ?? '', validity: { valid: true }, getAttribute: () => null }), at = new URL(href);
-  const nodes = { '#eliloUserID': element('#eliloUserID'), '#eliloPassword': element('#eliloPassword'), '#loginSubmit': {} };
-  const sandbox = { document: { body: {}, querySelector: selector => nodes[selector] ?? null, activeElement: nodes['#eliloPassword'] }, location: { href, origin: at.origin, pathname: at.pathname }, crypto: { subtle: globalThis.crypto.subtle } };
-  try { return { result: { value: JSON.parse(JSON.stringify((await vm.runInNewContext('(' + source + ')', sandbox)(...args)) ?? null)) } }; }
-  catch (error) { return { exceptionDetails: { text: 'Uncaught', exception: { description: String(error?.message) } } }; }
-}
-function fakeSignInPage(events, { refuse = false, devtools = 'ok', lost = () => false } = {}) {
-  let url = 'about:blank', surface = 'blank', focused = null, pending = null, documentId = 0, world = null, later = null;
-  const listeners = new Map(), frame = { url: () => url }, typed = {}, digests = [];
-  const emit = (name, payload) => { for (const handler of [...(listeners.get(name) || [])]) handler(payload); };
-  const exchange = (target, method, type, status, navigation = false, failure = null) => { const request = { url: () => target, method: () => method, resourceType: () => type, isNavigationRequest: () => navigation, frame: () => frame, failure: () => failure && { errorText: failure } }; emit('request', request); if (failure) emit('requestfailed', request); else emit('response', { request: () => request, status: () => status }); };
-  const open = (target, kind) => { exchange(target, 'GET', 'document', 200, true); url = target; surface = kind; documentId++; emit('framenavigated', frame); emit('domcontentloaded'); emit('load'); };
-  const gone = () => { if (lost()) throw new Error('Protocol error: Target closed.'); };
-  return {
-    label: 'amex-signin-page', url: () => url, mainFrame: () => frame,
-    async goto(target) { gone(); events.push('goto'); open(target, 'login'); },
-    async evaluate(fn, arg) {
-      gone(); if (later) { const next = later; later = null; next(); }
-      const src = String(fn);
-      if (src.includes('alertdialog')) return { readyState: 'complete', visibility: 'visible', focused: true, fields: surface === 'login', userEmpty: false, passwordEmpty: false, submitEnabled: true, submitType: 'submit', alerts: 0, invalid: 0, dialogs: 0, frames: 0, busy: 0, challenge: false };
-      if (src.includes('__react')) { const shape = { present: true, visible: true, enabled: true, editable: true, react: true }; return { readyState: 'interactive', visibility: 'visible', focused: true, user: shape, password: shape, submit: { present: true, visible: true, enabled: true, react: true, type: 'submit', form: true, sameForm: true } }; }
-      if (src.includes('a[href*="/activity/statement"]')) return false;
-      if (src.includes("'#loginSubmit'") && src.includes("'#eliloPassword'")) return surface === 'login';
-      if (src.includes("'#question-input'") && src.includes('channels')) return surface === 'verify' ? { kind: 'channels', channels: [{ id: 'channel-mail', text: 'c***s@example.invalid', checked: false }] } : { kind: 'unknown' };
-      if (src.includes('input.focus()')) { focused = arg.selector; return undefined; }
-      if (src.includes('elementFromPoint')) { pending = arg.selector; return { x: 640, y: 450 }; }
-      throw new Error('fake sign-in page: unrecognised evaluate');
-    },
-    keyboard: { async down() {}, async up() {}, async press() {}, async type(value) { gone(); typed[focused] = value; events.push('type'); } },
-    mouse: {
-      async click() {
-        gone(); if (pending !== '#loginSubmit') throw new Error('fake sign-in page: unexpected click'); pending = null; events.push('submit');
-        if (world?.installed && world.documentId === documentId) Object.assign(world.n, { clicks: 1, trusted: 1, buttonClicks: 1, submits: 1, prevented: 1, bubbled: 1 });
-        later = () => { exchange(LOGIN_API, 'OPTIONS', 'other', null, false, 'net::ERR_FAILED'); exchange('https://www.americanexpress.com/omf-synthetic/logon?user=' + FICTIONAL_LOGIN.username, 'POST', 'fetch', 403); open(AMEX_VERIFY + '?token=' + FICTIONAL_LOGIN.password, 'verify'); };
-      }
-    },
-    bringToFront: front(events, refuse),
-    on(name, handler) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(handler); },
-    off(name, handler) { listeners.get(name)?.delete(handler); },
-    listeners: () => [...listeners.values()].reduce((n, set) => n + set.size, 0), digests,
-    async devtools(method, params) {
-      if (lost()) throw new Error('Protocol error: Session closed.');
-      if (devtools === 'hang' && method === 'Runtime.callFunctionOn') return new Promise(() => {});
-      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'synthetic-main-frame' } } };
-      if (method === 'Page.createIsolatedWorld') { world = { documentId, installed: false, n: null }; return { executionContextId: 41 }; }
-      if (method !== 'Runtime.callFunctionOn') return {};
-      if (!world || world.documentId !== documentId) throw new Error('Cannot find context with specified id');
-      const src = params.functionDeclaration;
-      if (src.includes('addEventListener')) { world.installed = true; world.n = { clicks: 0, trusted: 0, buttonClicks: 0, submits: 0, prevented: 0, bubbled: 0, invalid: 0 }; return { result: { value: true } }; }
-      if (src.includes('activeElement')) { const answer = await inFakeWorld(src, (params.arguments || []).map(a => a.value), { values: typed, href: url }); for (const d of [answer.result?.value?.digests].flat()) if (typeof d === 'string') digests.push(d); return answer; }
-      if (src.includes('t.remove()')) { world.installed = false; return { result: { value: true } }; }
-      return { result: { value: world.installed ? { readable: true, ...world.n } : { readable: false } } };
-    }
-  };
-}
-test('Amex login trace (wrapper): the real sign-in is traced and, before the owned browser closes, the trace is stopped and written once to the private diagnostics — bound to the account and job, outside the outbox, never a login value', { skip: WINDOWS, timeout: 120000 }, async () => {
-  const events = [], dir = await owned('trace-wrapper'), atClose = [], statuses = []; let page = null;
-  const stand = recordingLaunch(() => (page = fakeSignInPage(events, { refuse: true })), { onClose: async () => { atClose.push({ files: await traceFiles(dir), listeners: page.listeners(), sessions: stand.record.pageSessions.map(s => s.detached) }); } });
-  await withLaunch(stand.launch, () => assert.rejects(B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { batch: 'trace', reveal: async () => { stand.record.sequence.push('reveal'); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED)));
-  assert.deepEqual([statuses.map(s => s[0]), events], [['running', 'verification_required'], ['goto', 'type', 'type', 'submit']], 'amex-trace:one-sign-in-unchanged ' + JSON.stringify({ statuses, events }));
-  assert.equal(atClose.length, 1, 'amex-trace:closed-once');
-  assert.ok(atClose[0].files.length === 1 && TRACE_NAME.test(atClose[0].files[0]), 'amex-trace:record-written-before-close ' + JSON.stringify(atClose));
-  assert.deepEqual([atClose[0].listeners, atClose[0].sessions], [0, [0, 1]], 'amex-trace:stopped-before-close (listeners removed, trace session detached, rendering session kept) ' + JSON.stringify(atClose));
-  const text = await readFile(path.join(traceDir(dir), atClose[0].files[0]), 'utf8'), record = JSON.parse(text), by = name => record.events.find(e => e.event === name);
-  assert.deepEqual([Object.keys(record), record.schema, record.accountId, record.jobId, record.outcome, record.overflow, typeof record.at], [['schema', 'accountId', 'jobId', 'at', 'outcome', 'events', 'overflow'], 'amex-login-trace-1', ACCOUNT._id, ACCOUNT.jobId, 'failed', 0, 'string'], 'amex-trace:record-bound');
-  const kinds = record.events.map(e => e.event);
-  for (const name of ['open', 'open-end', 'state', 'fields', 'listen', 'filled', 'submitted', 'response', 'navigated', 'show', 'end']) assert.ok(kinds.includes(name), 'amex-trace:record-has ' + name + ' ' + JSON.stringify(kinds));
-  assert.deepEqual([by('listen').native, by('filled').user.matches, by('filled').password.matches, by('submitted').native.submits, by('submitted').native.buttonClicks, by('end').reason, kinds.at(-1)], ['installed', true, true, 1, 1, 'stopped', 'end'], 'amex-trace:record-observations ' + JSON.stringify(record.events.filter(e => ['listen', 'filled', 'submitted', 'end'].includes(e.event))));
-  assert.deepEqual(record.events.filter(e => e.event === 'response' && e.phase === 'after').map(e => [e.method, e.type, e.target, e.status]), [['POST', 'fetch', 'www', 403], ['GET', 'document', 'verify', 200]], 'amex-trace:record-responses');
-  // network-fold-01: the failed preflight is an attempt to the login API that got no answer, the 403 another endpoint's; the comparison stayed
-  // in this process (no DevTools call of the page's sessions carried the login or a digest of it), and the page's digests are in no record
-  const api = record.events.filter(e => e.endpoint === 'login-api').map(e => [e.event, e.method, e.target, e.failure ?? null]), last = record.events.at(-1);
-  assert.deepEqual([api, record.events.find(e => e.event === 'response' && e.status === 403)?.endpoint, last?.network?.after?.login], [[['request', 'OPTIONS', 'global', null], ['failed', 'OPTIONS', 'global', 'failed']], 'other', { options: { ...ZERO_CELL, sent: 1, failed: 1 }, post: ZERO_CELL, other: ZERO_CELL }], 'amex-trace:record-login-api ' + JSON.stringify({ api, login: last?.network?.after?.login }));
-  assert.deepEqual(handedLogin(stand.record.pageSessions.flatMap(s => s.sent.map(([method, params]) => ({ method, params })))), [], 'amex-trace:record-no-secret-to-browser');
-  assert.ok(page.digests.length === 2 && page.digests.every(d => /^[0-9a-f]{64}$/.test(d) && !text.includes(d.slice(0, 16))), 'amex-trace:record-digest-transient ' + page.digests.length);
-  for (const leak of TRACE_LEAKS) assert.ok(!text.includes(leak), 'amex-trace:no-leak ' + leak);
-  assert.deepEqual([existsSync(path.join(dir, 'outbox')), await readdir(path.join(dir, 'diagnostics'))], [false, ['amex']], 'amex-trace:outside-outbox');
-  assert.deepEqual([stand.record.closed, existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'trace')), B.ownedBrowsers()], [1, false, []], 'amex-trace:closed');
-});
-test('Amex login trace (wrapper): a store that cannot be written, or an isolated world that never answers, changes neither the sign-in, the ending, the statuses nor the closure', { skip: WINDOWS, timeout: 120000 }, async () => {
-  for (const [label, options, prepare] of [['store-refused', {}, dir => writeFile(path.join(dir, 'diagnostics'), 'not a directory')], ['world-hangs', { devtools: 'hang' }, async () => {}]]) {
-    const events = [], dir = await owned('trace-' + label), statuses = []; await prepare(dir);
-    const stand = recordingLaunch(() => fakeSignInPage(events, { refuse: true, ...options })), began = Date.now();
-    const outcome = await withLaunch(stand.launch, () => B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async state => { statuses.push(state); }, { batch: label, reveal: async () => { throw new Error(PERSON_NEEDED); } }).then(() => null, error => error));
-    assert.deepEqual([outcome?.message, statuses, events], [PERSON_NEEDED, ['running', 'verification_required'], ['goto', 'type', 'type', 'submit']], 'amex-trace:best-effort-unchanged ' + label);
-    assert.deepEqual([stand.record.closed, existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, label)), B.ownedBrowsers()], [1, false, []], 'amex-trace:best-effort-closed ' + label);
-    assert.ok(Date.now() - began < 30000, 'amex-trace:best-effort-bounded ' + label + ' ' + (Date.now() - began) + ' ms');
-    if (label === 'store-refused') assert.equal(await readFile(path.join(dir, 'diagnostics'), 'utf8'), 'not a directory', 'amex-trace:store-refused-nothing-written');
-    else { const [file] = await traceFiles(dir); assert.ok(file, 'amex-trace:hang-recorded (no record)'); const record = JSON.parse(await readFile(path.join(traceDir(dir), file), 'utf8')); assert.deepEqual([record.events.find(e => e.event === 'listen')?.native, record.events.at(-1)?.event], ['unavailable', 'end'], 'amex-trace:hang-recorded'); }
-  }
-});
-test('Amex login trace (wrapper): only the 20 newest records of the account are kept; other names and other accounts are untouched', { skip: WINDOWS, timeout: 120000 }, async () => {
-  const dir = await owned('trace-retention'), mine = traceDir(dir), other = path.join(dir, 'diagnostics', 'amex', 'd4'.repeat(12));
-  await mkdir(mine, { recursive: true }); await mkdir(other, { recursive: true });
-  const old = Array.from({ length: 25 }, (_, i) => 'f'.repeat(8) + '-' + (1700000000000 + i) + '.json');
-  for (const name of old) await writeFile(path.join(mine, name), '{}');
-  await writeFile(path.join(mine, 'notes.txt'), 'kept'); for (let i = 0; i < 3; i++) await writeFile(path.join(other, 'job-' + (1700000000000 + i) + '.json'), '{}');
-  const stand = recordingLaunch(() => fakeSignInPage([], { refuse: true }));
-  await withLaunch(stand.launch, () => assert.rejects(B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'retention', reveal: async () => { throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED)));
-  const left = (await readdir(mine)).sort(), fresh = left.filter(name => TRACE_NAME.test(name));
-  assert.equal(fresh.length, 1, 'amex-trace:retention-new-record');
-  assert.deepEqual(left, [...old.slice(6), fresh[0], 'notes.txt'].sort(), 'amex-trace:retention-20-newest ' + JSON.stringify(left));
-  assert.deepEqual((await readdir(other)).sort(), ['job-1700000000000.json', 'job-1700000000001.json', 'job-1700000000002.json'], 'amex-trace:retention-other-account-untouched');
-});
-test('Amex login trace (wrapper): a cancellation — the owned browsers closed while the person is needed — ends the job with the unchanged error, and the trace is still stopped and written', { skip: WINDOWS, timeout: 120000 }, async () => {
-  const events = [], dir = await owned('trace-cancel'); let page = null;
-  const stand = recordingLaunch(() => (page = fakeSignInPage(events, { refuse: true, lost: () => stand.record.closed > 0 })));
-  await withLaunch(stand.launch, () => assert.rejects(B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async () => {}, { batch: 'cancel', reveal: async () => { await B.closeOwnedBrowsers(); } }), /Target closed/));
-  const [file] = await traceFiles(dir); assert.ok(file, 'amex-trace:cancel-stopped-and-written (no record)');
-  const record = JSON.parse(await readFile(path.join(traceDir(dir), file), 'utf8'));
-  assert.deepEqual([record.outcome, record.events.at(-1)?.event, record.events.at(-1)?.reason, page.listeners()], ['failed', 'end', 'stopped', 0], 'amex-trace:cancel-stopped-and-written');
-  assert.deepEqual([stand.record.closed, existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'cancel')), B.ownedBrowsers()], [1, false, []], 'amex-trace:cancel-closed');
-});
-test('Amex login trace (wrapper): only the Amex wrapper writes it — the Aplus wrapper leaves no diagnostics', { skip: WINDOWS, timeout: 120000 }, async () => {
+test('Amex native trace: only the Amex wrapper writes diagnostics — the Aplus wrapper leaves none', { skip: WINDOWS, timeout: 120000 }, async () => {
   const stand = recordingLaunch(() => fakeAplusPage([], { refuse: true })), dir = await owned('trace-aplus');
   await withLaunch(stand.launch, () => assert.rejects(B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'bg', reveal: async () => { throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED)));
   assert.equal(existsSync(path.join(dir, 'diagnostics')), false, 'amex-trace:aplus-untouched');
@@ -717,15 +627,6 @@ const RENDER_SITE = {
   [RENDER_NEXT]: { body: renderPage('Synthetic render next', '', 'chain(()=>{});') },
   [RENDER_B]: { body: renderPage('Synthetic render B (another site)', '', 'chain(()=>{});') }
 };
-// The Amex sign-in on a login page whose submit needs rendering: both fields filled, ログイン starts the chain and only its end opens the
-// verification page (one masked e-mail channel: without a saved mailbox the person is asked there). Synthetic: it shows the minimized page
-// now reaches a next state that needs rendering; it is NOT a copy of the real issuer page and says nothing about why the real first
-// sign-ins stayed on the login page.
-const AMEX_VERIFY = 'https://www.americanexpress.com/ja-jp/account/reauth/verify';
-const AMEX_RENDER_SITE = {
-  [AMEX_LOGIN]: { body: renderPage('Synthetic Amex login', '<input id="eliloUserID"><input id="eliloPassword" type="password"><button id="loginSubmit">ログイン</button>', 'document.getElementById("loginSubmit").onclick=()=>{if(!document.getElementById("eliloUserID").value||!document.getElementById("eliloPassword").value)return;chain(()=>{location.href=' + JSON.stringify(AMEX_VERIFY) + ';});};') },
-  [AMEX_VERIFY]: { body: '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Synthetic Amex verification</title><body><label for="channel-mail">s*****@example.invalid</label><input type="radio" id="channel-mail" name="channel"><button>次へ</button></body></html>' }
-};
 // A synthetic My APLUS on the issuer's origin for the REAL aplusUi (collector/aplus.mjs): signed in at /, the statement page of 2026/09
 // (2,400円, card -1234) with 保存 → CSV, the statement-code page, a CSV download after the code, and the unbilled page (1 row, 1,200円).
 // The code page returns to the statement page with the typed code, which is recorded from that intercepted navigation; the page then
@@ -746,7 +647,6 @@ function aplusSite(record) {
 }
 const NATIVE = WINDOWS || (process.env.OMF_CARD_NATIVE === '1' ? false : 'native Chrome legs: set OMF_CARD_NATIVE=1 (the fixture runs them serialized with the other Chrome suites)');
 for (const [lane, run, fulfilledKey, profileOf] of [
-  ['Amex', (dir, options) => B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'native', ...options }), AMEX_LOGIN, dir => B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'native')],
   ['Aplus', (dir, options) => B.collectAplusStatement(APLUS_ACCOUNT, {}, dir, async () => {}, { batch: 'native', ...options }), APLUS + '/login/id/input', dir => B.ephemeralProfile(dir, APLUS_ACCOUNT.ownerId, 'aplus', APLUS_ACCOUNT._id, 'native')]
 ]) {
   test(`native ${lane}: real background Chrome on synthetic pages — no startup page, minimized off-screen inactive window whose page keeps rendering, foreground kept, attention routed to the same page, no issuer request, closed and removed`, { skip: NATIVE, timeout: 240000 }, async t => {
@@ -848,23 +748,6 @@ test('native card rendering: the real minimized background page keeps rendering 
   assert.deepEqual([...new Set(seen.fulfilled)].sort(), [RENDER_A, RENDER_B, RENDER_NEXT].sort(), 'only the synthetic pages were served ' + JSON.stringify(seen));
   t.diagnostic('window events rendering: ' + JSON.stringify(await assertNoFocus(seen, 'rendering')) + '; frames in 4 s ' + JSON.stringify(cadence));
 });
-// The real Amex wrapper signs in with a FICTIONAL login on the synthetic login page whose submit needs rendering (AMEX_RENDER_SITE):
-// typed and pressed once through DevTools, the minimized page reaches the verification page, where the person would be asked.
-test('native Amex sign-in on a login page whose next state needs rendering: the real wrapper types the fictional login through DevTools and presses ログイン once; the minimized page reaches the verification page, where the person would be asked; never restored or foreground; closed and removed', { skip: NATIVE, timeout: 300000 }, async t => {
-  const dir = await owned('native-amex-signin'), seen = { fulfilled: [], aborted: [] }, statuses = [], facts = [];
-  await assert.rejects(B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { batch: 'signin', onLaunch: nativeOnLaunch(seen, AMEX_RENDER_SITE), reveal: async page => { facts.push({ url: page.url(), facts: await windowFacts(seen.pid), rendering: await framesWithin(page) }); throw new Error(PERSON_NEEDED); } }), new RegExp(PERSON_NEEDED));
-  assert.equal(facts.length, 1, 'card-reveal:native-attention-once');
-  const [{ url, facts: at, rendering: sample }] = facts;
-  assert.ok(url.startsWith(AMEX_VERIFY), 'card-rendering:native-amex-next-state-after-submit ' + JSON.stringify({ url, sample, statuses }));
-  assert.deepEqual(statuses.map(s => s[0]), ['running', 'verification_required'], 'one sign-in, then the person: ' + JSON.stringify(statuses));
-  assert.ok(rendering(sample), 'card-rendering:native-amex-signin-rendering-at-attention ' + JSON.stringify(sample));
-  assert.notEqual(at.foregroundPid, seen.pid, 'card-background:native-foreground-kept');
-  assert.deepEqual(onScreen(at), [], 'card-background:native-offscreen ' + JSON.stringify(at.windows)); assert.ok(minimized(at), 'card-background:native-minimized-at-attention ' + JSON.stringify(at.windows));
-  assert.deepEqual(seen.fulfilled, [AMEX_LOGIN, AMEX_VERIFY], 'the login page once, then the verification page ' + JSON.stringify(seen));
-  assert.ok(await waitGone(seen.pid), 'card-background:native-closed'); assert.equal(existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'signin')), false, 'card-background:native-profile-removed');
-  assert.deepEqual(B.ownedBrowsers(), []);
-  t.diagnostic('window events amex-signin: ' + JSON.stringify(await assertNoFocus(seen, 'amex-signin')) + '; frames in 4 s at attention ' + sample.frames);
-});
 // The reveal of the minimized background window with the REAL backgroundPage and the REAL showWindow, in HEADLESS Chrome only (no window
 // of the owner's desktop exists or moves): the launch is made headless beneath the wrapper's own options, so browserFor installs the
 // background page exactly as for a headed batch; with the card wrappers' `minimized` the page opens minimized off-screen and keeps
@@ -913,157 +796,13 @@ test('native bank default in HEADLESS Chrome: the real background page without t
   } finally { await B.closeOwnedBrowsers(); }
   assert.equal(existsSync(profile), false, 'bank-background:headless-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
 });
-// The Amex login trace natively (case omf-amex-login-fix-20261031), in HEADLESS Chrome only (no window of the owner's desktop exists):
-// the real wrapper — its launch made headless beneath its own options, so browserFor and the minimized, rendering background page run as for
-// a batch — signs in with the fictional login on a synthetic login form whose own submit handler cancels the native submission, sends the
-// login module's cross-origin login request to its login API on the global origin (its CORS preflight is aborted like every request without
-// a synthetic page, so the POST is never sent: the parent's offline public trace), posts to a synthetic endpoint (answered 403) and then
-// opens the verification page, where the person would be asked (no mailbox). The record shows what the real isolated world and page events
-// saw; the form's script reports whether the trace left anything in the page's own world, and the trace's own DevTools session is recorded
-// (network-fold-01: what it handed to the browser). Every host name resolves nowhere in this owned Chrome, so a request the interception
-// missed could not leave it either.
-const TRACE_SITE = seen => ({
-  [AMEX_LOGIN]: { body: '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Synthetic Amex login</title><body><form id="login"><input id="eliloUserID"><input id="eliloPassword" type="password"><button id="loginSubmit" type="submit">ログイン</button></form><script>document.getElementById("login").addEventListener("submit",e=>{e.preventDefault();fetch(' + JSON.stringify(LOGIN_API) + ',{method:"POST",credentials:"include",headers:{"Content-Type":"application/x-www-form-urlencoded",challengeable:"ON"},body:"synthetic"}).catch(()=>null).then(()=>fetch("/omf-synthetic/logon?main="+("__omfLoginTrace" in window),{method:"POST",body:"synthetic"})).then(()=>{location.href=' + JSON.stringify(AMEX_VERIFY) + ';});});</script></body></html>' },
-  'https://www.americanexpress.com/omf-synthetic/logon': { status: 403, body: '{}', seen: url => { seen.mainWorld = url.searchParams.get('main'); } },
-  [AMEX_VERIFY]: AMEX_RENDER_SITE[AMEX_VERIFY]
-});
-// Records what the DevTools sessions opened on `page` from now on send (the trace's; the page's rendering session is already open) and the
-// digests its field comparison answers; the sessions themselves are unchanged.
-function recordSessions(page, sent, digests) {
-  const create = page.createCDPSession.bind(page);
-  page.createCDPSession = async () => {
-    const session = await create(), send = session.send.bind(session);
-    session.send = async (method, params) => { sent.push({ method, params: JSON.parse(JSON.stringify(params ?? {})) }); const answer = await send(method, params); for (const d of [answer?.result?.value?.digests].flat()) if (typeof d === 'string') digests.push(d); return answer; };
-    return session;
-  };
-}
-test('Amex login trace in HEADLESS Chrome: the real wrapper\'s isolated world sees both fictional values in place and one trusted click with one prevented submit, the page\'s own world sees nothing of it, the synthetic 403 and the verification page are recorded, and the record is written before Chrome closes', { skip: NATIVE, timeout: 180000 }, async t => {
-  const dir = await owned('trace-headless'), seen = { fulfilled: [], aborted: [] }, statuses = [], launches = [], traceSent = [], digests = []; let pid = null;
-  // `seen.api`: puppeteer's own page events for the login API's origin, in order (the method, resource type and failure text)
-  const onLaunch = async ({ pid: launched, browser }) => { pid = launched; const open = browser.newPage.bind(browser); browser.newPage = async () => {
-    const page = await open(); await serve(page, TRACE_SITE(seen), seen); recordSessions(page, traceSent, digests); seen.api = [];
-    for (const name of ['request', 'requestfailed', 'response']) page.on(name, item => { const r = name === 'response' ? item.request() : item; if (r.url().startsWith(new URL(LOGIN_API).origin)) seen.api.push([name, r.method(), r.resourceType(), name === 'requestfailed' ? r.failure()?.errorText : name === 'response' ? item.status() : null]); });
-    return page;
-  }; };
-  const outcome = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true, args: [...options.args, '--host-resolver-rules=MAP * ~NOTFOUND'] }); }, () => B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { batch: 'trace-headless', onLaunch, reveal: async page => { seen.revealedAt = page.url(); throw new Error(PERSON_NEEDED); } })).then(() => null, error => error);
-  assert.equal(outcome?.message, PERSON_NEEDED, 'the person would be asked on the verification page: ' + outcome?.message);
-  assert.deepEqual([launches.length, launches[0]?.headless, launches[0]?.args.includes('--no-startup-window'), statuses.map(s => s[0])], [1, false, true, ['running', 'verification_required']], 'one background launch (made headless here) and one sign-in');
-  assert.ok(String(seen.revealedAt).startsWith(AMEX_VERIFY), 'amex-trace:native-reached-verification ' + seen.revealedAt);
-  assert.equal(seen.mainWorld, 'false', 'amex-trace:native-invisible-to-the-page');
-  assert.ok(await waitGone(pid), 'amex-trace:native-closed'); assert.equal(existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'trace-headless')), false, 'amex-trace:native-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
-  const [file, ...more] = await traceFiles(dir);
-  assert.ok(file && !more.length && TRACE_NAME.test(file), 'amex-trace:native-one-record');
-  const text = await readFile(path.join(traceDir(dir), file), 'utf8'), record = JSON.parse(text), all = name => record.events.filter(e => e.event === name);
-  // network-fold-01: the trace's DevTools calls handed the browser no fictional login, part or digest of one; the page's own digests came
-  // back from the real isolated world and are in no record
-  assert.deepEqual(handedLogin(traceSent), [], 'amex-trace:native-no-secret-to-browser');
-  assert.ok(traceSent.some(c => c.method === 'Runtime.callFunctionOn') && digests.length === 2 && digests.every(d => /^[0-9a-f]{64}$/.test(d) && !text.includes(d.slice(0, 16))), 'amex-trace:native-digest-transient ' + digests.length);
-  const [fields] = all('fields'), [filled] = all('filled'), [submitted] = all('submitted');
-  const ready = { present: true, visible: true, enabled: true, editable: true, react: false };
-  assert.deepEqual([fields?.user, fields?.password, fields?.submit, fields?.visibility, fields?.surface], [ready, ready, { present: true, visible: true, enabled: true, react: false, type: 'submit', form: true, sameForm: true }, 'visible', 'login'], 'amex-trace:native-fields ' + JSON.stringify(fields));
-  assert.deepEqual(all('listen').map(e => e.native), ['installed'], 'amex-trace:native-isolated-world');
-  assert.deepEqual([filled?.user, filled?.password, filled?.focus], [{ matches: true, empty: false, valid: true, ariaInvalid: false }, { matches: true, empty: false, valid: true, ariaInvalid: false }, 'password'], 'amex-trace:native-filled ' + JSON.stringify(filled));
-  assert.deepEqual(submitted?.native, { readable: true, clicks: 1, trusted: 1, buttonClicks: 1, submits: 1, prevented: 1, bubbled: 1, invalid: 0 }, 'amex-trace:native-submit ' + JSON.stringify(submitted));
-  // The preflight is aborted inside this Chrome; no login POST is received. Puppeteer may report requestfailed before request while
-  // resolving an intercepted preflight. Preserve its observed arrival order, and require both exact events independently of that order.
-  // The 403 belongs to another endpoint.
-  const api = record.events.filter(e => e.endpoint === 'login-api').map(e => [e.event, e.method, e.type, e.target, e.failure ?? e.status ?? null]);
-  assert.deepEqual(api, seen.api.map(([event, method, type, answer]) => [event === 'requestfailed' ? 'failed' : event, method, type, 'global', event === 'requestfailed' ? 'failed' : answer]), 'amex-trace:native-api-arrival-order');
-  assert.deepEqual([api.slice().sort((a, b) => a[0].localeCompare(b[0])), seen.aborted.includes('https://global.americanexpress.com')], [[['failed', 'OPTIONS', 'other', 'global', 'failed'], ['request', 'OPTIONS', 'other', 'global', null]], true], 'amex-trace:native-login-api ' + JSON.stringify({ api: record.events.filter(e => e.endpoint === 'login-api'), puppeteer: seen.api, aborted: seen.aborted, login: record.events.at(-1)?.network?.after?.login }));
-  const after = record.events.filter(e => (e.event === 'response' || e.event === 'failed') && e.phase === 'after').map(e => [e.event, e.method, e.type, e.target, e.endpoint, e.status ?? e.failure]);
-  assert.deepEqual(after, [['failed', 'OPTIONS', 'other', 'global', 'login-api', 'failed'], ['response', 'POST', 'fetch', 'www', 'other', 403], ['response', 'GET', 'document', 'verify', 'other', 200]], 'amex-trace:native-responses ' + JSON.stringify(after));
-  assert.ok(all('navigated').some(e => e.phase === 'after' && e.surface === 'verify'), 'amex-trace:native-navigated');
-  assert.deepEqual([record.outcome, record.events.at(-1).event, record.events.at(-1).reason, record.events.at(-1).network.after.writes.www, record.events.at(-1).network.after.login], ['failed', 'end', 'stopped', { sent: 1, '2xx': 0, '3xx': 0, '4xx': 1, '5xx': 0, other: 0, failed: 0 }, { options: { ...ZERO_CELL, sent: 1, failed: 1 }, post: ZERO_CELL, other: ZERO_CELL }], 'amex-trace:native-end ' + JSON.stringify(record.events.at(-1)));
-  for (const leak of TRACE_LEAKS) assert.ok(!text.includes(leak), 'amex-trace:native-no-leak ' + leak);
-  assert.ok(seen.fulfilled.includes(AMEX_LOGIN) && seen.fulfilled.includes(AMEX_VERIFY), 'only synthetic pages served ' + JSON.stringify(seen.fulfilled));
-  t.diagnostic('trace record (leak-checked above): ' + text);
-  t.diagnostic('login API page events (puppeteer, in order): ' + JSON.stringify(seen.api));
-});
-// The login API's network detail natively (case omf-amex-network-detail-01), in HEADLESS Chrome only. The real wrapper signs in on a
-// synthetic login page that an owned loopback TLS server answers for both Amex host names, mapped to it inside this Chrome alone (every
-// other name resolves nowhere; the server's throwaway certificate is accepted by this Chrome alone and nothing is intercepted), so Chrome's
-// own network stack answers and checks CORS: the page's request to the login API is preflighted (answered 200 with the CORS grant) and its
-// POST answered 403 without Access-Control-Allow-Origin, which Chrome withholds from the page (net::ERR_FAILED: the real job's page-level
-// pattern). The record must tell that hidden 403 and its CORS error apart from no answer, and the page's own DevTools session (where
-// puppeteer enabled Network) must get no command from the trace and no detach, keep puppeteer's listeners and lose the trace's before Chrome
-// closes. Synthetic: it proves the seam on Chrome 155, not what the issuer answers to a real login.
 const OPENSSL = 'C:/Program Files/Git/usr/bin/openssl.exe';
-const DETAIL_EVENTS = ['Network.requestWillBeSent', 'Network.responseReceivedExtraInfo', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed'];
-async function corsSite(dir, record) {
-  const key = path.join(dir, 'key.pem'), cert = path.join(dir, 'cert.pem');
-  await execute(OPENSSL, ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', '/CN=omf-synthetic.invalid'], { windowsHide: true, timeout: 30000 });
-  const login = '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Synthetic Amex login</title><body><form id="login"><input id="eliloUserID"><input id="eliloPassword" type="password"><button id="loginSubmit" type="submit">ログイン</button></form><script>document.getElementById("login").addEventListener("submit",e=>{e.preventDefault();fetch(' + JSON.stringify(LOGIN_API) + ',{method:"POST",credentials:"include",headers:{"Content-Type":"application/json",challengeable:"ON"},body:"{}"}).catch(()=>null).then(()=>{location.href=' + JSON.stringify(AMEX_VERIFY) + ';});});</script></body></html>';
-  const server = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
-    const host = String(req.headers.host).split(':')[0], { pathname } = new URL(req.url, 'https://' + host); req.resume(); record.push([host, req.method, pathname]);
-    if (host === 'www.americanexpress.com' && req.method === 'GET' && pathname === new URL(AMEX_LOGIN).pathname) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(login); }
-    if (host === 'www.americanexpress.com' && req.method === 'GET' && pathname === new URL(AMEX_VERIFY).pathname) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(AMEX_RENDER_SITE[AMEX_VERIFY].body); }
-    if (host === 'global.americanexpress.com' && pathname === new URL(LOGIN_API).pathname && req.method === 'OPTIONS') { res.writeHead(200, { 'access-control-allow-origin': 'https://www.americanexpress.com', 'access-control-allow-credentials': 'true', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type, challengeable' }); return res.end(); }
-    if (host === 'global.americanexpress.com' && pathname === new URL(LOGIN_API).pathname && req.method === 'POST') { res.writeHead(403, { 'content-type': 'text/html' }); return res.end('<html><body>Access Denied</body></html>'); }
-    res.writeHead(404); res.end();
-  });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  return { port: server.address().port, close: () => new Promise(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); }) };
-}
-test('Amex login trace network detail in HEADLESS Chrome: the real wrapper\'s record tells the login API\'s POST answered 403 but withheld by CORS (MissingAllowOriginHeader) from its preflight answered 200, read in place from the page\'s own DevTools session, which gets no command or detach from the trace, keeps puppeteer\'s listeners and loses the trace\'s before Chrome closes', { skip: NATIVE, timeout: 180000 }, async t => {
-  const dir = await owned('trace-detail'), served = [], site = await corsSite(dir, served), statuses = [], launches = [], traceSent = [], digests = [];
-  const seen = { api: [], ids: new Set(), sdkSent: [], detached: 0, client: null, before: null, during: null, atClose: null }; let pid = null;
-  const counts = client => Object.fromEntries(DETAIL_EVENTS.map(name => [name, client.listenerCount(name)]));
-  const onLaunch = async ({ pid: launched, browser }) => {
-    pid = launched; const open = browser.newPage.bind(browser), close = browser.close.bind(browser);
-    browser.newPage = async () => {
-      const page = await open(), client = page._client(); recordSessions(page, traceSent, digests);
-      // this test's own recorders on the page's session, registered before its listener counts are taken: the login API's request ids
-      // (for the leak check), every command sent on it from now on and any detach
-      client.on('Network.requestWillBeSent', e => { if (String(e.request?.url).startsWith(LOGIN_API)) seen.ids.add(e.requestId); });
-      const send = client.send.bind(client), detach = client.detach.bind(client);
-      client.send = (method, ...rest) => { seen.sdkSent.push(method); return send(method, ...rest); };
-      client.detach = (...rest) => { seen.detached++; return detach(...rest); };
-      for (const name of ['request', 'requestfailed', 'response']) page.on(name, item => { const r = name === 'response' ? item.request() : item; if (r.url().startsWith(LOGIN_API)) seen.api.push([name, r.method(), r.resourceType(), name === 'requestfailed' ? r.failure()?.errorText : name === 'response' ? item.status() : null]); });
-      seen.client = client; seen.before = counts(client); return page;
-    };
-    browser.close = async () => { if (seen.client) seen.atClose = counts(seen.client); return close(); };
-  };
-  let outcome;
-  try {
-    outcome = await withLaunch(async options => { launches.push(options); return realLaunch({ ...options, headless: true, args: [...options.args, '--host-resolver-rules=MAP www.americanexpress.com 127.0.0.1:' + site.port + ', MAP global.americanexpress.com 127.0.0.1:' + site.port + ', MAP * ~NOTFOUND', '--ignore-certificate-errors'] }); },
-      () => B.collectStatement(ACCOUNT, FICTIONAL_LOGIN, dir, async (state, text) => { statuses.push([state, text]); }, { batch: 'trace-detail', onLaunch, reveal: async page => { seen.revealedAt = page.url(); seen.during = counts(seen.client); throw new Error(PERSON_NEEDED); } })).then(() => null, error => error);
-  } finally { await site.close(); }
-  assert.equal(outcome?.message, PERSON_NEEDED, 'the person would be asked on the verification page: ' + outcome?.message);
-  assert.deepEqual([launches.length, launches[0]?.headless, statuses.map(s => s[0])], [1, false, ['running', 'verification_required']], 'one background launch (made headless here) and one sign-in');
-  assert.ok(String(seen.revealedAt).startsWith(AMEX_VERIFY), 'amex-trace:native-detail-reached-verification ' + seen.revealedAt);
-  const api = served.filter(([host, , pathname]) => host === 'global.americanexpress.com' && pathname === new URL(LOGIN_API).pathname).map(([, method]) => method);
-  assert.deepEqual(api, ['OPTIONS', 'POST'], 'amex-trace:native-detail-real-exchange (the loopback server answered one preflight and one POST) ' + JSON.stringify(served));
-  assert.deepEqual(seen.api.map(e => e.join(':')).sort(), ['request:OPTIONS:other:', 'request:POST:fetch:', 'requestfailed:POST:fetch:net::ERR_FAILED', 'response:OPTIONS:other:200'], 'amex-trace:native-detail-page-level-pattern (the real job\'s: a preflight answered 200, a POST failed with no answer the page saw) ' + JSON.stringify(seen.api));
-  assert.ok(await waitGone(pid), 'amex-trace:native-detail-closed'); assert.deepEqual(B.ownedBrowsers(), []);
-  const [file, ...more] = await traceFiles(dir);
-  assert.ok(file && !more.length && TRACE_NAME.test(file), 'amex-trace:native-detail-one-record');
-  const text = await readFile(path.join(traceDir(dir), file), 'utf8'), record = JSON.parse(text), end = record.events.at(-1), detail = end?.network?.detail;
-  const answered = { phase: 'after', method: 'OPTIONS', responseStatus: 200, responseClass: '2xx', extraStatus: 200, extraClass: '2xx', outcome: 'finished', cors: null, blocked: null };
-  const hidden = { phase: 'after', method: 'POST', responseStatus: null, responseClass: null, extraStatus: 403, extraClass: '4xx', outcome: 'failed', cors: 'MissingAllowOriginHeader', blocked: null };
-  const requests = Array.isArray(detail?.requests) ? detail.requests.map(({ ms: _ms, ordinal: _ordinal, ...r }) => r).sort((a, b) => a.method.localeCompare(b.method)) : null;
-  assert.deepEqual([detail?.listening, detail?.seen, detail?.dropped, requests, (detail?.requests || []).map(r => r.ordinal).sort()], [true, 2, 0, [answered, hidden], [1, 2]], 'amex-trace:native-detail (a hidden 403 with its CORS error, apart from the answered preflight) ' + JSON.stringify(end?.network));
-  assert.deepEqual([end?.event, end?.reason, end?.network?.after?.login], ['end', 'stopped', { options: { ...ZERO_CELL, sent: 1, '2xx': 1 }, post: { ...ZERO_CELL, sent: 1, failed: 1 }, other: ZERO_CELL }], 'amex-trace:native-detail-page-counts ' + JSON.stringify(end?.network?.after?.login));
-  // the page's own session: the trace's five listeners while the person was needed, none of them when Chrome closed, puppeteer's own kept
-  const plus = Object.fromEntries(Object.entries(seen.before || {}).map(([name, n]) => [name, n + 1]));
-  assert.ok(seen.before && Object.values(seen.before).every(n => n >= 1), 'amex-trace:native-detail-sdk-own-listeners ' + JSON.stringify(seen.before));
-  assert.deepEqual([seen.during, seen.atClose], [plus, seen.before], 'amex-trace:native-detail-sdk-listeners (added for the sign-in, removed before close) ' + JSON.stringify({ before: seen.before, during: seen.during, atClose: seen.atClose }));
-  const commands = seen.sdkSent.filter(method => /\.enable$/.test(method) || /^(Network|Fetch|Log|Audits)\./.test(method));
-  assert.deepEqual([seen.detached, commands], [0, []], 'amex-trace:native-detail-sdk-untouched (no detach, no domain enabled, no Network/Fetch command on the page\'s session) ' + JSON.stringify([...new Set(seen.sdkSent)]));
-  assert.ok(traceSent.every(c => ['Page.getFrameTree', 'Page.createIsolatedWorld', 'Runtime.callFunctionOn'].includes(c.method)), 'amex-trace:native-detail-own-session-unchanged ' + JSON.stringify([...new Set(traceSent.map(c => c.method))]));
-  assert.ok(seen.ids.size === 2 && [...seen.ids].every(id => !text.includes(id)), 'amex-trace:native-detail-no-request-id ' + seen.ids.size);
-  for (const leak of TRACE_LEAKS) assert.ok(!text.includes(leak), 'amex-trace:native-detail-no-leak ' + leak);
-  t.diagnostic('network detail (leak-checked above): ' + JSON.stringify(detail));
-  t.diagnostic('page session commands during the job (puppeteer\'s): ' + JSON.stringify([...new Set(seen.sdkSent)]));
-});
 // The Amex language preference natively (case omf-amex-locale-01), in HEADLESS Chrome only (no window of the owner's desktop exists). Each
 // launch is made headless beneath its own options, and an owned loopback TLS server answers the Amex login host inside that Chrome alone (a
 // throwaway certificate accepted by that Chrome alone, every other name resolves nowhere, nothing intercepted): the login page's own world
 // reads the language preference Chrome gives it, and the server keeps the Accept-Language header Chrome sent for that document. Synthetic:
 // it shows what Chrome makes of each launch's switch, not what the issuer does with it.
 const LANGUAGE_FACTS = () => { let canonical; try { canonical = Intl.getCanonicalLocales(navigator.languages); } catch (error) { canonical = String(error?.name); } return { language: navigator.language, languages: [...navigator.languages], canonical, intlLocale: Intl.DateTimeFormat().resolvedOptions().locale }; };
-// An Accept-Language value whose every item is one language tag with at most one weight (RFC 9110 12.5.4), and those tags in order.
-const LANGUAGE_ITEM = /^([A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*)(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?$/;
-const acceptLanguage = header => { const items = String(header ?? '').split(',').map(item => LANGUAGE_ITEM.exec(item.trim())); return { wellFormed: typeof header === 'string' && items.every(Boolean), tags: items.map(m => m?.[1] ?? null) }; };
 async function languageSite(dir, record) {
   const key = path.join(dir, 'key.pem'), cert = path.join(dir, 'cert.pem');
   await execute(OPENSSL, ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', '/CN=omf-synthetic.invalid'], { windowsHide: true, timeout: 30000 });
@@ -1078,22 +817,6 @@ async function languageSite(dir, record) {
 }
 const languageLaunch = (site, launches) => async options => { launches.push(options); return realLaunch({ ...options, headless: true, args: [...options.args, '--host-resolver-rules=MAP www.americanexpress.com 127.0.0.1:' + site.port + ', MAP * ~NOTFOUND', '--ignore-certificate-errors'] }); };
 const loginDocument = (served, from = 0) => served.slice(from).find(r => r.host === 'www.americanexpress.com' && r.method === 'GET' && r.pathname === new URL(AMEX_LOGIN).pathname);
-test('Amex language preference in HEADLESS Chrome (wrapper): the real wrapper\'s login page gets the plain tags ja-JP, ja, en, all canonical, and Chrome sends a well-formed Accept-Language for that document', { skip: NATIVE, timeout: 180000 }, async t => {
-  const dir = await owned('language-amex-headless'), served = [], site = await languageSite(dir, served), launches = [], seen = {};
-  let outcome;
-  try {
-    outcome = await withLaunch(languageLaunch(site, launches), () => B.collectStatement(ACCOUNT, {}, dir, async () => {}, { batch: 'language-headless', onLaunch: async ({ pid, browser }) => { seen.pid = pid; seen.chrome = await browser.version(); }, reveal: async page => { seen.url = page.url(); seen.facts = await page.evaluate(LANGUAGE_FACTS); throw new Error(PERSON_NEEDED); } })).then(() => null, error => error);
-  } finally { await site.close(); }
-  const document = loginDocument(served), header = acceptLanguage(document?.acceptLanguage);
-  t.diagnostic('Amex lane (' + seen.chrome + '): ' + JSON.stringify({ facts: seen.facts, acceptLanguage: document?.acceptLanguage ?? null }));
-  assert.equal(outcome?.message, PERSON_NEEDED, 'the person would be asked on the login page: ' + outcome?.message);
-  assert.ok(String(seen.url).startsWith(AMEX_LOGIN), 'amex-locale:native-login-page ' + seen.url);
-  assert.deepEqual(seen.facts?.languages, AMEX_LANGUAGES, 'amex-locale:native-languages ' + JSON.stringify(seen.facts));
-  assert.deepEqual([seen.facts?.language, seen.facts?.canonical], ['ja-JP', AMEX_LANGUAGES], 'amex-locale:native-canonical ' + JSON.stringify(seen.facts));
-  assert.ok(header.wellFormed && header.tags[0] === 'ja-JP' && new Set(header.tags).size === header.tags.length && JSON.stringify(canonical(header.tags)) === JSON.stringify(header.tags), 'amex-locale:native-accept-language ' + JSON.stringify(document));
-  assert.deepEqual([launches.length, launches[0]?.headless, launches[0]?.args], [1, false, [...AMEX_LAUNCH_ARGS, '--no-startup-window']], 'amex-locale:native-one-launch (made headless here) ' + JSON.stringify(launches.map(l => l.args)));
-  assert.ok(await waitGone(seen.pid), 'amex-locale:native-closed'); assert.equal(existsSync(B.ephemeralProfile(dir, ACCOUNT.ownerId, 'amex', ACCOUNT._id, 'language-headless')), false, 'amex-locale:native-profile-removed'); assert.deepEqual(B.ownedBrowsers(), []);
-});
 test('Amex language preference in HEADLESS Chrome (defaults): launches without the option, with the bank callers\' and the Aplus wrapper\'s options, give their page exactly the list of the release\'s --accept-lang, as before', { skip: NATIVE, timeout: 180000 }, async t => {
   const dir = await owned('language-defaults-headless'), served = [], site = await languageSite(dir, served), seen = [];
   try {

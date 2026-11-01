@@ -64,7 +64,12 @@
 //      L (login.test.mjs), K (the recorded wrapper) and NT (the native trace test, HEADLESS Chrome only); a login.mjs copy reaches the
 //      wrapper through a browser.mjs copy that imports it. The Amex language preference's defects run through K (the recorded language
 //      tests) and NT (its native wrapper language test, HEADLESS Chrome only).
-// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,F3,F4,F5,U,K,N,T,AL,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
+//   A  the Amex native wrapper (case omf-amex-native-runtime-01): node --test collector/test/amex-native.test.mjs (the real amex-native.mjs over a
+//      scripted helper) and collector/test/amex-native-setup.test.mjs (the attended download: index.mjs, the setup page, the real collector).
+//      The Amex wrapper no longer uses the DevTools launcher: its DevTools legs (window, rendering, login trace, language) retired from
+//      card-background.test.mjs with their mutants and fail-first parts (F3/F4 keep their login.test.mjs parts; F5 retired whole); the real
+//      helper and its Chrome run in scripts/zoomer-fixtures/omf-amex-native.mjs.
+// Selection: OMF_CARD_LEGS (comma list of F,F1,F2,F3,F4,U,K,N,T,AL,A,S,C,P,R,RN,M), OMF_CARD_MUTANTS (labels); OMF_CARD_EVIDENCE keeps every leg's log.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -106,15 +111,16 @@ const NATIVE = process.env.OMF_CARD_NATIVE !== '0';
 // Parent fold P5: a selected (OMF_CARD_LEGS / OMF_CARD_MUTANTS) or non-native run is development evidence and exports no coverage;
 // only the complete run with its native legs may claim the covered files (the verifier reads `covers` at load).
 export const PARTIAL = LEGS.length > 0 || !!process.env.OMF_CARD_MUTANTS || !NATIVE;
-const COVERS = ['pages/connections.vue', 'server/api/finance/[...path].ts', 'collector/legacy-card-import.mjs', 'collector/index.mjs', 'collector/setup.html', 'collector/setup.js', 'collector/omf-authorization.mjs', 'collector/browser.mjs', 'collector/login.mjs', 'collector/aplus.mjs', 'collector/package/stage.mjs', 'server/api/finance/collector-security/[...path].ts', 'server/services/financeCollectorSecurityService.ts', 'server/services/financeService.ts', 'server/services/financeSyncScheduler.ts', 'docs/amex-connector.md', 'collector/test/legacy-card-import.test.mjs', 'collector/test/card-background.test.mjs', 'collector/test/login.test.mjs', 'scripts/finance-legacy-card-import-integration.cjs', 'scripts/zoomer-fixtures/omf-card-handover.mjs'];
+const COVERS = ['collector/amex-native.mjs', 'collector/test/amex-native.test.mjs', 'collector/test/amex-native-setup.test.mjs', 'pages/connections.vue', 'server/api/finance/[...path].ts', 'collector/legacy-card-import.mjs', 'collector/index.mjs', 'collector/setup.html', 'collector/setup.js', 'collector/omf-authorization.mjs', 'collector/browser.mjs', 'collector/login.mjs', 'collector/aplus.mjs', 'collector/package/stage.mjs', 'server/api/finance/collector-security/[...path].ts', 'server/services/financeCollectorSecurityService.ts', 'server/services/financeService.ts', 'server/services/financeSyncScheduler.ts', 'docs/amex-connector.md', 'collector/test/legacy-card-import.test.mjs', 'collector/test/card-background.test.mjs', 'collector/test/login.test.mjs', 'scripts/finance-legacy-card-import-integration.cjs', 'scripts/zoomer-fixtures/omf-card-handover.mjs'];
 const UNIT = 'collector/test/legacy-card-import.test.mjs', BACKGROUND = 'collector/test/card-background.test.mjs', INTEGRATION = 'scripts/finance-legacy-card-import-integration.cjs';
 const LOGIN = 'collector/login.mjs', LOGIN_TEST = 'collector/test/login.test.mjs';
+const NATIVE_MODULE = 'collector/amex-native.mjs', NATIVE_TEST = 'collector/test/amex-native.test.mjs', ATTENDED_TEST = 'collector/test/amex-native-setup.test.mjs';
 // Existing collector suites that exercise the changed modules: no Chrome (R) and the Chrome-launching shared browser lane (RN, native).
 const EXISTING = ['collector/test/login.test.mjs', 'collector/test/mail.test.mjs', 'collector/test/omf-authorization.test.mjs', 'collector/test/sealed-vault.test.mjs', 'collector/test/split-vault.test.mjs', 'collector/test/vault.test.mjs', 'collector/test/statement.test.mjs', 'collector/test/aplus-setup.test.mjs', 'collector/test/yayoi.test.mjs', 'collector/test/yayoi-setup.test.mjs', 'collector/test/startup.test.mjs'];
 // paypay-setup/rakuten-setup drive the real setup.html + setup.js (changed) in owned headless Chrome against a stub /status.
 const EXISTING_NATIVE = ['collector/test/frame-init.test.mjs', 'collector/test/rakuten-standard.test.mjs', 'collector/test/paypay-standard.test.mjs', 'collector/test/bank-balance.test.mjs', 'collector/test/paypay-setup.test.mjs', 'collector/test/rakuten-setup.test.mjs'];
 // The module a copy replaces, by the test seam that loads it.
-const ENV = { 'collector/legacy-card-import.mjs': 'OMF_TEST_IMPORT_MODULE', 'collector/omf-authorization.mjs': 'OMF_TEST_AUTHORIZATION_MODULE', 'collector/browser.mjs': 'OMF_TEST_BROWSER_MODULE', 'collector/login.mjs': 'OMF_TEST_LOGIN_MODULE', 'collector/aplus.mjs': 'OMF_TEST_APLUS_MODULE', 'collector/index.mjs': 'OMF_TEST_INDEX_MODULE' };
+const ENV = { 'collector/legacy-card-import.mjs': 'OMF_TEST_IMPORT_MODULE', 'collector/omf-authorization.mjs': 'OMF_TEST_AUTHORIZATION_MODULE', 'collector/browser.mjs': 'OMF_TEST_BROWSER_MODULE', 'collector/login.mjs': 'OMF_TEST_LOGIN_MODULE', 'collector/aplus.mjs': 'OMF_TEST_APLUS_MODULE', 'collector/index.mjs': 'OMF_TEST_INDEX_MODULE', 'collector/amex-native.mjs': 'OMF_TEST_NATIVE_MODULE' };
 const SERVER_FILES = ['server/services/financeCollectorSecurityService.ts', 'server/api/finance/collector-security/[...path].ts', 'server/services/financeService.ts', 'server/services/financeSyncScheduler.ts', 'server/api/finance/[...path].ts'];
 const ROUTE = 'server/api/finance/[...path].ts', SERVICE = 'server/services/financeService.ts';
 
@@ -136,11 +142,7 @@ export const MUTANTS = [
   ['MI13-raw-token-sent', I, [['proof = await remote.legacyOwner(sha256(blob.token));', 'proof = await remote.legacyOwner(blob.token);']], 'U', '^same-owner proof', /proof:hash-only/],
   ['MI14-other-owner-grant-accepted', I, [["if (grant.ownerId !== ownerId || grant.origin !== origin) throw legacyError('legacy-owner'); // guard:legacy-owner-match", '']], 'U', '^grant-first', /grant-first:another (owner|origin) touched the previous setup/],
   ['MI15-parent-link-followed', I, [["if (keyOf(real) !== keyOf(source) || keyOf(realFile) !== keyOf(file)) throw legacyError('legacy-unsafe'); // guard:legacy-plain", '']], 'U', '^source:', /expected legacy-unsafe but it resolved|source:parent junction/],
-  ['MB1-amex-visible-launch', BR, [['onLaunch, background: true, minimized: true }); // guard:card-background-amex', 'onLaunch });']], 'K', '^Amex wrapper', /card-background:amex-launch/],
   ['MB2-aplus-visible-launch', BR, [['onLaunch, background: true, minimized: true }); // guard:card-background-aplus', 'onLaunch });']], 'K', '^Aplus wrapper', /card-background:aplus-launch/],
-  // the same defect as before the Amex login trace (the wrapper's login UI, with its reveal, not handed to collectFromPage, so ensureLogin
-  // makes its own); amex-login-fix-20261031 moved that UI into a variable (it also carries the trace), so the anchor is that call's tail
-  ['MB3-amex-attention-unrouted', BR, [[', origin, ui }); // guard:card-reveal-amex', ', origin }); // guard:card-reveal-amex']], 'K', '^Amex wrapper', /FOREGROUND/],
   ['MB4-aplus-attention-unrouted', BR, [['signal, ui, reveal }); // guard:card-reveal-aplus', 'signal, ui });']], 'K', '^Aplus wrapper', /FOREGROUND/],
   ['ML1-login-ui-ignores-reveal', 'collector/login.mjs', [['async show() { if (reveal) await reveal(page); else await page.bringToFront(); } // guard:login-reveal', 'async show() { await page.bringToFront(); }']], 'K', '^login UI', /card-reveal:login-ui-routes/],
   ['MA1-aplus-ui-ignores-reveal', 'collector/aplus.mjs', [['async show() { if (reveal) await reveal(page); else await page.bringToFront(); }, // guard:aplus-reveal', 'async show() { await page.bringToFront(); },']], 'K', '^Aplus default UI', /card-reveal:aplus-ui-background/],
@@ -175,8 +177,25 @@ export const MUTANTS = [
   // the focus repair (focus-repair/6-build.md), narrowed to the card wrappers by the card-only fold (card-only-focus-fold/6-build.md):
   // the card windows minimized at creation and the bank callers' window kept as live-accepted (recorded only: a card window that is not
   // minimized is never launched natively again), and the previous-setup section re-read while the collector's own tick is busy
+  // the Amex native wrapper (case omf-amex-native-runtime-01): K the wrapper legs of card-background.test.mjs (the DevTools launcher refuses
+  // there), A amex-native.test.mjs, X amex-native-setup.test.mjs (index.mjs and setup.js copies reach its collector process and page)
+  ['MN1-amex-falls-back-to-the-launcher', BR, [['  try { result = await collectStatementNative(', "  try { await browserFor(path.join(directory, 'devtools-fallback'), { onLaunch }); result = await collectStatementNative("]], 'K', '^Amex native wrapper', /amex-native:no-automated-factory/],
+  ['MN2-attended-not-passed', BR, [['onLaunch, origin, attended }); } // guard:amex-native', 'onLaunch, origin }); } // guard:amex-native']], 'K', '^Amex native wrapper', /amex-native:attended-input-desktop/],
+  ['MN3-launch-before-ownership', NATIVE_MODULE, [["    try { await onLaunch({ pid: helper.pid, browser: null }); } catch (error) { trace.step('own', 'error'); throw error; }\n    trace.step('own');\n    await act(helper, trace, 'launch', {}, LAUNCH_MS);\n", "    await act(helper, trace, 'launch', {}, LAUNCH_MS);\n    try { await onLaunch({ pid: helper.pid, browser: null }); } catch (error) { trace.step('own', 'error'); throw error; }\n    trace.step('own');\n"]], 'K', '^Amex native wrapper', /amex-native:own-before-launch/],
+  ['MN4-private-check-shown', NATIVE_MODULE, [["async show() { if (mode !== 'input') { trace.step('attention', 'refused', 'private_mode'); throw new Error(PRIVATE_ATTENTION); } await act(helper, trace, 'show'); }", "async show() { await act(helper, trace, 'show'); }"]], 'K', '^Amex native wrapper', /amex-native:private-(check-ends-job|nothing-shown-one-login)/],
+  ['MN5-private-status-asks-person', NATIVE_MODULE, [["if (state === 'verification_required' && mode !== 'input') return; ", '']], 'A', '^private mode', /amex-native:private-no-verification-status/],
+  ['MN6-no-login-still-launches', NATIVE_MODULE, [["    if (mode === 'private' && !(settings?.username && settings?.password)) throw new Error(NO_LOGIN); // guard:amex-private-no-login\n", '']], 'A', '^private mode', /amex-native:private-no-login/],
+  ['MN7-ambiguity-ends-reads', NATIVE_MODULE, [["export const TRANSIENT = Object.freeze(['ambiguous_document', ", 'export const TRANSIENT = Object.freeze([']], 'A', '^read tolerance', /amex-native:tolerance-completes/],
+  ['MN8-action-repeated', NATIVE_MODULE, [["  if (!reply.ok) { trace.step(step, reply.acted ? 'uncertain' : 'error', reply.code); throw new Error(message(reply.code)); }", "  if (!reply.ok) { const again = await helper.request(op, fields, timeoutMs); if (again.ok) { trace.step(step); return again; } trace.step(step, reply.acted ? 'uncertain' : 'error', reply.code); throw new Error(message(reply.code)); }"]], 'A', '^actions are never repeated', /amex-native:action-(once|refused)/],
+  ['MN9-final-check-skipped', NATIVE_MODULE, [["    const after = await readUntil(helper, trace, 'snapshot', snapshotOf, RECHECK_MS, 'verify-after');\n    if (!after) throw new Error(PAGE_UNREADABLE);\n    verifyStatement(after, selected, account.primaryCard);\n", '']], 'A', '^persistent ambiguity', /amex-native:persistent-ambiguity-fails/],
+  ['MN10-record-carries-values', NATIVE_MODULE, [['  trace.step(step);\n  return reply;', '  trace.step(step + JSON.stringify(fields));\n  return reply;']], 'A', '^(privacy|the private record)', /amex-native:(record-no-leak|record-step)/],
+  ['MN11-arming-not-consumed', 'collector/index.mjs', [['  return {attended:true,intent:null};', '  return {attended:true,intent};']], 'X', '^takeAttended', /attended:(next-job-consumes|consumed-once)/],
+  ['MN12-arming-takes-the-prior-job', 'collector/index.mjs', [["||String(account?.jobId??'')===String(intent.priorJobId??''))return {attended:false,intent};", ')return {attended:false,intent};']], 'X', '^takeAttended', /attended:prior-job-private-kept/],
+  ['MN13-manual-batch-private', 'collector/index.mjs', [["const attended=live.mode==='manual'||taken.attended; // guard:amex-attended-mode", 'const attended=taken.attended; // guard:amex-attended-mode']], 'X', '^the real collector process', /attended-route:manual-batch-input-desktop/],
+  ['MN14-arming-outlives-its-session', 'collector/index.mjs', [['if(!intent||!live||intent.session!==live.id||now>intent.until)return {attended:false,intent:null}; // guard:amex-attended-bound', 'if(!intent||!live)return {attended:false,intent:null}; // guard:amex-attended-bound']], 'X', '^takeAttended', /attended:(other-session-dropped|expired-dropped)/],
+  ['MN15-setup-promises-a-download', 'collector/setup.js', [['To complete it yourself: press Prepare an attended download (this starts nothing), then request', 'To complete it yourself: press Prepare an attended download, which starts the download; or request']], 'X', '^the real setup page', /attended-setup:truthful-note/],
+  ['MN16-native-not-staged', 'collector/package/stage.mjs', [[",'legacy-card-import','amex-native']", ",'legacy-card-import']"]], 'P', '', /card-handover:staged collector\/amex-native\.mjs|staged import missing/],
   ['MB5-card-window-not-minimized', BR, [["...(minimized ? { windowState: 'minimized' } : {}), ", '']], 'K', '^(Amex|Aplus) wrapper', /card-background:(amex|aplus)-minimized-window/],
-  ['MB6-amex-not-minimized', BR, [['background: true, minimized: true }); // guard:card-background-amex', 'background: true }); // guard:card-background-amex']], 'K', '^Amex wrapper', /card-background:amex-minimized-window/],
   ['MB7-aplus-not-minimized', BR, [['background: true, minimized: true }); // guard:card-background-aplus', 'background: true }); // guard:card-background-aplus']], 'K', '^Aplus wrapper', /card-background:aplus-minimized-window/],
   ['MB8-bank-default-minimized', BR, [['background = false, minimized = false } = {}) {', 'background = false, minimized = true } = {}) {']], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-target/],
   ['MB9-every-window-minimized', BR, [["...(minimized ? { windowState: 'minimized' } : {}), ", "windowState: 'minimized', "]], 'K', '^bank caller', /bank-background:(statement|guided-observe|balance)-target/],
@@ -203,15 +222,6 @@ export const MUTANTS = [
   ['MT10-sink-failure-reaches-login', LOGIN, [["    try { const result = sink(freeze(event)); if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {}); } catch { /* the sink's failure never reaches the login */ }", "    const result = sink(freeze(event)); if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});"]], 'L', '^login trace \\(best effort', /login-trace:best-effort sink-throws/],
   ['MT11-events-unbounded', LOGIN, [['    else if (emitted >= TRACE_EVENTS - 1) { dropped++; return; }\n', '']], 'L', '^login trace \\(bounded', /login-trace:event-caps/],
   ['MT12-step-unbounded', LOGIN, [['const within = (fn, ms = TRACE_MS) => { let timer; return Promise.race([Promise.resolve().then(fn).catch(() => null), new Promise(resolve => { timer = setTimeout(resolve, ms, null); })]).finally(() => clearTimeout(timer)); };', 'const within = fn => Promise.resolve().then(fn).catch(() => null);']], 'L', '^login trace \\(best effort', /test timed out after 60000ms|login-trace:best-effort/],
-  ['MT13-trace-not-written', BR, [['    if (ui) { // guard:amex-trace-flush', '    if (false) { // guard:amex-trace-flush']], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:record-written-before-close/],
-  ['MT14-written-before-stop', BR, [['        await ui.stopTrace?.();\n', '']], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:stopped-before-close/],
-  ['MT15-record-in-outbox', BR, [["path.join(directory, 'diagnostics', 'amex', accountId)", "path.join(directory, 'outbox', accountId, 'trace')"]], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:(record-written-before-close|outside-outbox)/],
-  ['MT16-records-unbounded', BR, [['for (const name of kept.slice(20))', 'for (const name of kept.slice(kept.length))']], 'K', '^Amex login trace \\(wrapper\\): only the 20 newest', /amex-trace:retention-20-newest/],
-  ['MT17-store-failure-reaches-job', BR, [['await Promise.race([flush().catch(() => {}),', 'await Promise.race([flush(),']], 'K', '^Amex login trace \\(wrapper\\): a store', /amex-trace:best-effort-unchanged store-refused/],
-  ['MT18-wrapper-trace-unwired', BR, [['ui = loginUi(page, { reveal, trace: event => { if (events.length < 250) events.push(event); else overflow++; } }); // guard:amex-login-trace', 'ui = loginUi(page, { reveal }); // guard:amex-login-trace']], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:(stopped-before-close|record-has|record-observations)/],
-  ['MT19-record-unbound', BR, [["JSON.stringify({ schema: 'amex-login-trace-1', accountId, jobId, at:", "JSON.stringify({ schema: 'amex-login-trace-1', accountId, jobId: null, at:"]], 'K', '^Amex login trace \\(wrapper\\): the real sign-in', /amex-trace:record-bound/],
-  ['MT20N-value-comparison-inverted', LOGIN, [["? timingSafeEqual(Buffer.from(hex, 'hex'), expected) : null;", "? !timingSafeEqual(Buffer.from(hex, 'hex'), expected) : null;"]], 'NT', '^Amex login trace in HEADLESS', /amex-trace:native-filled/],
-  ['MT21N-submit-not-counted', LOGIN, [['const onSubmit = () => { n.submits++; }', 'const onSubmit = () => {}']], 'NT', '^Amex login trace in HEADLESS', /amex-trace:native-submit/],
   // Parent network/context findings: preserve endpoint discrimination, unavailable comparisons and the protected-process boundary.
   ['MT22-login-preflight-hidden', LOGIN, [['endpoint = endpointOf(request.url())', "endpoint = method === 'OPTIONS' ? 'other' : endpointOf(request.url())"]], 'L', '^login trace \\(login API, preflight only', /login-trace:login-api-preflight-only/],
   ['MT23-analytics-treated-as-login', LOGIN, [["(u.origin === WWW || u.origin === GLOBAL) && LOGIN_API.test(u.pathname)", '(u.origin === WWW || u.origin === GLOBAL)']], 'L', '^login trace \\(login API answered', /login-trace:analytics-unrelated/],
@@ -231,9 +241,7 @@ export const MUTANTS = [
   ['MT34-detail-request-id-recorded', LOGIN, [['const r = { ordinal: detail.requests.length + 1, ms: ms(), phase, method, ', 'const r = { ordinal: detail.requests.length + 1, ms: ms(), phase, method, id, ']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:(schema keys|detail-no-request-id|no-leak)/],
   ['MT35-detail-sdk-detached', LOGIN, [["catch { /* gone */ } } // only the trace's own listeners", "catch { /* gone */ } } try { sdk?.detach?.()?.catch?.(() => {}); } catch { /* gone */ } // only the trace's own listeners"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-sdk-untouched/],
   ['MT36-detail-domain-enabled', LOGIN, [['      sdk = client;\n', "      sdk = client; client.send('Network.enable')?.catch?.(() => {});\n"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-sdk-untouched/],
-  ['MT37N-detail-domain-enabled-native', LOGIN, [['      sdk = client;\n', "      sdk = client; client.send('Network.enable')?.catch?.(() => {});\n"]], 'NT', '^Amex login trace network detail in HEADLESS', /amex-trace:native-detail-sdk-untouched/],
   ['MT38-detail-listeners-kept', LOGIN, [["      for (const [name, listener] of sdkAttached) { try { sdk.off(name, listener); } catch { /* gone */ } } // only the trace's own listeners\n", '']], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-(sdk-untouched|listeners-removed)/],
-  ['MT39N-detail-listeners-kept-native', LOGIN, [["      for (const [name, listener] of sdkAttached) { try { sdk.off(name, listener); } catch { /* gone */ } } // only the trace's own listeners\n", '']], 'NT', '^Amex login trace network detail in HEADLESS', /amex-trace:native-detail-sdk-listeners/],
   ['MT40-detail-others-listeners-removed', LOGIN, [["try { sdk.off(name, listener); } catch { /* gone */ } } // only the trace's own listeners", "try { sdk.off(name); } catch { /* gone */ } } // only the trace's own listeners"]], 'L', '^login trace \\(network detail, hidden by CORS', /login-trace:detail-(sdk-untouched|listeners-removed)/],
   ['MT41-detail-failure-reaches-session', LOGIN, [['    [DETAIL_EVENTS[4], e => { try {\n', '    [DETAIL_EVENTS[4], e => { {\n'], ["      r.outcome = 'failed'; r.cors = cors; r.blocked = blocked;\n    } catch { /* unreadable */ } }]", "      r.outcome = 'failed'; r.cors = cors; r.blocked = blocked;\n    } }]"]], 'L', '^login trace \\(network detail, best effort', /login-trace:detail-(best-effort|contained) hostile-events/],
   ['MT42-detail-late-status-dropped', LOGIN, [['if (r) [r.extraStatus, r.extraClass] = status;', 'if (r && r.outcome === null) [r.extraStatus, r.extraClass] = status;']], 'L', '^login trace \\(network detail, arrival order', /login-trace:detail-arrival-order/],
@@ -247,15 +255,9 @@ export const MUTANTS = [
   // The Amex language preference (amex-locale-01): only the Amex wrapper launches with the plain tags; the release's arguments of every other
   // launch and the Amex launch's other arguments stay as they were. K: the recorded language tests; NT: the native wrapper language test,
   // HEADLESS Chrome only.
-  ['MG1-amex-plain-languages-omitted', BR, [['root: directory, plainLanguages: true, onLaunch', 'root: directory, onLaunch']], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
-  ['MG2-weighted-tags-restored', BR, [["? '--accept-lang=ja-JP,ja,en' : arg", "? '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8' : arg"]], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
-  ['MG2N-weighted-tags-restored-native', BR, [["? '--accept-lang=ja-JP,ja,en' : arg", "? '--accept-lang=ja-JP,ja;q=0.9,en;q=0.8' : arg"]], 'NT', '^Amex language preference in HEADLESS Chrome \\(wrapper', /amex-locale:native-languages/],
-  ['MG3-option-ignored', BR, [['args: [...(plainLanguages ? PLAIN_LANGUAGE_ARGS : LAUNCH_ARGS), ', 'args: [...LAUNCH_ARGS, ']], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
   ['MG4-global-language-changed', BR, [["'--accept-lang=ja-JP,ja;q=0.9,en;q=0.8'", "'--accept-lang=ja-JP,ja,en'"]], 'K', '^Amex language preference \\(defaults', /amex-locale:default-constant-preserved/],
   ['MG5-default-plain', BR, [['headless = false, plainLanguages = false, onLaunch', 'headless = false, plainLanguages = true, onLaunch']], 'K', '^Amex language preference \\(defaults', /amex-locale:(aplus|bank|yayoi|research|headless|factory)-default-preserved/],
   ['MG6-aplus-plain', BR, [['root: directory, onLaunch, background: true, minimized: true }); // guard:card-background-aplus', 'root: directory, plainLanguages: true, onLaunch, background: true, minimized: true }); // guard:card-background-aplus']], 'K', '^Amex language preference \\(defaults', /amex-locale:aplus-default-preserved/],
-  ['MG7-amex-flag-added', BR, [["? '--accept-lang=ja-JP,ja,en' : arg));", "? '--accept-lang=ja-JP,ja,en' : arg).concat('--disable-web-security'));"]], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/],
-  ['MG8-amex-lang-switch-replaced', BR, [["arg.startsWith('--accept-lang=') ?", "arg.startsWith('--lang=') || arg.startsWith('--accept-lang=') ?"]], 'K', '^Amex language preference \\(wrapper', /amex-locale:proper-language-preferences/]
 ];
 
 function runChild(args, env, timeout) {
@@ -304,6 +306,7 @@ async function withRouted(file, label, text, fn) {
   return withCopy(file, label, text, async copy => {
     if (file === BR) return withBankRoute(copy, label, fn);
     if (file === LOGIN) return withLoginRoute(copy, label, fn);
+    if (file === NATIVE_MODULE) { const routed = mutate(await readFile(path.join(root, BR), 'utf8'), [["from './amex-native.mjs';", "from './" + path.basename(copy) + "';"]], label + ' native route'); return withCopy(BR, label, routed, browserCopy => fn({ [ENV[NATIVE_MODULE]]: copy, [ENV[BR]]: browserCopy })); }
     if (file !== 'collector/aplus.mjs') return fn({ [ENV[file]]: copy });
     const browserText = mutate(await readFile(path.join(root, BR), 'utf8'), [["from './aplus.mjs';", "from './" + path.basename(copy) + "';"]], label + ' browser route');
     return withCopy(BR, label, browserText, browserCopy => fn({ [ENV[file]]: copy, [ENV[BR]]: browserCopy }));
@@ -339,16 +342,17 @@ async function stageCheck(stageFile = path.join(root, 'collector/package/stage.m
   try {
     const stageModule = await import(pathToFileURL(stageFile).href + '?' + Date.now()), into = path.join(temp, 'staged');
     const { manifest } = await stageModule.stage({ into, origin: 'https://omf.example', install: false, log: () => {} });
-    for (const entry of ['collector/legacy-card-import.mjs', 'collector/index.mjs', 'collector/browser.mjs', 'collector/login.mjs', 'collector/aplus.mjs', 'collector/omf-authorization.mjs', 'collector/setup.html', 'collector/setup.js']) {
+    for (const entry of ['collector/legacy-card-import.mjs', 'collector/index.mjs', 'collector/browser.mjs', 'collector/login.mjs', 'collector/aplus.mjs', 'collector/omf-authorization.mjs', 'collector/setup.html', 'collector/setup.js', 'collector/amex-native.mjs', 'collector/windows/amex-native.ps1']) {
       if (!manifest.files[entry]) throw new Error('card-handover:staged ' + entry + ' is not in the package');
       if (manifest.files[entry] !== sha256(await readFile(path.join(root, entry)))) throw new Error('card-handover:staged-hash ' + entry);
     }
     if (Object.keys(manifest.files).some(f => f.includes('/test/') || /mutant|zoomer/.test(f))) throw new Error('card-handover:no-test-code-staged');
     const graph = await walkImports(path.join(into, 'collector', 'index.mjs'));
     if (![...graph].some(f => f.endsWith(path.join('collector', 'legacy-card-import.mjs')))) throw new Error('card-handover:importer-not-in-graph');
+    if (![...graph].some(f => f.endsWith(path.join('collector', 'amex-native.mjs')))) throw new Error('card-handover:native-not-in-graph');
     const staged = await import(pathToFileURL(path.join(into, 'collector', 'legacy-card-import.mjs')).href);
     if (typeof staged.previewLegacyCards !== 'function' || staged.standardSource({ LOCALAPPDATA: 'C:\\Synthetic' }) !== path.resolve('C:\\Synthetic\\OhMyFinance\\collector')) throw new Error('card-handover:staged-importer-loads');
-    return Object.keys(manifest.files).length + ' files staged; the importer hashed, in the graph from index.mjs and loadable without node_modules; no test code';
+    return Object.keys(manifest.files).length + ' files staged; the importer hashed, in the graph from index.mjs and loadable without node_modules; the Amex native module and its helper script hashed, the module in the graph; no test code';
   } finally { await rm(temp, { recursive: true, force: true }).catch(() => {}); }
 }
 
@@ -396,8 +400,9 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
       // opened while the collector's tick is held at OMF, keeps Check disabled after the tick ends (L4, headless Chrome). The d067126 headed
       // background window is never launched again: its native foreground failure stays retained in combined/card-control-recovery.
       { const r = await withCopy('collector/browser.mjs', 'focus', await baseText('collector/browser.mjs', FOCUS), b => unit(BACKGROUND, { OMF_TEST_BROWSER_MODULE: b, OMF_CARD_NATIVE: '0' }, '^(Amex|Aplus) wrapper')), t = tests(r); await keep('F-FOCUS-K', t.out);
-        const named = ['card-background:amex-minimized-window', 'card-background:aplus-minimized-window'].filter(x => t.out.includes(x));
-        if (t.fail !== 2 || named.length !== 2) throw new Error('the background window did not fail first on ' + FOCUS.slice(0, 7) + ': fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        // the Amex wrapper's DevTools window retired with that wrapper (case omf-amex-native-runtime-01): the Aplus wrapper's is the one left
+        const named = ['card-background:aplus-minimized-window'].filter(x => t.out.includes(x));
+        if (t.fail !== 1 || named.length !== 1) throw new Error('the background window did not fail first on ' + FOCUS.slice(0, 7) + ': fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
         counts.failFirst.FOCUS_K = t.fail + '/' + (t.pass + t.fail); found.push(FOCUS.slice(0, 7) + ' K red (' + named.join(', ') + ')'); }
       { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + FOCUS.slice(0, 7) + ' setup-page fail-first needs owned headless Chrome');
         const index = await readFile(path.join(root, 'collector/index.mjs'), 'utf8');
@@ -418,12 +423,12 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
       const at = async (revision, tag) => { const text = await baseText(BR, revision); if (!text) throw new Error('SETUP ' + revision + ' is not readable here'); return tests(await withCopy(BR, tag, text, copy => withBankRoute(copy, tag, seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, select)))); };
       { const t = await at(FOLD, 'fold'); await keep('F1-FOLD-K', t.out);
         const named = ['bank-background:statement-target', 'bank-background:guided-observe-target', 'bank-background:balance-target'].filter(x => t.out.includes(x));
-        if (t.fail !== 3 || t.pass !== 3 || named.length !== 3) throw new Error('the bank callers did not fail first on ' + FOLD.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
-        counts.failFirst.FOLD_K = t.fail + '/' + (t.pass + t.fail); found.push(FOLD.slice(0, 7) + ' K red (' + named.join(', ') + '); its two card wrappers and the visible observe green'); }
+        if (t.fail !== 3 || t.pass !== 2 || named.length !== 3) throw new Error('the bank callers did not fail first on ' + FOLD.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.FOLD_K = t.fail + '/' + (t.pass + t.fail); found.push(FOLD.slice(0, 7) + ' K red (' + named.join(', ') + '); its Aplus wrapper and the visible observe green'); }
       { const t = await at(FOCUS, 'focus'); await keep('F1-FOCUS-K', t.out);
-        const named = ['card-background:amex-minimized-window', 'card-background:aplus-minimized-window'].filter(x => t.out.includes(x));
-        if (t.fail !== 2 || t.pass !== 4 || named.length !== 2) throw new Error('the reverse control on ' + FOCUS.slice(0, 7) + ' did not hold: pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
-        counts.failFirst.FOCUS_BANK_K = t.pass + ' green / ' + t.fail + ' red'; found.push(FOCUS.slice(0, 7) + ' K: the four bank callers green (the live-accepted creation it sends), its card wrappers red (' + named.join(', ') + ')'); }
+        const named = ['card-background:aplus-minimized-window'].filter(x => t.out.includes(x));
+        if (t.fail !== 1 || t.pass !== 4 || named.length !== 1) throw new Error('the reverse control on ' + FOCUS.slice(0, 7) + ' did not hold: pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        counts.failFirst.FOCUS_BANK_K = t.pass + ' green / ' + t.fail + ' red'; found.push(FOCUS.slice(0, 7) + ' K: the four bank callers green (the live-accepted creation it sends), its Aplus wrapper red (' + named.join(', ') + ')'); }
       // what that creation does to the page, in HEADLESS Chrome only (no window of the owner's desktop): ef038a9's bank default page is
       // minimized and hidden
       { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + FOLD.slice(0, 7) + ' headless bank-default fail-first needs owned headless Chrome');
@@ -438,13 +443,13 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
     await leg('F2 fail-first of the card rendering correction on ' + RENDER.slice(0, 7) + ' (its minimized card page hidden: no page session, no focus emulation, no setup-failure exit), by recording and in owned minimized native Chrome', async () => {
       const found = [], text = await baseText(BR, RENDER); if (!text) throw new Error('SETUP ' + RENDER + ' is not readable here');
       { const t = tests(await withCopy(BR, 'render', text, copy => withBankRoute(copy, 'render', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, '^(card rendering|bank caller)')))); await keep('F2-RENDER-K', t.out);
-        const named = ['card-rendering:amex-renders-before-first-step', 'card-rendering:aplus-renders-before-first-step', 'card-rendering:setup-failure-amex-session', 'card-rendering:setup-failure-aplus-session'].filter(x => t.out.includes(x));
-        if (t.fail !== 4 || t.pass !== 4 || named.length !== 4) throw new Error('the card rendering did not fail first on ' + RENDER.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        const named = ['card-rendering:aplus-renders-before-first-step', 'card-rendering:setup-failure-aplus-session'].filter(x => t.out.includes(x));
+        if (t.fail !== 2 || t.pass !== 4 || named.length !== 2) throw new Error('the card rendering did not fail first on ' + RENDER.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
         counts.failFirst.RENDER_K = t.fail + '/' + (t.pass + t.fail); found.push(RENDER.slice(0, 7) + ' K red (' + named.join(', ') + '); its four bank callers green'); }
       { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + RENDER.slice(0, 7) + ' native rendering fail-first needs owned Chrome');
-        const r = await withCopy(BR, 'render', text, copy => unit(BACKGROUND, { OMF_TEST_BROWSER_MODULE: copy, OMF_CARD_NATIVE: '1' }, '^native (card rendering|Amex sign-in|reveal geometry in HEADLESS|Aplus statement code read automatically)')), t = tests(r); await keep('F2-RENDER-N', t.out);
-        const named = ['card-rendering:native-next-state', 'card-rendering:native-amex-next-state-after-submit', 'card-rendering:headless-visible-while-minimized', 'The My APLUS CSV option did not appear'].filter(x => t.out.includes(x));
-        if (t.fail !== 4 || t.pass !== 0 || named.length !== 4 || !t.out.includes('"visibility":"hidden"')) throw new Error('the minimized card page did not fail first natively on ' + RENDER.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
+        const r = await withCopy(BR, 'render', text, copy => unit(BACKGROUND, { OMF_TEST_BROWSER_MODULE: copy, OMF_CARD_NATIVE: '1' }, '^native (card rendering|reveal geometry in HEADLESS|Aplus statement code read automatically)')), t = tests(r); await keep('F2-RENDER-N', t.out);
+        const named = ['card-rendering:native-next-state', 'card-rendering:headless-visible-while-minimized', 'The My APLUS CSV option did not appear'].filter(x => t.out.includes(x));
+        if (t.fail !== 3 || t.pass !== 0 || named.length !== 3 || !t.out.includes('"visibility":"hidden"')) throw new Error('the minimized card page did not fail first natively on ' + RENDER.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
         counts.failFirst.RENDER_N = t.fail + '/' + (t.pass + t.fail); found.push(RENDER.slice(0, 7) + ' native red (' + named.join(', ') + '; its page "hidden")'); }
       return found.join('; ');
     });
@@ -459,15 +464,8 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         const named = LOGIN_NAMED.filter(x => t.out.includes(x));
         if (t.fail !== 17 || t.pass !== 7 || named.length !== LOGIN_NAMED.length) throw new Error('the login trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
         counts.failFirst.TRACE_L = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' login.test red (' + named.join(', ') + '); its 7 earlier login tests green'); }
-      const WRAPPER_NAMED = ['amex-trace:record-written-before-close', 'amex-trace:hang-recorded', 'amex-trace:retention-new-record', 'amex-trace:cancel-stopped-and-written'];
-      { const t = tests(await withCopy(LOGIN, 'trace-base', login, copy => withLoginRoute(copy, 'trace-base', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, '^Amex login trace'), browser))); await keep('F3-K', t.out);
-        const named = WRAPPER_NAMED.filter(x => t.out.includes(x));
-        if (t.fail !== 4 || t.pass !== 1 || named.length !== WRAPPER_NAMED.length) throw new Error('the wrapper trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
-        counts.failFirst.TRACE_K = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' K red (' + named.join(', ') + '); its Aplus control green'); }
-      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + TRACE.slice(0, 7) + ' native trace fail-first needs owned headless Chrome');
-        const t = tests(await withCopy(LOGIN, 'trace-base', login, copy => withLoginRoute(copy, 'trace-base', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '1' }, '^Amex login trace in HEADLESS'), browser))); await keep('F3-NT', t.out);
-        if (t.fail !== 1 || t.pass !== 0 || !t.out.includes('amex-trace:native-one-record')) throw new Error('the native trace did not fail first on ' + TRACE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
-        counts.failFirst.TRACE_NT = t.fail + '/' + (t.pass + t.fail); found.push(TRACE.slice(0, 7) + ' headless red (amex-trace:native-one-record: no record)'); }
+      // its wrapper and headless trace parts retired with the Amex DevTools wrapper (case omf-amex-native-runtime-01); amex-native.test.mjs
+      // tests the native record
       return found.join('; ');
     });
     // F4: the trace's network detail (amex-network-detail-01) on 172eba8, whose actual job's six login POSTs failed with no page-level answer
@@ -480,49 +478,36 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         const named = DETAIL_NAMED.filter(x => t.out.includes(x));
         if (t.fail !== 3 || t.pass !== 21 || named.length !== DETAIL_NAMED.length) throw new Error('the network detail did not fail first on ' + DETAIL.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ', named ' + named.join(',') + ' ' + t.message);
         counts.failFirst.DETAIL_L = t.fail + '/' + (t.pass + t.fail); found.push(DETAIL.slice(0, 7) + ' login.test red (' + named.join(', ') + '); its 21 earlier login tests green'); }
-      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + DETAIL.slice(0, 7) + ' native detail fail-first needs owned headless Chrome');
-        const t = tests(await withCopy(LOGIN, 'detail-base', login, copy => withLoginRoute(copy, 'detail-base', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '1' }, '^Amex login trace network detail in HEADLESS')))); await keep('F4-NT', t.out);
-        if (t.fail !== 1 || t.pass !== 0 || !t.out.includes('amex-trace:native-detail (a hidden 403')) throw new Error('the native detail did not fail first on ' + DETAIL.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
-        counts.failFirst.DETAIL_NT = t.fail + '/' + (t.pass + t.fail); found.push(DETAIL.slice(0, 7) + ' headless red (amex-trace:native-detail: the real exchange and page-level pattern seen, no detail)'); }
+      // its headless part retired with the Amex DevTools wrapper (case omf-amex-native-runtime-01)
       return found.join('; ');
     });
-    // F5: the Amex language preference (amex-locale-01) on 9c71012, whose Amex launch passes the q-weighted --accept-lang that Chrome gives
-    // the page as is: its browser.mjs in the defect seam (routed to the bank modules) under the recorded language tests, then natively in owned
-    // HEADLESS Chrome; in both, the defaults control of the same selection stays green.
-    await leg('F5 fail-first of the Amex language preference on ' + LOCALE.slice(0, 7) + ' (the weighted list reaches the Amex page as its language tags)', async () => {
-      const found = [], text = await baseText(BR, LOCALE); if (!text) throw new Error('SETUP ' + LOCALE + ' is not readable here');
-      { const t = tests(await withCopy(BR, 'locale', text, copy => withBankRoute(copy, 'locale', seams => unit(BACKGROUND, { ...seams, OMF_CARD_NATIVE: '0' }, '^Amex language preference \\((wrapper|defaults)\\)')))); await keep('F5-K', t.out);
-        if (t.fail !== 1 || t.pass !== 1 || !t.out.includes('amex-locale:proper-language-preferences')) throw new Error('the recorded language test did not fail first on ' + LOCALE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
-        counts.failFirst.LOCALE_K = t.fail + '/' + (t.pass + t.fail); found.push(LOCALE.slice(0, 7) + ' K red (amex-locale:proper-language-preferences: the weighted list launched); its defaults control green'); }
-      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — the ' + LOCALE.slice(0, 7) + ' native language fail-first needs owned headless Chrome');
-        const t = tests(await withCopy(BR, 'locale', text, copy => unit(BACKGROUND, { OMF_TEST_BROWSER_MODULE: copy, OMF_CARD_NATIVE: '1' }, '^Amex language preference in HEADLESS'))); await keep('F5-NT', t.out);
-        if (t.fail !== 1 || t.pass !== 1 || !t.out.includes('amex-locale:native-languages') || !t.out.includes('ja;q=0.9')) throw new Error('the native language test did not fail first on ' + LOCALE.slice(0, 7) + ': pass ' + t.pass + ' fail ' + t.fail + ' ' + t.message);
-        counts.failFirst.LOCALE_NT = t.fail + '/' + (t.pass + t.fail); found.push(LOCALE.slice(0, 7) + ' headless red (amex-locale:native-languages: the Amex page got ja;q=0.9 and en;q=0.8 as language tags); its native defaults control green'); }
-      return found.join('; ');
-    });
+    // F5 (the Amex language preference of the DevTools launch, amex-locale-01) retired with that launch (case omf-amex-native-runtime-01): the
+    // native helper's language list is read on the page and in the Accept-Language header by scripts/zoomer-fixtures/omf-amex-native.mjs
     await leg('U node --test ' + UNIT, async () => { const r = await unit(UNIT), t = tests(r); await keep('U', t.out); counts.unitTests = t.pass; unitGreen(r, t, 'the importer'); return t.pass + ' tests green'; });
     await leg('K node --test ' + BACKGROUND + ' (Part A, no Chrome)', async () => { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }), t = tests(r); await keep('K', t.out); counts.backgroundTests = t.pass; unitGreen(r, t, 'the wrappers'); return t.pass + ' tests green, ' + t.skipped + ' skipped (geometry excluded; native legs are leg N)'; });
     await leg('N native background Chrome (OMF_CARD_NATIVE=1)', async () => {
       if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native background coverage is claimed');
       const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^native'), t = tests(r); await keep('N', t.out); counts.nativeTests = t.pass; unitGreen(r, t, 'the wrappers');
-      if (t.pass !== 10) throw new Error('expected the 10 native legs (8 headed background, 2 of them the card rendering; headless: the card reveal and the bank default), ran ' + t.pass);
+      if (t.pass !== 8) throw new Error('expected the 8 native legs (6 headed background, 1 of them the card rendering; headless: the card reveal and the bank default; the Amex DevTools legs retired), ran ' + t.pass);
       return t.pass + ' native legs green (' + [...t.out.matchAll(/ℹ window events [^\n]*/g)].length + ' with their window-event summaries)';
     });
-    await leg('T the Amex login trace: login.test.mjs, the recorded wrapper trace tests and the native trace and network-detail tests in owned HEADLESS Chrome', async () => {
+    await leg('T the Amex login trace and the native record: login.test.mjs (the trace of login.mjs, unchanged) and the record legs of amex-native.test.mjs', async () => {
       const done = [];
       { const r = await unit(LOGIN_TEST), t = tests(r); await keep('T-L', t.out); unitGreen(r, t, 'the login UI'); if (t.pass !== 24) throw new Error('expected the 24 login tests (7 earlier, 14 of the trace, 3 of its network detail), ran ' + t.pass); counts.traceTests += t.pass; done.push('login.test ' + t.pass + '/24'); }
-      { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }, '^Amex login trace'), t = tests(r); await keep('T-K', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 5) throw new Error('expected the 5 recorded wrapper trace tests, ran ' + t.pass); counts.traceTests += t.pass; done.push('recorded wrapper ' + t.pass + '/5'); }
-      { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native trace coverage is claimed (' + done.join('; ') + ')');
-        const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace in HEADLESS'), t = tests(r); await keep('T-NT', t.out); unitGreen(r, t, 'the Amex wrapper'); if (t.pass !== 1) throw new Error('expected the 1 native headless trace test, ran ' + t.pass); counts.traceTests += t.pass; done.push('native headless ' + t.pass + '/1');
-        const d = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex login trace network detail in HEADLESS'), dt = tests(d); await keep('T-ND', dt.out); unitGreen(d, dt, 'the Amex wrapper'); if (dt.pass !== 1) throw new Error('expected the 1 native headless network-detail test, ran ' + dt.pass); counts.traceTests += dt.pass; done.push('native headless detail ' + dt.pass + '/1'); }
+      { const r = await unit(NATIVE_TEST, {}, '^(privacy|the private record)'), t = tests(r); await keep('T-A', t.out); unitGreen(r, t, 'the native record'); if (t.pass !== 2) throw new Error('expected the 2 native record legs, ran ' + t.pass); counts.traceTests += t.pass; done.push('native record ' + t.pass + '/2'); }
       return done.join('; ') + ' green';
     });
-    await leg('AL the Amex language preference: the recorded wrapper and defaults tests and, in owned HEADLESS Chrome, the native wrapper and defaults tests', async () => {
+    await leg('AL the language preference of every launch of the DevTools launcher: the recorded and, in owned HEADLESS Chrome, the native defaults tests (the Amex helper\'s language is omf-amex-native.mjs\'s)', async () => {
       const done = [];
-      { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }, '^Amex language preference \\((wrapper|defaults)\\)'), t = tests(r); await keep('AL-K', t.out); unitGreen(r, t, 'the card wrappers'); if (t.pass !== 2) throw new Error('expected the 2 recorded language tests, ran ' + t.pass); counts.languageTests += t.pass; done.push('recorded ' + t.pass + '/2'); }
+      { const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '0' }, '^Amex language preference \\(defaults\\)'), t = tests(r); await keep('AL-K', t.out); unitGreen(r, t, 'the card wrappers'); if (t.pass !== 1) throw new Error('expected the 1 recorded defaults language test, ran ' + t.pass); counts.languageTests += t.pass; done.push('recorded defaults ' + t.pass + '/1'); }
       { if (!NATIVE) throw new Error('NOT RUN: OMF_CARD_NATIVE=0 — no native language coverage is claimed (' + done.join('; ') + ')');
-        const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex language preference in HEADLESS'), t = tests(r); await keep('AL-NT', t.out); unitGreen(r, t, 'the card wrappers'); if (t.pass !== 2) throw new Error('expected the 2 native headless language tests, ran ' + t.pass); counts.languageTests += t.pass; done.push('native headless ' + t.pass + '/2'); }
+        const r = await unit(BACKGROUND, { OMF_CARD_NATIVE: '1' }, '^Amex language preference in HEADLESS'), t = tests(r); await keep('AL-NT', t.out); unitGreen(r, t, 'the card wrappers'); if (t.pass !== 1) throw new Error('expected the 1 native headless defaults language test, ran ' + t.pass); counts.languageTests += t.pass; done.push('native headless defaults ' + t.pass + '/1'); }
       return done.join('; ') + ' green';
+    });
+    await leg('A the Amex native wrapper and the attended download: ' + NATIVE_TEST + ' and ' + ATTENDED_TEST, async () => {
+      const out = [];
+      for (const file of [NATIVE_TEST, ATTENDED_TEST]) { const r = await unit(file), t = tests(r); await keep('A-' + path.basename(file), t.out); unitGreen(r, t, file); out.push(path.basename(file) + ' ' + t.pass + '/' + (t.pass + t.fail)); }
+      return out.join('; ') + ' green';
     });
     await leg('S services, route, the real collector over TLS, schedule and the service guard mutants (L1-L3, L5-L7)', async () => {
       const r = await harness(); executed = true; await keep('S', r.text + '\n--- stderr ---\n' + r.stderr); counts.harnessLegs = r.passes.length; counts.serviceGuardMutants = r.mutants;
@@ -562,7 +547,9 @@ export default { name: 'omf-card-handover', covers: PARTIAL ? [] : COVERS, async
         if (via === 'C') return withCopy(file, label, text, async setupCopy => withCopy('collector/index.mjs', label, mutate(await readFile(path.join(root, 'collector/index.mjs'), 'utf8'), [["'./setup.js'", "'./" + path.basename(setupCopy) + "'"]], label + ' index'), async indexCopy => harnessed(await harness({ OMF_TEST_INDEX_MODULE: indexCopy, OMF_CARD_ONLY: select, OMF_CARD_NATIVE: '1' }, true))));
         if (via === 'S' && file.startsWith('server/')) return harnessed(await withTree(label, { [file]: text }, dir => harness({ OMF_CARD_SRC: dir, OMF_CARD_ONLY: select })));
         if (via === 'S') return harnessed(await withCopy(file, label, text, copy => harness({ [ENV[file]]: copy, OMF_CARD_ONLY: select })));
-        const r = await withRouted(file, label, text, seams => unit(via === 'U' ? UNIT : via === 'L' ? LOGIN_TEST : BACKGROUND, { ...seams, OMF_CARD_NATIVE: via === 'N' || via === 'NT' ? '1' : '0' }, select)), t = tests(r);
+        // X: index.mjs and setup.js copies reach the attended legs (its collector process imports OMF_TEST_INDEX_MODULE, its page OMF_TEST_SETUP_SCRIPT)
+        if (via === 'X' && file === 'collector/setup.js') { const r = await withCopy(file, label, text, copy => unit(ATTENDED_TEST, { OMF_TEST_SETUP_SCRIPT: copy }, select)), t = tests(r); return { ok: r.code === 0 && !t.fail && t.pass > 0, out: t.out }; }
+        const r = await withRouted(file, label, text, seams => unit(via === 'U' ? UNIT : via === 'L' ? LOGIN_TEST : via === 'A' ? NATIVE_TEST : via === 'X' ? ATTENDED_TEST : BACKGROUND, { ...seams, OMF_CARD_NATIVE: via === 'N' || via === 'NT' ? '1' : '0' }, select)), t = tests(r);
         return { ok: r.code === 0 && !t.fail && t.pass > 0, out: t.out };
       };
       for (const [label, file, pairs, via, select, expect] of MUTANTS_RUN) {
