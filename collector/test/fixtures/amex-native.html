@@ -82,8 +82,36 @@ function placed({ nodes, place = 'visible' }) {
 const displayed = end => !cfg.observed ? el('p', {}, el('span', {}, cfg.display[end])) : el('p', {}, el('span', {}, end.replaceAll('-', '/')), ' ', el('span', {}, ...(cfg.ranges[end] ? rangeNodes(cfg.ranges[end]).slice(0, cfg.stages ? stage : 5) : [])));
 function trigger(href, download) { const a = el('a', { href, ...(download ? { download } : {}), style: 'display:none' }); document.body.append(a); a.click(); a.remove(); }
 function snapshotFor(label) { setTimeout(() => report({ kind: 'dom', label, path: location.pathname + location.search, snapshot: statementSnapshot() }), 200); }
+// ── case omf-amex-download-fold-01, `cfg.icon`: the download icon in the forms Chrome 155 tells apart through UI Automation (measured on fictional
+// forms in the case folder). `attrs` decide its patterns and state: plain, Invoke; aria-expanded or aria-haspopup, ExpandCollapse alone. In these forms
+// opening draws the dialog in place, so the icon stays one element as on a real page. `flips`: aria-expanded follows the dialog. `opens: false`: the
+// click reaches the page and nothing opens. `inert`: no click listener. `parent`: a clickable ancestor, which Chrome exposes with Invoke, around it.
+// Every click is reported, also a second one. ──
+const ICON = 'action-icon-dls-icon-download-';
+function downloadIcons(end, section) {
+  const { tag = 'button', attrs = {}, flips = false, opens = true, inert = false, count = 1, absent = false, parent = false } = cfg.icon ?? {};
+  const make = () => { const icon = el(tag, { id: ICON, ...(tag === 'button' ? { type: 'button' } : {}), 'aria-label': 'ダウンロード', ...(cfg.icon ? { style: 'display:inline-block;width:175.5px;height:47.7px' } : {}), ...attrs, ...(flips ? { 'aria-expanded': String(dialog) } : {}), ...(inert ? {} : { onclick: event => {
+    event.preventDefault(); report({ kind: 'open-dialog', trusted: event.isTrusted });
+    if (!cfg.icon) { dialog = true; render(); return; }
+    if (dialog || !opens) return;
+    dialog = true; if (flips) icon.setAttribute('aria-expanded', 'true'); section().append(dialogNode(end));
+  } }) }, '↓'); return icon; };
+  return absent ? [] : parent ? [el('div', { onclick: event => report({ kind: 'open-dialog', trusted: event.isTrusted }) }, make())] : Array.from({ length: count }, make);
+}
+// On the observed page the dialog is drawn as a modal overlay (the real dialog is not measured yet); cfg.dialogInPage leaves it below the fold.
+const dialogNode = end => el('div', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'omf-fixture-dialog-title', style: cfg.observed && !cfg.dialogInPage ? 'position:fixed;top:40px;left:40px;padding:8px;background:#fff;border:1px solid #888' : null }, el('h2', { id: 'omf-fixture-dialog-title' }, '明細をダウンロード'),
+  ...FORMATS.map(f => { const input = el('input', { type: 'radio', class: 'visually-hidden', name: 'omf-fixture-format', id: radioId(f), value: f, onchange: event => { report({ kind: 'format', format: f, trusted: event.isTrusted }); format = f; render(); } }); input.checked = format === f; return el('span', {}, input, el('label', { for: radioId(f) }, f.toUpperCase())); }),
+  el('button', { type: 'button', onclick: () => { dialog = false; render(); } }, 'キャンセル'),
+  el('button', { type: 'button', onclick: event => {
+    report({ kind: 'download-click', trusted: event.isTrusted, format });
+    if (cfg.download === 'none') return;
+    if (format !== 'csv') return trigger('/download?end=' + end + '&format=' + format);
+    if (cfg.download === 'blob') { const url = URL.createObjectURL(new Blob(['﻿' + cfg.csvText[end]], { type: 'text/csv' })); trigger(url, cfg.fileName); setTimeout(() => URL.revokeObjectURL(url), 10000); return; }
+    trigger('/download?end=' + end + '&format=csv');
+  } }, 'ダウンロード'));
 function statement() {
-  const end = endOf(), cards = end ? cfg.cardsPeriod : cfg.cardsInitial, [total, shown] = (end && cfg.totals[end]) || [0, 0];
+  // the card arrives last, as it did on the real page: on the observed page no card, of either form, is drawn before the data
+  const end = endOf(), cards = cfg.observed && !loaded ? [] : end ? cfg.cardsPeriod : cfg.cardsInitial, [total, shown] = (end && cfg.totals[end]) || [0, 0];
   const header = el('header', {}, ...cards.map(card => el('button', { type: 'button', class: 'card', ...(cfg.labelledCard ? { 'aria-label': 'カード ' + card } : {}) }, card)));
   if (cfg.hiddenCard) header.append(el('button', { type: 'button', style: 'display:none' }, cfg.hiddenCard));
   const nav = el('nav', { 'aria-label': 'ご利用期間' }, ...cfg.links.map(link => el('div', {}, el('a', { href: link.href, onclick: event => {
@@ -91,25 +119,14 @@ function statement() {
     if (!cfg.spa) return;
     event.preventDefault(); history.pushState({}, '', link.href);
   } }, link.text))));
-  const forms = cfg.observed ? '&forms=observed' : '', decoys = cfg.decoys ? el('div', { class: 'decoys' }, el('iframe', { title: 'decoy same origin', src: '/decoy-frame?tag=same' + forms, width: 380, height: 300 }), el('iframe', { title: 'decoy cross site', src: cfg.crossOrigin + '/decoy-frame?tag=cross' + forms, width: 380, height: 300 })) : '';
+  const forms = (cfg.observed ? '&forms=observed' : '') + (cfg.icon ? '&icon=expand' : ''), decoys = cfg.decoys ? el('div', { class: 'decoys' }, el('iframe', { title: 'decoy same origin', src: '/decoy-frame?tag=same' + forms, width: 380, height: 300 }), el('iframe', { title: 'decoy cross site', src: cfg.crossOrigin + '/decoy-frame?tag=cross' + forms, width: 380, height: 300 })) : '';
   // the card arrives last, as it did on the real page
   const masked = cfg.observed && loaded && (!cfg.stages || stage >= cfg.stages) ? cfg.maskedCards[end] ?? cfg.maskedCards['*'] : [];
   const parts = [decoys, header, ...masked.map(text => placed({ nodes: [text] })), nav];
   if (end && loaded) {
-    const icon = el('button', { id: 'action-icon-dls-icon-download-', type: 'button', 'aria-label': 'ダウンロード', onclick: event => { report({ kind: 'open-dialog', trusted: event.isTrusted }); dialog = true; render(); } }, '↓');
-    const section = el('section', { 'aria-label': 'ご利用明細' }, displayed(end), el('p', { class: 'count' }, el('span', {}, String(total)), ' 件中 ', el('span', {}, String(shown)), ' 件を表示'), icon, ...cfg.extras.map(placed), ...(cfg.observed ? [el('div', { style: 'height:2400px' })] : []),
+    const section = el('section', { 'aria-label': 'ご利用明細' }, displayed(end), el('p', { class: 'count' }, el('span', {}, String(total)), ' 件中 ', el('span', {}, String(shown)), ' 件を表示'), ...downloadIcons(end, () => section), ...cfg.extras.map(placed), ...(cfg.observed ? [el('div', { style: 'height:2400px' })] : []),
       el('table', {}, el('tbody', {}, ...(cfg.rows[end] || []).slice(0, shown).map(row => el('tr', {}, ...row.map(cell => el('td', {}, cell)))))));
-    // On the observed page the dialog is drawn as a modal overlay (the real dialog is not measured yet); cfg.dialogInPage leaves it below the fold.
-    if (dialog) section.append(el('div', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'omf-fixture-dialog-title', style: cfg.observed && !cfg.dialogInPage ? 'position:fixed;top:40px;left:40px;padding:8px;background:#fff;border:1px solid #888' : null }, el('h2', { id: 'omf-fixture-dialog-title' }, '明細をダウンロード'),
-      ...FORMATS.map(f => { const input = el('input', { type: 'radio', class: 'visually-hidden', name: 'omf-fixture-format', id: radioId(f), value: f, onchange: event => { report({ kind: 'format', format: f, trusted: event.isTrusted }); format = f; render(); } }); input.checked = format === f; return el('span', {}, input, el('label', { for: radioId(f) }, f.toUpperCase())); }),
-      el('button', { type: 'button', onclick: () => { dialog = false; render(); } }, 'キャンセル'),
-      el('button', { type: 'button', onclick: event => {
-        report({ kind: 'download-click', trusted: event.isTrusted, format });
-        if (cfg.download === 'none') return;
-        if (format !== 'csv') return trigger('/download?end=' + end + '&format=' + format);
-        if (cfg.download === 'blob') { const url = URL.createObjectURL(new Blob(['﻿' + cfg.csvText[end]], { type: 'text/csv' })); trigger(url, cfg.fileName); setTimeout(() => URL.revokeObjectURL(url), 10000); return; }
-        trigger('/download?end=' + end + '&format=csv');
-      } }, 'ダウンロード')));
+    if (dialog) section.append(dialogNode(end));
     parts.push(section);
   }
   mount.replaceChildren(...parts);
@@ -120,15 +137,24 @@ let timer = null;
 function render() { statement(); }
 function advance() { if (stage < cfg.stages) timer = setTimeout(() => { stage++; render(); advance(); }, cfg.stageMs); }
 // A page with no period has nothing new to draw when its data arrive: redrawing it would replace the links under the job's first action.
-function navigateLoad() { loaded = false; stage = 0; dialog = false; format = 'pdf'; render(); clearTimeout(timer); timer = setTimeout(() => { loaded = true; if (endOf()) render(); advance(); }, cfg.loadDelayMs); }
+function navigateLoad() { loaded = false; stage = 0; dialog = !!cfg.preopened; format = 'pdf'; render(); clearTimeout(timer); timer = setTimeout(() => { loaded = true; if (endOf()) { render(); report({ kind: 'data-drawn', clientAt: Date.now() }); } advance(); }, cfg.loadDelayMs); }
 window.addEventListener('popstate', navigateLoad);
 const pushState = history.pushState.bind(history);
 history.pushState = (...args) => { pushState(...args); navigateLoad(); };
 
+// `cfg.hold`, scenarios download-hold-*: a copy of the helper holds its action and asks for one change, made before the copy goes on.
+const HOLD = { redrawn: () => render(), replaced: icon => icon.replaceWith(icon.cloneNode(true)), doubled: icon => icon.after(icon.cloneNode(true)), disabled: icon => { icon.disabled = true; }, expanded: icon => { dialog = true; icon.setAttribute('aria-expanded', 'true'); icon.closest('section').append(dialogNode(endOf())); } };
+async function holdWatch() {
+  for (;;) { const answer = await fetch('/test/hold').then(r => r.json()).catch(() => ({})); if (answer.held) break; await new Promise(resolve => setTimeout(resolve, 80)); }
+  HOLD[cfg.hold]?.(document.getElementById(ICON));
+  await fetch('/test/hold-done');
+  if (cfg.hold === 'reloaded') location.reload(); else if (cfg.hold === 'left') location.href = '/account/profile';
+}
+
 if (cfg.surface === 'login') login();
 else if (cfg.surface === 'verify') verify();
 else if (cfg.surface === 'dashboard') dashboard();
-else if (cfg.surface === 'statement') { if (cfg.landing && !endOf()) history.replaceState({}, '', location.pathname + '?end=' + cfg.landing); navigateLoad(); }
+else if (cfg.surface === 'statement') { if (cfg.landing && !endOf()) history.replaceState({}, '', location.pathname + '?end=' + cfg.landing); navigateLoad(); if (cfg.hold) holdWatch(); }
 else if (cfg.surface === 'unrelated') mount.append(el('p', {}, 'An unrelated window'));
 </script>
 </body>

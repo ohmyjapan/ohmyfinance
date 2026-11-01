@@ -80,6 +80,7 @@ public static class OmfAmexNative {
  [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
  [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint code);
  [DllImport("kernel32.dll", SetLastError = true)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool contained);
+ [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int type, IntPtr information, uint size, IntPtr returned);
  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
  [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
  [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
@@ -376,10 +377,26 @@ public static class OmfAmexNative {
   Same(d, OmfAmexNativePolicy.Global, StatementPath); acting = true; invoke.Invoke();
   return new Dictionary<string, object> { { "invoked", 1 } };
  }
+ // The download icon, the one main-document element with IconId. Invoke where it has that pattern, as ever. The real icon has none: Chrome exposes a
+ // button with aria-expanded or aria-haspopup through ExpandCollapse instead, and its Expand is the same click (measured, case omf-amex-download-fold-01).
+ // With neither pattern Invokable refuses: no other pattern and no other element is tried.
  static Dictionary<string, object> DownloadOpen() {
-  var d = On(OmfAmexNativePolicy.Global, StatementPath); var invoke = Invokable(Single(Scoped(d, Id(IconId)), "control"));
+  var d = On(OmfAmexNativePolicy.Global, StatementPath); var icon = Single(Scoped(d, Id(IconId)), "control"); object p;
+  if (!icon.TryGetCurrentPattern(InvokePattern.Pattern, out p) && icon.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out p)) return ExpandIcon(d, icon, (ExpandCollapsePattern)p);
+  var invoke = Invokable(icon);
   Same(d, OmfAmexNativePolicy.Global, StatementPath); acting = true; invoke.Invoke();
   return new Dictionary<string, object> { { "invoked", 1 } };
+ }
+ // One Expand, with the document, the icon's place in it, its enabled state and its ExpandCollapseState read again last. Expanded shows its content already:
+ // Chrome refuses Expand there and the content must stay open, so nothing is sent and the CSV read decides. Every other state gets the one Expand. Collapsed and
+ // PartiallyExpanded have content to show. Microsoft documents InvalidOperationException for LeafNode, but Chrome answers it with the same click (measured), and a
+ // provider that did refuse ends the job here as uncertain, never sent again, so refusing it first would only stop a job that works. Collapse is never called.
+ static Dictionary<string, object> ExpandIcon(Doc d, AutomationElement icon, ExpandCollapsePattern expand) {
+  Same(d, OmfAmexNativePolicy.Global, StatementPath); Check(Automation.Compare(Single(Scoped(d, Id(IconId)), "control"), icon), "control_changed"); Check(icon.Current.IsEnabled, "control_disabled");
+  var state = expand.Current.ExpandCollapseState;
+  if (state == ExpandCollapseState.Expanded) return new Dictionary<string, object> { { "alreadyExpanded", true } };
+  acting = true; expand.Expand();
+  return new Dictionary<string, object> { { "expanded", 1 } };
  }
  static Dictionary<string, object> CsvState() {
   var d = On(OmfAmexNativePolicy.Global, StatementPath); var list = Scoped(d, Id(CsvId));
@@ -414,6 +431,38 @@ public static class OmfAmexNative {
   Check(mode == "input", "private_mode"); GuardWindow();
   bool minimized = IsIconic(window); if (minimized) { acting = true; ShowWindow(window, 4); }
   return new Dictionary<string, object> { { "restored", minimized } };
+ }
+ // -- the end of the job's processes --
+ // The job's own figures cannot say they have ended: ActiveProcesses and the id list read zero within 2 ms of TerminateJobObject while the processes run on for seconds (measured, case
+ // omf-amex-download-fold-01). So each member is held by a handle taken from the list just before the termination, and Finish waits on those handles. A process already exiting by itself
+ // is still on the list then: it leaves within 3 ms of its handle signaling (measured). EndMs bounds the wait: exits past 20 s were measured on a loaded PC, and that is no maximum. A list
+ // that cannot be read, or a listed process that cannot be opened for any reason but having gone, leaves the end unproven. An id read a moment ago can already be another process's: that one
+ // is closed again, never waited on.
+ const int EndMs = 60000;
+ static readonly List<IntPtr> members = new List<IntPtr>();
+ static bool membersKnown = true;
+ static void Hold(uint pid) {
+  if (pid == chrome.pid) return;
+  IntPtr p = OpenProcess(0x101000, false, pid); bool contained; // SYNCHRONIZE, PROCESS_QUERY_LIMITED_INFORMATION
+  if (p == IntPtr.Zero) { if (Marshal.GetLastWin32Error() != 87) membersKnown = false; return; }
+  if (!IsProcessInJob(p, job, out contained)) membersKnown = false;
+  if (contained) members.Add(p); else CloseHandle(p);
+ }
+ // JOBOBJECT_BASIC_PROCESS_ID_LIST: two counts, then the ids. A list that does not fit is read again in a larger buffer: a partial one proves nothing.
+ static void Track() {
+  if (job == IntPtr.Zero) return;
+  for (int capacity = 1024; capacity <= 65536; capacity *= 4) {
+   int size = 8 + capacity * IntPtr.Size; IntPtr list = Marshal.AllocHGlobal(size);
+   try {
+    bool read = QueryInformationJobObject(job, 3, list, (uint)size, IntPtr.Zero);
+    if (!read) { if (Marshal.GetLastWin32Error() == 234) continue; break; }
+    int listed = Marshal.ReadInt32(list, 4);
+    if (listed < Marshal.ReadInt32(list, 0)) continue;
+    for (int i = 0; i < listed; i++) Hold((uint)Marshal.ReadIntPtr(list, 8 + i * IntPtr.Size).ToInt64());
+    return;
+   } finally { Marshal.FreeHGlobal(list); }
+  }
+  membersKnown = false;
  }
  static Dictionary<string, object> Close() {
   if (window != IntPtr.Zero && IsWindow(window)) { uint pid; GetWindowThreadProcessId(window, out pid); if (pid == windowPid && Owned(pid)) PostMessageW(window, 0x10, IntPtr.Zero, IntPtr.Zero); }
@@ -460,13 +509,18 @@ public static class OmfAmexNative {
   }
  }
  static int Finish(string reason, int code) {
-  if (job != IntPtr.Zero) TerminateJobObject(job, 0);
-  bool chromeEnded = chrome.process == IntPtr.Zero || WaitForSingleObject(chrome.process, 5000) == 0;
-  if (chrome.process != IntPtr.Zero) { CloseHandle(chrome.process); chrome.process = IntPtr.Zero; }
+  Track();
+  bool terminated = job == IntPtr.Zero || TerminateJobObject(job, 0);
+  if (!terminated) { CloseHandle(job); job = IntPtr.Zero; } // the job's kill-on-close ends what the refused termination left
+  var clock = System.Diagnostics.Stopwatch.StartNew(); int left = 0;
+  if (chrome.process != IntPtr.Zero) { members.Add(chrome.process); chrome.process = IntPtr.Zero; }
+  foreach (var p in members) { if (WaitForSingleObject(p, (uint)Math.Max(0, EndMs - clock.ElapsedMilliseconds)) != 0) left++; CloseHandle(p); }
+  members.Clear();
+  bool chromeEnded = left == 0 && membersKnown; long closeMs = clock.ElapsedMilliseconds;
   bool desktopClosed = !ownDesktop || desktop == IntPtr.Zero || CloseDesktop(desktop);
   desktop = IntPtr.Zero;
   if (job != IntPtr.Zero) { CloseHandle(job); job = IntPtr.Zero; }
-  Emit(new Dictionary<string, object> { { "event", "end" }, { "reason", reason }, { "chromeEnded", chromeEnded }, { "desktopClosed", desktopClosed } });
+  Emit(new Dictionary<string, object> { { "event", "end" }, { "reason", reason }, { "chromeEnded", chromeEnded }, { "desktopClosed", desktopClosed }, { "jobTerminated", terminated }, { "processesLeft", left }, { "membersKnown", membersKnown }, { "closeMs", closeMs } });
   return code;
  }
  public static int Run(string chromePath, string profileDir, string downloadDir, string runMode) {

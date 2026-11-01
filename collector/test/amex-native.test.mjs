@@ -48,7 +48,8 @@ function csv(count, { foreignCard = false } = {}) {
 // helper ends right after answering that op (a crash). `person(page)`: what the person does when the window is shown (attended mode).
 // `landing`: the statement page opens on that period's end query with its data, as the current Amex page does. `loading(read, page)`: a partial
 // snapshot's fields, by read number since the last navigation; null once complete (a page still drawing, with no helper refusal).
-function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, foreignCard = false, cards = ['-12345'], periodCards = cards, displayed = null, landing = null, loading = null, faults = {}, persist = {}, on = {}, exitAfter = null, person = null } = {}) {
+// `end`: what the end event says beyond its reason. `lingers`: after `close` the helper stays in its wait for Chrome, until it is killed.
+function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, foreignCard = false, cards = ['-12345'], periodCards = cards, displayed = null, landing = null, loading = null, faults = {}, persist = {}, on = {}, exitAfter = null, person = null, end = { chromeEnded: true, desktopClosed: true, jobTerminated: true, processesLeft: 0, membersKnown: true, closeMs: 120 }, lingers = false } = {}) {
   const p = periods(), record = { spawns: [], lines: [], ops: [], typed: {}, mode: null, ended: null };
   const link = q => ({ text: `${slash(q.start)} - ${slash(q.end)}`, href: `${STATEMENT}?end=${q.end}` });
   const links = [link(p.open), link(p.latest), { text: 'この期間を見る', href: `${STATEMENT}?end=${p.latest.end}` }, link(p.older)];
@@ -89,7 +90,7 @@ function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, for
     const child = new EventEmitter(); let buffer = '', ended = false;
     child.pid = 52000 + record.spawns.length; child.stdout = new PassThrough(); child.stderr = new PassThrough(); record.child = child;
     const out = value => { if (!ended) child.stdout.write(JSON.stringify(value) + '\n'); };
-    const finish = reason => { if (ended) return; out({ event: 'end', reason, chromeEnded: true, desktopClosed: true }); ended = true; record.ended = reason; child.stdout.end(); setImmediate(() => child.emit('close', reason === 'killed' ? null : 0)); };
+    const finish = reason => { if (ended) return; if (!['killed', 'crashed'].includes(reason)) out({ event: 'end', reason, ...end }); ended = true; record.ended = reason; child.stdout.end(); setImmediate(() => child.emit('close', reason === 'killed' ? null : 0)); };
     child.kill = () => { record.killed = true; finish('killed'); return true; };
     child.stdin = new Writable({
       write(chunk, _encoding, callback) {
@@ -100,11 +101,11 @@ function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, for
           if (ended) continue;
           const reply = take(request.op) ?? handlers[request.op]?.(request) ?? { ok: false, code: 'unknown_op' };
           out({ id: request.id, ...reply }); on[request.op]?.(request, page);
-          if (request.op === 'close') finish('closed'); else if (exitAfter === request.op) finish('crashed');
+          if (request.op === 'close') { if (!lingers) finish('closed'); } else if (exitAfter === request.op) finish('crashed');
         }
         callback();
       },
-      final(callback) { finish('stdin_closed'); callback(); }
+      final(callback) { record.stdinEnded = true; if (!lingers) finish('stdin_closed'); callback(); }
     });
     setImmediate(() => out({ event: 'ready', pid: child.pid, mode: record.mode }));
     return child;
@@ -232,6 +233,38 @@ test('actions are never repeated: an action the helper refuses — ambiguous bef
   }
 });
 
+test('the download icon: an Invoke, an Expand and an icon already open go on alike, the last recorded as sending nothing; a refusal keeps its code; a failed action is uncertain; none is sent again', { skip: WINDOWS }, async () => {
+  const opened = { on: { 'download-open': (_r, page) => { page.dialog = true; } } };
+  for (const [label, reply, none] of [['invoked', { ok: true, invoked: 1 }, false], ['expanded', { ok: true, expanded: 1 }, false], ['already-expanded', { ok: true, alreadyExpanded: true }, true]]) {
+    const fake = fakeAmex({ ...opened, faults: { 'download-open': [reply] } }), r = await run(fake, { label: 'icon-' + label });
+    assert.equal(r.error, undefined, 'amex-native:icon-goes-on ' + label + ' ' + r.error?.message);
+    assert.deepEqual(['download-open', 'csv-select', 'download'].map(op => count(fake.record.ops, op)), [1, 1, 1], 'amex-native:icon-one-action-each ' + label + ' ' + fake.record.ops.join(','));
+    const { record } = await traceOf(r);
+    assert.equal(record.steps.some(s => s.step === 'download-already-open'), none, 'amex-native:icon-sent-nothing-recorded ' + label);
+  }
+  // the helper refused before acting: this one request, nothing read or chosen after it, the code kept in the record
+  for (const code of ['invoke_unsupported', 'control_changed', 'control_disabled', 'control_missing', 'control_ambiguous', 'document_changed']) {
+    const fake = fakeAmex({ ...opened, faults: { 'download-open': [code] } }), r = await run(fake, { label: 'icon-' + code });
+    assert.equal(r.error?.message, N.PAGE_CHANGED, 'amex-native:icon-refused ' + code);
+    assert.deepEqual(['download-open', 'csv-state', 'csv-select', 'download'].map(op => count(fake.record.ops, op)), [1, 0, 0, 0], 'amex-native:icon-refused-nothing-after ' + code + ' ' + fake.record.ops.join(','));
+    const step = (await traceOf(r)).record.steps.find(s => s.step === 'download-open');
+    assert.deepEqual([step.outcome, step.code], ['error', code], 'amex-native:icon-refusal-code-kept ' + code);
+  }
+  // the action failed after it was sent. Reads tolerate these same codes; an action never does.
+  for (const code of ['uia_invalid_operation', 'element_not_available', 'uia_com']) {
+    const fake = fakeAmex({ ...opened, faults: { 'download-open': [{ ok: false, code, acted: true }] } }), r = await run(fake, { label: 'icon-uncertain-' + code });
+    assert.equal(r.error?.message, N.PAGE_CHANGED, 'amex-native:icon-uncertain ' + code);
+    assert.deepEqual(['download-open', 'csv-state', 'csv-select', 'download'].map(op => count(fake.record.ops, op)), [1, 0, 0, 0], 'amex-native:icon-uncertain-never-sent-again ' + code + ' ' + fake.record.ops.join(','));
+    const step = (await traceOf(r)).record.steps.find(s => s.step === 'download-open');
+    assert.deepEqual([step.outcome, step.code], ['uncertain', code], 'amex-native:icon-uncertain-traced ' + code);
+  }
+  // an Expand that opens nothing: the unchanged CSV deadline ends the job, and the icon is not tried again
+  { const fake = fakeAmex({ faults: { 'download-open': [{ ok: true, expanded: 1 }] } }), r = await run(fake, { label: 'icon-opens-nothing' });
+    assert.equal(r.error?.message, 'Amex CSV format option changed', 'amex-native:icon-opens-nothing');
+    assert.deepEqual([count(fake.record.ops, 'download-open'), count(fake.record.ops, 'csv-select'), count(fake.record.ops, 'download')], [1, 0, 0], 'amex-native:icon-opens-nothing-once ' + fake.record.ops.join(','));
+    assert.equal((await traceOf(r)).record.steps.find(s => s.step === 'csv-present').outcome, 'timeout', 'amex-native:icon-opens-nothing-traced'); }
+});
+
 test('statement identity and file checks: the selected card, period and count before the download; the file\'s cards, rows and format after; each failure leaves no manifest', { skip: WINDOWS }, async () => {
   for (const [label, options, expected, downloads] of [
     ['wrong-card', { periodCards: ['-54321'] }, /The signed-in Amex account does not match this connection/, 0],
@@ -311,7 +344,8 @@ test('closure on every exit: a helper that ends mid-job ends it with the fixed m
   { const fake = fakeAmex({ exitAfter: 'open-statement' }), r = await run(fake, { label: 'helper-crash' });
     assert.equal(r.error?.message, N.HELPER_ENDED, 'amex-native:helper-crash');
     assert.deepEqual([fake.record.ended, count(fake.record.ops, 'snapshot') <= 1], ['crashed', true], 'amex-native:helper-crash-no-further-reads ' + fake.record.ops.join(','));
-    const { record } = await traceOf(r); assert.equal(record.helper.end, null, 'amex-native:helper-crash-traced'); }
+    const { record } = await traceOf(r); assert.equal(record.helper.end, null, 'amex-native:helper-crash-traced');
+    assert.deepEqual([record.helper.chromeEnded, record.helper.desktopClosed, record.helper.jobTerminated, record.helper.processesLeft, record.helper.membersKnown, record.helper.closeMs], [null, null, null, null, null, null], 'amex-native:helper-crash-claims-nothing'); }
   { const fake = fakeAmex({ faults: { 'wait-ready': ['no_window'] } }), r = await run(fake, { label: 'no-window' });
     assert.equal(r.error?.message, N.PAGE_CHANGED, 'amex-native:no-window');
     assert.deepEqual([fake.record.ops.at(-1), fake.record.ended], ['close', 'closed'], 'amex-native:no-window-closed'); }
@@ -320,6 +354,39 @@ test('closure on every exit: a helper that ends mid-job ends it with the fixed m
     const r = await run(fake, { label: 'cancel' });
     assert.equal(r.error?.message, N.HELPER_ENDED, 'amex-native:cancelled-ends-job');
     assert.deepEqual([fake.record.killed, count(fake.record.ops, 'next')], [true, 0], 'amex-native:cancelled-nothing-after'); }
+});
+
+test('the end: the adapter waits out the helper\'s own wait, kills it only after its bound, and records what the helper could prove without changing what the job found', { skip: WINDOWS }, async t => {
+  // what the helper proved is recorded as it said it; a job that completed stays complete whatever its end could prove
+  for (const [label, end] of [
+    ['proved', { chromeEnded: true, desktopClosed: true, jobTerminated: true, processesLeft: 0, membersKnown: true, closeMs: 2400 }],
+    ['timed-out', { chromeEnded: false, desktopClosed: true, jobTerminated: true, processesLeft: 2, membersKnown: true, closeMs: 30004 }],
+    ['terminate-refused', { chromeEnded: true, desktopClosed: true, jobTerminated: false, processesLeft: 0, membersKnown: true, closeMs: 900 }],
+    ['members-unknown', { chromeEnded: false, desktopClosed: false, jobTerminated: true, processesLeft: 0, membersKnown: false, closeMs: 40 }]
+  ]) {
+    const fake = fakeAmex({ end }), r = await run(fake, { label: 'end-' + label });
+    assert.equal(r.error, undefined, 'amex-native:end-leaves-the-job-as-it-was ' + label + ' ' + r.error?.message);
+    assert.deepEqual((await traceOf(r)).record.helper, { started: true, exit: 0, end: 'closed', ...end }, 'amex-native:closure-recorded ' + label);
+  }
+  // only the fixed forms reach the record, and an end event without these facts claims nothing about them
+  { const fake = fakeAmex({ end: { chromeEnded: 'yes', desktopClosed: true, jobTerminated: 1, processesLeft: -1, membersKnown: 'all', closeMs: 1.5 } }), r = await run(fake, { label: 'end-bad-values' });
+    assert.deepEqual((await traceOf(r)).record.helper, { started: true, exit: 0, end: 'closed', chromeEnded: null, desktopClosed: true, jobTerminated: null, processesLeft: null, membersKnown: null, closeMs: null }, 'amex-native:closure-record-closed'); }
+  { const fake = fakeAmex({ end: { chromeEnded: true, desktopClosed: true } }), r = await run(fake, { label: 'end-older-helper' });
+    assert.deepEqual((await traceOf(r)).record.helper, { started: true, exit: 0, end: 'closed', chromeEnded: true, desktopClosed: true, jobTerminated: null, processesLeft: null, membersKnown: null, closeMs: null }, 'amex-native:closure-record-closed-absent'); }
+  // a helper still in its wait is left to finish it: not killed at the old bound nor just before this one, killed at it, and then nothing is claimed
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  const fake = fakeAmex({ lingers: true }), running = run(fake, { label: 'end-waits' });
+  for (let i = 0; i < 200000 && !fake.record.stdinEnded; i++) await turn();
+  assert.equal(fake.record.stdinEnded, true, 'amex-native:end-reached ' + fake.record.ops.join(','));
+  for (let i = 0; i < 50; i++) await turn();
+  t.mock.timers.tick(74999); for (let i = 0; i < 50; i++) await turn();
+  assert.equal(fake.record.killed, undefined, 'amex-native:end-waits-for-the-helper');
+  t.mock.timers.tick(1); for (let i = 0; i < 50; i++) await turn();
+  assert.equal(fake.record.killed, true, 'amex-native:end-kills-after-its-bound');
+  const r = await running;
+  assert.equal(r.error, undefined, 'amex-native:end-killed-job-unchanged ' + r.error?.message);
+  assert.deepEqual((await traceOf(r)).record.helper, { started: true, exit: null, end: null, chromeEnded: null, desktopClosed: null, jobTerminated: null, processesLeft: null, membersKnown: null, closeMs: null }, 'amex-native:end-killed-claims-nothing');
 });
 
 test('privacy: the login and the code reach the helper only inside their own request lines on stdin — never its arguments, any other request, the statuses, the errors, the record or the outbox', { skip: WINDOWS }, async () => {
@@ -345,7 +412,8 @@ test('the private record: schema, closed key and value sets, the 20 newest kept 
   { const fake = fakeAmex(), r = await run(fake, { label: 'record' }), { record, name } = await traceOf(r);
     assert.match(name, new RegExp('^' + r.account.jobId + '-\\d{13}\\.json$'), 'amex-native:record-name');
     assert.deepEqual(Object.keys(record), ['schema', 'accountId', 'jobId', 'at', 'mode', 'outcome', 'steps', 'states', 'tolerated', 'helper', 'overflow'], 'amex-native:record-keys');
-    const STEPS = ['ready', 'own', 'launch', 'wait-ready', 'login', 'choose', 'next', 'code', 'show', 'state', 'attention', 'open-statement', 'initial', 'select', 'invoke-period', 'period', 'verify-period', 'download-open', 'csv-present', 'csv-select', 'csv-selected', 'verify-before', 'download', 'file', 'validate', 'verify-after', 'manifest', 'close'];
+    assert.deepEqual(Object.keys(record.helper), ['started', 'exit', 'end', 'chromeEnded', 'desktopClosed', 'jobTerminated', 'processesLeft', 'membersKnown', 'closeMs'], 'amex-native:record-helper-keys');
+    const STEPS = ['ready', 'own', 'launch', 'wait-ready', 'login', 'choose', 'next', 'code', 'show', 'state', 'attention', 'open-statement', 'initial', 'select', 'invoke-period', 'period', 'verify-period', 'download-open', 'download-already-open', 'csv-present', 'csv-select', 'csv-selected', 'verify-before', 'download', 'file', 'validate', 'verify-after', 'manifest', 'close'];
     for (const s of record.steps) { assert.ok(STEPS.includes(s.step), 'amex-native:record-step ' + s.step); assert.ok(['ok', 'error', 'uncertain', 'timeout', 'refused'].includes(s.outcome)); assert.ok(s.code === null || N.CODES.includes(s.code)); assert.ok(Number.isSafeInteger(s.ms)); }
     assert.deepEqual(Object.keys(record.states).sort(), ['authenticated', 'channels', 'code', 'login'], 'amex-native:record-states'); }
   { const fake = fakeAmex(), mine = r => traceDir(r), other = dir => path.join(dir, 'diagnostics', 'amex', 'd4'.repeat(12));

@@ -51,12 +51,14 @@ export const PAGE_UNREADABLE = 'The Amex statement page could not be read again;
 export const NOT_CSV = 'Amex download was not a CSV file';
 const READY_MS = 60000, LAUNCH_MS = 30000, OPEN_MS = 60000, READ_MS = 20000, ACT_MS = 20000;
 const STATEMENT_MS = 45000, CSV_MS = 15000, SELECTED_MS = 5000, RECHECK_MS = 15000, DOWNLOAD_MS = 45000;
+// The helper's end: up to 60 s for its job's processes to end (amex-native.ps1 EndMs), then its own exit. Killing it sooner loses what it could prove.
+const END_MS = 75000;
 // Helper refusals a read waits out (until its step's deadline): no single main document, a document between navigations or on another
 // surface, an element gone while it was read. Every other refusal ends the job; an action's refusal always does.
 export const TRANSIENT = Object.freeze(['ambiguous_document', 'no_document', 'document_url_unavailable', 'document_origin', 'document_path', 'element_not_available', 'uia_invalid_operation', 'uia_com']);
 const ENDED = ['helper_exited', 'ipc_timeout', 'uia_watchdog', 'not_launched'];
 // Every code the helper or this channel can give (the trace keeps only these; anything else is 'other').
-export const CODES = Object.freeze([...TRANSIENT, ...ENDED, 'argument', 'mode', 'chrome_path', 'profile_path', 'downloads_path', 'job_creation', 'job_limit', 'helper_not_owned', 'already_launched', 'desktop_descriptor', 'desktop_creation', 'input_desktop_unavailable', 'preferences', 'chrome_creation', 'job_assignment', 'chrome_resume', 'no_window', 'ambiguous_window', 'window_not_locked', 'window_changed', 'window_not_owned', 'document_changed', 'unrelated_document_window', 'control_missing', 'control_ambiguous', 'control_type', 'control_disabled', 'control_readonly', 'invoke_unsupported', 'value_unsupported', 'selection_unsupported', 'not_radio', 'link_missing', 'link_ambiguous', 'statement_link_missing', 'statement_link_ambiguous', 'radio_missing', 'radio_ambiguous', 'dialog_button_missing', 'dialog_button_ambiguous', 'private_mode', 'unknown_op', 'invalid_request', 'error']);
+export const CODES = Object.freeze([...TRANSIENT, ...ENDED, 'argument', 'mode', 'chrome_path', 'profile_path', 'downloads_path', 'job_creation', 'job_limit', 'helper_not_owned', 'already_launched', 'desktop_descriptor', 'desktop_creation', 'input_desktop_unavailable', 'preferences', 'chrome_creation', 'job_assignment', 'chrome_resume', 'no_window', 'ambiguous_window', 'window_not_locked', 'window_changed', 'window_not_owned', 'document_changed', 'unrelated_document_window', 'control_missing', 'control_ambiguous', 'control_changed', 'control_type', 'control_disabled', 'control_readonly', 'invoke_unsupported', 'value_unsupported', 'selection_unsupported', 'not_radio', 'link_missing', 'link_ambiguous', 'statement_link_missing', 'statement_link_ambiguous', 'radio_missing', 'radio_ambiguous', 'dialog_button_missing', 'dialog_button_ambiguous', 'private_mode', 'unknown_op', 'invalid_request', 'error']);
 const KINDS = ['authenticated', 'login', 'channels', 'code', 'unknown'];
 const message = code => ENDED.includes(code) ? HELPER_ENDED : code === 'unrelated_document_window' ? OTHER_WINDOW : PAGE_CHANGED;
 const bounded = (promise, ms, fallback) => { let timer; return Promise.race([promise, new Promise(resolve => { timer = setTimeout(resolve, ms, fallback); })]).finally(() => clearTimeout(timer)); };
@@ -112,7 +114,7 @@ function channel(child) {
     },
     async end() {
       try { child.stdin.end(); } catch { /* closed */ }
-      if (await bounded(exited.then(() => true), 10000, false)) return;
+      if (await bounded(exited.then(() => true), END_MS, false)) return;
       try { child.kill(); } catch { /* gone */ }
       await bounded(exited, 5000, null);
     }
@@ -139,6 +141,7 @@ async function readUntil(helper, trace, op, accept, ms, step) {
   }
 }
 const list = value => Array.isArray(value) ? value : [];
+const fact = value => Number.isSafeInteger(value) && value >= 0 && value <= 86400000 ? value : null;
 const replySnapshot = reply => ({ url: String(reply.url ?? ''), links: list(reply.links).map(l => ({ text: String(l?.text ?? ''), href: String(l?.href ?? '') })), periods: list(reply.periods).map(String), cards: list(reply.cards).map(String), counts: list(reply.counts).map(pair => list(pair).map(Number)) });
 // The snapshot of a page holding a card, a period and a count, whatever their values, else null. A page without them is not yet a verdict on the
 // statement: the helper reads only displayed text, so one still drawing or scrolled away has none. verifyStatement judges what this returns.
@@ -193,7 +196,7 @@ async function writeTrace(directory, account, trace, outcome, helper) {
   const dir = path.join(directory, 'diagnostics', 'amex', accountId), stamp = name => Number(/^[A-Za-z0-9-]{1,64}-(\d{13})\.json$/.exec(name)?.[1] ?? NaN);
   const end = helper?.ended, exit = helper ? await bounded(helper.exited, 1000, null) : null;
   const record = { schema: 'amex-native-trace-1', accountId, jobId, at: new Date(at).toISOString(), mode: trace.mode, outcome, steps: trace.steps, states: trace.states, tolerated: trace.tolerated,
-    helper: { started: !!helper, exit: Number.isSafeInteger(exit) ? exit : null, end: ['closed', 'stdin_closed', 'uia_watchdog'].includes(end?.reason) ? end.reason : null, chromeEnded: typeof end?.chromeEnded === 'boolean' ? end.chromeEnded : null, desktopClosed: typeof end?.desktopClosed === 'boolean' ? end.desktopClosed : null }, overflow: trace.overflow };
+    helper: { started: !!helper, exit: Number.isSafeInteger(exit) ? exit : null, end: ['closed', 'stdin_closed', 'uia_watchdog'].includes(end?.reason) ? end.reason : null, chromeEnded: typeof end?.chromeEnded === 'boolean' ? end.chromeEnded : null, desktopClosed: typeof end?.desktopClosed === 'boolean' ? end.desktopClosed : null, jobTerminated: typeof end?.jobTerminated === 'boolean' ? end.jobTerminated : null, processesLeft: fact(end?.processesLeft), membersKnown: typeof end?.membersKnown === 'boolean' ? end.membersKnown : null, closeMs: fact(end?.closeMs) }, overflow: trace.overflow };
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, `${jobId || 'job'}-${at}.json`), JSON.stringify(record), { flag: 'wx', mode: 0o600 });
   const kept = (await readdir(dir)).filter(name => Number.isSafeInteger(stamp(name))).sort((a, b) => stamp(b) - stamp(a));
@@ -246,7 +249,8 @@ export async function collectStatementNative(account, settings, directory, statu
     trace.step('verify-period');
     // collectFromPage: the download icon, the CSV choice, the check before, one ダウンロード, the file and the check after
     await status('running', `Downloading the closed statement ${selected.start} to ${selected.end}`);
-    await act(helper, trace, 'download-open');
+    // An icon already expanded is sent nothing: the record says so, and the CSV read decides as for an icon just opened
+    if ((await act(helper, trace, 'download-open')).alreadyExpanded === true) trace.step('download-already-open');
     if (!await readUntil(helper, trace, 'csv-state', reply => reply.present === true, CSV_MS, 'csv-present')) throw new Error('Amex CSV format option changed');
     await act(helper, trace, 'csv-select');
     if (!await readUntil(helper, trace, 'csv-state', reply => reply.present === true && reply.selected === true, SELECTED_MS, 'csv-selected')) throw new Error('Amex CSV format was not selected');
