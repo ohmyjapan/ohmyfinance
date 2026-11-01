@@ -33,6 +33,7 @@ const execute=promisify(execFile);
 let message='Connect this PC once to let OMF download statements automatically.', running=false,activeAction=false;
 let yayoiState={state:'idle',message:'Connect this PC, save your Yayoi login, then open Yayoi in Chrome.'};
 let session=null;          // { id, broker, mode:'protected'|'manual', until, ran, browsers:Set<number>, publicKey, installationId }
+let amexAttended=null;     // the armed attended Amex download (armAttended): {session, accountId, priorJobId, armedAt, until}; memory only
 let authorization=null, closing=null;
 let keyLost=false, approvalUrl=null, reconnectNeeded=false, nextAutoAttempt=0, stopped=false, ticking=false;
 const startup={done:false,acl:null,elevated:null,chromeFound:null,capability:null,recovered:null,packagedOrigin:null};
@@ -152,6 +153,7 @@ async function ownerBroker(pending,config,state,localKey,action='batch',interact
 }
 
 async function endSession(reason) {
+  amexAttended=null; // guard:amex-attended-session-end
   if(closing)return closing;
   const current=session, pending=authorization;
   if(!current && !pending)return;
@@ -502,6 +504,46 @@ export async function retryBankLogin(input,{live,config,banks,store=secrets,root
     return {retry:true};
   });
 }
+// ── The attended Amex download (case omf-amex-native-runtime-01) ───────────────────────────────────────────────────────────────────
+// Routine Amex jobs run in a Chrome that is never shown (collector/amex-native.mjs, private mode) and stop when Amex asks for a check the
+// downloader cannot complete. The person who wants to complete it arms an attended download for ONE card on the setup screen. That starts
+// nothing: it records in memory the live protected session, the card, the job OMF holds for that card at that moment and an expiry
+// ATTENDED_MS later. The next job OMF hands this PC for that card — any job other than the recorded one, so one requested after the
+// arming (the person's 確定明細を取得 in OMF) — claimed in the same session before the expiry runs with Chrome on the person's own desktop,
+// and the arming is consumed at that claim, whatever the job's outcome. Every other card, job and session, an expired arming, Lock,
+// Pause, a Windows lock, the session's end or the person's cancel leave or make the jobs private. Nothing is sent to OMF.
+// Case attended-fold-01: a preparation holds the collector's action slot from before its first await until it answers, so no claim, job
+// or other setup action runs between OMF's card list and the arming (and a preparation is refused while one runs); a cancel never waits
+// for the slot, and a cancel acknowledged while the preparation waits for OMF stays effective (amexPreparing).
+export const ATTENDED_MS=10*60000;
+// The one preparation waiting for OMF's card list ({accountId}), by identity: a cancel of its card drops it, and a preparation that is no
+// longer this one when OMF answers arms nothing. Memory only; the action slot admits one preparation at a time.
+let amexPreparing=null;
+const ATTENDED_CANCELLED='The attended download was cancelled while it was being prepared; nothing is prepared.';
+/** The setup body: exactly an Amex card account id, and `cancel: true` to withdraw it. */
+export function attendedInput(body){
+  if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(k=>!['accountId','cancel'].includes(k))||!/^[a-f\d]{24}$/.test(String(body.accountId))||(body.cancel!==undefined&&body.cancel!==true))throw new Error('Choose the Amex card for the attended download');
+  return {accountId:String(body.accountId),cancel:body.cancel===true};
+}
+/** Arms one Amex card of this connection (its own metadata) that OMF still lists for this PC (`accounts`: the live card list). */
+export async function armAttended(input,{live,config,accounts,now=Date.now}){
+  const info=(config?.accountInfo||[]).find(a=>String(a._id)===input.accountId);
+  if(!info||(info.provider||'amex')!=='amex')throw coded('forbidden','Choose an Amex card of this connection.');
+  const list=await accounts(),current=(Array.isArray(list)?list:[]).find(a=>String(a?._id)===input.accountId);
+  if(!current||(current.provider||'amex')!=='amex')throw coded('forbidden','OMF does not allow this card for this PC now.');
+  const at=now();
+  return {session:live.id,accountId:input.accountId,priorJobId:current.jobId==null?null:String(current.jobId),armedAt:at,until:at+ATTENDED_MS};
+}
+/** For one claimed card job: whether it is the attended one, and the arming that stays (consumed by the attended job, dropped once stale). */
+export function takeAttended(intent,live,account,now=Date.now()){
+  if(!intent||!live||intent.session!==live.id||now>intent.until)return {attended:false,intent:null}; // guard:amex-attended-bound
+  if(String(account?._id)!==intent.accountId||String(account?.jobId??'')===String(intent.priorJobId??''))return {attended:false,intent};
+  return {attended:true,intent:null};
+}
+/** What /status shows of the arming: the card and its expiry, or null. */
+export function attendedStatus(intent,live,now=Date.now()){
+  return intent&&live&&intent.session===live.id&&now<=intent.until?{accountId:intent.accountId,until:new Date(intent.until).toISOString()}:null;
+}
 /**
  * The one collector-action slot (plan P1), taken synchronously — before the first await of a setup action — and released by the
  * returned function (call it in finally): no claim (tick), connection, unlock or other setup action can start in between.
@@ -648,6 +690,10 @@ async function tickWork() {
       assertSession(live);live.ran=true;
       clearInterval(heartbeat);
     } else {
+    // Case omf-amex-native-runtime-01: the job runs private (Chrome never shown) unless the person asked for it — a manual batch, or the
+    // attended download armed for this card, consumed by this claim (takeAttended).
+    const taken=takeAttended(amexAttended,live,account);amexAttended=taken.intent;
+    const attended=live.mode==='manual'||taken.attended; // guard:amex-attended-mode
     const queued=await pending(account,config);
     for(const item of queued) {await status('running','Sending a previously downloaded statement');await upload(config,account,item,live);}
     if(!queued.length) {
@@ -659,7 +705,7 @@ async function tickWork() {
         if(await secrets.has('gmail'))gmail=await secrets.open('gmail',aadFor(live.installationId,'gmail',null,config),live.broker);
       }
       assertSession(live);
-      const item=await collectStatement(account,credentials,directory,status,{gmail,batch:live.id,onLaunch:ownBrowser(live),origin:config.baseUrl});credentials=null;gmail=null;await status('running','Sending the downloaded statement to OMF');await upload(config,account,item,live);
+      const item=await collectStatement(account,credentials,directory,status,{gmail,batch:live.id,onLaunch:ownBrowser(live),origin:config.baseUrl,attended});credentials=null;gmail=null;await status('running','Sending the downloaded statement to OMF');await upload(config,account,item,live);
     }
     assertSession(live);live.ran=true;
     clearInterval(heartbeat);await status('complete','Statement saved in OMF for review');
@@ -983,7 +1029,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
           return {bankAccountId:id,name:String(b?.name||''),provider:b?.provider||null,variant:b?.variant??null,supported,hasCredentials:!!envelope,refused:!!pending,pending};}));
         // The previous card setup: file metadata only (legacy-card-import.mjs inspectSource), never decrypted here.
         const previous=await inspectSource(LEGACY_SOURCE,directory).catch(()=>({available:false,code:'legacy-unsafe'}));
-        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},smsSource:{serial:config.smsSource?.serial??null,adbFound:!!findAdb()},accounts,banks,legacyCards:{available:previous.available,state:previous.code}});
+        return reply(200,{message,approvalUrl,reconnectNeeded,baseUrl:config.baseUrl||startup.packagedOrigin||null,pcName:os.hostname(),connect:connectStatus(),busy:running,authorizing:!!authorization,locking:!!closing,legacy,protected:activated(state,config),mode:config.mode || (activated(state,config)?'protected':null),capability:capabilityOf(config,state),unlocked:!!session,unlockUntil:session?new Date(session.until).toISOString():null,due,paused:!!config.paused,keyLost,aclProtected:startup.acl?!!startup.acl.verified:null,elevated:startup.elevated,chromeFound:startup.chromeFound,testBroker:testBrokerEnabled(),startupDone:startup.done,aplus:{hasCredentials:aplus},yayoi:{...yayoiState,hasCredentials:yayoi},mailbox:{hasCredentials:gmail},smsSource:{serial:config.smsSource?.serial??null,adbFound:!!findAdb()},accounts,banks,legacyCards:{available:previous.available,state:previous.code},amexAttended:attendedStatus(amexAttended,liveSession())});
       }
       if(req.method==='POST' && ['/connect','/connect/resume'].includes(req.url)) { await json(req).catch(()=>({})); try { return reply(200,await connect({resume:req.url==='/connect/resume'})); } catch(error) { return reply(codeOf(error),{error:error.message,keyLost}); } }
       if(req.method==='POST' && req.url==='/pair') {
@@ -1051,6 +1097,26 @@ export async function startCollector({openSetup=false,open=launch}={}) {
           const config=await metadata();
           return reply(200,await retryBankLogin(input,{live,config,banks:async()=>(await api(config,'bank/accounts',undefined,undefined,live,{base:BANK_BASE})).accounts}));
         }finally{release();}
+      }
+      if(req.method==='POST' && req.url==='/amex/attended') {
+        // The attended Amex download (armAttended above): body (400), then the protected session (403). `cancel` withdraws the card's
+        // arming and its preparation still waiting for OMF, at any time (it takes no action slot). A preparation takes the action slot
+        // (409 while a claim, a job or another setup action runs; none starts until it answers), then the card in this connection and
+        // OMF's live card list; it is kept only in the same session and while it is still the card's preparation (a cancel meanwhile:
+        // 409, nothing armed). Nothing is launched, queued, decrypted or sent to OMF here.
+        const input=attendedInput(await json(req));
+        const live=requireProtectedSession();
+        if(input.cancel){if(amexAttended?.accountId===input.accountId)amexAttended=null;if(amexPreparing?.accountId===input.accountId)amexPreparing=null;return reply(200,{amexAttended:attendedStatus(amexAttended,live)});} // guard:amex-attended-cancel
+        let release;try{release=reserveAction();}catch(busy){return reply(409,{error:busy.message});} // guard:amex-attended-slot
+        const preparing={accountId:input.accountId};amexPreparing=preparing;
+        try{
+          const config=await metadata();
+          const intent=await armAttended(input,{live,config,accounts:async()=>(await api(config,'accounts',undefined,undefined,live)).accounts});
+          assertSession(live);
+          if(amexPreparing!==preparing)return reply(409,{error:ATTENDED_CANCELLED}); // guard:amex-attended-cancelled
+          amexAttended=intent;
+          return reply(200,{amexAttended:attendedStatus(intent,live)});
+        }finally{if(amexPreparing===preparing)amexPreparing=null;release();}
       }
       if(req.method==='GET' && req.url==='/aplus/status') {const state=await vaultState();let config;try{config=await metadata();}catch(error){if(error.code!=='legacy')throw error;config={};}return reply(200,{busy:running,unlocked:!!session,aplus:{hasCredentials:await boundSecret('aplus',state?.installationId,'aplus',null,config)}});}
       if(req.method==='POST' && req.url==='/aplus/credentials') {

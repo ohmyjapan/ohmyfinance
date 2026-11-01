@@ -25,8 +25,9 @@ export const ALLOWLIST = [
   // bank-balance + shared/finance-bank-balance.mjs (plan omf-bank-hourly-balances-20261027): the background balance inquiry and its portable rules.
   // puppeteer-frame-init (plan omf-downloader-release-ready-20261028): the pinned-SDK iframe-initialization fix browser.mjs loads.
   // legacy-card-import (plan omf-card-handover-20261030): the explicit protected import of the previous card setup index.mjs loads.
-  ...['browser','puppeteer-frame-init','index','interaction','login','mail','run','statement','vault','yayoi','omf-authorization','aplus','aplus-verification','sms-source','bank','bank-balance','bank-certificate','banks/rakuten','banks/paypay','banks/resona','banks/ikeda','banks/contract','legacy-card-import'].map(name=>({from:`collector/${name}.mjs`})),
-  ...['browser-process','key-broker','private-acl','vault','bank-certificate','bank-certificate-policy'].map(name=>({from:`collector/windows/${name}.ps1`})),
+  // amex-native + windows/amex-native.ps1 (case omf-amex-native-runtime-01): the Amex statement download collectStatement runs; signed with the other scripts.
+  ...['browser','puppeteer-frame-init','index','interaction','login','mail','run','statement','vault','yayoi','omf-authorization','aplus','aplus-verification','sms-source','bank','bank-balance','bank-certificate','banks/rakuten','banks/paypay','banks/resona','banks/ikeda','banks/contract','legacy-card-import','amex-native'].map(name=>({from:`collector/${name}.mjs`})),
+  ...['browser-process','key-broker','private-acl','vault','bank-certificate','bank-certificate-policy','amex-native'].map(name=>({from:`collector/windows/${name}.ps1`})),
   { from: 'collector/setup.html' }, { from: 'collector/setup.js' }, { from: 'collector/package.json' }, { from: 'collector/package-lock.json' },
   { from: 'shared/amex.mjs' }, { from: 'shared/aplus.mjs' }, { from: 'shared/finance-pending.mjs' }, { from: 'shared/billing-mail.mjs' }, { from: 'shared/finance-payment-match.mjs' }, { from: 'shared/finance-bank-balance.mjs' }
 ];

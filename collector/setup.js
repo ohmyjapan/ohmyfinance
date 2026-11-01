@@ -58,7 +58,7 @@ function showProtection(data) {
   $('#reset-form').classList.toggle('hidden',!data.keyLost);
   for(const id of ['#mailbox-save','#aplus-save','#yayoi-save'])$(id).disabled=!protectedBatch || !!data.busy;
   $('#yayoi-open').disabled=!protectedBatch || !!data.busy || !data.yayoi?.hasCredentials;
-  $('#mailbox-saved').textContent=data.mailbox?.hasCredentials?'Mailbox access saved: the Amex login code is read automatically during a download.':'Login codes: manual. Amex emails a code at each download; enter it in the Chrome window when asked. Mailbox access is not saved on this PC.';
+  $('#mailbox-saved').textContent=data.mailbox?.hasCredentials?'Mailbox access saved: the Amex login code is read automatically during a download.':'Mailbox access is not saved on this PC. Amex downloads run in a Chrome window that is not shown, so when Amex emails a login code the download stops there. To enter the code yourself, prepare an attended download in the card\'s section.';
 }
 // The previous card setup (plan omf-card-handover-20261030): shown only when /status finds the previous downloader's directory of this
 // Windows user. Check and import are explicit actions inside the protected connection; this page receives account names, outcomes and
@@ -128,9 +128,26 @@ async function refresh() {
     }
     const button=document.createElement('button');button.textContent='Save encrypted login';button.disabled=!(data.unlocked && data.mode==='protected') || !!data.busy;form.append(button);
     form.onsubmit=async e=>{e.preventDefault();button.disabled=true;try{await call('/credentials',{accountId:account.accountId,username:values.username.value,password:values.password.value});values.password.value='';values.username.value='';await refresh();}catch(error){note.textContent=error.message;button.disabled=false;}};
-    section.append(title,note,form);main.append(section);
+    section.append(title,note,form);if(issuer==='Amex')section.append(attendedControl(account,data));main.append(section);
   }
   showBanks(data);
+}
+// The attended Amex download (case omf-amex-native-runtime-01): routine Amex downloads run in a Chrome window nobody sees and stop when
+// Amex asks for a check. Prepare arms ONE card and starts nothing; the person then requests 確定明細を取得 for that card in OMF within ten
+// minutes, and that one download opens Chrome on this desktop, where they sign in or enter the code themselves. A manual batch always does.
+function attendedControl(account,data){
+  const box=document.createElement('div'),note=document.createElement('p'),actions=document.createElement('div'),arm=document.createElement('button'),cancel=document.createElement('button');
+  box.dataset.amexAttended=account.accountId;note.dataset.amexAttendedNote='';note.setAttribute('role','status');actions.className='actions';
+  arm.type='button';arm.className='secondary';arm.textContent='Prepare an attended download';arm.dataset.amexAttendedArm='';
+  cancel.type='button';cancel.className='secondary';cancel.textContent='Cancel the attended download';cancel.dataset.amexAttendedCancel='';
+  const armed=data.amexAttended&&data.amexAttended.accountId===account.accountId?data.amexAttended:null,protectedBatch=!!data.unlocked&&data.mode==='protected';
+  if(data.mode==='manual'){note.textContent='In a manual batch every Amex download opens Chrome on this screen; sign in there.';box.append(note);return box;}
+  note.textContent=armed?`Prepared until ${new Date(armed.until).toLocaleTimeString()}. Nothing has started yet: now request 確定明細を取得 for this card in OMF. That one download opens Chrome on this screen; sign in or enter Amex's code there yourself.`
+    :'Downloads of this card run in a Chrome window that is not shown and stop when Amex asks for a check (for example a login code while mailbox access is not saved). To complete it yourself: press Prepare an attended download (this starts nothing), then request 確定明細を取得 for this card in OMF within 10 minutes. That one download opens Chrome on this screen.';
+  arm.classList.toggle('hidden',!!armed);cancel.classList.toggle('hidden',!armed);arm.disabled=!protectedBatch;cancel.disabled=!protectedBatch;
+  arm.onclick=async()=>{arm.disabled=true;try{await call('/amex/attended',{accountId:account.accountId});await refresh();}catch(error){note.textContent=error.message;arm.disabled=false;}};
+  cancel.onclick=async()=>{cancel.disabled=true;try{await call('/amex/attended',{accountId:account.accountId,cancel:true});await refresh();}catch(error){note.textContent=error.message;cancel.disabled=false;}};
+  actions.append(arm,cancel);box.append(note,actions);return box;
 }
 // Bank logins (plans omf-rakuten-auto-login-20261021 §3, omf-paypay-four-accounts-20261021): one section per bank account OMF grants
 // to this PC (/status.banks, metadata only — a saved login is never read back). 楽天銀行 標準 gets the one-time ID/password form;

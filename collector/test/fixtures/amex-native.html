@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>OMF native Amex fixture</title>
+<!-- Case omf-amex-native-runtime-01: the loopback fixture of scripts/zoomer-fixtures/omf-amex-native.mjs. Fictional data only. One page
+     serves every surface the native helper reads: the login form, the e-mail channel and code page (the "www" server), the dashboard and
+     the statement page with its download dialog (the "global" server). The scenario arrives as window.__FIXTURE__ (inserted by the server
+     at the marker below). The page reports its own events (and whether each was trusted) and, on the statement page, the result of the
+     REAL collector/statement.mjs statementSnapshot (served from the worktree; node:crypto mapped to a stub) to its server. Two decoy frames
+     (same origin, cross site) repeat the statement page's ids, names and texts; any event in them is reported. No framework, no runtime. -->
+<style>.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}body{font-family:sans-serif}iframe{border:1px solid #888;margin:4px}</style>
+<script type="importmap">{"imports":{"node:crypto":"/omf-crypto-stub.mjs"}}</script>
+<!--FIXTURE-->
+</head>
+<body>
+<main id="mount"></main>
+<script type="module">
+import { statementSnapshot } from '/collector/statement.mjs';
+const cfg = window.__FIXTURE__, mount = document.getElementById('mount');
+const report = body => fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }).catch(() => {});
+const post = (route, body) => fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+const el = (tag, attrs = {}, ...children) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (v !== null && v !== undefined) e.setAttribute(k, v); } e.append(...children); return e; };
+report({ kind: 'load', surface: cfg.surface, path: location.pathname + location.search, languages: navigator.languages, webdriver: navigator.webdriver, visibility: document.visibilityState });
+
+function login() {
+  const user = el('input', { id: 'eliloUserID', name: 'UserID', autocomplete: 'username' }), password = el('input', { id: 'eliloPassword', type: 'password', autocomplete: 'current-password' });
+  const form = el('form', { id: 'login-form', onsubmit: async event => {
+    event.preventDefault(); report({ kind: 'submit', trusted: event.isTrusted });
+    const answer = await post('/login-api', { user: user.value, password: password.value }); location.href = answer.next;
+  } }, el('label', { for: 'eliloUserID' }, 'ユーザーID'), user, el('label', { for: 'eliloPassword' }, 'パスワード'), password, el('button', { id: 'loginSubmit', type: 'submit', onclick: event => report({ kind: 'login-click', trusted: event.isTrusted }) }, 'ログイン'));
+  mount.append(form);
+}
+
+function verify() {
+  const radio = (id, text) => [el('input', { type: 'radio', name: 'channel', id, class: 'visually-hidden', onchange: event => report({ kind: 'channel', id, trusted: event.isTrusted }) }), el('label', { for: id }, text)];
+  const choices = el('fieldset', {}, el('legend', {}, '認証コードの送信先を選択してください'), ...radio('channel-mail', cfg.mailLabel), ...radio('channel-sms', '***-****-1234'));
+  const first = el('button', { type: 'button', onclick: async event => {
+    report({ kind: 'request-code', trusted: event.isTrusted });
+    if (!document.getElementById('channel-mail').checked) return;
+    await post('/request-code', {});
+    mount.replaceChildren(el('p', {}, el('span', {}, cfg.mailLabel + ' に認証コードを送信しました。')), el('label', { for: 'question-input' }, '認証コード'), el('input', { id: 'question-input', autocomplete: 'one-time-code', inputmode: 'numeric' }),
+      el('button', { type: 'button', onclick: async e => { report({ kind: 'code-next', trusted: e.isTrusted }); const answer = await post('/verify-code', { code: document.getElementById('question-input').value }); if (answer.next) location.href = answer.next; } }, '次へ'));
+  } }, '次へ');
+  mount.append(choices, first);
+}
+
+function dashboard() {
+  mount.append(el('nav', {}, el('a', { href: '/account/profile' }, 'アカウント'), ' ', el('a', { href: '/activity/statement?inav=jp_menu' }, '明細一覧'), ' ', el('a', { href: '/activity/statement', onclick: event => {
+    report({ kind: 'statement-link', trusted: event.isTrusted });
+    if (cfg.popup) window.open('/unrelated', 'unrelated', 'popup,width=520,height=420');
+  } }, 'ご利用明細')));
+}
+
+// ── the statement page: card buttons, dated links (and the non-date link repeating one href), the period, the count, the download icon
+// and a role=dialog with the format radios and its ダウンロード button; data appear loadDelayMs after each navigation ──
+const FORMATS = ['pdf', 'csv', 'excel'], radioId = format => 'axp-activity-download-body-selection-options-type_' + format;
+let format = 'pdf', dialog = false, loaded = false, stage = 0;
+const endOf = () => new URLSearchParams(location.search).get('end');
+// ── case omf-amex-statement-fold-01, `cfg.observed`: the current statement page as UI Automation measured it on the real page (kept there as
+// counts and masked shapes only; fictional here). It lands with an end query. No card button: the card is one Text, four bullets and the
+// five digits, under four unnamed groups. No whole period: a separate date, then five adjacent Texts ( date - date ), as a page draws
+// `({start} - {end})`. The row dates are far below the fold. `cfg.extras` draw these forms where a decoy needs them. ──
+const nest = child => [1, 2, 3, 4].reduce(inner => el('div', { role: 'group' }, inner), child);
+const rangeNodes = ([start, end]) => ['(', start, ' - ', end, ')'];
+const spans = nodes => nodes.map(node => el('span', {}, node));
+function placed({ nodes, place = 'visible' }) {
+  if (place === 'offscreen') return el('div', { style: 'position:absolute;left:-10000px;top:0' }, nest(el('span', {}, ...nodes)));
+  if (place === 'clipped') return el('div', { class: 'visually-hidden' }, el('span', {}, ...nodes));
+  if (place === 'unrendered') return el('div', { style: 'display:none' }, el('span', {}, ...nodes));
+  // Shapes a card or period chooser could take. Chrome names each control by its label and exposes no Text inside it, whatever it holds (measured).
+  const icon = () => el('img', { alt: 'カード', width: 8, height: 8, src: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' });
+  if (place === 'link') return el('p', {}, el('a', { href: '#omf-fixture-choice' }, icon(), ...spans(nodes)));
+  if (place === 'button') return el('p', {}, el('button', { type: 'button' }, icon(), ...spans(nodes)));
+  if (place === 'menuitem') return el('div', { role: 'menu' }, el('div', { role: 'menuitem', tabindex: '-1' }, icon(), ...spans(nodes)));
+  if (place === 'block-link') return el('p', {}, el('a', { href: '#omf-fixture-choice' }, el('div', {}, ...spans(nodes)), el('div', {}, 'カードを切り替える')));
+  if (place === 'list-link') return el('div', {}, el('a', { href: '#omf-fixture-choice' }, el('ul', {}, el('li', {}, ...spans(nodes)), el('li', {}, 'カードを切り替える'))));
+  if (place === 'nested-button') return el('div', { role: 'button', tabindex: '0' }, el('div', {}, ...spans(nodes)), el('button', { type: 'button' }, '切替'));
+  if (place === 'tab') return el('div', { role: 'tablist' }, el('div', { role: 'tab', tabindex: '0' }, el('div', {}, ...spans(nodes)), el('button', { type: 'button' }, '閉じる')));
+  return nest(el('span', {}, ...nodes));
+}
+const displayed = end => !cfg.observed ? el('p', {}, el('span', {}, cfg.display[end])) : el('p', {}, el('span', {}, end.replaceAll('-', '/')), ' ', el('span', {}, ...(cfg.ranges[end] ? rangeNodes(cfg.ranges[end]).slice(0, cfg.stages ? stage : 5) : [])));
+function trigger(href, download) { const a = el('a', { href, ...(download ? { download } : {}), style: 'display:none' }); document.body.append(a); a.click(); a.remove(); }
+function snapshotFor(label) { setTimeout(() => report({ kind: 'dom', label, path: location.pathname + location.search, snapshot: statementSnapshot() }), 200); }
+function statement() {
+  const end = endOf(), cards = end ? cfg.cardsPeriod : cfg.cardsInitial, [total, shown] = (end && cfg.totals[end]) || [0, 0];
+  const header = el('header', {}, ...cards.map(card => el('button', { type: 'button', class: 'card', ...(cfg.labelledCard ? { 'aria-label': 'カード ' + card } : {}) }, card)));
+  if (cfg.hiddenCard) header.append(el('button', { type: 'button', style: 'display:none' }, cfg.hiddenCard));
+  const nav = el('nav', { 'aria-label': 'ご利用期間' }, ...cfg.links.map(link => el('div', {}, el('a', { href: link.href, onclick: event => {
+    report({ kind: 'navigate', href: link.href, trusted: event.isTrusted });
+    if (!cfg.spa) return;
+    event.preventDefault(); history.pushState({}, '', link.href);
+  } }, link.text))));
+  const forms = cfg.observed ? '&forms=observed' : '', decoys = cfg.decoys ? el('div', { class: 'decoys' }, el('iframe', { title: 'decoy same origin', src: '/decoy-frame?tag=same' + forms, width: 380, height: 300 }), el('iframe', { title: 'decoy cross site', src: cfg.crossOrigin + '/decoy-frame?tag=cross' + forms, width: 380, height: 300 })) : '';
+  // the card arrives last, as it did on the real page
+  const masked = cfg.observed && loaded && (!cfg.stages || stage >= cfg.stages) ? cfg.maskedCards[end] ?? cfg.maskedCards['*'] : [];
+  const parts = [decoys, header, ...masked.map(text => placed({ nodes: [text] })), nav];
+  if (end && loaded) {
+    const icon = el('button', { id: 'action-icon-dls-icon-download-', type: 'button', 'aria-label': 'ダウンロード', onclick: event => { report({ kind: 'open-dialog', trusted: event.isTrusted }); dialog = true; render(); } }, '↓');
+    const section = el('section', { 'aria-label': 'ご利用明細' }, displayed(end), el('p', { class: 'count' }, el('span', {}, String(total)), ' 件中 ', el('span', {}, String(shown)), ' 件を表示'), icon, ...cfg.extras.map(placed), ...(cfg.observed ? [el('div', { style: 'height:2400px' })] : []),
+      el('table', {}, el('tbody', {}, ...(cfg.rows[end] || []).slice(0, shown).map(row => el('tr', {}, ...row.map(cell => el('td', {}, cell)))))));
+    // On the observed page the dialog is drawn as a modal overlay (the real dialog is not measured yet); cfg.dialogInPage leaves it below the fold.
+    if (dialog) section.append(el('div', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'omf-fixture-dialog-title', style: cfg.observed && !cfg.dialogInPage ? 'position:fixed;top:40px;left:40px;padding:8px;background:#fff;border:1px solid #888' : null }, el('h2', { id: 'omf-fixture-dialog-title' }, '明細をダウンロード'),
+      ...FORMATS.map(f => { const input = el('input', { type: 'radio', class: 'visually-hidden', name: 'omf-fixture-format', id: radioId(f), value: f, onchange: event => { report({ kind: 'format', format: f, trusted: event.isTrusted }); format = f; render(); } }); input.checked = format === f; return el('span', {}, input, el('label', { for: radioId(f) }, f.toUpperCase())); }),
+      el('button', { type: 'button', onclick: () => { dialog = false; render(); } }, 'キャンセル'),
+      el('button', { type: 'button', onclick: event => {
+        report({ kind: 'download-click', trusted: event.isTrusted, format });
+        if (cfg.download === 'none') return;
+        if (format !== 'csv') return trigger('/download?end=' + end + '&format=' + format);
+        if (cfg.download === 'blob') { const url = URL.createObjectURL(new Blob(['﻿' + cfg.csvText[end]], { type: 'text/csv' })); trigger(url, cfg.fileName); setTimeout(() => URL.revokeObjectURL(url), 10000); return; }
+        trigger('/download?end=' + end + '&format=csv');
+      } }, 'ダウンロード')));
+    parts.push(section);
+  }
+  mount.replaceChildren(...parts);
+  if (dialog && cfg.dialogFocus) document.getElementById(radioId(format)).focus();
+  snapshotFor(!end ? 'initial' : !loaded ? 'loading' : dialog ? 'dialog-' + format : 'period');
+}
+let timer = null;
+function render() { statement(); }
+function advance() { if (stage < cfg.stages) timer = setTimeout(() => { stage++; render(); advance(); }, cfg.stageMs); }
+// A page with no period has nothing new to draw when its data arrive: redrawing it would replace the links under the job's first action.
+function navigateLoad() { loaded = false; stage = 0; dialog = false; format = 'pdf'; render(); clearTimeout(timer); timer = setTimeout(() => { loaded = true; if (endOf()) render(); advance(); }, cfg.loadDelayMs); }
+window.addEventListener('popstate', navigateLoad);
+const pushState = history.pushState.bind(history);
+history.pushState = (...args) => { pushState(...args); navigateLoad(); };
+
+if (cfg.surface === 'login') login();
+else if (cfg.surface === 'verify') verify();
+else if (cfg.surface === 'dashboard') dashboard();
+else if (cfg.surface === 'statement') { if (cfg.landing && !endOf()) history.replaceState({}, '', location.pathname + '?end=' + cfg.landing); navigateLoad(); }
+else if (cfg.surface === 'unrelated') mount.append(el('p', {}, 'An unrelated window'));
+</script>
+</body>
+</html>
