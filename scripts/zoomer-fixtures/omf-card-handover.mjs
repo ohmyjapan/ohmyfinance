@@ -146,7 +146,7 @@ export const MUTANTS = [
   ['MB4-aplus-attention-unrouted', BR, [['signal, ui, reveal }); // guard:card-reveal-aplus', 'signal, ui });']], 'K', '^Aplus wrapper', /FOREGROUND/],
   ['ML1-login-ui-ignores-reveal', 'collector/login.mjs', [['async show() { if (reveal) await reveal(page); else await page.bringToFront(); } // guard:login-reveal', 'async show() { await page.bringToFront(); }']], 'K', '^login UI', /card-reveal:login-ui-routes/],
   ['MA1-aplus-ui-ignores-reveal', 'collector/aplus.mjs', [['async show() { if (reveal) await reveal(page); else await page.bringToFront(); }, // guard:aplus-reveal', 'async show() { await page.bringToFront(); },']], 'K', '^Aplus default UI', /card-reveal:aplus-ui-background/],
-  ['MP1-importer-not-staged', 'collector/package/stage.mjs', [[",'legacy-card-import']", ']']], 'P', '', /card-handover:staged|staged import missing/],
+  ['MP1-importer-not-staged', 'collector/package/stage.mjs', [[",'legacy-card-import'", '']], 'P', '', /card-handover:staged|staged import missing/],
   ['MS1-amex-not-due', 'server/services/financeSyncScheduler.ts', [['AUTO_SYNC_PROVIDERS.includes(row?.provider)', "row?.provider === 'aplus'"]], 'S', 'L5', /schedule:amex-and-aplus-due/],
   ['MS2-amex-refused-by-the-atomic-write', 'server/services/financeService.ts', [['findOneAndUpdate({ _id: account._id, provider: { $in: [...AUTO_SYNC_PROVIDERS] }', "findOneAndUpdate({ _id: account._id, provider: 'aplus'"]], 'S', 'L5', /schedule:amex-and-aplus-due/],
   ['MS3-same-day-enqueued-again', 'server/services/financeService.ts', [["'autoSync.lastQueuedDay': { $ne: day }, ", '']], 'S', 'L5', /schedule:(atomic-already-queued-today|same-day-once|claimed-today-not-again|concurrent-exactly-once|manual-claim-same-day)/],
