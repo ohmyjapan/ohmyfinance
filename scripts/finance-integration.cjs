@@ -16,6 +16,69 @@ const root=path.resolve(__dirname,'..'),pause=ms=>new Promise(r=>setTimeout(r,ms
 // over budget fails with its method, path and elapsed time only (no headers or tokens), and a larger budget explains no earlier timeout.
 const ASSISTANT_ONLY=!!process.env.OMF_TEST_ASSISTANT_ONLY,SETUP_READY_MS=300000,REQUEST_BUDGET_MS=ASSISTANT_ONLY?60000:20000;
 async function availablePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
+// The explicit recent Amex job through the built app (case omf-amex-recent-activity-20261102): the bounded request, the capability a PC declares in its own claims, a legacy claim that
+// never receives it, a job that can only upload provisional activity, and closed jobs that are untouched before, between and after. The schedule, Navi and the bill notice run at
+// module level in scripts/zoomer-fixtures/omf-amex-recent.mjs, whose mutants need no rebuild.
+async function recentJobs({db,call,request,token,other,pass,csv,row}){
+ const created=await request('accounts',{name:'Recent synthetic Amex',primaryCard:'71560',cardIdentifiers:['71560'],otpRecipient:'recent@example.invalid',otpMailbox:'recent@example.invalid'});assert.equal(created.status,200,JSON.stringify(created));const id=created.data.account._id;
+ const createdAplus=await request('accounts',{provider:'aplus',name:'Recent synthetic Aplus',primaryCard:'9471',cardIdentifiers:['9471']});assert.equal(createdAplus.status,200,JSON.stringify(createdAplus));const aplusId=createdAplus.data.account._id;
+ const device=await request('collectors',{name:'Recent collector',accountIds:[id,aplusId]});assert.equal(device.status,200,JSON.stringify(device));const dev=device.data.token,CAPABLE={capabilities:['amex-recent-v1']};
+ const claim=body=>call('/api/finance/collector/claim',{method:'POST',token:dev,body:body||{}});
+ const stored=()=>db.collection('financialaccounts').findOne({_id:new ObjectId(id)}),collector=()=>db.collection('financecollectors').findOne({_id:new ObjectId(device.data.id)});
+ const sync=(body,account=id,auth=token)=>call('/api/finance/accounts/'+account+'/sync',{method:'POST',token:auth,...(body===undefined?{}:{body})});
+ const status=(jobId,state)=>call('/api/finance/collector/status',{method:'POST',token:dev,body:{accountId:id,jobId,state,message:'synthetic'}});
+ const sent=(jobId,query,bytes)=>call('/api/finance/collector/upload?accountId='+id+'&jobId='+jobId+query,{method:'POST',token:dev,body:bytes,raw:true});
+ const cell=changes=>row({0:'2026/10/06',1:'2026/10/07',2:'Recent shop',4:'71560',5:'1200',...changes}),activity=csv([cell(),cell({2:'Recent other',5:'800'})]);
+ const imports=()=>db.collection('financeimports').countDocuments({accountId:new ObjectId(id)});
+ // the request: a bounded word, Amex only, the caller's own account, and a PC that has declared it
+ assert.equal((await sync({source:'closed'})).status,400,'recent-api:unknown-source');
+ assert.equal((await sync({source:['recent']})).status,400,'recent-api:source-is-one-word');
+ assert.equal((await sync({source:'recent'},aplusId)).status,400,'recent-api:aplus-refused');
+ assert.equal((await sync({source:'recent'},id,other)).status,404,'recent-api:another-owner');
+ const unsupported=await sync({source:'recent'});assert.equal(unsupported.status,409,'recent-api:no-capable-collector '+JSON.stringify(unsupported));
+ assert.match(String(unsupported.data?.data?.message),/未請求（仮）/,'recent-api:refusal-explains-itself '+JSON.stringify(unsupported.data));
+ assert.equal((await stored()).jobState,'idle','recent-api:a-refusal-queues-nothing');
+ assert.equal((await claim()).data.account,null,'recent-api:legacy-idle-claim');assert.equal((await collector()).capabilities?.length??0,0,'recent-api:a-legacy-claim-records-nothing');
+ assert.equal((await claim(CAPABLE)).data.account,null,'recent-api:capable-idle-claim');assert.deepEqual((await collector()).capabilities,['amex-recent-v1'],'recent-api:the-claim-records-the-capability');
+ assert.equal((await claim({capabilities:['something-else','amex-recent-v1','x'.repeat(50)]})).status,200);assert.deepEqual((await collector()).capabilities,['amex-recent-v1'],'recent-api:only-known-capabilities-are-kept');
+ assert.equal((await claim()).status,200);assert.equal((await collector()).capabilities?.length??0,0,'recent-api:a-downgraded-collector-loses-it');
+ assert.equal((await sync({source:'recent'})).status,409,'recent-api:refused-again-after-the-downgrade');
+ assert.equal((await claim(CAPABLE)).status,200);
+ pass('the recent request is bounded, Amex only and refused until a connected PC has declared it in its own claim');
+ // the job: a legacy claim leaves it, a capable claim takes it, and it can only go up as provisional
+ const queued=await sync({source:'recent'});assert.equal(queued.status,200,JSON.stringify(queued));assert.equal(queued.data.account.jobSource,'recent','recent-api:queued-as-recent');
+ assert.equal((await sync({source:'recent'})).status,409,'recent-api:one-job-at-a-time');assert.equal((await sync()).status,409,'recent-api:a-queued-job-is-not-replaced');
+ assert.equal((await claim()).data.account,null,'recent-api:a-legacy-claim-never-receives-it');
+ assert.deepEqual([(await stored()).jobState,(await stored()).jobDeviceId,(await stored()).lastAttemptAt],['queued',undefined,undefined],'recent-api:left-untouched-by-the-legacy-claim');
+ const job=(await claim(CAPABLE)).data.account;assert.equal(job?._id,id,'recent-api:a-capable-claim-takes-it');assert.equal(job.jobSource,'recent','recent-api:the-claim-says-recent');
+ assert.equal((await stored()).lastAttemptAt,undefined,'recent-api:a-recent-claim-is-no-closed-attempt');assert.equal((await stored()).jobState,'running','recent-api:running');
+ for(const query of ['&kind=statement&start=2026-10-05&end=2026-11-02&pageCount=2','&kind=recent&start=2026-10-05&end=2026-11-02&pageCount=2','&start=2026-10-05&end=2026-11-02&pageCount=2','&kind=custom&start=2026-10-05&end=2026-11-02'])assert.equal((await sent(job.jobId,query,activity)).status,409,'recent-api:only-provisional-from-a-recent-job '+query);
+ assert.equal(await imports(),0,'recent-api:nothing-archived-by-a-refused-upload');
+ assert.equal((await sent(job.jobId,'&kind=pending&start=2026-10-05&end=2026-11-02&pageCount=3',activity)).status,400,'recent-api:the-count-still-binds');
+ assert.equal((await sent(job.jobId,'&kind=pending&start=2026-10-08&end=2026-11-02&pageCount=2',activity)).status,400,'recent-api:the-dates-still-bind');
+ const accepted=await sent(job.jobId,'&kind=pending&start=2026-10-05&end=2026-11-02&pageCount=2',activity);assert.equal(accepted.status,200,JSON.stringify(accepted));assert.equal(accepted.data.rowCount,2);
+ const repeat=await sent(job.jobId,'&kind=pending&start=2026-10-05&end=2026-11-03&pageCount=2',activity);assert.deepEqual([repeat.data.id,repeat.data.duplicateFile],[accepted.data.id,true],'recent-api:a-retry-is-the-same-import');
+ const batch=await db.collection('financeimports').findOne({_id:new ObjectId(accepted.data.id)});
+ assert.deepEqual([batch.sourceStatus,batch.period.kind,batch.period.key,batch.calendar,await imports()],['pending','pending','pending:2026-10-05:2026-11-02',undefined,1],'recent-api:stored-provisional-with-no-calendar-work');
+ assert.equal((await status(job.jobId,'complete')).status,200);
+ const review=(await request('imports/'+accepted.data.id,undefined,'GET')).data;assert.deepEqual([review.sourceStatus,review.requiresDraft,review.rows.map(r=>r.settlement.state)],['pending',true,['pending','pending']],'recent-api:review-says-provisional');
+ const ledger=await db.collection('transactions').countDocuments();for(const action of ['import','link'])assert.equal((await request('imports/'+accepted.data.id+'/commit',{decisions:[{line:2,action,draftRevision:1,confirmNew:true}]})).status,409,'recent-api:unpostable '+action);assert.equal(await db.collection('transactions').countDocuments(),ledger,'recent-api:no-ledger-write');
+ pass('a recent job goes only to a capable collector, uploads only provisional activity, keeps its count and dates, retries as one import and cannot post');
+ // afterwards: closed jobs are what they were, for a legacy and a capable collector alike
+ const closed=await sync();assert.equal(closed.status,200,JSON.stringify(closed));assert.equal(closed.data.account.jobSource,undefined,'recent-api:a-closed-request-clears-the-kind');assert.equal((await stored()).jobSource,undefined,'recent-api:cleared-in-the-store');
+ const legacyJob=(await claim()).data.account;assert.deepEqual([legacyJob?._id,legacyJob?.jobSource],[id,undefined],'recent-api:a-legacy-claim-takes-the-closed-job');assert.ok((await stored()).lastAttemptAt,'recent-api:a-closed-claim-records-its-attempt');
+ const statement=csv([cell({0:'2026/09/10',1:'2026/09/11',2:'Closed shop'}),cell({0:'2026/09/12',1:'2026/09/13',2:'Closed other',5:'700'})]);
+ const accepted2=await sent(legacyJob.jobId,'&kind=statement&start=2026-09-05&end=2026-10-04&pageCount=2',statement);assert.equal(accepted2.status,200,JSON.stringify(accepted2));assert.equal((await db.collection('financeimports').findOne({_id:new ObjectId(accepted2.data.id)})).sourceStatus,undefined,'recent-api:a-closed-import-stays-confirmed');assert.equal((await status(legacyJob.jobId,'complete')).status,200);
+ const named=await sync({source:'statement'});assert.equal(named.status,200,JSON.stringify(named));const capableClosed=(await claim(CAPABLE)).data.account;assert.deepEqual([capableClosed?._id,capableClosed?.jobSource],[id,undefined],'recent-api:a-capable-claim-takes-closed-jobs-too');
+ const retained=csv([cell({2:'Provisional left behind',5:'901'})]);const drained=await sent(capableClosed.jobId,'&kind=pending&start=2026-10-05&end=2026-11-02&pageCount=1',retained);assert.equal(drained.status,200,'recent-api:a-closed-job-can-send-a-retained-provisional-file '+JSON.stringify(drained));assert.equal((await db.collection('financeimports').findOne({_id:new ObjectId(drained.data.id)})).sourceStatus,'pending','recent-api:that-file-stays-provisional');assert.equal((await status(capableClosed.jobId,'complete')).status,200);
+ // a lost recent job is resumed only by a capable collector, under the same job
+ const again=await sync({source:'recent'});assert.equal(again.status,200,JSON.stringify(again));const lost=(await claim(CAPABLE)).data.account;await db.collection('financialaccounts').updateOne({_id:new ObjectId(id)},{$set:{jobLeaseUntil:new Date(Date.now()-1000)}});
+ assert.equal((await claim()).data.account,null,'recent-api:a-legacy-claim-never-resumes-it');const resumed=(await claim(CAPABLE)).data.account;assert.deepEqual([resumed?.jobId,resumed?.jobSource],[lost.jobId,'recent'],'recent-api:resumed-under-the-same-job');assert.equal((await status(lost.jobId,'complete')).status,200);
+ // Aplus and priority: closed work of another card goes first, with its own reply
+ await db.collection('financialaccounts').updateOne({_id:new ObjectId(aplusId)},{$set:{jobId:'recent-aplus-job',jobState:'queued',jobRequestedAt:new Date()}});const third=await sync({source:'recent'});assert.equal(third.status,200,JSON.stringify(third));
+ const first=await claim(CAPABLE);assert.deepEqual([first.data.account?._id,Array.isArray(first.data.covered?.statements)],[aplusId,true],'recent-api:closed-work-first-aplus-reply-unchanged');const next=(await claim(CAPABLE)).data.account;assert.equal(next?.jobSource,'recent','recent-api:then-the-recent-job');
+ pass('closed jobs stay closed after a recent job for legacy and capable collectors, a lost recent job resumes only on a capable one, and Aplus claims are unchanged');
+}
 async function main(){
  let mongo,child,client,directory,logs='',checks=0;const pass=name=>{checks++;console.log('PASS '+name);};
  const setupTiming={},slowest={ms:0,request:null};
@@ -70,6 +133,7 @@ async function main(){
   if(process.env.OMF_TEST_PURCHASE_LINKS_ONLY){await require('./finance-purchase-links-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});console.log(checks+' targeted purchase connection checks passed');return;}
   if(process.env.OMF_TEST_EXPORT_ONLY){await require('./finance-export-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row,directory});console.log(checks+' targeted export checks passed');return;}
   if(process.env.OMF_TEST_PENDING_ONLY){await require('./finance-pending-integration.cjs')({db,call,request,upload,token,other,pass,csv,row,origin,root});console.log(checks+' targeted pending checks passed');return;}
+  if(process.env.OMF_TEST_RECENT_ONLY){await recentJobs({db,call,request,token,other,pass,csv,row});console.log(checks+' targeted recent activity checks passed');return;}
   if(process.env.OMF_TEST_APLUS_ONLY){await require('./finance-aplus-integration.cjs')({db,call,request,token:unselectedToken,other,pass,root,origin});console.log(checks+' targeted Aplus checks passed');return;}
   if(process.env.OMF_TEST_IMPORT_OVERLAP_ONLY){await require('./finance-import-overlap-integration.cjs')({db,call,request,upload,token,other,pass,csv,row,origin,root});console.log(checks+' targeted source overlap checks passed');return;}
   if(process.env.OMF_TEST_INVENTORY_REVIEW_ONLY){await require('./finance-inventory-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});console.log(checks+' targeted inventory review checks passed');return;}
@@ -208,6 +272,7 @@ async function main(){
   await require('./finance-inventory-review-integration.cjs')({db,call,request,token,other,origin,pass,root,csv,row});
   await require('./finance-aplus-integration.cjs')({db,call,request,token:unselectedToken,other,pass,root,origin});
   await require('./finance-purchase-links-integration.cjs')({db,call,upload,token,other,deviceToken,origin,pass,csv,row});
+  await recentJobs({db,call,request,token,other,pass,csv,row});
   console.log(`${checks} finance integration checks passed`);
  }catch(error){console.error(error);console.error(logs.slice(-3500));process.exitCode=1;}
  finally{

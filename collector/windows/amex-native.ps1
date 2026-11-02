@@ -16,6 +16,8 @@
 #  - Login values and codes arrive only inside request lines on stdin and are passed to ValuePattern.SetValue; they are never echoed,
 #    written to stderr, put in an argument or kept. Replies carry fixed codes, booleans, counts, the statement-snapshot shape and, for
 #    the login state, the fields collector/login.mjs ensureLogin reads.
+#  - The recent activity (case omf-amex-recent-activity-20261102) adds fixed operations only: the statement page's own link to RecentPath, and the statement page's read and one-shot download
+#    controls held to RecentPath. Each operation's name fixes its page; no request field names a page, an address or a target.
 param(
   [Parameter(Mandatory = $true)][string]$Chrome,
   [Parameter(Mandatory = $true)][string]$ProfileDir,
@@ -93,7 +95,7 @@ public static class OmfAmexNative {
  sealed class Work { public Dictionary<string, object> request; public Dictionary<string, object> reply; public ManualResetEvent done = new ManualResetEvent(false); }
  sealed class Doc { public AutomationElement main; public string url; }
 
- const string LoginPath = "/ja-jp/account/login", VerifyPath = "/ja-jp/account/reauth/verify", StatementPath = "/activity/statement";
+ const string LoginPath = "/ja-jp/account/login", VerifyPath = "/ja-jp/account/reauth/verify", StatementPath = "/activity/statement", RecentPath = "/activity/recent";
  const string IconId = "action-icon-dls-icon-download-", CsvId = "axp-activity-download-body-selection-options-type_csv";
  // collector/browser.mjs PLAIN_LANGUAGE_ARGS (the Amex language list, case omf-amex-locale-01), then the owned profile and the policy page.
  const string Arguments = "--lang=ja-JP,ja --accept-lang=ja-JP,ja,en --no-first-run --no-default-browser-check --disable-extensions --disable-sync";
@@ -114,6 +116,10 @@ public static class OmfAmexNative {
  static readonly Regex[] PeriodParts = { Whole("[\uFF08(]"), Whole(DatePart), Whole("[-\uFF0D\u2013]"), Whole(DatePart), Whole("[\uFF09)]") };
  // The code field's label (ninshou koodo), the button "tsugi he" and the dialog button "daunroodo".
  const string CodeLabel = "\u8A8D\u8A3C\u30B3\u30FC\u30C9", NextLabel = "\u6B21\u3078", DownloadLabel = "\u30C0\u30A6\u30F3\u30ED\u30FC\u30C9";
+ // The recent page's displayed range (the sanitized contract's shape): the cycle's first date, a long mark or one of PeriodText's range marks, "kyou genzai" (as of today), an opening parenthesis,
+ // "jikai shimebi" (next closing date), that date and a closing parenthesis. Measured only as a shape: one Text or several is not known, so RecentRanges reads either, all of it displayed.
+ static readonly Regex RecentRange = new Regex("^[0-9]{4}/[0-9]{2}/[0-9]{2}[\\s]*[\u30FC\uFF0D\u2013-][\\s]*\u4ECA\u65E5\u73FE\u5728[\\s]*[\uFF08(][\\s]*\u6B21\u56DE\u7DE0\u3081\u65E5[\\s]*[0-9]{4}/[0-9]{2}/[0-9]{2}[\\s]*[\uFF09)]$", RegexOptions.CultureInvariant);
+ const int RecentParts = 7; // date, mark, "kyou genzai", parenthesis, "jikai shimebi", date, parenthesis
  static readonly Regex Recipient = new Regex("[a-zA-Z0-9.*_+-]+@[a-zA-Z0-9.-]+", RegexOptions.CultureInvariant);
  static StreamWriter Output;
  static IntPtr desktop, job, window;
@@ -214,6 +220,22 @@ public static class OmfAmexNative {
    part = 0; while (part < PeriodParts.Length && Displayed(elements[i + part])) part++;
    if (part == PeriodParts.Length) periods.Add(string.Concat(texts.GetRange(i, PeriodParts.Length)));
   }
+ }
+ // The recent range the page displays: one Text, or up to RecentParts adjacent Texts that read as the whole range. As with the period, an empty name shows nothing between two parts and every part
+ // must be Displayed. Controls are no Text, and Scoped keeps frames out.
+ static List<string> RecentRanges(List<AutomationElement> elements, List<string> texts) {
+  var ranges = new List<string>();
+  for (int i = 0; i < texts.Count; i++) {
+   var joined = "";
+   for (int n = 1; n <= RecentParts && i + n <= texts.Count; n++) {
+    joined += texts[i + n - 1];
+    if (!RecentRange.IsMatch(joined)) continue;
+    int part = 0; while (part < n && Displayed(elements[i + part])) part++;
+    if (part == n) ranges.Add(joined);
+    break;
+   }
+  }
+  return ranges;
  }
  static AutomationElement Single(List<AutomationElement> list, string code) { Check(list.Count == 1, list.Count == 0 ? code + "_missing" : code + "_ambiguous"); return list[0]; }
  static object Pattern(AutomationElement e, AutomationPattern pattern, string code) { object p; Check(e.TryGetCurrentPattern(pattern, out p), code); return p; }
@@ -347,11 +369,22 @@ public static class OmfAmexNative {
   Same(d, OmfAmexNativePolicy.Global, null); acting = true; invoke.Invoke();
   return new Dictionary<string, object> { { "invoked", 1 } };
  }
+ // The statement page's link to the current activity, as observed: the global origin, exactly RecentPath, no query, in the main document. Its label is not read: the observed labels differ by
+ // page and language while the destination decides where it leads. Elements with that one destination lead to the same page; the first enabled one is invoked once, as OpenStatement does.
+ static Dictionary<string, object> OpenRecent() {
+  var d = On(OmfAmexNativePolicy.Global, StatementPath); AutomationElement target = null; int found = 0;
+  foreach (var e in Scoped(d, Type(ControlType.Hyperlink))) { var v = ValueOf(e); if (OriginOf(v) != OmfAmexNativePolicy.Global || PathOf(v) != RecentPath || QueryOf(v) != "") continue; found++; if (target == null && e.Current.IsEnabled) target = e; }
+  Check(found > 0, "recent_link_missing"); Check(target != null, "control_disabled"); var open = Invokable(target);
+  Same(d, OmfAmexNativePolicy.Global, StatementPath); acting = true; open.Invoke();
+  return new Dictionary<string, object> { { "invoked", 1 } };
+ }
  // collector/statement.mjs statementSnapshot's shape from the main document of the statement page; URLs as the policy reports them. The legacy
  // card button and whole period stay; the current page's card and period are translated into the same strings, so verifyStatement's card,
  // period and count comparisons are the ones it always made.
- static Dictionary<string, object> Snapshot() {
-  var d = On(OmfAmexNativePolicy.Global, StatementPath);
+ static Dictionary<string, object> Snapshot() { return Read(StatementPath); }
+ // The recent page's read is the same read on its own page, with its displayed ranges beside it; the closed reply is unchanged.
+ static Dictionary<string, object> Read(string surface) {
+  var d = On(OmfAmexNativePolicy.Global, surface);
   var links = new List<object>();
   foreach (var e in Scoped(d, Type(ControlType.Hyperlink))) { var v = ValueOf(e); if (v == null) continue; var href = OmfAmexNativePolicy.Report(v); if (href.Contains("/activity/statement?end=")) links.Add(new Dictionary<string, object> { { "text", Trimmed(e.Current.Name) }, { "href", href } }); }
   var periods = new List<string>(); var names = new List<string>(); var cards = new List<string>(); var elements = new List<AutomationElement>(); var texts = new List<string>();
@@ -365,7 +398,9 @@ public static class OmfAmexNative {
   foreach (var e in Scoped(d, Type(ControlType.Button))) { var name = Trimmed(e.Current.Name); if (CardText.IsMatch(name)) cards.Add(name); }
   var counts = new List<object>();
   foreach (Match m in CountText.Matches(string.Join("\n", names.ToArray()))) counts.Add(new[] { long.Parse(m.Groups[1].Value.Replace(",", "")), long.Parse(m.Groups[2].Value.Replace(",", "")) });
-  return new Dictionary<string, object> { { "url", OmfAmexNativePolicy.Report(d.url) }, { "links", links }, { "periods", periods }, { "cards", cards }, { "counts", counts } };
+  var reply = new Dictionary<string, object> { { "url", OmfAmexNativePolicy.Report(d.url) }, { "links", links }, { "periods", periods }, { "cards", cards }, { "counts", counts } };
+  if (surface == RecentPath) reply["ranges"] = RecentRanges(elements, texts);
+  return reply;
  }
  // The one main-document statement link with exactly this destination and accessible name (a period link latestClosed chose).
  static Dictionary<string, object> InvokePeriod(string href, string name) {
@@ -380,42 +415,42 @@ public static class OmfAmexNative {
  // The download icon, the one main-document element with IconId. Invoke where it has that pattern, as ever. The real icon has none: Chrome exposes a
  // button with aria-expanded or aria-haspopup through ExpandCollapse instead, and its Expand is the same click (measured, case omf-amex-download-fold-01).
  // With neither pattern Invokable refuses: no other pattern and no other element is tried.
- static Dictionary<string, object> DownloadOpen() {
-  var d = On(OmfAmexNativePolicy.Global, StatementPath); var icon = Single(Scoped(d, Id(IconId)), "control"); object p;
-  if (!icon.TryGetCurrentPattern(InvokePattern.Pattern, out p) && icon.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out p)) return ExpandIcon(d, icon, (ExpandCollapsePattern)p);
+ static Dictionary<string, object> DownloadOpen(string surface) {
+  var d = On(OmfAmexNativePolicy.Global, surface); var icon = Single(Scoped(d, Id(IconId)), "control"); object p;
+  if (!icon.TryGetCurrentPattern(InvokePattern.Pattern, out p) && icon.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out p)) return ExpandIcon(d, icon, (ExpandCollapsePattern)p, surface);
   var invoke = Invokable(icon);
-  Same(d, OmfAmexNativePolicy.Global, StatementPath); acting = true; invoke.Invoke();
+  Same(d, OmfAmexNativePolicy.Global, surface); acting = true; invoke.Invoke();
   return new Dictionary<string, object> { { "invoked", 1 } };
  }
  // One Expand, with the document, the icon's place in it, its enabled state and its ExpandCollapseState read again last. Expanded shows its content already:
  // Chrome refuses Expand there and the content must stay open, so nothing is sent and the CSV read decides. Every other state gets the one Expand. Collapsed and
  // PartiallyExpanded have content to show. Microsoft documents InvalidOperationException for LeafNode, but Chrome answers it with the same click (measured), and a
  // provider that did refuse ends the job here as uncertain, never sent again, so refusing it first would only stop a job that works. Collapse is never called.
- static Dictionary<string, object> ExpandIcon(Doc d, AutomationElement icon, ExpandCollapsePattern expand) {
-  Same(d, OmfAmexNativePolicy.Global, StatementPath); Check(Automation.Compare(Single(Scoped(d, Id(IconId)), "control"), icon), "control_changed"); Check(icon.Current.IsEnabled, "control_disabled");
+ static Dictionary<string, object> ExpandIcon(Doc d, AutomationElement icon, ExpandCollapsePattern expand, string surface) {
+  Same(d, OmfAmexNativePolicy.Global, surface); Check(Automation.Compare(Single(Scoped(d, Id(IconId)), "control"), icon), "control_changed"); Check(icon.Current.IsEnabled, "control_disabled");
   var state = expand.Current.ExpandCollapseState;
   if (state == ExpandCollapseState.Expanded) return new Dictionary<string, object> { { "alreadyExpanded", true } };
   acting = true; expand.Expand();
   return new Dictionary<string, object> { { "expanded", 1 } };
  }
- static Dictionary<string, object> CsvState() {
-  var d = On(OmfAmexNativePolicy.Global, StatementPath); var list = Scoped(d, Id(CsvId));
+ static Dictionary<string, object> CsvState(string surface) {
+  var d = On(OmfAmexNativePolicy.Global, surface); var list = Scoped(d, Id(CsvId));
   if (list.Count == 0) return new Dictionary<string, object> { { "present", false } };
   Check(list.Count == 1, "radio_ambiguous"); Check(list[0].Current.ControlType == ControlType.RadioButton, "not_radio");
   var s = (SelectionItemPattern)Pattern(list[0], SelectionItemPattern.Pattern, "selection_unsupported");
   return new Dictionary<string, object> { { "present", true }, { "selected", s.Current.IsSelected } };
  }
- static Dictionary<string, object> CsvSelect() {
-  var d = On(OmfAmexNativePolicy.Global, StatementPath); var radio = Single(Scoped(d, Id(CsvId)), "radio");
+ static Dictionary<string, object> CsvSelect(string surface) {
+  var d = On(OmfAmexNativePolicy.Global, surface); var radio = Single(Scoped(d, Id(CsvId)), "radio");
   Check(radio.Current.ControlType == ControlType.RadioButton, "not_radio"); Check(radio.Current.IsEnabled, "control_disabled");
   var s = (SelectionItemPattern)Pattern(radio, SelectionItemPattern.Pattern, "selection_unsupported");
-  Same(d, OmfAmexNativePolicy.Global, StatementPath); acting = true; s.Select();
+  Same(d, OmfAmexNativePolicy.Global, surface); acting = true; s.Select();
   return new Dictionary<string, object> { { "chosen", 1 } };
  }
  // collector/browser.mjs clicked '[role="dialog"] button' with the text DownloadLabel: here a main-document button with that exact accessible
  // name, not the download icon, whose ancestor inside the main document reports IsDialog.
- static Dictionary<string, object> Download() {
-  var d = On(OmfAmexNativePolicy.Global, StatementPath); var matches = new List<AutomationElement>();
+ static Dictionary<string, object> Download(string surface) {
+  var d = On(OmfAmexNativePolicy.Global, surface); var matches = new List<AutomationElement>();
   foreach (var e in Named(d, ControlType.Button, DownloadLabel)) {
    if (e.Current.AutomationId == IconId) continue;
    var walker = TreeWalker.RawViewWalker; var current = walker.GetParent(e); bool dialog = false; int depth = 0;
@@ -423,7 +458,7 @@ public static class OmfAmexNative {
    if (dialog) matches.Add(e);
   }
   var invoke = Invokable(Single(matches, "dialog_button"));
-  Same(d, OmfAmexNativePolicy.Global, StatementPath); acting = true; invoke.Invoke();
+  Same(d, OmfAmexNativePolicy.Global, surface); acting = true; invoke.Invoke();
   return new Dictionary<string, object> { { "invoked", 1 } };
  }
  // Attended mode only: the window is already on the person's desktop; it is restored without activation only when minimized.
@@ -482,10 +517,16 @@ public static class OmfAmexNative {
    case "open-statement": return OpenStatement();
    case "snapshot": return Snapshot();
    case "invoke-period": return InvokePeriod(Str(request, "href"), Str(request, "name"));
-   case "download-open": return DownloadOpen();
-   case "csv-state": return CsvState();
-   case "csv-select": return CsvSelect();
-   case "download": return Download();
+   case "download-open": return DownloadOpen(StatementPath);
+   case "csv-state": return CsvState(StatementPath);
+   case "csv-select": return CsvSelect(StatementPath);
+   case "download": return Download(StatementPath);
+   case "open-recent": return OpenRecent();
+   case "recent-snapshot": return Read(RecentPath);
+   case "recent-download-open": return DownloadOpen(RecentPath);
+   case "recent-csv-state": return CsvState(RecentPath);
+   case "recent-csv-select": return CsvSelect(RecentPath);
+   case "recent-download": return Download(RecentPath);
    case "close": return Close();
    default: throw new Fail("unknown_op");
   }

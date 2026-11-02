@@ -25,6 +25,8 @@
 // The closure-* scenarios (same case) reach the end of the job. A copy takes one more process into its job: a copy of PING.EXE, run from inside the profile and held by a debugger
 // (HOLDER). A debuggee cannot finish exiting until its debugger continues, so after a successful TerminateJobObject it stays unsignaled and its image cannot be deleted, as in a slow real
 // exit (case evidence held-01, held-02). The hold is a declared control, not a Chrome measurement. Other copies make a real API call fail: a null job, or a process no helper can open.
+// Case omf-amex-recent-activity-20261102: scripts/zoomer-fixtures/omf-amex-recent.mjs runs its own scenarios through this file's servers, runner and judge (a scenario with `source: 'recent'` and
+// the page's cfg.recent); no scenario here sets either, and every child of a scenario gets the scenario's own LOCALAPPDATA and USERPROFILE.
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -57,15 +59,18 @@ const PRIMARY = '12345', OMF = 'https://omf.example.invalid';
 const tokyo = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 const day = (date, n) => new Date(Date.parse(date + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 const slash = date => date.replaceAll('-', '/');
-function periods() {
+export function periods() {
   const closedEnd = day(tokyo(), -5), latest = { start: day(closedEnd, -30), end: closedEnd, total: 12 }, older = { start: day(latest.start, -31), end: day(latest.start, -1), total: 9 };
   return { open: { start: day(closedEnd, 1), end: day(closedEnd, 31), total: 3 }, latest, older, oldest: { start: day(older.start, -31), end: day(older.start, -1), total: 7 } };
 }
 const HEADERS = ['ご利用日', 'データ処理日', 'ご利用内容', 'カード会員様名', '会員番号 #', '金額', '海外通貨利用金額', '換算レート'];
 const rowsOf = (p, count, { foreignCardRow = false } = {}) => Array.from({ length: count }, (_, i) => [slash(day(p.start, i + 1)), slash(day(p.start, i + 2)), i === count - 1 && count > 1 ? '前回分口座振替金額' : 'FIXTURE SHOP ' + String(i + 1).padStart(2, '0'), 'FIXTURE TARO', foreignCardRow && i === 0 ? '-54321' : '-' + PRIMARY, i === count - 1 && count > 1 ? '-15,000' : ((i + 1) * 1100).toLocaleString('en-US'), '', '']);
+// The current cycle's fictional activity (the page's cfg.recent): a cycle that began before today and closes after it, four rows, the first bought before the cycle (a late submission).
+export const recentOf = p => ({ start: p.open.start, closing: p.open.end, end: tokyo(), total: 4 });
+export const recentRowsOf = (q, count, { foreignCardRow = false, outside = false } = {}) => Array.from({ length: count }, (_, i) => [slash(day(q.start, i === 0 ? -10 : i)), slash(day(q.start, outside && i === 1 ? -1 : i + 1)), 'FIXTURE RECENT ' + String(i + 1).padStart(2, '0'), 'FIXTURE TARO', foreignCardRow && i === 0 ? '-54321' : '-' + PRIMARY, ((i + 1) * 1300).toLocaleString('en-US'), '', '']);
 const csvField = v => /[",\r\n]/.test(v) ? '"' + v.replaceAll('"', '""') + '"' : v;
-const csvText = rows => [HEADERS, ...rows].map(r => r.map(csvField).join(',')).join('\r\n') + '\r\n';
-const csvBytes = text => Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, 'utf8')]);
+export const csvText = rows => [HEADERS, ...rows].map(r => r.map(csvField).join(',')).join('\r\n') + '\r\n';
+export const csvBytes = text => Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, 'utf8')]);
 
 // ── the policy copy ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 export const PRODUCTION_POLICY = ['# policy:begin', "$policy = @'", 'public static class OmfAmexNativePolicy {', ' public const string Login = "https://www.americanexpress.com/ja-jp/account/login?inav=iNavLnkLog";', ' public const string Www = "https://www.americanexpress.com";', ' public const string Global = "https://global.americanexpress.com";', ' public const string Isolation = "";', ' public static string Report(string url) { return url; }', ' public static string Accept(string url) { return url; }', '}', "'@", ''];
@@ -93,16 +98,16 @@ export async function policyCopy(dir, www, global, { source = SCRIPT, edit = nul
 }
 
 // ── loopback servers: www (login, e-mail code), global (dashboard, statement, download), decoy (cross-site frame) ───────────────────────
-const decoyHtml = (tag, observed, expand) => `<!doctype html><html lang="ja"><meta charset="utf-8"><title>decoy ${tag}</title>
+const decoyHtml = (tag, observed, expand, recent) => `<!doctype html><html lang="ja"><meta charset="utf-8"><title>decoy ${tag}</title>
 ${observed ? '<div><span>••••99999</span></div>' : '<button type="button" data-c="card">-99999</button>'}<a href="/activity/statement?end=2020-01-21" data-c="link">2019/12/22 - 2020/01/21</a>
 <p>${observed ? '<span>(</span><span>2019/12/22</span><span> - </span><span>2020/01/21</span><span>)</span>' : '<span>（2019/12/22－2020/01/21）</span>'}</p><p>99 件中 99 件を表示</p>
 <button id="action-icon-dls-icon-download-" type="button" aria-label="ダウンロード"${expand ? ' aria-haspopup="dialog" aria-expanded="false"' : ''} data-c="icon">↓</button>
 <div role="dialog" aria-modal="true" aria-label="decoy"><input type="radio" name="f" id="axp-activity-download-body-selection-options-type_csv" data-c="radio"><label for="axp-activity-download-body-selection-options-type_csv">CSV</label><button type="button" data-c="download">ダウンロード</button><button type="button" data-c="next">次へ</button></div>
-<a href="/activity/statement" data-c="statement-link">ご利用明細</a>
+<a href="/activity/statement" data-c="statement-link">ご利用明細</a>${recent ? '\n<p><span>2019/12/22ー今日現在（次回締め日2020/01/21)</span></p><a href="/activity/recent" data-c="recent-link">直近のご利用分</a>' : ''}
 <script>const tag=${JSON.stringify(tag)};const send=(c,e)=>fetch('/decoy-receipt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag,control:c,event:e.type,trusted:e.isTrusted})});
 document.querySelectorAll('[data-c]').forEach(el=>{el.addEventListener('click',e=>{if(el.tagName==='A')e.preventDefault();send(el.dataset.c,e)});el.addEventListener('change',e=>send(el.dataset.c,e));});</script>`;
 function readJson(req, limit = 262144) { return new Promise(resolve => { let body = ''; req.on('data', chunk => { body += chunk; if (body.length > limit) req.destroy(); }); req.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } }); req.on('error', () => resolve(null)); }); }
-async function startServers() {
+export async function startServers() {
   const page = await readFile(PAGE, 'utf8'), modules = { '/collector/statement.mjs': await readFile(path.join(root, 'collector', 'statement.mjs')), '/shared/amex.mjs': await readFile(path.join(root, 'shared', 'amex.mjs')), '/omf-crypto-stub.mjs': Buffer.from("export const createHash = () => { throw new Error('fixture page: no hashing'); };\n") };
   const events = new EventEmitter(), servers = { www: http.createServer(), global: http.createServer(), decoy: http.createServer() };
   for (const s of Object.values(servers)) await new Promise(r => s.listen(0, '127.0.0.1', r));
@@ -136,6 +141,7 @@ async function startServers() {
     if (await common('global', req, res, u)) return;
     if (req.method === 'GET' && u.pathname === '/dashboard') return send(res, 200, 'text/html; charset=utf-8', html('dashboard'));
     if (req.method === 'GET' && u.pathname === '/activity/statement') { if (!sc.statementLoaded) { sc.statementLoaded = true; events.emit('statement'); } return send(res, 200, 'text/html; charset=utf-8', html('statement')); }
+    if (req.method === 'GET' && u.pathname === '/activity/recent') { if (sc.cfg.recent?.leaves) { res.writeHead(302, { Location: '/account/profile', 'Cache-Control': 'no-store' }); return res.end(); } return send(res, 200, 'text/html; charset=utf-8', html('recent')); }
     if (req.method === 'GET' && u.pathname === '/unrelated') return send(res, 200, 'text/html; charset=utf-8', html('unrelated'));
     // a helper copy holding its action asks once and is answered when the page has made its change (scenarios download-hold-*)
     if (req.method === 'GET' && u.pathname === '/test/hold-reached') { sc.held = true; sc.release = () => send(res, 200, 'application/json', '{}'); return; }
@@ -145,10 +151,10 @@ async function startServers() {
     if (req.method === 'GET' && u.pathname === '/test/member') return send(res, 200, 'text/plain', String(await sc.holder.start()));
     if (req.method === 'GET' && u.pathname === '/test/member-leave') { await sc.holder.leave(); return send(res, 204, 'text/plain', ''); }
     if (req.method === 'GET' && u.pathname === '/account/profile') return send(res, 200, 'text/html; charset=utf-8', '<!doctype html><title>profile</title><p>profile</p>');
-    if (req.method === 'GET' && u.pathname === '/decoy-frame' && u.searchParams.get('tag') === 'same') return send(res, 200, 'text/html; charset=utf-8', decoyHtml('same', u.searchParams.get('forms') === 'observed', u.searchParams.get('icon') === 'expand'));
+    if (req.method === 'GET' && u.pathname === '/decoy-frame' && u.searchParams.get('tag') === 'same') return send(res, 200, 'text/html; charset=utf-8', decoyHtml('same', u.searchParams.get('forms') === 'observed', u.searchParams.get('icon') === 'expand', u.searchParams.get('recent') === '1'));
     if (req.method === 'GET' && u.pathname === '/download') {
       const format = u.searchParams.get('format'), end = u.searchParams.get('end'), all = Object.values(periods()), p = all.find(q => q.end === end) || periods().latest;
-      if (format === 'csv') { const bytes = csvBytes(csvText(rowsOf(p, sc.def.csv?.count ?? p.total, { foreignCardRow: !!sc.def.csv?.foreignCardRow }))); sc.receipts.downloads.push({ format, end, bytes: bytes.length, sha256: sha(bytes) }); return send(res, 200, 'text/csv; charset=utf-8', bytes, { 'Content-Disposition': `attachment; filename="${sc.cfg.fileName}"`, 'Content-Length': bytes.length }); }
+      if (format === 'csv') { const q = recentOf(periods()), bytes = csvBytes(csvText(end === 'recent' ? recentRowsOf(q, sc.def.csv?.count ?? q.total, sc.def.csv) : rowsOf(p, sc.def.csv?.count ?? p.total, { foreignCardRow: !!sc.def.csv?.foreignCardRow }))); sc.receipts.downloads.push({ format, end, bytes: bytes.length, sha256: sha(bytes) }); return send(res, 200, 'text/csv; charset=utf-8', bytes, { 'Content-Disposition': `attachment; filename="${sc.cfg.fileName}"`, 'Content-Length': bytes.length }); }
       const bytes = Buffer.from('%PDF-1.4\n% fixture stand-in\n'); sc.receipts.downloads.push({ format, end, bytes: bytes.length, sha256: sha(bytes) });
       return send(res, 200, 'application/octet-stream', bytes, { 'Content-Disposition': `attachment; filename="${sc.cfg.fileName.replace(/\.csv$/, '.pdf')}"`, 'Content-Length': bytes.length });
     }
@@ -158,7 +164,7 @@ async function startServers() {
     const u = new URL(req.url, origins.decoy);
     if (!sc || req.headers.host !== origins.decoy.slice(7)) return send(res, 403, 'text/plain', 'loopback only');
     sc.receipts.decoyArrivals.push({ method: req.method, path: u.pathname, query: u.search });
-    if (req.method === 'GET' && u.pathname === '/decoy-frame') return send(res, 200, 'text/html; charset=utf-8', decoyHtml('cross', u.searchParams.get('forms') === 'observed', u.searchParams.get('icon') === 'expand'));
+    if (req.method === 'GET' && u.pathname === '/decoy-frame') return send(res, 200, 'text/html; charset=utf-8', decoyHtml('cross', u.searchParams.get('forms') === 'observed', u.searchParams.get('icon') === 'expand', u.searchParams.get('recent') === '1'));
     if (req.method === 'POST' && u.pathname === '/decoy-receipt') { const body = await readJson(req); sc.receipts.decoy.push({ server: 'cross', at: Date.now(), ...(body || {}) }); return send(res, 204, 'text/plain', ''); }
     return send(res, 404, 'text/plain', 'not found');
   });
@@ -171,8 +177,9 @@ async function startServers() {
 function fixtureConfig(def, origins, fileName) {
   const p = periods(), links = [];
   for (const q of [p.open, p.latest, p.older, p.oldest]) { links.push({ text: `${slash(q.start)} - ${slash(q.end)}`, href: `/activity/statement?end=${q.end}` }); if (q === p.latest) links.push({ text: 'この期間を見る', href: `/activity/statement?end=${q.end}` }); }
-  const cfg = { scenario: def.name, otp: def.otp !== false, mailLabel: 'c***s@example.invalid', spa: true, download: 'attachment', loadDelayMs: 450, decoys: true, crossOrigin: origins.decoy, popup: false, hiddenCard: null, labelledCard: false, cardsInitial: ['-' + PRIMARY], cardsPeriod: ['-' + PRIMARY], links, display: {}, totals: {}, rows: {}, csvText: {}, fileName, observed: false, landing: null, maskedCards: {}, ranges: {}, extras: [], stages: 0, stageMs: 700, icon: null, preopened: false, hold: null };
+  const cfg = { scenario: def.name, otp: def.otp !== false, mailLabel: 'c***s@example.invalid', spa: true, download: 'attachment', loadDelayMs: 450, decoys: true, crossOrigin: origins.decoy, popup: false, hiddenCard: null, labelledCard: false, cardsInitial: ['-' + PRIMARY], cardsPeriod: ['-' + PRIMARY], links, display: {}, totals: {}, rows: {}, csvText: {}, fileName, observed: false, landing: null, maskedCards: {}, ranges: {}, extras: [], stages: 0, stageMs: 700, icon: null, preopened: false, hold: null, recent: null };
   for (const q of Object.values(p)) { cfg.display[q.end] = `（${slash(q.start)}－${slash(q.end)}）`; cfg.ranges[q.end] = rangeOf(q); cfg.totals[q.end] = [q.total, q.total]; cfg.rows[q.end] = rowsOf(q, q.total).map(r => [r[0], r[2], r[5]]); cfg.csvText[q.end] = csvText(rowsOf(q, q.total)); }
+  { const q = recentOf(p), rows = recentRowsOf(q, q.total); cfg.rows.recent = rows.map(r => [r[0], r[2], r[5]]); cfg.csvText.recent = csvText(rows); }
   def.fixture?.(cfg, p);
   return cfg;
 }
@@ -180,30 +187,30 @@ const datedLink = (cfg, end) => cfg.links.find(l => l.text !== 'この期間を�
 // The current statement page (the fixture page's cfg.observed): it lands on `landing` with an end query, no card button, the masked card Text,
 // the split period, and the dated PDF link the real page repeats beside the period links. The in-page statementSnapshot finds no card button
 // there, so a positive flow on it measures that difference instead of asserting the DOM's agreement.
-const rangeOf = q => [slash(q.start), slash(q.end)];
-const rangeNodes = ([start, end]) => ['(', start, ' - ', end, ')'];
-const MASK = '••••';
+export const rangeOf = q => [slash(q.start), slash(q.end)];
+export const rangeNodes = ([start, end]) => ['(', start, ' - ', end, ')'];
+export const MASK = '••••';
 const OBSERVED = 'the card is a masked Text and no button: the accessibility tree reads it, the in-page statementSnapshot finds no card (reviewed difference)';
-function observedPage(c, p, landing = p.latest) {
+export function observedPage(c, p, landing = p.latest) {
   Object.assign(c, { observed: true, landing: landing.end, cardsInitial: [], cardsPeriod: [], maskedCards: { '*': [MASK + PRIMARY] } });
   c.links.push({ text: `カード明細(PDF)を表示 ${slash(p.latest.start)} - ${slash(p.latest.end)}`, href: `/activity/statement?end=${p.latest.end}` });
 }
 // The controls a decoy label is drawn in: Chrome names each by its label and exposes no Text inside it (case folder, evidence/shape-03.shapes.txt).
-const CONTROLS = ['link', 'button', 'menuitem', 'block-link', 'list-link', 'nested-button', 'tab'];
+export const CONTROLS = ['link', 'button', 'menuitem', 'block-link', 'list-link', 'nested-button', 'tab'];
 // Near forms of the card, each visible and alone in its Text: none is the measured form, so none is a card.
 const NEAR_CARDS = ['••••2345', '•••12345', '•••••12345', '****12345', '●●●●12345', '••••123456', '•••• 12345', 'カード ••••12345', '12345', '-12345'];
 
 // ── the scenarios ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-const MESSAGES = { privateAttention: 'Amex asked for a check that the background download cannot complete', helperEnded: 'The Amex browser ended before the statement was saved; request the download again', otherWindow: 'Amex opened another window; request the download again', unverified: 'Amex statement links or signed-in card could not be verified', wrongCard: 'The signed-in Amex account does not match this connection', wrongDates: 'Amex displayed dates do not match the selected closed statement', notLoaded: 'The selected Amex statement did not finish loading', incomplete: 'Amex complete statement row count could not be verified', unreadable: 'The Amex statement page could not be read again; request the download again', pageChanged: 'The Amex page changed before the statement was saved; request the download again', csvMissing: 'Amex CSV format option changed' };
+export const MESSAGES = { privateAttention: 'Amex asked for a check that the background download cannot complete', helperEnded: 'The Amex browser ended before the statement was saved; request the download again', otherWindow: 'Amex opened another window; request the download again', unverified: 'Amex statement links or signed-in card could not be verified', wrongCard: 'The signed-in Amex account does not match this connection', wrongDates: 'Amex displayed dates do not match the selected closed statement', notLoaded: 'The selected Amex statement did not finish loading', incomplete: 'Amex complete statement row count could not be verified', unreadable: 'The Amex statement page could not be read again; request the download again', pageChanged: 'The Amex page changed before the statement was saved; request the download again', csvMissing: 'Amex CSV format option changed' };
 // The icon's forms on the current statement page (cfg.icon), each what Chrome 155 exposes for that markup (case evidence forms-02, forms-03). COLLAPSED is the
 // measured real shape; aria-expanded follows the dialog, which is not measured on the real icon, so download-expand-menu-form keeps it Collapsed.
-const COLLAPSED = { attrs: { 'aria-haspopup': 'dialog' }, flips: true }, EXPANDED = { attrs: { 'aria-haspopup': 'dialog', 'aria-expanded': 'true' } };
-const iconPage = (c, p, icon) => { observedPage(c, p); c.icon = icon; };
-const refused = code => ({ message: MESSAGES.pageChanged, before: true, refused: code });
+export const COLLAPSED = { attrs: { 'aria-haspopup': 'dialog' }, flips: true }, EXPANDED = { attrs: { 'aria-haspopup': 'dialog', 'aria-expanded': 'true' } };
+export const iconPage = (c, p, icon) => { observedPage(c, p); c.icon = icon; };
+export const refused = code => ({ message: MESSAGES.pageChanged, before: true, refused: code });
 // The two edits a scenario's `helper` makes. held: on entering the Expand path the copy asks the page for its change (cfg.hold), waits for the answer and for
 // Chrome's tree to follow. forced: the state read answers what Chrome does not report at that moment. Neither touches a check or the action under test.
-const HOLD_AT = ' static Dictionary<string, object> ExpandIcon(Doc d, AutomationElement icon, ExpandCollapsePattern expand) {', STATE_READ = 'var state = expand.Current.ExpandCollapseState;';
-const held = ms => [[HOLD_AT, `${HOLD_AT} var hold = new System.Net.WebClient(); hold.Proxy = null; hold.DownloadString(OmfAmexNativePolicy.Global + "/test/hold-reached"); Thread.Sleep(${ms});`]];
+const HOLD_AT = ' static Dictionary<string, object> ExpandIcon(Doc d, AutomationElement icon, ExpandCollapsePattern expand, string surface) {', STATE_READ = 'var state = expand.Current.ExpandCollapseState;';
+export const held = ms => [[HOLD_AT, `${HOLD_AT} var hold = new System.Net.WebClient(); hold.Proxy = null; hold.DownloadString(OmfAmexNativePolicy.Global + "/test/hold-reached"); Thread.Sleep(${ms});`]];
 const forced = state => [[STATE_READ, `var state = ExpandCollapseState.${state};`]];
 const heldPage = (c, p, hold, icon = COLLAPSED) => { iconPage(c, p, icon); c.hold = hold; };
 // The period action held once it has resolved its link: the page changes and the copy goes on with the element it resolved.
@@ -333,7 +340,7 @@ export const SCENARIOS = [
   { name: 'closure-no-launch', expect: { message: 'The batch could not take ownership of the browser', before: true, noChrome: true }, refuseOwn: true },
   { name: 'closure-launch-refused', expect: { message: MESSAGES.pageChanged, before: true, launchCode: 'job_assignment' }, helper: [['  if (!AssignProcessToJobObject(job, chrome.process)) {', '  if (chrome.pid != 0) {']] }
 ];
-const base = name => name.split('~')[0];
+export const base = name => name.split('~')[0];
 const POSITIVE = ['positive-attachment', 'positive-blob', 'observed-statement', 'download-expand-collapsed']; // the flows leg R repeats and the run's measured rate counts
 // M: defects reintroduced into the helper core of the copy (each anchor once in the production text), each run through the scenario named
 // after it; the same scenario's unchanged run (leg N) is its control. The private desktop is never replaced by the input desktop here:
@@ -367,8 +374,8 @@ export const HELPER_DEFECTS = [
   ['PN20-the-icon-is-not-found-again', [['Check(Automation.Compare(Single(Scoped(d, Id(IconId)), "control"), icon), "control_changed"); ', '']], 'download-hold-doubled'],
   ['PN21-enabled-is-not-read-again', [['Check(icon.Current.IsEnabled, "control_disabled");', '']], 'download-hold-disabled'],
   ['PN22-the-state-is-read-before-the-hold', [[STATE_READ, ''], [HOLD_AT, `${HOLD_AT} ${STATE_READ}`]], 'download-hold-expanded'],
-  ['PN23-the-document-is-not-read-again', [['Same(d, OmfAmexNativePolicy.Global, StatementPath); Check(Automation.Compare(Single', 'Check(Automation.Compare(Single']], 'download-hold-reloaded'],
-  ['PN24-the-surface-is-not-read-again', [['Same(d, OmfAmexNativePolicy.Global, StatementPath); Check(Automation.Compare(Single', 'Check(Automation.Compare(Single']], 'download-hold-left'],
+  ['PN23-the-document-is-not-read-again', [['Same(d, OmfAmexNativePolicy.Global, surface); Check(Automation.Compare(Single', 'Check(Automation.Compare(Single']], 'download-hold-reloaded'],
+  ['PN24-the-surface-is-not-read-again', [['Same(d, OmfAmexNativePolicy.Global, surface); Check(Automation.Compare(Single', 'Check(Automation.Compare(Single']], 'download-hold-left'],
   ['PN25-a-frame-can-be-the-icon', [['var icon = Single(Scoped(d, Id(IconId)), "control");', 'var raw = new List<AutomationElement>(); foreach (AutomationElement e in d.main.FindAll(TreeScope.Descendants, Id(IconId))) raw.Add(e); var icon = Single(raw, "control");']], 'download-icon-only-in-frames'],
   ['PN26-toggle-is-tried', [['  var invoke = Invokable(icon);', '  object t; if (icon.TryGetCurrentPattern(TogglePattern.Pattern, out t)) { acting = true; ((TogglePattern)t).Toggle(); return new Dictionary<string, object> { { "invoked", 1 } }; } var invoke = Invokable(icon);']], 'download-toggle-target'],
   ['PN27-an-ancestor-is-tried', [['  var invoke = Invokable(icon);', '  var up = TreeWalker.RawViewWalker.GetParent(icon); while (up != null && !icon.TryGetCurrentPattern(InvokePattern.Pattern, out p) && up.Current.ControlType != ControlType.Document) { icon = up; up = TreeWalker.RawViewWalker.GetParent(up); } var invoke = Invokable(icon);']], 'download-no-action-target'],
@@ -507,19 +514,19 @@ const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) 
 async function gone(ownedRoot, ms = 20000) { const started = Date.now(); let last; do { last = await audit(ownedRoot); if (last.chrome && !last.chrome.length && !last.desktops.length) return { ms: Date.now() - started, ...last }; await sleep(500); } while (Date.now() - started < ms); return { ms: null, ...last }; }
 
 // ── one scenario: a runner child (the real wrapper, the real broker, the helper copy), the trigger of its fault, the audit, the verdict ─
-async function runScenario(def, ctx) {
+export async function runScenario(def, ctx) {
   const outer = await mkdtemp(path.join(TEMP, 'omf-amex-native-')), directory = path.join(outer, 'collector'), local = path.join(outer, 'local');
   await mkdir(directory); await mkdir(local);
   const r = { scenario: def.name, startedAt: new Date().toISOString(), root: outer, expect: typeof def.expect === 'string' ? def.expect : { ...def.expect, message: String(def.expect.message) }, measurement: def.measurement || null };
   const fileName = `omf-native-fixture-${base(def.name)}-${randomBytes(4).toString('hex')}.csv`;
   const sc = ctx.servers.begin(def, fixtureConfig(def, ctx.servers.origins, fileName));
   const account = { _id: 'f1'.repeat(12), ownerId: 'e2'.repeat(12), provider: 'amex', name: 'Fixture Amex', primaryCard: PRIMARY, cardIdentifiers: [PRIMARY], otpRecipient: 'codes@example.invalid', otpMailbox: 'codes@example.invalid', jobId: randomUUID() };
-  const params = { copy: ctx.copy.file, www: ctx.servers.origins.www, directory, account, login: LOGIN, origin: OMF, result: path.join(outer, 'runner-result.json'), inUse: !!def.inUse, refuseOwn: !!def.refuseOwn };
+  const params = { copy: ctx.copy.file, www: ctx.servers.origins.www, directory, account, login: LOGIN, origin: OMF, result: path.join(outer, 'runner-result.json'), inUse: !!def.inUse, refuseOwn: !!def.refuseOwn, source: def.source || null };
   const profile = path.join(directory, 'profiles', 'ephemeral', `${account.ownerId}-amex-${account._id}-native`);
   const holder = def.member ? sc.holder = await startHolder(outer, path.join(profile, 'omf-fixture-member.exe'), def.member.holdMs) : null;
   await writeFile(path.join(outer, 'runner.json'), JSON.stringify(params), { flag: 'wx' });
   const monitor = await startMonitor(outer, outer);
-  const child = spawn(process.execPath, [SELF, '--runner', path.join(outer, 'runner.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LOCALAPPDATA: local, OMF_COLLECTOR_DIR: directory, OMF_KEY_BROKER: '' } });
+  const child = spawn(process.execPath, [SELF, '--runner', path.join(outer, 'runner.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LOCALAPPDATA: local, USERPROFILE: local, OMF_COLLECTOR_DIR: directory, OMF_KEY_BROKER: '' } });
   const progress = {}, stderr = []; let buffer = '';
   child.stdout.on('data', chunk => { buffer += chunk; let i; while ((i = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, i); buffer = buffer.slice(i + 1); try { Object.assign(progress, JSON.parse(line)); } catch { /* not progress */ } } });
   child.stderr.on('data', chunk => stderr.push(String(chunk)));
@@ -558,7 +565,7 @@ async function runScenario(def, ctx) {
 }
 async function judge(def, r, account) {
   const rec = r.receipts, page = kind => rec.page.filter(p => p.kind === kind), err = r.result?.error?.message ?? null, csvRequests = rec.downloads.filter(d => d.format === 'csv').length;
-  const opens = page('open-dialog'), steps = r.trace?.record.steps ?? [], openSteps = steps.filter(s => s.step === 'download-open'), helper = r.trace?.record.helper;
+  const recent = def.source === 'recent', opens = page('open-dialog'), steps = r.trace?.record.steps ?? [], openSteps = steps.filter(s => s.step === 'download-open' || s.step === 'recent-download-open'), helper = r.trace?.record.helper;
   const p = periods(), checks = {
     runnerReported: def.expect === 'crash' ? r.result === null : !!r.result, noWatchdog: !r.watchdog, noDecoyActivation: rec.decoy.length === 0, noEscapedDownload: r.escaped.length === 0,
     ownedChromeGone: Array.isArray(r.cleanup.chrome) && r.cleanup.chrome.length === 0, privateDesktopGone: Array.isArray(r.cleanup.desktops) && r.cleanup.desktops.length === 0,
@@ -585,21 +592,23 @@ async function judge(def, r, account) {
   }
   const complete = def.expect === 'complete' || def.expect === 'complete-older';
   if (complete) {
-    const target = def.expect === 'complete-older' ? p.older : p.latest, m = r.result?.value?.manifest;
-    const served = base(def.name) === 'positive-blob' ? sha(csvBytes(csvText(rowsOf(target, target.total)))) : rec.downloads.find(d => d.format === 'csv')?.sha256;
-    Object.assign(checks, { completed: !err && !!m, manifestFields: !!m && m.accountId === account._id && m.jobId === account.jobId && m.primaryCard === PRIMARY && m.ownerId === account.ownerId && m.origin === OMF && m.kind === 'statement', selectedPeriod: m?.end === target.end && m?.start === target.start, pageCount: m?.pageCount === target.total,
+    const target = recent ? recentOf(p) : def.expect === 'complete-older' ? p.older : p.latest, m = r.result?.value?.manifest, blob = base(def.name) === 'positive-blob' || !!def.blob;
+    const served = blob ? sha(csvBytes(csvText(recent ? recentRowsOf(target, target.total) : rowsOf(target, target.total)))) : rec.downloads.find(d => d.format === 'csv')?.sha256;
+    Object.assign(checks, { completed: !err && !!m, manifestFields: !!m && m.accountId === account._id && m.jobId === account.jobId && m.primaryCard === PRIMARY && m.ownerId === account.ownerId && m.origin === OMF && m.kind === (recent ? 'pending' : 'statement'), selectedPeriod: m?.end === target.end && m?.start === target.start, pageCount: m?.pageCount === target.total,
       fileMatchesServedBytes: !!served && r.file?.sha256 === served && m?.sha256 === served, outboxShape: r.jobFiles.length === 2 && r.jobFiles.includes('manifest.json') && r.jobFiles.includes(m?.filename), oneSignIn: rec.logins.length === 1 && rec.logins[0].user && rec.logins[0].password,
       trustedSubmit: page('submit').length === 1 && page('submit')[0].trusted === true, oneTrustedDownloadClick: page('download-click').length === 1 && page('download-click')[0].trusted === true && page('download-click')[0].format === 'csv',
-      csvRequests: csvRequests === (base(def.name) === 'positive-blob' ? 0 : 1), trustedNavigation: page('navigate').length === 1 && page('navigate')[0].trusted === true, trustedCsvChoice: page('format').some(f => f.format === 'csv' && f.trusted === true),
+      csvRequests: csvRequests === (blob ? 0 : 1), trustedNavigation: recent ? page('recent-link').length === 1 && page('recent-link')[0].trusted === true && page('navigate').length === 0 : page('navigate').length === 1 && page('navigate')[0].trusted === true, trustedCsvChoice: page('format').some(f => f.format === 'csv' && f.trusted === true),
       traceCompleted: r.trace?.record.outcome === 'completed', iconOpenedOnce: openSteps.length === 1 && openSteps[0].outcome === 'ok' && (def.opens === 0 ? opens.length === 0 : opens.length === 1 && opens[0].trusted === true) });
     if (def.opens === 0) checks.noActionRecorded = steps.some(s => s.step === 'download-already-open');
     if (def.otp !== false) Object.assign(checks, { oneCodeRequest: rec.codeRequests === 1, codeAccepted: rec.codeChecks.length === 1 && rec.codeChecks[0] === true });
     if (def.expect === 'complete-older') checks.foreignNeverRequested = rec.decoyArrivals.filter(a => a.path === '/activity/statement').length === 0;
     // the in-page statementSnapshot of the same page (the REAL module): its decision, beside the native one
-    const dom = [...rec.page].reverse().find(x => x.kind === 'dom' && x.label === (def.domLabel ?? 'period'));
-    r.domDecision = dom ? await decideDom(dom.snapshot, target) : null;
-    if (def.measurement) checks.divergenceMeasured = r.domDecision?.ok === false && /does not match this connection/.test(r.domDecision.message);
-    else checks.domAgrees = r.domDecision?.ok === true && r.domDecision.value === target.total;
+    if (!recent) {
+      const dom = [...rec.page].reverse().find(x => x.kind === 'dom' && x.label === (def.domLabel ?? 'period'));
+      r.domDecision = dom ? await decideDom(dom.snapshot, target) : null;
+      if (def.measurement) checks.divergenceMeasured = r.domDecision?.ok === false && /does not match this connection/.test(r.domDecision.message);
+      else checks.domAgrees = r.domDecision?.ok === true && r.domDecision.value === target.total;
+    }
   } else if (def.expect === 'crash') {
     Object.assign(checks, { collectorKilled: r.killed?.kind === 'collector' && !r.killed.error, helperEndedAfterCollector: r.helperGone === true, brokerEndedAfterCollector: r.brokerGone === true, chromeGoneWithin: r.cleanup.ms !== null, startupRecoveryRemovedProfile: r.profileAfterRecovery === false, noManifest: !r.jobFiles.includes('manifest.json') });
   } else {
@@ -612,6 +621,8 @@ async function judge(def, r, account) {
     if (e.launchCode) checks.launchRefusedWith = steps.find(s => s.step === 'launch')?.code === e.launchCode;
     if (e.before) Object.assign(checks, { noDownloadRequest: rec.downloads.length === 0, noDownloadClick: page('download-click').length === 0 });
     if (e.noNavigation) checks.noNavigation = page('navigate').length === 0;
+    if (e.noRecentLink) checks.noRecentLink = page('recent-link').length === 0;
+    if (e.recentLinkOnce) checks.recentLinkOnce = page('recent-link').length === 1 && page('recent-link')[0].trusted === true;
     if (e.clicked) Object.assign(checks, { oneTrustedDownloadClick: page('download-click').length === 1 && page('download-click')[0].trusted === true, noDownloadRequest: rec.downloads.length === 0 });
     if (e.file) Object.assign(checks, { oneCsvRequest: csvRequests === 1, fileKeptOutOfListing: r.jobFiles.length === 1 && r.jobFiles[0].startsWith('download-') });
     if (e.refused) Object.assign(checks, { refusedBeforeActing: openSteps.length === 1 && openSteps[0].outcome === 'error' && [].concat(e.refused).includes(openSteps[0].code), iconNeverClicked: opens.length === 0 });
@@ -652,7 +663,7 @@ async function runner(file) {
   let holder = null;
   // The test's precondition, not the operation under test: its failure keeps the error's facts and fails the scenario as setupReady, never as the refusal the scenario expects.
   if (p.inUse) { const profile = B.ephemeralProfile(p.directory, p.account.ownerId, 'amex', p.account._id, 'native'); try { holder = await B.browserFor(profile, { ephemeral: true, root: p.directory, headless: true }); } catch (error) { report.setupFailure = { message: String(error?.message).slice(0, 300), code: error?.code ?? null, killed: error?.killed ?? null, signal: error?.signal ?? null }; } }
-  if (!report.setupFailure) try { report.value = await B.collectStatement(p.account, p.login, p.directory, async (state, text) => { report.statuses.push([state, text]); }, { gmail: { fixture: 'the mailbox seam answers; no OAuth client is built' }, batch: 'native', onLaunch, origin: p.origin }); }
+  if (!report.setupFailure) try { report.value = await B.collectStatement(p.account, p.login, p.directory, async (state, text) => { report.statuses.push([state, text]); }, { gmail: { fixture: 'the mailbox seam answers; no OAuth client is built' }, batch: 'native', onLaunch, origin: p.origin, ...(p.source ? { source: p.source } : {}) }); }
   catch (error) { report.error = { message: String(error?.message), code: error?.code ?? null }; }
   if (holder) await B.closeOwnedBrowsers();
   report.chromeBeforeBroker = await ownedChromeLeft(p.directory, 15000);

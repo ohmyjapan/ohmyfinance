@@ -13,6 +13,9 @@ const account = new Schema({
   otpRecipient: { type: String, required: function (this: any) { return this.provider !== 'aplus' } }, otpMailbox: { type: String, required: function (this: any) { return this.provider !== 'aplus' } },
   forwarded: { type: Boolean, default: false }, active: { type: Boolean, default: true },
   jobId: String, jobState: { type: String, default: 'idle' }, jobRequestedAt: Date,
+  // The source of the current job when it is not the closed statement (case omf-amex-recent-activity-20261102): 'recent' only by the owner's explicit request on an Amex account, cleared by
+  // every closed enqueue in that same atomic write. Absent is the closed statement, as every job before it, so an account that never asked for recent activity never holds this field.
+  jobSource: { type: String, enum: ['recent'] },
   jobDeviceId: oid, jobLeaseUntil: Date, lastAttemptAt: Date, lastSuccessAt: Date, lastMessage: String,
   // Automatic Aplus collection (plan omf-auto-sync-build-20261014 §2 A1): on/off per account, the JST hour after which one
   // job per day is queued, and the JST day (YYYY-MM-DD) last queued by the schedule.
@@ -38,7 +41,9 @@ const collector = new Schema({
   accountIds: [{ type: oid, required: true }], revokedAt: Date, lastSeenAt: Date,
   // Bank accounts this PC may collect (plan omf-bank-collection-amended-20261018 S2): set only by PUT bank/collectors/:id;
   // the card routes' device.accountIds and the connect/security services never read it.
-  bankAccountIds: { type: [oid], default: [] }
+  bankAccountIds: { type: [oid], default: [] },
+  // What this PC declared in its latest card claim (case omf-amex-recent-activity-20261102); an older collector declares nothing and never holds this field. Read by the recent request only.
+  capabilities: { type: [String], default: undefined }
 }, common)
 
 const batch = new Schema({

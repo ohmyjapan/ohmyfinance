@@ -16,6 +16,8 @@
 //    the download, parseAmex with the account's cards, rows === the page count, the manifest's fields and exclusive write.
 //  - Reads tolerate a transient refusal (a second top-level document was seen briefly after downloads; a document between navigations)
 //    until that step's own deadline; actions are sent once and never repeated, whatever their reply.
+//  - The recent activity (case omf-amex-recent-activity-20261102, collectRecent): only for a job the owner explicitly asked for as recent, after the same launch and login. The statement page's card,
+//    its own /activity/recent link, the displayed card, cycle and complete count before and after the one download, and a manifest of kind pending: the file is provisional in OMF.
 //  - One value-free record per job: <directory>/diagnostics/amex/<accountId>/<jobId>-<ms>.json (schema amex-native-trace-1; mode, fixed
 //    step names, outcomes, helper codes, counts and milliseconds only), the 20 newest kept, outside the outbox, written after closure.
 import { spawn } from 'node:child_process';
@@ -27,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { parseAmex } from '../shared/amex.mjs';
 import { ensureLogin, LoginClaims } from './login.mjs';
 import { LoginMailbox } from './mail.mjs';
-import { latestClosed, verifyStatement } from './statement.mjs';
+import { latestClosed, tokyoDate, verifyRecent, verifyRecentRows, verifyStatement } from './statement.mjs';
 
 export const NATIVE_SCRIPT = fileURLToPath(new URL('./windows/amex-native.ps1', import.meta.url));
 // The process, mailbox and clock this module uses. Tests replace these properties in their own process (a fake helper, a fake mailbox,
@@ -49,6 +51,8 @@ export const PAGE_CHANGED = 'The Amex page changed before the statement was save
 export const OTHER_WINDOW = 'Amex opened another window; request the download again';
 export const PAGE_UNREADABLE = 'The Amex statement page could not be read again; request the download again';
 export const NOT_CSV = 'Amex download was not a CSV file';
+export const RECENT_NOT_LOADED = 'The recent Amex activity did not finish loading';
+export const RECENT_CHANGED = 'The recent Amex activity changed while it was being saved; request it again';
 const READY_MS = 60000, LAUNCH_MS = 30000, OPEN_MS = 60000, READ_MS = 20000, ACT_MS = 20000;
 const STATEMENT_MS = 45000, CSV_MS = 15000, SELECTED_MS = 5000, RECHECK_MS = 15000, DOWNLOAD_MS = 45000;
 // The helper's end: up to 60 s for its job's processes to end (amex-native.ps1 EndMs), then its own exit. Killing it sooner loses what it could prove.
@@ -58,7 +62,7 @@ const END_MS = 75000;
 export const TRANSIENT = Object.freeze(['ambiguous_document', 'no_document', 'document_url_unavailable', 'document_origin', 'document_path', 'element_not_available', 'uia_invalid_operation', 'uia_com']);
 const ENDED = ['helper_exited', 'ipc_timeout', 'uia_watchdog', 'not_launched'];
 // Every code the helper or this channel can give (the trace keeps only these; anything else is 'other').
-export const CODES = Object.freeze([...TRANSIENT, ...ENDED, 'argument', 'mode', 'chrome_path', 'profile_path', 'downloads_path', 'job_creation', 'job_limit', 'helper_not_owned', 'already_launched', 'desktop_descriptor', 'desktop_creation', 'input_desktop_unavailable', 'preferences', 'chrome_creation', 'job_assignment', 'chrome_resume', 'no_window', 'ambiguous_window', 'window_not_locked', 'window_changed', 'window_not_owned', 'document_changed', 'unrelated_document_window', 'control_missing', 'control_ambiguous', 'control_changed', 'control_type', 'control_disabled', 'control_readonly', 'invoke_unsupported', 'value_unsupported', 'selection_unsupported', 'not_radio', 'link_missing', 'link_ambiguous', 'statement_link_missing', 'statement_link_ambiguous', 'radio_missing', 'radio_ambiguous', 'dialog_button_missing', 'dialog_button_ambiguous', 'private_mode', 'unknown_op', 'invalid_request', 'error']);
+export const CODES = Object.freeze([...TRANSIENT, ...ENDED, 'argument', 'mode', 'chrome_path', 'profile_path', 'downloads_path', 'job_creation', 'job_limit', 'helper_not_owned', 'already_launched', 'desktop_descriptor', 'desktop_creation', 'input_desktop_unavailable', 'preferences', 'chrome_creation', 'job_assignment', 'chrome_resume', 'no_window', 'ambiguous_window', 'window_not_locked', 'window_changed', 'window_not_owned', 'document_changed', 'unrelated_document_window', 'control_missing', 'control_ambiguous', 'control_changed', 'control_type', 'control_disabled', 'control_readonly', 'invoke_unsupported', 'value_unsupported', 'selection_unsupported', 'not_radio', 'link_missing', 'link_ambiguous', 'recent_link_missing', 'statement_link_missing', 'statement_link_ambiguous', 'radio_missing', 'radio_ambiguous', 'dialog_button_missing', 'dialog_button_ambiguous', 'private_mode', 'unknown_op', 'invalid_request', 'error']);
 const KINDS = ['authenticated', 'login', 'channels', 'code', 'unknown'];
 const message = code => ENDED.includes(code) ? HELPER_ENDED : code === 'unrelated_document_window' ? OTHER_WINDOW : PAGE_CHANGED;
 const bounded = (promise, ms, fallback) => { let timer; return Promise.race([promise, new Promise(resolve => { timer = setTimeout(resolve, ms, fallback); })]).finally(() => clearTimeout(timer)); };
@@ -190,6 +194,52 @@ async function awaitDownload(folder, ms) {
   }
 }
 
+// The recent page's evidence, whatever its values, else null: a page without a card, a range and a count is not yet a verdict on the activity. verifyRecent judges what this returns.
+const recentOf = reply => { const s = { url: String(reply.url ?? ''), ranges: list(reply.ranges).map(String), cards: list(reply.cards).map(String), counts: list(reply.counts).map(pair => list(pair).map(Number)) }; return s.ranges.length && s.counts.length && s.cards.length ? s : null; };
+// The recent job after its login. The helper holds every operation here to /activity/recent; nothing below can reach a closed statement, and nothing above changed for one. Activity moves while the
+// page is open, so a range or count that differs between the reads is a stop, never a choice between them: the file stays in its attempt folder and no manifest is written.
+async function collectRecent(helper, trace, account, status, folder, jobDir, origin) {
+  await status('running', 'Opening the recent Amex activity');
+  await act(helper, trace, 'open-statement');
+  const verified = await readUntil(helper, trace, 'snapshot', reply => replySnapshot(reply).cards.includes('-' + account.primaryCard) ? true : null, STATEMENT_MS, 'initial');
+  if (!verified) throw new Error('Amex statement links or signed-in card could not be verified');
+  await act(helper, trace, 'open-recent');
+  const shown = await readUntil(helper, trace, 'recent-snapshot', recentOf, STATEMENT_MS, 'recent');
+  if (!shown) throw new Error(RECENT_NOT_LOADED);
+  const selected = verifyRecent(shown, account.primaryCard, nativeHost.now());
+  trace.step('verify-recent');
+  await status('running', `Downloading the recent activity from ${selected.start}`);
+  if ((await act(helper, trace, 'recent-download-open')).alreadyExpanded === true) trace.step('download-already-open');
+  if (!await readUntil(helper, trace, 'recent-csv-state', reply => reply.present === true, CSV_MS, 'recent-csv-present')) throw new Error('Amex CSV format option changed');
+  await act(helper, trace, 'recent-csv-select');
+  if (!await readUntil(helper, trace, 'recent-csv-state', reply => reply.present === true && reply.selected === true, SELECTED_MS, 'recent-csv-selected')) throw new Error('Amex CSV format was not selected');
+  const before = await readUntil(helper, trace, 'recent-snapshot', recentOf, RECHECK_MS, 'verify-before');
+  if (!before) throw new Error(PAGE_UNREADABLE);
+  const ahead = verifyRecent(before, account.primaryCard, nativeHost.now());
+  if (ahead.key !== selected.key || ahead.pageCount !== selected.pageCount) throw new Error(RECENT_CHANGED);
+  if ((await readdir(folder)).length) { trace.step('recent-download', 'error'); throw new Error('Multiple downloads started; check the Amex tab'); }
+  await act(helper, trace, 'recent-download');
+  let file;
+  try { file = await awaitDownload(folder, DOWNLOAD_MS); } catch (error) { trace.step('file', 'error'); throw error; }
+  trace.step('file');
+  if (!/\.csv$/i.test(file)) { trace.step('validate', 'error'); throw new Error(NOT_CSV); }
+  const bytes = await readFile(path.join(folder, file));
+  let parsed;
+  try { parsed = parseAmex(bytes, account.cardIdentifiers); verifyRecentRows(parsed.rows, { start: selected.start, end: tokyoDate(nativeHost.now()) }); } catch (error) { trace.step('validate', 'error'); throw error; }
+  if (parsed.rows.length !== selected.pageCount) { trace.step('validate', 'error'); throw new Error('Downloaded row count does not match the Amex page'); }
+  trace.step('validate');
+  const after = await readUntil(helper, trace, 'recent-snapshot', recentOf, RECHECK_MS, 'verify-after');
+  if (!after) throw new Error(PAGE_UNREADABLE);
+  const last = verifyRecent(after, account.primaryCard, nativeHost.now());
+  if (last.key !== selected.key || last.pageCount !== selected.pageCount) throw new Error(RECENT_CHANGED);
+  const filename = randomUUID();
+  await link(path.join(folder, file), path.join(jobDir, filename)); await unlink(path.join(folder, file));
+  const manifest = { accountId: account._id, primaryCard: account.primaryCard, jobId: account.jobId, kind: 'pending', start: selected.start, end: last.end, key: `pending:${selected.start}:${last.end}`, pageCount: selected.pageCount, sha256: parsed.sha256, filename, downloadedAt: new Date().toISOString(), ...(account.ownerId ? { ownerId: String(account.ownerId) } : {}), ...(origin ? { origin } : {}) };
+  await writeFile(path.join(jobDir, 'manifest.json'), JSON.stringify(manifest, null, 2), { flag: 'wx', mode: 0o600 });
+  trace.step('manifest');
+  return { directory: jobDir, manifest };
+}
+
 async function writeTrace(directory, account, trace, outcome, helper) {
   const accountId = String(account?._id ?? ''), jobId = /^[A-Za-z0-9-]{1,64}$/.test(String(account?.jobId ?? '')) ? String(account.jobId) : null, at = Date.now();
   if (!/^[a-f\d]{24}$/.test(accountId)) return;
@@ -207,8 +257,9 @@ async function writeTrace(directory, account, trace, outcome, helper) {
  * The Amex statement download of one claimed job (called by browser.mjs collectStatement, which owns `profile`: an empty ephemeral
  * profile no Chrome is using, removed after this returns). Returns { directory, manifest } as collectFromPage did.
  * attended: the person asked for this job (index.mjs) — Chrome on the person's desktop; otherwise the private desktop.
+ * source: 'recent' only for a job the owner asked for as recent (index.mjs, the claimed job's jobSource): the current activity, written as a pending manifest. Anything else is the closed statement.
  */
-export async function collectStatementNative(account, settings, directory, status, { profile, chrome, gmail = null, onLaunch = null, origin = '', attended = false } = {}) {
+export async function collectStatementNative(account, settings, directory, status, { profile, chrome, gmail = null, onLaunch = null, origin = '', attended = false, source = 'statement' } = {}) {
   const mode = attended ? 'input' : 'private', trace = traceOf(mode);
   let helper = null, folder = null, outcome = 'failed';
   try {
@@ -232,6 +283,7 @@ export async function collectStatementNative(account, settings, directory, statu
     const ui = nativeLoginUi(helper, mode, trace);
     const quiet = async (state, text) => { if (state === 'verification_required' && mode !== 'input') return; await status(state, text); }; // guard:amex-private-status
     await ensureLogin(null, settings, quiet, { account, mailbox: gmail ? nativeHost.mailbox(gmail) : null, claims: new LoginClaims(directory), ui, wait: nativeHost.sleep, now: nativeHost.now });
+    if (source === 'recent') { const result = await collectRecent(helper, trace, account, status, folder, jobDir, origin); outcome = 'completed'; return result; } // guard:amex-recent-explicit
     // selectLatestStatement: the signed-in card and the dated links, the latest closed period, its own verified link
     await status('running', 'Selecting the latest closed Amex statement');
     await act(helper, trace, 'open-statement');

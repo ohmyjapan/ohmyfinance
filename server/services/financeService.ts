@@ -122,13 +122,30 @@ export function autoSyncInput(body: any): { enabled: boolean; hour: number } {
   if (!body || typeof body !== 'object' || typeof body.enabled !== 'boolean' || !Number.isInteger(body.hour) || body.hour < 0 || body.hour > 23) fail(400, '自動取得の時刻は0〜23で指定してください')
   return { enabled: body.enabled, hour: body.hour }
 }
+// The capability a collector declares in its card claim ({capabilities:[...]}, collector/statement.mjs RECENT_CAPABILITY) to receive a recent Amex job; an older collector sends {}.
+export const AMEX_RECENT_CAPABILITY = 'amex-recent-v1'
+const RECENT_UNSUPPORTED = 'この口座の取得用PCが未請求（仮）の取得に対応していることを確認できません。ダウンローダーを更新・起動してから、もう一度お試しください。'
+/** What a claim body declares: only the known capability, so a body can store nothing else. */
+export function claimCapabilities(body: any): string[] { return Array.isArray(body?.capabilities) && body.capabilities.includes(AMEX_RECENT_CAPABILITY) ? [AMEX_RECENT_CAPABILITY] : [] }
+/** The owner's sync request: no source is the closed statement, as ever; the one other word is recent, on an Amex account. */
+export function syncSource(account: any, body: any): 'statement' | 'recent' {
+  const source = body?.source ?? 'statement'
+  if (source !== 'statement' && source !== 'recent') fail(400, 'Unknown synchronization source')
+  if (source === 'recent' && (account.provider || 'amex') !== 'amex') fail(400, 'Recent activity is available for Amex accounts only')
+  return source
+}
 // The manual 確定明細を取得 enqueue, moved verbatim from the route: same collector check, filter, $set/$unset and 409s. An owner Navi
 // action passes its trusted internal journal operation: its id and the queued jobId are recorded in the SAME atomic enqueue
 // (jobOperation), so a lost reply is reconciled from the account, never re-queued blindly. The page button and the bill notice pass none.
-export async function queueSync(ownerId: string, account: any, operation?: { operationId: string } | null) {
+// Case omf-amex-recent-activity-20261102: `source: 'recent'` is the owner's explicit current-activity request (syncSource). Everything else is a closed job, and clears any earlier source in the
+// same write, so a recent job can never leak into the schedule, Navi or a notice. guard:recent-needs-capable-collector — a recent job is queued only for a PC that declared it in its own claim:
+// no older collector can claim it, and a queued job it could never run would hold the account's closed jobs behind it.
+export async function queueSync(ownerId: string, account: any, operation?: { operationId: string } | null, { source = 'statement' }: { source?: 'statement' | 'recent' } = {}) {
   if (!await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null })) fail(409, 'Pair a collector for this account first')
+  const recent = source === 'recent'
+  if (recent && !await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null, capabilities: AMEX_RECENT_CAPABILITY })) fail(409, RECENT_UNSUPPORTED)
   const jobId = randomUUID(), requestedAt = new Date()
-  const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId, jobState: 'queued', jobRequestedAt: requestedAt, lastMessage: 'Waiting for collector', ...(operation ? { jobOperation: { operationId: operation.operationId, jobId, at: requestedAt } } : {}) }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true })
+  const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId, jobState: 'queued', jobRequestedAt: requestedAt, lastMessage: 'Waiting for collector', ...(recent ? { jobSource: 'recent' } : {}), ...(operation ? { jobOperation: { operationId: operation.operationId, jobId, at: requestedAt } } : {}) }, $unset: { jobLeaseUntil: '', jobDeviceId: '', ...(recent ? {} : { jobSource: '' }) } }, { new: true })
   if (!updated) fail(409, 'A synchronization is already queued or running')
   return updated
 }
@@ -143,8 +160,8 @@ export async function saveAutoSync(ownerId: string, account: any, body: any, ope
   return { autoSync: input }
 }
 // The card providers the daily schedule may queue (plan omf-card-handover-20261030), exactly the providers the collector claim
-// serves: Aplus (finalized statements and the unbilled page) and Amex (the latest CLOSED statement only; Amex unbilled activity is
-// not collected). The scheduler's pre-filter, the atomic enqueue below and the native settings route read this one list; the owner Navi
+// serves: Aplus (finalized statements and the unbilled page) and Amex (the latest CLOSED statement only; Amex recent activity is
+// only ever the owner's explicit manual request, never scheduled). The scheduler's pre-filter, the atomic enqueue below and the native settings route read this one list; the owner Navi
 // action keeps saveAutoSync's Aplus-only default. Amex settings stay off until the person turns them on, so an Amex account is queued
 // only once its setting is on.
 export const AUTO_SYNC_PROVIDERS: readonly string[] = Object.freeze(['amex', 'aplus'])
@@ -154,7 +171,7 @@ export const AUTO_SYNC_PROVIDERS: readonly string[] = Object.freeze(['amex', 'ap
 // scan and this write makes it a no-op; two schedulers cannot both pass lastQueuedDay ≠ day. A running job with an expired
 // lease is NOT re-queued (a re-claim continues the same jobId). Returns the queued document or null, never 409.
 export async function queueScheduledSync(account: any, { day, hour, dayStartUtc, now = new Date() }: { day: string; hour: number; dayStartUtc: Date; now?: Date }) {
-  return FinancialAccount.findOneAndUpdate({ _id: account._id, provider: { $in: [...AUTO_SYNC_PROVIDERS] }, active: true, 'autoSync.enabled': true, 'autoSync.hour': { $lte: hour }, 'autoSync.lastQueuedDay': { $ne: day }, jobState: { $nin: ['queued','running','verification_required'] }, $or: [{ lastAttemptAt: { $exists: false } }, { lastAttemptAt: { $lt: dayStartUtc } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: now, lastMessage: '自動取得を予約しました', 'autoSync.lastQueuedDay': day }, $unset: { jobLeaseUntil: '', jobDeviceId: '' } }, { new: true }).lean() // guard:schedule-providers-atomic
+  return FinancialAccount.findOneAndUpdate({ _id: account._id, provider: { $in: [...AUTO_SYNC_PROVIDERS] }, active: true, 'autoSync.enabled': true, 'autoSync.hour': { $lte: hour }, 'autoSync.lastQueuedDay': { $ne: day }, jobState: { $nin: ['queued','running','verification_required'] }, $or: [{ lastAttemptAt: { $exists: false } }, { lastAttemptAt: { $lt: dayStartUtc } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: now, lastMessage: '自動取得を予約しました', 'autoSync.lastQueuedDay': day }, $unset: { jobLeaseUntil: '', jobDeviceId: '', jobSource: '' } }, { new: true }).lean() // guard:schedule-providers-atomic
 }
 export async function csvBody(event: H3Event): Promise<Buffer> {
   if (Number(getHeader(event, 'content-length') || 0) > MAX_BYTES) fail(413, 'CSV exceeds 5MB')

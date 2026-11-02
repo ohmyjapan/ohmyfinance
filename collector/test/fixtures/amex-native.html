@@ -8,7 +8,10 @@
      the statement page with its download dialog (the "global" server). The scenario arrives as window.__FIXTURE__ (inserted by the server
      at the marker below). The page reports its own events (and whether each was trusted) and, on the statement page, the result of the
      REAL collector/statement.mjs statementSnapshot (served from the worktree; node:crypto mapped to a stub) to its server. Two decoy frames
-     (same origin, cross site) repeat the statement page's ids, names and texts; any event in them is reported. No framework, no runtime. -->
+     (same origin, cross site) repeat the statement page's ids, names and texts; any event in them is reported. No framework, no runtime.
+     Case omf-amex-recent-activity-20261102: `cfg.recent` adds the statement page's link to /activity/recent and that page, from the sanitized
+     route and label contract only. The rows, count and download of a real recent page are not measured; these are fictional forms of the
+     existing statement patterns, kept apart so a real surface that differs stays parent acceptance work. Closed scenarios never set it. -->
 <style>.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}body{font-family:sans-serif}iframe{border:1px solid #888;margin:4px}</style>
 <script type="importmap">{"imports":{"node:crypto":"/omf-crypto-stub.mjs"}}</script>
 <!--FIXTURE-->
@@ -100,10 +103,11 @@ function downloadIcons(end, section) {
 }
 // On the observed page the dialog is drawn as a modal overlay (the real dialog is not measured yet); cfg.dialogInPage leaves it below the fold.
 const dialogNode = end => el('div', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'omf-fixture-dialog-title', style: cfg.observed && !cfg.dialogInPage ? 'position:fixed;top:40px;left:40px;padding:8px;background:#fff;border:1px solid #888' : null }, el('h2', { id: 'omf-fixture-dialog-title' }, '明細をダウンロード'),
-  ...FORMATS.map(f => { const input = el('input', { type: 'radio', class: 'visually-hidden', name: 'omf-fixture-format', id: radioId(f), value: f, onchange: event => { report({ kind: 'format', format: f, trusted: event.isTrusted }); format = f; render(); } }); input.checked = format === f; return el('span', {}, input, el('label', { for: radioId(f) }, f.toUpperCase())); }),
+  ...FORMATS.map(f => { const input = el('input', { type: 'radio', class: 'visually-hidden', name: 'omf-fixture-format', id: radioId(f), value: f, onchange: event => { report({ kind: 'format', format: f, trusted: event.isTrusted }); format = f; if (f === 'csv') recentChanges('format'); render(); } }); input.checked = format === f; return el('span', {}, input, el('label', { for: radioId(f) }, f.toUpperCase())); }),
   el('button', { type: 'button', onclick: () => { dialog = false; render(); } }, 'キャンセル'),
   el('button', { type: 'button', onclick: event => {
     report({ kind: 'download-click', trusted: event.isTrusted, format });
+    recentChanges('download');
     if (cfg.download === 'none') return;
     if (format !== 'csv') return trigger('/download?end=' + end + '&format=' + format);
     if (cfg.download === 'blob') { const url = URL.createObjectURL(new Blob(['﻿' + cfg.csvText[end]], { type: 'text/csv' })); trigger(url, cfg.fileName); setTimeout(() => URL.revokeObjectURL(url), 10000); return; }
@@ -118,8 +122,8 @@ function statement() {
     report({ kind: 'navigate', href: link.href, trusted: event.isTrusted });
     if (!cfg.spa) return;
     event.preventDefault(); history.pushState({}, '', link.href);
-  } }, link.text))));
-  const forms = (cfg.observed ? '&forms=observed' : '') + (cfg.icon ? '&icon=expand' : ''), decoys = cfg.decoys ? el('div', { class: 'decoys' }, el('iframe', { title: 'decoy same origin', src: '/decoy-frame?tag=same' + forms, width: 380, height: 300 }), el('iframe', { title: 'decoy cross site', src: cfg.crossOrigin + '/decoy-frame?tag=cross' + forms, width: 380, height: 300 })) : '';
+  } }, link.text))), ...recentLinks());
+  const decoys = decoyFrames();
   // the card arrives last, as it did on the real page
   const masked = cfg.observed && loaded && (!cfg.stages || stage >= cfg.stages) ? cfg.maskedCards[end] ?? cfg.maskedCards['*'] : [];
   const parts = [decoys, header, ...masked.map(text => placed({ nodes: [text] })), nav];
@@ -133,11 +137,37 @@ function statement() {
   if (dialog && cfg.dialogFocus) document.getElementById(radioId(format)).focus();
   snapshotFor(!end ? 'initial' : !loaded ? 'loading' : dialog ? 'dialog-' + format : 'period');
 }
+function decoyFrames() {
+  const forms = (cfg.observed ? '&forms=observed' : '') + (cfg.icon ? '&icon=expand' : '') + (cfg.recent ? '&recent=1' : '');
+  return cfg.decoys ? el('div', { class: 'decoys' }, el('iframe', { title: 'decoy same origin', src: '/decoy-frame?tag=same' + forms, width: 380, height: 300 }), el('iframe', { title: 'decoy cross site', src: cfg.crossOrigin + '/decoy-frame?tag=cross' + forms, width: 380, height: 300 })) : '';
+}
+// ── case omf-amex-recent-activity-20261102, `cfg.recent`: links {href, text, spa} on the statement page; on /activity/recent `cards` (masked Texts,
+// the current page's form), `buttonCards` (the earlier form), `ranges` (each one Text, or an array of adjacent Texts), `total` ([N, M] or null: no
+// count text), `extras` (cfg.extras' forms) and `after` ({format, download}: what changes on the page when the CSV is chosen or the download pressed). ──
+const onRecent = () => location.pathname === '/activity/recent';
+function recentChanges(moment) { const change = cfg.recent?.after?.[moment]; if (change) { Object.assign(cfg.recent, change); render(); } }
+const recentLinks = () => (cfg.recent?.links ?? []).map(link => el('div', {}, el('a', { href: link.href, onclick: event => {
+  report({ kind: 'recent-link', href: link.href, trusted: event.isTrusted });
+  if (cfg.recent.popup) window.open('/unrelated', 'unrelated', 'popup,width=520,height=420');
+  if (link.spa === false) return;
+  event.preventDefault(); history.pushState({}, '', link.href);
+} }, link.text)));
+function recentView() {
+  const r = cfg.recent, end = 'recent', parts = [decoyFrames()];
+  if (loaded) {
+    const section = el('section', { 'aria-label': 'ご利用明細' }, ...r.cards.map(text => placed({ nodes: [text] })), el('header', {}, ...(r.buttonCards ?? []).map(card => el('button', { type: 'button', class: 'card' }, card))),
+      ...r.ranges.map(range => el('p', {}, el('span', {}, ...[].concat(range)))), ...(r.total ? [el('p', { class: 'count' }, el('span', {}, String(r.total[0])), ' 件中 ', el('span', {}, String(r.total[1])), ' 件を表示')] : []),
+      ...downloadIcons(end, () => section), ...(r.extras ?? []).map(placed), el('table', {}, el('tbody', {}, ...(cfg.rows.recent || []).map(row => el('tr', {}, ...row.map(cell => el('td', {}, cell)))))));
+    if (dialog) section.append(dialogNode(end));
+    parts.push(section);
+  }
+  mount.replaceChildren(...parts);
+}
 let timer = null;
-function render() { statement(); }
+function render() { if (onRecent()) recentView(); else statement(); }
 function advance() { if (stage < cfg.stages) timer = setTimeout(() => { stage++; render(); advance(); }, cfg.stageMs); }
 // A page with no period has nothing new to draw when its data arrive: redrawing it would replace the links under the job's first action.
-function navigateLoad() { loaded = false; stage = 0; dialog = !!cfg.preopened; format = 'pdf'; render(); clearTimeout(timer); timer = setTimeout(() => { loaded = true; if (endOf()) { render(); report({ kind: 'data-drawn', clientAt: Date.now() }); } advance(); }, cfg.loadDelayMs); }
+function navigateLoad() { loaded = false; stage = 0; dialog = !!cfg.preopened; format = 'pdf'; render(); clearTimeout(timer); timer = setTimeout(() => { loaded = true; if (endOf() || onRecent()) { render(); report({ kind: 'data-drawn', clientAt: Date.now() }); } advance(); }, cfg.loadDelayMs); }
 window.addEventListener('popstate', navigateLoad);
 const pushState = history.pushState.bind(history);
 history.pushState = (...args) => { pushState(...args); navigateLoad(); };
@@ -155,6 +185,7 @@ if (cfg.surface === 'login') login();
 else if (cfg.surface === 'verify') verify();
 else if (cfg.surface === 'dashboard') dashboard();
 else if (cfg.surface === 'statement') { if (cfg.landing && !endOf()) history.replaceState({}, '', location.pathname + '?end=' + cfg.landing); navigateLoad(); if (cfg.hold) holdWatch(); }
+else if (cfg.surface === 'recent') { navigateLoad(); if (cfg.hold) holdWatch(); }
 else if (cfg.surface === 'unrelated') mount.append(el('p', {}, 'An unrelated window'));
 </script>
 </body>

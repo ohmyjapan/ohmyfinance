@@ -224,11 +224,12 @@ export async function selectLatestStatement(page, primaryCard) {
  * Chrome is using is refused (nothing attaches to it), and the profile is deleted after the job. `settings` are the credentials opened
  * inside the batch (none in the manual lane); `gmail` the mailbox grant; `onLaunch` the ownership hand-over (required: the batch's broker
  * owns the helper before Chrome exists); `origin` binds the outbox manifest to the paired OMF; `attended` (index.mjs: a manual batch, or the
- * attended download the person armed for this card's next job) shows Chrome on the person's desktop instead of the private one. Returns
+ * attended download the person armed for this card's next job) shows Chrome on the person's desktop instead of the private one; `source` (index.mjs:
+ * the claimed job's source, 'recent' only by the owner's explicit request) goes to the native job and changes nothing here. Returns
  * { directory, manifest }. The shared launcher, its owned registry and its closure are not used: the broker's job, the helper's own job
  * and the helper's closure end this Chrome (lock, expiry, batch end, broker or collector crash), and recoverEphemeral removes a leftover.
  */
-export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', attended = false } = {}) {
+export async function collectStatement(account, settings, directory, status, { gmail = null, batch = 'batch', onLaunch = null, origin = '', attended = false, source = 'statement' } = {}) {
   const profile = ephemeralProfile(directory, account.ownerId, 'amex', account._id, batch);
   assertEphemeralPath(profile, directory);
   await mkdir(ephemeralRoot(directory), { recursive: true }); await assertPlainDirectory(ephemeralRoot(directory));
@@ -236,7 +237,7 @@ export async function collectStatement(account, settings, directory, status, { g
   const probe = await probeProfile(profile), existingProfile = await access(path.join(profile, 'Default')).then(() => true, () => false);
   if (probe.matches.length || (existingProfile && probe.unreadable.length)) throw new Error('Close the Chrome window that is already using this profile before retrying; the collector never attaches to an existing browser');
   let result, failure = null;
-  try { result = await collectStatementNative(account, settings, directory, status, { profile, chrome: findChrome(), gmail, onLaunch, origin, attended }); } // guard:amex-native
+  try { result = await collectStatementNative(account, settings, directory, status, { profile, chrome: findChrome(), gmail, source, onLaunch, origin, attended }); } // guard:amex-native
   catch (error) { failure = error; }
   // the profile is removed after the job; a removal failure is reported only when the job itself did not fail (startup recovery retries)
   try { await removeEphemeral(profile, directory); } catch (error) { failure ??= error; }

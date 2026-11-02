@@ -14,6 +14,7 @@ import { BALANCE_CAPABILITY, bankBalanceSupported } from '../shared/finance-bank
 import { BillingMailbox } from './mail.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
 import { digest } from '../shared/amex.mjs';
+import { RECENT_CAPABILITY } from './statement.mjs';
 import { approveWithOmf, resumeWithOmf, keyService, securityCall, secureOrigin, connectWithOmf, acknowledgeWithOmf, cancelConnectWithOmf, launch } from './omf-authorization.mjs';
 import { AdbSmsSource, smsSourceInput, findAdb } from './sms-source.mjs';
 import { inspectSource, previewLegacyCards, importLegacyCards, legacyReply, standardSource } from './legacy-card-import.mjs';
@@ -301,13 +302,21 @@ export function bankUploadQuery(m) {
 // 404, which means "no bank job" (plan C3); every other failure propagates as before.
 // Plan omf-bank-hourly-balances-20261027: the bank claim advertises balance-v1 (an OMF without it ignores the body; an old collector's {}
 // never receives a balance job).
+// Case omf-amex-recent-activity-20261102: the card claim declares amex-recent-v1 (an OMF without it ignores the body; a collector that does not declare it never receives a recent job).
 export async function claimWork(config,live) {
-  const {account,covered}=await api(config,'claim',{},undefined,live);
+  const {account,covered}=await api(config,'claim',{capabilities:[RECENT_CAPABILITY]},undefined,live);
   if(account)return {account,covered,bank:null};
   let bank=null;
   try{bank=await api(config,'bank/claim',{capabilities:[BALANCE_CAPABILITY]},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
   return {account:null,covered,bank:bank?.job?bank:null};
 }
+// Which retained files of an Amex account a claimed job sends, and whether it still collects. A closed job sends everything, as ever, and a provisional file left behind never costs it its download.
+// A recent job sends only provisional files (OMF accepts nothing else from it) and leaves a closed statement for the next closed job; a provisional file it sent is that job's retry, not a new download.
+export function amexRetained(source,retained){
+  const send=source==='recent'?retained.filter(item=>item.manifest.kind==='pending'):retained;
+  return {send,collect:source==='recent'?!send.length:!send.some(item=>item.manifest.kind!=='pending')};
+}
+const RECENT_SAVED='未請求（仮）の明細をOMFに保存しました';
 // One claimed bank job: drain the retained manifests (each under its own job and snapshot), then retrieve through the adapter
 // (kind retrieve) or observe the portal (kind observe), retain and send every artifact, acknowledge each only after OMF
 // answered, then complete. Only a retrieval — or a guided observe job (plan omf-paypay-four-accounts-20261021: PayPay銀行 標準,
@@ -694,9 +703,10 @@ async function tickWork() {
     // attended download armed for this card, consumed by this claim (takeAttended).
     const taken=takeAttended(amexAttended,live,account);amexAttended=taken.intent;
     const attended=live.mode==='manual'||taken.attended; // guard:amex-attended-mode
-    const queued=await pending(account,config);
-    for(const item of queued) {await status('running','Sending a previously downloaded statement');await upload(config,account,item,live);}
-    if(!queued.length) {
+    const source=account.jobSource==='recent'?'recent':'statement'; // the claimed job's source; absent is the closed statement, also from an older OMF
+    const {send,collect}=amexRetained(source,await pending(account,config));
+    for(const item of send) {await status('running',item.manifest.kind==='pending'?'保存済みの未請求（仮）の明細を送信中':'Sending a previously downloaded statement');await upload(config,account,item,live);}
+    if(collect) {
       let credentials={},gmail=null;
       assertSession(live);
       if(live.mode==='protected') {
@@ -705,10 +715,10 @@ async function tickWork() {
         if(await secrets.has('gmail'))gmail=await secrets.open('gmail',aadFor(live.installationId,'gmail',null,config),live.broker);
       }
       assertSession(live);
-      const item=await collectStatement(account,credentials,directory,status,{gmail,batch:live.id,onLaunch:ownBrowser(live),origin:config.baseUrl,attended});credentials=null;gmail=null;await status('running','Sending the downloaded statement to OMF');await upload(config,account,item,live);
+      const item=await collectStatement(account,credentials,directory,status,{gmail,batch:live.id,onLaunch:ownBrowser(live),origin:config.baseUrl,attended,source});credentials=null;gmail=null;await status('running',source==='recent'?'未請求（仮）の明細をOMFへ送信中':'Sending the downloaded statement to OMF');await upload(config,account,item,live);
     }
     assertSession(live);live.ran=true;
-    clearInterval(heartbeat);await status('complete','Statement saved in OMF for review');
+    clearInterval(heartbeat);await status('complete',source==='recent'?RECENT_SAVED:'Statement saved in OMF for review');
     }
   } catch(error) {
     // Do not log browser errors, URLs, mail bodies, credentials, or response objects.

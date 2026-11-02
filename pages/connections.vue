@@ -23,6 +23,10 @@
         <p>{{ states[account.jobState] || account.jobState }} · {{ account.lastMessage || '未取得' }}</p>
         <small>最終取得: {{ formatDate(account.lastSuccessAt) }}<template v-if="account.provider !== 'aplus'"><br>認証メール: {{ account.otpRecipient }} → {{ account.otpMailbox }}</template></small>
         <button class="btn btn-primary" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
+        <template v-if="account.provider !== 'aplus'">
+          <button class="btn btn-secondary" data-recent-sync :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id, 'recent'))">未請求（仮）を取得</button>
+          <small>現在のご利用分を仮の明細として一度だけ取得します。日付・金額・利用先は確定までに変わることがあり、帳簿には登録しません。自動取得では使いません。</small>
+        </template>
         <details v-if="account.provider === 'aplus' && fiscalInputs[account._id]"><summary>自動取得の会計期間：{{ account.fiscalPeriod ? account.fiscalPeriod.start + ' ～ ' + account.fiscalPeriod.end : '未設定' }}</summary>
           <form @submit.prevent="run(() => saveFiscalPeriod(account._id))">
             <label>開始日<input v-model="fiscalInputs[account._id].start" type="date" required></label>
@@ -89,7 +93,7 @@
       <p v-for="device in collectors" :key="device._id">{{ device.name }} · {{ device.revokedAt ? '接続解除済み' : (device.lastSeenAt ? '最終接続 ' + formatDate(device.lastSeenAt) : '接続済み・取得待ち') }} <button class="btn btn-secondary" v-if="!device.revokedAt" :disabled="busy" @click="run(() => revoke(device._id))">接続解除</button></p>
     </details>
     <section class="card"><h2>取得履歴</h2><p v-if="!imports.length">まだ明細がありません。</p>
-      <button class="btn btn-secondary history" v-for="batch in imports" :key="batch._id" :data-import-id="batch._id" :disabled="busy" @click="run(() => review(batch._id))">{{ accountName(batch.accountId) }} · {{ batch.period.start }} ～ {{ batch.period.end }} · {{ batch.rowCount }}件<template v-if="batch.calendar?.state"> · {{ calendarLabel(batch.calendar) }}</template></button>
+      <button class="btn btn-secondary history" v-for="batch in imports" :key="batch._id" :data-import-id="batch._id" :disabled="busy" @click="run(() => review(batch._id))">{{ accountName(batch.accountId) }} · {{ batch.period.start }} ～ {{ batch.period.end }} · {{ batch.rowCount }}件<template v-if="batch.sourceStatus === 'pending'"> · 未請求（仮）</template><template v-if="batch.calendar?.state"> · {{ calendarLabel(batch.calendar) }}</template></button>
     </section>
     <section class="card notice-list" v-if="accounts.some(a => a.provider === 'aplus')"><h2>請求メール</h2><p v-if="!notices.length">まだ請求メールはありません。</p>
       <article v-for="notice in notices" :key="notice._id">
@@ -111,7 +115,8 @@
         </div>
       </article>
     </section>
-    <section class="card" v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件</p></div><button class="btn btn-secondary" :disabled="busy" @click="run(downloadOriginal)">元の明細ファイル</button></header>
+    <section class="card" v-if="selected" ref="reviewPanel"><header><div><h2>{{ selected.account.name }} — 内容確認</h2><p>{{ selected.period.start }} ～ {{ selected.period.end }} · {{ selected.rowCount }}件<template v-if="selected.sourceStatus === 'pending'"> · 未請求（仮）</template></p></div><button class="btn btn-secondary" :disabled="busy" @click="run(downloadOriginal)">元の明細ファイル</button></header>
+      <p v-if="selected.sourceStatus === 'pending'" class="notice" data-provisional>未請求（仮）の明細です。確定明細との照合までは帳簿に登録しません。日付・金額・利用先は確定までに変わることがあります。</p>
       <p>口座振替はカードへの返済として保管します。返金などのマイナス明細は確認待ちです。同じ取引の可能性がある行は、既存取引への紐付け・別の支出として登録・保留から選んでください。</p>
       <p v-if="(selected.requiresDraft || selected.mappingPreview)" class="notice">この明細の顧客・区分は分類案の確認中です。<NuxtLink :to="{ path: '/mapping', query: { import: selected.id } }">マッピングを確認 →</NuxtLink></p>
       <div v-if="selectedCalendar?.calendar?.state" class="notice calendar-choice">
@@ -126,7 +131,7 @@
       </div>
       <div class="review-list"><article v-for="row in selected.rows" :key="row.line" :class="{ muted: ['posted','duplicate'].includes(row.state) }">
         <div><strong>{{ row.description }}</strong><p>{{ row.purchaseDate || '利用日未記載' }} · 処理日 {{ row.processingDate || '未記載' }} · カード {{ row.cardIdentifier?.slice(-4) || '未記載' }}</p><p v-if="row.sourceReviewReason">{{ row.sourceReviewReason }}</p><small v-if="row.provider === 'aplus'">請求月 {{ row.statementMonth }} · お支払金額 {{ row.paymentAmount === null ? '未記載' : yen(row.paymentAmount) }} · {{ row.statementDetails }}</small><small v-if="row.foreignAmount">外貨 {{ row.foreignAmount }} · レート {{ row.exchangeRate }}</small></div>
-        <div><strong>{{ yen(row.amount) }}</strong><p>{{ states[row.state] || row.state }}{{ row.skipped ? '（保留済み）' : '' }}</p></div>
+        <div><strong>{{ yen(row.amount) }}</strong><p>{{ states[row.state] || row.state }}{{ row.skipped ? '（保留済み）' : '' }}{{ row.settlement?.state === 'pending' ? ' · 未請求（仮）' : '' }}</p></div>
         <label v-if="!(selected.requiresDraft || selected.mappingPreview) && row.kind === 'expense' && !['posted','duplicate','in_progress'].includes(row.state)">この行の処理
           <select v-model="choices[row.line]"><option value="">選択してください</option><option value="skip">保留する</option><option value="import">{{ ['legacy_review','overlap_review','correction_review'].includes(row.state) ? '別の支出と確認して登録する' : '取引に登録する' }}</option><option v-for="existing in row.existing" :key="existing.id" :value="'link:' + existing.id">既存取引に紐付け: {{ existing.description }} · {{ yen(existing.amount) }}</option></select>
         </label>
@@ -191,7 +196,7 @@ async function linkNotice(id: string, body: any) { await api(`notices/${id}/link
 // The statement batch's own calendar choice (no mail notice needed): the same reconciliation and membership checks as a notice link.
 async function linkImport(id: string, body: any) { await api(`imports/${id}/calendar`, { method: 'PUT', body }); selectedCalendar.value = await api(`imports/${id}/calendar`); await refresh(); message.value = '支払カレンダーの請求を更新しました' }
 async function addAccount() { await api('accounts', { method:'POST', body: { ...newAccount, cardIdentifiers:cardsText.value.split(',').map(v=>v.trim()).filter(Boolean) } }); await refresh(); message.value = '口座を追加しました' }
-async function sync(id: string) { await api(`accounts/${id}/sync`, { method:'POST' }); await refresh() }
+async function sync(id: string, source?: 'recent') { await api(`accounts/${id}/sync`, { method:'POST', ...(source ? { body: { source } } : {}) }); await refresh() }
 // Connections are created by the downloader's own Connect flow (POST /api/finance/collectors stays available for compatibility).
 async function revoke(id: string) { await api(`collectors/${id}`, { method:'DELETE' }); await refresh() }
 function selectFile(event: Event) { file.value = (event.target as HTMLInputElement).files?.[0] || null }

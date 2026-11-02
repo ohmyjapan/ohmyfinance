@@ -130,3 +130,95 @@ test('Amex changed processing dates, merchant labels and foreign amounts remain 
   assert.equal(activeImportRows(reconcile(final, [original])).length, 0);
   assert.equal(final.sourceReferences.groups[0].state, 'source_overlap_review');
 });
+
+// ── recent Amex snapshots (case omf-amex-recent-activity-20261102): the existing rules on the real parser's rows. These prove the provisional flows hold what can change; none of them
+// is a promise of matching, and no stable transaction reference exists in this CSV. A row keeps its place in review until a person or an exact final file settles it. ──
+const amex = { provider: 'amex', cardIdentifiers: ['12345', '23456'] };
+const cells = ({ date = '2026/10/06', processed = '2026/10/07', merchant = 'Synthetic shop', card = '12345', amount = 1200, foreign = '', rate = '' } = {}) => [date, processed, merchant, 'Test user', card, amount, foreign, rate];
+const source = (parsed, n) => ({ ...parsed, _id: String(n).padStart(24, '0'), ownerId: 'owner', accountId: 'account', hash: parsed.sha256, provider: 'amex' });
+const snapshot = (rows, n, period = { start: '2026-10-05', end: '2026-10-20' }) => source(parseCardImport(csv(AMEX_HEADERS, rows.map(cells)), amex, { kind: 'pending', ...period }), n);
+const finalFile = (rows, n, period = { start: '2026-10-05', end: '2026-11-04' }) => source(parseCardImport(csv(AMEX_HEADERS, rows.map(cells)), amex, { kind: 'statement', ...period }), n);
+const lines = batch => activeImportRows(batch).map(r => r.line);
+const shop = { merchant: 'Shop A' }, other = { merchant: 'Shop B', amount: 800 }, third = { merchant: 'Shop C', amount: 300, date: '2026/10/08', processed: '2026/10/09' };
+
+test('recent: the same rows again, in any order, count once; a later snapshot adds only what is new', () => {
+  const first = snapshot([shop, other], 1);
+  assert.equal(activeImportRows(first).length, 2, 'recent:first-snapshot-counts-its-purchases');
+  const again = reconcile(snapshot([shop, other], 2), [first]);
+  assert.deepEqual([lines(again), again.sourceReferences.groups.map(g => g.state)], [[], ['existing_import', 'existing_import']], 'recent:repeat-counts-nothing-more');
+  const reordered = reconcile(snapshot([other, shop], 3), [first]);
+  assert.notEqual(reordered.hash, first.hash, 'recent:another-order-is-another-file');
+  assert.deepEqual(lines(reordered), [], 'recent:changed-ordering-counts-nothing-more');
+  const grown = reconcile(snapshot([shop, other, third], 4), [first]);
+  assert.deepEqual(activeImportRows(grown).map(r => r.description), ['Shop C'], 'recent:only-the-new-purchase-counts');
+  assert.deepEqual(lines(reconcile(snapshot([third, other, shop], 5), [first, grown])), [], 'recent:the-third-snapshot-counts-nothing-more');
+});
+
+test('recent: two identical purchases on one day stay two, and a snapshot that shows another number of them is held, never collapsed or added', () => {
+  const first = snapshot([shop, shop, other], 1);
+  assert.deepEqual([activeImportRows(first).length, first.rows[0].key === first.rows[1].key], [3, false], 'recent:identical-purchases-kept-apart');
+  assert.deepEqual(lines(reconcile(snapshot([shop, shop, other], 2), [first])), [], 'recent:same-multiplicity-counts-nothing-more');
+  for (const [label, rows] of [['one-gone', [shop, other]], ['one-more', [shop, shop, shop, other]]]) {
+    const held = reconcile(snapshot(rows, 3), [first]), group = held.sourceReferences.groups.find(g => g.lines.includes(2));
+    assert.deepEqual([group.match, group.state, group.targets[0].lines], ['pending_purchase', 'source_overlap_review', [2, 3]], 'recent:multiplicity-held ' + label);
+    assert.equal(activeImportRows(held).filter(r => r.description === 'Shop A').length, 0, 'recent:multiplicity-adds-nothing ' + label);
+  }
+  assert.equal(activeImportRows(first).length, 3, 'recent:the-original-count-stands');
+});
+
+test('recent: a changed date, amount, merchant or all of them is held for review beside its original; nothing is merged, moved or counted twice', () => {
+  const first = snapshot([shop], 1), before = structuredClone(first);
+  for (const [label, change, match] of [
+    ['amount', { amount: 1250 }, 'pending_purchase'], ['currency-conversion', { amount: 1210, foreign: '8.00 USD', rate: '151.25' }, 'pending_purchase'], ['processing-date', { processed: '2026/10/09' }, 'pending_purchase'],
+    ['merchant', { merchant: 'Shop A TOKYO' }, 'pending_candidate'], ['purchase-date', { date: '2026/10/05' }, 'pending_candidate'],
+    ['everything', { date: '2026/10/05', processed: '2026/10/08', merchant: 'SHOP-A*ONLINE', amount: 1300 }, 'pending_candidate']
+  ]) {
+    const next = reconcile(snapshot([{ ...shop, ...change }], 2), [first]), [group] = next.sourceReferences.groups;
+    assert.deepEqual([group.match, group.state, group.targets[0].importId], [match, 'source_overlap_review', first._id], 'recent:held ' + label);
+    assert.deepEqual([lines(next), lines(first)], [[], [2]], 'recent:counted-once ' + label);
+    const forged = structuredClone(next); forged.sourceReferences.groups[0].state = 'existing_import';
+    assert.throws(() => verifySourceReferences(forged, [first]), undefined, 'recent:a-review-cannot-be-rewritten-as-a-match ' + label);
+  }
+  assert.deepEqual(first, before, 'recent:the-first-snapshot-never-changes');
+});
+
+test('recent: a row that disappears stays as it was seen; it proves no cancellation, and a row that comes back is the original again', () => {
+  const first = snapshot([shop, other], 1), gone = reconcile(snapshot([other], 2), [first]);
+  assert.deepEqual([lines(gone), lines(first)], [[], [2, 3]], 'recent:disappearance-removes-nothing');
+  const back = reconcile(snapshot([shop, other], 3), [first, gone]);
+  assert.deepEqual(lines(back), [], 'recent:reappearance-counts-nothing-more');
+  // a new purchase beside an unexplained disappearance waits too: the card has an unsettled row it could be a changed form of
+  const beside = reconcile(snapshot([other, third], 4), [first]);
+  assert.deepEqual([lines(beside), beside.sourceReferences.groups.at(-1).match], [[], 'pending_candidate'], 'recent:new-row-beside-a-missing-one-waits');
+  // a credit is no purchase: it stays in the file for review and never answers for the row that disappeared
+  const credit = reconcile(snapshot([{ ...shop, amount: -1200 }, other], 5), [first]), refund = credit.rows[0];
+  assert.deepEqual([refund.kind, credit.sourceReferences.groups.some(g => g.lines.includes(refund.line))], ['credit_review', false], 'recent:a-refund-is-not-a-match');
+  assert.deepEqual(lines(first), [2, 3], 'recent:a-refund-settles-nothing');
+});
+
+test('recent: a late submission and a reverse arrival cannot count a purchase twice; the supplementary card keeps its own rows', () => {
+  const first = snapshot([shop], 1);
+  const late = reconcile(snapshot([shop, { merchant: 'Late merchant', amount: 500, date: '2026/09/28', processed: '2026/10/10' }], 2), [first]);
+  assert.deepEqual(activeImportRows(late).map(r => [r.description, r.purchaseDate]), [['Late merchant', '2026-09-28']], 'recent:late-submission-keeps-its-date');
+  const closed = finalFile([shop, other], 3);
+  const after = reconcile(snapshot([shop, other], 4, { start: '2026-10-05', end: '2026-10-25' }), [closed]);
+  assert.deepEqual([lines(after), after.sourceReferences.groups.map(g => g.state)], [[], ['existing_import', 'existing_import']], 'recent:reverse-arrival-counts-nothing');
+  const changed = reconcile(snapshot([{ merchant: 'Shop A renamed' }], 5), [closed]);
+  assert.deepEqual([lines(changed), changed.sourceReferences.groups[0].match], [[], 'pending_candidate'], 'recent:reverse-arrival-with-a-change-is-held');
+  const nextCycle = reconcile(snapshot([{ merchant: 'New cycle', date: '2026/11/06', processed: '2026/11/07' }], 6, { start: '2026-11-05', end: '2026-11-20' }), [closed]);
+  assert.equal(activeImportRows(nextCycle).length, 1, 'recent:activity-after-the-closed-period-is-independent');
+  const card = reconcile(snapshot([{ ...shop, card: '23456' }], 7), [first]);
+  assert.deepEqual(lines(card), [2], 'recent:another-card-is-another-purchase');
+});
+
+test('recent: the closed statement settles an exact row group and holds everything else; the snapshots keep their own rows', () => {
+  const first = snapshot([shop, shop, other], 1), before = structuredClone(first);
+  const exact = reconcile(finalFile([shop, shop, other], 2), [first]);
+  assert.deepEqual([exact.sourceReferences.groups.map(g => g.state), lines(exact), lines(first)], [['existing_import', 'existing_import'], [], [2, 3, 4]], 'recent:exact-final-settles-the-group');
+  for (const [label, rows] of [['amount', [shop, { ...shop, amount: 1300 }, other]], ['one-gone', [shop, other]], ['merchant', [{ merchant: 'Final label' }, { merchant: 'Final label' }, other]]]) {
+    const held = reconcile(finalFile(rows, 3), [first]), group = held.sourceReferences.groups.find(g => g.lines.includes(2));
+    assert.equal(group.state, 'source_overlap_review', 'recent:final-difference-held ' + label);
+    assert.equal(activeImportRows(held).length, 0, 'recent:final-difference-adds-nothing ' + label);
+  }
+  assert.deepEqual(first, before, 'recent:final-never-rewrites-the-snapshot');
+});

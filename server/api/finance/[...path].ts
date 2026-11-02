@@ -3,7 +3,7 @@ import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { calendarCompany } from '../../utils/calendarAccess'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, AUTO_SYNC_PROVIDERS, queueSync, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
+import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, AUTO_SYNC_PROVIDERS, queueSync, syncSource, claimCapabilities, AMEX_RECENT_CAPABILITY, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
 import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
 
 // A JSON artifact of the collector (notice, mail receipt): bounded by csvBody, parsed once, never echoed back.
@@ -20,7 +20,15 @@ export default defineEventHandler(async event => {
       const scope = { ownerId: device.ownerId, _id: { $in: device.accountIds }, active: true, provider: { $in: ['amex', 'aplus'] } }
       if (parts[1] === 'accounts' && parts.length === 2 && method === 'GET') return { accounts: await FinancialAccount.find(scope).select('-commitLease -commitLeaseUntil').lean() }
       if (parts[1] === 'claim' && parts.length === 2 && method === 'POST') {
-        const account: any = await FinancialAccount.findOneAndUpdate({ ...scope, $or: [{ jobState: 'queued' }, { jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $lt: new Date() } }] }, { $set: { jobState: 'running', jobDeviceId: device._id, jobLeaseUntil: new Date(Date.now() + 180000), lastAttemptAt: new Date(), lastMessage: '明細の取得を開始' } }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
+        // Case omf-amex-recent-activity-20261102. An older collector declares nothing (its body is {}), so a recent job is never handed to it, also not on a lease reclaim: it keeps every closed
+        // job as before. guard:recent-claim — closed work goes first, and a recent claim leaves lastAttemptAt alone: that is the day's closed attempt, which a recent job must not use up.
+        const capabilities = claimCapabilities(await readBody(event).catch(() => null))
+        const recentAllowed = capabilities.includes(AMEX_RECENT_CAPABILITY)
+        if ((device.capabilities || []).join() !== capabilities.join()) await FinanceCollector.updateOne({ _id: device._id, revokedAt: null }, { $set: { capabilities } })
+        const open = { ...scope, $or: [{ jobState: 'queued' }, { jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $lt: new Date() } }] }
+        const started = { jobState: 'running', jobDeviceId: device._id, jobLeaseUntil: new Date(Date.now() + 180000), lastMessage: '明細の取得を開始' }
+        let account: any = await FinancialAccount.findOneAndUpdate({ ...open, jobSource: { $ne: 'recent' } }, { $set: { ...started, lastAttemptAt: new Date() } }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
+        if (!account && recentAllowed) account = await FinancialAccount.findOneAndUpdate({ ...open, jobSource: 'recent' }, { $set: started }, { new: true, sort: { jobRequestedAt: 1 } }).select('-commitLease -commitLeaseUntil').lean()
         if (account?.provider !== 'aplus') return { account }
         // Finalized Aplus statement months OMF already holds (read only): the collector never downloads them again.
         // Billing notices already completed or owned by a member (read only): the collector never sends them again; a
@@ -40,6 +48,8 @@ export default defineEventHandler(async event => {
         const account: any = await FinancialAccount.findOne({ ...scope, _id: { $in: device.accountIds, $eq: id(query.accountId) }, jobId: query.jobId, jobDeviceId: device._id, jobState: { $in: ['running','verification_required'] }, jobLeaseUntil: { $gt: new Date() } }).lean()
         if (!account) fail(409, 'Job is unavailable or expired')
         const kind = String(query.kind || '')
+        // guard:recent-upload — a recent job delivers provisional activity only, whatever a client asks. A closed job can still send a retained provisional file: that file's own kind decides, and it stays provisional.
+        if (account.jobSource === 'recent' && kind !== 'pending') fail(409, 'A recent activity job uploads provisional activity only')
         const json = account.provider === 'aplus' && ['pending', 'notice', 'billing-mail'].includes(kind)
         if (!getHeader(event,'content-type')?.startsWith(json ? 'application/json' : 'text/csv')) fail(415, json ? 'Bank page JSON capture required' : 'CSV required')
         // An issuer billing notice (parsed claims + body hash, never the body) and the mail read's receipt are JSON
@@ -95,7 +105,7 @@ export default defineEventHandler(async event => {
         if (await FinanceImport.exists({ accountId: account._id }) && account.cardIdentifiers.some((v: string) => !input.cardIdentifiers.includes(v))) fail(409, 'Imported card identifiers cannot be removed')
         return { account: await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId }, { $set: input }, { new: true }) }
       }
-      if (parts[2] === 'sync' && parts.length === 3 && method === 'POST') return { account: await queueSync(ownerId, account) }
+      if (parts[2] === 'sync' && parts.length === 3 && method === 'POST') return { account: await queueSync(ownerId, account, null, { source: syncSource(account, await readBody(event).catch(() => null)) }) }
       if (parts[2] === 'imports' && parts.length === 3 && method === 'POST') {
         const jsonCapture = account.provider === 'aplus' && getQuery(event).kind === 'pending'
         if (!getHeader(event,'content-type')?.startsWith(jsonCapture ? 'application/json' : 'text/csv')) fail(415, jsonCapture ? 'Bank page JSON capture required' : 'CSV required')

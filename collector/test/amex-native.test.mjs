@@ -23,7 +23,7 @@ const WINDOWS = process.platform === 'win32' ? false : 'Windows only';
 const ACCOUNT = Object.freeze({ _id: 'c3'.repeat(12), ownerId: 'a1'.repeat(12), provider: 'amex', name: 'Synthetic Amex', primaryCard: '12345', cardIdentifiers: ['12345'], otpRecipient: 'codes@example.invalid', otpMailbox: 'codes@example.invalid' });
 const LOGIN = Object.freeze({ username: 'omf-fictional-user-0001', password: 'Omf-fictional-pass-0001' });
 const CODE = '864213', MAIL_ID = 'synthetic-mail-0001', ORIGIN = 'https://omf.example.invalid';
-const STATEMENT = 'https://global.americanexpress.com/activity/statement';
+const STATEMENT = 'https://global.americanexpress.com/activity/statement', RECENT_PAGE = 'https://global.americanexpress.com/activity/recent';
 const ATTENTION_DEADLINE = 'Amex login needs attention in Chrome; retry when verification is complete';
 const roots = [];
 test.after(async () => { for (const dir of roots) await rm(dir, { recursive: true, force: true }).catch(() => {}); });
@@ -41,6 +41,13 @@ function csv(count, { foreignCard = false } = {}) {
   return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from([HEADERS, ...rows].map(r => r.join(',')).join('\r\n') + '\r\n', 'utf8')]);
 }
 
+// ── the current cycle (case omf-amex-recent-activity-20261102): the open period, four rows, the first bought before the cycle began (a late submission) ───────
+const shownRange = (start, closing) => `${slash(start)}ー今日現在（次回締め日${slash(closing)})`;
+function recentCsv(count, { foreignCard = false, outside = false } = {}) {
+  const { open } = periods(), rows = Array.from({ length: count }, (_, i) => [slash(day(open.start, i === 0 ? -10 : i)), slash(day(open.start, outside && i === 1 ? -1 : i + 1)), 'FIXTURE RECENT ' + (i + 1), 'FIXTURE TARO', foreignCard && i === 0 ? '-54321' : '-12345', String((i + 1) * 1300), '', '']);
+  return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from([HEADERS, ...rows].map(r => r.join(',')).join('\r\n') + '\r\n', 'utf8')]);
+}
+
 // ── the fake helper: a scripted Amex behind the helper's JSON-lines protocol ──────────────────────────────────────────────────────────
 // page.surface: login → channels → code → dashboard → statement (end: the opened period, dialog, csv) — the e-mail code is accepted on 次へ.
 // `faults[op]`: replies given instead of the scripted one, in order (a code, or a whole reply); tests may push more at any time (hooks).
@@ -49,11 +56,12 @@ function csv(count, { foreignCard = false } = {}) {
 // `landing`: the statement page opens on that period's end query with its data, as the current Amex page does. `loading(read, page)`: a partial
 // snapshot's fields, by read number since the last navigation; null once complete (a page still drawing, with no helper refusal).
 // `end`: what the end event says beyond its reason. `lingers`: after `close` the helper stays in its wait for Chrome, until it is killed.
-function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, foreignCard = false, cards = ['-12345'], periodCards = cards, displayed = null, landing = null, loading = null, faults = {}, persist = {}, on = {}, exitAfter = null, person = null, end = { chromeEnded: true, desktopClosed: true, jobTerminated: true, processesLeft: 0, membersKnown: true, closeMs: 120 }, lingers = false } = {}) {
+// `recent`: the /activity/recent page and its file: {cards, ranges, counts, rows, foreignCard, outside, download, loading(read, page)}; hooks change page.recent mid-job.
+function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, foreignCard = false, cards = ['-12345'], periodCards = cards, displayed = null, landing = null, loading = null, faults = {}, persist = {}, on = {}, exitAfter = null, person = null, end = { chromeEnded: true, desktopClosed: true, jobTerminated: true, processesLeft: 0, membersKnown: true, closeMs: 120 }, lingers = false, recent = {} } = {}) {
   const p = periods(), record = { spawns: [], lines: [], ops: [], typed: {}, mode: null, ended: null };
   const link = q => ({ text: `${slash(q.start)} - ${slash(q.end)}`, href: `${STATEMENT}?end=${q.end}` });
   const links = [link(p.open), link(p.latest), { text: 'この期間を見る', href: `${STATEMENT}?end=${p.latest.end}` }, link(p.older)];
-  const page = { surface: 'login', channel: false, end: null, dialog: false, csv: false, folder: null, reads: 0 };
+  const page = { surface: 'login', channel: false, end: null, dialog: false, csv: false, folder: null, reads: 0, recent: { cards: ['-12345'], ranges: [shownRange(p.open.start, p.open.end)], counts: [[4, 4]], rows: 4, ...recent } };
   const shownPeriod = () => displayed ?? `（${slash(p.latest.start)}－${slash(p.latest.end)}）`;
   const take = op => {
     if (persist[op]) return { ok: false, code: persist[op], acted: false };
@@ -83,7 +91,20 @@ function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, for
       else if (download === 'partial') put('Unconfirmed 1234.crdownload', Buffer.from('partial'));
       return { ok: true, invoked: 1 };
     },
-    close: () => ({ ok: true, gracefulExit: true })
+    close: () => ({ ok: true, gracefulExit: true }),
+    'open-recent': () => { page.surface = 'recent'; page.reads = 0; return { ok: true, invoked: 1 }; },
+    'recent-snapshot': () => page.surface !== 'recent' ? { ok: false, code: 'document_path', acted: false } : { ok: true, url: RECENT_PAGE, links: [], periods: [], ranges: page.recent.ranges, cards: page.recent.cards, counts: page.recent.counts, ...page.recent.loading?.(++page.reads, page) },
+    'recent-download-open': () => { page.dialog = true; return { ok: true, invoked: 1 }; },
+    'recent-csv-state': () => ({ ok: true, present: page.dialog, ...(page.dialog ? { selected: page.csv } : {}) }),
+    'recent-csv-select': () => { page.csv = true; return { ok: true, chosen: 1 }; },
+    'recent-download': () => {
+      const r = page.recent, bytes = () => recentCsv(r.rows, r);
+      if (!r.download) put('activity.csv', bytes());
+      else if (r.download === 'pdf') put('activity.pdf', Buffer.from('%PDF-1.4 fictional'));
+      else if (r.download === 'two') { put('activity.csv', bytes()); put('activity (1).csv', bytes()); }
+      else if (r.download === 'partial') put('Unconfirmed 1234.crdownload', Buffer.from('partial'));
+      return { ok: true, invoked: 1 };
+    }
   };
   const spawn = args => {
     record.spawns.push(args); record.mode = args[args.indexOf('-Mode') + 1]; page.folder = args[args.indexOf('-Downloads') + 1];
@@ -114,14 +135,14 @@ function fakeAmex({ otp = true, mailbox = true, download = 'csv', rows = 12, for
   return { spawn, record, mail, page, faults, periods: p };
 }
 // Runs the real collectStatementNative with the fake at the seams and a virtual clock; the real seams are restored afterwards.
-async function run(fake, { attended = false, settings = LOGIN, gmail = {}, onLaunch, label = 'run', jobId = randomUUID(), prepare = null } = {}) {
+async function run(fake, { attended = false, settings = LOGIN, gmail = {}, onLaunch, label = 'run', jobId = randomUUID(), prepare = null, source = undefined } = {}) {
   const dir = await owned(label), profile = path.join(dir, 'profiles', 'ephemeral', 'p'), statuses = [], order = [], account = { ...ACCOUNT, jobId };
   await mkdir(profile, { recursive: true }); if (prepare) await prepare(dir, account);
   const saved = { ...N.nativeHost }; let t = Date.now();
   Object.assign(N.nativeHost, { spawn: fake.spawn, mailbox: () => fake.mail, now: () => t, sleep: async ms => { t += ms; await new Promise(resolve => setImmediate(resolve)); } });
   const own = onLaunch !== undefined ? onLaunch : async ({ pid, browser }) => { order.push({ pid, browser, opsBefore: [...fake.record.ops] }); };
   try {
-    const outcome = await N.collectStatementNative(account, settings, dir, async (state, text) => { statuses.push([state, text]); }, { profile, chrome: 'C:\\Synthetic\\chrome.exe', gmail, onLaunch: own, origin: ORIGIN, attended }).then(value => ({ value }), error => ({ error }));
+    const outcome = await N.collectStatementNative(account, settings, dir, async (state, text) => { statuses.push([state, text]); }, { profile, chrome: 'C:\\Synthetic\\chrome.exe', gmail, onLaunch: own, origin: ORIGIN, attended, ...(source ? { source } : {}) }).then(value => ({ value }), error => ({ error }));
     return { ...outcome, dir, account, order, statuses };
   } finally { Object.assign(N.nativeHost, saved); }
 }
@@ -425,4 +446,143 @@ test('the private record: schema, closed key and value sets, the 20 newest kept 
   { const fake = fakeAmex(), r = await run(fake, { label: 'store-refused', prepare: dir => writeFile(path.join(dir, 'diagnostics'), 'not a directory') });
     assert.equal(r.error, undefined, 'amex-native:store-refused-job-unchanged ' + r.error?.message);
     assert.equal(await readFile(path.join(r.dir, 'diagnostics'), 'utf8'), 'not a directory', 'amex-native:store-refused-nothing-written'); }
+});
+
+// ── the recent activity (case omf-amex-recent-activity-20261102): only by an explicit source, from the statement page's verified card, held to its own page, pending at the end ─────
+const RECENT_OPS = ['open-recent', 'recent-snapshot', 'recent-download-open', 'recent-csv-state', 'recent-csv-select', 'recent-download'], CLOSED_OPS = ['invoke-period', 'download-open', 'csv-state', 'csv-select', 'download'];
+const noManifest = r => !existsSync(path.join(jobDirOf(r), 'manifest.json'));
+
+test('recent activity: an explicit recent job signs in as ever, reads the signed-in card on the statement page, follows the page\'s own link, verifies before and after its one download and writes a pending manifest with the bytes unchanged', { skip: WINDOWS }, async () => {
+  const fake = fakeAmex(), r = await run(fake, { label: 'recent', source: 'recent' });
+  assert.equal(r.error, undefined, 'amex-recent:positive ' + r.error?.stack);
+  const m = r.value.manifest, { open } = fake.periods, today = tokyoDate();
+  assert.deepEqual(r.order, [{ pid: 52001, browser: null, opsBefore: [] }], 'amex-recent:own-before-any-request');
+  assert.deepEqual(fake.record.ops.slice(fake.record.ops.indexOf('open-statement')), ['open-statement', 'snapshot', 'open-recent', 'recent-snapshot', 'recent-download-open', 'recent-csv-state', 'recent-csv-select', 'recent-csv-state', 'recent-snapshot', 'recent-download', 'recent-snapshot', 'close'], 'amex-recent:the-whole-path ' + fake.record.ops.join(','));
+  assert.deepEqual(CLOSED_OPS.map(op => count(fake.record.ops, op)), [0, 0, 0, 0, 0], 'amex-recent:no-closed-action-on-this-path');
+  assert.deepEqual(['login', 'code', 'open-recent', 'recent-download', 'close'].map(op => count(fake.record.ops, op)), [1, 1, 1, 1, 1], 'amex-recent:one-each');
+  assert.deepEqual(Object.keys(m), ['accountId', 'primaryCard', 'jobId', 'kind', 'start', 'end', 'key', 'pageCount', 'sha256', 'filename', 'downloadedAt', 'ownerId', 'origin'], 'amex-recent:manifest-shape');
+  assert.deepEqual([m.accountId, m.primaryCard, m.jobId, m.kind, m.start, m.end, m.key, m.pageCount, m.ownerId, m.origin], [ACCOUNT._id, '12345', r.account.jobId, 'pending', open.start, today, 'pending:' + open.start + ':' + today, 4, ACCOUNT.ownerId, ORIGIN], 'amex-recent:manifest-values');
+  assert.deepEqual((await readdir(jobDirOf(r))).sort(), [m.filename, 'manifest.json'].sort(), 'amex-recent:outbox-file-and-manifest-only');
+  assert.equal((await readFile(path.join(jobDirOf(r), m.filename))).equals(recentCsv(4)), true, 'amex-recent:bytes-unchanged');
+  assert.ok(!r.statuses.some(s => /closed/i.test(s[1])), 'amex-recent:status-never-says-closed ' + JSON.stringify(r.statuses));
+  const { record, text } = await traceOf(r);
+  assert.deepEqual([record.schema, record.mode, record.outcome, record.helper.end], ['amex-native-trace-1', 'private', 'completed', 'closed'], 'amex-recent:trace');
+  for (const name of ['open-recent', 'recent', 'verify-recent', 'recent-download-open', 'recent-csv-present', 'recent-csv-select', 'recent-csv-selected', 'verify-before', 'recent-download', 'file', 'validate', 'verify-after', 'manifest']) assert.ok(record.steps.some(s => s.step === name && s.outcome === 'ok'), 'amex-recent:trace-step ' + name + ' ' + JSON.stringify(record.steps.map(s => s.step)));
+  for (const leak of [LOGIN.username, LOGIN.password, CODE, 'http', 'americanexpress', 'FIXTURE', '今日現在', open.start]) assert.ok(!text.includes(leak), 'amex-recent:record-no-leak ' + leak);
+});
+
+test('the closed job is the default: no source, an explicit statement or anything else takes the closed path with no recent action and its statement manifest', { skip: WINDOWS }, async () => {
+  for (const source of [undefined, 'statement', 'pending', 'RECENT']) {
+    const fake = fakeAmex(), r = await run(fake, { label: 'closed-default', source });
+    assert.equal(r.error, undefined, 'amex-recent:closed-default ' + source + ' ' + r.error?.message);
+    assert.deepEqual(RECENT_OPS.map(op => count(fake.record.ops, op)), [0, 0, 0, 0, 0, 0], 'amex-recent:closed-sends-no-recent-action ' + source);
+    assert.deepEqual(CLOSED_OPS.map(op => count(fake.record.ops, op)), [1, 1, 2, 1, 1], 'amex-recent:closed-path-whole ' + source + ' ' + fake.record.ops.join(','));
+    assert.deepEqual([r.value.manifest.kind, r.value.manifest.end], ['statement', fake.periods.latest.end], 'amex-recent:closed-manifest ' + source);
+  }
+});
+
+test('recent refusals: another or a second card, dates that do not hold today, an incomplete or empty count and a page that never shows its evidence end the job before any download; a wrong file ends it after the one download, with no manifest', { skip: WINDOWS }, async () => {
+  const { open, latest } = periods(), stale = shownRange(latest.start, latest.end), future = shownRange(day(tokyoDate(), 2), day(tokyoDate(), 30));
+  for (const [label, recent, expected, downloads] of [
+    ['wrong-card', { cards: ['-54321'] }, /does not match this connection/, 0],
+    ['two-cards', { cards: ['-12345', '-54321'] }, /does not match this connection/, 0],
+    ['stale-range', { ranges: [stale] }, /displayed dates do not cover the current activity/, 0],
+    ['future-range', { ranges: [future] }, /displayed dates do not cover the current activity/, 0],
+    ['two-ranges', { ranges: [shownRange(open.start, open.end), stale] }, /displayed dates do not cover the current activity/, 0],
+    ['partial-count', { counts: [[4, 3]] }, /complete recent activity count could not be verified/, 0],
+    ['two-counts', { counts: [[4, 4], [5, 5]] }, /complete recent activity count could not be verified/, 0],
+    ['empty', { counts: [[0, 0]] }, /no recent activity/, 0],
+    ['no-range', { ranges: [] }, /recent Amex activity did not finish loading/, 0],
+    ['no-count', { counts: [] }, /recent Amex activity did not finish loading/, 0],
+    ['no-card', { cards: [] }, /recent Amex activity did not finish loading/, 0],
+    ['wrong-download-count', { rows: 3 }, /Downloaded row count does not match the Amex page/, 1],
+    ['wrong-download-card', { foreignCard: true }, /2行目: この口座に登録されていないカードです/, 1],
+    ['outside-dates', { outside: true }, /outside its displayed dates/, 1],
+    ['not-csv', { download: 'pdf' }, new RegExp(N.NOT_CSV), 1],
+    ['two-files', { download: 'two' }, /Multiple downloads started/, 1],
+    ['never-finished', { download: 'partial' }, /Amex CSV download did not complete/, 1],
+    ['no-file', { download: 'none' }, /Amex CSV download did not complete/, 1]
+  ]) {
+    const fake = fakeAmex({ recent }), r = await run(fake, { label: 'recent-' + label, source: 'recent' });
+    assert.match(String(r.error?.message), expected, 'amex-recent:' + label);
+    assert.deepEqual([count(fake.record.ops, 'recent-download'), noManifest(r), fake.record.ended], [downloads, true, 'closed'], 'amex-recent:' + label + '-nothing-kept ' + fake.record.ops.join(','));
+    assert.deepEqual(CLOSED_OPS.map(op => count(fake.record.ops, op)), [0, 0, 0, 0, 0], 'amex-recent:' + label + '-no-closed-action');
+  }
+  // a file already in the attempt folder before the one action is no download of this job
+  { const fake = fakeAmex({ on: { 'recent-csv-select': (_r, page) => writeFileSync(path.join(page.folder, 'early.csv'), 'early') } }), r = await run(fake, { label: 'recent-file-before', source: 'recent' });
+    assert.match(String(r.error?.message), /Multiple downloads started/, 'amex-recent:file-before-the-action');
+    assert.deepEqual([count(fake.record.ops, 'recent-download'), noManifest(r)], [0, true], 'amex-recent:file-before-the-action nothing-pressed'); }
+  // before the recent page: another card on the statement page, or no signed-in card there at all, never follows the link
+  for (const [label, options] of [['other-card-first', { cards: ['-54321'] }], ['no-card-first', { cards: [] }]]) {
+    const fake = fakeAmex(options), r = await run(fake, { label: 'recent-' + label, source: 'recent' });
+    assert.equal(r.error?.message, 'Amex statement links or signed-in card could not be verified', 'amex-recent:' + label);
+    assert.equal(count(fake.record.ops, 'open-recent'), 0, 'amex-recent:' + label + '-link-not-followed');
+  }
+});
+
+test('recent activity moves: a page that changes between its reads stops the job, before the download with nothing fetched and after it with the file left out of the outbox; nothing is sent again', { skip: WINDOWS }, async () => {
+  const { open } = periods(), next = shownRange(day(open.start, 1), day(open.end, 1));
+  for (const [label, op, change, downloads] of [
+    ['count-before', 'recent-csv-select', page => { page.recent.counts = [[5, 5]]; }, 0], ['range-before', 'recent-csv-select', page => { page.recent.ranges = [next]; }, 0],
+    ['count-after', 'recent-download', page => { page.recent.counts = [[5, 5]]; }, 1], ['range-after', 'recent-download', page => { page.recent.ranges = [next]; }, 1]
+  ]) {
+    const fake = fakeAmex({ on: { [op]: (_r, page) => change(page) } }), r = await run(fake, { label: 'recent-moved-' + label, source: 'recent' });
+    assert.equal(r.error?.message, N.RECENT_CHANGED, 'amex-recent:moved ' + label);
+    assert.deepEqual([count(fake.record.ops, 'recent-download'), noManifest(r)], [downloads, true], 'amex-recent:moved-nothing-kept ' + label);
+    if (downloads) { const attempt = (await readdir(jobDirOf(r))).find(n => n.startsWith('download-')); assert.deepEqual(await readdir(path.join(jobDirOf(r), attempt)), ['activity.csv'], 'amex-recent:moved-file-in-its-attempt-folder ' + label); }
+  }
+  // the same file again, with a page that moved and came back, is the job the reads saw: the count compared is the one the file was checked against
+  { const fake = fakeAmex({ on: { 'recent-download': (_r, page) => { page.recent.counts = [[3, 3]]; } } }), r = await run(fake, { label: 'recent-moved-down', source: 'recent' });
+    assert.equal(r.error?.message, N.RECENT_CHANGED, 'amex-recent:moved-down'); }
+  // a page still drawing is no change: reads wait for all three facts
+  { const fake = fakeAmex({ recent: { loading: read => read <= 2 ? { cards: [], ranges: [], counts: [] } : read === 3 ? { counts: [] } : null } }), r = await run(fake, { label: 'recent-drawing', source: 'recent' });
+    assert.equal(r.error, undefined, 'amex-recent:drawing-completes ' + r.error?.message);
+    assert.equal((await traceOf(r)).record.steps.find(s => s.step === 'recent').reads, 4, 'amex-recent:drawing-read-through');
+    assert.equal(count(fake.record.ops, 'recent-download'), 1, 'amex-recent:drawing-one-download'); }
+  // evidence gone after the file is unreadable, not a change: the same fixed end as the closed job
+  { const fake = fakeAmex({ on: { 'recent-download': () => { fake.faults['recent-snapshot'] = Array(500).fill('ambiguous_document'); } } }), r = await run(fake, { label: 'recent-unreadable-after', source: 'recent' });
+    assert.equal(r.error?.message, N.PAGE_UNREADABLE, 'amex-recent:unreadable-after');
+    assert.deepEqual([count(fake.record.ops, 'recent-download'), noManifest(r)], [1, true], 'amex-recent:unreadable-after-nothing-kept'); }
+});
+
+test('recent reads tolerate what the closed reads tolerate, and every recent action is sent once: a refusal keeps its code, a failure after it was sent is uncertain, neither is sent again', { skip: WINDOWS }, async () => {
+  { const fake = fakeAmex({ faults: { 'recent-snapshot': ['ambiguous_document', 'document_path', 'element_not_available'] }, on: { 'recent-download': () => { fake.faults['recent-snapshot'] = ['no_document', 'ambiguous_document']; } } }), r = await run(fake, { label: 'recent-tolerance', source: 'recent' });
+    assert.equal(r.error, undefined, 'amex-recent:tolerance-completes ' + r.error?.message);
+    assert.deepEqual(['open-recent', 'recent-download-open', 'recent-csv-select', 'recent-download'].map(op => count(fake.record.ops, op)), [1, 1, 1, 1], 'amex-recent:tolerance-one-action-each');
+    const { record } = await traceOf(r); assert.equal(record.tolerated.document_path, 1, 'amex-recent:tolerance-traced ' + JSON.stringify(record.tolerated)); }
+  for (const op of ['open-recent', 'recent-download-open', 'recent-csv-select', 'recent-download']) {
+    for (const [label, reply, outcome, code] of [['refused', 'window_changed', 'error', 'window_changed'], ['uncertain', { ok: false, code: 'element_not_available', acted: true }, 'uncertain', 'element_not_available']]) {
+      const fake = fakeAmex({ faults: { [op]: [reply] } }), r = await run(fake, { label: 'recent-once-' + op + '-' + label, source: 'recent' });
+      assert.equal(r.error?.message, N.PAGE_CHANGED, 'amex-recent:action-ends-job ' + op + ' ' + label);
+      assert.equal(count(fake.record.ops, op), 1, 'amex-recent:action-once ' + op + ' ' + label + ' ' + fake.record.ops.join(','));
+      const step = (await traceOf(r)).record.steps.find(s => s.step === op);
+      assert.deepEqual([step.outcome, step.code], [outcome, code], 'amex-recent:action-traced ' + op + ' ' + label);
+      assert.equal(noManifest(r), true, 'amex-recent:action-no-manifest ' + op);
+    }
+  }
+  { const fake = fakeAmex({ faults: { 'open-recent': ['recent_link_missing'] } }), r = await run(fake, { label: 'recent-no-link', source: 'recent' });
+    assert.equal(r.error?.message, N.PAGE_CHANGED, 'amex-recent:no-link');
+    assert.equal((await traceOf(r)).record.steps.find(s => s.step === 'open-recent').code, 'recent_link_missing', 'amex-recent:no-link-code-kept');
+    assert.deepEqual(['recent-snapshot', 'recent-download'].map(op => count(fake.record.ops, op)), [0, 0], 'amex-recent:no-link-nothing-after'); }
+  { const fake = fakeAmex({ faults: { 'recent-download-open': [{ ok: true, alreadyExpanded: true }] }, on: { 'recent-download-open': (_r, page) => { page.dialog = true; } } }), r = await run(fake, { label: 'recent-already-open', source: 'recent' });
+    assert.equal(r.error, undefined, 'amex-recent:already-open ' + r.error?.message);
+    assert.ok((await traceOf(r)).record.steps.some(s => s.step === 'download-already-open'), 'amex-recent:already-open-recorded'); }
+});
+
+test('a recent job keeps the job\'s own boundaries: private by default, attended only when asked, no login means nothing starts, a crash and a closure end as ever', { skip: WINDOWS }, async () => {
+  { const fake = fakeAmex({ mailbox: false }), r = await run(fake, { label: 'recent-private-check', source: 'recent' });
+    assert.equal(r.error?.message, N.PRIVATE_ATTENTION, 'amex-recent:private-attention');
+    assert.deepEqual([count(fake.record.ops, 'show'), count(fake.record.ops, 'login'), count(fake.record.ops, 'open-recent')], [0, 1, 0], 'amex-recent:private-attention-nothing-shown'); }
+  { const fake = fakeAmex({ mailbox: false, person: page => { page.surface = 'dashboard'; } }), r = await run(fake, { label: 'recent-attended', attended: true, source: 'recent' });
+    assert.equal(r.error, undefined, 'amex-recent:attended-completes ' + r.error?.message);
+    assert.deepEqual([fake.record.mode, count(fake.record.ops, 'show'), r.value.manifest.kind], ['input', 1, 'pending'], 'amex-recent:attended-asked-once'); }
+  { const fake = fakeAmex(), r = await run(fake, { label: 'recent-no-login', settings: {}, source: 'recent' });
+    assert.deepEqual([r.error?.message, fake.record.spawns.length], [N.NO_LOGIN, 0], 'amex-recent:no-login-nothing-started'); }
+  { const fake = fakeAmex({ exitAfter: 'open-recent' }), r = await run(fake, { label: 'recent-helper-crash', source: 'recent' });
+    assert.equal(r.error?.message, N.HELPER_ENDED, 'amex-recent:helper-crash');
+    assert.equal(noManifest(r), true, 'amex-recent:helper-crash-no-manifest');
+    assert.equal((await traceOf(r)).record.helper.end, null, 'amex-recent:helper-crash-claims-nothing'); }
+  { const fake = fakeAmex({ recent: { counts: [[4, 3]] } }), r = await run(fake, { label: 'recent-closure', source: 'recent' });
+    assert.deepEqual([fake.record.ops.at(-1), fake.record.ended, (await traceOf(r)).record.outcome], ['close', 'closed', 'failed'], 'amex-recent:closure-on-a-refusal');
+    assert.deepEqual((await readdir(jobDirOf(r))), [], 'amex-recent:closure-attempt-folder-removed'); }
 });
