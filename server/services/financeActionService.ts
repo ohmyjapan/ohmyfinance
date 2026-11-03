@@ -346,7 +346,7 @@ async function reconcileOne(ownerId: string, op: any) {
     const frozen = frozenPostingCompany(op.postingCompany, ownerId)
     if (!frozen) return unresolvedPost('この操作には登録先の会社の記録がありません。自動で引き継がず、明細の状態を確認してください。')
     let organizationId: any
-    try { organizationId = await currentPostingCompany(ownerId, frozen) } catch (error: any) { if (error?.statusCode === 403) return unresolvedPost(NOT_POSTING_MEMBER); throw error }
+    try { organizationId = await currentPostingCompany(ownerId, frozen) } catch (error: any) { if (error?.statusCode === 403) return unresolvedPost(error?.data?.message || NOT_POSTING_MEMBER); throw error }
     const batch: any = await FinanceImport.findOne({ _id: id(target.importId), ownerId }).lean()
     if (!batch) return unresolvedPost('明細を確認できません。帳簿の状態を確認してください。')
     const verified = await verifiedPostingRows(ownerId, batch, organizationId, lines)

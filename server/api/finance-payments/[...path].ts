@@ -8,6 +8,7 @@ import * as balance from '../../services/financeBankBalanceService'
 import * as matches from '../../services/financePaymentMatchService'
 import * as classification from '../../services/financeBankClassificationService'
 import { calendarCompany } from '../../utils/calendarAccess'
+import { requireLedgerRegistrar } from '../../utils/ledgerRegistrarAccess'
 export default defineEventHandler(async event=>{
  setHeader(event,'Cache-Control','no-store')
  try{
@@ -38,7 +39,8 @@ export default defineEventHandler(async event=>{
    if(parts.length===2&&method==='GET')return classification.getBankClassification(ownerId,classificationCompany,parts[1])
    if(parts.length===2&&method==='PUT')return classification.updateBankClassification(ownerId,classificationCompany,parts[1],await json())
    if(parts.length===3&&parts[2]==='remember'&&method==='POST')return classification.rememberBankClassification(ownerId,classificationCompany,parts[1],await json())
-   if(parts.length===3&&parts[2]==='register'&&method==='POST')return classification.registerBankClassification(ownerId,classificationCompany,parts[1],await json())
+   // Plan omf-role-writes-20261101 C4: 確認して取引へ登録 (and its resume inside register) is a 仕訳 registration — owner, admin or 経理担当 only.
+   if(parts.length===3&&parts[2]==='register'&&method==='POST'){await requireLedgerRegistrar(ownerId,classificationCompany);return classification.registerBankClassification(ownerId,classificationCompany,parts[1],await json())}
    if(parts.length===3&&parts[2]==='release'&&method==='POST')return classification.releaseBankClassification(ownerId,classificationCompany,parts[1],await json())
   }
   if(parts[0]==='bank'){

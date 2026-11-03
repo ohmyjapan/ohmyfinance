@@ -171,7 +171,8 @@ const countsText = computed(() => { const c = data.value.counts || {}; return `�
 const formOf = (d: any) => ({ revision: d.revision, ...Object.fromEntries(VALUE_KEYS.map(k => [k, k === 'transferReviewed' ? d.values?.[k] === true : String(d.values?.[k] ?? '')])), acceptSource: false, confirmed: false, confirmNew: false, linkId: '' })
 const dirty = (r: any) => { const f = forms[r.rowId], v = r.draft?.values || {}; return !!f && VALUE_KEYS.some(k => k === 'transferReviewed' ? f[k] !== (v[k] === true) : String(f[k] ?? '') !== String(v[k] ?? '')) }
 const messageOf = (e: any) => e?.data?.data?.message || e?.data?.statusMessage || e?.message || '処理できませんでした。'
-async function run(fn: () => Promise<void>) { busy.value = true; error.value = ''; try { await fn() } catch (e: any) { error.value = e?.statusCode === 403 || e?.status === 403 ? '会社を選択してください（この会社のメンバーである必要があります）。' : messageOf(e) } finally { busy.value = false } }
+// A 403 shows the server's data.message when it carries one (the registrar or viewer refusal, plan omf-role-writes-20261101 C9), else the company text.
+async function run(fn: () => Promise<void>) { busy.value = true; error.value = ''; try { await fn() } catch (e: any) { error.value = e?.statusCode === 403 || e?.status === 403 ? (e?.data?.data?.message || '会社を選択してください（この会社のメンバーである必要があります）。') : messageOf(e) } finally { busy.value = false } }
 function adopt(result: any) {
   data.value = result
   for (const r of result.rows || []) if (r.draft && (!forms[r.rowId] || forms[r.rowId].revision !== r.draft.revision)) forms[r.rowId] = formOf(r.draft)

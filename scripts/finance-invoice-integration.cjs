@@ -215,9 +215,9 @@ async function main() {
       await owner.goto(origin + '/settings/organization', { waitUntil: 'networkidle2' })
       await wait(owner, () => document.querySelectorAll('[data-member-role]').length >= 6, [], 'members-table')
       const labels = await owner.$$eval('[data-member-role]', els => els.map(e => e.textContent.trim()))
-      assert.ok(labels.includes('経理担当') && labels.includes('オーナー') && labels.includes('管理者') && labels.includes('一般') && labels.includes('閲覧者'), 'invite-ui:role-badges ' + JSON.stringify(labels))
+      assert.ok(labels.includes('経理担当') && labels.includes('オーナー') && labels.includes('管理者') && labels.includes('一般') && labels.includes('閲覧のみ'), 'invite-ui:role-badges ' + JSON.stringify(labels))
       const options = await owner.$eval('[data-member-role-select]', s => [...s.options].map(o => [o.value, o.textContent.trim()]))
-      assert.deepEqual(options, [['admin', '管理者'], ['accountant', '経理担当'], ['member', '一般'], ['viewer', '閲覧者']], 'invite-ui:role-select')
+      assert.deepEqual(options, [['admin', '管理者'], ['accountant', '経理担当'], ['member', '一般'], ['viewer', '閲覧のみ']], 'invite-ui:role-select')
       assert.ok(await owner.$eval('[data-roles-help]', e => e.textContent.includes('経理担当')), 'invite-ui:roles-help')
       // The invite modal is found by its own form (the fixed overlay holding the email field); its lines carry no test hooks.
       const MODAL = "[...document.querySelectorAll('div.fixed')].find(d => d.querySelector('form input[type=email]'))"
@@ -225,7 +225,7 @@ async function main() {
       const invite = async (email, role) => {
         assert.ok(await clickText(owner, 'button', 'メンバーを招待'), 'invite-ui:open-modal'); await wait(owner, new Function('return !!(' + MODAL + ')'), [], 'invite-modal')
         const roleOptions = await inModal('form select', 's => [...s.options].map(o => o.value)'); assert.deepEqual(roleOptions, ['member', 'accountant', 'admin', 'viewer'], 'invite-ui:invite-roles')
-        assert.deepEqual(await inModal('form select', 's => [...s.options].map(o => o.textContent.trim())'), ['一般', '経理担当', '管理者', '閲覧者'], 'invite-ui:invite-role-labels')
+        assert.deepEqual(await inModal('form select', 's => [...s.options].map(o => o.textContent.trim())'), ['一般', '経理担当', '管理者', '閲覧のみ'], 'invite-ui:invite-role-labels')
         await owner.evaluate(new Function('email', 'role', 'const m = ' + MODAL + '; const set = (e, v) => { e.value = v; e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })) }; set(m.querySelector("form input[type=email]"), email); set(m.querySelector("form select"), role); m.querySelector("form button[type=submit]").click()'), email, role)
         await wait(owner, () => !!document.querySelector('[data-invite-link]')?.textContent.trim(), [], 'invite-link')
         const shown = await owner.evaluate(new Function('return (() => { const m = ' + MODAL + '; return { link: document.querySelector("[data-invite-link]").textContent.trim(), result: document.querySelector("[data-invite-result]").textContent, copy: !!document.querySelector("[data-invite-copy]"), modal: m.textContent } })()'))
@@ -272,7 +272,7 @@ async function main() {
       const acc = await newPage(true); await login(acc, 'accA'); await nativeSwitch(acc, A); await acc.goto(origin + '/profile', { waitUntil: 'networkidle2' }); await wait(acc, () => document.body.innerText.includes('Synthetic invoice A'), [], 'profile'); assert.ok(await acc.evaluate(() => document.body.innerText.includes('経理担当')), 'invite-ui:profile-role-label'); await closeContext(acc)
       assert.deepEqual(pageErrors, [], 'invite-ui:page-errors')
       await owner.close()
-      pass('Chrome 390px: role badges/select/help/profile show 経理担当; the settings invite makes an Invite row and shows its link on the page origin with a copy button and a link-created text (never "sent"); a new person registers from it and joins as 経理担当; an existing account logs in and joins as 閲覧者; a lost link is cancelled from 保留中の招待, shows cancelled, and a new invite works; no [Email] log line')
+      pass('Chrome 390px: role badges/select/help/profile show 経理担当; the settings invite makes an Invite row and shows its link on the page origin with a copy button and a link-created text (never "sent"); a new person registers from it and joins as 経理担当; an existing account logs in and joins as 閲覧のみ; a lost link is cancelled from 保留中の招待, shows cancelled, and a new invite works; no [Email] log line')
     } else if (has('L7')) console.log('Browser leg L7 not requested (OMF_INVOICE_BROWSER unset)')
 
     // ---- M1 on the app without Gmail settings.
@@ -403,7 +403,8 @@ async function main() {
       if (wantM('Q5')) {
         for (const u of ['ownerA', 'adminA', 'accA']) { assert.equal((await api('/api/company-mail/gmail', T[u], 'POST', { action: 'start' })).status, 200, 'gmail:role-start ' + u); const doc = await freshInvoice(A); const r = await sendFor(T[u], doc._id); assert.equal(r.status, 200, 'gmail:role-send ' + u); assert.equal((await deliveryOf(doc._id)).last.state, 'sent'); assert.equal((await status(T[u])).canSend, true) }
         for (const u of ['memberA', 'viewerA']) {
-          const doc = await freshInvoice(A); const r = await sendFor(T[u], doc._id); assert.equal(r.status, 403, 'gmail:role-send-refused ' + u + ' answered ' + r.status); assert.ok(said(r).includes('請求書の送信は経理担当以上のメンバーだけができます'), 'gmail:role-message')
+          // A 閲覧のみ member meets the viewerReadOnly middleware first (plan omf-role-writes-20261101 C2): same 403, the viewer message; a 一般 member keeps the sender message.
+          const doc = await freshInvoice(A); const r = await sendFor(T[u], doc._id); assert.equal(r.status, 403, 'gmail:role-send-refused ' + u + ' answered ' + r.status); assert.ok(said(r).includes(u === 'viewerA' ? '閲覧のみのメンバーは変更できません' : '請求書の送信は経理担当以上のメンバーだけができます'), 'gmail:role-message ' + u + ' ' + said(r).slice(0, 200))
           for (const body of [{ action: 'start' }, { action: 'finish', code: 'x', state: 'y' }]) assert.equal((await api('/api/company-mail/gmail', T[u], 'POST', body)).status, 403, 'gmail:role-connect-refused ' + u)
           assert.equal((await api('/api/company-mail/gmail', T[u], 'DELETE')).status, 403, 'gmail:role-disconnect-refused ' + u); assert.equal((await status(T[u])).canSend, false); assert.equal((await deliveryOf(doc._id)).list.length, 0)
         }
@@ -537,6 +538,7 @@ async function main() {
       x = await deliveryOf(rf.doc._id); assert.equal(x.last.state, 'unknown', 'restart:no-before-count-unknown'); assert.equal(fake.mailbox(F.address).posts.length, 0)
       x = await deliveryOf(rh.doc._id); assert.equal(x.last.state, 'unknown', 'restart:no-connection-unknown ' + JSON.stringify(x.last))
       x = await deliveryOf(g._id); assert.deepEqual([x.last.state, x.last.confirmedBy], ['sent', 'sent_count'], 'restart:stopped-mid-send ' + JSON.stringify(x.last)); assert.equal(mailsFor(G.address, g).length, 1, 'restart:stopped-mid-send one mail'); assert.equal(postsFor(G.address, g).length, 1)
+      for (let i = 0; i < 300 && await db.collection('invoicemailoutbox').countDocuments(); i++) await pause(100)
       assert.equal(await db.collection('invoicemailoutbox').countDocuments(), 0, 'restart:outbox-empty')
       pass('M21 restart: no postStartedAt → resent with the stored bytes; postStartedAt and an unchanged count → resent with the same bytes; +1 → sent by the count without a post; no before-count or no connection → unknown; a stop mid-send that Gmail accepted → sent by the count, one mail; a click during the recovery → 409; no row left sending')
     }

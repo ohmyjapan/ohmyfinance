@@ -5,6 +5,7 @@ import Transaction from '../models/Transaction'
 import { FinanceImportCompany } from '../models/FinanceImportCompany'
 import { FinanceEntry } from '../models/Finance'
 import { companyMembership } from '../utils/calendarAccess'
+import { requireLedgerRegistrar } from '../utils/ledgerRegistrarAccess'
 
 // Navi ledger posting destination for the legacy owner workspace and purchase chats. The company is the one the access token selects,
 // checked against a current, active membership when the message is sent and frozen on that server-built turn (never a request body, a
@@ -44,8 +45,15 @@ export function frozenPostingCompany(value: any, ownerId: string): PostingCompan
 }
 export const frozenCompanyId = (frozen: PostingCompany) => new mongoose.Types.ObjectId(frozen.organizationId)
 
-// Fresh membership of the frozen company at the write and at recovery (refused when removed or the company is inactive).
+// Fresh membership of the frozen company at the write and at recovery (refused when removed or the company is inactive), then the
+// role: only an owner, admin or 経理担当 registers 仕訳 (plan omf-role-writes-20261101 C6). The registrar refusal is raised after the
+// membership catch, so its own message reaches the action's 403 and the recovery's unresolved reason.
 export async function currentPostingCompany(ownerId: string, frozen: PostingCompany) {
+  const organizationId = await currentPostingMembership(ownerId, frozen)
+  await requireLedgerRegistrar(String(ownerId), String(frozen.organizationId))
+  return organizationId
+}
+async function currentPostingMembership(ownerId: string, frozen: PostingCompany) {
   try {
     return await companyMembership(String(ownerId), String(frozen.organizationId))
   } catch (error: any) {

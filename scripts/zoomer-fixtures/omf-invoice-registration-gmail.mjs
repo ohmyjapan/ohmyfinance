@@ -56,7 +56,7 @@ export default {
         await test('plus-one-rule-removed', 'if (after === before + 1) return { outcome: "sent", after };', '', 'L5:M16', 'gmail:5xx-accepted')
         await test('company-queue-removed', 'return enqueue(String(ctx.organizationId), () => runDelivery(ctx));', 'return runDelivery(ctx);', 'L5:M8b', 'gmail:company-queue')
         await test('sixty-second-abort', 'body: mime, headers: sendHeaders', 'body: mime, headers: sendHeaders, signal: AbortSignal.timeout(6e4)', 'L5:M19', 'gmail:slow-answer')
-        await test('member-in-send-roles', '["owner", "admin", "accountant"]', '["owner", "admin", "accountant", "member"]', 'L5:Q5', 'gmail:role-send-refused')
+        await test('member-in-send-roles', 'INVOICE_SENDER_ROLES = ["owner", "admin", "accountant"]', 'INVOICE_SENDER_ROLES = ["owner", "admin", "accountant", "member"]', 'L5:Q5', 'gmail:role-send-refused')
         await test('inviteUser-role-check-removed', 'throw new Error("Invalid role");', ';', 'L6', 'roles:invite-owner')
         await test('acceptInvite-role-check-removed', 'throw new Error("Invalid invite role");', ';', 'L6', 'roles:prefix-owner-jwt')
         await test('settings-invite-on-jwt-route', '/invites`,{method:"POST"', '/invite`,{ method:"POST"', 'L7', 'invite-ui:', true)

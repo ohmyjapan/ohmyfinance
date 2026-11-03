@@ -19,10 +19,11 @@ async function main(){
   const ok=async(route,token,method='GET',body)=>{const r=await api(route,token,method,body);assert.equal(r.status,200,'navi-posting:positive '+method+' '+route+' '+r.raw.slice(0,400));return r.data};
   const transactions=db.collection('transactions'),entries=db.collection('financeentries'),bindings=db.collection('financeimportcompanies'),ops=db.collection('financeactionoperations'),organizations=db.collection('organizations'),assistants=db.collection('financeassistants'),chats=db.collection('financechats');
   const ledger=async()=>JSON.stringify(await Promise.all(['transactions','financeentries','financeimportcompanies'].map(n=>db.collection(n).find().sort({_id:1}).toArray())));
-  // Owner P, companies A/B (P is a member) and C (P is not). Tokens are the native ones; the foreign one is a validly signed token of P naming C.
+  // Owner P, companies A/B (P is a member of B as 経理担当: group 6 posts B's statement through company-commit, a 仕訳 registration since
+  // plan omf-role-writes-20261101 C5) and C (P is not). Tokens are the native ones; the foreign one is a validly signed token of P naming C.
   const email='navi-posting-owner@example.invalid',plain=(await ok('/api/auth/register',null,'POST',{email,password:'Synthetic-password-Only1!',name:'Synthetic owner'})).tokens.accessToken,owner=(await db.collection('users').findOne({email}))._id;
   const A=new ObjectId(),B=new ObjectId(),C=new ObjectId(),now=new Date(),membersA=[{userId:owner,role:'owner',joinedAt:now}];
-  await organizations.insertMany([{_id:A,name:'Synthetic posting company A',slug:'navi-posting-a',isActive:true,members:membersA},{_id:B,name:'Synthetic posting company B',slug:'navi-posting-b',isActive:true,members:[{userId:owner,role:'member',joinedAt:now}]},{_id:C,name:'PRIVATE_FOREIGN_COMPANY_C',slug:'navi-posting-c',isActive:true,members:[{userId:new ObjectId(),role:'owner',joinedAt:now}]}]);
+  await organizations.insertMany([{_id:A,name:'Synthetic posting company A',slug:'navi-posting-a',isActive:true,members:membersA},{_id:B,name:'Synthetic posting company B',slug:'navi-posting-b',isActive:true,members:[{userId:owner,role:'accountant',joinedAt:now}]},{_id:C,name:'PRIVATE_FOREIGN_COMPANY_C',slug:'navi-posting-c',isActive:true,members:[{userId:new ObjectId(),role:'owner',joinedAt:now}]}]);
   const tokenA=(await ok('/api/auth/switch-organization',plain,'POST',{organizationId:String(A)})).tokens.accessToken,tokenB=(await ok('/api/auth/switch-organization',plain,'POST',{organizationId:String(B)})).tokens.accessToken;
   const foreign=jwt.sign({userId:String(owner),email,organizationId:String(C),role:'owner',type:'access'},secret,{expiresIn:'10m'});
   const account=(await ok('/api/finance/accounts',plain,'POST',{name:'Navi posting Amex',provider:'amex',primaryCard:'12345',cardIdentifiers:['12345'],otpRecipient:'synthetic@example.invalid',otpMailbox:'synthetic@example.invalid'})).account;
@@ -84,19 +85,23 @@ async function main(){
   // 4 membership removed after the turn was frozen: the write rechecks fresh membership; restored membership posts in a new turn.
   const revoked=await wsTurn(tokenA,'4行目を帳簿に登録して');assert.equal((await storedTurn(revoked.requestId)).postingCompany.organizationId,String(A));
   await organizations.updateOne({_id:A},{$set:{members:[]}});assert.equal((await ok(wsEndpoint,tokenA)).postingCompany,null,'navi-posting:revoked-not-displayed');
-  snapshot=await ledger();const refusedRevoked=await act(revoked.job,1,'post_selected_approved_rows',{importId,lines:[4]});assert.equal(refusedRevoked.status,403,'navi-posting:revoked-write-refused '+refusedRevoked.raw.slice(0,200));assert.equal(await ledger(),snapshot,'navi-posting:revoked-no-write');
-  await organizations.updateOne({_id:A},{$set:{isActive:false,members:membersA}});assert.equal((await act(revoked.job,2,'post_selected_approved_rows',{importId,lines:[4]})).status,403,'navi-posting:inactive-company-refused');assert.equal(await ledger(),snapshot);
+  // The membership refusal carries its own reason (not the registrar message that the later role gate gives a non-member).
+  snapshot=await ledger();const refusedRevoked=await act(revoked.job,1,'post_selected_approved_rows',{importId,lines:[4]});assert.equal(refusedRevoked.status,403,'navi-posting:revoked-write-refused '+refusedRevoked.raw.slice(0,200));assert.ok(refusedRevoked.raw.includes('現在のメンバーであることを確認できない'),'navi-posting:revoked-write-refused reason '+refusedRevoked.raw.slice(0,200));assert.equal(await ledger(),snapshot,'navi-posting:revoked-no-write');
+  await organizations.updateOne({_id:A},{$set:{isActive:false,members:membersA}});const refusedInactive=await act(revoked.job,2,'post_selected_approved_rows',{importId,lines:[4]});assert.equal(refusedInactive.status,403,'navi-posting:inactive-company-refused');assert.ok(refusedInactive.raw.includes('現在のメンバーであることを確認できない'),'navi-posting:inactive-company-refused reason '+refusedInactive.raw.slice(0,200));assert.equal(await ledger(),snapshot);
   await organizations.updateOne({_id:A},{$set:{isActive:true}});assert.equal((await finish(revoked.job,'会社の確認ができませんでした。')).status,200);
   const restored=await wsTurn(tokenA,'4行目を帳簿に登録して');assert.equal((await acted(restored.job,1,'post_selected_approved_rows',{importId,lines:[4]})).receipt.state,'done','navi-posting:restored-member-posts');assert.equal(String((await companyOf(4)).transaction.organizationId),String(A));assert.equal((await finish(restored.job,'登録しました。')).status,200);
   pass('a removed or inactive membership after the frozen send refuses the write; the current member posts again in a new turn');
 
-  // 5 every existing member role of the selected company posts as on the native company route.
-  for(const [i,role]of['admin','member','viewer'].entries()){
+  // 5 the registrar roles of the selected company post as on the native company route; a 一般 member is refused at the write with the
+  // registrar message and no Transaction; a 閲覧のみ member cannot even send the turn (plan omf-role-writes-20261101 C2/C6).
+  for(const [i,role]of['admin','accountant'].entries()){
    await organizations.updateOne({_id:A},{$set:{'members.0.role':role}});const line=5+i,j=await wsTurn(tokenA,line+'行目を承認して帳簿に登録して');await prepare(j.job,1,line);
    const r=await acted(j.job,3,'post_selected_approved_rows',{importId,lines:[line]});assert.equal(r.receipt.state,'done','navi-posting:legitimate-role '+role);assert.equal(String((await companyOf(line)).transaction.organizationId),String(A));assert.equal((await finish(j.job,'登録しました。')).status,200);
   }
+  await organizations.updateOne({_id:A},{$set:{'members.0.role':'member'}});{const j=await wsTurn(tokenA,'7行目を承認して帳簿に登録して');await prepare(j.job,1,7);snapshot=await ledger();const r=await act(j.job,3,'post_selected_approved_rows',{importId,lines:[7]});assert.equal(r.status,403,'navi-posting:member-post-refused '+r.raw.slice(0,200));assert.ok(r.raw.includes('経理担当以上のメンバーだけ'),'navi-posting:member-post-message '+r.raw.slice(0,200));assert.equal(await ledger(),snapshot,'navi-posting:member-post-no-write');assert.equal(await companyOf(7),null,'navi-posting:member-post-no-transaction');assert.equal((await finish(j.job,'経理担当以上のメンバーが登録できます。')).status,200)}
+  await organizations.updateOne({_id:A},{$set:{'members.0.role':'viewer'}});{const sent=await wsSend(tokenA,'7行目を帳簿に登録して');assert.equal(sent.response.status,403,'navi-posting:viewer-send-refused '+sent.response.raw.slice(0,200))}
   await organizations.updateOne({_id:A},{$set:{'members.0.role':'owner'}});
-  pass('owner, admin, member and viewer of the selected company post through Navi');
+  pass('owner, admin and accountant of the selected company post through Navi; a member is refused at the write with the registrar message and nothing is written; a viewer cannot send the turn');
 
   // 6 a statement already bound to another company: neither new rows nor its posted row can be claimed or reported as done.
   const s2=await upload([['11','Bound shop one',2101],['12','Bound shop two',2102]]),s2Id=String(s2._id);
@@ -136,7 +141,7 @@ async function main(){
   pass('purchase chat shows and freezes the checked company; without one the conversation saves and approves and only posting is refused');
 
   // Totals: every company transaction was posted by an explicit current-member instruction; the legacy row stays unassigned.
-  assert.equal(await transactions.countDocuments({organizationId:A}),8,'navi-posting:explicit-company-posts-only');assert.equal(await transactions.countDocuments({organizationId:B}),1);assert.equal(await transactions.countDocuments({organizationId:{$exists:false}}),1);
+  assert.equal(await transactions.countDocuments({organizationId:A}),7,'navi-posting:explicit-company-posts-only');assert.equal(await transactions.countDocuments({organizationId:B}),1);assert.equal(await transactions.countDocuments({organizationId:{$exists:false}}),1);
   assert.ok(!logs.includes('PRIVATE_FOREIGN_COMPANY_C'));
   console.log(groups+' navi posting groups passed');
  }finally{if(child){child.kill();await child.closed}if(client)await client.close();if(mongo)await mongo.stop();if(directory)await fsp.rm(directory,{recursive:true,force:true})}

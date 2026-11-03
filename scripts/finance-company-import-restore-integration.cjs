@@ -76,10 +76,12 @@ async function main(){
 
    // Denials write nothing (no transaction, supplier or customer); every existing member role can import.
    await denial('/api/transactions/import',{data:[row('2026/03/05','5','DENIED','DENIED_PRODUCT',{'仕入れ先':'DENIED_SUPPLIER'})],mappings,options:{}},'import:denied');
-   for(const p of people.slice(0,4)){const r=await ok('/api/transactions/import',p.companyToken,'POST',{data:[row('2026/03/06','6','ROLE_'+p.role,'ROLE_PRODUCT_'+p.role)],mappings,options:{}});assert.equal(r.data.results.imported,1,'import:legitimate-role');assert.equal(String((await transactions.findOne({productName:'ROLE_PRODUCT_'+p.role})).organizationId),String(A),'import:legitimate-role')}
+   for(const p of people.slice(0,3)){const r=await ok('/api/transactions/import',p.companyToken,'POST',{data:[row('2026/03/06','6','ROLE_'+p.role,'ROLE_PRODUCT_'+p.role)],mappings,options:{}});assert.equal(r.data.results.imported,1,'import:legitimate-role');assert.equal(String((await transactions.findOne({productName:'ROLE_PRODUCT_'+p.role})).organizationId),String(A),'import:legitimate-role')}
+   // A 閲覧のみ member (people[3]) is refused before the handler (plan omf-role-writes-20261101 C2): nothing imported.
+   {const n=await transactions.countDocuments();const r=await api('/api/transactions/import',people[3].companyToken,'POST',{data:[row('2026/03/06','6','ROLE_viewer','ROLE_PRODUCT_viewer')],mappings,options:{}});assert.equal(r.status,403,'import:viewer-refused '+r.raw.slice(0,200));assert.equal(await transactions.countDocuments(),n,'import:viewer-nothing-imported');assert.equal(await transactions.countDocuments({productName:'ROLE_PRODUCT_viewer'}),0,'import:viewer-nothing-imported')}
    const bad=await ok('/api/transactions/import',tokenA,'POST',{data:[row('2026/03/07','not-a-number','BAD','BAD_PRODUCT'),row('2026/13/45','5','BAD_DATE','BAD_DATE_PRODUCT')],mappings,options:{}});assert.equal(bad.data.results.imported,0);assert.equal(bad.data.results.errors.length,2,'import:row-errors');
    assert.equal((await api('/api/transactions/import',tokenA,'POST',{mappings})).status,400,'import:bad-request');assert.equal((await api('/api/transactions/import',tokenA,'GET')).status,405);
-   pass('missing/forged/removed/inactive company imports write nothing at all; all member roles import into the selected company; row and request errors unchanged');
+   pass('missing/forged/removed/inactive company imports write nothing at all; owner, admin and member import into the selected company while a viewer is refused; row and request errors unchanged');
 
    // One original insert carries the company (profiler), parallel imports keep their own company, restart keeps the rows visible.
    await db.command({profile:2,slowms:0});await ok('/api/transactions/import',tokenA,'POST',{data:[row('2026/03/08','8','PROFILED','PROFILED_PRODUCT')],mappings,options:{}});await db.command({profile:0});

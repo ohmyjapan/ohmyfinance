@@ -248,3 +248,69 @@ test('adoptTokens is not overwritten by a pending refresh that resolves 200 afte
   assert.throws(() => h.store.adoptTokens({ accessToken: 'broken', refreshToken: 'broken' }), /Invalid session response/)
   assert.equal(h.store.token, fresh.accessToken)
 })
+
+// One refusal notice (plan omf-role-writes-20261101 fold 4): a 閲覧のみ refusal reaches the optional callback once and stays readable.
+const VIEWER_MESSAGE = '閲覧のみのメンバーは変更できません（閲覧だけができます）。'
+const viewerRefusal = { statusCode: 403, statusMessage: 'Viewer read only', message: VIEWER_MESSAGE, data: { code: 'VIEWER_READ_ONLY', message: VIEWER_MESSAGE } }
+const sessionOwner = () => ({ token: 'current', sessionId: 'one', isAuthenticated: true, async ensureFreshToken() { return true }, async refreshAuthToken() { this.token = 'new'; return 'refreshed' } })
+const write = () => ({ method: 'POST', headers: { Authorization: 'Bearer current' }, body: '{}' })
+
+test('a 閲覧のみ refusal calls the callback once with the server message and the response stays readable', async () => {
+  const { createSessionFetch } = harness().load('utils/session-fetch.ts')
+  const messages = []
+  const wrapped = createSessionFetch(async () => json(viewerRefusal, 403), sessionOwner, 'http://localhost', message => messages.push(message))
+  const response = await wrapped('/api/budgets', write())
+  assert.equal(response.status, 403)
+  assert.deepEqual(messages, [VIEWER_MESSAGE])
+  assert.deepEqual(await response.json(), viewerRefusal)
+})
+
+test('a 閲覧のみ refusal of the request replayed after a renewal calls the callback once', async () => {
+  const { createSessionFetch } = harness().load('utils/session-fetch.ts')
+  const messages = []
+  let calls = 0
+  const wrapped = createSessionFetch(async () => { calls++; return calls === 1 ? json({}, 401) : json(viewerRefusal, 403) }, sessionOwner, 'http://localhost', message => messages.push(message))
+  const response = await wrapped('/api/budgets', write())
+  assert.equal(calls, 2)
+  assert.deepEqual(messages, [VIEWER_MESSAGE])
+  assert.equal((await response.json()).data.code, 'VIEWER_READ_ONLY')
+})
+
+test('every other response leaves the callback silent and its body readable', async () => {
+  const { createSessionFetch } = harness().load('utils/session-fetch.ts')
+  const answers = [
+    () => json({ statusCode: 403, data: { message: '帳簿への登録（仕訳の登録）は経理担当以上のメンバーだけができます。' } }, 403),
+    () => json({ statusCode: 403, message: 'Access denied' }, 403),
+    () => new Response('<html>not json</html>', { status: 403, headers: { 'Content-Type': 'text/html' } }),
+    () => json(viewerRefusal, 200),
+    () => json(viewerRefusal, 500)
+  ]
+  for (const answer of answers) {
+    const messages = [], expected = await answer().text()
+    const wrapped = createSessionFetch(async () => answer(), sessionOwner, 'http://localhost', message => messages.push(message))
+    const response = await wrapped('/api/budgets', write())
+    assert.deepEqual(messages, [])
+    assert.equal(await response.text(), expected)
+  }
+})
+
+test('Navi conversation requests and the Gmail connection show their own message: a refusal never calls the callback', async () => {
+  const { createSessionFetch } = harness().load('utils/session-fetch.ts')
+  const paths = ['/api/finance-chat/company-workspace/read', '/api/finance-chat/company-workspace', '/api/finance-chat/company-workspace/retry', '/api/finance-chat/workspace/read', '/api/finance-chat/workspace/new', '/api/finance-chat/imports/synthetic/drafts/2/read', '/api/finance-chat/imports/synthetic/drafts/2/confirm', '/api/company-mail/gmail']
+  for (const path of paths) {
+    const messages = []
+    const wrapped = createSessionFetch(async () => json(viewerRefusal, 403), sessionOwner, 'http://localhost', message => messages.push(message))
+    const response = await wrapped(path, write())
+    assert.equal(response.status, 403)
+    assert.deepEqual(messages, [], path)
+    assert.equal((await response.json()).data.code, 'VIEWER_READ_ONLY')
+  }
+})
+
+test('a refusal without a callback, and a callback that throws, still return the response', async () => {
+  const { createSessionFetch } = harness().load('utils/session-fetch.ts')
+  const plain = createSessionFetch(async () => json(viewerRefusal, 403), sessionOwner, 'http://localhost')
+  assert.equal((await (await plain('/api/budgets', write())).json()).data.code, 'VIEWER_READ_ONLY')
+  const throwing = createSessionFetch(async () => json(viewerRefusal, 403), sessionOwner, 'http://localhost', () => { throw Error('notice failed') })
+  assert.equal((await (await throwing('/api/budgets', write())).json()).data.code, 'VIEWER_READ_ONLY')
+})

@@ -2,6 +2,7 @@ import { readMerchantLink, saveMerchantLink } from '../../services/financeSuppli
 import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { calendarCompany } from '../../utils/calendarAccess'
+import { requireLedgerRegistrar } from '../../utils/ledgerRegistrarAccess'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
 import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, AUTO_SYNC_PROVIDERS, queueSync, syncSource, claimCapabilities, AMEX_RECENT_CAPABILITY, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
 import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
@@ -182,6 +183,8 @@ export default defineEventHandler(async event => {
       if (parts[2] === 'mapping' && parts.length === 3 && method === 'GET') return await reviewMapping(ownerId, parts[1])
       if (parts[2] === 'company-commit' && parts.length === 3 && method === 'POST') {
         const { organizationId } = await calendarCompany(event)
+        // Plan omf-role-writes-20261101 C5: posting a statement into the company ledger is a 仕訳 registration — owner, admin or 経理担当 only.
+        await requireLedgerRegistrar(ownerId, organizationId)
         return await commitCompanyImport(ownerId, parts[1], await readBody(event), organizationId)
       }
       if (parts[2] === 'commit' && parts.length === 3 && method === 'POST') return await commitImport(ownerId, parts[1], await readBody(event))

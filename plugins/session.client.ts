@@ -8,7 +8,9 @@ import { publicAuthRoute, safeRedirect } from '~/utils/auth-session'
 export default defineNuxtPlugin(nuxtApp => {
   const store = useUserStore(nuxtApp.$pinia as Pinia)
   const router = useRouter()
-  const authenticatedFetch = createSessionFetch(window.fetch.bind(window), () => store, window.location.origin)
+  // The one refusal notice (components/common/ViewerRefusalNotice.vue reads this state): a new object per refusal restarts its timer.
+  const refusal = useState<{ text: string; at: number } | null>('viewer-refusal', () => null)
+  const authenticatedFetch = createSessionFetch(window.fetch.bind(window), () => store, window.location.origin, text => { refusal.value = { text, at: Date.now() } })
   window.fetch = authenticatedFetch
   globalThis.$fetch = createFetch({ fetch: authenticatedFetch, Headers, AbortController }) as unknown as typeof globalThis.$fetch
   store.initAuth()

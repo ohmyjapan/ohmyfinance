@@ -18,6 +18,9 @@
 
     <AssistantPanel />
 
+    <!-- One refusal notice for a 閲覧のみ member's refused write (plan omf-role-writes-20261101) -->
+    <ViewerRefusalNotice />
+
     <!-- Screen Lock Overlay -->
     <ScreenLockOverlay />
   </div>
