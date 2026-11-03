@@ -99,7 +99,8 @@ const uploadFile = async (file) => {
     // Upload the file
     const response = await fetch('/api/upload', {
       method: 'POST',
-      body: formData
+      body: formData,
+      headers: useUserStore().authHeader
     });
 
     clearInterval(progressInterval);

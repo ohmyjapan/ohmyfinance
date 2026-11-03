@@ -1,4 +1,6 @@
 // server/services/shipmentService.ts
+import mongoose from 'mongoose'
+import { createError } from 'h3'
 import Shipment from '../models/Shipment'
 import Transaction from '../models/Transaction'
 import type { IShipment, IShipmentEvent } from '../models/Shipment'
@@ -12,11 +14,11 @@ interface ShipmentFilters {
 }
 
 /**
- * Get all shipments with optional filtering
+ * Get the company's shipments with optional filtering; only the company's own transactions populate
  */
-export async function getShipments(filters: ShipmentFilters = {}) {
+export async function getShipments(filters: ShipmentFilters = {}, organizationId?: mongoose.Types.ObjectId) {
   try {
-    const query: any = {}
+    const query: any = { organizationId }
 
     if (filters.status) {
       query.status = filters.status
@@ -46,7 +48,7 @@ export async function getShipments(filters: ShipmentFilters = {}) {
 
     const shipments = await Shipment.find(query)
       .sort({ createdAt: -1 })
-      .populate('transactionIds')
+      .populate({ path: 'transactionIds', match: { organizationId } })
       .lean()
 
     return shipments
@@ -72,12 +74,18 @@ export async function getShipmentById(id: string) {
 }
 
 /**
- * Create a new shipment
+ * Create a new shipment for the company
  */
-export async function createShipment(data: Partial<IShipment> & { transactionId?: string }) {
+export async function createShipment(data: Partial<IShipment> & { transactionId?: string }, organizationId: mongoose.Types.ObjectId) {
   try {
+    // GUARD (S9): every linked transaction must be the company's before anything is saved; 400 otherwise, nothing written.
+    const linked = [...new Set([...(data.transactionIds || []), ...(data.transactionId ? [data.transactionId] : [])].map(String))]
+    const owned = linked.every(id => mongoose.isValidObjectId(id)) ? await Transaction.countDocuments({ _id: { $in: linked }, organizationId }) : -1
+    if (owned !== linked.length) throw createError({ statusCode: 400, statusMessage: 'Choose existing company transactions' })
+
     const shipmentData: Partial<IShipment> = {
       ...data,
+      organizationId,
       status: data.status || 'pending',
       events: [{
         type: 'created',
@@ -95,10 +103,10 @@ export async function createShipment(data: Partial<IShipment> & { transactionId?
     const shipment = new Shipment(shipmentData)
     await shipment.save()
 
-    // Update linked transactions
+    // Update linked transactions (the company's, checked above; the filter keeps the write inside the company)
     if (shipment.transactionIds && shipment.transactionIds.length > 0) {
       for (const txnId of shipment.transactionIds) {
-        await Transaction.findByIdAndUpdate(txnId, {
+        await Transaction.updateOne({ _id: txnId, organizationId }, {
           shipment: {
             shipmentId: shipment._id,
             trackingNumber: shipment.trackingNumber,
@@ -344,11 +352,12 @@ export async function unlinkTransactions(shipmentId: string, transactionIds: str
 }
 
 /**
- * Get shipment statistics
+ * Get the company's shipment statistics
  */
-export async function getShipmentStats() {
+export async function getShipmentStats(organizationId: mongoose.Types.ObjectId) {
   try {
     const stats = await Shipment.aggregate([
+      { $match: { organizationId } },
       {
         $facet: {
           total: [{ $count: 'count' }],

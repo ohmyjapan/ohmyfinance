@@ -27,5 +27,9 @@ logs
 uploads/*
 !uploads/.gitkeep
 
+# Request-lifetime upload storage and per-company scheduled backups (runtime only, never tracked)
+server/data/
+backups/
+
 # Docker
 mongo_data

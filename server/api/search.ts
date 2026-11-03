@@ -5,15 +5,17 @@ import Transaction from '../models/Transaction'
 import Receipt from '../models/Receipt'
 import RecurringPayment from '../models/RecurringPayment'
 import { requireAuth } from '../middleware/auth'
+import { calendarCompany } from '../utils/calendarAccess'
 
 /**
  * GET /api/search?q=query
- * Global search across all entities
+ * Search across the company's entities
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
   try {
     await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
 
     const query = getQuery(event)
     const searchTerm = String(query.q || '').trim()
@@ -30,6 +32,7 @@ export default defineEventHandler(async (event) => {
     // Search transactions
     if (type === 'all' || type === 'transactions') {
       const transactions = await Transaction.find({
+        organizationId,
         $or: [
           { reference: searchRegex },
           { 'customer.name': searchRegex },
@@ -59,6 +62,7 @@ export default defineEventHandler(async (event) => {
     // Search receipts
     if (type === 'all' || type === 'receipts') {
       const receipts = await Receipt.find({
+        organizationId,
         $or: [
           { filename: searchRegex },
           { originalFilename: searchRegex },
@@ -87,6 +91,7 @@ export default defineEventHandler(async (event) => {
     // Search recurring payments
     if (type === 'all' || type === 'recurring') {
       const recurring = await RecurringPayment.find({
+        organizationId,
         $or: [
           { name: searchRegex },
           { description: searchRegex },
@@ -126,6 +131,7 @@ export default defineEventHandler(async (event) => {
       hasMore: results.length > limit
     }
   } catch (error: any) {
+    if (error.statusCode) throw error
     console.error('Search error:', error)
     throw createError({
       statusCode: 500,

@@ -6,6 +6,8 @@ import { writeFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import iconv from 'iconv-lite';
+import { requireAuth } from '../middleware/auth';
+import { sweepOlderThan } from '../utils/uploadRetention';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -272,7 +274,11 @@ function parseCSV(content) {
 }
 
 export default defineEventHandler(async (event) => {
+    // S17: a login is required; the saved input and the processed output live for this request only.
+    requireAuth(event);
     console.log('[excel-processor] Processing file upload request...');
+    let filePath = null;
+    let processedFilePath = null;
 
     try {
         // Handle form data upload
@@ -326,17 +332,18 @@ export default defineEventHandler(async (event) => {
 
         await fs.mkdir(downloadDir, { recursive: true });
         await fs.mkdir(processedDir, { recursive: true });
+        await sweepOlderThan(downloadDir);
+        await sweepOlderThan(processedDir);
 
         // Save the file
         const timestamp = Date.now();
         const safeFilename = `${timestamp}-${file.filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-        const filePath = path.join(downloadDir, safeFilename);
+        filePath = path.join(downloadDir, safeFilename);
 
         await fs.writeFile(filePath, file.data);
 
         let headers = [];
         let data = [];
-        let processedFilePath = null;
 
         if (fileExt === '.xlsx' || fileExt === '.xls') {
             processedFilePath = await processExcelWithChildProcess(filePath, processedDir);
@@ -364,26 +371,6 @@ export default defineEventHandler(async (event) => {
             await fs.writeFile(processedFilePath, JSON.stringify({ headers, data }, null, 2));
         }
 
-        // Clean up the original uploaded file after processing
-        try {
-            await fs.unlink(filePath);
-        } catch (e) {
-            console.warn('[excel-processor] Failed to clean up uploaded file:', filePath, e.message);
-        }
-
-        // Schedule cleanup of processed JSON file after 24 hours
-        if (processedFilePath) {
-            const cleanupPath = processedFilePath;
-            setTimeout(async () => {
-                try {
-                    await fs.unlink(cleanupPath);
-                    console.log('[excel-processor] Cleaned up processed file:', cleanupPath);
-                } catch (e) {
-                    // File may already be deleted — ignore
-                }
-            }, 24 * 60 * 60 * 1000);
-        }
-
         console.log('[excel-processor] Success! Headers:', headers.length, 'Data rows:', data.length);
 
         return {
@@ -402,5 +389,8 @@ export default defineEventHandler(async (event) => {
             statusCode: error.statusCode || 500,
             statusMessage: error.statusMessage || error.message || 'Failed to process file'
         });
+    } finally {
+        // Request-lifetime storage: the input and the processed output leave the disk once the response is composed.
+        for (const target of [filePath, processedFilePath]) if (target) await fs.unlink(target).catch(() => {});
     }
 });

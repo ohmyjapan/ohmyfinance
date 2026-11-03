@@ -36,6 +36,8 @@ export interface IUser extends Document<mongoose.Types.ObjectId> {
     userAgent: string
     expiresAt: Date
   }>
+  // S16: the password generation; every token carries it as `sv`, a renewal with an older value is refused
+  sessionVersion?: number
   createdAt: Date
   updatedAt: Date
 
@@ -93,7 +95,9 @@ const UserSchema = new Schema<IUser>({
     deviceId: { type: String, required: true },
     userAgent: { type: String },
     expiresAt: { type: Date, required: true }
-  }]
+  }],
+  // S16: incremented by a password change; users without the field renew as version 0
+  sessionVersion: { type: Number, default: 0 }
 }, {
   timestamps: true
 })

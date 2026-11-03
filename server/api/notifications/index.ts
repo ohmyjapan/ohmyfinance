@@ -4,15 +4,17 @@ import { ensureConnection } from '../../config/database'
 import RecurringPayment from '../../models/RecurringPayment'
 import Receipt from '../../models/Receipt'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * GET /api/notifications
- * Get pending notifications for the user
+ * Get pending notifications for the user's selected company
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
   try {
     await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
 
     const query = getQuery(event)
     const days = parseInt(String(query.days || '7'))
@@ -24,6 +26,7 @@ export default defineEventHandler(async (event) => {
 
     // Check for upcoming recurring payments
     const upcomingPayments = await RecurringPayment.find({
+      organizationId,
       status: 'active',
       nextDueDate: { $gte: now, $lte: futureDate }
     })
@@ -52,6 +55,7 @@ export default defineEventHandler(async (event) => {
 
     // Check for overdue payments
     const overduePayments = await RecurringPayment.find({
+      organizationId,
       status: 'active',
       nextDueDate: { $lt: now }
     })
@@ -83,6 +87,7 @@ export default defineEventHandler(async (event) => {
     oldUnmatchedDate.setDate(oldUnmatchedDate.getDate() - 7)
 
     const unmatchedReceipts = await Receipt.countDocuments({
+      organizationId,
       status: 'unmatched',
       uploadDate: { $lt: oldUnmatchedDate }
     })
@@ -115,6 +120,7 @@ export default defineEventHandler(async (event) => {
       unreadCount: notifications.length // In a real app, track read status
     }
   } catch (error: any) {
+    if (error.statusCode) throw error
     console.error('Notifications error:', error)
     throw createError({
       statusCode: 500,

@@ -3,6 +3,7 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import AccountCategory from '../../models/AccountCategory'
 import { ensureConnection } from '../../config/database'
 import { requireAuth } from '../../middleware/auth'
+import { rejectSharedMasterWrite } from '../../utils/sharedMasterAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -31,8 +32,9 @@ export default defineEventHandler(async (event) => {
     return category
   }
 
-  // PUT - Update account category
+  // PUT - refused for every session (shared master, S15): the operator edits with scripts/manage-masters.ts
   if (method === 'PUT') {
+    rejectSharedMasterWrite(event)
     const body = await readBody(event)
 
     const category = await AccountCategory.findByIdAndUpdate(
@@ -60,8 +62,9 @@ export default defineEventHandler(async (event) => {
     return category
   }
 
-  // DELETE - Delete account category
+  // DELETE - refused for every session (shared master, S15)
   if (method === 'DELETE') {
+    rejectSharedMasterWrite(event)
     const category = await AccountCategory.findByIdAndDelete(id)
     if (!category) {
       throw createError({

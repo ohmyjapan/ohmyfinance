@@ -307,7 +307,8 @@ const processFiles = async (files: File[]) => {
 
       const res = await fetch('/api/excel-processor', {
         method: 'POST',
-        body: formData
+        body: formData,
+        headers: useUserStore().authHeader
       }).then(r => r.json())
 
       const idx = selectedFiles.value.findIndex(f => f.name === file.name)

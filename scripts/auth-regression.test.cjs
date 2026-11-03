@@ -212,3 +212,39 @@ test('changing sessions while renewal is pending cannot replay an earlier write'
   assert.equal((await wrapped('/api/payments', { method: 'POST', headers: { Authorization: 'Bearer old' }, body: '{}' })).status, 401)
   assert.equal(calls, 1)
 })
+
+// S16 (plan omf-security-fixes-20261102): a password change answers with tokens minted after the version bump; the store adopts
+// them on this device, and a renewal already in flight can neither sign the device out (late 401) nor overwrite them (late 200).
+test('adoptTokens keeps the session when a pending refresh resolves 401 afterwards', async () => {
+  const h = harness(); h.login(); let resolve
+  h.handle(() => new Promise(r => { resolve = r }))
+  const pending = h.store.refreshAuthToken()
+  h.advance(5000)
+  const fresh = h.tokens()
+  h.store.adoptTokens(fresh)
+  resolve(json({}, 401))
+  assert.equal(await pending, 'unavailable')
+  assert.equal(h.store.isAuthenticated, true)
+  assert.equal(h.store.token, fresh.accessToken)
+  assert.equal(h.store.refreshToken, fresh.refreshToken)
+  assert.equal(JSON.parse(h.saved.get('auth_tokens')).accessToken, fresh.accessToken)
+  assert.equal(JSON.parse(h.saved.get('ohmyfinance_session')).tokens.accessToken, fresh.accessToken)
+  assert.equal(h.timers.size, 1)
+})
+
+test('adoptTokens is not overwritten by a pending refresh that resolves 200 afterwards', async () => {
+  const h = harness(); h.login(); let resolve
+  h.handle(() => new Promise(r => { resolve = r }))
+  const pending = h.store.refreshAuthToken()
+  h.advance(5000)
+  const fresh = h.tokens()
+  h.store.adoptTokens(fresh)
+  h.advance(5000)
+  resolve(json({ tokens: h.tokens() }))
+  assert.equal(await pending, 'unavailable')
+  assert.equal(h.store.token, fresh.accessToken)
+  assert.equal(h.store.refreshToken, fresh.refreshToken)
+  assert.equal(h.store.user.id, 'test-user')
+  assert.throws(() => h.store.adoptTokens({ accessToken: 'broken', refreshToken: 'broken' }), /Invalid session response/)
+  assert.equal(h.store.token, fresh.accessToken)
+})

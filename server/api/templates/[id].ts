@@ -3,9 +3,10 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { MappingTemplate } from '../../models/MappingTemplate'
 import { requireAuth } from '../../middleware/auth'
+import { rejectSharedMasterWrite } from '../../utils/sharedMasterAccess'
 
 /**
- * GET/PUT/DELETE /api/templates/:id
+ * GET/PUT/DELETE /api/templates/:id — PUT/PATCH/DELETE refused for every session (shared master, S15)
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -31,6 +32,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'PUT' || method === 'PATCH') {
+    rejectSharedMasterWrite(event)
     try {
       const body = await readBody(event)
       const { _id, createdAt, ...updateData } = body
@@ -47,6 +49,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'DELETE') {
+    rejectSharedMasterWrite(event)
     const template = await MappingTemplate.findByIdAndDelete(id).lean()
     if (!template) {
       throw createError({ statusCode: 404, statusMessage: 'Template not found' })

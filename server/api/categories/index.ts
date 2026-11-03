@@ -3,10 +3,11 @@ import { defineEventHandler, getQuery, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Category from '../../models/Category'
 import { requireAuth } from '../../middleware/auth'
+import { rejectSharedMasterWrite } from '../../utils/sharedMasterAccess'
 
 /**
  * GET /api/categories - List all categories
- * POST /api/categories - Create new category
+ * POST /api/categories - refused for every session (shared master, S15): the operator adds with scripts/manage-masters.ts
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -33,6 +34,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'POST') {
+    rejectSharedMasterWrite(event)
     try {
       const body = await readBody(event)
 

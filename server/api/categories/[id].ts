@@ -3,9 +3,10 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Category from '../../models/Category'
 import { requireAuth } from '../../middleware/auth'
+import { rejectSharedMasterWrite } from '../../utils/sharedMasterAccess'
 
 /**
- * GET/PUT/DELETE /api/categories/:id
+ * GET/PUT/DELETE /api/categories/:id — PUT/PATCH/DELETE refused for every session (shared master, S15)
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -26,6 +27,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'PUT' || method === 'PATCH') {
+    rejectSharedMasterWrite(event)
     try {
       const body = await readBody(event)
       const { _id, createdAt, ...updateData } = body
@@ -42,6 +44,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'DELETE') {
+    rejectSharedMasterWrite(event)
     const category = await Category.findByIdAndDelete(id).lean()
     if (!category) {
       throw createError({ statusCode: 404, statusMessage: 'Category not found' })

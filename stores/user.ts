@@ -203,6 +203,27 @@ export const useUserStore = defineStore('user', {
             this.scheduleRefresh()
         },
 
+        // S16: a password change answers with tokens minted after the version bump. This device adopts them without touching the
+        // user or company; the epoch bump makes a renewal already in flight inert when it lands (its 401 cannot sign the device out,
+        // its 200 cannot overwrite the adopted tokens).
+        adoptTokens(tokens: SessionTokens) {
+            const access = tokenClaims(tokens?.accessToken)
+            const refresh = tokenClaims(tokens?.refreshToken)
+            if (!accessExpiry(tokens?.accessToken) || accessExpiry(tokens.accessToken) <= Date.now() || !validRefresh(tokens?.refreshToken) || access?.userId !== refresh?.userId) {
+                throw new Error('Invalid session response')
+            }
+            const rt = runtime(this)
+            rt.epoch++
+            rt.refresh = null
+            if (rt.timer) clearTimeout(rt.timer)
+            rt.timer = null
+            this.token = tokens.accessToken
+            this.refreshToken = tokens.refreshToken
+            this.sessionUnavailable = false
+            this.persistSession()
+            this.scheduleRefresh()
+        },
+
         async login(email: string, password: string, rememberMe = false) {
             this.isLoading = true
             this.error = null

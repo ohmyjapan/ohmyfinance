@@ -3,6 +3,7 @@ import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import { MappingTemplate } from '../../models/MappingTemplate'
 import { requireAuth } from '../../middleware/auth'
+import { rejectSharedMasterWrite } from '../../utils/sharedMasterAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -30,8 +31,9 @@ export default defineEventHandler(async (event) => {
     return templates
   }
 
-  // POST - Create new template
+  // POST - refused for every session (shared master, S15): the operator adds with scripts/manage-masters.ts
   if (method === 'POST') {
+    rejectSharedMasterWrite(event)
     const body = await readBody(event)
 
     if (!body.name || !body.mappings) {

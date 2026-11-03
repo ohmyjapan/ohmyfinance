@@ -2,22 +2,27 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Webhook from '../../models/Webhook'
-import { testWebhook } from '../../services/webhookService'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
+import { requireCompanyAdmin } from '../../utils/companyRoleAccess'
+
+// S14: the secret is masked and the custom headers (which may carry credentials) are omitted from every response.
+const publicWebhook = (w: any) => {
+  const { headers, secret, ...rest } = w
+  return { ...rest, id: w._id, secret: secret ? '••••••••' : undefined }
+}
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
   await ensureConnection()
+  const { auth, organizationId } = await calendarCompany(event)
+  await requireCompanyAdmin(auth.userId, organizationId)
   const method = event.method
 
   if (method === 'GET') {
-    const webhooks = await Webhook.find({}).sort({ createdAt: -1 }).lean()
+    const webhooks = await Webhook.find({ organizationId }).sort({ createdAt: -1 }).lean()
     return {
-      webhooks: webhooks.map((w: any) => ({
-        ...w,
-        id: w._id,
-        secret: w.secret ? '••••••••' : undefined
-      }))
+      webhooks: webhooks.map((w: any) => publicWebhook(w))
     }
   }
 

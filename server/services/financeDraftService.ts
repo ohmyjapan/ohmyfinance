@@ -30,6 +30,7 @@ import { assessPurchaseAccounting } from '../../shared/finance-accounting-assess
 import { documentDisplayReading, documentSuggestions } from '../../shared/finance-document-evidence.mjs'
 import { sourceCategoryChoices, draftReadiness } from '../../shared/finance-preparation.mjs'
 import { fields, learnedFields, emptyValues, normalizeMerchant, sameValue, isEmpty, validateValues, missingFields, transactionValues } from '../../shared/finance-draft.mjs'
+import { sharedMasterReadOnlyError } from '../utils/sharedMasterAccess'
 
 const Customer = CustomerModel as mongoose.Model<any>
 const Supplier = SupplierModel as mongoose.Model<any>
@@ -53,8 +54,9 @@ export async function draftReferences(ownerId: string) {
   return { customers, suppliers, accountCategories, transactionCategories, taxCategories, sources }
 }
 const scopedDraftReferenceFields = ['customerId', 'supplierId']
-// A created customer or supplier belongs to the token's selected company (the posting company); the match is within it. A created tax
-// category is shared: stored without a company and matched by name and rate across every company.
+// A created customer or supplier belongs to the token's selected company (the posting company); the match is within it. An account,
+// sub-account, transaction or tax category is a shared master: an existing one resolves by name (and rate), a new one is never created
+// from the app (S19, owner ruling 2026-11-02) — the operator adds it with scripts/manage-masters.ts.
 export async function createDraftReference(ownerId: string, importId: string, body: any, organizationId: mongoose.Types.ObjectId) {
   await ownedImport(ownerId, importId)
   if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 100 || /[\x00-\x1f]/.test(body.name)) fail(400, '名称を入力してください（100文字以内）。')
@@ -80,6 +82,7 @@ export async function createDraftReference(ownerId: string, importId: string, bo
   if (body.field === 'taxCategoryId') match.rate = data.rate
   const existing: any = await model.findOne(match).lean()
   if (existing?.isActive === false) fail(409, '同名の無効な項目があります。設定から確認してください。')
+  if (!existing && !scoped) throw sharedMasterReadOnlyError()
   const record: any = existing || await model.create(data)
   return { id: record._id.toString(), references: await draftReferences(ownerId) }
 }
@@ -220,17 +223,13 @@ export async function prepareSourceCategories(ownerId: string, importId: string,
   if (selected.some((c: any) => c.matches > 1)) fail(409, '同名の区分が複数あります。区分設定を確認してください。')
   const categories = []
   for (const choice of selected) {
-    // A stable identifier makes concurrent retries idempotent without changing
-    // the legacy shared category collection or rewriting existing records.
+    // An existing shared 区分 of the same name resolves; a missing one is never created from the app (S19, owner ruling 2026-11-02):
+    // the operator adds it with scripts/manage-masters.ts, then this preparation matches it.
     const current: any[] = await TransactionCategory.find({}).select('name').lean()
     const matches = current.filter(r => normalizeMerchant(r.name) === normalizeMerchant(choice.name))
     if (matches.length > 1) fail(409, '同名の区分が複数あります。区分設定を確認してください。')
-    if (matches.length) { categories.push({ name: matches[0].name, id: matches[0]._id.toString(), created: false }); continue }
-    const categoryId = new mongoose.Types.ObjectId(digest('omf-source-category:' + normalizeMerchant(choice.name)).slice(0, 24)), at = new Date()
-    const result = await TransactionCategory.updateOne({ _id: categoryId }, { $setOnInsert: { name: choice.name, description: '元シートの区分名を登録', createdAt: at, updatedAt: at } }, { upsert: true, runValidators: true, timestamps: false })
-    const record: any = await TransactionCategory.findById(categoryId).lean()
-    if (!record || normalizeMerchant(record.name) !== normalizeMerchant(choice.name)) fail(409, '区分の登録内容を確認してください。')
-    categories.push({ name: record.name, id: categoryId.toString(), created: !!result.upsertedCount })
+    if (!matches.length) throw sharedMasterReadOnlyError()
+    categories.push({ name: matches[0].name, id: matches[0]._id.toString(), created: false })
   }
   return { categories }
 }

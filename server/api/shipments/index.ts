@@ -1,10 +1,14 @@
 // server/api/shipments/index.ts
-import { defineEventHandler, getQuery, readBody, getMethod } from 'h3'
+import { defineEventHandler, getQuery, readBody, getMethod, createError } from 'h3'
+import { ensureConnection } from '../../config/database'
 import { getShipments, createShipment, getShipmentStats } from '../../services/shipmentService'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
+  await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
   const method = getMethod(event)
 
   if (method === 'GET') {
@@ -12,7 +16,7 @@ export default defineEventHandler(async (event) => {
 
     // Check if stats are requested
     if (query.stats === 'true') {
-      const stats = await getShipmentStats()
+      const stats = await getShipmentStats(organizationId)
       return { stats }
     }
 
@@ -31,7 +35,7 @@ export default defineEventHandler(async (event) => {
       }
     })
 
-    const shipments = await getShipments(filters)
+    const shipments = await getShipments(filters, organizationId)
 
     return {
       shipments,
@@ -56,7 +60,7 @@ export default defineEventHandler(async (event) => {
       notes: body.notes,
       transactionId: body.transactionId,
       transactionIds: body.transactionIds
-    })
+    }, organizationId)
 
     return shipment
   }

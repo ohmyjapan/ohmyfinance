@@ -3,6 +3,7 @@ import { defineEventHandler, readBody, getQuery, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 interface DuplicateGroup {
   key: string
@@ -14,6 +15,7 @@ interface DuplicateGroup {
 export default defineEventHandler(async (event) => {
   requireAuth(event)
   await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
   const method = event.method
 
   if (method === 'GET') {
@@ -21,8 +23,8 @@ export default defineEventHandler(async (event) => {
     const { threshold = '80' } = query
     const confidenceThreshold = parseInt(threshold as string)
 
-    // Get all transactions
-    const transactions = await Transaction.find({}).sort({ date: -1 }).lean()
+    // Get the company's transactions
+    const transactions = await Transaction.find({ organizationId }).sort({ date: -1 }).lean()
 
     const duplicateGroups: DuplicateGroup[] = []
     const processed = new Set<string>()
@@ -80,14 +82,14 @@ export default defineEventHandler(async (event) => {
         throw createError({ statusCode: 400, statusMessage: 'keepId and deleteIds required' })
       }
 
-      // Get the transaction to keep
-      const keepTx = await Transaction.findById(keepId)
+      // Get the transaction to keep (the company's)
+      const keepTx = await Transaction.findOne({ _id: keepId, organizationId })
       if (!keepTx) {
         throw createError({ statusCode: 404, statusMessage: 'Transaction to keep not found' })
       }
 
-      // Merge metadata from duplicates
-      const duplicates = await Transaction.find({ _id: { $in: deleteIds } })
+      // Merge metadata from the company's duplicates only; a foreign candidate is neither read nor deleted
+      const duplicates = await Transaction.find({ _id: { $in: deleteIds }, organizationId })
 
       for (const dup of duplicates) {
         // Merge tags
@@ -108,14 +110,14 @@ export default defineEventHandler(async (event) => {
 
       await keepTx.save()
 
-      // Delete duplicates
-      await Transaction.deleteMany({ _id: { $in: deleteIds } })
+      // Delete duplicates; the counts come from what was really merged and deleted
+      const merged = await Transaction.deleteMany({ _id: { $in: deleteIds }, organizationId })
 
       return {
         success: true,
-        message: `Merged ${deleteIds.length} duplicates into transaction ${(keepTx as typeof keepTx & { reference?: unknown }).reference}`,
+        message: `Merged ${duplicates.length} duplicates into transaction ${(keepTx as typeof keepTx & { reference?: unknown }).reference}`,
         kept: keepId,
-        deleted: deleteIds.length
+        deleted: merged.deletedCount
       }
     }
 
@@ -124,12 +126,12 @@ export default defineEventHandler(async (event) => {
         throw createError({ statusCode: 400, statusMessage: 'deleteIds required' })
       }
 
-      await Transaction.deleteMany({ _id: { $in: deleteIds } })
+      const removed = await Transaction.deleteMany({ _id: { $in: deleteIds }, organizationId })
 
       return {
         success: true,
-        message: `Deleted ${deleteIds.length} duplicate transactions`,
-        deleted: deleteIds.length
+        message: `Deleted ${removed.deletedCount} duplicate transactions`,
+        deleted: removed.deletedCount
       }
     }
 
@@ -140,17 +142,20 @@ export default defineEventHandler(async (event) => {
         throw createError({ statusCode: 400, statusMessage: 'transactionIds required' })
       }
 
+      let updated = 0
       for (const id of transactionIds) {
-        await Transaction.findByIdAndUpdate(id, {
+        const r = await Transaction.updateOne({ _id: id, organizationId }, {
           $addToSet: {
             'metadata.ignoredDuplicates': { $each: transactionIds.filter((tid: string) => tid !== id) }
           }
         })
+        updated += r.matchedCount
       }
 
       return {
         success: true,
-        message: 'Transactions marked as not duplicates'
+        message: 'Transactions marked as not duplicates',
+        updated
       }
     }
 

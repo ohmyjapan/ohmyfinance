@@ -1,12 +1,15 @@
 // server/api/auth/logout.ts
 import { defineEventHandler, createError, getHeader, readBody } from 'h3'
-import { revokeToken } from '../../services/authService'
+import { ensureConnection } from '../../config/database'
+import { revokeToken, revokeRefreshToken } from '../../services/authService'
 import { logAudit } from '../../utils/audit'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'POST') {
     throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
   }
+
+  await ensureConnection()
 
   // Get the access token from header
   const authHeader = getHeader(event, 'authorization')
@@ -16,7 +19,7 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event).catch(() => ({}))
   const refreshToken = body?.refreshToken
 
-  // Revoke tokens
+  // Revoke tokens: the access token for this process, the refresh token for good (S16, signature verified, persisted)
   let revokedAccess = false
   let revokedRefresh = false
 
@@ -25,7 +28,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (refreshToken) {
-    revokedRefresh = revokeToken(refreshToken)
+    revokedRefresh = await revokeRefreshToken(refreshToken)
   }
 
   // Log logout

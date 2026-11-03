@@ -3,10 +3,11 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 /**
  * POST /api/transactions/bulk
- * Perform bulk operations on transactions
+ * Perform bulk operations on the company's transactions
  */
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -16,6 +17,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
 
     const body = await readBody(event)
     const { action, ids, data } = body
@@ -38,7 +40,7 @@ export default defineEventHandler(async (event) => {
 
     switch (action) {
       case 'delete':
-        const deleteResult = await Transaction.deleteMany({ _id: { $in: ids } })
+        const deleteResult = await Transaction.deleteMany({ _id: { $in: ids }, organizationId })
         results.succeeded = deleteResult.deletedCount
         results.failed = ids.length - deleteResult.deletedCount
         break
@@ -53,7 +55,7 @@ export default defineEventHandler(async (event) => {
         }
 
         const statusResult = await Transaction.updateMany(
-          { _id: { $in: ids } },
+          { _id: { $in: ids }, organizationId },
           {
             $set: { status: data.status },
             $push: {
@@ -75,7 +77,7 @@ export default defineEventHandler(async (event) => {
           throw createError({ statusCode: 400, statusMessage: 'Tag is required for add_tag action' })
         }
         const tagResult = await Transaction.updateMany(
-          { _id: { $in: ids } },
+          { _id: { $in: ids }, organizationId },
           { $addToSet: { tags: data.tag } }
         )
         results.succeeded = tagResult.modifiedCount
@@ -87,7 +89,7 @@ export default defineEventHandler(async (event) => {
           throw createError({ statusCode: 400, statusMessage: 'Tag is required for remove_tag action' })
         }
         const removeTagResult = await Transaction.updateMany(
-          { _id: { $in: ids } },
+          { _id: { $in: ids }, organizationId },
           { $pull: { tags: data.tag } }
         )
         results.succeeded = removeTagResult.modifiedCount
@@ -99,7 +101,7 @@ export default defineEventHandler(async (event) => {
           throw createError({ statusCode: 400, statusMessage: 'Source is required for update_source action' })
         }
         const sourceResult = await Transaction.updateMany(
-          { _id: { $in: ids } },
+          { _id: { $in: ids }, organizationId },
           { $set: { source: data.source } }
         )
         results.succeeded = sourceResult.modifiedCount
@@ -110,17 +112,18 @@ export default defineEventHandler(async (event) => {
         if (!data?.note) {
           throw createError({ statusCode: 400, statusMessage: 'Note is required for add_note action' })
         }
-        // For notes, we need to update each individually to append
+        // For notes, we need to update each individually to append; a row outside the company matches nothing and counts as failed.
         for (const id of ids) {
           try {
-            await Transaction.findByIdAndUpdate(id, {
+            const r = await Transaction.updateOne({ _id: id, organizationId }, {
               $set: {
                 notes: data.appendNote
                   ? { $concat: ['$notes', '\n', data.note] }
                   : data.note
               }
             })
-            results.succeeded++
+            if (r.matchedCount) results.succeeded++
+            else results.failed++
           } catch {
             results.failed++
           }
@@ -128,8 +131,8 @@ export default defineEventHandler(async (event) => {
         break
 
       case 'export':
-        // Return the transactions for export
-        const transactions = await Transaction.find({ _id: { $in: ids } }).lean()
+        // Return the company's transactions for export
+        const transactions = await Transaction.find({ _id: { $in: ids }, organizationId }).lean()
         return {
           success: true,
           action: 'export',

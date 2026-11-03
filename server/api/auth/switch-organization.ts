@@ -20,7 +20,7 @@ export default defineEventHandler(async (event) => {
   try {
     await ensureConnection()
 
-    const tokens = await switchOrganization(auth.userId, organizationId)
+    const tokens = await switchOrganization(auth.userId, organizationId, { sv: auth.sv })
 
     if (!tokens) {
       throw createError({ statusCode: 403, statusMessage: 'Not a member of this organization' })
@@ -31,6 +31,8 @@ export default defineEventHandler(async (event) => {
       tokens
     }
   } catch (error: any) {
+    // S16: a stale session answers 401 (and the 403 above keeps its code) instead of a 500
+    if (error.statusCode) throw createError({ statusCode: error.statusCode, statusMessage: error.statusMessage || error.message })
     throw createError({ statusCode: 500, statusMessage: error.message })
   }
 })

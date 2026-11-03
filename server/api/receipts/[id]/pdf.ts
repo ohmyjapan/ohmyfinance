@@ -3,6 +3,8 @@ import { defineEventHandler, setHeader, createError } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import Transaction from '../../../models/Transaction'
 import { requireAuth } from '../../../middleware/auth'
+import { calendarCompany } from '../../../utils/calendarAccess'
+import { isValidObjectId } from 'mongoose'
 
 /**
  * GET /api/receipts/:id/pdf
@@ -18,14 +20,15 @@ export default defineEventHandler(async (event) => {
   requireAuth(event)
   const id = event.context.params?.id
 
-  if (!id) {
+  if (!id || !isValidObjectId(id)) {
     throw createError({ statusCode: 400, statusMessage: 'Transaction ID required' })
   }
 
   try {
     await ensureConnection()
+    const { organizationId } = await calendarCompany(event)
 
-    const transaction = await Transaction.findById(id).lean()
+    const transaction = await Transaction.findOne({ _id: id, organizationId }).lean()
     if (!transaction) {
       throw createError({ statusCode: 404, statusMessage: 'Transaction not found' })
     }

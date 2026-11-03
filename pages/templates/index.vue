@@ -171,9 +171,9 @@ const setDefault = async (template: any) => {
     })
 
     await loadTemplates()
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to set default:', error)
-    alert('Failed to set default template')
+    alert(error?.data?.data?.message || 'Failed to set default template')
   }
 }
 
@@ -183,9 +183,9 @@ const deleteTemplate = async (template: any) => {
   try {
     await $fetch(`/api/templates/${template.id}`, { method: 'DELETE', headers: userStore.authHeader })
     await loadTemplates()
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to delete:', error)
-    alert('Failed to delete template')
+    alert(error?.data?.data?.message || 'Failed to delete template')
   }
 }
 

@@ -6,14 +6,24 @@ import { unlink } from 'fs/promises'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads', 'attachments')
+// GUARD (S2): the only name shape server/api/attachments/upload.ts writes — <organizationId>-<timestamp>-<random>.<ext>: no path
+// separator, no percent, no backslash, one segment. A reference planted on a transaction or restored from a backup confers nothing;
+// the 24-hex prefix must be the token's company, checked before any filesystem access.
+const ATTACHMENT_NAME = /^[0-9a-f]{24}-[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
-  const filename = event.context.params?.id
-  if (!filename) {
-    throw createError({ statusCode: 400, statusMessage: 'Filename required' })
+  await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
+  const filename = String(event.context.params?.id || '')
+  if (!ATTACHMENT_NAME.test(filename)) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid attachment name' })
+  }
+  if (filename.slice(0, 24) !== String(organizationId)) {
+    throw createError({ statusCode: 404, statusMessage: 'File not found' })
   }
 
   const filepath = join(UPLOAD_DIR, filename)
@@ -43,11 +53,9 @@ export default defineEventHandler(async (event) => {
   }
 
   if (event.method === 'DELETE') {
-    await ensureConnection()
-
-    // Remove from any transactions that reference this file
+    // Remove the reference from this company's transactions only; another company's reference to the same name stays.
     await Transaction.updateMany(
-      { 'attachments.filename': filename },
+      { organizationId, 'attachments.filename': filename },
       { $pull: { attachments: { filename } } }
     )
 

@@ -1290,8 +1290,9 @@ const saveSubAccount = async () => {
     subAccountSearch.value = result.name
 
     showSubAccountModal.value = false
-  } catch (e) {
+  } catch (e: any) {
     console.error('Failed to save sub-account:', e)
+    alert(e?.data?.data?.message || e?.data?.statusMessage || 'Failed to save sub-account')
   }
 }
 

@@ -20,7 +20,7 @@ export default defineEventHandler(async (event) => {
 
     const header = getHeader(event, 'authorization')
     const auth = header?.startsWith('Bearer ') ? verifyAccessToken(header.slice(7)) : null
-    const result = await acceptInvite(inviteToken, { name, password }, auth?.userId)
+    const result = await acceptInvite(inviteToken, { name, password }, auth?.userId, auth?.sv)
 
     return {
       success: true,

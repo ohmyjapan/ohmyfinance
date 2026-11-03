@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import User from '../models/User'
 import Organization from '../models/Organization'
 import { INVITABLE_ROLES, type InviteRole } from '../models/Invite'
+import RevokedToken from '../models/RevokedToken'
 import { addToBlacklist, isBlacklisted } from './tokenBlacklistService'
 import { logAudit } from '../utils/audit'
 import { hashDeviceId } from './twoFactorService'
@@ -31,7 +32,12 @@ export interface TokenPayload {
   role?: string
   jti?: string // JWT ID for revocation
   type?: 'access' | 'refresh' | '2fa_pending' | 'invite'
+  sv?: number // S16: the user's session version (password generation) when the token was minted; absent = 0
 }
+
+// S16 (GUARD): a credential minted before the user's current session version renews nothing. Tokens without the claim and users
+// without the field (before this deploy) compare as 0 = 0 and keep working.
+const staleSession = (payload: { sv?: number }, user: { sessionVersion?: number }) => (payload.sv ?? 0) !== (user.sessionVersion ?? 0)
 
 export interface AuthTokens {
   accessToken: string
@@ -123,7 +129,8 @@ export async function registerUser(data: {
     userId: user._id.toString(),
     email: user.email,
     organizationId: organization?._id?.toString(),
-    role: organization ? 'owner' : undefined
+    role: organization ? 'owner' : undefined,
+    sv: user.sessionVersion ?? 0
   })
 
   return {
@@ -227,13 +234,14 @@ export async function loginUser(email: string, password: string, deviceId?: stri
     device.deviceId === deviceHash && device.expiresAt > new Date()
   )
   if (user.twoFactorEnabled && user.twoFactorSecret && !trustedDevice) {
-    // Generate temporary token for 2FA verification
+    // Generate temporary token for 2FA verification (it carries the session version a password change would invalidate)
     const tempToken = jwt.sign(
       {
         userId: user._id.toString(),
         email: user.email,
         type: '2fa_pending',
-        jti: uuidv4()
+        jti: uuidv4(),
+        sv: user.sessionVersion ?? 0
       },
       JWT_SECRET,
       { expiresIn: '5m' } // 5 minutes to complete 2FA
@@ -261,11 +269,13 @@ export async function loginUser(email: string, password: string, deviceId?: stri
   )?.role || 'member'
 
   // Generate tokens
+  const sessionVersion = user.sessionVersion ?? 0
   const tokens = await generateTokens({
     userId: user._id.toString(),
     email: user.email,
     organizationId: defaultOrg?._id.toString(),
-    role: userRole
+    role: userRole,
+    sv: sessionVersion
   })
 
   // Log successful login
@@ -293,8 +303,11 @@ export async function refreshTokens(refreshToken: string): Promise<AuthTokens | 
     return null
   }
 
-  // Check if token is blacklisted
+  // Check if token is blacklisted (this process) or revoked by a logout before a restart (persisted)
   if (payload.jti && isBlacklisted(payload.jti)) {
+    return null
+  }
+  if (await RevokedToken.exists({ jti: payload.jti })) {
     return null
   }
 
@@ -304,12 +317,34 @@ export async function refreshTokens(refreshToken: string): Promise<AuthTokens | 
     return null
   }
 
+  // S16: a refresh token minted before the password change renews nothing
+  if (staleSession(payload, user)) {
+    return null
+  }
+
+  const renewedSessionVersion = user.sessionVersion ?? 0
   return generateTokens({
     userId: payload.userId,
     email: payload.email,
     organizationId: payload.organizationId,
-    role: payload.role
+    role: payload.role,
+    sv: renewedSessionVersion
   })
+}
+
+/**
+ * Revoke a refresh token for good (S16): the signature and expiry are verified first, so a forged token persists nothing; the jti goes
+ * to this process's blacklist and to revokedtokens, which the renewal checks after a restart.
+ */
+export async function revokeRefreshToken(token: string): Promise<boolean> {
+  const revoked = verifyToken(token) as (TokenPayload & { exp?: number }) | null
+  if (!revoked || revoked.type !== 'refresh' || !revoked.jti || !revoked.exp) {
+    return false
+  }
+  const expiresAt = new Date(revoked.exp * 1000)
+  addToBlacklist(revoked.jti, expiresAt)
+  await RevokedToken.updateOne({ jti: revoked.jti }, { $setOnInsert: { jti: revoked.jti, expiresAt } }, { upsert: true })
+  return true
 }
 
 /**
@@ -347,6 +382,11 @@ export async function completeLoginAfter2FA(tempToken: string): Promise<{
     throw new Error('User not found or inactive')
   }
 
+  // S16: a challenge issued before the password change completes nothing
+  if (staleSession(payload, user)) {
+    throw Object.assign(new Error('Invalid or expired 2FA token'), { statusCode: 401 })
+  }
+
   // Get user's organizations
   const organizations = await Organization.find({
     'members.userId': user._id,
@@ -360,11 +400,13 @@ export async function completeLoginAfter2FA(tempToken: string): Promise<{
   )?.role || 'member'
 
   // Generate tokens
+  const verifiedSessionVersion = user.sessionVersion ?? 0
   const tokens = await generateTokens({
     userId: user._id.toString(),
     email: user.email,
     organizationId: defaultOrg?._id.toString(),
-    role: userRole
+    role: userRole,
+    sv: verifiedSessionVersion
   })
 
   // Log successful login
@@ -387,7 +429,7 @@ export async function completeLoginAfter2FA(tempToken: string): Promise<{
   }
 }
 
-export async function switchOrganization(userId: string, organizationId: string): Promise<AuthTokens | null> {
+export async function switchOrganization(userId: string, organizationId: string, presented: { sv?: number } = {}): Promise<AuthTokens | null> {
   const organization = await Organization.findOne({
     _id: organizationId,
     'members.userId': userId,
@@ -403,15 +445,22 @@ export async function switchOrganization(userId: string, organizationId: string)
     return null
   }
 
+  // S16: switching is a renewal; a session from before the password change gets no new tokens
+  if (staleSession(presented, user)) {
+    throw Object.assign(new Error('Session expired'), { statusCode: 401 })
+  }
+
   const userRole = organization.members.find(
     m => m.userId.toString() === userId
   )?.role || 'member'
 
+  const switchedSessionVersion = user.sessionVersion ?? 0
   return generateTokens({
     userId,
     email: user.email,
     organizationId,
-    role: userRole
+    role: userRole,
+    sv: switchedSessionVersion
   })
 }
 
@@ -466,7 +515,7 @@ export async function inviteUser(
 export async function acceptInvite(inviteToken: string, userData?: {
   name?: string
   password?: string
-}, authenticatedUserId?: string): Promise<{ user: any; organization: any; tokens: AuthTokens }> {
+}, authenticatedUserId?: string, authenticatedSv?: number): Promise<{ user: any; organization: any; tokens: AuthTokens }> {
   const payload = verifyToken(inviteToken) as any
   if (!payload || payload.type !== 'invite') {
     throw new Error('Invalid or expired invite')
@@ -482,8 +531,9 @@ export async function acceptInvite(inviteToken: string, userData?: {
   // Find or create user
   let user = await User.findOne({ email: payload.email })
 
-  // An invitation proves access to the link, not authentication of an existing account.
-  if (user && (!user.isActive || String(user._id) !== authenticatedUserId)) {
+  // An invitation proves access to the link, not authentication of an existing account; a bearer from before the password change is
+  // not a sign-in either (S16).
+  if (user && (!user.isActive || String(user._id) !== authenticatedUserId || (authenticatedSv ?? 0) !== (user.sessionVersion ?? 0))) {
     throw Object.assign(new Error('Sign in to the invited account first'), { statusCode: 401 })
   }
 
@@ -514,11 +564,13 @@ export async function acceptInvite(inviteToken: string, userData?: {
   }
 
   // Generate tokens
+  const invitedSessionVersion = user.sessionVersion ?? 0
   const tokens = await generateTokens({
     userId: user._id.toString(),
     email: user.email,
     organizationId: organization._id.toString(),
-    role: payload.role
+    role: payload.role,
+    sv: invitedSessionVersion
   })
 
   return {

@@ -3,6 +3,7 @@ import { defineEventHandler, readBody, createError } from 'h3'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 interface ValidationIssue {
   id: string
@@ -16,10 +17,11 @@ interface ValidationIssue {
 export default defineEventHandler(async (event) => {
   requireAuth(event)
   await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
 
   if (event.method === 'GET') {
-    // Validate all transactions
-    const transactions = await Transaction.find({}).lean()
+    // Validate the company's transactions
+    const transactions = await Transaction.find({ organizationId }).lean()
     const issues: ValidationIssue[] = []
 
     for (const tx of transactions as any[]) {

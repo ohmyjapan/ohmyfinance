@@ -241,7 +241,7 @@ async function prepareCategories(batch: Batch) {
     await $fetch('/api/finance/imports/' + batch.id + '/source-categories', { method: 'POST', headers: user.authHeader, body: { sourceHash: batch.sourceHash, mappingKey: batch.mappingKey, names: missingCategories(batch).map(c => c.name) } })
     await fetchSelection()
     preparationMessage.value = '元シートの区分を追加しました。下書きの提案を更新しています。'
-  } catch (e: any) { preparationError.value = e.data?.statusMessage || e.message || '区分を追加できませんでした。再読込して確認してください。' }
+  } catch (e: any) { preparationError.value = e.data?.data?.message || e.data?.statusMessage || e.message || '区分を追加できませんでした。再読込して確認してください。' }
   finally { preparing.value = false }
 }
 const normalize = (value: string) => value.normalize('NFKC').toLocaleLowerCase().trim()

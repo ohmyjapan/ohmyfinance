@@ -3,6 +3,7 @@ import { defineEventHandler, getQuery, readBody, getMethod, createError } from '
 import TransactionCategory from '../../models/TransactionCategory'
 import { ensureConnection } from '../../config/database'
 import { requireAuth } from '../../middleware/auth'
+import { rejectSharedMasterWrite } from '../../utils/sharedMasterAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -25,6 +26,8 @@ export default defineEventHandler(async (event) => {
   }
 
   if (method === 'POST') {
+    // Refused for every session (shared master, S15): the operator adds with scripts/manage-masters.ts
+    rejectSharedMasterWrite(event)
     const body = await readBody(event)
 
     if (!body.name) {

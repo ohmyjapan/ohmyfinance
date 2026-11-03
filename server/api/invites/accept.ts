@@ -16,7 +16,8 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const { token, name, password } = body
 
-  if (!token) {
+  // GUARD (S1): only the minted shape (models/Invite.ts:89-91, 64 hex characters) reaches the query; an object or any other value is 400.
+  if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) {
     throw createError({ statusCode: 400, statusMessage: 'Invite token is required' })
   }
 
@@ -52,6 +53,8 @@ export default defineEventHandler(async (event) => {
       const payload = verifyAccessToken(authToken)
       if (payload && payload.userId) {
         currentUser = await User.findById(payload.userId)
+        // S16: a bearer minted before the user's current session version is not a sign-in (the existing-user path answers requiresLogin).
+        if (currentUser && (payload.sv ?? 0) !== (currentUser.sessionVersion ?? 0)) currentUser = null
       }
     }
 
@@ -132,7 +135,8 @@ export default defineEventHandler(async (event) => {
       userId: user._id.toString(),
       email: user.email,
       organizationId: organization._id.toString(),
-      role: invite.role
+      role: invite.role,
+      sv: user.sessionVersion ?? 0
     })
 
     return {

@@ -439,6 +439,8 @@ const changePassword = async () => {
     })
 
     if (response.success) {
+      // S16: the server minted fresh tokens after the version bump; this device adopts them (every other session is signed out).
+      if (response.tokens) userStore.adoptTokens(response.tokens)
       passwordSuccess.value = t('profile.passwordChanged')
       passwordForm.currentPassword = ''
       passwordForm.newPassword = ''

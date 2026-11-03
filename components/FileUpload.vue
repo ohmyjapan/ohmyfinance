@@ -115,7 +115,8 @@ const processFile = async (file) => {
     // Upload to server
     const response = await fetch(props.uploadUrl, {
       method: 'POST',
-      body: formData
+      body: formData,
+      headers: useUserStore().authHeader
     });
 
     if (!response.ok) {

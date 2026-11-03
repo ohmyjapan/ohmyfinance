@@ -3,6 +3,7 @@ import { defineEventHandler, createError, readBody } from 'h3'
 import { ensureConnection } from '../../../config/database'
 import User from '../../../models/User'
 import { requireAuth } from '../../../middleware/auth'
+import { generateTokens } from '../../../services/authService'
 
 export default defineEventHandler(async (event) => {
   if (event.method !== 'POST') {
@@ -54,13 +55,24 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    // Update password (will be hashed by pre-save hook)
+    // Update password (will be hashed by pre-save hook). S16: the session version moves on, so every session minted before this
+    // change is refused at its next renewal; the changing device gets fresh tokens for the same selected company.
+    user.sessionVersion = (user.sessionVersion ?? 0) + 1
     user.password = newPassword
     await user.save()
 
+    const tokens = await generateTokens({
+      userId: user._id.toString(),
+      email: user.email,
+      organizationId: auth.organizationId,
+      role: auth.role,
+      sv: user.sessionVersion
+    })
+
     return {
       success: true,
-      message: 'Password changed successfully'
+      message: 'Password changed successfully',
+      tokens
     }
   } catch (error: any) {
     if (error.statusCode) throw error

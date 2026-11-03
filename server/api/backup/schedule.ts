@@ -1,5 +1,6 @@
 // server/api/backup/schedule.ts
 import { defineEventHandler, readBody, createError } from 'h3'
+import type mongoose from 'mongoose'
 import { ensureConnection } from '../../config/database'
 import Transaction from '../../models/Transaction'
 import Receipt from '../../models/Receipt'
@@ -11,11 +12,15 @@ import { writeFile, mkdir, readdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 const BACKUP_DIR = join(process.cwd(), 'backups')
-const MAX_BACKUPS = 7 // Keep last 7 backups
+const MAX_BACKUPS = 7 // Keep last 7 backups per company
+// S12: one file name per company, backup-<organizationId>-<timestamp>.json; listing and cleanup see only that prefix, so the old
+// global backup-<timestamp>.json files are neither listed nor deleted.
+const companyPrefix = (organizationId: mongoose.Types.ObjectId) => `backup-${organizationId}-`
 
-async function createBackup(): Promise<{ filename: string; size: number }> {
+async function createBackup(organizationId: mongoose.Types.ObjectId): Promise<{ filename: string; size: number }> {
   await ensureConnection()
 
   // Ensure backup directory exists
@@ -23,14 +28,14 @@ async function createBackup(): Promise<{ filename: string; size: number }> {
     await mkdir(BACKUP_DIR, { recursive: true })
   }
 
-  // Gather all data
+  // Gather the company's data
   const [transactions, receipts, recurring, invoices, budgets, vendors] = await Promise.all([
-    Transaction.find({}).lean(),
-    Receipt.find({}).lean(),
-    RecurringPayment.find({}).lean(),
-    Invoice.find({}).lean(),
-    Budget.find({}).lean(),
-    Vendor.find({}).lean()
+    Transaction.find({ organizationId }).lean(),
+    Receipt.find({ organizationId }).lean(),
+    RecurringPayment.find({ organizationId }).lean(),
+    Invoice.find({ organizationId }).lean(),
+    Budget.find({ organizationId }).lean(),
+    Vendor.find({ organizationId }).lean()
   ])
 
   const backup = {
@@ -55,23 +60,24 @@ async function createBackup(): Promise<{ filename: string; size: number }> {
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const filename = `backup-${timestamp}.json`
+  const filename = `${companyPrefix(organizationId)}${timestamp}.json`
   const filepath = join(BACKUP_DIR, filename)
 
   const content = JSON.stringify(backup, null, 2)
   await writeFile(filepath, content, 'utf-8')
 
-  // Clean up old backups
-  await cleanupOldBackups()
+  // Clean up the company's old backups
+  await cleanupOldBackups(organizationId)
 
   return { filename, size: content.length }
 }
 
-async function cleanupOldBackups(): Promise<void> {
+async function cleanupOldBackups(organizationId: mongoose.Types.ObjectId): Promise<void> {
   try {
+    const prefix = companyPrefix(organizationId)
     const files = await readdir(BACKUP_DIR)
     const backupFiles = files
-      .filter(f => f.startsWith('backup-') && f.endsWith('.json'))
+      .filter(f => f.startsWith(prefix) && f.endsWith('.json'))
       .sort()
       .reverse()
 
@@ -84,16 +90,17 @@ async function cleanupOldBackups(): Promise<void> {
   }
 }
 
-async function listBackups(): Promise<any[]> {
+async function listBackups(organizationId: mongoose.Types.ObjectId): Promise<any[]> {
   if (!existsSync(BACKUP_DIR)) {
     return []
   }
 
+  const prefix = companyPrefix(organizationId)
   const files = await readdir(BACKUP_DIR)
   const backups = files
-    .filter(f => f.startsWith('backup-') && f.endsWith('.json'))
+    .filter(f => f.startsWith(prefix) && f.endsWith('.json'))
     .map(f => {
-      const match = f.match(/backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/)
+      const match = f.match(/^backup-[0-9a-f]{24}-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/)
       return {
         filename: f,
         createdAt: match ? match[1].replace(/-/g, ':').replace('T', ' ') : null
@@ -106,11 +113,13 @@ async function listBackups(): Promise<any[]> {
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
+  await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
   const method = event.method
 
   if (method === 'GET') {
-    // List available backups
-    const backups = await listBackups()
+    // List the company's backups
+    const backups = await listBackups(organizationId)
     return { backups }
   }
 
@@ -119,7 +128,7 @@ export default defineEventHandler(async (event) => {
     const { action } = body
 
     if (action === 'create') {
-      const result = await createBackup()
+      const result = await createBackup(organizationId)
       return {
         success: true,
         message: 'Backup created',

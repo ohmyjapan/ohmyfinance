@@ -4,6 +4,7 @@ import { ensureConnection } from '../../config/database'
 import RecurringPayment from '../../models/RecurringPayment'
 import { sendPaymentReminder } from '../../services/emailService'
 import { requireAuth } from '../../middleware/auth'
+import { calendarCompany } from '../../utils/calendarAccess'
 
 export default defineEventHandler(async (event) => {
   requireAuth(event)
@@ -12,12 +13,14 @@ export default defineEventHandler(async (event) => {
   }
 
   await ensureConnection()
+  const { organizationId } = await calendarCompany(event)
 
-  // Find payments due in the next 7 days
+  // Find the company's payments due in the next 7 days
   const now = new Date()
   const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
 
   const upcomingPayments = await RecurringPayment.find({
+    organizationId,
     isActive: true,
     nextDueDate: { $gte: now, $lte: weekFromNow }
   }).lean()
