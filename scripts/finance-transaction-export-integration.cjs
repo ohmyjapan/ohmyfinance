@@ -40,9 +40,9 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   const revoke=on=>db.collection('organizations').updateOne({_id:A},{$set:{members:on?[]:members}});
   const role=r=>db.collection('organizations').updateOne({_id:A},{$set:{'members.0.role':r}});
 
-  // ---- Seed: references through the native routes, rows at the zone boundaries, literal cells and a zero price.
+  // ---- Seed: company-local parties through native routes, shared codes in the owned DB, zone boundaries, literal cells and a zero price.
   const customer=String((await ok('/api/customers',tokenA,'POST',{name:'EXPORT_CUSTOMER',email:'synthetic@example.invalid'}))._id),supplier=String((await ok('/api/suppliers',tokenA,'POST',{name:'EXPORT_SUPPLIER'}))._id);
-  const accountCategory=String((await ok('/api/account-categories',tokenA,'POST',{name:'EXPORT_ACCOUNT',type:'expense',code:'EXP'}))._id),transactionCategory=String((await ok('/api/transaction-categories',tokenA,'POST',{name:'EXPORT_CATEGORY'}))._id);
+  const accountCategory=String((await db.collection('accountcategories').insertOne({name:'EXPORT_ACCOUNT',type:'expense',code:'EXP',isActive:true,order:0,createdAt:now,updatedAt:now})).insertedId),transactionCategory=String((await db.collection('transactioncategories').insertOne({name:'EXPORT_CATEGORY',createdAt:now,updatedAt:now})).insertedId);
   const tx=db.collection('transactions'),t=o=>({_id:new ObjectId(),referenceNumber:'EXP-'+crypto.randomBytes(3).toString('hex'),hasReceipt:false,items:[],timeline:[],attachments:[],tags:[],createdAt:now,updatedAt:now,...o});
   const rows={
    late:t({organizationId:A,date:new Date('2026-10-31T14:30:00Z'),amount:1001,type:EXPENSE,status:'completed',productName:'EXPORT_LATE_JST',hasReceipt:true,referenceNumber:'EXP-LATE'}),

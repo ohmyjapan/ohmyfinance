@@ -6,7 +6,7 @@ module.exports=async({root,origin,call,ok,db,ObjectId,ownerToken,tokenA,tokenB,A
  let puppeteer;try{puppeteer=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core')}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;puppeteer=createRequire(path.resolve(root,'../collector/package.json'))('rebrowser-puppeteer-core')}
  const executablePath=[path.join(process.env.ProgramFiles||'C:/Program Files','Google/Chrome/Application/chrome.exe'),path.join(process.env['ProgramFiles(x86)']||'C:/Program Files (x86)','Google/Chrome/Application/chrome.exe'),path.join(process.env.LOCALAPPDATA||'','Google/Chrome/Application/chrome.exe')].find(existsSync);
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'omf-account-registration-ui-'));
- let browser,page,hold=false;const errors=[],held=[],transactionWrites=[],categories=db.collection('accountcategories'),transactions=db.collection('transactions');
+ let browser,page,hold=false,expectSharedRefusal=false;const errors=[],saveErrors=[],dialogs=[],held=[],transactionWrites=[],categories=db.collection('accountcategories'),transactions=db.collection('transactions');
  const wait=async(fn,args=[],label='condition')=>{for(let i=0;i<240;i++){if(await page.evaluate(fn,...args))return;await pause(100)}throw Error('account-ui:chrome-'+label)};
  const nativeSwitch=async organizationId=>page.evaluate(async organizationId=>{
   const user=document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user');
@@ -17,13 +17,13 @@ module.exports=async({root,origin,call,ok,db,ObjectId,ownerToken,tokenA,tokenB,A
  const statusText=kind=>page.evaluate(s=>document.querySelector(s+' [data-account-registration-status]')?.textContent||'',control(kind));
  const chooseAccount=id=>page.evaluate(id=>{const select=[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value===id));if(!select)return false;select.value=id;select.dispatchEvent(new Event('change',{bubbles:true}));return true},id);
  const registrations=async name=>((await categories.findOne({name}))?.companyRegistrations||[]).map(x=>String(x.organizationId)).sort();
- // Accounts shown by the modal are read when the page mounts: create them first (legacy, no company registration).
- const legacyAccount=await ok('/api/account-categories',ownerToken,'POST',{name:'UI_LEGACY_ACCOUNT',type:'expense'}),legacyId=String(legacyAccount._id);
- await ok('/api/account-categories',ownerToken,'POST',{name:'UI_LEGACY_SUB',parentId:legacyId});
- const lateAccount=await ok('/api/account-categories',ownerToken,'POST',{name:'UI_LATE_ACCOUNT',type:'expense'}),lateId=String(lateAccount._id);
+ // The modal reads accounts on mount. Operator-maintained shared rows are seeded only into this owned DB, with no registrations.
+ const legacyAccountId=new ObjectId(),lateAccountId=new ObjectId(),legacyId=String(legacyAccountId),lateId=String(lateAccountId),now=new Date();
+ await categories.insertMany([{_id:legacyAccountId,name:'UI_LEGACY_ACCOUNT'},{_id:new ObjectId(),name:'UI_LEGACY_SUB',parentId:legacyAccountId},{_id:lateAccountId,name:'UI_LATE_ACCOUNT'}].map(row=>({...row,type:'expense',isActive:true,order:0,createdAt:now,updatedAt:now})));
  try{
   assert.ok(executablePath,'Installed Chrome is required');browser=await puppeteer.launch({executablePath,userDataDir:path.join(directory,'profile'),pipe:true,headless:true,args:['--lang=ja-JP,ja','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-sync']});page=await browser.newPage();await page.setViewport({width:390,height:844});
-  page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error'&&!/^Failed to load resource/.test(m.text()))errors.push(m.text())});
+  page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error'&&!/^Failed to load resource/.test(m.text())){if(expectSharedRefusal&&m.text().startsWith('Failed to save sub-account:'))saveErrors.push(m.text());else errors.push(m.text())}});
+  page.on('dialog',async dialog=>{dialogs.push({type:dialog.type(),message:dialog.message()});await dialog.dismiss()});
   await page.setRequestInterception(true);page.on('request',request=>{const url=request.url();if(url.startsWith(origin+'/api/transactions')&&['POST','PUT','PATCH','DELETE'].includes(request.method()))transactionWrites.push(request.method()+' '+url);if(hold&&/\/api\/account-categories\/[a-f0-9]{24}\/registration$/.test(url)&&request.method()==='POST'){hold=false;held.push(request)}else request.continue().catch(()=>{})});
   await page.goto(origin+'/login',{waitUntil:'networkidle2'});await wait(()=>!!document.querySelector('#email'),[],'login-form');await page.type('#email','company-owner@example.invalid');await page.type('#password','Synthetic-password-Only1!');await page.evaluate(()=>document.querySelector('button[type=submit]').click());await wait(()=>location.pathname==='/',[],'login');
   await nativeSwitch(A);await page.goto(origin+'/transactions',{waitUntil:'networkidle2'});
@@ -56,17 +56,22 @@ module.exports=async({root,origin,call,ok,db,ObjectId,ownerToken,tokenA,tokenB,A
   await held[0].continue();for(let i=0;i<80&&(await registrations('UI_LATE_ACCOUNT')).length===0;i++)await pause(100);await pause(500);
   assert.deepEqual(await registrations('UI_LATE_ACCOUNT'),[A],'account-ui:held-request-was-A');assert.equal(await statusText('account'),'','account-ui:late-response-dropped');assert.equal(await page.$eval(control('account')+' [data-account-registration-button]',e=>e.disabled),false,'account-ui:late-response-dropped');
   await page.click(control('account')+' [data-account-registration-button]');await wait(s=>(document.querySelector(s+' [data-account-registration-status]')?.textContent||'').includes('Synthetic company 1'),[control('account')],'B-registered');assert.deepEqual(await registrations('UI_LATE_ACCOUNT'),[A,B].sort(),'account-ui:registered-for-selected-company');
-  // A new sub-account created in the modal reports its company registration.
+  // Creating a shared sub-account from the modal is refused; the existing registration controls still worked above.
   await nativeSwitch(A);await wait(s=>(document.querySelector(s+' [data-account-registration-company]')?.textContent||'').includes('Synthetic company 0'),[control('account')],'switched-A');
   assert.ok(await chooseAccount(legacyId));await subInput.click({clickCount:3});await page.keyboard.type('UI_NEW_SUB');
   await wait(()=>[...document.querySelectorAll('button')].some(b=>b.textContent.includes('新規作成')&&b.textContent.includes('UI_NEW_SUB')),[],'create-sub-option');
   await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes('新規作成')&&b.textContent.includes('UI_NEW_SUB')).dispatchEvent(new MouseEvent('mousedown',{bubbles:true})));
   await wait(()=>!!document.querySelector('.z-\\[60\\] input[type=text]'),[],'sub-dialog');await page.$eval('.z-\\[60\\] input[type=text]',e=>{e.value='UI_NEW_SUB';e.dispatchEvent(new Event('input',{bubbles:true}))});
+  const categoriesBefore=JSON.stringify(await categories.find().sort({_id:1}).toArray());assert.deepEqual(dialogs,[],'account-ui:no-unexpected-dialogs');assert.deepEqual(errors,[],'account-ui:no-page-errors');
+  const refusalResponse=page.waitForResponse(response=>response.url()===origin+'/api/account-categories'&&response.request().method()==='POST');expectSharedRefusal=true;
   await page.evaluate(()=>[...document.querySelectorAll('.z-\\[60\\] button')].find(b=>b.textContent.trim()==='保存').click());
-  await wait(s=>(document.querySelector(s+' [data-account-registration-status]')?.textContent||'').includes('新しい科目「UI_NEW_SUB」'),[control('subAccount')],'created-feedback');
-  assert.ok((await statusText('subAccount')).includes('Synthetic company 0'),'account-ui:create-feedback');assert.deepEqual(await registrations('UI_NEW_SUB'),[A],'account-ui:create-feedback');
+  const response=await refusalResponse,refusal=await response.json();assert.equal(response.status(),403,'account-ui:shared-read-only');assert.equal(refusal.data?.code,'SHARED_MASTER_READ_ONLY','account-ui:shared-read-only');
+  for(let i=0;i<80&&!dialogs.length;i++)await pause(100);assert.deepEqual(dialogs,[{type:'alert',message:refusal.data.message}],'account-ui:read-only-feedback');assert.ok(refusal.data.message,'account-ui:read-only-feedback');
+  // The component's console line can arrive after the alert closes; it is tolerated once, never required.
+  for(let i=0;i<30&&!saveErrors.length;i++)await pause(100);assert.ok(saveErrors.length<=1,'account-ui:expected-save-error '+saveErrors.length);assert.equal(JSON.stringify(await categories.find().sort({_id:1}).toArray()),categoriesBefore,'account-ui:shared-write-unchanged');assert.equal(await categories.countDocuments({name:'UI_NEW_SUB'}),0,'account-ui:shared-write-unchanged');
+  assert.ok(await page.$('.z-\\[60\\] input[type=text]'),'account-ui:refused-dialog-stays-open');assert.ok(!(await statusText('subAccount')).includes('UI_NEW_SUB'),'account-ui:no-false-registration-feedback');
   assert.equal(await transactions.countDocuments(),txBefore,'account-ui:no-transaction-save');assert.deepEqual(transactionWrites,[],'account-ui:no-transaction-save');
   assert.deepEqual(errors,[],'account-ui:no-page-errors');
-  pass('installed Chrome: a late registration response after a company switch is dropped, the new company registers for itself, and a sub-account created in the modal reports its company registration');
+  pass('installed Chrome: a late registration response after a company switch is dropped, the new company registers for itself, and shared sub-account creation shows the read-only refusal without changing any account or saving a transaction');
  }finally{for(const h of held.splice(0))await h.continue().catch(()=>{});if(browser)await browser.close().catch(()=>{});await fs.rm(directory,{recursive:true,force:true}).catch(()=>{})}
 };

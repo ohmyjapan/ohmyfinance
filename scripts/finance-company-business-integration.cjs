@@ -98,7 +98,8 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   await require('./finance-navi-receipt-link-integration.cjs')({root,origin,db,ObjectId,A,B,ownerToken,tokenA,tokenB,act,actOk,turn,finish,ok,call,worker,members,pass});
 
   // ---- 4. Transaction create: marker in the original insert, idempotency, recovery, refusal, roles
-  const refRow=await ok('/api/account-categories',tokenA,'POST',{name:'BUSINESS_CATEGORY',type:'expense',code:'BSN'}),ref=String(refRow._id||refRow.id);assert.ok(/^[a-f0-9]{24}$/.test(ref));
+  // Shared codes are operator-maintained; seed only this test's owned database.
+  const refRow={_id:new ObjectId(),name:'BUSINESS_CATEGORY',type:'expense',code:'BSN',isActive:true,order:0,createdAt:now,updatedAt:now};await db.collection('accountcategories').insertOne(refRow);const ref=String(refRow._id);assert.ok(/^[a-f0-9]{24}$/.test(ref));
   await db.command({profile:2,slowms:0});
   job=await turn(tokenA,'Create this expense: pens 1,200 yen today.',{page:'transactions'});
   const createArgs={date:'2026-10-20',amount:1200,type:EXPENSE,status:'completed',productName:'NAVI_CREATED_TX',notes:'Created by explicit request',accountCategoryId:ref,items:[{productName:'pen',quantity:2,unitPrice:600,taxRate:10}],tags:['navi']};

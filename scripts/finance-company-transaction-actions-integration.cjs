@@ -6,7 +6,10 @@ module.exports=async({db,ObjectId,ok,call,worker,ownerToken,tokenA,tokenB,A,B,ow
  assert.equal((await call('/api/transactions/'+foreignId,tokenA,'PUT',{notes:'Forbidden'})).status,404,'transaction-action:native-foreign-update');
  assert.equal((await call('/api/transactions/'+foreignId,tokenA,'DELETE')).status,404,'transaction-action:native-foreign-delete');
  const refs={};for(const [field,route]of Object.entries({accountCategoryId:'/api/account-categories',subAccountCategoryId:'/api/account-categories',taxCategoryId:'/api/tax-categories',transactionCategoryId:'/api/transaction-categories',customerId:'/api/customers',supplierId:'/api/suppliers'})){
-  const row=await ok(route,tokenA,'POST',{name:'TX_CHOICE_'+field,...(field.includes('AccountCategory')||field==='accountCategoryId'?{type:'expense',code:'SYN'}:{}),...(field==='taxCategoryId'?{rate:10}:{}),email:'PRIVATE_REFERENCE_EMAIL@example.invalid'});refs[field]=String(row._id||row.id);
+  const input={name:'TX_CHOICE_'+field,...(field.includes('AccountCategory')||field==='accountCategoryId'?{type:'expense',code:'SYN'}:{}),...(field==='taxCategoryId'?{rate:10}:{}),email:'PRIVATE_REFERENCE_EMAIL@example.invalid'};
+  // Shared codes are operator-maintained; only seed this test's owned database. Company-local parties still use their APIs.
+  const collection={accountCategoryId:'accountcategories',subAccountCategoryId:'accountcategories',taxCategoryId:'taxcategories',transactionCategoryId:'transactioncategories'}[field];
+  const row=collection?{_id:new ObjectId(),...input,isActive:true,order:0,createdAt:new Date(),updatedAt:new Date()}:await ok(route,tokenA,'POST',input);if(collection)await db.collection(collection).insertOne(row);refs[field]=String(row._id||row.id);
  }
  const foreignParty=await ok('/api/suppliers',tokenB,'POST',{name:'FOREIGN_PRIVATE_SUPPLIER',email:'FOREIGN_PRIVATE_EMAIL@example.invalid'});await tx.insertOne({_id:new ObjectId(),organizationId:B,date:new Date('2026-09-01'),amount:999,type:'支出',status:'pending',supplierId:new ObjectId(String(foreignParty._id||foreignParty.id))});
  const foreign=async()=>JSON.stringify(await tx.find({organizationId:{$ne:A}}).sort({_id:1}).toArray()),foreignBefore=await foreign();

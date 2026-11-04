@@ -1,5 +1,5 @@
 // Reduced-rate (軽減税率) mark on the actual built application (plan omf-keigen-mark-20261030 §4): owned throwaway MongoDB,
-// synthetic company A (Asia/Tokyo), the seed tax categories and one rate-less tax category through the native routes, synthetic rows
+// synthetic company A (Asia/Tokyo), standard tax categories and one rate-less tax category in the owned database, synthetic rows
 // R1-R9 and, when asked, installed Chrome headless. No model, provider, network, SMTP/Slack or business sends. The first section
 // prints a non-throwing PROBE ledger for the fail-first legs; every later group asserts under its own label.
 const assert=require('node:assert/strict'),fs=require('node:fs'),fsp=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),net=require('node:net'),crypto=require('node:crypto');
@@ -25,9 +25,10 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   await db.collection('organizations').insertOne({_id:A,name:'Synthetic reduced-rate A',slug:'reduced-rate-a',type:'business',isActive:true,members:[{userId:owner,role:'owner',joinedAt:now}],settings:{defaultCurrency:'JPY',fiscalYearStart:11,timezone:'Asia/Tokyo'}});
   const tokenA=(await ok('/api/auth/switch-organization',ownerToken,'POST',{organizationId:String(A)})).tokens.accessToken;
 
-  // ---- Seed: the 7 seed tax categories and one rate-less tax category through the native routes; rows R1-R9 on company A.
-  const seeded=await ok('/api/seed',tokenA,'POST',{});assert.equal(seeded.results?.taxCategories?.created,7,'SETUP seed tax categories '+JSON.stringify(seeded.results));
-  const rateless=await ok('/api/tax-categories',tokenA,'POST',{name:'RR_RATELESS_CATEGORY'});assert.equal(rateless.rate,undefined,'SETUP rate-less tax category');
+  // ---- Seed: shared masters are operator-maintained; insert the 7 standard rows and one rate-less row into this owned DB.
+  const standardTaxes=[['課税売上',10],['課税売上(軽減)',8],['課税仕入',10],['課税仕入(軽減)',8],['非課税',0],['不課税',0],['輸出免税',0]];
+  const seeded=await db.collection('taxcategories').insertMany(standardTaxes.map(([name,rate])=>({name,rate,createdAt:now,updatedAt:now})));assert.equal(seeded.insertedCount,7,'SETUP seed tax categories');
+  const rateless={_id:new ObjectId(),name:'RR_RATELESS_CATEGORY',createdAt:now,updatedAt:now};await db.collection('taxcategories').insertOne(rateless);assert.equal(rateless.rate,undefined,'SETUP rate-less tax category');
   const categories=await ok('/api/tax-categories',tokenA),categoryId=name=>{const c=categories.find(x=>x.name===name);assert.ok(c,'SETUP tax category '+name);return new ObjectId(String(c._id))};
   assert.equal(categories.find(x=>x.name==='課税仕入(軽減)').rate,8);assert.equal(categories.find(x=>x.name==='課税売上(軽減)').rate,8);assert.equal(categories.find(x=>x.name==='課税仕入').rate,10);
   const tx=db.collection('transactions'),t=(label,o)=>({_id:new ObjectId(),organizationId:A,referenceNumber:'RR-'+label,amount:1080,type:EXPENSE,status:'completed',productName:'RR_'+label+'_PRODUCT',hasReceipt:false,items:[],timeline:[],attachments:[],tags:[],notes:'',createdAt:now,updatedAt:now,...o});

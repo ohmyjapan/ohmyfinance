@@ -25,6 +25,8 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   const idOf=row=>String(row._id||row.id),ids=list=>(list||[]).map(idOf),sid=v=>String(v||'');
   // Suppliers and customers belong to one company; tax categories are one shared list for every company, as on main.
   const lists=[['suppliers','/api/suppliers',suppliers],['customers','/api/customers',customers]],tax=['taxcategories','/api/tax-categories',taxcategories],taxRoute=tax[1];
+  const sharedSnapshot=async()=>JSON.stringify(await Promise.all(['accountcategories','taxcategories','transactioncategories','mappingtemplates','categories'].map(name=>db.collection(name).find().sort({_id:1}).toArray())));
+  const refused=async(route,token,method='POST',body)=>{const before=await sharedSnapshot(),r=await call(route,token,method,body);assert.equal(r.status,403,'masters:shared-read-only '+method+' '+route);assert.equal(r.data?.data?.code,'SHARED_MASTER_READ_ONLY','masters:shared-read-only code');assert.equal(await sharedSnapshot(),before,'masters:shared-write-unchanged');return r};
 
   // M6 (part 1): legacy rows with no company, inserted before any leg. The supplier and customer are listed to nobody; the tax category
   // is listed to every company (T1). All three stay byte-identical.
@@ -63,17 +65,17 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   }
   pass('each company lists, reads, updates and deletes only its own suppliers and customers; a foreign id is 404');
 
-  // T1 (fold 3): tax categories are one shared list for every company, as on main. Company B lists the tax category company A made
-  // (masters:tax-shared); every company and a signed-in caller with no company list the same rows, the row with no company included;
-  // a created tax category carries no company, even when the body names one.
-  const taxA=await ok(taxRoute,tokenA,'POST',{name:'SHARED_TAX_A',rate:10,organizationId:String(B)});
-  const taxListB=await call(taxRoute,tokenB);assert.equal(taxListB.status,200,taxListB.raw.slice(0,200));assert.ok(ids(taxListB.data).includes(idOf(taxA)),'masters:tax-shared company B lists the tax category company A made');
-  const taxB=await ok(taxRoute,tokenB,'POST',{name:'SHARED_TAX_B',rate:8}),sharedTax=[idOf(taxA),idOf(taxB),String(legacy.taxcategories.id)];
+  // T1: shared taxes are operator-maintained, visible to every company and never created by an app session.
+  await refused(taxRoute,tokenA,'POST',{name:'SHARED_TAX_A',rate:10,organizationId:String(B)});
+  await refused(taxRoute,tokenB,'POST',{name:'SHARED_TAX_B',rate:8});
+  const taxA={_id:new ObjectId(),name:'SHARED_TAX_A',rate:10,createdAt:now,updatedAt:now},taxB={_id:new ObjectId(),name:'SHARED_TAX_B',rate:8,createdAt:now,updatedAt:now};await taxcategories.insertMany([taxA,taxB]);
+  const taxListB=await call(taxRoute,tokenB);assert.equal(taxListB.status,200,taxListB.raw.slice(0,200));assert.ok(ids(taxListB.data).includes(idOf(taxA)),'masters:tax-shared company B lists the operator-maintained tax category');
+  const sharedTax=[idOf(taxA),idOf(taxB),String(legacy.taxcategories.id)];
   for(const [tag,token] of [['A',tokenA],['B',tokenB],['C',tokenC],['no company',ownerToken]]){const list=await call(taxRoute,token);assert.equal(list.status,200,'masters:tax-shared list '+tag+' '+list.raw.slice(0,200));assert.ok(sharedTax.every(id=>ids(list.data).includes(id)),'masters:tax-shared list '+tag)}
   assert.deepEqual(ids((await call(taxRoute+'?search=SHARED_TAX',tokenC)).data).sort(),[idOf(taxA),idOf(taxB)].sort(),'masters:tax-shared search');
   for(const row of [taxA,taxB])assert.equal((await taxcategories.findOne({_id:new ObjectId(idOf(row))})).organizationId,undefined,'masters:tax-unstamped');
   assert.equal((await call(taxRoute,null)).status,401,'masters:tax-auth');
-  pass('tax categories are one shared list: a row made under one company and the row with no company are listed to every company and carry no company');
+  pass('tax categories are one shared list: app creates are refused without writes; operator-maintained rows are listed to every company and carry no company');
 
   // M2: a company named in the body is ignored on every create; the token company is stamped.
   for(const [name,route,col] of lists){const created=await ok(route,tokenA,'POST',{name:'FORGED_'+name.toUpperCase(),organizationId:String(B),...(name==='taxcategories'?{rate:8}:{})});const stored=await col.findOne({_id:new ObjectId(idOf(created))});assert.equal(String(stored.organizationId),String(A),'masters:body-company-ignored '+name);assert.ok(!ids((await call(route,tokenB)).data).includes(idOf(created)),'masters:body-company-ignored list '+name)}
@@ -81,7 +83,7 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   pass('a company named in a create body is ignored; rows carry the token company');
 
   // M3: the second supplier reader/writer (vendors), the import preview and the import auto-create are scoped; the import reads the
-  // shared tax list and the seed creates the standard tax list once, shared.
+  // shared tax list; the app seed is refused without changing any shared master.
   const vendorsB=await call('/api/vendors',tokenB);assert.equal(vendorsB.status,200);assert.ok(!ids(vendorsB.data.vendors).includes(idOf(rows.suppliersA))&&!ids(vendorsB.data.vendors).includes(idOf(vendor.vendor)),'masters:list-isolation vendors');assert.ok(ids(vendorsB.data.vendors).includes(idOf(rows.suppliersB)));noLegacy(vendorsB.raw,'vendors');
   assert.equal((await call('/api/vendors',ownerToken)).status,403,'masters:company-required vendors');
   const txB=await ok('/api/transactions',tokenB,'POST',{date:'2026-10-01',amount:1200,productName:'MASTER_TX_B',supplierId:idOf(rows.suppliersB)});
@@ -100,14 +102,15 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   const importedTax=await ok('/api/transactions/import',tokenA,'POST',{data:[{date:'2026/10/04',amount:'1200',productName:'IMPORTED_TAX_SHARED',taxCategoryName:'SHARED_TAX_B'}],mappings:{}});assert.equal(importedTax.success,true);
   assert.equal(String((await db.collection('transactions').findOne({productName:'IMPORTED_TAX_SHARED'})).taxCategoryId),idOf(taxB),'masters:import-tax-shared');
   assert.equal((await call('/api/seed',null,'POST')).status,401,'masters:seed-auth');
-  const seeded=await ok('/api/seed',tokenA,'POST');assert.equal(seeded.results.taxCategories.created,7,'masters:seed-shared '+JSON.stringify(seeded).slice(0,200));
+  await refused('/api/seed',tokenA);
+  const standardTaxes=[['課税売上',10],['課税売上(軽減)',8],['課税仕入',10],['課税仕入(軽減)',8],['非課税',0],['不課税',0],['輸出免税',0]];await taxcategories.insertMany(standardTaxes.map(([name,rate])=>({name,rate,createdAt:now,updatedAt:now})));
   const standard=await taxcategories.find({name:'課税仕入'}).toArray();assert.equal(standard.length,1,'masters:seed-shared once');assert.equal(standard[0].organizationId,undefined,'masters:seed-shared no company');
-  const seededB=await ok('/api/seed',tokenB,'POST');assert.deepEqual(seededB.results.taxCategories,{created:0,existing:7},'masters:seed-shared second company creates none');assert.equal(await taxcategories.countDocuments({name:'課税仕入'}),1,'masters:seed-shared once');
+  await refused('/api/seed',tokenB);await refused('/api/seed',tokenA,'GET');assert.equal(await taxcategories.countDocuments({name:'課税仕入'}),1,'masters:seed-shared once');
   assert.ok(ids((await call(taxRoute,tokenB)).data).includes(String(standard[0]._id)),'masters:seed-shared company B lists it');
-  pass('vendors, import preview and import auto-create read and write only the token company; the import reads and the seed writes one shared tax list');
+  pass('vendors, import preview and import auto-create read and write only the token company; imports resolve existing shared taxes, and app seed requests leave shared masters unchanged');
 
-  // REST create must reject a foreign supplier or customer before any transaction is saved; a tax category made by another company
-  // is an existing reference (the shared list).
+  // REST create must reject a foreign supplier or customer before any transaction is saved; an operator-maintained tax category
+  // is an existing reference for every company (the shared list).
   for(const [key,name] of [['supplierId','suppliers'],['customerId','customers']]){
    const productName='REST_FOREIGN_'+key;
    const r=await call('/api/transactions',tokenA,'POST',{date:'2026-10-05',amount:700,productName,[key]:idOf(rows[name+'B'])});
@@ -156,10 +159,16 @@ async function main(){let mongo,child,client,directory,logs='',checks=0;const pa
   const refB=await reference(tokenB,{field:'customerId',name:'REF_CUS'});assert.equal(refB.status,200,refB.raw.slice(0,200));assert.equal(String((await customers.findOne({_id:new ObjectId(refB.data.id)})).organizationId),String(B),'masters:intake-create-stamped customer');
   const refB2=await reference(tokenB,{field:'customerId',name:'REF_CUS'});assert.equal(refB2.data.id,refB.data.id,'masters:intake-match-scoped same company');
   const refA2=await reference(tokenA,{field:'customerId',name:'REF_CUS'});assert.notEqual(refA2.data.id,refB.data.id,'masters:intake-match-scoped other company');assert.equal(String((await customers.findOne({_id:new ObjectId(refA2.data.id)})).organizationId),String(A));
-  const refTax=await reference(tokenB,{field:'taxCategoryId',name:'REF_TAX',rate:8});assert.equal(refTax.status,200,refTax.raw.slice(0,200));assert.equal((await taxcategories.findOne({_id:new ObjectId(refTax.data.id)})).organizationId,undefined,'masters:intake-create-shared tax');
+  const referenceRoute='/api/finance/imports/'+importId+'/references';
+  await refused(referenceRoute,tokenB,'POST',{field:'taxCategoryId',name:'REF_TAX',rate:8});
+  const refTaxId=(await taxcategories.insertOne({name:'REF_TAX',rate:8,createdAt:now,updatedAt:now})).insertedId,taxBefore=await sharedSnapshot();
+  const refTax=await reference(tokenB,{field:'taxCategoryId',name:'REF_TAX',rate:8});assert.equal(refTax.status,200,refTax.raw.slice(0,200));assert.equal(refTax.data.id,String(refTaxId));assert.equal((await taxcategories.findOne({_id:new ObjectId(refTax.data.id)})).organizationId,undefined,'masters:intake-match-shared tax');
   assert.ok([...sharedTax,refTax.data.id].every(id=>ids(refTax.data.references.taxCategories).includes(id)),'masters:intake-references-shared tax');
   const refTaxA=await reference(tokenA,{field:'taxCategoryId',name:'REF_TAX',rate:8});assert.equal(refTaxA.status,200,refTaxA.raw.slice(0,200));assert.equal(refTaxA.data.id,refTax.data.id,'masters:intake-match-shared tax');
-  const refAcc=await reference(tokenA,{field:'accountCategoryId',name:'REF_ACC'});assert.equal(refAcc.status,200,refAcc.raw.slice(0,200));assert.equal((await db.collection('accountcategories').findOne({_id:new ObjectId(refAcc.data.id)})).organizationId,undefined,'masters:shared-master-unstamped');
+  assert.equal(await sharedSnapshot(),taxBefore,'masters:intake-match-unchanged tax');
+  await refused(referenceRoute,tokenA,'POST',{field:'accountCategoryId',name:'REF_ACC'});
+  const refAccId=(await db.collection('accountcategories').insertOne({name:'REF_ACC',type:'expense',isActive:true,order:0,createdAt:now,updatedAt:now})).insertedId,accountBefore=await sharedSnapshot();
+  const refAcc=await reference(tokenA,{field:'accountCategoryId',name:'REF_ACC'});assert.equal(refAcc.status,200,refAcc.raw.slice(0,200));assert.equal(refAcc.data.id,String(refAccId));assert.equal((await db.collection('accountcategories').findOne({_id:new ObjectId(refAcc.data.id)})).organizationId,undefined,'masters:shared-master-unstamped');assert.equal(await sharedSnapshot(),accountBefore,'masters:intake-match-unchanged account');
   assert.equal((await reference(forged,{field:'supplierId',name:'REF_FORGED'})).status,403,'masters:fresh-membership intake');
   pass('owner intake lists the rows of every company the owner belongs to and nothing else; reference creates stamp and match the token company');
 
