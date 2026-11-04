@@ -44,7 +44,7 @@ const COVERS = ['shared/finance-import-overlap.mjs', 'server/services/financeSer
 const list = name => (process.env[name] || '').split(',').map(s => s.trim()).filter(Boolean);
 const LEGS = list('OMF_APLUS_LEGS'), MUTANTS = list('OMF_APLUS_MUTANTS');
 export const PARTIAL = LEGS.length > 0 || MUTANTS.length > 0;
-const CHILD_LEGS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'R-a', 'R-b', 'R-c', 'R-d', 'R-e', 'R-f'];
+const CHILD_LEGS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'R-a', 'R-b', 'R-c', 'R-d', 'R-e', 'R-f', 'R-g'];
 const execute = (file, args, options = {}) => new Promise(resolve => execFile(file, args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8', ...options }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, stdout: String(stdout), stderr: String(stderr) })));
 const mutate = (text, edits, label) => { let out = text; for (const [a, b] of edits) { const n = out.split(a).length - 1; if (n !== 1) throw new Error(label + ' anchor hits ' + n + ': ' + a.slice(0, 100)); out = out.replace(a, () => b); } return out; };
 
@@ -60,7 +60,9 @@ export const DEFECTS = [
   ['M7-matching-keeps-provisional-values', MATCH, [["const c=confirmed.get(sid(b._id)+':'+row.line)||null;", 'const c=null;']], 'R-a'],
   ['M8-record-mismatch-verifies', SHARED, [[' || !equal(record.target.lines, group.lines) || !equal(record.lines, target.lines)) fail();', ') fail();']], 'R-d'],
   ['M9-closed-line-still-holds-nonexact', SHARED, [["    if (!isPending(batch) && !exact(candidates)) {", '    if (false) {']], 'R-c'],
-  ['M10-superseded-not-marked', SERVICE, [["superseded: settlement.state === 'finalized' && !own", 'superseded: false']], 'R-b']
+  ['M10-superseded-not-marked', SERVICE, [["superseded: settlement.state === 'finalized' && !own", 'superseded: false']], 'R-b'],
+  ['M11-partial-resolution-revalidates-consumed-rows', SHARED, [["const available = batch.rows.filter(r => !resolutionLines.has(r.line));", 'const available = batch.rows;']], 'R-c'],
+  ['M12-stale-draft-date-overrides-confirmed', SERVICE, [["const date = keepDraft ? draftDate : confirmed.purchaseDate", 'const date = draftDate']], 'R-g']
 ];
 
 // ── the child: the real services on an owned ephemeral database (node --import tsx <this file> --child --out <json> [--src <tree>] [--legs a,b]) ──
@@ -281,7 +283,49 @@ async function child() {
       const s2 = await settlementsOf(P2);
       assert.deepEqual([s2[2].state, s2[3].state, (await groupsOf(Sept2)).map(g => [g.match, g.state, g.lines, g.targets[0].lines]), await activeOf(Sept2)], ['closed', 'review', [['pending_purchase', 'source_overlap_review', [2, 3, 4], [3]]], []], 'R-c:closing-E1-alone-leaves-E2-held');
       await verifyAll(account2._id);
+      // The page sends one selected radio and no grouped `lines`: each identical purchase must resolve independently.
+      for (const changed of [false, true]) {
+        const account3 = await newAccount('R-c-browser-' + changed), P3 = await importPending(account3, [E, E]);
+        const bills = changed ? [{ ...E, amount: 800 }, { ...E, amount: 800 }] : [E, E, E];
+        const F3 = await importFinal(account3, bills, '2026-09'), p3 = await doc(P3), f3 = await doc(F3);
+        for (const line of [2, 3]) {
+          const response = await api('imports/' + P3 + '/forecast', { line, action: 'billed', sourceHash: p3.hash, revision: 0, target: { importId: F3, sourceHash: f3.hash, lines: [line] } });
+          assert.equal(response.status, 200, 'R-c:browser-single-choice-' + changed + '-' + line + ' returns ' + response.status);
+          assert.equal((await settlementsOf(P3))[line].state, 'finalized', 'R-c:browser-choice-finalized');
+          await verifyAll(account3._id);
+        }
+        assert.deepEqual([await activeOf(P3), await activeOf(F3)], [[2, 3], changed ? [] : [4]], 'R-c:individual-repeats-preserved');
+      }
       return 'billed [E1,E2]<->[x1,x2], x3 new (3 purchases); 1<->2 is 400; closing E1 alone leaves E2 held';
+    });
+    await leg('R-g', async () => {
+      for (const mode of ['default', 'chosen', 'keep-provisional', 'choose-final', 'resume']) {
+        const account = await configuredAccount('R-g-' + mode), P = await importPending(account, [FORECAST.A]);
+        const draftDate = mode === 'chosen' || mode === 'choose-final' ? '2026-08-31' : '2026-08-10';
+        await approvedDraft(account, P, 2, draftDate); // Approved before the final date exists.
+        const F = await importFinal(account, [{ merchant: 'Shop A final', amount: 1200, date: '2026-08-12' }], '2026-09'), p = await doc(P), f = await doc(F);
+        const resolved = await api('imports/' + P + '/forecast', { line: 2, action: 'billed', sourceHash: p.hash, target: { importId: F, sourceHash: f.hash, lines: [2] } });
+        assert.equal(resolved.status, 200, 'R-g:resolve');
+        const beforeWrites = writes.transactions.length;
+        if (mode === 'resume') {
+          const insert = Transaction.updateOne;
+          try {
+            Transaction.updateOne = async () => { throw Error('synthetic interruption before the ledger write'); };
+            assert.match(String(await thrown(() => finance.commitImport(ownerId, P, { decisions: [{ line: 2, action: 'import', draftRevision: 1 }] }))), /synthetic interruption/);
+          } finally { Transaction.updateOne = insert; }
+          const view = await finance.reviewImport(ownerId, P);
+          assert.equal(view.rows.find(r => r.line === 2).settlement.postingDate.date, '2026-08-12', 'R-g:editor-sees-the-reserved-date');
+        }
+        const posted = await finance.commitImport(ownerId, P, { decisions: [{ line: 2, action: 'import', draftRevision: 1, ...(mode === 'keep-provisional' || mode === 'resume' ? { keepDraftDate: true } : mode === 'choose-final' ? { keepDraftDate: false } : {}) }] });
+        const payload = writes.transactions[beforeWrites].update.$setOnInsert, day = new Date(payload.date).toISOString().slice(0, 10);
+        assert.deepEqual([posted.posted, day, payload.amount], [1, mode === 'default' || mode === 'choose-final' || mode === 'resume' ? '2026-08-12' : draftDate, 1200], 'R-g:confirmed-date-default-and-explicit-accounting-choice-' + mode);
+        const entry = await FinanceEntry.findOne({ importId: P, line: 2 }).lean();
+        assert.equal(entry.draftSnapshot.postingDate.date, day, 'R-g:posting-date-choice-is-durable');
+        assert.equal((await FinanceDraft.findOne({ importId: P, line: 2 }).lean()).values.date, draftDate, 'R-g:saved-draft-is-preserved');
+        await finance.commitImport(ownerId, P, { decisions: [{ line: 2, action: 'import', draftRevision: 1 }] });
+        assert.equal(writes.transactions.length, beforeWrites + 1, 'R-g:retry-no-second-post');
+      }
+      return 'preapproved provisional date uses the final date; deliberate accounting dates and explicit keep-date survive; no duplicate on retry';
     });
     await leg('R-d', async () => {
       const { resolveForecastLine } = await resolution(), { planSourceReferenceRebuild, applySourceReferenceRebuild } = await rebuild();

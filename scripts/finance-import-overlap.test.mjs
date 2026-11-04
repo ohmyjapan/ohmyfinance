@@ -98,6 +98,20 @@ test('identical forecasts: a grouped decision pairs two lines with two of three 
  assert.equal(verifySourceReferences(open,[closedOne]).length,1,'the binding built before the closure still verifies');
  assert.equal(verifySourceReferences(rest,[closedOne]).length,1,'the binding built after it verifies too');
 });
+test('individual decisions partition identical statement groups without losing remaining purchases',()=>{
+ for(const amount of ['70','80']){
+  const P=pendingBatch('1',[row('Shop E','70'),row('Shop E','70')]),F=finalBatch('2',[row('Shop E',amount),row('Shop E',amount),row('Shop E',amount)]);
+  const one=withRecords(P,{2:record('billed',[2],{importId:F._id,sourceHash:F.hash,lines:[2]})});
+  const bound={...F,sourceReferences:buildSourceReferences(F,[one])};
+  assert.equal(verifySourceReferences(bound,[one]).length,2,'resolution and residual group both verify');
+  assert.deepEqual(bound.sourceReferences.groups.map(g=>g.lines),[[2],[3,4]]);
+  const tampered=structuredClone(bound);tampered.sourceReferences.groups[1].lines=[3];assert.throws(()=>sourceReferenceGroups(tampered),'cannot omit a remaining identical row');
+  const two=withRecords(P,{...one.forecastResolutions,3:record('billed',[3],{importId:F._id,sourceHash:F.hash,lines:[3]})});
+  const done={...F,sourceReferences:buildSourceReferences(F,[two])};
+  assert.equal(verifySourceReferences(done,[two]).length,2);assert.deepEqual(activeImportRows(done).map(r=>r.line),[4]);
+ }
+});
+
 test('a statement settles a forecast for every other statement (history), and a stale billed record binds nothing',()=>{
  const P=pendingBatch('1',[row('Shop A','100'),row('Shop B','200')]);
  const F1={...finalBatch('2',[row('Shop A','100'),row('Shop X','300')])};F1.sourceReferences=buildSourceReferences(F1,[P]);

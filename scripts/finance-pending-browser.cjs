@@ -1,5 +1,5 @@
 const assert=require('node:assert/strict'),path=require('node:path');
-module.exports=async({origin,root,bid,heldId,pass})=>{
+module.exports=async({origin,root,bid,heldId,releasedId,pass})=>{
  const {createRequire}=require('node:module'),p=createRequire(path.join(root,'collector/package.json'))('rebrowser-puppeteer-core');
  const browser=await p.connect({browserURL:'http://127.0.0.1:'+Number(process.env.OMF_TEST_CHROME_PORT),defaultViewport:null});let page;
  try{
@@ -8,11 +8,11 @@ module.exports=async({origin,root,bid,heldId,pass})=>{
   await page.goto(origin+'/mapping?import='+bid,{waitUntil:'networkidle2'});await page.waitForSelector('[data-pending-summary]');
   assert.equal(await page.$$eval('.mapping-list article',rows=>rows.length),2);assert.match(await page.$eval('[data-pending-summary]',e=>e.textContent),/2件.*2,400/);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT,fullPage:true});
-  await page.goto(origin+'/mapping-draft/'+bid+'/2',{waitUntil:'networkidle2'});await page.waitForSelector('[data-action="save-draft"]');assert.equal(await page.$$eval('[data-action="prepare-post"]',r=>r.length),0);assert.match(await page.$eval('[data-statement-status]',e=>e.textContent),heldId ? /未請求・確定明細の差を確認/ : /未請求・確定待ち/);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.goto(origin+'/mapping-draft/'+bid+'/2',{waitUntil:'networkidle2'});await page.waitForSelector('[data-action="save-draft"]');assert.equal(await page.$$eval('[data-action="prepare-post"]',r=>r.length),0);assert.match(await page.$eval('[data-statement-status]',e=>e.textContent),heldId || releasedId ? /未請求・確定明細の差を確認/ : /未請求・確定待ち/);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.setViewport({width:1440,height:1000});await page.goto(origin+'/mapping?import='+bid,{waitUntil:'networkidle2'});await page.waitForSelector('[data-pending-summary]');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png','-desktop.png'),fullPage:true});
   // the カード連携 page: the provisional state is on the imported batch and in its review, the recent request exists for Amex only, and a provisional batch offers no posting control
-  if(!heldId){
+  if(!heldId&&!releasedId){
    for(const width of [390,1440]){
     await page.setViewport({width,height:1000});await page.goto(origin+'/connections',{waitUntil:'networkidle2'});await page.waitForSelector('[data-import-id="'+bid+'"]');
     assert.match(await page.$eval('[data-import-id="'+bid+'"]',e=>e.textContent),/未請求（仮）/,'recent-ui:the-batch-says-provisional');
@@ -39,6 +39,17 @@ module.exports=async({origin,root,bid,heldId,pass})=>{
     if(process.env.OMF_TEST_SCREENSHOT)await page.screenshot({path:process.env.OMF_TEST_SCREENSHOT.replace('.png',`-overlap-${width}.png`),fullPage:true});
    }
    assert.deepEqual(errors,[]);pass('real Chrome explains held forecast overlaps, excludes the copies and links the original at mobile and desktop sizes');
+  }else if(releasedId){
+   for(const width of [390,1440]){
+    await page.setViewport({width,height:1000});await page.goto(origin+'/mapping?import='+releasedId,{waitUntil:'networkidle2'});await page.waitForSelector('.mapping-list article');
+    assert.equal(await page.$$eval('.mapping-list article',rows=>rows.length),2);
+    assert.equal(await page.$$eval('[data-pending-overlap]',rows=>rows.length),0);
+    assert.ok(await page.$(`a[href="/mapping-draft/${releasedId}/2"]`));
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.goto(origin+'/mapping-draft/'+releasedId+'/2',{waitUntil:'networkidle2'});await page.waitForSelector('[data-action="save-draft"]');
+    assert.equal(await page.$eval('[data-action="prepare-post"]',e=>e.disabled),true,'released rows still need an approved draft');
+   }
+   assert.deepEqual(errors,[]);pass('real Chrome shows the released purchases and editable drafts, with unapproved posting disabled, at mobile and desktop sizes');
   }else{assert.deepEqual(errors,[]);pass('real Chrome shows pending totals and editable drafts while hiding posting controls on mobile and desktop');}
  }finally{await page?.close();await browser.disconnect();}
 };

@@ -31,7 +31,11 @@ A disappearance from a later snapshot is not proof of cancellation. The owner
 resolves these holds on the forecast's draft page (`PUT
 /api/finance/imports/:id/forecast`): *billed* pairs the forecast line (or a
 group of identical forecast lines) with the chosen rows of one finalized
-statement — the ledger then posts the statement's date and amount, payment
+statement — the ledger then posts the statement's amount and uses its date in
+place of an unchanged provisional date. A deliberately chosen accounting date
+is preserved; the posting confirmation can explicitly keep the saved date or
+select the confirmed date. This choice is captured with the reserved draft so
+retries reuse it. The saved draft and originals are not rewritten. Payment
 matching shows the confirmed values beside the forecast's, and the statement
 rows become reference copies of the forecast; *closed* records that no bill is
 expected — the forecast never posts and holds no other row, while a later exact
@@ -44,6 +48,9 @@ whose coverage closed before the forecast's purchase date never holds it.
 `scripts/finance-source-references-rebuild.ts` re-derives every binding of an
 account from its full history (dry run by default). Closing is the owner's
 decision; exact statement evidence outranks it.
+Identical purchases can be paired one at a time from the draft page; the
+remaining rows are verified as their own residual group, so a third purchase
+does not disappear when two forecasts have been resolved.
 
 Exact groups in the incoming file take precedence. Already confirmed forecasts
 do not hold activity after their final statement period; revised or older

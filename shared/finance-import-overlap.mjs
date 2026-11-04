@@ -40,13 +40,17 @@ export function sourceReferenceGroups(batch) {
   const binding = batch.sourceReferences;
   if (binding === undefined || binding === null) return [];
   if (![1, 2, 3, 4].includes(binding.version) || binding.sourceHash !== batch.hash || !Array.isArray(binding.groups) || binding.groups.length > batch.rows.length) fail();
-  const current = groups(batch.rows), seen = new Set(), seenLines = new Set();
+  // Explicit owner resolutions consume individual rows, including part of an otherwise identical group.
+  // Validate the remaining automatic groups over the same free rows used by the emitter below.
+  const resolutionLines = new Set(binding.groups.filter(g => g?.match === 'pending_resolution').flatMap(g => Array.isArray(g.lines) ? g.lines : []));
+  const available = batch.rows.filter(r => !resolutionLines.has(r.line));
+  const current = groups(available), seen = new Set(), seenLines = new Set();
   for (const group of binding.groups) {
     const candidate = group.match === 'pending_candidate', resolution = group.match === 'pending_resolution';
     const pending = group.match === 'pending_purchase' || candidate || resolution;
     if (group.match !== undefined && (!pending || binding.version < 2 || candidate && binding.version < 3 || resolution && binding.version !== 4)) fail();
     // A resolution group names its rows explicitly: the owner may pair one of two identical forecasts.
-    const rows = resolution ? batch.rows.filter(r => group.lines.includes(r.line)) : pending ? batch.rows.filter(r => pendingGroupKey(batch, r) === group.fingerprint) : current.get(group.fingerprint);
+    const rows = resolution ? batch.rows.filter(r => group.lines.includes(r.line)) : pending ? available.filter(r => pendingGroupKey(batch, r) === group.fingerprint) : current.get(group.fingerprint);
     if (!rows?.length || seen.has(group.fingerprint) || !equal(group.lines, lines(rows))) fail();
     seen.add(group.fingerprint);
     for (const line of group.lines) { if (seenLines.has(line)) fail(); seenLines.add(line); }

@@ -344,7 +344,7 @@ export async function reviewImport(ownerId: string, importId: string, organizati
     if (manual?.state === 'posted') state = 'posted'
     const sourceReference = references.find(g => g.lines.includes(row.line))
     if (sourceReference) state = sourceReference.state
-    return { ...row, state, settlement: settlements.get(row.line) || null, ...(sourceReference ? { sourceReference } : {}), skipped: batch.decisions?.[String(row.line)] === 'skip', transactionId: manual?.transactionId || entry?.transactionId, existing: matches.map(v => ({ id: v._id.toString(), date: v.date, amount: v.amount, description: v.notes || v.productName || '', cardNumber: v.cardNumber || '' })) }
+    return { ...row, state, settlement: settlements.has(row.line) ? { ...settlements.get(row.line), ...(entry?.draftSnapshot?.postingDate ? { postingDate: entry.draftSnapshot.postingDate } : {}) } : null, ...(sourceReference ? { sourceReference } : {}), skipped: batch.decisions?.[String(row.line)] === 'skip', transactionId: manual?.transactionId || entry?.transactionId, existing: matches.map(v => ({ id: v._id.toString(), date: v.date, amount: v.amount, description: v.notes || v.productName || '', cardNumber: v.cardNumber || '' })) }
   })
   const { commitLease: _lease, commitLeaseUntil: _leaseUntil, ...visibleAccount } = account
   return { id: batch._id.toString(), account: visibleAccount, period: batch.period, sourceStatus: batch.sourceStatus, sourceFormat: batch.sourceFormat || 'csv', rowCount: batch.rowCount, downloadedAt: batch.downloadedAt, hash: batch.hash, mappingPreview: !!batch.mappingPreview, requiresDraft: isPending(batch) || account.provider === 'aplus' || !!batch.mappingPreview, reconciliation: batch.reconciliation, rows: view }
@@ -367,6 +367,17 @@ export async function commitImport(ownerId: string, importId: string, body: any)
 
 export async function commitCompanyImport(ownerId: string, importId: string, body: any, organizationId: mongoose.Types.ObjectId) {
   return commitScopedImport(ownerId, importId, body, organizationId)
+}
+
+// A saved provisional default must not silently override the bill's confirmed date.
+// Preserve a deliberate accounting date, including explicitly keeping the saved date in the confirmation screen.
+function postingSnapshot(snapshot: any, row: any, decision: any) {
+  if (snapshot.postingDate || row.settlement?.source?.match !== 'pending_resolution') return snapshot
+  const confirmed = row.settlement.source.row, draftDate = snapshot.transaction?.date
+  const provisionalDate = row.processingDate || row.purchaseDate, source = snapshot.evidence?.date?.source
+  const keepDraft = !!draftDate && (typeof decision.keepDraftDate === 'boolean' ? decision.keepDraftDate : draftDate !== provisionalDate || !!source && !['amex', 'aplus', 'default'].includes(source))
+  const date = keepDraft ? draftDate : confirmed.purchaseDate
+  return { ...snapshot, postingDate: { date, mode: keepDraft ? 'draft' : 'confirmed', draftDate, provisionalDate, confirmedDate: confirmed.purchaseDate } }
 }
 
 async function commitScopedImport(ownerId: string, importId: string, body: any, organizationId?: mongoose.Types.ObjectId) {
@@ -401,10 +412,10 @@ async function commitScopedImport(ownerId: string, importId: string, body: any, 
         const reserved: any = await FinanceEntry.findOne({ ownerId, importId: initial._id, line: row.line }).lean()
         if (reserved?.draftSnapshot) {
           if (reserved.draftSnapshot.revision !== decision.draftRevision) fail(409, 'Resume the previously approved draft revision')
-          snapshots.set(row.line, reserved.draftSnapshot)
+          snapshots.set(row.line, postingSnapshot(reserved.draftSnapshot, row, decision))
         } else if (decision.draftRevision !== undefined) {
           const { draftSnapshot } = await import('./financeDraftService')
-          snapshots.set(row.line, await draftSnapshot(ownerId, initial, row, decision.draftRevision))
+          snapshots.set(row.line, postingSnapshot(await draftSnapshot(ownerId, initial, row, decision.draftRevision), row, decision))
         } else if (locked.provider === 'aplus' || locked.accounting || await FinanceDraft.exists({ ownerId, importId: initial._id, line: row.line })) fail(409, 'Review and approve the saved draft before posting')
       }
     }
@@ -430,6 +441,12 @@ async function commitScopedImport(ownerId: string, importId: string, body: any, 
       if (organizationId ? String(entry.postingOrganizationId) !== String(organizationId) : !!entry.postingOrganizationId) fail(409, 'Posting company or reservation ownership needs review')
       if (entry.state === 'posted') { skipped++; continue }
       if (entry.linkedExisting !== (decision.action === 'link') || (entry.linkedExisting && entry.transactionId.toString() !== decision.transactionId)) fail(409, 'Resume the previously selected action for this row')
+      // Older interrupted reservations have no date choice yet. Capture it before any ledger effect, then reuse it on retries.
+      const postingDate = snapshots.get(row.line)?.postingDate
+      if (postingDate && entry.draftSnapshot && !entry.draftSnapshot.postingDate) {
+        await FinanceEntry.updateOne({ _id: entry._id, 'draftSnapshot.postingDate': { $exists: false } }, { $set: { 'draftSnapshot.postingDate': postingDate } })
+        entry.draftSnapshot.postingDate = postingDate
+      }
       if (entry.linkedExisting) {
         // A link records evidence without rewriting the user's existing accounting data.
         if (!await Transaction.exists({ _id: entry.transactionId, ...(organizationId ? { organizationId } : {}) })) fail(409, 'Historical transaction no longer exists')
@@ -439,10 +456,11 @@ async function commitScopedImport(ownerId: string, importId: string, body: any, 
         // billed date and amount for a resolved forecast, identical to the row's own values for an exact match.
         const confirmed = row.settlement?.source?.row
         const payload = {
-          referenceNumber: `${(view.account.provider || 'amex').toUpperCase()}-${entry._id}`, date: new Date(confirmed?.purchaseDate ?? row.purchaseDate), status: 'completed',
+          referenceNumber: `${(view.account.provider || 'amex').toUpperCase()}-${entry._id}`, status: 'completed',
           accountCategoryId: body.accountCategoryId || undefined,
           hasReceipt: false, notes: row.description, items: [], attachments: [], tags: ['imported', view.account.provider || 'amex'],
           ...(entry.draftSnapshot?.transaction || {}),
+          date: new Date(entry.draftSnapshot?.postingDate?.date || entry.draftSnapshot?.transaction?.date || confirmed?.purchaseDate || row.purchaseDate),
           // CSV amount, card and transaction type cannot be overridden by a draft.
           amount: confirmed?.amount ?? row.amount, type: '支出', paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
           metadata: { ...(row.settlement?.source ? { finalizedSource: row.settlement.source } : {}), financeEntryId: entry._id.toString(), financialAccountId: initial.accountId.toString(), importBatchId: initial._id.toString(), importSource: view.account.provider || 'amex', originalCardIdentifier: row.cardIdentifier, processingDate: row.processingDate, currency: row.currency, foreignAmount: row.foreignAmount, exchangeRate: row.exchangeRate, ...(entry.draftSnapshot ? { financeDraftId: entry.draftSnapshot.draftId, financeDraftRevision: entry.draftSnapshot.revision, mappingPurpose: entry.draftSnapshot.purpose, mappingEvidence: entry.draftSnapshot.evidence, financeDocuments: entry.draftSnapshot.documents } : {}) },
