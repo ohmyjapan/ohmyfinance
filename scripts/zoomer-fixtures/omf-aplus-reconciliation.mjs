@@ -62,7 +62,8 @@ export const DEFECTS = [
   ['M9-closed-line-still-holds-nonexact', SHARED, [["    if (!isPending(batch) && !exact(candidates)) {", '    if (false) {']], 'R-c'],
   ['M10-superseded-not-marked', SERVICE, [["superseded: settlement.state === 'finalized' && !own", 'superseded: false']], 'R-b'],
   ['M11-partial-resolution-revalidates-consumed-rows', SHARED, [["const available = batch.rows.filter(r => !resolutionLines.has(r.line));", 'const available = batch.rows;']], 'R-c'],
-  ['M12-stale-draft-date-overrides-confirmed', SERVICE, [["const date = keepDraft ? draftDate : confirmed.purchaseDate", 'const date = draftDate']], 'R-g']
+  ['M12-stale-draft-date-overrides-confirmed', SERVICE, [["const date = keepDraft ? draftDate : confirmed.purchaseDate", 'const date = draftDate']], 'R-g'],
+  ['M13-legacy-reservation-date-not-persisted', SERVICE, [["        await FinanceEntry.updateOne({ _id: entry._id, 'draftSnapshot.postingDate': { $exists: false } }, { $set: { 'draftSnapshot.postingDate': postingDate } })\n", '']], 'R-g']
 ];
 
 // ── the child: the real services on an owned ephemeral database (node --import tsx <this file> --child --out <json> [--src <tree>] [--legs a,b]) ──
@@ -299,7 +300,7 @@ async function child() {
       return 'billed [E1,E2]<->[x1,x2], x3 new (3 purchases); 1<->2 is 400; closing E1 alone leaves E2 held';
     });
     await leg('R-g', async () => {
-      for (const mode of ['default', 'chosen', 'keep-provisional', 'choose-final', 'resume']) {
+      for (const mode of ['default', 'chosen', 'keep-provisional', 'choose-final', 'resume', 'legacy-resume']) {
         const account = await configuredAccount('R-g-' + mode), P = await importPending(account, [FORECAST.A]);
         const draftDate = mode === 'chosen' || mode === 'choose-final' ? '2026-08-31' : '2026-08-10';
         await approvedDraft(account, P, 2, draftDate); // Approved before the final date exists.
@@ -307,20 +308,23 @@ async function child() {
         const resolved = await api('imports/' + P + '/forecast', { line: 2, action: 'billed', sourceHash: p.hash, target: { importId: F, sourceHash: f.hash, lines: [2] } });
         assert.equal(resolved.status, 200, 'R-g:resolve');
         const beforeWrites = writes.transactions.length;
-        if (mode === 'resume') {
+        if (mode === 'resume' || mode === 'legacy-resume') {
           const insert = Transaction.updateOne;
           try {
             Transaction.updateOne = async () => { throw Error('synthetic interruption before the ledger write'); };
             assert.match(String(await thrown(() => finance.commitImport(ownerId, P, { decisions: [{ line: 2, action: 'import', draftRevision: 1 }] }))), /synthetic interruption/);
           } finally { Transaction.updateOne = insert; }
-          const view = await finance.reviewImport(ownerId, P);
-          assert.equal(view.rows.find(r => r.line === 2).settlement.postingDate.date, '2026-08-12', 'R-g:editor-sees-the-reserved-date');
+          if (mode === 'legacy-resume') await FinanceEntry.updateOne({ importId: P, line: 2 }, { $unset: { 'draftSnapshot.postingDate': '' } });
+          else {
+            const view = await finance.reviewImport(ownerId, P);
+            assert.equal(view.rows.find(r => r.line === 2).settlement.postingDate.date, '2026-08-12', 'R-g:editor-sees-the-reserved-date');
+          }
         }
         const posted = await finance.commitImport(ownerId, P, { decisions: [{ line: 2, action: 'import', draftRevision: 1, ...(mode === 'keep-provisional' || mode === 'resume' ? { keepDraftDate: true } : mode === 'choose-final' ? { keepDraftDate: false } : {}) }] });
         const payload = writes.transactions[beforeWrites].update.$setOnInsert, day = new Date(payload.date).toISOString().slice(0, 10);
-        assert.deepEqual([posted.posted, day, payload.amount], [1, mode === 'default' || mode === 'choose-final' || mode === 'resume' ? '2026-08-12' : draftDate, 1200], 'R-g:confirmed-date-default-and-explicit-accounting-choice-' + mode);
+        assert.deepEqual([posted.posted, day, payload.amount], [1, ['default','choose-final','resume','legacy-resume'].includes(mode) ? '2026-08-12' : draftDate, 1200], 'R-g:confirmed-date-default-and-explicit-accounting-choice-' + mode);
         const entry = await FinanceEntry.findOne({ importId: P, line: 2 }).lean();
-        assert.equal(entry.draftSnapshot.postingDate.date, day, 'R-g:posting-date-choice-is-durable');
+        assert.equal(entry.draftSnapshot.postingDate?.date, day, 'R-g:posting-date-choice-is-durable');
         assert.equal((await FinanceDraft.findOne({ importId: P, line: 2 }).lean()).values.date, draftDate, 'R-g:saved-draft-is-preserved');
         await finance.commitImport(ownerId, P, { decisions: [{ line: 2, action: 'import', draftRevision: 1 }] });
         assert.equal(writes.transactions.length, beforeWrites + 1, 'R-g:retry-no-second-post');

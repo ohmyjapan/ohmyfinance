@@ -32,7 +32,8 @@ export const timeoutMs = 7200000;
 const SELF = fileURLToPath(import.meta.url), root = path.resolve(path.dirname(SELF), '..', '..');
 // Re-pinned by plan omf-aplus-reconciliation-resolution-20261104 (S7): the frozen list below includes shared/finance-import-overlap.mjs, which that plan changed
 // deliberately; the pin now names the commit carrying those bytes (its parent 127c8ad9 is the previous pin's descendant), so the Amex protection stays whole.
-const BASE = '6e42540d90910873914c92ea24381fe64d02eef2';
+// Review F1-F3 corrections are now included; the complete frozen list remains enforced.
+const BASE = 'cfc697a735e567611c74e7c42526e61dc163e8e4';
 const SCRIPT = path.join(root, 'collector', 'windows', 'amex-native.ps1');
 const COVERS = ['collector/windows/amex-native.ps1', 'collector/amex-native.mjs', 'collector/browser.mjs', 'collector/index.mjs', 'collector/statement.mjs', 'server/models/Finance.ts', 'server/services/financeService.ts', 'server/api/finance/[...path].ts', 'pages/connections.vue', 'collector/test/fixtures/amex-native.html', 'scripts/zoomer-fixtures/omf-amex-recent.mjs'];
 const list = name => (process.env[name] || '').split(',').map(s => s.trim()).filter(Boolean);
