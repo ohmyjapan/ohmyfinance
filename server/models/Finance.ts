@@ -56,6 +56,10 @@ const batch = new Schema({
   decisions: { type: Schema.Types.Mixed, default: {} },
   mappingPreview: { type: Schema.Types.Mixed },
   sourceReferences: Schema.Types.Mixed,
+  // Plan omf-aplus-reconciliation-resolution-20261104: the creation-order rebuild's mark { at, revision, replaced: <previous binding> }
+  // (S4/S5) and, on a pending batch, the owner's per-line forecast decisions { <line>: { state: billed|closed, lines, target?, note,
+  // at, revision, replaced } } (R5). Mixed, because the strict schema would otherwise drop them.
+  sourceReferenceRebuild: Schema.Types.Mixed, forecastResolutions: Schema.Types.Mixed,
   sourceStatus: { type: String, enum: ['pending'] }, sourceFormat: { type: String, enum: ['csv', 'json'] }, sourceCapturedAt: Date,
   finalization: Schema.Types.Mixed,
   // The statement's calendar link state (financeBillService reconcileBill): pending before the first reconciliation,

@@ -19,7 +19,7 @@ import { FinanceDraft } from '../models/FinanceDraft'
 import { verifyPostingCompany, claimPostingCompany, insertCompanyPosting } from './financeCompanyPostingService'
 import { reconcileBill, importEvidence, importCalendarEligible, RETRY_IMPORT_STATES } from './financeBillService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
-import { buildSourceReferences, sourceReferenceGroups, sourceReferenceAt, verifySourceReferences, activeImportRows } from '../../shared/finance-import-overlap.mjs'
+import { buildSourceReferences, sourceReferenceGroups, sourceReferenceAt, verifySourceReferences, activeImportRows, forecastResolutions } from '../../shared/finance-import-overlap.mjs'
 
 const User = UserModel as mongoose.Model<IUser>
 const Transaction = TransactionModel as mongoose.Model<ITransaction>
@@ -189,7 +189,7 @@ export async function importSourceReferences(batch: any) {
     const groups = sourceReferenceGroups(batch)
     if (!groups.length) return []
     const ids = [...new Set(groups.flatMap(g => g.targets.map(t => t.importId)))]
-    const targets: any[] = await FinanceImport.find({ ownerId: batch.ownerId, accountId: batch.accountId, _id: { $in: ids } }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus').lean()
+    const targets: any[] = await FinanceImport.find({ ownerId: batch.ownerId, accountId: batch.accountId, _id: { $in: ids } }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus forecastResolutions').lean()
     verifySourceReferences(batch, targets)
     return groups.map(group => ({ ...group, description: batch.rows.find((r: any) => group.lines.includes(r.line)).description,
       targets: group.targets.map(t => ({ ...t, period: targets.find(b => String(b._id) === t.importId).period })) }))
@@ -201,12 +201,20 @@ export function assertEditableImportRow(batch: any, line: number) {
   if (reference) fail(409, 'This source group is already in an earlier import; open its original mapping')
 }
 // Keep drafts, purchase links and documents on their original working rows.
+// Precedence per line (plan omf-aplus-reconciliation-resolution-20261104 S3/R2): a strong review (a pending_purchase or fingerprint group
+// that disputes count, amount or month) → an exact finalized source (a statement's existing_import group, including the owner's billed
+// resolution) → the owner's closed record → a weak candidate review (a same-card row that might be a changed form) → pending. Every
+// finalized source carries the paired statement row (`source.row`: the confirmed date, merchant and amount — equal to the forecast's for
+// an exact match) and every review group its candidate rows; a closed line a statement later matches exactly is finalized with the
+// record marked superseded (READBACK B1).
 export async function pendingSettlements(batch: any) {
   const result = new Map<number, any>()
   if (!isPending(batch)) return result
+  const strong = new Map<number, any>(), exact = new Map<number, any>(), weak = new Map<number, any>()
+  const rowView = (r: any) => ({ line: r.line, purchaseDate: r.purchaseDate, description: r.description, amount: r.amount, statementMonth: r.statementMonth || '' })
   if (batch.finalization) {
     if (batch.finalization.sourceHash !== batch.hash || batch.finalization.period?.kind !== 'statement') fail(409, 'Finalized source evidence changed')
-    for (const row of activeImportRows(batch)) result.set(row.line, { state: 'finalized', source: { importId: String(batch._id), sourceHash: batch.hash, period: batch.finalization.period, lines: batch.rows.map((r: any) => r.line) } })
+    for (const row of activeImportRows(batch)) exact.set(row.line, { state: 'finalized', source: { importId: String(batch._id), sourceHash: batch.hash, period: batch.finalization.period, lines: batch.rows.map((r: any) => r.line), match: 'finalization', row: rowView(row) } })
   }
   const related: any[] = await FinanceImport.find({ ownerId: batch.ownerId, accountId: batch.accountId, 'sourceReferences.groups.targets.importId': String(batch._id) }).limit(101).lean()
   if (related.length > 100) fail(409, 'Too many settlement sources; review the source history')
@@ -215,13 +223,28 @@ export async function pendingSettlements(batch: any) {
     for (const group of references) {
       const target = group.targets.find(t => t.importId === String(batch._id))
       if (!target) continue
-      for (const line of target.lines) {
-        if (group.state === 'source_overlap_review') result.set(line, { state: 'review', reason: group.match === 'pending_candidate' ? '同じカードに未照合の明細があります。利用先・日付・金額などを比較するまで、追加分を購入件数に加えません。' : '未請求明細と件数・金額などが一致しません。元の明細と比較してください。' })
-        else if (isFinalStatement(other) && result.get(line)?.state !== 'review') result.set(line, { state: 'finalized', source: { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, lines: group.lines } })
+      const rows = other.rows.filter((r: any) => group.lines.includes(r.line))
+      if (group.state === 'source_overlap_review') {
+        const bucket = group.match === 'pending_candidate' ? weak : strong
+        const reason = group.match === 'pending_candidate' ? '同じカードに未照合の明細があります。利用先・日付・金額などを比較するまで、追加分を購入件数に加えません。' : '未請求明細と件数・金額などが一致しません。元の明細と比較してください。'
+        const candidate = { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, final: isFinalStatement(other), lines: group.lines, rows: rows.map(rowView) }
+        for (const line of target.lines) { const entry = bucket.get(line) || { state: 'review', reason, candidates: [] }; entry.candidates.push(candidate); bucket.set(line, entry) }
+      } else if (isFinalStatement(other)) {
+        for (const [index, line] of target.lines.entries()) exact.set(line, { state: 'finalized', source: { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, lines: group.lines, match: group.match || 'fingerprint', row: rowView(rows[index] || rows[0]) } })
       }
     }
   }
-  for (const row of activeImportRows(batch)) if (!result.has(row.line)) result.set(row.line, { state: 'pending' })
+  let records: Map<number, any>
+  try { records = forecastResolutions(batch) } catch { return fail(409, 'Forecast resolution records are invalid; review the source history') }
+  for (const row of activeImportRows(batch)) {
+    const record = records.get(row.line) || null
+    const settlement = strong.get(row.line) || exact.get(row.line) || (record?.state === 'closed' ? { state: 'closed' } : null) || weak.get(row.line) || { state: 'pending' }
+    // A line disputed by a strong group and held by candidate groups offers every statement candidate: the owner's pairing may be any of them.
+    const view = settlement.state === 'review' ? { ...settlement, candidates: [...(strong.get(row.line)?.candidates || []), ...(weak.get(row.line)?.candidates || [])] } : settlement
+    if (!record) { result.set(row.line, view); continue }
+    const own = settlement.state === 'finalized' && record.state === 'billed' && settlement.source.match === 'pending_resolution' && settlement.source.importId === record.target.importId
+    result.set(row.line, { ...view, resolution: { ...record, superseded: settlement.state === 'finalized' && !own } })
+  }
   return result
 }
 // The calendar link of a statement batch (plan omf-calendar-gmail-build-20261015 §2 S15): runs after the batch is stored
@@ -272,7 +295,7 @@ export async function acceptImport(ownerId: string, account: any, bytes: Buffer,
     }
     // Date/fingerprint-only lookups miss bank corrections. Read the bounded
     // account history, including final statements that confirm older forecasts.
-    const previous: any[] = await FinanceImport.find({ ownerId, accountId: account._id }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus finalization').limit(101).lean()
+    const previous: any[] = await FinanceImport.find({ ownerId, accountId: account._id }).select('ownerId accountId hash rows sourceReferences period provider sourceStatus finalization forecastResolutions').limit(101).lean()
     if (previous.length > 100) fail(409, 'Too many overlapping imports; review the source history first')
     for (const prior of previous) await importSourceReferences(prior)
     const calendarEligible = importCalendarEligible(locked, parsed!)
@@ -412,13 +435,16 @@ async function commitScopedImport(ownerId: string, importId: string, body: any, 
         if (!await Transaction.exists({ _id: entry.transactionId, ...(organizationId ? { organizationId } : {}) })) fail(409, 'Historical transaction no longer exists')
         linked++
       } else {
+        // The confirmed statement row of a finalized forecast (plan omf-aplus-reconciliation-resolution-20261104 R2, READBACK B2): the
+        // billed date and amount for a resolved forecast, identical to the row's own values for an exact match.
+        const confirmed = row.settlement?.source?.row
         const payload = {
-          referenceNumber: `${(view.account.provider || 'amex').toUpperCase()}-${entry._id}`, date: new Date(row.purchaseDate), status: 'completed',
+          referenceNumber: `${(view.account.provider || 'amex').toUpperCase()}-${entry._id}`, date: new Date(confirmed?.purchaseDate ?? row.purchaseDate), status: 'completed',
           accountCategoryId: body.accountCategoryId || undefined,
           hasReceipt: false, notes: row.description, items: [], attachments: [], tags: ['imported', view.account.provider || 'amex'],
           ...(entry.draftSnapshot?.transaction || {}),
           // CSV amount, card and transaction type cannot be overridden by a draft.
-          amount: row.amount, type: '支出', paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
+          amount: confirmed?.amount ?? row.amount, type: '支出', paymentMethod: 'クレジットカード', cardNumber: row.cardIdentifier.slice(-4),
           metadata: { ...(row.settlement?.source ? { finalizedSource: row.settlement.source } : {}), financeEntryId: entry._id.toString(), financialAccountId: initial.accountId.toString(), importBatchId: initial._id.toString(), importSource: view.account.provider || 'amex', originalCardIdentifier: row.cardIdentifier, processingDate: row.processingDate, currency: row.currency, foreignAmount: row.foreignAmount, exchangeRate: row.exchangeRate, ...(entry.draftSnapshot ? { financeDraftId: entry.draftSnapshot.draftId, financeDraftRevision: entry.draftSnapshot.revision, mappingPurpose: entry.draftSnapshot.purpose, mappingEvidence: entry.draftSnapshot.evidence, financeDocuments: entry.draftSnapshot.documents } : {}) },
           timeline: [{ type: 'imported', title: view.account.provider === 'aplus' ? 'Aplus取込' : 'Amex取込', timestamp: new Date(), description: `${view.account.name} / ${initial.period.start} - ${initial.period.end}` }]
         }

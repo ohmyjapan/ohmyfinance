@@ -1,5 +1,6 @@
 import { readMerchantLink, saveMerchantLink } from '../../services/financeSupplierService'
 import { readDraft, saveDraft, addDocument, removeDocument, createDraftReference, prepareSourceCategories, downloadDocument, boundedBody } from '../../services/financeDraftService'
+import { resolveForecastLine } from '../../services/financeForecastResolutionService'
 import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3'
 import { calendarCompany } from '../../utils/calendarAccess'
 import { requireLedgerRegistrar } from '../../utils/ledgerRegistrarAccess'
@@ -181,6 +182,13 @@ export default defineEventHandler(async event => {
       if (parts[2] === 'calendar' && parts.length === 3 && method === 'GET') return await importCalendarReview(ownerId, parts[1])
       if (parts[2] === 'calendar' && parts.length === 3 && method === 'PUT') return await linkImport(ownerId, parts[1], await readBody(event))
       if (parts[2] === 'mapping' && parts.length === 3 && method === 'GET') return await reviewMapping(ownerId, parts[1])
+      // The owner's decision on one unbilled (forecast) line (plan omf-aplus-reconciliation-resolution-20261104 R4): billed as the chosen
+      // statement rows, closed (no bill expected) or reopened. Owner auth above; bounded JSON body as the draft routes.
+      if (parts[2] === 'forecast' && parts.length === 3 && method === 'PUT') {
+        let body: any
+        try { body = JSON.parse((await boundedBody(event, 10000)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; fail(400, 'Invalid forecast resolution JSON') }
+        return await resolveForecastLine(ownerId, parts[1], body)
+      }
       if (parts[2] === 'company-commit' && parts.length === 3 && method === 'POST') {
         const { organizationId } = await calendarCompany(event)
         // Plan omf-role-writes-20261101 C5: posting a statement into the company ledger is a 仕訳 registration — owner, admin or 経理担当 only.

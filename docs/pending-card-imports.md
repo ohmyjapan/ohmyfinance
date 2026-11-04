@@ -27,9 +27,23 @@ creates a version-3 `pending_candidate` review reference, never an automatic
 match. These incoming rows are archived and visible in source review but excluded
 from purchase totals and posting; the original draft and evidence remain intact.
 This can also hold genuinely new purchases when an older forecast is unresolved.
-A disappearance from a later snapshot is not proof of cancellation. Resolving
-these ambiguous holds is a separate source review; no automatic cancellation or
-manual override endpoint is provided by this change.
+A disappearance from a later snapshot is not proof of cancellation. The owner
+resolves these holds on the forecast's draft page (`PUT
+/api/finance/imports/:id/forecast`): *billed* pairs the forecast line (or a
+group of identical forecast lines) with the chosen rows of one finalized
+statement — the ledger then posts the statement's date and amount, payment
+matching shows the confirmed values beside the forecast's, and the statement
+rows become reference copies of the forecast; *closed* records that no bill is
+expected — the forecast never posts and holds no other row, while a later exact
+statement match still binds it and marks the record superseded; *reopen* undoes
+either. Each decision is stored on the forecast import (`forecastResolutions`)
+and the affected bindings are rebuilt in creation order; a decision is refused
+when a ledger entry already sits on a row it would re-pair or release. A
+statement settles a forecast line for every other statement, and a statement
+whose coverage closed before the forecast's purchase date never holds it.
+`scripts/finance-source-references-rebuild.ts` re-derives every binding of an
+account from its full history (dry run by default). Closing is the owner's
+decision; exact statement evidence outranks it.
 
 Exact groups in the incoming file take precedence. Already confirmed forecasts
 do not hold activity after their final statement period; revised or older

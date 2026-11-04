@@ -225,7 +225,8 @@ const filters = computed(() => [{ value: 'all', label: 'すべて' }, { value: '
 const purposeFilters = computed(() => [{value: 'purpose:supported', label: t('mappingImport.supported')}, {value: 'purpose:tentative', label: t('mappingImport.tentative')}, {value: 'purpose:review', label: t('mappingImport.unresolved')}].map(item => ({...item, count: rows.value.filter(row => matchesFilter(row, item.value)).length})))
 const purposeLabel = (row: MappingRow) => t('mappingImport.' + (row.classification?.state === 'conflict' ? 'conflict' : row.classification?.state === 'unresolved' ? 'unresolved' : row.classification?.state === 'tentative' ? 'tentative' : row.classification?.source === 'learning_rule' ? 'confirmedRule' : row.classification?.source === 'spreadsheet' ? 'spreadsheet' : 'supported'))
 const referenceGroups = computed(() => batches.value.flatMap(batch => (batch.sourceReferences || []).map(group => ({...group, importId: batch.id, accountName: batch.account.name}))))
-const pendingRows = computed(() => rows.value.filter(row => row.settlement && row.settlement.state !== 'finalized'))
+// A closed forecast (no bill expected) is neither awaiting confirmation nor part of the 確定待ち amount (READBACK B2).
+const pendingRows = computed(() => rows.value.filter(row => row.settlement && !['finalized', 'closed'].includes(row.settlement.state)))
 const referenceCount = computed(() => referenceGroups.value.reduce((n, group) => n + group.lines.length, 0))
 const countFor = (value: string) => filters.value.find(item => item.value === value)?.count || 0
 const preparationFilters = computed(() => Object.entries(preparationStates).map(([key,label]) => ({ value: 'preparation:' + key, label, count: rows.value.filter(row => row.preparation?.state === key).length })))

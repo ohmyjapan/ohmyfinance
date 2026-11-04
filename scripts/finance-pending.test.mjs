@@ -222,3 +222,49 @@ test('recent: the closed statement settles an exact row group and holds everythi
   }
   assert.deepEqual(first, before, 'recent:final-never-rewrites-the-snapshot');
 });
+
+// ── Aplus reconciliation (plan omf-aplus-reconciliation-resolution-20261104): the settled-line and closed-period rules and the owner's forecast resolutions on the real
+// Aplus parser's rows. The original parsing and provisional semantics above are unchanged; these legs state the intentional new behaviour. ──
+const forecast = (items, n, capturedAt = '2026-08-20T00:00:00.000Z') => batch(pending({ ...aplusCapture(items.map(i => ({ merchant: i.merchant, amount: i.amount, date: i.date || '2026-08-10', card: '1234', month: i.month || '26/09' }))), capturedAt }), n);
+const statement = (items, month, n) => batch(actual(items.map(i => ({ ...i, date: i.date || '2026-08-10' })), month), n);
+const decided = (b, records) => ({ ...b, forecastResolutions: records });
+const decision = (state, lines, target) => ({ state, lines, ...(target ? { target } : {}), note: '', at: '2026-11-04T00:00:00.000Z', revision: 1, replaced: null });
+const groupsOf = b => b.sourceReferences.groups.map(g => [g.match, g.state, g.lines, g.targets[0].lines]);
+const A = { merchant: 'Shop A', amount: 1000, month: '26/09' }, B = { merchant: 'Shop B', amount: 900, month: '26/09' }, C = { merchant: 'Shop C', amount: 800, month: '26/10' }, D = { merchant: 'Shop D', amount: 700, month: '26/10' };
+
+test('aplus: a later statement settles a forecast for every other statement, and a statement closed before the purchases holds nothing', () => {
+  const P = forecast([A, B, C, D], 1);
+  const oct = reconcile(statement([C, { merchant: 'Shop X', amount: 777, date: '2026-10-03' }], '2026-10', 2), [P]);
+  assert.deepEqual(groupsOf(oct), [['pending_purchase', 'existing_import', [2], [4]], ['pending_candidate', 'source_overlap_review', [3], [2, 3, 5]]], 'aplus:at-import X->{A,B,D}');
+  const sept = reconcile(statement([A, B, { merchant: 'Shop Y', amount: 555, date: '2026-09-05' }], '2026-09', 3), [P, oct]);
+  assert.deepEqual(groupsOf(sept), [['pending_purchase', 'existing_import', [2], [2]], ['pending_purchase', 'existing_import', [3], [3]], ['pending_candidate', 'source_overlap_review', [4], [5]]], 'aplus:Y->{D}: C settled by the October statement is no candidate');
+  const rebuilt = { ...oct, sourceReferences: buildSourceReferences(oct, [P], [P, sept]) };
+  assert.deepEqual(groupsOf(rebuilt)[1], ['pending_candidate', 'source_overlap_review', [3], [5]], 'aplus:rebuilt with the whole history X->{D}');
+  assert.equal(verifySourceReferences(oct, [P, sept]).length, 2, 'aplus:the import-time binding still verifies');
+  const old = reconcile(statement([{ merchant: 'Old shop', amount: 300, date: '2025-08-05' }], '2025-08', 4), [P]);
+  assert.deepEqual([old.sourceReferences.groups, activeImportRows(old).length], [[], 1], 'aplus:a 2025-08 statement holds no 2026 forecast');
+});
+test('aplus: a billed decision binds the changed statement row and consumes the forecast; a closed one holds nothing and an exact bill supersedes it', () => {
+  const P = forecast([A], 1), changed = statement([{ merchant: 'Shop A (final)', amount: 1200, date: '2026-08-12' }], '2026-09', 2);
+  assert.deepEqual(groupsOf(reconcile(changed, [P])), [['pending_candidate', 'source_overlap_review', [2], [2]]], 'aplus:changed bill held');
+  const billed = decided(P, { 2: decision('billed', [2], { importId: changed._id, sourceHash: changed.hash, lines: [2] }) });
+  const bound = reconcile({ ...changed }, [billed]);
+  assert.deepEqual([bound.sourceReferences.version, groupsOf(bound), activeImportRows(bound).length, activeImportRows(billed).length], [4, [['pending_resolution', 'existing_import', [2], [2]]], 0, 1], 'aplus:resolution group, the final row is a reference copy of the forecast');
+  assert.deepEqual([activeImportRows(reconcile(statement([A], '2026-09', 3), [billed, bound])).length], [1], 'aplus:an exact row of a consumed forecast is a new purchase');
+  const closed = decided(forecast([B], 4), { 2: decision('closed', [2]) });
+  const held = reconcile(statement([{ merchant: 'Shop O1', amount: 100, date: '2026-09-02' }, { merchant: 'Shop O2', amount: 200, date: '2026-09-03' }], '2026-09', 5), [closed]);
+  assert.deepEqual([held.sourceReferences.groups, activeImportRows(held).length], [[], 2], 'aplus:a closed forecast holds nothing');
+  const exact = reconcile(statement([B], '2026-09', 6), [closed, held]);
+  assert.deepEqual(groupsOf(exact), [['pending_purchase', 'existing_import', [2], [2]]], 'aplus:an exact bill still binds the closed forecast (superseding its record)');
+  const again = reconcile(forecast([B], 7, '2026-08-21T00:00:00.000Z'), [closed]);
+  assert.equal(activeImportRows(again).length, 0, 'aplus:a repeated snapshot row of a closed forecast is not a second purchase');
+});
+test('aplus identical repeats: two forecasts paired with two of three statement rows leave the third new; closing one alone leaves the other held', () => {
+  const E = { merchant: 'Shop E', amount: 700, month: '26/09' }, P = forecast([E, E], 1), three = statement([E, E, E], '2026-09', 2);
+  assert.deepEqual(groupsOf(reconcile(three, [P])), [['pending_purchase', 'source_overlap_review', [2, 3, 4], [2, 3]]], 'aplus:three bills, two forecasts: review');
+  const target = { importId: three._id, sourceHash: three.hash, lines: [2, 3] };
+  const paired = reconcile({ ...three }, [decided(P, { 2: decision('billed', [2, 3], target), 3: decision('billed', [2, 3], target) })]);
+  assert.deepEqual([groupsOf(paired), activeImportRows(paired).map(r => r.line)], [[['pending_resolution', 'existing_import', [2, 3], [2, 3]]], [4]], 'aplus:x3 stays a new purchase');
+  const one = reconcile({ ...three }, [decided(P, { 2: decision('closed', [2]) })]);
+  assert.deepEqual([groupsOf(one), activeImportRows(one).length], [[['pending_purchase', 'source_overlap_review', [2, 3, 4], [3]]], 0], 'aplus:closing E1 alone leaves E2 holding the rows');
+});
