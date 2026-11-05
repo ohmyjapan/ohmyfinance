@@ -211,7 +211,7 @@ export async function pendingSettlements(batch: any) {
   const result = new Map<number, any>()
   if (!isPending(batch)) return result
   const strong = new Map<number, any>(), exact = new Map<number, any>(), weak = new Map<number, any>()
-  const rowView = (r: any) => ({ line: r.line, purchaseDate: r.purchaseDate, description: r.description, amount: r.amount, statementMonth: r.statementMonth || '' })
+  const rowView = (r: any) => ({ line: r.line, kind: r.kind, purchaseDate: r.purchaseDate, description: r.description, amount: r.amount, statementMonth: r.statementMonth || '' })
   if (batch.finalization) {
     if (batch.finalization.sourceHash !== batch.hash || batch.finalization.period?.kind !== 'statement') fail(409, 'Finalized source evidence changed')
     for (const row of activeImportRows(batch)) exact.set(row.line, { state: 'finalized', source: { importId: String(batch._id), sourceHash: batch.hash, period: batch.finalization.period, lines: batch.rows.map((r: any) => r.line), match: 'finalization', row: rowView(row) } })
