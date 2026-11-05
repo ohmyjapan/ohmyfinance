@@ -4,7 +4,7 @@ import { aplusCapture } from './finance-pending-fixtures.mjs';
 import { parseCardImport } from '../shared/card-import.mjs';
 import { HEADERS as APLUS_HEADERS } from '../shared/aplus.mjs';
 import { HEADERS as AMEX_HEADERS } from '../shared/amex.mjs';
-import { buildSourceReferences, verifySourceReferences, activeImportRows } from '../shared/finance-import-overlap.mjs';
+import { buildSourceReferences, verifySourceReferences, activeImportRows, resolutionTargetEligible } from '../shared/finance-import-overlap.mjs';
 const account = { provider: 'aplus', cardIdentifiers: ['1234', '5678'] };
 const encode = x => Buffer.from(JSON.stringify(x));
 const csv = (headers, rows) => Buffer.from([headers, ...rows].map(r => r.map(v => '"' + String(v).replaceAll('"', '""') + '"').join(',')).join('\r\n'));
@@ -258,6 +258,26 @@ test('aplus: a billed decision binds the changed statement row and consumes the 
   assert.deepEqual(groupsOf(exact), [['pending_purchase', 'existing_import', [2], [2]]], 'aplus:an exact bill still binds the closed forecast (superseding its record)');
   const again = reconcile(forecast([B], 7, '2026-08-21T00:00:00.000Z'), [closed]);
   assert.equal(activeImportRows(again).length, 0, 'aplus:a repeated snapshot row of a closed forecast is not a second purchase');
+});
+// ── plan omf-aplus-statement-payment-review-20261105: automatic exact matching and the capture parsing contracts are unchanged; a pending row's blank
+// payment field is a forecast, never a statement exception; the same purchase kept under individual review on the statement needs the owner's explicit
+// pairing and then stays a reference copy with its original values. ──
+const reviewRow = (items, month) => parseCardImport(csv(APLUS_HEADERS, items.map(r => [`≪****-****-****-${r.card || '1234'}≫`, (r.date || '2026-08-01').replaceAll('-', ''), r.merchant, r.amount, 'Ｓ', '1', '01', r.payment === null ? '' : (r.payment ?? r.amount), ''])), account, { kind: 'statement', statementMonth: month, statementTotal: items.reduce((n, r) => n + (r.payment === null ? 0 : (r.payment ?? r.amount)), 0) });
+test('aplus: pending null payment fields are forecasts, never finalized exceptions; exact statements still match automatically; the same purchase under review needs the explicit pairing', () => {
+  const original = batch(pending(), 1);
+  assert.deepEqual(original.rows.map(r => [r.kind, r.paymentAmount, r.purchaseAmount]), [['expense', null, 1200], ['expense', null, 1200]], 'pending rows: expense with a blank payment field');
+  assert.equal(resolutionTargetEligible(original.rows[0], { ...original.rows[1], kind: 'statement_review' }), false, 'a pending row under review is never the same-purchase target (no statement month); batch finality is the callers\' check');
+  const exact = reconcile(batch(billed(), 2), [original]);
+  assert.deepEqual([exact.sourceReferences.version, exact.sourceReferences.groups[0].match, exact.sourceReferences.groups[0].state, activeImportRows(exact).length], [2, 'pending_purchase', 'existing_import', 0], 'an exact statement still matches automatically');
+  const under = batch(reviewRow([{ merchant: 'Synthetic shop', amount: 1200, payment: null }, { merchant: 'Synthetic shop', amount: 1200, payment: null }], '2026-09'), 3);
+  assert.deepEqual(under.rows.map(r => [r.kind, r.purchaseAmount, r.paymentAmount]), [['statement_review', 1200, null], ['statement_review', 1200, null]], 'a blank payment field on the statement is a statement_review row');
+  const held = reconcile({ ...under }, [original]);
+  assert.deepEqual([held.sourceReferences.groups[0].match, held.sourceReferences.groups[0].state, activeImportRows(held).length, activeImportRows(original).length], ['pending_purchase', 'source_overlap_review', 0, 2], 'never an automatic match: held for the owner');
+  assert.equal(resolutionTargetEligible(original.rows[0], under.rows[0]), true, 'the same purchase is eligible for the explicit pairing');
+  const target = { importId: under._id, sourceHash: under.hash, lines: [2, 3] }, paired = reconcile({ ...under }, [decided(original, { 2: decision('billed', [2, 3], target), 3: decision('billed', [2, 3], target) })]);
+  assert.deepEqual([paired.sourceReferences.version, paired.sourceReferences.groups.map(g => [g.match, g.state, g.lines]), activeImportRows(paired).length, paired.rows.map(r => r.paymentAmount)], [4, [['pending_resolution', 'existing_import', [2, 3]]], 0, [null, null]], 'the explicit pairing binds; the payment fields stay blank');
+  const changed = reconcile(batch(reviewRow([{ merchant: 'Synthetic shop', amount: 1300, payment: null }, { merchant: 'Synthetic shop', amount: 1300, payment: null }], '2026-09'), 4), [original]);
+  assert.equal(resolutionTargetEligible(original.rows[0], changed.rows[0]), false, 'a changed amount under review is not the same purchase');
 });
 test('aplus identical repeats: two forecasts paired with two of three statement rows leave the third new; closing one alone leaves the other held', () => {
   const E = { merchant: 'Shop E', amount: 700, month: '26/09' }, P = forecast([E, E], 1), three = statement([E, E, E], '2026-09', 2);

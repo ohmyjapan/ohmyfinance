@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { FinancialAccount, FinanceImport, FinanceEntry } from '../models/Finance'
 import { fail, ownedImport, pendingSettlements } from './financeService'
 import { isPending, isFinalStatement } from '../../shared/finance-pending.mjs'
-import { forecastResolutions, verifySourceReferences } from '../../shared/finance-import-overlap.mjs'
+import { forecastResolutions, verifySourceReferences, resolutionTargetEligible } from '../../shared/finance-import-overlap.mjs'
 import { accountImports, relatedRows, planSourceReferenceRebuild, applySourceReferenceRebuild, rebuildReport } from './financeSourceReferenceRebuildService'
 
 // R3 (plan omf-aplus-reconciliation-resolution-20261104, READBACK B1-B4): the owner's decision on one unbilled (forecast) line.
 //   billed — these forecast lines (one, or a group of identical ones) are the chosen rows of one finalized statement whose date, merchant
 //            or amount changed; the ledger posts the statement's values and the statement rows become reference copies of the forecast.
+//            Plan omf-aplus-statement-payment-review-20261105: the chosen row may also be the same Aplus purchase the issuer kept under
+//            individual review (statement_review, a blank or adjusted payment field) — the shared eligibility decides; that pairing records
+//            the source only, the forecast stays in review with its original amounts, and nothing here marks it paid, posts or closes it.
 //   closed — no bill is expected (cancelled, refunded): the forecast never posts and holds no other row; a later exact statement match
 //            still binds it and supersedes the record (B1).
 //   reopen — undoes either; the candidate holds return.
@@ -78,8 +81,8 @@ export async function resolveForecastLine(ownerId: string, importId: string, bod
       if (isPending(target) || !isFinalStatement(target)) fail(400, '確定した請求明細の行だけを照合先にできます。') // guard:forecast-target-final
       if (request.target!.lines.length !== lines.length) fail(400, '未請求の行数と確定明細の行数が一致しません。') // guard:forecast-count
       const forecastRows = lines.map(l => batch.rows.find((r: any) => r.line === l)), targetRows = request.target!.lines.map(l => target.rows.find((r: any) => r.line === l))
-      if (targetRows.some(r => !r || r.kind !== 'expense')) fail(400, '確定明細の支出の行だけを照合先にできます。')
-      if (targetRows.some((r, i) => r.cardIdentifier !== forecastRows[i].cardIdentifier)) fail(400, 'カードが一致しません。') // guard:forecast-card
+      if (targetRows.some((r, i) => r && r.cardIdentifier !== forecastRows[i].cardIdentifier)) fail(400, 'カードが一致しません。') // guard:forecast-card
+      if (targetRows.some((r, i) => !resolutionTargetEligible(forecastRows[i], r))) fail(400, '確定明細の支出の行か、同じ利用（カード・利用日・利用先・利用金額・請求月が一致する個別確認の行）だけを照合先にできます。') // guard:forecast-target-eligible
       const candidates = lines.flatMap(l => (settlements.get(l)?.candidates || []).filter((c: any) => c.importId === String(target._id)).flatMap((c: any) => c.lines))
       if (request.target!.lines.some(l => !candidates.includes(l))) fail(409, '選んだ確定明細は、この未請求の候補ではありません。再読込してください。') // guard:forecast-candidate
       if (await FinanceEntry.exists({ ownerId, importId: target._id, line: { $in: request.target!.lines } })) fail(409, ENTRY_ON_TARGET) // guard:forecast-target-posted

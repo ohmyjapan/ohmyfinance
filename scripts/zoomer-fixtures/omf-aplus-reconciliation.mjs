@@ -25,9 +25,25 @@
 //   R-f Amex: the 127c8ad binding is byte-identical and verifies; one pending/final pair resolves the same way; confirmed values matched
 //   M   deliberately reintroduced defects (OMF_APLUS_MUTANTS narrows them): each copy of server/+shared/ with one line changed must turn the
 //       named leg RED after that leg's unchanged control was green.
-import { execFile } from 'node:child_process';
+// Plan omf-aplus-statement-payment-review-20261105 (the same-purchase statement exception; acceptance P1-P9):
+//   S-a P1/P2: a forecast whose statement row is the same purchase with a blank お支払金額 (kind statement_review) cannot bind at the base
+//       (400 / stale); with the change the explicit pairing binds and the forecast stays in state `review` WITH the confirmed source row
+//       (kind, purchase amount 8039, payment null, the issuer's review reason), the record not superseded; payment matching keeps the
+//       source identities and marks nothing paid; readiness stays `reconciliation`; the statement row is a reference copy.
+//   S-b P5: one eligibility for the page's candidate, the writer and the emitter/verifier: a reduced payment field is the same purchase; a
+//       changed amount, date, merchant, billing month or card, a credit, an annual fee, a deposit, an Amex review row, a reused target or
+//       a second use of a paired row are refused everywhere (API 400/409, candidate `pairable:false`, forged record binds nothing).
+//   S-c P6: reopen restores the hold; identical repeats pair as a group and one at a time; crash after the record and before the binding
+//       verifies and completes; expired lease and a concurrent second decision are refused; a tampered target hash fails closed.
+//   S-d P3/P8: the linked exception cannot post (import, link, an approved draft, a reserved retry) and the ordinary billed expense still
+//       posts exactly once; no ledger, entry, payment-anchor, calendar or account flag write comes from the pairing.
+//   B   P4 real Chrome (headless, an owned temporary profile, the built app on a loopback port with the harness's own mongod): the page
+//       offers the same-purchase statement_review candidate with 利用金額 8,039 and お支払金額 未記載, confirms the correspondence only,
+//       shows the review status with no posting control and no "posts with this amount" promise, supports reopen; the ordinary Aplus
+//       pair and the Amex pair keep working; mobile 390 and desktop 1440. OMF_APLUS_LEGS=B runs it alone; it builds .output when stale.
+import { execFile, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import http from 'node:http';
@@ -40,13 +56,14 @@ export const timeoutMs = 3600000;
 const SELF = fileURLToPath(import.meta.url), root = path.resolve(path.dirname(SELF), '..', '..');
 // The plan's revision: the module the stored production bindings were built with. L5/R-f read it from git and verify its bindings under the new code.
 const BASE_REV = '127c8ad9c9edcf91c2bd40a1067d3270d70587cf';
-const COVERS = ['shared/finance-import-overlap.mjs', 'server/services/financeService.ts', 'server/models/Finance.ts', 'server/services/financeSourceReferenceRebuildService.ts', 'server/services/financeForecastResolutionService.ts', 'server/api/finance/[...path].ts', 'server/services/financePaymentMatchService.ts', 'scripts/finance-source-references-rebuild.ts', 'scripts/finance-pending.test.mjs', 'scripts/finance-import-overlap.test.mjs', 'scripts/zoomer-fixtures/omf-aplus-reconciliation.mjs'];
+const COVERS = ['shared/finance-import-overlap.mjs', 'server/services/financeService.ts', 'server/models/Finance.ts', 'server/services/financeSourceReferenceRebuildService.ts', 'server/services/financeForecastResolutionService.ts', 'server/api/finance/[...path].ts', 'server/services/financePaymentMatchService.ts', 'scripts/finance-source-references-rebuild.ts', 'scripts/finance-pending.test.mjs', 'scripts/finance-import-overlap.test.mjs', 'scripts/zoomer-fixtures/omf-aplus-reconciliation.mjs', 'shared/finance-preparation.mjs', 'pages/mapping-draft/[importId]/[line].vue', 'components/finance/StatementStatus.vue', 'components/intake/IntakePaymentMatches.vue'];
 const list = name => (process.env[name] || '').split(',').map(s => s.trim()).filter(Boolean);
 const LEGS = list('OMF_APLUS_LEGS'), MUTANTS = list('OMF_APLUS_MUTANTS');
 export const PARTIAL = LEGS.length > 0 || MUTANTS.length > 0;
-const CHILD_LEGS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'R-a', 'R-b', 'R-c', 'R-d', 'R-e', 'R-f', 'R-g'];
+const CHILD_LEGS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'R-a', 'R-b', 'R-c', 'R-d', 'R-e', 'R-f', 'R-g', 'S-a', 'S-b', 'S-c', 'S-d'];
 const execute = (file, args, options = {}) => new Promise(resolve => execFile(file, args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8', ...options }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, stdout: String(stdout), stderr: String(stderr) })));
-const mutate = (text, edits, label) => { let out = text; for (const [a, b] of edits) { const n = out.split(a).length - 1; if (n !== 1) throw new Error(label + ' anchor hits ' + n + ': ' + a.slice(0, 100)); out = out.replace(a, () => b); } return out; };
+// Anchors are written with LF; a checkout under core.autocrlf reads CRLF, so each anchor and replacement take the file's own line ending.
+const mutate = (text, edits, label) => { let out = text; const eol = text.includes('\r\n') ? '\r\n' : '\n'; for (const [a0, b0] of edits) { const a = a0.replaceAll('\n', eol), b = b0.replaceAll('\n', eol); const n = out.split(a).length - 1; if (n !== 1) throw new Error(label + ' anchor hits ' + n + ': ' + a0.slice(0, 100)); out = out.replace(a, () => b); } return out; };
 
 // ── the reintroduced defects: [label, file, [[anchor, replacement]], leg that must turn RED] ───────────────────────────────────────────
 const SHARED = 'shared/finance-import-overlap.mjs', SERVICE = 'server/services/financeService.ts', RESOLUTION = 'server/services/financeForecastResolutionService.ts', MATCH = 'server/services/financePaymentMatchService.ts';
@@ -63,7 +80,19 @@ export const DEFECTS = [
   ['M10-superseded-not-marked', SERVICE, [["superseded: settlement.state === 'finalized' && !own", 'superseded: false']], 'R-b'],
   ['M11-partial-resolution-revalidates-consumed-rows', SHARED, [["const available = batch.rows.filter(r => !resolutionLines.has(r.line));", 'const available = batch.rows;']], 'R-c'],
   ['M12-stale-draft-date-overrides-confirmed', SERVICE, [["const date = keepDraft ? draftDate : confirmed.purchaseDate", 'const date = draftDate']], 'R-g'],
-  ['M13-legacy-reservation-date-not-persisted', SERVICE, [["        await FinanceEntry.updateOne({ _id: entry._id, 'draftSnapshot.postingDate': { $exists: false } }, { $set: { 'draftSnapshot.postingDate': postingDate } })\n", '']], 'R-g']
+  ['M13-legacy-reservation-date-not-persisted', SERVICE, [["        await FinanceEntry.updateOne({ _id: entry._id, 'draftSnapshot.postingDate': { $exists: false } }, { $set: { 'draftSnapshot.postingDate': postingDate } })\n", '']], 'R-g'],
+  // plan omf-aplus-statement-payment-review-20261105 (P9): each reintroduced defect must fail a specific behavioural assertion
+  ['M14-review-source-finalizes', SERVICE, [["group.match === 'pending_resolution' && row.kind !== 'expense' ? { state: 'review'", "false ? { state: 'review'"]], 'S-a'],
+  ['M15-blank-payment-coerced-to-zero', SERVICE, [['paymentAmount: r.paymentAmount,', 'paymentAmount: r.paymentAmount ?? 0,']], 'S-a'],
+  ['M16-confirmed-amount-from-payment-field', MATCH, [['amount:use?use.amount:row.amount,', 'amount:use?(use.paymentAmount??use.amount):row.amount,']], 'S-b'],
+  ['M17-eligibility-ignores-billing-month', SHARED, [[' && text(target.statementMonth) && target.statementMonth === forecast.pendingPaymentMonth;', ';']], 'S-b'],
+  ['M18-eligibility-ignores-purchase-amount', SHARED, [[' && target.amount === forecast.amount\n', '\n']], 'S-b'],
+  ['M19-writer-accepts-any-review-row', RESOLUTION, [['if (targetRows.some((r, i) => !resolutionTargetEligible(forecastRows[i], r)))', "if (targetRows.some((r, i) => !r || !['expense', 'statement_review'].includes(r.kind)))"]], 'S-b'],
+  ['M20-source-pairing-marks-paid', MATCH, [['Object.assign(p,residuals(p));', 'Object.assign(p,residuals(p));if(p.confirmed){p.allocated=p.amount;p.remaining=0;}']], 'S-a'],
+  ['M21-reopen-keeps-record', RESOLUTION, [["      if (request.action === 'reopen') { await check(); await FinanceImport.updateOne({ _id: batch._id, ownerId, hash: batch.hash }, { $unset: Object.fromEntries(lines.map(l => [`forecastResolutions.${l}`, ''])) }) }\n", '']], 'S-c'],
+  ['M22-verifier-ignores-target-hash', SHARED, [["record.target.importId !== String(batch._id) || record.target.sourceHash !== batch.hash || !equal(record.target.lines, group.lines)", "record.target.importId !== String(batch._id) || !equal(record.target.lines, group.lines)"]], 'S-c'],
+  ['M23-eligibility-ignores-card', SHARED, [[' || !forecast.cardIdentifier || forecast.cardIdentifier !== target.cardIdentifier) return false;', ') return false;']], 'S-b'],
+  ['M24-candidate-offered-without-eligibility', SERVICE, [['pairable: candidate.final && resolutionTargetEligible(forecastRow, r)', 'pairable: candidate.final']], 'S-b']
 ];
 
 // ── the child: the real services on an owned ephemeral database (node --import tsx <this file> --child --out <json> [--src <tree>] [--legs a,b]) ──
@@ -105,8 +134,10 @@ async function child() {
     const api = (p, body, method = 'PUT') => fetch(origin + '/api/finance/' + p, { method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then(async res => ({ status: res.status, data: await res.json().catch(() => null) }));
     // ── helpers ──
     const csv = (headers, rows) => Buffer.from([headers, ...rows].map(row => row.map(v => '"' + String(v).replaceAll('"', '""') + '"').join(',')).join('\r\n'));
-    const aplusRow = (i, card) => ['≪****-****-****-' + (i.card || card) + '≫', (i.date || '2026-08-10').replaceAll('-', ''), i.merchant, i.amount, 'Ｓ', '1', '01', i.amount, ''];
-    const sum = items => items.reduce((n, i) => n + i.amount, 0);
+    // A statement row: payment equals the purchase unless `payment` is given (null = blank お支払金額); `sales`/`count`/`number`/`details` for installments, refunds and adjustments.
+    const paymentOf = i => i.payment === undefined ? i.amount : i.payment;
+    const aplusRow = (i, card) => i.annualFee ? ['', '', '年会費', i.amount, '', '', '', i.amount, ''] : i.deposit ? ['', '', 'ご入金（８／２７）', i.amount, '', '', '', '', i.details || 'ショッピング元金'] : ['≪****-****-****-' + (i.card || card) + '≫', (i.date || '2026-08-10').replaceAll('-', ''), i.merchant, i.amount, i.sales || 'Ｓ', i.count || '1', i.number === undefined ? '01' : i.number, paymentOf(i) === null ? '' : paymentOf(i), i.details || ''];
+    const sum = items => items.reduce((n, i) => n + (i.deposit || paymentOf(i) === null ? 0 : paymentOf(i)), 0);
     // One Aplus account per owner and card set (unique index): every synthetic account gets its own four-digit suffix.
     let accounts = 0;
     const nextCard = () => String(1000 + (++accounts));
@@ -405,6 +436,221 @@ async function child() {
       assert.equal(await verifyAll(amex._id), 2, 'R-f:verifies');
       return 'Amex: 127c8ad binding identical and verifies; billed resolves the same way; confirmed values matched';
     });
+    // ── plan omf-aplus-statement-payment-review-20261105: the same purchase kept under individual review on the statement ──
+    // Synthetic only: the amounts 8039 / blank reproduce the SHAPE of the owner's case (purchase amount with a blank お支払金額); merchant,
+    // card, owner and dates are fictional.
+    const X = { merchant: 'Synthetic service X', amount: 8039, date: '2026-08-06', month: '26/09' }, Y = { merchant: 'Synthetic service Y', amount: 5000, date: '2026-08-07', month: '26/09' };
+    const CREDIT = { merchant: 'Synthetic credit', amount: -50, date: '2026-08-20' };
+    const BLANK_REASON = /お支払金額が空欄/, REDUCED_REASON = /利用金額と支払金額の差/;
+    const draftView = async (id, line) => { const r = await api('imports/' + id + '/drafts/' + line, undefined, 'GET'); assert.equal(r.status, 200, 'draft view ' + id + ':' + line + ' → ' + r.status + ' ' + JSON.stringify(r.data).slice(0, 300)); return r.data; };
+    const linkedReview = (s, importId, line, purchase, payment, reason) => {
+      assert.deepEqual([s.state, s.source?.match, s.source?.importId, s.source?.row?.line, s.source?.row?.kind, s.source?.row?.purchaseAmount, s.source?.row?.paymentAmount, s.source?.row?.amount, s.resolution?.state, s.resolution?.superseded], ['review', 'pending_resolution', importId, line, 'statement_review', purchase, payment, purchase, 'billed', false], 'linked review shape ' + JSON.stringify(s).slice(0, 400));
+      assert.match(String(s.reason), reason, 'linked review carries the statement row\'s own review reason'); assert.match(String(s.source.row.reviewReason), reason, 'the source row view carries the reason');
+    };
+    const paymentOfLine = async (importId, line) => { const { listPayments } = await payments(); return (await listPayments(ownerId)).payments.find(p => p.kind === 'card' && p.importId === importId && p.line === line) || null; };
+    const forgedRecord = (target, lines = [2]) => ({ state: 'billed', lines, target, note: '', at: new Date().toISOString(), revision: 1, replaced: null });
+    await leg('S-a', async () => {
+      const { draftReadiness } = await import(u('shared/finance-preparation.mjs')), { FinancePurchaseLink } = await import(u('server/models/FinancePurchaseLink.ts')), { FinanceDocument } = await import(u('server/models/FinanceDraft.ts'));
+      const { planSourceReferenceRebuild, rebuildSourceReferences } = await rebuild();
+      const account = await newAccount('S-a'), P = await importPending(account, [X]), Sept = await importFinal(account, [{ ...X, payment: null }, { merchant: 'Shop A (final)', amount: 1200, date: '2026-08-12' }, CREDIT], '2026-09');
+      const p = await doc(P), f = await doc(Sept), sx = f.rows.find(r => r.line === 2), originalRows = JSON.stringify([p.rows, f.rows]);
+      assert.deepEqual([sx.kind, sx.purchaseAmount, sx.paymentAmount, sx.amount], ['statement_review', 8039, null, 8039], 'S-a:the-statement-row-is-the-same-purchase-with-a-blank-payment-field');
+      assert.match(sx.sourceReviewReason, BLANK_REASON);
+      const before = (await settlementsOf(P))[2];
+      assert.equal(before.state, 'review', 'S-a:held-before-the-decision');
+      assert.deepEqual(before.candidates.filter(c => c.final).flatMap(c => c.rows).filter(r => r.kind === 'statement_review').map(r => [r.line, r.kind, r.pairable, r.purchaseAmount, r.paymentAmount, r.amount]), [[2, 'statement_review', true, 8039, null, 8039]], 'S-a:P1 the page is offered the same-purchase candidate with its original purchase/payment values');
+      // related records on the forecast line keep their identity through the pairing
+      await approvedDraft(account, P, 2, '2026-08-06');
+      const link = await FinancePurchaseLink.create({ ownerId, archiveId: 'synthetic-archive-S-a', accountId: account._id, importId: p._id, line: 2, key: p.rows[0].key, sourceHash: p.hash, paymentKey: 'card:' + account._id + ':' + p.rows[0].key, status: 'linked', revision: 1, order: { id: 'synthetic-order' } });
+      const document = await FinanceDocument.create({ ownerId, accountId: account._id, importId: p._id, line: 2, name: 'synthetic.pdf', mimeType: 'application/pdf', size: 3, hash: 'a'.repeat(64), kind: 'receipt' });
+      const accountBefore = JSON.stringify((({ commitLease: _l, commitLeaseUntil: _u, updatedAt: _t, ...rest }) => rest)(await FinancialAccount.findById(account._id).lean()));
+      const calendarBefore = JSON.stringify(f.calendar ?? null), ledgerBefore = writes.transactions.length;
+      const response = await api('imports/' + P + '/forecast', { line: 2, action: 'billed', sourceHash: p.hash, revision: 0, target: { importId: Sept, sourceHash: f.hash, lines: [2] }, note: 'same purchase; payment field still blank' });
+      assert.equal(response.status, 200, 'S-a:P1 the explicit same-purchase pairing binds → ' + response.status + ' ' + JSON.stringify(response.data).slice(0, 300));
+      linkedReview(response.data.settlement, Sept, 2, 8039, null, BLANK_REASON);
+      assert.deepEqual([(await doc(Sept)).sourceReferences.version, (await groupsOf(Sept)).map(g => [g.match, g.state, g.lines, g.targets[0].importId, g.targets[0].lines])], [4, [['pending_resolution', 'existing_import', [2], P, [2]]]], 'S-a:version-4 resolution group, canonical identities');
+      assert.deepEqual([await activeOf(Sept), await activeOf(P)], [[3, 4], [2]], 'S-a:the statement row is a reference copy; the forecast line keeps its identity');
+      assert.equal(await verifyAll(account._id), 2, 'S-a:every reader verifies');
+      const s = (await settlementsOf(P))[2];
+      linkedReview(s, Sept, 2, 8039, null, BLANK_REASON);
+      assert.deepEqual([s.resolution.revision, s.resolution.note, s.candidates], [1, 'same purchase; payment field still blank', []], 'S-a:P2 the record is the owner\'s, not superseded, with no further candidates');
+      const view = await draftView(P, 2);
+      linkedReview(view.review.settlement, Sept, 2, 8039, null, BLANK_REASON);
+      assert.deepEqual([view.source.kind, view.source.amount, view.importId, view.line, view.sourceHash], ['expense', 8039, P, 2, p.hash], 'S-a:P2 the forecast keeps its original identity and amount');
+      const readiness = draftReadiness({ ...view, source: { ...view.source } }, view.references, view.review);
+      assert.equal(readiness.state, 'reconciliation', 'S-a:readiness stays held (existing review gate), not ready and not pending');
+      const payment = await paymentOfLine(P, 2);
+      assert.deepEqual([payment?.amount, payment?.date, payment?.description, payment?.confirmed?.kind, payment?.confirmed?.importId, payment?.confirmed?.purchaseAmount, payment?.confirmed?.paymentAmount, payment?.provisional?.amount, payment?.allocations?.length, payment?.allocated, payment?.remaining, payment?.state === 'review'], [8039, '2026-08-06', 'Synthetic service X', 'statement_review', Sept, 8039, null, 8039, 0, 0, 8039, false], 'S-a:P2 payment matching keeps the source identity and amount, marks nothing paid or allocated');
+      assert.match(String(payment?.confirmed?.reviewReason), BLANK_REASON);
+      assert.ok(!(await paymentOfLine(Sept, 2)), 'S-a:the paired statement row is not a second payment');
+      const plan = planSourceReferenceRebuild(await all(account._id), { entries: [], drafts: await FinanceDraft.find({ importId: P }).lean(), links: [link.toObject()], documents: [document.toObject()] });
+      assert.deepEqual([plan.verified, plan.changed, plan.stale, plan.flipping.filter(x => x.importId === P)], [true, [], [], []], 'S-a:the rebuild honours the decision; nothing on the forecast line flips');
+      assert.deepEqual([(await rebuildSourceReferences(ownerId, String(account._id), { apply: true, revision: 'S-a' })).written], [[]], 'S-a:a rebuild is a no-op on a bound decision');
+      assert.deepEqual([await FinanceDraft.countDocuments({ importId: P, line: 2, approvedAt: { $ne: null } }), await FinancePurchaseLink.countDocuments({ importId: P, line: 2, status: 'linked' }), await FinanceDocument.countDocuments({ importId: P, line: 2 })], [1, 1, 1], 'S-a:draft, link and document stay on the forecast line');
+      assert.equal(JSON.stringify([(await doc(P)).rows, (await doc(Sept)).rows]), originalRows, 'S-a:the source rows are immutable (8039 and the blank payment field are retained)');
+      assert.deepEqual([JSON.stringify((({ commitLease: _l, commitLeaseUntil: _u, updatedAt: _t, ...rest }) => rest)(await FinancialAccount.findById(account._id).lean())), JSON.stringify((await doc(Sept)).calendar ?? null), writes.transactions.length, await FinanceEntry.countDocuments({ importId: { $in: [p._id, f._id] } })], [accountBefore, calendarBefore, ledgerBefore, 0], 'S-a:P8 no account flag, calendar, ledger or entry write came from the pairing');
+      return 'same-purchase statement_review row pairs through the route; forecast stays review with the confirmed source (8039 / blank / reason); matching, readiness, rebuild and related records unchanged';
+    });
+    await leg('S-b', async () => {
+      const { resolveForecastLine } = await resolution(), { resolutionTargetEligible } = overlap;
+      assert.equal(typeof resolutionTargetEligible, 'function', 'S-b:one exported eligibility predicate');
+      // a reduced payment field is still the same purchase (the amounts stay the originals: 5000 purchase, 4000 payment)
+      const account = await newAccount('S-b'), P = await importPending(account, [Y]), Sept = await importFinal(account, [{ ...Y, payment: 4000 }], '2026-09'), p = await doc(P), f = await doc(Sept);
+      assert.deepEqual([f.rows[0].kind, f.rows[0].purchaseAmount, f.rows[0].paymentAmount], ['statement_review', 5000, 4000]);
+      const r = await api('imports/' + P + '/forecast', { line: 2, action: 'billed', sourceHash: p.hash, target: { importId: Sept, sourceHash: f.hash, lines: [2] } });
+      assert.equal(r.status, 200, 'S-b:reduced-payment-same-purchase-pairs → ' + r.status + ' ' + JSON.stringify(r.data).slice(0, 300));
+      linkedReview((await settlementsOf(P))[2], Sept, 2, 5000, 4000, REDUCED_REASON);
+      const payment = await paymentOfLine(P, 2);
+      assert.deepEqual([payment?.amount, payment?.confirmed?.purchaseAmount, payment?.confirmed?.paymentAmount, payment?.provisional?.amount], [5000, 5000, 4000, 5000], 'S-b:the purchase amount is never overwritten by the payment field');
+      // the same predicate everywhere: what the page may offer, the writer accepts and the emitter binds
+      const refusals = [
+        ['amount', { ...X, amount: 8040, payment: null }], ['date', { ...X, date: '2026-08-07', payment: null }], ['merchant', { ...X, merchant: 'Synthetic service X.', payment: null }],
+        ['installment-amount-differs', { ...X, amount: 8100, payment: 4050, count: '2' }]
+      ];
+      for (const [label, item] of refusals) {
+        const account2 = await newAccount('S-b-' + label), P2 = await importPending(account2, [X]), F2 = await importFinal(account2, [item, CREDIT], '2026-09'), p2 = await doc(P2), f2 = await doc(F2);
+        assert.equal(f2.rows[0].kind, 'statement_review', 'S-b:' + label + ' is a review row');
+        const offered = ((await settlementsOf(P2))[2].candidates || []).filter(c => c.final).flatMap(c => c.rows).filter(x => x.line === 2);
+        assert.ok(offered.every(x => x.pairable === false), 'S-b:' + label + ' is never offered as pairable: ' + JSON.stringify(offered));
+        const refused = await thrown(() => resolveForecastLine(ownerId, P2, { line: 2, action: 'billed', sourceHash: p2.hash, target: { importId: F2, sourceHash: f2.hash, lines: [2] } }));
+        assert.ok([400, 409].includes(refused?.statusCode), 'S-b:' + label + ' refused by the writer: ' + messageOf(refused));
+        assert.deepEqual([(await records(P2)).size, (await doc(F2)).sourceReferences], [0, f2.sourceReferences], 'S-b:' + label + ' writes nothing');
+        const forged = overlap.buildSourceReferences(f2, [{ ...p2, forecastResolutions: { 2: forgedRecord({ importId: F2, sourceHash: f2.hash, lines: [2] }) } }]);
+        assert.ok(!forged.groups.some(g => g.match === 'pending_resolution'), 'S-b:' + label + ' a forged record binds nothing in the emitter');
+      }
+      // billing month: the forecast expects 26/10, the statement is 2026-09 — same card, date, merchant and amount
+      const accountM = await newAccount('S-b-month'), PM = await importPending(accountM, [{ ...X, month: '26/10' }]), FM = await importFinal(accountM, [{ ...X, payment: null }], '2026-09'), pm = await doc(PM), fm = await doc(FM);
+      assert.equal((await thrown(() => resolveForecastLine(ownerId, PM, { line: 2, action: 'billed', sourceHash: pm.hash, target: { importId: FM, sourceHash: fm.hash, lines: [2] } })))?.statusCode, 400, 'S-b:month-mismatch-refused');
+      assert.ok(!overlap.buildSourceReferences(fm, [{ ...pm, forecastResolutions: { 2: forgedRecord({ importId: FM, sourceHash: fm.hash, lines: [2] }) } }]).groups.some(g => g.match === 'pending_resolution'), 'S-b:month-mismatch-binds-nothing');
+      assert.equal(resolutionTargetEligible(pm.rows[0], fm.rows[0]), false, 'S-b:predicate-month');
+      // card: a forged record naming another card's review row binds nothing and verifies as nothing (the writer's card guard is separate)
+      const accountC = await newAccount('S-b-card', undefined, {}), other = String(Number(accountC.primaryCard) + 500);
+      await FinancialAccount.updateOne({ _id: accountC._id }, { $set: { cardIdentifiers: [accountC.primaryCard, other] } });
+      const accountC2 = { ...accountC, cardIdentifiers: [accountC.primaryCard, other] }, PC = await importPending(accountC2, [X]), FC = await importFinal(accountC2, [{ ...X, card: other, payment: null }], '2026-09'), pc = await doc(PC), fc = await doc(FC);
+      assert.equal(resolutionTargetEligible(pc.rows[0], fc.rows[0]), false, 'S-b:predicate-card');
+      assert.ok(!overlap.buildSourceReferences(fc, [{ ...pc, forecastResolutions: { 2: forgedRecord({ importId: FC, sourceHash: fc.hash, lines: [2] }) } }]).groups.some(g => g.match === 'pending_resolution'), 'S-b:cross-card-binds-nothing');
+      const card = await thrown(() => resolveForecastLine(ownerId, PC, { line: 2, action: 'billed', sourceHash: pc.hash, target: { importId: FC, sourceHash: fc.hash, lines: [2] } }));
+      assert.ok([400, 409].includes(card?.statusCode), 'S-b:cross-card-refused ' + messageOf(card));
+      // credits, annual fee without identity, account deposit, repayment-like rows: never eligible
+      const accountN = await newAccount('S-b-nonpurchase'), PN = await importPending(accountN, [X]), FN = await importFinal(accountN, [{ ...X, payment: null }, { ...CREDIT, date: '2026-08-06' }, { annualFee: true, amount: 1375 }, { deposit: true, amount: -200 }], '2026-09'), pn = await doc(PN), fn = await doc(FN);
+      assert.deepEqual(fn.rows.map(x => x.kind), ['statement_review', 'credit_review', 'statement_review', 'credit_review'], 'S-b:row kinds');
+      for (const line of [3, 4, 5]) {
+        assert.equal(resolutionTargetEligible(pn.rows[0], fn.rows.find(x => x.line === line)), false, 'S-b:predicate-refuses-line-' + line);
+        assert.ok([400, 409].includes((await thrown(() => resolveForecastLine(ownerId, PN, { line: 2, action: 'billed', sourceHash: pn.hash, target: { importId: FN, sourceHash: fn.hash, lines: [line] } })))?.statusCode), 'S-b:writer-refuses-line-' + line);
+      }
+      assert.equal(resolutionTargetEligible({ ...pn.rows[0], kind: 'statement_review' }, fn.rows[0]), false, 'S-b:a forecast that is itself a review row is not eligible');
+      assert.equal(resolutionTargetEligible({ ...pn.rows[0], provider: 'amex' }, { ...fn.rows[0], provider: 'amex' }), false, 'S-b:the widening is Aplus only');
+      assert.equal(resolutionTargetEligible(pn.rows[0], { ...fn.rows[0], kind: 'expense' }), true, 'S-b:an expense row of the same card is eligible as before');
+      assert.equal(resolutionTargetEligible(pn.rows[0], { ...fn.rows[0], kind: 'expense', amount: 1, purchaseAmount: 1 }), true, 'S-b:an expense row with another amount stays eligible as before (the ordinary changed-bill case)');
+      // reused target: once paired, the review row is claimed; a second forecast cannot name it
+      const okN = await resolveForecastLine(ownerId, PN, { line: 2, action: 'billed', sourceHash: pn.hash, target: { importId: FN, sourceHash: fn.hash, lines: [2] } });
+      assert.equal(okN.settlement.state, 'review', 'S-b:paired');
+      const again = await importPending(accountN, [X, { ...X, merchant: 'Synthetic service Z' }], '2026-08-21T00:00:00.000Z');
+      const againDoc = await doc(again), z = againDoc.rows.find(x => x.description === 'Synthetic service Z');
+      const reused = await thrown(() => resolveForecastLine(ownerId, again, { line: z.line, action: 'billed', sourceHash: againDoc.hash, target: { importId: FN, sourceHash: fn.hash, lines: [2] } }));
+      assert.ok([400, 409].includes(reused?.statusCode), 'S-b:a paired review row cannot be reused: ' + messageOf(reused));
+      assert.equal(await verifyAll(accountN._id), 3, 'S-b:verifies');
+      // hash change and stale revision stay refused (existing guards)
+      assert.equal((await thrown(() => resolveForecastLine(ownerId, PN, { line: 2, action: 'reopen', sourceHash: '0'.repeat(64) })))?.statusCode, 409, 'S-b:stale-hash');
+      assert.equal((await thrown(() => resolveForecastLine(ownerId, PN, { line: 2, action: 'reopen', sourceHash: pn.hash, revision: 0 })))?.statusCode, 409, 'S-b:stale-revision');
+      // old ordinary bindings remain readable beside the widened rule (L5 covers the 127c8ad shape; here the version-4 expense pairing)
+      const accountO = await configuredAccount('S-b-old'), PO = await importPending(accountO, [FORECAST.A]), FO = await importFinal(accountO, [{ merchant: 'Shop A (final)', amount: 1200, date: '2026-08-12' }], '2026-09');
+      await resolveForecastLine(ownerId, PO, { line: 2, action: 'billed', sourceHash: (await doc(PO)).hash, target: { importId: FO, sourceHash: (await doc(FO)).hash, lines: [2] } });
+      assert.deepEqual([(await settlementsOf(PO))[2].state, (await doc(FO)).sourceReferences.version, await verifyAll(accountO._id)], ['finalized', 4, 2], 'S-b:the ordinary expense pairing is finalized exactly as before');
+      return 'reduced payment pairs (5000/4000 retained); amount/date/merchant/month/card/credit/fee/deposit/Amex/reused refused by page flag, writer and emitter alike; ordinary pairs unchanged';
+    });
+    await leg('S-c', async () => {
+      const { resolveForecastLine } = await resolution(), { planSourceReferenceRebuild, applySourceReferenceRebuild } = await rebuild();
+      const account = await newAccount('S-c'), P = await importPending(account, [X]), Sept = await importFinal(account, [{ ...X, payment: null }, CREDIT], '2026-09'), p = await doc(P), f = await doc(Sept);
+      const billed = { line: 2, action: 'billed', sourceHash: p.hash, target: { importId: Sept, sourceHash: f.hash, lines: [2] } };
+      await resolveForecastLine(ownerId, P, billed);
+      linkedReview((await settlementsOf(P))[2], Sept, 2, 8039, null, BLANK_REASON);
+      // reopen restores the hold and removes the record; drafts/documents untouched
+      await resolveForecastLine(ownerId, P, { line: 2, action: 'reopen', sourceHash: p.hash, revision: 1 });
+      const reopened = (await settlementsOf(P))[2];
+      assert.deepEqual([reopened.state, reopened.resolution, (await records(P)).size, reopened.candidates.filter(c => c.final).flatMap(c => c.rows).map(x => [x.line, x.pairable]), await activeOf(Sept)], ['review', undefined, 0, [[2, true]], [3]], 'S-c:reopen-restores-the-candidate-and-removes-the-record');
+      assert.equal(await verifyAll(account._id), 2);
+      // crash order 1: the record is written, the bindings are not — every reader verifies, the view is still a hold with the record, the next call completes
+      await FinanceImport.updateOne({ _id: P }, { $set: { 'forecastResolutions.2': { state: 'billed', lines: [2], target: billed.target, note: '', at: new Date().toISOString(), revision: 1, replaced: null } } });
+      assert.equal(await verifyAll(account._id), 2, 'S-c:readers-verify-with-a-record-but-no-group');
+      const partial = (await settlementsOf(P))[2];
+      assert.deepEqual([partial.state, partial.source, partial.resolution.state, partial.resolution.superseded], ['review', undefined, 'billed', false], 'S-c:a-record-without-its-group-names-no-source');
+      await resolveForecastLine(ownerId, P, { ...billed, revision: 1 });
+      linkedReview((await settlementsOf(P))[2], Sept, 2, 8039, null, BLANK_REASON);
+      assert.equal((await records(P)).get(2).revision, 2, 'S-c:the-next-call-completes-the-binding');
+      // crash order 2 (reopen): the bindings are rebuilt, the record is still there
+      const docs = await all(account._id);
+      await applySourceReferenceRebuild(planSourceReferenceRebuild(docs.map(b => String(b._id) === P ? { ...b, forecastResolutions: {} } : b)), { ownerId, revision: 'S-c-crash' });
+      assert.deepEqual([(await groupsOf(Sept)).map(g => g.match), (await records(P)).size, await verifyAll(account._id)], [['pending_purchase'], 1, 2], 'S-c:bindings-rebuilt-record-left-readers-verify');
+      await resolveForecastLine(ownerId, P, { line: 2, action: 'reopen', sourceHash: p.hash });
+      assert.equal((await records(P)).size, 0, 'S-c:the-next-reopen-completes');
+      // tampering: a record whose target hash no longer matches fails closed everywhere
+      await resolveForecastLine(ownerId, P, billed);
+      await FinanceImport.updateOne({ _id: P }, { $set: { 'forecastResolutions.2.target.sourceHash': '1'.repeat(64) } });
+      assert.ok(await thrown(() => verifyAll(account._id)), 'S-c:a-tampered-target-hash-fails-closed');
+      assert.equal((await thrown(async () => finance.importSourceReferences(await doc(Sept))))?.statusCode, 409, 'S-c:import-references-409-on-tamper');
+      await FinanceImport.updateOne({ _id: P }, { $set: { 'forecastResolutions.2.target.sourceHash': f.hash } });
+      assert.equal(await verifyAll(account._id), 2, 'S-c:restored');
+      // expired lease, held lease, concurrency: exactly one of two simultaneous decisions wins; the loser writes nothing
+      await FinancialAccount.updateOne({ _id: account._id }, { $set: { commitLease: 'held', commitLeaseUntil: new Date(Date.now() + 60000) } });
+      assert.equal((await thrown(() => resolveForecastLine(ownerId, P, { line: 2, action: 'reopen', sourceHash: p.hash })))?.statusCode, 409, 'S-c:held-lease-refused');
+      await FinancialAccount.updateOne({ _id: account._id }, { $unset: { commitLease: '', commitLeaseUntil: '' } });
+      const account2 = await newAccount('S-c-race'), P2 = await importPending(account2, [X]), F2 = await importFinal(account2, [{ ...X, payment: null }], '2026-09'), p2 = await doc(P2), f2 = await doc(F2);
+      const body2 = { line: 2, action: 'billed', sourceHash: p2.hash, revision: 0, target: { importId: F2, sourceHash: f2.hash, lines: [2] } };
+      const race = await Promise.allSettled([resolveForecastLine(ownerId, P2, body2), resolveForecastLine(ownerId, P2, body2)]);
+      assert.deepEqual([race.filter(x => x.status === 'fulfilled').length, race.filter(x => x.status === 'rejected' && x.reason?.statusCode === 409).length], [1, 1], 'S-c:one-of-two-concurrent-decisions-wins ' + JSON.stringify(race.map(x => x.status === 'rejected' ? messageOf(x.reason) : 'ok')));
+      assert.deepEqual([(await records(P2)).get(2).revision, (await groupsOf(F2)).map(g => g.match), await verifyAll(account2._id)], [1, ['pending_resolution'], 2], 'S-c:the-winner-wrote-once');
+      linkedReview((await settlementsOf(P2))[2], F2, 2, 8039, null, BLANK_REASON);
+      // identical repeats: two forecasts and two review rows of the same purchase, as a group and one at a time
+      const account3 = await newAccount('S-c-repeats'), P3 = await importPending(account3, [X, X]), F3 = await importFinal(account3, [{ ...X, payment: null }, { ...X, payment: null }, CREDIT], '2026-09'), p3 = await doc(P3), f3 = await doc(F3);
+      const before3 = await settlementsOf(P3);
+      assert.deepEqual([before3[2].state, before3[3].state, before3[2].candidates.filter(c => c.final).flatMap(c => c.rows).map(x => [x.line, x.pairable])], ['review', 'review', [[2, true], [3, true]]], 'S-c:two-review-rows-two-forecasts');
+      assert.equal((await thrown(() => resolveForecastLine(ownerId, P3, { line: 2, lines: [2], action: 'billed', sourceHash: p3.hash, target: { importId: F3, sourceHash: f3.hash, lines: [2, 3] } })))?.statusCode, 400, 'S-c:1<->2-refused');
+      await resolveForecastLine(ownerId, P3, { line: 2, lines: [2, 3], action: 'billed', sourceHash: p3.hash, target: { importId: F3, sourceHash: f3.hash, lines: [2, 3] } });
+      const grouped = await settlementsOf(P3);
+      linkedReview(grouped[2], F3, 2, 8039, null, BLANK_REASON); linkedReview(grouped[3], F3, 3, 8039, null, BLANK_REASON);
+      assert.deepEqual([(await groupsOf(F3)).map(g => [g.match, g.lines, g.targets[0].lines]), await activeOf(F3), await verifyAll(account3._id)], [[['pending_resolution', [2, 3], [2, 3]]], [4], 2], 'S-c:grouped-decision-binds-both-review-rows');
+      const account4 = await newAccount('S-c-one-at-a-time'), P4 = await importPending(account4, [X, X]), F4 = await importFinal(account4, [{ ...X, payment: null }, { ...X, payment: null }, CREDIT], '2026-09'), p4 = await doc(P4), f4 = await doc(F4);
+      for (const line of [2, 3]) {
+        const one = await api('imports/' + P4 + '/forecast', { line, action: 'billed', sourceHash: p4.hash, revision: 0, target: { importId: F4, sourceHash: f4.hash, lines: [line] } });
+        assert.equal(one.status, 200, 'S-c:single-choice-' + line + ' → ' + one.status + ' ' + JSON.stringify(one.data).slice(0, 300));
+        linkedReview((await settlementsOf(P4))[line], F4, line, 8039, null, BLANK_REASON);
+        await verifyAll(account4._id);
+      }
+      assert.deepEqual([(await groupsOf(F4)).map(g => [g.match, g.lines]), await activeOf(F4), await activeOf(P4)], [[['pending_resolution', [2]], ['pending_resolution', [3]]], [4], [2, 3]], 'S-c:one-at-a-time-pairs-each-review-row-once');
+      return 'reopen, both crash orders, tampered hash, held lease, concurrent race (1 win / 1 409), grouped and single-choice identical repeats';
+    });
+    await leg('S-d', async () => {
+      const { resolveForecastLine } = await resolution();
+      const account = await configuredAccount('S-d'), P = await importPending(account, [X, FORECAST.A]), Sept = await importFinal(account, [{ ...X, payment: null }, { merchant: 'Shop A (final)', amount: 1200, date: '2026-08-12' }], '2026-09'), p = await doc(P), f = await doc(Sept);
+      await resolveForecastLine(ownerId, P, { line: 2, action: 'billed', sourceHash: p.hash, target: { importId: Sept, sourceHash: f.hash, lines: [2] } });
+      await resolveForecastLine(ownerId, P, { line: 3, action: 'billed', sourceHash: p.hash, target: { importId: Sept, sourceHash: f.hash, lines: [3] } });
+      const s = await settlementsOf(P);
+      linkedReview(s[2], Sept, 2, 8039, null, BLANK_REASON); assert.equal(s[3].state, 'finalized', 'S-d:the ordinary pair beside it is finalized');
+      await approvedDraft(account, P, 2, '2026-08-06'); await approvedDraft(account, P, 3, '2026-08-12');
+      const ledgerBefore = writes.transactions.length, blocked = async (decision, label) => { const refused = await thrown(() => finance.commitImport(ownerId, P, { decisions: [decision] })); assert.equal(refused?.statusCode, 409, 'S-d:' + label + ' blocked: ' + messageOf(refused)); assert.match(messageOf(refused), /未請求明細/, 'S-d:' + label + ' the existing review gate'); };
+      await blocked({ line: 2, action: 'import', draftRevision: 1 }, 'direct import of the linked exception');
+      await blocked({ line: 2, action: 'link', transactionId: String(new mongoose.Types.ObjectId()) }, 'link of the linked exception');
+      const view = await finance.reviewImport(ownerId, P);
+      assert.deepEqual([view.rows.find(r => r.line === 2).state, view.rows.find(r => r.line === 2).settlement.state], ['new', 'review'], 'S-d:the review state travels to the posting view');
+      // a reservation that an earlier approved retry could have left behind: still blocked by the same gate, nothing posts
+      const reserved = await entryOn(account, p, p.rows[0], 'reserved');
+      await blocked({ line: 2, action: 'import', draftRevision: 1 }, 'approved/reserved retry of the linked exception');
+      assert.deepEqual([(await FinanceEntry.findById(reserved._id).lean()).state, writes.transactions.length], ['reserved', ledgerBefore], 'S-d:the reservation stays reserved; no ledger write');
+      await FinanceEntry.deleteOne({ _id: reserved._id });
+      // the statement side: the paired review row is a reference copy (uneditable, excluded from the statement's mapping)
+      assert.equal((await thrown(async () => finance.assertEditableImportRow(await doc(Sept), 2)))?.statusCode, 409, 'S-d:statement-row-uneditable');
+      assert.ok([400, 409].includes((await thrown(() => finance.commitImport(ownerId, Sept, { decisions: [{ line: 2, action: 'import', draftRevision: 1 }] })))?.statusCode), 'S-d:statement-row-unpostable');
+      // the ordinary billed expense beside it posts exactly once with its confirmed values (unchanged behaviour)
+      const posted = await finance.commitImport(ownerId, P, { decisions: [{ line: 3, action: 'import', draftRevision: 1 }] });
+      const payload = writes.transactions[ledgerBefore]?.update?.$setOnInsert;
+      assert.deepEqual([posted.posted, writes.transactions.length - ledgerBefore, payload?.amount, new Date(payload?.date).toISOString().slice(0, 10)], [1, 1, 1200, '2026-08-12'], 'S-d:P3 the ordinary pair posts once with the billed amount and confirmed date');
+      await finance.commitImport(ownerId, P, { decisions: [{ line: 3, action: 'import', draftRevision: 1 }] });
+      assert.equal(writes.transactions.length - ledgerBefore, 1, 'S-d:retry-no-second-post');
+      await blocked({ line: 2, action: 'import', draftRevision: 1 }, 'the linked exception after the sibling posted');
+      assert.equal(await FinanceEntry.countDocuments({ importId: p._id, line: 2 }), 0, 'S-d:no entry on the linked exception');
+      return 'linked exception blocked for import/link/approved/reserved retry (existing gate); statement row uneditable; ordinary pair posts once at 1200';
+    });
   } catch (error) { report.setupError = String(error?.stack || error).slice(0, 2400); console.log('SETUP ' + String(error?.message || error).slice(0, 600)); }
   finally {
     await finish();
@@ -413,6 +659,202 @@ async function child() {
     await mongoose?.disconnect().catch(() => {}); await mongo?.stop().catch(() => {}); if (temp) await rm(temp, { recursive: true, force: true }).catch(() => {});
   }
   process.exit(!report.setupError && legs.every(l => l.pass) ? 0 : 1);
+}
+
+// ── P4: real Chrome. The cases module below is written to a temporary directory at run time and loaded by scripts/finance-integration.cjs in
+// place of its pending seam (OMF_TEST_PENDING_ONLY): the harness owns its mongod and the built app on a loopback port; Chrome is headless with
+// a fresh temporary profile; every request that leaves the app's origin is aborted. Synthetic accounts, merchants and amounts only. ──
+const BROWSER_CASES = String.raw`'use strict';
+const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), { createRequire } = require('node:module'), { pathToFileURL } = require('node:url');
+module.exports = async ({ db, call, request, token, pass, origin, root }) => {
+  assert.equal(db.databaseName, 'finance_regression');
+  const { ObjectId } = createRequire(path.join(root, 'package.json'))('mongodb'), p = require(process.env.OMF_APLUS_PUPPETEER);
+  const { aplusCapture } = await import(pathToFileURL(path.join(root, 'scripts/finance-pending-fixtures.mjs')));
+  const ap = await import(pathToFileURL(path.join(root, 'shared/aplus.mjs'))), am = await import(pathToFileURL(path.join(root, 'shared/amex.mjs')));
+  const output = process.env.OMF_APLUS_EVIDENCE; fs.mkdirSync(output, { recursive: true });
+  const browser = await p.connect({ browserURL: 'http://127.0.0.1:' + process.env.OMF_TEST_CHROME_PORT, defaultViewport: null });
+  const results = [], errors = [], external = [], csv = (headers, rows) => Buffer.from([headers, ...rows].map(r => r.map(v => '"' + String(v).replaceAll('"', '""') + '"').join(',')).join('\r\n'));
+  const batch = id => db.collection('financeimports').findOne({ _id: new ObjectId(id) });
+  let page;
+  try {
+    page = await browser.newPage();
+    page.on('pageerror', e => errors.push(String(e.message).slice(0, 600)));
+    await page.setRequestInterception(true);
+    page.on('request', r => { const u = r.url(); if (u.startsWith(origin + '/') || /^(data:|about:|blob:)/.test(u)) r.continue(); else { external.push(new URL(u).hostname); r.abort(); } });
+    await page.setViewport({ width: 1440, height: 1000 });
+    await page.goto(origin + '/login', { waitUntil: 'networkidle2' }); await page.waitForSelector('#email');
+    await page.type('#email', 'finance-a@example.invalid'); await page.type('#password', 'Synthetic-password-Only1!'); await page.click('button[type="submit"]');
+    await page.waitForFunction(() => !location.pathname.endsWith('/login'));
+    const noOverflow = async name => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, name + ': horizontal overflow');
+    const confirmSel = '[data-action="forecast-confirm"]';
+    const act = async (P, kind, pick) => {
+      if (kind === 'billed') await page.click(pick || 'input[name="forecast-candidate"]');
+      await page.waitForSelector('[data-action="forecast-' + kind + '"]');
+      await page.click('[data-action="forecast-' + kind + '"]'); await page.waitForSelector(confirmSel);
+      const text = await page.$eval(confirmSel, e => e.parentElement.parentElement.textContent);
+      const response = page.waitForResponse(r => r.url() === origin + '/api/finance/imports/' + P + '/forecast' && r.request().method() === 'PUT');
+      await page.click(confirmSel); const r = await response; assert.equal(r.status(), 200, kind + ' ' + await r.text());
+      await page.waitForFunction(kind => {
+        const messages = kind === 'reopen' ? ['照合を取り消しました。'] : kind === 'closed' ? ['請求なしとして閉じました。'] : ['確定明細との対応を記録しました。支払欄の個別確認を続けます。', '確定明細の利用として照合しました。'];
+        return !document.querySelector('[data-action="forecast-confirm"]') && [...document.querySelectorAll('[role="status"]')].some(e => messages.includes(e.textContent.trim()));
+      }, {}, kind);
+      return { text, view: (await request('imports/' + P + '/drafts/' + page.url().split('/').pop(), undefined, 'GET')).data };
+    };
+    let index = 0;
+    for (const width of [390, 1440]) {
+      index++;
+      const name = 'aplus-' + width, card = String(4300 + index);
+      const created = await request('accounts', { provider: 'aplus', name: 'Synthetic statement exception ' + name, primaryCard: card, cardIdentifiers: [card] }); assert.equal(created.status, 200, JSON.stringify(created));
+      const accountId = created.data.account._id;
+      const pending = await call('/api/finance/accounts/' + accountId + '/imports?kind=pending', { method: 'POST', token, body: aplusCapture([{ merchant: 'Synthetic service X ' + name, amount: 8039, date: '2026-08-06', month: '26/09', card }, { merchant: 'Fictional shop ' + name, amount: 1000, date: '2026-08-10', month: '26/09', card }]) });
+      assert.equal(pending.status, 200, JSON.stringify(pending.data)); const P = pending.data.id;
+      const mark = '\u226a****-****-****-' + card + '\u226b';
+      const finalBytes = csv(ap.HEADERS, [[mark, '20260806', 'Synthetic service X ' + name, 8039, 'S', '1', '01', '', ''], [mark, '20260812', 'Fictional final shop ' + name, 1200, 'S', '1', '01', 1200, ''], [mark, '20260820', 'Fictional credit ' + name, -50, 'S', '1', '01', -50, '']]);
+      const final = await call('/api/finance/accounts/' + accountId + '/imports?kind=statement&statementMonth=2026-09&statementTotal=1150', { method: 'POST', token, raw: true, body: finalBytes });
+      assert.equal(final.status, 200, JSON.stringify(final.data)); const F = final.data.id;
+      const originalRows = JSON.stringify([(await batch(P)).rows, (await batch(F)).rows]);
+      const before = await request('imports/' + P + '/drafts/2', undefined, 'GET'); assert.equal(before.status, 200);
+      assert.equal(before.data.review.settlement.state, 'review');
+      const offered = before.data.review.settlement.candidates.filter(c => c.final).flatMap(c => c.rows);
+      assert.deepEqual(offered.filter(r => r.kind === 'statement_review').map(r => [r.line, r.pairable, r.purchaseAmount, r.paymentAmount]), [[2, true, 8039, null]], 'API offers the same-purchase review row with its original values');
+      // Only this disposable database is seeded with approved drafts (the ordinary pair's posting preview needs one). No ledger commit is made.
+      const pb = await batch(P);
+      for (const [line, date] of [[2, '2026-08-06'], [3, '2026-08-15']]) { const v = line === 2 ? before.data : (await request('imports/' + P + '/drafts/3', undefined, 'GET')).data; await db.collection('financedrafts').updateOne({ importId: pb._id, line }, { $set: { ownerId: pb.ownerId, accountId: pb.accountId, importId: pb._id, line, key: v.key, sourceHash: v.sourceHash, revision: 1, values: { ...v.values, purpose: 'company', date }, evidence: {}, history: [], approvedAt: new Date(), cardAccounting: v.cardAccounting } }, { upsert: true }); }
+      await page.setViewport({ width, height: 1000 });
+      await page.goto(origin + '/mapping-draft/' + P + '/2', { waitUntil: 'networkidle2' }); await page.waitForSelector('[data-forecast-resolution]');
+      const radios = await page.$$eval('input[name="forecast-candidate"]', e => e.map(x => ({ value: x.value, text: x.parentElement.textContent, kind: x.parentElement.getAttribute('data-candidate-kind') })));
+      assert.deepEqual(radios.map(r => r.kind).sort(), ['expense', 'statement_review'], name + ': the same-purchase review row is offered beside the ordinary expense candidate');
+      const reviewRadio = radios.find(r => r.kind === 'statement_review');
+      assert.ok(/8,039/.test(reviewRadio.text) && /未記載/.test(reviewRadio.text) && /個別確認/.test(reviewRadio.text), name + ': the candidate shows 利用金額 8,039 and お支払金額 未記載: ' + reviewRadio.text);
+      await noOverflow(name);
+      assert.equal(await page.$eval('[data-action="forecast-billed"]', e => e.disabled), true, 'match needs a chosen candidate');
+      const pick = 'label[data-candidate-kind="statement_review"] input[name="forecast-candidate"]';
+      const paired = await act(P, 'billed', pick);
+      assert.ok(/元の値/.test(paired.text) && /帳簿には登録しません/.test(paired.text), name + ': the confirmation names the source correspondence only: ' + paired.text);
+      const s = paired.view.review.settlement;
+      assert.deepEqual([s.state, s.source.match, s.source.importId, s.source.row.kind, s.source.row.purchaseAmount, s.source.row.paymentAmount, s.source.row.amount, s.resolution.state, s.resolution.superseded], ['review', 'pending_resolution', F, 'statement_review', 8039, null, 8039, 'billed', false], name + ': linked review payload');
+      await page.waitForSelector('[data-source-review]');
+      const status = await page.$eval('[data-statement-status]', e => e.textContent);
+      assert.ok(/対応を確認済み/.test(status) && /8,039/.test(status) && /未記載/.test(status) && /支払済み・未払い・返金とは判断しません/.test(status), name + ': status text: ' + status);
+      assert.equal(await page.$$eval('[data-confirmed-values]', e => e.length), 0, name + ': no "posts with this amount" promise');
+      assert.equal(await page.$$eval('[data-action="prepare-post"], [data-action="confirm-post"]', e => e.length), 0, name + ': no ledger posting control');
+      assert.equal(await page.$$eval('[data-action="forecast-closed"]', e => e.length), 0, name + ': a linked review offers no close while linked');
+      assert.equal(await page.$$eval('[data-action="forecast-reopen"]', e => e.length), 1, name + ': reopen offered');
+      assert.equal(await page.$$eval('input[name="forecast-candidate"]', e => e.length), 0, name + ': no further candidates');
+      await page.waitForSelector('[data-payment-matches] [data-source-review]');
+      const matchText = await page.$eval('[data-payment-matches] [data-source-review]', e => e.textContent);
+      assert.ok(/8,039/.test(matchText) && /未記載/.test(matchText), name + ': payment matching shows the original purchase/payment distinction: ' + matchText);
+      assert.equal(await page.$$eval('[data-payment-matches] [data-allocation]', e => e.length), 0, name + ': no allocation was created');
+      await noOverflow(name + ' linked');
+      await page.screenshot({ path: path.join(output, name + '-linked-review.png'), fullPage: true });
+      const reopened = await act(P, 'reopen');
+      assert.equal(reopened.view.review.settlement.state, 'review'); assert.equal(reopened.view.review.settlement.source, undefined, name + ': reopen releases the source');
+      assert.equal(await page.$$eval('input[name="forecast-candidate"]', e => e.length), 2, name + ': candidates return after reopen');
+      await act(P, 'billed', pick);
+      assert.equal((await request('imports/' + P + '/drafts/2', undefined, 'GET')).data.review.settlement.source.match, 'pending_resolution');
+      // the ordinary pair beside it: finalized, postable, confirmed-date choice unchanged
+      await page.goto(origin + '/mapping-draft/' + P + '/3', { waitUntil: 'networkidle2' }); await page.waitForSelector('[data-forecast-resolution]');
+      assert.deepEqual(await page.$$eval('input[name="forecast-candidate"]', e => e.map(x => x.parentElement.getAttribute('data-candidate-kind'))), ['expense'], name + ': the ordinary forecast sees the ordinary candidate only');
+      const ordinary = await act(P, 'billed');
+      assert.equal(ordinary.view.review.settlement.state, 'finalized'); assert.equal(ordinary.view.review.settlement.source.row.amount, 1200);
+      assert.ok(/確定明細の金額で登録します/.test(ordinary.text), name + ': the ordinary confirmation text is unchanged');
+      await page.waitForSelector('[data-action="prepare-post"]'); assert.equal(await page.$eval('[data-action="prepare-post"]', e => e.disabled), false, name + ': the ordinary pair can still be posted');
+      assert.equal(await page.$$eval('[data-confirmed-values]', e => e.length), 1, name + ': the ordinary pair keeps its posting note');
+      await page.click('[data-action="prepare-post"]'); await page.waitForSelector('[data-posting-date-choice] input');
+      assert.match(await page.$eval('[data-posting-date-choice]', e => e.parentElement.querySelector('p').textContent), /1,200/);
+      await page.$eval('[data-action="confirm-post"]', e => e.parentElement.querySelectorAll('button')[1].click());
+      await noOverflow(name + ' ordinary');
+      await page.screenshot({ path: path.join(output, name + '-ordinary-finalized.png'), fullPage: true });
+      // the mapping list: the forecast shows the linked status; the statement's paired row is a reference copy
+      await page.goto(origin + '/mapping?import=' + P, { waitUntil: 'networkidle2' }); await page.waitForFunction(() => document.querySelectorAll('.mapping-list article').length >= 2);
+      const listed = await page.$$eval('[data-statement-status]', e => e.map(x => x.textContent));
+      assert.ok(listed.some(t => /対応を確認済み/.test(t) && /未記載/.test(t)), name + ': the mapping list shows the linked review');
+      const finalMapping = await request('imports/' + F + '/mapping', undefined, 'GET');
+      assert.deepEqual(finalMapping.data.rows.map(r => r.line), [4], name + ': both paired statement rows are reference copies; the credit stays');
+      await noOverflow(name + ' mapping');
+      assert.equal(JSON.stringify([(await batch(P)).rows, (await batch(F)).rows]), originalRows, name + ': original rows unchanged');
+      assert.equal(await db.collection('transactions').countDocuments(), 0); assert.equal(await db.collection('financeentries').countDocuments(), 0); assert.equal(await db.collection('financepayments').countDocuments({ 'allocations.0': { $exists: true } }), 0);
+      results.push({ provider: 'aplus', width, pass: true, linkedReview: true, purchaseAmount: 8039, paymentAmount: null, reopen: true, ordinaryPairFinalized: true, noPostingControl: true, noLedgerWrite: true });
+      fs.writeFileSync(path.join(output, 'browser-progress.json'), JSON.stringify({ results, errors, external: [...new Set(external)] }, null, 2));
+      pass('real Chrome ' + name + ': same-purchase review candidate, source-only confirmation, linked review status, reopen, ordinary pair unchanged');
+    }
+    for (const width of [390, 1440]) {
+      index++;
+      const name = 'amex-' + width, card = String(71000 + index), row = (date, processed, merchant, amount) => [date, processed, merchant, 'Synthetic owner', card, String(amount), '', ''];
+      const created = await request('accounts', { provider: 'amex', name: 'Synthetic Amex control ' + name, primaryCard: card, cardIdentifiers: [card], otpRecipient: 'control@example.invalid', otpMailbox: 'control@example.invalid' }); assert.equal(created.status, 200, JSON.stringify(created));
+      const accountId = created.data.account._id;
+      const pending = await call('/api/finance/accounts/' + accountId + '/imports?kind=pending&start=2026-08-05&end=2026-09-04&pageCount=1', { method: 'POST', token, raw: true, body: csv(am.HEADERS, [row('2026/08/10', '2026/08/11', 'Fictional shop ' + name, 1000)]) });
+      assert.equal(pending.status, 200, JSON.stringify(pending.data)); const P = pending.data.id;
+      const final = await call('/api/finance/accounts/' + accountId + '/imports?kind=statement&start=2026-08-05&end=2026-09-04&pageCount=2', { method: 'POST', token, raw: true, body: csv(am.HEADERS, [row('2026/08/12', '2026/08/13', 'Fictional final shop ' + name, 1200), row('2026/08/14', '2026/08/15', 'Fictional credit ' + name, -50)]) });
+      assert.equal(final.status, 200, JSON.stringify(final.data));
+      await page.setViewport({ width, height: 1000 });
+      await page.goto(origin + '/mapping-draft/' + P + '/2', { waitUntil: 'networkidle2' }); await page.waitForSelector('[data-forecast-resolution]');
+      assert.deepEqual(await page.$$eval('input[name="forecast-candidate"]', e => e.map(x => x.parentElement.getAttribute('data-candidate-kind'))), ['expense'], name + ': Amex offers its ordinary candidate');
+      const billed = await act(P, 'billed'); assert.equal(billed.view.review.settlement.state, 'finalized'); assert.equal(billed.view.review.settlement.source.row.amount, 1200);
+      const reopened = await act(P, 'reopen'); assert.equal(reopened.view.review.settlement.state, 'review');
+      await noOverflow(name);
+      results.push({ provider: 'amex', width, pass: true, ordinaryPairFinalized: true, reopen: true });
+      pass('real Chrome ' + name + ': the Amex pair still finalizes and reopens');
+    }
+    assert.deepEqual(errors, [], 'page errors');
+    fs.writeFileSync(path.join(output, 'browser-result.json'), JSON.stringify({ at: new Date().toISOString(), pass: true, syntheticOnly: true, results, errors, external: [...new Set(external)] }, null, 2));
+  } catch (e) {
+    if (page) await page.screenshot({ path: path.join(output, 'browser-failure.png'), fullPage: true }).catch(() => {});
+    fs.writeFileSync(path.join(output, 'browser-failure.json'), JSON.stringify({ at: new Date().toISOString(), pass: false, results, errors, error: String(e.stack || e).slice(0, 5000) }, null, 2));
+    throw e;
+  } finally { if (page) await page.close().catch(() => {}); await browser.disconnect(); }
+};
+`;
+const RUNTIME_DIRS = ['pages', 'components', 'layouts', 'server', 'shared', 'stores', 'composables', 'middleware', 'plugins', 'utils', 'i18n', 'app.vue', 'nuxt.config.ts', 'tailwind.config.js', 'i18n.config.ts'];
+async function newestMtime(target) {
+  let newest = 0; const s = await stat(target).catch(() => null); if (!s) return 0;
+  if (!s.isDirectory()) return s.mtimeMs;
+  for (const entry of await readdir(target, { withFileTypes: true })) { if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue; newest = Math.max(newest, await newestMtime(path.join(target, entry.name))); }
+  return newest;
+}
+async function browserLeg(keep) {
+  const require = createRequire(path.join(root, 'package.json'));
+  const puppeteerFrom = base => { try { return createRequire(path.join(base, 'collector', 'package.json')).resolve('rebrowser-puppeteer-core'); } catch { return null; } };
+  const puppeteer = puppeteerFrom(root) || puppeteerFrom(path.resolve(root, '..'));
+  if (!puppeteer) throw new Error('rebrowser-puppeteer-core is not resolvable from the collector package of this worktree or its nested parent');
+  const chrome = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'].find(f => existsSync(f));
+  if (!chrome) throw new Error('Google Chrome is not installed');
+  const env = { ...process.env, MONGO_URI: '', MONGODB_URI: '', NUXT_MONGO_URI: '', ZOOMER_HIDDEN_CONSOLE: '1' };
+  // the built app must be newer than every runtime source of this worktree; otherwise build it here (no deploy: .output is gitignored)
+  const built = path.join(root, '.output', 'server', 'index.mjs'), builtAt = (await stat(built).catch(() => null))?.mtimeMs || 0;
+  let sourceAt = 0; for (const d of RUNTIME_DIRS) sourceAt = Math.max(sourceAt, await newestMtime(path.join(root, d)));
+  let buildNote = 'reused .output built at ' + new Date(builtAt).toISOString();
+  if (!builtAt || builtAt < sourceAt) {
+    const nuxt = path.join(path.dirname(require.resolve('nuxt/package.json')), 'bin', 'nuxt.mjs');
+    const t = Date.now(), b = await execute(process.execPath, [nuxt, 'build'], { cwd: root, env, timeout: 1500000 });
+    await keep('B-nuxt-build.txt', b.stdout + '\n' + b.stderr);
+    if (b.code !== 0) throw new Error('nuxt build failed (exit ' + b.code + '): ' + (b.stderr + b.stdout).slice(-1200));
+    if (!existsSync(built)) throw new Error('nuxt build produced no .output/server/index.mjs');
+    buildNote = 'nuxt build exit 0 in ' + Math.round((Date.now() - t) / 1000) + 's';
+  }
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'omf-aplus-chrome-')), profile = path.join(temp, 'profile'), evidence = path.join(temp, 'evidence');
+  await mkdir(profile, { recursive: true }); await mkdir(evidence, { recursive: true });
+  const proc = spawn(chrome, ['--headless=new', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir=' + profile, '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-sync', '--disable-extensions', 'about:blank'], { env, windowsHide: true, stdio: 'ignore' });
+  try {
+    let port = 0; const portFile = path.join(profile, 'DevToolsActivePort');
+    for (let i = 0; i < 150 && !port; i++) { if (existsSync(portFile)) port = Number((await readFile(portFile, 'utf8')).split(/\r?\n/)[0]); else await new Promise(r => setTimeout(r, 200)); }
+    if (!port) throw new Error('owned headless Chrome did not publish a DevTools port');
+    const cases = path.join(temp, 'browser-cases.cjs'), loader = path.join(temp, 'load-integration.cjs'), harness = path.join(root, 'scripts', 'finance-integration.cjs');
+    await writeFile(cases, BROWSER_CASES);
+    const anchor = "require('./finance-pending-integration.cjs')";
+    if ((await readFile(harness, 'utf8')).split(anchor).length !== 2) throw new Error('the integration harness pending seam changed');
+    await writeFile(loader, "const fs=require('fs'),Module=require('module');const file=" + JSON.stringify(harness) + ",source=fs.readFileSync(file,'utf8'),anchor=" + JSON.stringify(anchor) + ";if(source.split(anchor).length!==2)throw Error('test seam changed');const m=new Module(file,module);m.filename=file;m.paths=Module._nodeModulePaths(require('path').dirname(file));m._compile(source.replace(anchor,'require('+JSON.stringify(" + JSON.stringify(cases) + ")+')'),file);\n");
+    const r = await execute(process.execPath, [loader], { cwd: root, env: { ...env, OMF_TEST_PENDING_ONLY: '1', OMF_TEST_CHROME_PORT: String(port), OMF_APLUS_PUPPETEER: puppeteer, OMF_APLUS_EVIDENCE: evidence }, timeout: 1500000 });
+    await keep('B-harness.txt', r.stdout + '\n' + r.stderr);
+    let result = null; try { result = JSON.parse(await readFile(path.join(evidence, 'browser-result.json'), 'utf8')); } catch {}
+    let failure = null; try { failure = JSON.parse(await readFile(path.join(evidence, 'browser-failure.json'), 'utf8')); } catch {}
+    for (const f of await readdir(evidence).catch(() => [])) await keep('B-' + f, await readFile(path.join(evidence, f)));
+    if (r.code !== 0 || !result?.pass) throw new Error('browser harness exit ' + r.code + ': ' + (failure?.error || (r.stdout + r.stderr).slice(-1500)).slice(0, 1500));
+    return buildNote + '; ' + result.results.length + ' Chrome cases (' + result.results.map(x => x.provider + '-' + x.width).join(', ') + '); external requests blocked: ' + result.external.length + '; page errors: ' + result.errors.length;
+  } finally {
+    if (proc.exitCode === null) await execute('taskkill', ['/PID', String(proc.pid), '/T', '/F']);
+    await rm(temp, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 // A copy of server/ + shared/ inside the worktree (dependencies resolve upward) with one file changed; removed whatever happens.
@@ -439,6 +881,11 @@ const fixture = { name: 'omf-aplus-reconciliation', covers: PARTIAL ? [] : COVER
       for (const name of chosen) if (!main.report.legs.some(l => l.name === name)) { pass = false; lines.push('FAIL ' + name + ': not reached'); }
       lines.push('intercepted ledger writes: ' + main.report.writes + ' (payloads kept, nothing inserted)');
     }
+  }
+  if (want('B')) {
+    const t = Date.now();
+    try { lines.push('PASS B: ' + await browserLeg(keep) + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); }
+    catch (error) { pass = false; lines.push('FAIL B: ' + String(error?.message || error).slice(0, 1500) + ' (' + Math.round((Date.now() - t) / 1000) + 's)'); }
   }
   if (want('L7')) {
     try {
