@@ -17,7 +17,10 @@ const FORBIDDEN = ['お客様のパソコンにのみ保存', '当社のサー�
   // Round 3 (Astra F1, 2026-11-06): document reading, purchase research, review replies and finalization reach Anthropic without any
   // conversation (financeDocumentService.ts:14-16, teaching-worker/worker.mjs:23, document-interpreter.mjs:8), so a conversation-only
   // no-transfer assurance overstates the boundary.
-  'ワーカーが処理しない会社のデータが Anthropic に送られることはありません', 'no data goes to Anthropic for a company whose conversations no worker processes']
+  'ワーカーが処理しない会社のデータが Anthropic に送られることはありません', 'no data goes to Anthropic for a company whose conversations no worker processes',
+  // Round 4 (Astra F1, 2026-11-06): purchase-intake research is scoped by the worker owner only (financeIntakeResearchService.ts:34, queued
+  // on an owned intake record at :67-72 without any account), so an account-only limit over every non-conversation job overstates it.
+  '書類の読み取り、購入の調査、確認への返信の解釈および購入の仕上げについては、所有者が自身の口座について依頼したものに限ります', 'the document reading, research, review replies and finalization the user requests for the user\'s own accounts']
 // L9 clauses the terms and the privacy policy must carry (legal draft 2026-11-05: B2B scope, damages cap with the intent/gross-negligence
 // carve-out, anti-social-forces, 民法548条の4 change notice, forum, tax-agent disclaimer, data ownership, no refunds; APPI arts. 17/21
 // purposes, art. 28 foreign transfer with the country and both US providers named, art. 32 items: representative, safety measures,
@@ -126,7 +129,14 @@ export async function checkSite(siteRoot) {
     // document-interpreter.mjs; research: research-worker/worker.mjs; review replies: review-worker/interpreter.mjs; finalization:
     // finalization-worker/interpreter.mjs), each owner-scoped (claimCompanyAssistant :195, claimChat :184, claimDocument :16, claimResearch
     // :61, claimQuestion :85, workerConfig :221); the DPA H.1 request belongs to the party to the Anthropic agreement, per route.
-    must(P, '外部サービスへの送信と、外国にある第三者への提供', ['現在、AI アシスタントはお客様には提供しておらず', '同じ AI ワーカーを用いる他の AI 機能も、現在はお客様に提供していません', '提供の前にお知らせしていること', '画像または PDF のファイル全体が送られます', '会話がなくても行われる処理です', '本サービスのサーバーが Anthropic に直接送ることはありません', 'ワーカーを作成したユーザー（所有者）の処理だけを扱います', '会社ごとに Anthropic アカウントを分ける仕組みではありません', 'ワーカーを誰が運用するかによって決まります', '当社が提供者であり', 'お客様が提供者であり', 'ご自身が保有する Anthropic', 'お客様のアカウントに限定する仕組みはありません', '第三者による利用を Anthropic の規約が許すプラン', 'お客様と Anthropic との契約', 'モデルの学習に用いることを許可するかどうか', '接続を解除すれば', '組み込まれておらず','https://www.anthropic.com/legal/commercial-terms', 'https://www.anthropic.com/legal/data-processing-addendum', 'モデルを学習させない', 'AES-256', 'その期間内に請求した場合', 'セルフサービス', '有害な利用', 'お客様と Anthropic との契約であり、返却を請求できるのはお客様です', 'お客様に代わって返却や削除を請求することはできません', '予備の経路では、この契約は当社と Anthropic との契約であり', 'お客様の本サービスの解約ではありません', '法第171条', 'お客様と Anthropic との契約条件', '個別に交渉したデータ処理契約を締結している旨を表明するものではありません'])
+    // Round 4 (Astra F1/F2, 2026-11-06): each non-document payload sentence (research, review reply, finalization) is required whole, so
+    // deleting one while the function names survive elsewhere in the item is caught; intake research (financeIntakeResearchService.ts:34,
+    // owner only; :83-85 package the saved intake details and the instruction) is disclosed as record-bound, not account-bound.
+    must(P, '外部サービスへの送信と、外国にある第三者への提供', ['現在、AI アシスタントはお客様には提供しておらず', '同じ AI ワーカーを用いる他の AI 機能も、現在はお客様に提供していません', '提供の前にお知らせしていること', '画像または PDF のファイル全体が送られます', '会話がなくても行われる処理です', '本サービスのサーバーが Anthropic に直接送ることはありません', 'ワーカーを作成したユーザー（所有者）の処理だけを扱います', '会社ごとに Anthropic アカウントを分ける仕組みではありません',
+      '購入の調査では、対象の取引（または購入受付の記録として保存された購入日、商品、購入先とその URL、注文番号、金額などの内容）、過去の記帳の内容と取引先の記憶、在庫の候補、連携した表計算の該当行、購入に関するメールと領収書、取得した公開ページの内容、および調査の指示が送られ、公開検索の語句も送られます。',
+      '確認への返信の解釈では、返信の文章、質問、下書きの用途と取引先、過去の返信、取引先の一覧が送られます。',
+      '購入の仕上げでは、領収書や書類のファイルと、購入の照合のための記録が送られます。',
+      '取引の明細についての会話は所有者自身の口座のもの、会社の会話は所有者がメンバーである会社のものに限ります', '書類の読み取り、取引の明細についての購入の調査、確認への返信の解釈および購入の仕上げについては、所有者が自身の口座について依頼したものに限ります', '口座には結び付けられておらず、所有者自身の受付の記録について依頼したものに限ります', '会社・口座・受付の記録の組み合わせによる境界', 'ワーカーを誰が運用するかによって決まります', '当社が提供者であり', 'お客様が提供者であり', 'ご自身が保有する Anthropic', 'お客様のアカウントに限定する仕組みはありません', '第三者による利用を Anthropic の規約が許すプラン', 'お客様と Anthropic との契約', 'モデルの学習に用いることを許可するかどうか', '接続を解除すれば', '組み込まれておらず','https://www.anthropic.com/legal/commercial-terms', 'https://www.anthropic.com/legal/data-processing-addendum', 'モデルを学習させない', 'AES-256', 'その期間内に請求した場合', 'セルフサービス', '有害な利用', 'お客様と Anthropic との契約であり、返却を請求できるのはお客様です', 'お客様に代わって返却や削除を請求することはできません', '予備の経路では、この契約は当社と Anthropic との契約であり', 'お客様の本サービスの解約ではありません', '法第171条', 'お客様と Anthropic との契約条件', '個別に交渉したデータ処理契約を締結している旨を表明するものではありません'])
     // Each provider's own art. 28 block must carry its country, its measures and its lawful basis: the two blocks share wording, so a
     // section-wide anchor alone would let one provider's line vanish while the other's still satisfies it. The Google block also carries the
     // art. 171 sentence (round 2 F3); the Anthropic block only refers to it.
@@ -145,7 +155,7 @@ export async function checkSite(siteRoot) {
     if (consent === null) bad.push('L10 privacy §7: Anthropic consent item missing')
     else for (const a of ['ご本人の同意（法第28条第1項）を得ます', 'ご本人の同意に代わるものではありません', 'ご本人から直接']) if (!consent.includes(a)) bad.push(`L10 privacy §7 consent item lacks "${a}"`)
     must(P, '第三者提供', ['販売せず', '広告のために利用しません', 'お客様ご自身の Google アカウント', '登録番号のみ', 'お客様ご自身の Anthropic アカウント', '現在行っていません'])
-    for (const a of ['The AI assistant is not offered to client companies at this time', 'The same applies to the other AI functions that use the same AI worker', 'an Anthropic (Claude) account the company holds', 'document reading and purchase research run without any conversation', 'The server itself never sends data to Anthropic; only a worker does', 'rests on contract and configuration, not on code', 'the company on its own account, where we are not a party', 'at the operator\'s own expense']) if (!privacy.includes(a)) bad.push(`L10 privacy English summary lacks "${a}"`)
+    for (const a of ['The AI assistant is not offered to client companies at this time', 'The same applies to the other AI functions that use the same AI worker', 'an Anthropic (Claude) account the company holds', 'document reading and purchase research run without any conversation', 'for a purchase-intake record, the saved intake details', 'For interpretation of review replies a worker sends the reply, the question, the draft\'s purpose and counterparty, past replies and the counterparty list; for purchase finalization it sends receipt and document files and the records used to match the purchase.', 'the purchase-intake research the user requests on the user\'s own intake records, which is bound to the user, not to an account', 'The server itself never sends data to Anthropic; only a worker does', 'rests on contract and configuration, not on code', 'the company on its own account, where we are not a party', 'at the operator\'s own expense']) if (!privacy.includes(a)) bad.push(`L10 privacy English summary lacks "${a}"`)
     // 開示等 request procedure (round 2 F6): the request method, the identity/agent check, the response, the fee and the rights sentence,
     // inside §11, so removing the list or one of its items no longer passes on the page-wide 開示 anchor.
     const requests = must(P, '保有個人データの開示・訂正・利用停止など', ['開示（第三者提供記録の開示を含みます）', '請求の方法：', '第1条のメールアドレスに', '本人確認：', '代理人の場合は代理権', '回答：', '2 週間以内', '手数料：', '手数料をいただきません'])
@@ -321,7 +331,21 @@ export default {
           ['dpa-route-split-removed', 'privacy/index.html', (s) => s.replace(/この契約と顧客は、経路によって異なります。[\s\S]*?返却を請求するのは当社です。/, '')],
           ['en-summary-dpa-party-removed', 'privacy/index.html', (s) => s.replace('the company on its own account, where we are not a party, and the operator on the fallback account', 'the operator')],
           ['index-ai-qualifier-removed', 'index.html', (s) => s.replace('（お客様への提供は準備中です）', '')],
-          ['index-ai-intro-qualifier-removed', 'index.html', (s) => s.replace('AI アシスタントによる記帳の補助（提供準備中）', 'AI アシスタントによる記帳の補助')]
+          ['index-ai-intro-qualifier-removed', 'index.html', (s) => s.replace('AI アシスタントによる記帳の補助（提供準備中）', 'AI アシスタントによる記帳の補助')],
+          // Round 4 copies (Astra legal review r4 F1-F2, 2026-11-06): each deletes exactly one payload sentence (the function names and the
+          // document, non-conversation, owner and server sentences all survive), or restores the account-only limit over intake research.
+          ['ai-research-path-removed', 'privacy/index.html', (s) => s.replace('購入の調査では、対象の取引（または購入受付の記録として保存された購入日、商品、購入先とその URL、注文番号、金額などの内容）、過去の記帳の内容と取引先の記憶、在庫の候補、連携した表計算の該当行、購入に関するメールと領収書、取得した公開ページの内容、および調査の指示が送られ、公開検索の語句も送られます。', '')],
+          ['ai-review-reply-path-removed', 'privacy/index.html', (s) => s.replace('確認への返信の解釈では、返信の文章、質問、下書きの用途と取引先、過去の返信、取引先の一覧が送られます。', '')],
+          ['ai-finalization-path-removed', 'privacy/index.html', (s) => s.replace('購入の仕上げでは、領収書や書類のファイルと、購入の照合のための記録が送られます。', '')],
+          ['ai-intake-context-removed', 'privacy/index.html', (s) => s.replace('対象の取引（または購入受付の記録として保存された購入日、商品、購入先とその URL、注文番号、金額などの内容）、', '対象の取引、')],
+          ['ai-intake-boundary-removed', 'privacy/index.html', (s) => s.replace('購入受付の記録についての購入の調査（店舗・商品の URL から販売者の会社名と登録番号を調べるもの）は、口座には結び付けられておらず、所有者自身の受付の記録について依頼したものに限ります。', '')],
+          ['ai-intake-account-bound-claimed', 'privacy/index.html', (s) => s.replace('は、口座には結び付けられておらず、所有者自身の受付の記録について依頼したものに限ります', 'も、所有者が自身の口座について依頼したものに限ります')],
+          ['ai-conversation-boundary-removed', 'privacy/index.html', (s) => s.replace('（取引の明細についての会話は所有者自身の口座のもの、会社の会話は所有者がメンバーである会社のものに限ります）', '')],
+          ['ai-all-jobs-account-bound-overclaim', 'privacy/index.html', (s) => s.replace('</main>', '<p>書類の読み取り、購入の調査、確認への返信の解釈および購入の仕上げについては、所有者が自身の口座について依頼したものに限ります。</p></main>')],
+          ['en-summary-intake-context-removed', 'privacy/index.html', (s) => s.replace(' (or, for a purchase-intake record, the saved intake details: date, item, merchant and its URL, order number, amount)', '')],
+          ['en-summary-review-finalization-paths-removed', 'privacy/index.html', (s) => s.replace('For interpretation of review replies a worker sends the reply, the question, the draft\'s purpose and counterparty, past replies and the counterparty list; for purchase finalization it sends receipt and document files and the records used to match the purchase. ', '')],
+          ['en-summary-intake-boundary-removed', 'privacy/index.html', (s) => s.replace(', and the purchase-intake research the user requests on the user\'s own intake records, which is bound to the user, not to an account', '')],
+          ['en-summary-all-jobs-account-bound-overclaim', 'privacy/index.html', (s) => s.replace('</main>', '<p>A worker handles only the document reading, research, review replies and finalization the user requests for the user\'s own accounts.</p></main>')]
         ]
         for (const [name, rel, mutate] of defects) {
           const copy = path.join(tmp, name)
@@ -334,7 +358,7 @@ export default {
         }
       } finally { await rm(tmp, { recursive: true, force: true }) }
     }
-    const pass = failures.length === 0 && mutants.length === 120 && mutants.every((m) => m.changed && m.detected)
+    const pass = failures.length === 0 && mutants.length === 132 && mutants.every((m) => m.changed && m.detected)
     return { pass, message: JSON.stringify({ failures, mutants }) }
   }
 }
