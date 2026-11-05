@@ -2,6 +2,7 @@ export interface ForecastResolution { state: 'billed' | 'closed'; lines: number[
 export interface SourceReference { match?: 'pending_purchase' | 'pending_candidate' | 'pending_resolution' | string; fingerprint: string; lines: number[]; state: 'existing_import' | 'source_overlap_review'; targets: { importId: string; sourceHash: string; lines: number[] }[] }
 export function sourceReferenceGroups(batch: any): SourceReference[];
 export function forecastResolutions(batch: any): Map<number, ForecastResolution>;
+export function resolutionTargetEligible(forecast: any, target: any): boolean;
 export function buildSourceReferences(batch: any, previous: any[], history?: any[]): { version: number; sourceHash: string; groups: SourceReference[] };
 export function verifySourceReferences(batch: any, targets: any[]): SourceReference[];
 export function activeImportRows(batch: any): any[];

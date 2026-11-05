@@ -52,6 +52,27 @@ Identical purchases can be paired one at a time from the draft page; the
 remaining rows are verified as their own residual group, so a third purchase
 does not disappear when two forecasts have been resolved.
 
+Source correspondence versus an ordinary finalized expense: an Aplus statement
+sometimes lists the same purchase (same card, purchase date, merchant, purchase
+amount, currency and the billing month the forecast expected) as a row the
+issuer keeps under individual review — a blank or adjusted お支払金額, parsed as
+`statement_review`. The owner may pair the forecast with that row as *billed*
+too; one shared eligibility rule decides it for the candidate the page offers,
+the API and the bindings every reader verifies. Such a pairing records only the
+source correspondence: the forecast keeps its original purchase amount, the
+statement row keeps its original (blank or adjusted) payment field and its own
+review reason, and the forecast's status stays *review* with the confirmed
+source shown beside it. It is not finalized, not paid, not unpaid, not closed;
+a blank payment field is never read as zero, and no credit is allocated from
+monthly totals. The existing review hold keeps ledger posting, linking and an
+approved or reserved retry blocked, exactly as before; the next step is the
+individual confirmation of the payment field, not a posting. Reopen undoes the
+pairing; cancellation (*closed*), grouped identical lines and retained evidence
+work as above. Payment matching shows the confirmed source kind, the original
+purchase and payment amounts and the review note beside the provisional values
+and creates no allocation. Ordinary expense pairings, altered merchant/date/
+amount choices, repeated purchases and Amex are unchanged.
+
 Exact groups in the incoming file take precedence. Already confirmed forecasts
 do not hold activity after their final statement period; revised or older
 snapshots can still require review. When a forecast arrives after the actual,

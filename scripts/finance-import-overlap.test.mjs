@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {HEADERS, parseAmex, period} from '../shared/amex.mjs';
-import {buildSourceReferences, sourceReferenceGroups, verifySourceReferences, activeImportRows, purposeEvidence, forecastResolutions} from '../shared/finance-import-overlap.mjs';
+import {buildSourceReferences, sourceReferenceGroups, verifySourceReferences, activeImportRows, purposeEvidence, forecastResolutions, resolutionTargetEligible} from '../shared/finance-import-overlap.mjs';
+import {parseCardImport} from '../shared/card-import.mjs';
+import {HEADERS as APLUS_HEADERS} from '../shared/aplus.mjs';
+import {aplusCapture} from './finance-pending-fixtures.mjs';
 const csv=rows=>Buffer.from([HEADERS,...rows].map(r=>r.map(v=>'"'+v+'"').join(',')).join('\n'));
 const row=(merchant='Repeated shop',amount='100',card='12345')=>['2026/08/01','2026/08/03',merchant,'Synthetic',card,amount,'',''];
 const batch=(id,rows,extra={})=>{const p=parseAmex(csv(rows),['12345','23456']);return {_id:id.repeat(24),ownerId:'owner',accountId:'account',hash:p.sha256,rows:p.rows,...extra};};
@@ -130,4 +133,88 @@ test('a statement whose coverage closed before the forecast purchase holds nothi
  earlier.sourceReferences=buildSourceReferences(earlier,[P]);assert.deepEqual([earlier.sourceReferences.groups,activeImportRows(earlier).length],[[],1]);
  const later={...finalBatch('3',[['2026/08/15','2026/08/16','Shop A changed','Synthetic','12345','120','','']])};later.sourceReferences=buildSourceReferences(later,[P]);
  assert.equal(later.sourceReferences.groups[0]?.match,'pending_candidate','a statement that can contain the forecast still holds its changed form');
+});
+
+// ── the same purchase kept under individual review on the statement (plan omf-aplus-statement-payment-review-20261105): one shared eligibility for the
+// emitter, the verifier and the writer; the owner's explicit pairing names the source and leaves every stored value as it is. Aplus rows through the real
+// parsers; synthetic card, merchants and amounts (the 8039 / blank shape reproduces the owner's case without its data). ──
+const aplusAccount={provider:'aplus',cardIdentifiers:['1234','5678']};
+const aplusCsv=rows=>Buffer.from([APLUS_HEADERS,...rows].map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n'));
+const aplusRow=i=>i.annualFee?['', '', '年会費',i.amount,'','','',i.amount,'']:i.deposit?['','','ご入金（８／２７）',i.amount,'','','','','ショッピング元金']:['≪****-****-****-'+(i.card||'1234')+'≫',(i.date||'2026-08-06').replaceAll('-',''),i.merchant,i.amount,i.sales||'Ｓ',i.count||'1',i.number===undefined?'01':i.number,i.payment===null?'':(i.payment===undefined?i.amount:i.payment),i.details||''];
+const paymentsOf=items=>items.reduce((n,i)=>n+(i.deposit||i.payment===null?0:(i.payment===undefined?i.amount:i.payment)),0);
+const aplusForecast=(items,n,capturedAt='2026-08-20T00:00:00.000Z')=>({...parseCardImport(Buffer.from(JSON.stringify({...aplusCapture(items.map(i=>({merchant:i.merchant,amount:i.amount,date:i.date||'2026-08-06',card:i.card||'1234',month:i.month||'26/09'}))),capturedAt})),aplusAccount,{kind:'pending'}),_id:String(n).padStart(24,'0'),ownerId:'owner',accountId:'account',provider:'aplus'});
+const aplusStatement=(items,month,n)=>({...parseCardImport(aplusCsv(items.map(aplusRow)),aplusAccount,{kind:'statement',statementMonth:month,statementTotal:paymentsOf(items)}),_id:String(n).padStart(24,'0'),ownerId:'owner',accountId:'account',provider:'aplus'});
+for(const b of [aplusForecast,aplusStatement])void b;
+const withHash=b=>({...b,hash:b.sha256});
+const X={merchant:'Synthetic service X',amount:8039,date:'2026-08-06',month:'26/09'};
+const billedTo=(F,lines,forecastLines=lines)=>Object.fromEntries(forecastLines.map(l=>[l,record('billed',forecastLines,{importId:F._id,sourceHash:F.hash,lines})]));
+test('aplus exception: one eligibility — an expense of the same card as before, or the same purchase kept under individual review; every deviation is refused',()=>{
+ const P=withHash(aplusForecast([X],1)),f=P.rows[0];assert.deepEqual([f.kind,f.paymentAmount,f.pendingPaymentMonth],['expense',null,'2026-09'],'a pending row with a blank payment field is a forecast, not an exception');
+ const S=withHash(aplusStatement([{...X,payment:null},{...X,payment:4000},{...X,amount:8040,payment:null},{...X,date:'2026-08-07',payment:null},{...X,merchant:'Synthetic service X.',payment:null},{...X,card:'5678',payment:null},{...X,amount:-8039,payment:-8039},{annualFee:true,amount:1375},{deposit:true,amount:-200},{merchant:'Shop A (final)',amount:1200,date:'2026-08-12'},{merchant:'Shop B (other card)',amount:300,card:'5678'},{...X,amount:8100,payment:4050,count:'2'}],'2026-09',2));
+ const [blank,reduced,amount,date,merchant,card,credit,fee,deposit,expense,otherCard,installment]=S.rows;
+ assert.deepEqual([blank.kind,blank.purchaseAmount,blank.paymentAmount,reduced.kind,reduced.paymentAmount,credit.kind,fee.kind,deposit.kind,expense.kind,installment.kind],['statement_review',8039,null,'statement_review',4000,'credit_review','statement_review','credit_review','expense','statement_review'],'parsed kinds');
+ assert.equal(resolutionTargetEligible(f,blank),true,'blank payment field: the same purchase');
+ assert.equal(resolutionTargetEligible(f,reduced),true,'reduced payment field: the same purchase');
+ assert.equal(resolutionTargetEligible(f,expense),true,'an expense of the same card: eligible as before, whatever its amount, date or merchant');
+ for(const [label,target] of [['amount',amount],['date',date],['merchant',merchant],['card',card],['credit',credit],['annual fee',fee],['deposit',deposit],['other card expense',otherCard],['installment',installment]])assert.equal(resolutionTargetEligible(f,target),false,'refused: '+label);
+ assert.equal(resolutionTargetEligible({...f,pendingPaymentMonth:'2026-10'},blank),false,'refused: billing month');
+ assert.equal(resolutionTargetEligible({...f,currency:'USD'},blank),false,'refused: currency');
+ assert.equal(resolutionTargetEligible({...f,kind:'statement_review'},blank),false,'refused: the forecast must be an expense');
+ assert.equal(resolutionTargetEligible({...f,kind:'statement_review'},expense),false,'refused: the forecast must be an expense (ordinary case too)');
+ assert.equal(resolutionTargetEligible({...f,provider:'amex'},{...blank,provider:'amex'}),false,'refused: Aplus only');
+ assert.equal(resolutionTargetEligible(f,{...f,kind:'statement_review'}),false,'refused: a pending row kept under review has no statement month (the batch-level finality is the callers\' check: the emitter runs for statements only, the verifier and the writer refuse a pending target)');
+ assert.equal(resolutionTargetEligible(f,undefined),false);assert.equal(resolutionTargetEligible(undefined,blank),false);
+});
+test('aplus exception: the billed record binds the review row as a version-4 resolution group, emitter and verifier agree, and no stored value changes',()=>{
+ const P=withHash(aplusForecast([X],1)),S=withHash(aplusStatement([{...X,payment:null},{merchant:'Shop Z',amount:500,date:'2026-08-20'}],'2026-09',2)),before=structuredClone([P,S]);
+ const held={...S,sourceReferences:buildSourceReferences(S,[P])};
+ assert.deepEqual(held.sourceReferences.groups.map(shape),[['pending_purchase','source_overlap_review',[2],[[P._id,[2]]]],['pending_candidate','source_overlap_review',[3],[[P._id,[2]]]]],'before the decision: a review hold, never an automatic match; the open forecast also holds the unmatched row');
+ assert.equal(activeImportRows(held).length,0);
+ const billed=withRecords(P,billedTo(S,[2]));
+ const bound={...S,sourceReferences:buildSourceReferences(S,[billed])};
+ assert.deepEqual([bound.sourceReferences.version,bound.sourceReferences.groups.map(shape)],[4,[['pending_resolution','existing_import',[2],[[P._id,[2]]]]]],'the same-purchase review row binds');
+ assert.deepEqual([verifySourceReferences(bound,[billed]).length,activeImportRows(bound).map(r=>r.line),activeImportRows(billed).map(r=>r.line)],[1,[3],[2]],'the statement row is a reference copy; the forecast keeps its identity; the resolved forecast releases the other row');
+ assert.deepEqual([bound.rows[0].purchaseAmount,bound.rows[0].paymentAmount,bound.rows[0].kind,billed.rows[0].amount,billed.rows[0].paymentAmount],[8039,null,'statement_review',8039,null],'8039 and the blank payment field are retained on both sides');
+ assert.deepEqual([P,S],before,'the source batches are immutable');
+ assert.throws(()=>verifySourceReferences(bound,[P]),'a resolution group without its record fails closed');
+ assert.throws(()=>verifySourceReferences(bound,[withRecords(P,{2:{...billedTo(S,[2])[2],target:{importId:S._id,sourceHash:'1'.repeat(64),lines:[2]}}})]),'a tampered target hash fails closed');
+ assert.throws(()=>verifySourceReferences({...bound,rows:bound.rows.map(r=>r.line===2?{...r,amount:8040,purchaseAmount:8040}:r)},[billed]),'a statement row that no longer is the same purchase fails closed');
+ assert.throws(()=>verifySourceReferences(bound,[{...billed,ownerId:'other'}]),'another owner fails closed');
+ const later=withHash(aplusForecast([X,{merchant:'Shop N',amount:70,date:'2026-08-21',month:'26/09'}],3,'2026-08-22T00:00:00.000Z')),again={...later,sourceReferences:buildSourceReferences(later,[billed,bound])};
+ assert.deepEqual(again.sourceReferences.groups.map(g=>[g.match,g.state,g.targets.map(t=>t.importId)]),[['pending_purchase','existing_import',[P._id]],['pending_candidate','source_overlap_review',[S._id]]],'a later snapshot repeating the purchase references the forecast; its new row is held by the statement\'s own unmatched row, never by the resolved forecast');
+ const consumed={...withHash(aplusStatement([{...X,payment:null}],'2026-10',4))};consumed.sourceReferences=buildSourceReferences(consumed,[billed,bound]);
+ assert.deepEqual([consumed.sourceReferences.groups,activeImportRows(consumed).length],[[],1],'a paired forecast is not matched by another statement again');
+});
+test('aplus exception: forged or no-longer-eligible records bind nothing (stale), cross-card/owner/hash controls hold, old ordinary bindings read unchanged',()=>{
+ const P=withHash(aplusForecast([X],1));
+ for(const [label,item] of [['amount',{...X,amount:8040,payment:null}],['date',{...X,date:'2026-08-07',payment:null}],['merchant',{...X,merchant:'Synthetic service X.',payment:null}],['installment',{...X,amount:8100,payment:4050,count:'2'}]]){
+  const S=withHash(aplusStatement([item],'2026-09',2)),forged=buildSourceReferences(S,[withRecords(P,billedTo(S,[2]))]);
+  assert.ok(!forged.groups.some(g=>g.match==='pending_resolution'),'binds nothing: '+label);assert.equal(forged.version,forged.groups.length?3:1,'no version-4 shape: '+label);
+ }
+ const monthS=withHash(aplusStatement([{...X,payment:null}],'2026-09',2)),monthP=withHash(aplusForecast([{...X,month:'26/10'}],1));
+ assert.ok(!buildSourceReferences(monthS,[withRecords(monthP,billedTo(monthS,[2]))]).groups.some(g=>g.match==='pending_resolution'),'billing month differs: binds nothing');
+ const cardS=withHash(aplusStatement([{...X,card:'5678',payment:null}],'2026-09',2));
+ assert.ok(!buildSourceReferences(cardS,[withRecords(P,billedTo(cardS,[2]))]).groups.some(g=>g.match==='pending_resolution'),'another card: binds nothing');
+ const S=withHash(aplusStatement([{...X,payment:null}],'2026-09',2)),billed=withRecords(P,billedTo(S,[2]));
+ assert.equal(buildSourceReferences(S,[{...billed,ownerId:'other'}]).groups.length,0,'another owner: nothing');
+ assert.ok(!buildSourceReferences(S,[withRecords(P,{2:record('billed',[2],{importId:S._id,sourceHash:'1'.repeat(64),lines:[2]})})]).groups.some(g=>g.match==='pending_resolution'),'another file hash: binds nothing');
+ const bound={...S,sourceReferences:buildSourceReferences(S,[billed])};
+ const handMade=structuredClone(bound);handMade.sourceReferences.groups[0].lines=[2];
+ const altered={...S,rows:S.rows.map(r=>({...r,kind:'statement_review',description:'Synthetic service X.'}))};
+ assert.throws(()=>verifySourceReferences({...bound,rows:altered.rows},[billed]),'a hand-made group on a row the rule refuses fails verification');
+ // the ordinary expense pairing (the existing shape) is unchanged: same group, same version, verifies
+ const changed=withHash(aplusStatement([{merchant:'Shop A (final)',amount:1200,date:'2026-08-12'}],'2026-09',5)),A=withHash(aplusForecast([{merchant:'Shop A',amount:1000,date:'2026-08-10',month:'26/09'}],6));
+ const ordinary={...changed,sourceReferences:buildSourceReferences(changed,[withRecords(A,billedTo(changed,[2]))])};
+ assert.deepEqual([ordinary.sourceReferences.version,ordinary.sourceReferences.groups.map(shape),verifySourceReferences(ordinary,[withRecords(A,billedTo(changed,[2]))]).length],[4,[['pending_resolution','existing_import',[2],[[A._id,[2]]]]],1]);
+});
+test('aplus exception: identical repeats pair as a group or one at a time; the remaining review row is verified as its own residual group',()=>{
+ const P=withHash(aplusForecast([X,X],1)),S=withHash(aplusStatement([{...X,payment:null},{...X,payment:null},{...X,payment:null}],'2026-09',2));
+ const open={...S,sourceReferences:buildSourceReferences(S,[P])};assert.deepEqual(open.sourceReferences.groups.map(shape),[['pending_purchase','source_overlap_review',[2,3,4],[[P._id,[2,3]]]]]);
+ const grouped=withRecords(P,billedTo(S,[2,3],[2,3])),bound={...S,sourceReferences:buildSourceReferences(S,[grouped])};
+ assert.deepEqual([bound.sourceReferences.groups.map(shape),activeImportRows(bound).map(r=>r.line),verifySourceReferences(bound,[grouped]).length],[[['pending_resolution','existing_import',[2,3],[[P._id,[2,3]]]]],[4],1],'a grouped decision binds two review rows; the third stays');
+ const one=withRecords(P,{2:record('billed',[2],{importId:S._id,sourceHash:S.hash,lines:[2]})}),partial={...S,sourceReferences:buildSourceReferences(S,[one])};
+ assert.deepEqual([partial.sourceReferences.groups.map(g=>[g.match,g.lines]),verifySourceReferences(partial,[one]).length],[[['pending_resolution',[2]],['pending_purchase',[3,4]]],2],'one at a time: the residual rows stay a verified review group');
+ const two=withRecords(P,{...one.forecastResolutions,3:record('billed',[3],{importId:S._id,sourceHash:S.hash,lines:[3]})}),done={...S,sourceReferences:buildSourceReferences(S,[two])};
+ assert.deepEqual([done.sourceReferences.groups.map(g=>[g.match,g.lines]),activeImportRows(done).map(r=>r.line),verifySourceReferences(done,[two]).length],[[['pending_resolution',[2]],['pending_resolution',[3]]],[4],2]);
+ assert.throws(()=>verifySourceReferences(bound,[withRecords(P,{2:record('billed',[2,3],{importId:S._id,sourceHash:S.hash,lines:[2,3]}),3:record('billed',[3],{importId:S._id,sourceHash:S.hash,lines:[3]})})]),'every line of a grouped decision must carry the same record');
 });

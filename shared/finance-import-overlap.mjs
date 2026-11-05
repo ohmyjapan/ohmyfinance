@@ -18,6 +18,25 @@ const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const sortedLines = v => Array.isArray(v) && v.length > 0 && v.length <= 100 && v.every(n => Number.isSafeInteger(n) && n >= 2) && equal(v, [...new Set(v)].sort((a, b) => a - b));
 const sameDecision = (a, b) => !!a && !!b && a.state === b.state && equal(a.lines, b.lines) && equal(a.target || null, b.target || null);
 
+// Plan omf-aplus-statement-payment-review-20261105: the one eligibility rule for an explicit `billed` pairing, shared by the emitter below,
+// the verifier and the writer (financeForecastResolutionService), so the candidate the page offers is the one the API accepts and the
+// binding every reader verifies. The forecast is an expense line; the statement row is an expense of the same card (the ordinary case,
+// unchanged), or — Aplus only — the same purchase the issuer kept under individual review (kind statement_review: a blank or adjusted
+// お支払金額): same card, purchase date, merchant, positive purchase amount, currency and the billing month the forecast expected. Such a
+// pairing names the source of the purchase and says nothing about its payment: the readers keep that forecast in review
+// (financeService.pendingSettlements), nothing marks it finalized, paid, unpaid or closed, and a blank payment field is never read as zero.
+export function resolutionTargetEligible(forecast, target) {
+  if (!forecast || !target || forecast.kind !== 'expense' || !forecast.cardIdentifier || forecast.cardIdentifier !== target.cardIdentifier) return false;
+  if (target.kind === 'expense') return true;
+  if (target.kind !== 'statement_review' || forecast.provider !== 'aplus' || target.provider !== 'aplus') return false;
+  const text = v => typeof v === 'string' && v.length > 0;
+  return text(target.purchaseDate) && target.purchaseDate === forecast.purchaseDate
+    && text(target.description) && text(forecast.description) && target.description.normalize('NFC') === forecast.description.normalize('NFC')
+    && Number.isSafeInteger(target.purchaseAmount) && target.purchaseAmount > 0 && target.purchaseAmount === target.amount
+    && target.amount === forecast.amount
+    && (target.currency || 'JPY') === (forecast.currency || 'JPY') && text(target.statementMonth) && target.statementMonth === forecast.pendingPaymentMonth;
+}
+
 // The owner's decision on a forecast line (plan omf-aplus-reconciliation-resolution-20261104 R1, READBACK B4): `billed` names the rows of
 // one finalized statement that are this forecast's bill, `closed` records that no bill is expected. A grouped decision (two identical
 // forecasts paired with two statement rows) carries the same record on every one of its lines; a malformed record fails closed like a
@@ -83,8 +102,8 @@ export function buildSourceReferences(batch, previous, history = previous) {
     if (isFinalStatement(prior)) for (const group of sourceReferenceGroups(prior)) if (group.state === 'existing_import') for (const target of group.targets) for (const line of target.lines) settle(identity(target.importId, line), prior.finalization?.period || prior.period, String(prior._id));
   }
   // R1(b): the owner's billed decisions whose target is this statement become exact reference groups, ahead of every automatic rule. A
-  // decision that no longer fits (rows gone, cards differ, the forecast settled exactly by another statement, rows already taken) binds
-  // nothing; the rebuild report lists it as stale.
+  // decision that no longer fits (rows gone, cards differ, the forecast settled exactly by another statement, rows already taken, a target
+  // row the shared eligibility refuses) binds nothing; the rebuild report lists it as stale.
   const resolutionReferences = [], resolvedRows = new Set();
   if (!isPending(batch)) for (const prior of previous) {
     if (!isPending(prior)) continue;
@@ -94,7 +113,7 @@ export function buildSourceReferences(batch, previous, history = previous) {
       const key = record.lines.join(','); if (seen.has(key)) continue; seen.add(key);
       const forecast = record.lines.map(line => prior.rows.find(r => r.line === line)), rows = record.target.lines.map(line => batch.rows.find(r => r.line === line));
       const stale = !record.lines.every(line => sameDecision(records.get(line), record) && active.has(line) && ![...(settled.get(identity(prior._id, line))?.by || [])].some(id => id !== String(batch._id)))
-        || forecast.some(r => !r || r.kind !== 'expense') || rows.some(r => !r || r.kind !== 'expense' || resolvedRows.has(r.line)) || forecast.some((r, i) => r.cardIdentifier !== rows[i].cardIdentifier);
+        || rows.some(r => !r || resolvedRows.has(r.line)) || forecast.some((r, i) => !resolutionTargetEligible(r, rows[i]));
       if (stale) continue;
       for (const r of rows) resolvedRows.add(r.line);
       resolutionReferences.push({ match: 'pending_resolution', fingerprint: `resolution:${prior._id}:${key}`, lines: lines(rows), state: 'existing_import', targets: [{ importId: String(prior._id), sourceHash: prior.hash, lines: lines(forecast) }] });
@@ -188,7 +207,7 @@ export function verifySourceReferences(batch, targets) {
       const rows = batch.rows.filter(r => group.lines.includes(r.line)), forecast = prior.rows.filter(r => target.lines.includes(r.line));
       if (rows.length !== group.lines.length || forecast.length !== target.lines.length || rows.length !== forecast.length) fail();
       for (const line of target.lines) { const record = resolved.get(line); if (!record || record.state !== 'billed' || record.target.importId !== String(batch._id) || record.target.sourceHash !== batch.hash || !equal(record.target.lines, group.lines) || !equal(record.lines, target.lines)) fail(); }
-      if ([...rows, ...forecast].some(r => r.kind !== 'expense') || rows.some((r, i) => r.cardIdentifier !== forecast[i].cardIdentifier) || sourceReferenceGroups(prior).some(g => g.lines.some(line => target.lines.includes(line)))) fail();
+      if (rows.some((r, i) => !resolutionTargetEligible(forecast[i], r)) || sourceReferenceGroups(prior).some(g => g.lines.some(line => target.lines.includes(line)))) fail();
       continue;
     }
     if (group.match === 'pending_candidate') {

@@ -19,7 +19,7 @@ import { FinanceDraft } from '../models/FinanceDraft'
 import { verifyPostingCompany, claimPostingCompany, insertCompanyPosting } from './financeCompanyPostingService'
 import { reconcileBill, importEvidence, importCalendarEligible, RETRY_IMPORT_STATES } from './financeBillService'
 import { mappingRows } from '../../shared/finance-mapping.mjs'
-import { buildSourceReferences, sourceReferenceGroups, sourceReferenceAt, verifySourceReferences, activeImportRows, forecastResolutions } from '../../shared/finance-import-overlap.mjs'
+import { buildSourceReferences, sourceReferenceGroups, sourceReferenceAt, verifySourceReferences, activeImportRows, forecastResolutions, resolutionTargetEligible } from '../../shared/finance-import-overlap.mjs'
 
 const User = UserModel as mongoose.Model<IUser>
 const Transaction = TransactionModel as mongoose.Model<ITransaction>
@@ -206,12 +206,16 @@ export function assertEditableImportRow(batch: any, line: number) {
 // resolution) → the owner's closed record → a weak candidate review (a same-card row that might be a changed form) → pending. Every
 // finalized source carries the paired statement row (`source.row`: the confirmed date, merchant and amount — equal to the forecast's for
 // an exact match) and every review group its candidate rows; a closed line a statement later matches exactly is finalized with the
-// record marked superseded (READBACK B1).
+// record marked superseded (READBACK B1). Plan omf-aplus-statement-payment-review-20261105: a row view also carries the original purchase
+// and payment amounts and the issuer's review reason as stored (a blank payment field stays null); each candidate row says whether the
+// shared eligibility would accept it as this line's explicit pairing (`pairable`, the same rule the writer applies); and a billed pairing
+// whose statement row is a statement_review row stays `review` WITH its confirmed source — the owner confirmed the purchase, not its
+// payment — so every existing review gate (readiness, posting, linking, retries) keeps holding it.
 export async function pendingSettlements(batch: any) {
   const result = new Map<number, any>()
   if (!isPending(batch)) return result
   const strong = new Map<number, any>(), exact = new Map<number, any>(), weak = new Map<number, any>()
-  const rowView = (r: any) => ({ line: r.line, kind: r.kind, purchaseDate: r.purchaseDate, description: r.description, amount: r.amount, statementMonth: r.statementMonth || '' })
+  const rowView = (r: any) => ({ line: r.line, kind: r.kind, purchaseDate: r.purchaseDate, description: r.description, amount: r.amount, statementMonth: r.statementMonth || '', purchaseAmount: r.purchaseAmount, paymentAmount: r.paymentAmount, reviewReason: r.sourceReviewReason || '' })
   if (batch.finalization) {
     if (batch.finalization.sourceHash !== batch.hash || batch.finalization.period?.kind !== 'statement') fail(409, 'Finalized source evidence changed')
     for (const row of activeImportRows(batch)) exact.set(row.line, { state: 'finalized', source: { importId: String(batch._id), sourceHash: batch.hash, period: batch.finalization.period, lines: batch.rows.map((r: any) => r.line), match: 'finalization', row: rowView(row) } })
@@ -227,10 +231,14 @@ export async function pendingSettlements(batch: any) {
       if (group.state === 'source_overlap_review') {
         const bucket = group.match === 'pending_candidate' ? weak : strong
         const reason = group.match === 'pending_candidate' ? '同じカードに未照合の明細があります。利用先・日付・金額などを比較するまで、追加分を購入件数に加えません。' : '未請求明細と件数・金額などが一致しません。元の明細と比較してください。'
-        const candidate = { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, final: isFinalStatement(other), lines: group.lines, rows: rows.map(rowView) }
-        for (const line of target.lines) { const entry = bucket.get(line) || { state: 'review', reason, candidates: [] }; entry.candidates.push(candidate); bucket.set(line, entry) }
+        const candidate = { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, final: isFinalStatement(other), lines: group.lines }
+        for (const line of target.lines) { const forecastRow = batch.rows.find((r: any) => r.line === line); const entry = bucket.get(line) || { state: 'review', reason, candidates: [] }; entry.candidates.push({ ...candidate, rows: rows.map((r: any) => ({ ...rowView(r), pairable: candidate.final && resolutionTargetEligible(forecastRow, r) })) }); bucket.set(line, entry) }
       } else if (isFinalStatement(other)) {
-        for (const [index, line] of target.lines.entries()) exact.set(line, { state: 'finalized', source: { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, lines: group.lines, match: group.match || 'fingerprint', row: rowView(rows[index] || rows[0]) } })
+        for (const [index, line] of target.lines.entries()) {
+          const row = rows[index] || rows[0], source = { importId: String(other._id), sourceHash: other.hash, period: other.finalization?.period || other.period, lines: group.lines, match: group.match || 'fingerprint', row: rowView(row) }
+          // A billed pairing with a row the issuer kept under individual review names the source but stays in review: not finalized, not paid, not closed.
+          exact.set(line, group.match === 'pending_resolution' && row.kind !== 'expense' ? { state: 'review', reason: row.sourceReviewReason || '確定明細の支払欄の個別確認が必要です。', source } : { state: 'finalized', source })
+        }
       }
     }
   }
