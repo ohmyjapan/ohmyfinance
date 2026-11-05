@@ -34,7 +34,9 @@
 //       changed amount, date, merchant, billing month or card, a credit, an annual fee, a deposit, an Amex review row, a reused target or
 //       a second use of a paired row are refused everywhere (API 400/409, candidate `pairable:false`, forged record binds nothing).
 //   S-c P6: reopen restores the hold; identical repeats pair as a group and one at a time; crash after the record and before the binding
-//       verifies and completes; expired lease and a concurrent second decision are refused; a tampered target hash fails closed.
+//       verifies and completes; an already-held lease and a concurrent second decision are refused; a tampered target hash fails closed.
+//   S-e F1/P6/P9: expire an acquired lease after the billed record or reopen binding is durable, with/without a successor holder; refuse the
+//       next write, preserve the verified intermediate state and successor lease, and retry once without money/related-record changes.
 //   S-d P3/P8: the linked exception cannot post (import, link, an approved draft, a reserved retry) and the ordinary billed expense still
 //       posts exactly once; no ledger, entry, payment-anchor, calendar or account flag write comes from the pairing.
 //   B   P4 real Chrome (headless, an owned temporary profile, the built app on a loopback port with the harness's own mongod): the page
@@ -60,7 +62,7 @@ const COVERS = ['shared/finance-import-overlap.mjs', 'server/services/financeSer
 const list = name => (process.env[name] || '').split(',').map(s => s.trim()).filter(Boolean);
 const LEGS = list('OMF_APLUS_LEGS'), MUTANTS = list('OMF_APLUS_MUTANTS');
 export const PARTIAL = LEGS.length > 0 || MUTANTS.length > 0;
-const CHILD_LEGS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'R-a', 'R-b', 'R-c', 'R-d', 'R-e', 'R-f', 'R-g', 'S-a', 'S-b', 'S-c', 'S-d'];
+const CHILD_LEGS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'R-a', 'R-b', 'R-c', 'R-d', 'R-e', 'R-f', 'R-g', 'S-a', 'S-b', 'S-c', 'S-d', 'S-e'];
 const execute = (file, args, options = {}) => new Promise(resolve => execFile(file, args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8', ...options }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, stdout: String(stdout), stderr: String(stderr) })));
 // Anchors are written with LF; a checkout under core.autocrlf reads CRLF, so each anchor and replacement take the file's own line ending.
 const mutate = (text, edits, label) => { let out = text; const eol = text.includes('\r\n') ? '\r\n' : '\n'; for (const [a0, b0] of edits) { const a = a0.replaceAll('\n', eol), b = b0.replaceAll('\n', eol); const n = out.split(a).length - 1; if (n !== 1) throw new Error(label + ' anchor hits ' + n + ': ' + a0.slice(0, 100)); out = out.replace(a, () => b); } return out; };
@@ -92,7 +94,10 @@ export const DEFECTS = [
   ['M21-reopen-keeps-record', RESOLUTION, [["      if (request.action === 'reopen') { await check(); await FinanceImport.updateOne({ _id: batch._id, ownerId, hash: batch.hash }, { $unset: Object.fromEntries(lines.map(l => [`forecastResolutions.${l}`, ''])) }) }\n", '']], 'S-c'],
   ['M22-verifier-ignores-target-hash', SHARED, [["record.target.importId !== String(batch._id) || record.target.sourceHash !== batch.hash || !equal(record.target.lines, group.lines)", "record.target.importId !== String(batch._id) || !equal(record.target.lines, group.lines)"]], 'S-c'],
   ['M23-eligibility-ignores-card', SHARED, [[' || !forecast.cardIdentifier || forecast.cardIdentifier !== target.cardIdentifier) return false;', ') return false;']], 'S-b'],
-  ['M24-candidate-offered-without-eligibility', SERVICE, [['pairable: candidate.final && resolutionTargetEligible(forecastRow, r)', 'pairable: candidate.final']], 'S-b']
+  ['M24-candidate-offered-without-eligibility', SERVICE, [['pairable: candidate.final && resolutionTargetEligible(forecastRow, r)', 'pairable: candidate.final']], 'S-b'],
+  ['M25-acquired-lease-check-removed', RESOLUTION, [["  const check = async () => { if (!await FinancialAccount.exists({ _id: initial.accountId, ownerId, commitLease: lease, commitLeaseUntil: { $gt: new Date() } })) fail(409, '照合の有効時間を超えました。再試行してください。') }", '  const check = async () => {}']], 'S-e'],
+  ['M26-reopen-final-lease-check-removed', RESOLUTION, [["if (request.action === 'reopen') { await check(); await FinanceImport.updateOne", "if (request.action === 'reopen') { await FinanceImport.updateOne"]], 'S-e'],
+  ['M27-successor-lease-cleared', RESOLUTION, [["} finally { await FinancialAccount.updateOne({ _id: initial.accountId, ownerId, commitLease: lease },", "} finally { await FinancialAccount.updateOne({ _id: initial.accountId, ownerId },"]], 'S-e']
 ];
 
 // ── the child: the real services on an owned ephemeral database (node --import tsx <this file> --child --out <json> [--src <tree>] [--legs a,b]) ──
@@ -591,7 +596,7 @@ async function child() {
       assert.equal((await thrown(async () => finance.importSourceReferences(await doc(Sept))))?.statusCode, 409, 'S-c:import-references-409-on-tamper');
       await FinanceImport.updateOne({ _id: P }, { $set: { 'forecastResolutions.2.target.sourceHash': f.hash } });
       assert.equal(await verifyAll(account._id), 2, 'S-c:restored');
-      // expired lease, held lease, concurrency: exactly one of two simultaneous decisions wins; the loser writes nothing
+      // already-held lease and concurrency; S-e separately expires an acquired lease at the durable-write boundaries
       await FinancialAccount.updateOne({ _id: account._id }, { $set: { commitLease: 'held', commitLeaseUntil: new Date(Date.now() + 60000) } });
       assert.equal((await thrown(() => resolveForecastLine(ownerId, P, { line: 2, action: 'reopen', sourceHash: p.hash })))?.statusCode, 409, 'S-c:held-lease-refused');
       await FinancialAccount.updateOne({ _id: account._id }, { $unset: { commitLease: '', commitLeaseUntil: '' } });
@@ -619,6 +624,95 @@ async function child() {
       }
       assert.deepEqual([(await groupsOf(F4)).map(g => [g.match, g.lines]), await activeOf(F4), await activeOf(P4)], [[['pending_resolution', [2]], ['pending_resolution', [3]]], [4], [2, 3]], 'S-c:one-at-a-time-pairs-each-review-row-once');
       return 'reopen, both crash orders, tampered hash, held lease, concurrent race (1 win / 1 409), grouped and single-choice identical repeats';
+    });
+    await leg('S-e', async () => {
+      const { resolveForecastLine } = await resolution(), { FinancePurchaseLink } = await import(u('server/models/FinancePurchaseLink.ts')), { FinanceDocument } = await import(u('server/models/FinanceDraft.ts'));
+      const otherDocuments = async () => {
+        const excluded = new Set([FinanceImport.collection.name, FinancialAccount.collection.name]), snapshot = [];
+        for (const name of (await mongoose.connection.db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name).filter(n => !excluded.has(n)).sort()) {
+          const rows = await mongoose.connection.db.collection(name).find({}).sort({ _id: 1 }).toArray();
+          if (rows.length) snapshot.push([name, rows]);
+        }
+        return JSON.stringify(snapshot);
+      };
+      for (const action of ['billed', 'reopen']) for (const takeover of [false, true]) {
+        const label = action + (takeover ? '-successor' : '-expired'), prefix = 'S-e:' + label;
+        const account = await newAccount(prefix), P = await importPending(account, [X]), F = await importFinal(account, [{ ...X, payment: null }, CREDIT], '2026-09'), p = await doc(P), f = await doc(F);
+        const billed = { line: 2, action: 'billed', sourceHash: p.hash, target: { importId: F, sourceHash: f.hash, lines: [2] } };
+        if (action === 'reopen') await resolveForecastLine(ownerId, P, { ...billed, revision: 0 });
+        await approvedDraft(account, P, 2, '2026-08-06');
+        await FinancePurchaseLink.create({ ownerId, archiveId: 'synthetic-lease-' + label, accountId: account._id, importId: p._id, line: 2, key: p.rows[0].key, sourceHash: p.hash, paymentKey: 'card:' + account._id + ':' + p.rows[0].key, status: 'linked', revision: 1, order: { id: 'synthetic-lease-' + label } });
+        await FinanceDocument.create({ ownerId, accountId: account._id, importId: p._id, line: 2, name: 'synthetic-lease-' + label + '.pdf', mimeType: 'application/pdf', size: 3, hash: randomBytes(32).toString('hex'), kind: 'receipt' });
+        const preservedImports = async () => JSON.stringify((await all(account._id)).map(({ forecastResolutions: _r, sourceReferences: _s, sourceReferenceRebuild: _b, updatedAt: _t, __v: _v, ...rest }) => rest));
+        const scalarAccount = async () => JSON.stringify((({ commitLease: _l, commitLeaseUntil: _u, updatedAt: _t, __v: _v, ...rest }) => rest)(await FinancialAccount.findById(account._id).lean()));
+        const original = await preservedImports(), companions = await otherDocuments(), originalAccount = await scalarAccount(), ledgerWrites = writes.transactions.length;
+        const body = action === 'billed' ? { ...billed, revision: 0 } : { line: 2, action: 'reopen', sourceHash: p.hash, revision: 1 };
+        const updateOne = FinanceImport.updateOne, unauthorized = []; let boundary = false, expiredLease = '', successor = '', successorUntil = null;
+        FinanceImport.updateOne = async function (filter, update, ...args) {
+          const here = [P, F].includes(String(filter._id));
+          if (boundary && here) unauthorized.push({ importId: String(filter._id), fields: Object.keys(update.$set || update.$unset || {}) });
+          const result = await updateOne.call(this, filter, update, ...args);
+          const hit = action === 'billed' ? String(filter._id) === P && update.$set?.['forecastResolutions.2'] : String(filter._id) === F && update.$set?.sourceReferences;
+          if (!boundary && here && hit) {
+            assert.equal(result.matchedCount, 1, prefix + ':durable-boundary-write');
+            const held = await FinancialAccount.findById(account._id).lean();
+            assert.ok(held.commitLease && new Date(held.commitLeaseUntil).getTime() > Date.now(), prefix + ':lease-acquired-before-expiry');
+            expiredLease = held.commitLease;
+            const expired = await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: expiredLease }, { $set: { commitLeaseUntil: new Date(Date.now() - 1000) } });
+            assert.equal(expired.matchedCount, 1, prefix + ':expire-the-acquired-lease');
+            if (takeover) {
+              successor = 'synthetic-successor-' + randomUUID(); successorUntil = new Date(Date.now() + 60000);
+              const claimed = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, commitLease: expiredLease, commitLeaseUntil: { $lte: new Date() } }, { $set: { commitLease: successor, commitLeaseUntil: successorUntil } }, { new: true }).lean();
+              assert.equal(claimed?.commitLease, successor, prefix + ':successor-acquires-only-the-expired-lease');
+            }
+            boundary = true;
+          }
+          return result;
+        };
+        let error; try { error = await thrown(() => resolveForecastLine(ownerId, P, body)); } finally { FinanceImport.updateOne = updateOne; }
+        assert.ok(boundary, prefix + ':injection-reached-the-durable-boundary');
+        assert.equal(error?.statusCode, 409, prefix + ':expiry-refuses-next-write');
+        assert.match(messageOf(error), /照合の有効時間を超えました/, prefix + ':expiry-refusal-reason');
+        assert.deepEqual(unauthorized, [], prefix + ':no-import-write-after-expiry');
+        const heldAfter = await FinancialAccount.findById(account._id).lean();
+        if (takeover) {
+          assert.deepEqual([heldAfter.commitLease, heldAfter.commitLeaseUntil?.toISOString()], [successor, successorUntil.toISOString()], prefix + ':successor-lease-survives-old-finally');
+          const beforeBlockedRetry = JSON.stringify(await all(account._id));
+          assert.equal((await thrown(() => resolveForecastLine(ownerId, P, { ...body, revision: 1 })))?.statusCode, 409, prefix + ':active-successor-refuses-retry');
+          assert.equal(JSON.stringify(await all(account._id)), beforeBlockedRetry, prefix + ':blocked-retry-writes-nothing');
+          assert.equal((await FinancialAccount.findById(account._id).lean()).commitLease, successor, prefix + ':blocked-retry-keeps-successor');
+          await FinancialAccount.updateOne({ _id: account._id, ownerId, commitLease: successor }, { $unset: { commitLease: '', commitLeaseUntil: '' } });
+        } else assert.deepEqual([heldAfter.commitLease, heldAfter.commitLeaseUntil], [undefined, undefined], prefix + ':only-own-expired-lease-released');
+        const record = (await records(P)).get(2), partial = (await settlementsOf(P))[2];
+        assert.equal(record.revision, 1, prefix + ':durable-record-retained');
+        assert.equal(await verifyAll(account._id), 2, prefix + ':intermediate-state-verifies');
+        assert.equal(partial.state, 'review', prefix + ':intermediate-stays-review');
+        assert.equal(partial.source, undefined, prefix + ':intermediate-names-no-confirmed-source');
+        assert.deepEqual((await groupsOf(F)).map(g => g.match), ['pending_purchase'], prefix + ':binding-at-the-safe-boundary');
+        const retry = { ...body, revision: record.revision };
+        await resolveForecastLine(ownerId, P, retry);
+        assert.equal(await verifyAll(account._id), 2, prefix + ':retry-verifies');
+        if (action === 'billed') {
+          linkedReview((await settlementsOf(P))[2], F, 2, 8039, null, BLANK_REASON);
+          assert.deepEqual([(await records(P)).get(2).revision, (await groupsOf(F)).map(g => [g.match, g.lines, g.targets[0].lines])], [2, [['pending_resolution', [2], [2]]]], prefix + ':retry-completes-one-correspondence');
+        } else {
+          assert.equal((await records(P)).size, 0, prefix + ':retry-removes-the-record-once');
+          const reopened = (await settlementsOf(P))[2];
+          assert.equal(reopened.source, undefined, prefix + ':reopened-source-not-confirmed');
+          assert.deepEqual(reopened.candidates.filter(c => c.final).flatMap(c => c.rows).map(r => [r.line, r.pairable]), [[2, true]], prefix + ':reopen-restores-the-candidate');
+        }
+        const completed = JSON.stringify(await all(account._id));
+        assert.equal((await thrown(() => resolveForecastLine(ownerId, P, retry)))?.statusCode, 409, prefix + ':duplicate-retry-refused');
+        assert.equal(JSON.stringify(await all(account._id)), completed, prefix + ':duplicate-retry-changes-no-import');
+        assert.equal(await preservedImports(), original, prefix + ':original-import-identity-rows-values-and-calendar-preserved');
+        assert.ok(await otherDocuments() === companions, prefix + ':draft-doc-link-ledger-payment-calendar-documents-unchanged');
+        assert.equal(await scalarAccount(), originalAccount, prefix + ':account-flags-unchanged');
+        assert.equal(writes.transactions.length, ledgerWrites, prefix + ':no-ledger-send');
+        const released = await FinancialAccount.findById(account._id).lean();
+        assert.deepEqual([released.commitLease, released.commitLeaseUntil], [undefined, undefined], prefix + ':fresh-retry-releases-only-own-lease');
+        console.log('CASE ' + prefix + ': expiry=409, unauthorizedWrites=0, intermediate=verified, retry=once, successor=' + (takeover ? 'preserved' : 'not-present') + ', moneyAndCompanions=unchanged');
+      }
+      return 'four acquired-lease expiry boundaries (billed/reopen x expiry/successor): refuse next write, verify partial state, preserve successor, retry once; original rows/companions/money unchanged';
     });
     await leg('S-d', async () => {
       const { resolveForecastLine } = await resolution();
