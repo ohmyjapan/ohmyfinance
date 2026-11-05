@@ -11,7 +11,9 @@ const FORBIDDEN = ['お客様のパソコンにのみ保存', '当社のサー�
   // Legal over-claims (legal draft 2026-11-05): AI output is not guaranteed, provider training is not ours to promise, data does leave Japan.
   'AI の出力は正確', 'お客様のデータが AI の学習に使われることはありません', '国内のサーバーのみ',
   // Anthropic over-claims (Astra legal review F1/F2 fold, 2026-11-05): no signed DPA, no blanket "never sent", no provider no-training promise.
-  'Anthropic との間でデータ処理契約を締結しています', 'お客様のデータが Anthropic に送られることはありません', 'Anthropic は学習に用いません']
+  'Anthropic との間でデータ処理契約を締結しています', 'お客様のデータが Anthropic に送られることはありません', 'Anthropic は学習に用いません',
+  // Round 2 (Astra F3/F4, 2026-11-05): APPI applies to the foreign recipients too (art. 171), and the DPA's return/deletion is conditional.
+  '日本の法ではなく', '契約終了後 30 日以内のデータの返却と削除を公表']
 // L9 clauses the terms and the privacy policy must carry (legal draft 2026-11-05: B2B scope, damages cap with the intent/gross-negligence
 // carve-out, anti-social-forces, 民法548条の4 change notice, forum, tax-agent disclaimer, data ownership, no refunds; APPI arts. 17/21
 // purposes, art. 28 foreign transfer with the country and both US providers named, art. 32 items: representative, safety measures,
@@ -108,23 +110,35 @@ export async function checkSite(siteRoot) {
     if (purposes !== null && items(purposes).length < 7) bad.push('L10 privacy §利用目的: fewer than 7 purposes listed')
     must(P, 'お客様から委託を受けて取り扱うデータ', ['当社自身の目的には利用しません'])
     must(P, '外部サービスへの送信と、外国にある第三者への提供', ['提供先の所在国：米国', '包括的な連邦法はなく', 'https://www.ppc.go.jp/files/pdf/USA_report.pdf', 'https://policies.google.com/privacy', '伝送中のデータの暗号化', '物理的なセキュリティ', '守秘義務', 'OECD', 'Google 利用規約', 'Google API サービスのユーザーデータに関するポリシー', '法第27条第5項第1号', '法第28条第1項', '登録番号のみ'])
-    // Anthropic (F1/F2 fold 2026-11-05): the assistant runs only under a client-held account (server/services/financeCompanyAssistantService.ts:187,
-    // :195: a worker serves only its owner's organizations), no account = nothing sent, the client's responsibilities and consent, and the
-    // fallback through the operator's paid API account with the art. 28(2) / 規則17条2項 information, not described as running, no DPA claimed.
-    must(P, '外部サービスへの送信と、外国にある第三者への提供', ['ご自身が保有する Anthropic', '接続されたアカウントのない会社のデータが Anthropic に送られることはありません', 'お客様と Anthropic との契約', 'モデルの学習に用いることを許可するかどうか', '接続を解除すれば', '組み込まれておらず', 'https://www.anthropic.com/legal/commercial-terms', 'https://www.anthropic.com/legal/data-processing-addendum', 'モデルを学習させない', 'AES-256', 'お客様と Anthropic との契約条件', '個別に交渉したデータ処理契約を締結している旨を表明するものではありません'])
+    // Anthropic (F1/F2 fold 2026-11-05; round 2 F1-F4 the same day): the assistant is not offered to clients yet and the conditions for
+    // offering it are stated; the client-held account is a PLAN (teaching-worker/interpreter.mjs:87-107 and shared/finance-native-cli-auth.mjs:12,
+    // :36 use the worker machine's native login; financeCompanyAssistantService.ts:187, :195 bind a worker to its owner's organizations, not to an
+    // Anthropic identity); who provides to Anthropic follows who operates the worker; the operator's workers use commercial-terms accounts only;
+    // the fallback is not described as running, no DPA claimed, its return/deletion carries the DPA H.1 conditions; APPI art. 171 is stated.
+    must(P, '外部サービスへの送信と、外国にある第三者への提供', ['現在、AI アシスタントはお客様には提供しておらず', '提供の前にお知らせしていること', 'ワーカーが処理しない会社のデータが Anthropic に送られることはありません', 'ワーカーを誰が運用するかによって決まります', '当社が提供者であり', 'お客様が提供者であり', 'ご自身が保有する Anthropic', 'お客様のアカウントに限定する仕組みはありません', '第三者による利用を Anthropic の規約が許すプラン', 'お客様と Anthropic との契約', 'モデルの学習に用いることを許可するかどうか', '接続を解除すれば', '組み込まれておらず','https://www.anthropic.com/legal/commercial-terms', 'https://www.anthropic.com/legal/data-processing-addendum', 'モデルを学習させない', 'AES-256', 'その期間内に請求した場合', 'セルフサービス', '有害な利用', '当社と Anthropic との契約の終了であり', '法第171条', 'お客様と Anthropic との契約条件', '個別に交渉したデータ処理契約を締結している旨を表明するものではありません'])
     // Each provider's own art. 28 block must carry its country, its measures and its lawful basis: the two blocks share wording, so a
-    // section-wide anchor alone would let one provider's line vanish while the other's still satisfies it.
+    // section-wide anchor alone would let one provider's line vanish while the other's still satisfies it. The Google block also carries the
+    // art. 171 sentence (round 2 F3); the Anthropic block only refers to it.
     const block = (lead, end) => { const i = privacy.indexOf(lead); if (i < 0) return null; const j = privacy.indexOf(end, i); return j < 0 ? null : privacy.slice(i, j) }
     const blocks = [
-      ['Google', block('Google LLC（米国）への提供について', '<p>Anthropic, PBC（米国）への送信について'), ['<li>提供先の所在国：米国</li>', '<li>Google LLC が講ずる措置：', '<li>法的根拠：', '法第27条第5項第1号', '法第28条第1項']],
+      ['Google', block('Google LLC（米国）への提供について', '<p>Anthropic, PBC（米国）への送信について'), ['<li>提供先の所在国：米国</li>', '<li>Google LLC が講ずる措置：', '<li>法的根拠：', '法第27条第5項第1号', '法第28条第1項', '（法第171条）', '我が国の法の適用を妨げるものではありません']],
       ['Anthropic', block('<p>Anthropic, PBC（米国）への送信について', '<p>当社は、お客様のデータを当社自身の AI モデルの学習に用いません'), ['提供先の所在国：米国。', 'Anthropic, PBC が講ずる措置：', '法的根拠：', '法第27条第5項第1号', '法第28条第1項']]
     ]
     for (const [who, text, list] of blocks) {
       if (text === null) { bad.push(`L10 privacy §7: ${who} art. 28 block missing`); continue }
       for (const a of list) if (!text.includes(a)) bad.push(`L10 privacy §7 ${who} block lacks "${a}"`)
     }
-    must(P, '第三者提供', ['販売せず', '広告のために利用しません', 'お客様ご自身の Google アカウント', '登録番号のみ', 'お客様ご自身の Anthropic アカウント'])
-    for (const a of ['connects an Anthropic (Claude) account it holds', 'No data goes to Anthropic for a company without a connected account']) if (!privacy.includes(a)) bad.push(`L10 privacy English summary lacks "${a}"`)
+    // The consent item itself (round 2 F6): the proposition that the individual's consent is obtained and that the company's approval does
+    // not stand in for it, checked inside the item, so deleting only the operative sentence while the disconnect sentence stays is caught.
+    const consent = blocks[1][1] === null ? null : (blocks[1][1].match(/<li>同意：([\s\S]*?)<\/li>/) || [null, null])[1]
+    if (consent === null) bad.push('L10 privacy §7: Anthropic consent item missing')
+    else for (const a of ['ご本人の同意（法第28条第1項）を得ます', 'ご本人の同意に代わるものではありません', 'ご本人から直接']) if (!consent.includes(a)) bad.push(`L10 privacy §7 consent item lacks "${a}"`)
+    must(P, '第三者提供', ['販売せず', '広告のために利用しません', 'お客様ご自身の Google アカウント', '登録番号のみ', 'お客様ご自身の Anthropic アカウント', '現在行っていません'])
+    for (const a of ['The AI assistant is not offered to client companies at this time', 'an Anthropic (Claude) account the company holds', 'no data goes to Anthropic for a company whose conversations no worker processes', 'rests on contract and configuration, not on code', 'at the operator\'s own expense']) if (!privacy.includes(a)) bad.push(`L10 privacy English summary lacks "${a}"`)
+    // 開示等 request procedure (round 2 F6): the request method, the identity/agent check, the response, the fee and the rights sentence,
+    // inside §11, so removing the list or one of its items no longer passes on the page-wide 開示 anchor.
+    const requests = must(P, '保有個人データの開示・訂正・利用停止など', ['開示（第三者提供記録の開示を含みます）', '請求の方法：', '第1条のメールアドレスに', '本人確認：', '代理人の場合は代理権', '回答：', '2 週間以内', '手数料：', '手数料をいただきません'])
+    if (requests !== null && items(requests).length < 4) bad.push('L10 privacy §開示等: fewer than 4 procedure items listed')
     const measures = must(P, '安全管理措置', ['組織的：', '人的：', '物理的：', '技術的：', '外的環境の把握：', 'ハッシュ化', '二要素認証', '更新トークンは暗号化'])
     if (measures !== null && items(measures).length < 5) bad.push('L10 privacy §安全管理措置: fewer than 5 measures listed')
     must(P, '苦情の申出先', ['お申し出ください'])
@@ -133,8 +147,11 @@ export async function checkSite(siteRoot) {
     must(T, '事業者向けサービス', ['消費者として利用することはできません'])
     must(T, '料金と支払い', ['返金しません'])
     must(T, 'お客様のデータ', ['お客様に帰属', '学習に用いません'])
-    must(T, '外部サービスとの連携', ['お客様ご自身の Anthropic アカウント'])
-    must(T, 'AI アシスタント', ['保証しません', '税理士業務（税務代理、税務書類の作成、税務相談）を行うものではありません', 'ご自身が保有する Anthropic', '当社はその当事者ではありません', '予備の経路', '提供する義務を負わず', '利用規約が許す範囲に限られ', 'お客様の会話履歴やお客様データを用いず', 'いつでもこの許諾を撤回できます'])
+    must(T, 'サービスの内容', ['AI アシスタント（提供準備中'])
+    must(T, '外部サービスとの連携', ['提供準備中', 'お客様ご自身の Anthropic アカウント'])
+    // Round 2 F1/F5: not offered yet with the conditions, no account check in the software, operator workers on commercial-terms plans
+    // only, and the fallback at the operator's expense with no extra charge to the client.
+    must(T, 'AI アシスタント', ['保証しません', '税理士業務（税務代理、税務書類の作成、税務相談）を行うものではありません', '現在、お客様には提供していません', 'あらかじめお知らせし', 'ご自身が保有する Anthropic', '当社はその当事者ではありません', '第三者による利用を Anthropic の規約が許すプラン', 'ログインしているかを確認する仕組みはなく', '予備の経路', '当社が負担し', '追加の料金をお客様に請求しません', '提供する義務を負わず', '利用規約が許す範囲に限られ', 'お客様の会話履歴やお客様データを用いず', 'いつでもこの許諾を撤回できます'])
     must(T, '契約終了後のデータ', ['30 日間'])
     const cap = must(T, '損害賠償の制限', ['直前12か月'])
     if (cap !== null) {
@@ -229,28 +246,53 @@ export default {
           ['refund-promised', 'terms/index.html', (s) => s.replace('返金しません。', '返金します。')],
           ['data-ownership-inverted', 'terms/index.html', (s) => s.replace('に関する権利は、お客様に帰属します', 'に関する権利は、当社に帰属します')],
           // Anthropic copies (F1/F2 fold 2026-11-05): each removes or inverts one provision about the client-held account, the fallback or the development use.
-          ['ai-client-account-condition-removed', 'privacy/index.html', (s) => s.replace(/AI アシスタントは、お客様が、お客様ご自身が保有する Anthropic（Claude）のアカウントでログインした[^。]*場合にのみ動作します。/, '')],
-          ['ai-no-account-no-send-removed', 'privacy/index.html', (s) => s.replace('接続されたアカウントのない会社のデータが Anthropic に送られることはありません。', '')],
+          ['ai-client-account-condition-removed', 'privacy/index.html', (s) => s.replace('当社は、お客様の会社の AI アシスタントを、お客様ご自身が保有する Anthropic（Claude）のアカウントでログインした AI ワーカーで動かすことを予定しています。', '')],
+          ['ai-no-account-no-send-removed', 'privacy/index.html', (s) => s.replace('ワーカーが処理しない会社のデータが Anthropic に送られることはありません。', '')],
           ['ai-consent-sentence-removed', 'privacy/index.html', (s) => s.replace(/<li>同意：[\s\S]*?<\/li>\n/, '')],
-          ['ai-client-responsibility-removed', 'privacy/index.html', (s) => s.replace(/<li>お客様の責任：[\s\S]*?<\/li>\n/, '')],
+          ['ai-client-responsibility-removed', 'privacy/index.html', (s) => s.replace(/<li>お客様の責任（[\s\S]*?<\/li>\n/, '')],
           ['ai-fallback-claimed-running', 'privacy/index.html', (s) => s.replace('組み込まれておらず、当社が用意し、お客様にお知らせした場合に限り使用します', '組み込まれており、常時使用します')],
-          ['ai-fallback-disclosure-removed', 'privacy/index.html', (s) => s.replace(/<li>当社のアカウントによる送信（予備）：[\s\S]*?<\/li>\n/, '')],
+          ['ai-fallback-disclosure-removed', 'privacy/index.html', (s) => s.replace(/<li>当社のアカウントによる処理（予備）：[\s\S]*?<\/li>\n/, '')],
           ['anthropic-dpa-claimed', 'privacy/index.html', (s) => s.replace('個別に交渉したデータ処理契約を締結している旨を表明するものではありません', 'データ処理契約を締結しています')],
           ['anthropic-measures-removed', 'privacy/index.html', (s) => s.replace(/Anthropic, PBC が講ずる措置：[\s\S]*?法的根拠：/, '法的根拠：')],
           ['anthropic-country-removed', 'privacy/index.html', (s) => s.replace('提供先の所在国：米国。米国の個人情報の保護に関する制度：Google の項に記載のとおりです。', '')],
           ['anthropic-lawful-basis-removed', 'privacy/index.html', (s) => s.replace(/法的根拠：お客様から当社への委託（法第27条第5項第1号）に基づく処理であり、ご本人[\s\S]*?根拠とします。/, '')],
           ['anthropic-blanket-no-training-claim', 'privacy/index.html', (s) => s.replace('</main>', '<p>Anthropic は学習に用いません。</p></main>')],
           ['anthropic-never-sent-overclaim', 'privacy/index.html', (s) => s.replace('</main>', '<p>お客様のデータが Anthropic に送られることはありません。</p></main>')],
-          ['ai-provision-under-our-account', 'privacy/index.html', (s) => s.replace('お客様ご自身の Anthropic アカウントのもとで行われ', '当社の Anthropic アカウントのもとで行われ')],
-          ['ai-provider-contract-ours-claimed', 'privacy/index.html', (s) => s.replace('お客様のアカウントによる送信ではお客様と Anthropic との契約条件により、予備の経路では当社と Anthropic との契約条件によります', '当社と Anthropic との契約条件によります')],
-          ['en-summary-anthropic-account-removed', 'privacy/index.html', (s) => s.replace('connects an Anthropic (Claude) account it holds', 'uses the assistant')],
-          ['terms-ai-account-condition-removed', 'terms/index.html', (s) => s.replace(/<li>AI アシスタントは、お客様が、お客様ご自身が保有する Anthropic（Claude）[\s\S]*?<\/li>\n/, '')],
+          ['ai-provision-under-our-account', 'privacy/index.html', (s) => s.replace('お客様ご自身の Anthropic アカウントのもとでお客様が行うものです', '当社の Anthropic アカウントのもとで当社が行うものです')],
+          ['ai-provider-contract-ours-claimed', 'privacy/index.html', (s) => s.replace('お客様が保有するアカウントによる処理ではお客様と Anthropic との契約条件により、当社のアカウントによる処理（予備）では当社と Anthropic との契約条件によります', '当社と Anthropic との契約条件によります')],
+          ['en-summary-anthropic-account-removed', 'privacy/index.html', (s) => s.replace('an Anthropic (Claude) account the company holds', 'an Anthropic (Claude) account')],
+          ['terms-ai-account-condition-removed', 'terms/index.html', (s) => s.replace(/<li>AI アシスタントは、現在、お客様には提供していません[\s\S]*?<\/li>\n/, '')],
           ['terms-anthropic-party-claimed', 'terms/index.html', (s) => s.replace('当社はその当事者ではありません', '当社もその当事者です')],
           ['terms-fallback-obligation-claimed', 'terms/index.html', (s) => s.replace('当社は予備の経路を提供する義務を負わず、予告なく停止することがあります', '当社は予備の経路を常に提供します')],
-          ['terms-devuse-scope-unlimited', 'terms/index.html', (s) => s.replace('この許諾は、当該アカウントに適用される Anthropic の利用規約が許す範囲に限られ、規約が許さない場合は効力を生じません。', '')],
+          ['terms-devuse-scope-unlimited', 'terms/index.html', (s) => s.replace('この許諾は、当該アカウントに適用される Anthropic の利用規約が許す範囲に限られ、規約が許さない場合は効力を生じません', 'この許諾は、無制限に効力を生じます')],
           ['terms-devuse-data-use-claimed', 'terms/index.html', (s) => s.replace('お客様の会話履歴やお客様データを用いず', 'お客様の会話履歴やお客様データを用いることがあり')],
           ['terms-devuse-withdrawal-removed', 'terms/index.html', (s) => s.replace('お客様は、当社への通知により、いつでもこの許諾を撤回できます。', '')],
-          ['terms-external-ai-own-account-removed', 'terms/index.html', (s) => s.replace('お客様がお客様ご自身の Anthropic アカウントで接続した場合に動作し、', '')]
+          ['terms-external-ai-own-account-removed', 'terms/index.html', (s) => s.replace('提供の条件、およびお客様ご自身の Anthropic アカウントによる処理の予定は、第11条によります。', '')],
+          // Round 2 copies (Astra legal review r2 F1-F6, 2026-11-05): each removes or inverts one operative provision added or corrected by that fold.
+          ['ai-not-offered-removed', 'privacy/index.html', (s) => s.replace('現在、AI アシスタントはお客様には提供しておらず、お客様の会社のデータを AI アシスタントに取り扱わせていません。', '')],
+          ['ai-offer-conditions-removed', 'privacy/index.html', (s) => s.replace(/当社は、次の条件がそろうまで、お客様への提供を開始しません。\(1\) [\s\S]*?同意していること。/, '')],
+          ['ai-provider-rule-removed', 'privacy/index.html', (s) => s.replace(/<li>提供を行う者の区分：[\s\S]*?<\/li>\n/, '')],
+          ['ai-provider-rule-inverted', 'privacy/index.html', (s) => s.replace('当社が提供者であり、法第28条の義務は当社が負います', 'お客様が提供者であり、法第28条の義務はお客様が負います')],
+          ['ai-account-binding-claimed', 'privacy/index.html', (s) => s.replace('お客様のアカウントに限定する仕組みはありません', 'お客様のアカウントに限定する仕組みがあります')],
+          ['ai-operator-worker-consumer-plan-allowed', 'privacy/index.html', (s) => s.replace('第三者による利用を Anthropic の規約が許すプラン（法人・API 向けの Commercial Terms of Service が適用されるもの）に限ります', 'いずれのプランのものでも用いることができます')],
+          ['ai-consent-operative-removed', 'privacy/index.html', (s) => s.replace(/当社は、AI アシスタントの提供を開始する前に、本条の情報[\s\S]*?ご本人の同意（法第28条第1項）を得ます。/, '')],
+          ['ai-consent-company-substitutes', 'privacy/index.html', (s) => s.replace('ご本人の同意に代わるものではありません', 'ご本人の同意に代わるものとします')],
+          ['en-summary-not-offered-removed', 'privacy/index.html', (s) => s.replace('The AI assistant is not offered to client companies at this time. ', '')],
+          ['japanese-law-inapplicable-claimed', 'privacy/index.html', (s) => s.replace('Google LLC が米国に所在し、', 'Google LLC が日本の法ではなく米国に所在し、')],
+          ['art171-sentence-removed', 'privacy/index.html', (s) => s.replace(/なお、我が国の法は、国内にある者への物品または役務の提供に関連して[\s\S]*?我が国の法の適用を妨げるものではありません。/, '')],
+          ['dpa-deletion-unconditional', 'privacy/index.html', (s) => s.replace(/データの返却と削除については、同追補は[\s\S]*?お客様の本サービスの解約ではありません。/, '同追補は、契約終了後 30 日以内のデータの返却と削除を公表しています。')],
+          ['terms-fallback-cost-shifted', 'terms/index.html', (s) => s.replace('追加の料金をお客様に請求しません', '追加の料金をお客様に請求します')],
+          ['terms-fallback-cost-removed', 'terms/index.html', (s) => s.replace('予備の経路の使用に伴う Anthropic の利用料金は当社が負担し、予備の経路を使用したことを理由とする追加の料金をお客様に請求しません。', '')],
+          ['terms-ai-not-offered-removed', 'terms/index.html', (s) => s.replace('AI アシスタントは、現在、お客様には提供していません（提供準備中）。', '')],
+          ['terms-operator-worker-any-plan', 'terms/index.html', (s) => s.replace('当社が運用するワーカーで用いるアカウントは、第三者による利用を Anthropic の規約が許すプランのものに限ります。', '')],
+          ['terms-account-check-claimed', 'terms/index.html', (s) => s.replace('ログインしているかを確認する仕組みはなく', 'ログインしているかを確認する仕組みがあり')],
+          ['terms-service-ai-preparing-removed', 'terms/index.html', (s) => s.replace('AI アシスタント（提供準備中。第11条）', 'AI アシスタント')],
+          ['disclosure-procedure-list-removed', 'privacy/index.html', (s) => s.replace(/(<h2>\d+\. 保有個人データの開示・訂正・利用停止など<\/h2>[\s\S]*?)<ul>[\s\S]*?<\/ul>/, '$1')],
+          ['disclosure-method-removed', 'privacy/index.html', (s) => s.replace(/<li>請求の方法：[\s\S]*?<\/li>\n/, '')],
+          ['disclosure-identity-removed', 'privacy/index.html', (s) => s.replace(/<li>本人確認：[\s\S]*?<\/li>\n/, '')],
+          ['disclosure-response-removed', 'privacy/index.html', (s) => s.replace(/<li>回答：[\s\S]*?<\/li>\n/, '')],
+          ['disclosure-fee-removed', 'privacy/index.html', (s) => s.replace(/<li>手数料：[\s\S]*?<\/li>\n/, '')],
+          ['disclosure-rights-removed', 'privacy/index.html', (s) => s.replace('開示（第三者提供記録の開示を含みます）、', '')]
         ]
         for (const [name, rel, mutate] of defects) {
           const copy = path.join(tmp, name)
@@ -263,7 +305,7 @@ export default {
         }
       } finally { await rm(tmp, { recursive: true, force: true }) }
     }
-    const pass = failures.length === 0 && mutants.length === 79 && mutants.every((m) => m.changed && m.detected)
+    const pass = failures.length === 0 && mutants.length === 103 && mutants.every((m) => m.changed && m.detected)
     return { pass, message: JSON.stringify({ failures, mutants }) }
   }
 }
