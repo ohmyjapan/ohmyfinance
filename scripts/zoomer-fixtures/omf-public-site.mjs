@@ -36,7 +36,9 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const section = (h, title) => { const m = h && h.match(new RegExp(`<h2>\\d+\\. ${esc(title)}</h2>([\\s\\S]*?)(?=<h2>|</main>)`)); return m ? m[1] : null }
 const items = (sec) => (sec ? [...sec.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]) : [])
 
-const read = async (siteRoot, rel) => { try { return await readFile(path.join(siteRoot, rel), 'utf8') } catch { return null } }
+// Pages are read with LF line endings: a Windows checkout (core.autocrlf) has CRLF, and the copies below match a literal "\n".
+const lf = (s) => s.replace(/\r\n/g, '\n')
+const read = async (siteRoot, rel) => { try { return lf(await readFile(path.join(siteRoot, rel), 'utf8')) } catch { return null } }
 const exists = async (file) => { try { return (await stat(file)).isFile() } catch { return false } }
 
 // Returns the list of failed checks for a site folder. Used on the real folder and on defective copies.
@@ -350,7 +352,7 @@ export default {
         for (const [name, rel, mutate] of defects) {
           const copy = path.join(tmp, name)
           await cp(site, copy, { recursive: true })
-          const before = await readFile(path.join(copy, rel), 'utf8')
+          const before = lf(await readFile(path.join(copy, rel), 'utf8'))
           const after = mutate(before)
           await writeFile(path.join(copy, rel), after)
           const found = await checkSite(copy)
