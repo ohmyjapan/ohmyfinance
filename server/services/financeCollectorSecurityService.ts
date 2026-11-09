@@ -184,6 +184,12 @@ async function activeGrant(token:string,grantToken:string){
   if(!installation)deny('Installation changed. Approve a new batch.',401)
   return {grant,device,installation}
 }
+// Learning uses the same current, remembered-PC grant; a polling token alone cannot record or replay.
+export async function bankLearningContext(token:string,grantToken:string,origin:string){
+  const context=await activeGrant(token,grantToken)
+  if(context.grant.origin!==origin)deny('Collector origin changed.',403)
+  return context
+}
 async function binding(context:any,record:any){
   const {grant,device}=context, a=record?.aad
   if(!a||a.v!==3||!hex.test(record.keyId)||a.keyId!==record.keyId||a.generation!==grant.generation||a.installationId!==grant.installationId||a.origin!==grant.origin||a.ownerId!==String(grant.ownerId)||JSON.stringify(Object.keys(a).sort())!==JSON.stringify(['v','installationId','origin','ownerId','provider','accountId','generation','keyId'].sort()))deny('Key binding mismatch.',400)

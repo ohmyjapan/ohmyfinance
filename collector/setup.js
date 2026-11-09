@@ -1,6 +1,21 @@
 const key=location.hash.slice(1); history.replaceState(null,'','/');
 const $=selector=>document.querySelector(selector);
 let current={};
+async function refreshLearning(){
+  const target=$('#learning-sessions'),note=$('#learning-status');target.replaceChildren();
+  try{
+    const data=await call('/learning/sessions');note.textContent=data.busy?'PCで処理中です。'+(data.message||''):'';
+    for(const session of data.sessions||[]){
+      const row=document.createElement('p'),text=document.createElement('span'),button=document.createElement('button');
+      text.textContent=session.entryOrigin+' · '+(session.state==='candidate'?'別の期間で確認':'照会手順を記録')+' ';
+      button.textContent=session.state==='candidate'?'このPCで確認':'このPCで記録を開始';button.disabled=data.busy||session.state==='candidate'&&!session.replayPeriod;
+      button.onclick=async()=>{button.disabled=true;try{await call('/learning/run',{id:session.id,action:session.state==='candidate'?'replay':'start'});note.textContent='このPCのChromeで操作してください。';}catch{note.textContent='開始できませんでした。OMFの記録とPCの接続状態を確認してください。';}await refreshLearning();};
+      row.append(text,button);target.append(row);
+    }
+    if(!data.sessions?.length&&!data.busy)note.textContent='OMFから依頼された記録・確認はありません。';
+  }catch{note.textContent='このPCをOMFに接続してから更新してください。';}
+}
+$('#learning-refresh').onclick=refreshLearning;
 async function call(route,body) {
   const progress=['/connect','/connect/resume','/protect','/unlock','/protect/reset'].includes(route)?setInterval(()=>refresh().catch(()=>{}),1500):null;
   try{

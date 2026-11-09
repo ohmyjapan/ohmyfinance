@@ -20,6 +20,8 @@ import { promisify } from 'node:util';
 const execute = promisify(execFile);
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const ALLOWLIST = [
+  ...['bank-learning','bank-learning-recorder','bank-learning-runner'].map(name=>({from:`collector/${name}.mjs`})),
+  {from:'shared/finance-bank-learning.mjs'},
   // bank, banks/* and shared/finance-payment-match.mjs: the web-bank module, its adapters, the contract page engine (banks/contract, plan omf-rakuten-bank-connector-amended-20261019 R8) and the provider table (plan omf-bank-collection-amended-20261018 A7).
   // bank-certificate + windows/bank-certificate(-policy).ps1 (plan omf-ikeda-collector-20261025): the owned-Chrome certificate chooser helper loaded by banks/ikeda only.
   // bank-balance + shared/finance-bank-balance.mjs (plan omf-bank-hourly-balances-20261027): the background balance inquiry and its portable rules.

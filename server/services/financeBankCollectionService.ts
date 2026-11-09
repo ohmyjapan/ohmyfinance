@@ -7,6 +7,7 @@ import { ownedBankAccount, acceptBankCapture } from './financeBankStatementServi
 import { bankScheduleBinding, scheduledRunCurrent, jstDayStart } from '../../shared/finance-bank-schedule.mjs'
 import { claimCapabilities } from '../../shared/finance-bank-balance.mjs'
 import { yieldQueuedBalance, recordClaimCapability, balanceClaimScope, balanceClaimCheck } from './financeBankBalanceService'
+import {queueLearnedStatement,learnedClaimScope,learnedClaimCurrent} from './financeBankLearningService'
 // Web-bank collection jobs (plan omf-bank-collection-amended-20261018 A4): the owner's connection and request, the collector's
 // claim/status/upload under its bank scope, and the interpretation frozen on each job at queue time.
 const LEASE_MS=180000,text=(v:any)=>String(v??'').trim(),sid=(v:any)=>String(v??'')
@@ -83,7 +84,9 @@ const missingNote=(snapshot:any)=>snapshot?.missingCoverage?'。銀行で照会�
 // variant whose capability requires a period (楽天銀行 standard) needs it frozen in the snapshot (400 without one); jobs queued
 // earlier keep their own snapshot.
 export async function queueBankSync(ownerId:string,accountId:string){
- await init();const account=await ownedBankAccount(ownerId,accountId),connection=account.connection;if(!connection?.provider)fail(400,'先に銀行の接続を保存してください。')
+ await init();const account=await ownedBankAccount(ownerId,accountId),connection=account.connection
+ if(account.learningConnector)return queueLearnedStatement(ownerId,accountId)
+ if(!connection?.provider)fail(400,'先に銀行の接続を保存してください。')
  if(!await FinanceCollector.exists({ownerId,bankAccountIds:account._id,revokedAt:null}))fail(409,'PC未接続: この口座の取得を許可した接続済みのPCがありません。')
  // Plan omf-bank-hourly-balances-20261027: statements first — a balance check no PC received yet yields to this request; one in flight blocks it like any job.
  const now=new Date();await yieldQueuedBalance(ownerId,account._id,now);if(await BankJob.exists({ownerId,bankAccountId:account._id,$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$gt:now}}]}))fail(409,'取得はすでに予約・実行中です。')
@@ -151,12 +154,24 @@ const SCHEDULE_CLOSED:Record<string,string>={'schedule-off':'毎日の自動取�
 // received it yet, passes balanceClaimCheck first. Every other job is claimed exactly as before; the capability is recorded for the screen.
 export async function claimBankJob(device:any,body:any={}){
  await init()
+ const teaching:any[]=await BankAccount.find({ownerId:device.ownerId,_id:{$in:device.bankAccountIds||[]},'learningLease.until':{$gt:new Date()}}).select('_id').lean()
+ const learningBusy=new Set(teaching.map(a=>sid(a._id)))
  const capable=claimCapabilities(body).balance;await recordClaimCapability(device,capable)
  for(let attempt=0;attempt<20;attempt++){
   const now=new Date()
-  const job:any=await BankJob.findOneAndUpdate({...scopeOf(device),$and:[{$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$lt:now}}]},balanceClaimScope(device,capable)]},{$set:{state:'running',collectorId:device._id,leaseUntil:new Date(now.getTime()+LEASE_MS),lastAttemptAt:now,lastMessage:'取得を開始'}},{new:true,sort:{requestedAt:1}}).lean()
+  const job:any=await BankJob.findOneAndUpdate({...scopeOf(device),$and:[{bankAccountId:{$nin:[...learningBusy]}},{$or:[{state:'queued'},{state:{$in:['running','verification_required']},leaseUntil:{$lt:now}}]},balanceClaimScope(device,capable),learnedClaimScope(device,body)]},{$set:{state:'running',collectorId:device._id,leaseUntil:new Date(now.getTime()+LEASE_MS),lastAttemptAt:now,lastMessage:'取得を開始'}},{new:true,sort:{requestedAt:1}}).lean()
   if(!job)return{job:null}
+  // Close the claim/start race before returning any browser work. Teaching checks running jobs after acquiring this lease.
+  if(await BankAccount.exists({_id:job.bankAccountId,ownerId:device.ownerId,'learningLease.until':{$gt:new Date()}})){
+   learningBusy.add(sid(job.bankAccountId))
+   await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running',leaseUntil:job.leaseUntil},{$set:{state:'queued'},$unset:{collectorId:1,leaseUntil:1}})
+   continue
+  }
   const account:any=await BankAccount.findOne({_id:job.bankAccountId,ownerId:device.ownerId}).lean(),provider=providerOf(account?.connection?.provider)
+  if(!await learnedClaimCurrent(job,account,device)){
+   await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{state:'superseded',open:false,completedAt:now,lastMessage:'記録した取得手順またはPCの接続が変わったため、この予約は実行しません。'}})
+   continue
+  }
   if(job.trigger==='schedule'&&!job.schedule?.claimedAt){
    const requested=new Date(job.requestedAt),earlier=await BankJob.findOne({ownerId:job.ownerId,bankAccountId:job.bankAccountId,_id:{$ne:job._id},kind:'retrieve',state:{$ne:'superseded'},requestedAt:{$gte:jstDayStart(requested),$lt:requested}}).select('_id').lean()
    const reason=scheduledRunCurrent({job,account,earlier})
@@ -168,7 +183,7 @@ export async function claimBankJob(device:any,body:any={}){
    if(!sameAccount(job.snapshot,account?.connection)){await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{state:'superseded',open:false,completedAt:now,lastMessage:MANUAL_ACCOUNT_CHANGED},$unset:{leaseUntil:''}});continue} // guard:manual-account-current
    await BankJob.updateOne({_id:job._id,collectorId:device._id,state:'running'},{$set:{identityCheckedAt:now}}) // guard:manual-account-received
   }
-  return{job:{...jobView(job),bankAccountId:sid(job.bankAccountId),provider:account?.connection?.provider||null,label:provider?.[1]||null,support:provider?.[2]||'contract-pending',accountLabel:account?.connection?.accountLabel??null},account:account?{_id:sid(account._id),name:account.name,currency:account.currency,ownerId:sid(account.ownerId),connection:account.connection}:null}
+  return{job:{...jobView(job),bankAccountId:sid(job.bankAccountId),provider:job.snapshot?.learned?job.snapshot.provider:account?.connection?.provider||null,label:job.snapshot?.learned?'記録した照会手順':provider?.[1]||null,support:provider?.[2]||'contract-pending',accountLabel:account?.connection?.accountLabel??null},account:account?{_id:sid(account._id),name:account.name,currency:account.currency,ownerId:sid(account.ownerId),connection:account.connection}:null}
  }
  return{job:null}
 }

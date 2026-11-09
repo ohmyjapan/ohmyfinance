@@ -10,6 +10,10 @@ account.index({ownerId:1,name:1},{unique:true})
 // connection never rewrites it: {enabled, hour (JST), revision, savedAt, binding {provider, variant, templateId}}. Absent/null = off;
 // read tolerantly (shared/finance-bank-schedule.mjs storedBankSchedule).
 account.add({schedule:{type:mixed,default:null}})
+// The short attended teaching/replay lease. A queued development task never occupies the bank.
+account.add({learningLease:{type:mixed,default:null,select:false}})
+// Explicit selection for attended statement requests; native schedules and hourly balance readers keep their existing connection.
+account.add({learningConnector:{type:mixed,default:null},learningConnectorHistory:{type:[mixed],default:[]}})
 // `capture` is written once for a statement received from the collector: the job, a copy of the interpretation it was taken
 // under and its hash, the source host, the state (received|imported|needs_review), the reason and the row counts.
 const statement=new Schema({ownerId:{type:oid,required:true},hash:{type:String,required:true},name:String,mimeType:String,size:Number,sheetNames:[String],dateRange:mixed,capture:{type:mixed,default:null}},options)

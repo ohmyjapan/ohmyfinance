@@ -11,6 +11,7 @@ const f=(id,group,label,labelKo,route,disposition,reason,source,extra={})=>Objec
 const transactionTools=['list_company_transactions','get_company_transaction','list_company_transaction_choices','update_company_transaction','create_company_transaction','delete_company_transaction','find_company_transaction_patterns'];
 const summaryTools=['get_company_finance_summary','get_company_profile'];
 export const naviFeatures=Object.freeze([
+ f('bank-learning','finance','銀行の手順を覚える','은행 절차 학습','/bank-learning','page_handoff','選択中の会社と自分の銀行口座・接続したPCで照会手順を実演し、OhMyCodeの開発キューに送ります。候補は別の期間でPCが確認し、確認済みの手順を手動の明細取得に選べます。取得のたびに本人がPCのChromeでサインインします。毎日の自動取得と1時間ごとの残高確認は既存の接続を使います。Naviはこの画面へ案内できます。認証情報を会話に入力せず、PCのChromeでログインしてください。','pages/bank-learning.vue'),
  f('dashboard','dashboard','ダッシュボード','대시보드','/','navi_tool','選択中の会社の集計・最近の取引を表示します。Navi は保存済みの記録を通貨・種類・状態ごとに分けた期間集計と会社情報を読み取れます。画面の合計とは計算が異なることがあり、銀行残高ではありません。','pages/index.vue',{tools:summaryTools}),
  f('transactions','transactions','取引一覧','거래 목록','/transactions','navi_tool','会社の取引を読み取り、明示された指示で手入力の取引を作成・編集・削除し、同じ店の過去の分類を比較できます。カード取込・帳簿転記の行は削除しません。転記・証憑確認はできません。','pages/transactions/index.vue',{tools:transactionTools,recordRoute:'/transactions/:transactionId',recordSource:'pages/transactions/[id].vue'}),
  f('transaction-import','transactions','取引のインポート','거래 가져오기','/transactions/import','page_handoff','ファイルからの取引取込は画面で行います。Navi は取込を実行しません。','pages/transactions/import.vue'),

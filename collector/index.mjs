@@ -10,6 +10,8 @@ import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf,
 import { collectStatement, collectAplusStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
 import { collectBankStatement, observeBankPortal, guidedAdapterFor } from './bank.mjs';
 import { runBalanceJob } from './bank-balance.mjs';
+import {runBankLearning,flushLearningOutbox,collectLearnedStatement} from './bank-learning.mjs';
+import {LEARNING_STATEMENT_CAPABILITY} from '../shared/finance-bank-learning.mjs';
 import { BALANCE_CAPABILITY, bankBalanceSupported } from '../shared/finance-bank-balance.mjs';
 import { BillingMailbox } from './mail.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
@@ -307,7 +309,7 @@ export async function claimWork(config,live) {
   const {account,covered}=await api(config,'claim',{capabilities:[RECENT_CAPABILITY]},undefined,live);
   if(account)return {account,covered,bank:null};
   let bank=null;
-  try{bank=await api(config,'bank/claim',{capabilities:[BALANCE_CAPABILITY]},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
+  try{bank=await api(config,'bank/claim',{capabilities:[BALANCE_CAPABILITY,...(live?.mode==='protected'?[LEARNING_STATEMENT_CAPABILITY]:[])]},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
   return {account:null,covered,bank:bank?.job?bank:null};
 }
 // Which retained files of an Amex account a claimed job sends, and whether it still collects. A closed job sends everything, as ever, and a provisional file left behind never costs it its download.
@@ -333,7 +335,7 @@ const REFUSAL_REASON={unreadable:'CSV・テキストとして読めないファ�
 export const bankRefusalText=reasons=>`OMFが受け付けなかった明細ファイル${reasons.length}件（${[...new Set(reasons)].map(r=>REFUSAL_REASON[r]).join('・')}）はこのPCに残し、再送信しません`;
 // Plan omf-bank-hourly-balances-20261027: a balance job (kind balance) goes to collector/bank-balance.mjs runBalanceJob — its own
 // balance-only receipt outbox, no statement drain, no CSV; `inquire` is its bank-inquiry seam (the fixture's).
-export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null,inquire=undefined}={}) {
+export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,learnedCollect=collectLearnedStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null,inquire=undefined}={}) {
   if(bank?.job?.kind==='balance')return runBalanceJob(bank,config,live,{status,send,root,onLaunch,batch,signal,now,login,...(inquire?{inquire}:{})}); // guard:balance-delegated
   const {job,account}=bank,refusals=[];
   const sendItem=async(item,own)=>{
@@ -348,7 +350,13 @@ export async function runBankJob(bank,config,live,{status,pending:listPending=pe
   let drained=0;
   for(const item of await listPending(account,config,root)){await status('running','保存済みの明細を送信中');await sendItem(item,false);drained++;}
   const bound={bankAccountId:String(account._id),ownerId:String(account.ownerId),origin:config.baseUrl,jobId:job.jobId,snapshotHash:job.snapshotHash,provider:job.provider};
-  const result=job.kind==='retrieve'?await collect(bound,job,root,status,{batch,onLaunch,signal,now,login}):await observe(bound,job,root,status,{batch,onLaunch,signal,now,...(login&&guidedBankJob(job)?{login}:{})});
+  let result;
+  try{result=job.kind==='retrieve'?(job.snapshot?.learned?await learnedCollect(bound,job,root,status,{batch,onLaunch,signal,live}):await collect(bound,job,root,status,{batch,onLaunch,signal,now,login})):await observe(bound,job,root,status,{batch,onLaunch,signal,now,...(login&&guidedBankJob(job)?{login}:{})});}
+  catch(error){
+    if(!job.snapshot?.learned)throw error;
+    const reasons={'learned-previous-attempt-unknown':'この取得は途中で止まったため、銀行にはもう一度ログインしません。PCの設定画面で状態を確認してから、新しく取得を依頼してください。','local-recording-binding-changed':'このPCの接続に対応する操作記録がありません。記録したPCを確認するか、もう一度操作を実演してください。','learned-pc-binding-changed':'記録したPCの接続が変わったため、この取得は実行していません。','recorded-control-unavailable':'銀行の画面で記録した操作箇所を確認できませんでした。取得手順の更新が必要です。','recorded-control-changed':'銀行の操作箇所が変わったため、クリックせずに取得を止めました。'};
+    result={items:[],failed:reasons[error?.code||error?.message]||'記録した手順で明細を取得できませんでした。ログインは繰り返しません。取得の記録とPCの設定画面を確認してください。'};
+  }
   const items=[...(result.items||[])];
   if(result.observation){
     const dir=path.join(root,'outbox','bank',bound.bankAccountId,job.jobId+'-observation');await mkdir(dir,{recursive:true});
@@ -1022,6 +1030,23 @@ export async function startCollector({openSetup=false,open=launch}={}) {
       if(req.headers.host!==`127.0.0.1:${port}` || (req.headers.origin && req.headers.origin!==origin))return reply(403,{error:'Local setup access required'});
       if(req.method==='GET' && ['/','/setup.js'].includes(req.url)) {res.setHeader('Content-Type',req.url==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');res.end(await readFile(fileURLToPath(new URL(req.url==='/'?'./setup.html':'./setup.js',import.meta.url))));return;}
       if(req.headers['x-setup-key']!==setupKey)return reply(403,{error:'Reopen the setup screen from the collector launch link'});
+      if(req.method==='GET'&&req.url==='/learning/sessions'){
+        const live=requireProtectedSession();
+        if(!activeAction)await flushLearningOutbox(directory,live.broker.remote,{origin:(await metadata()).baseUrl,...live.broker.remote.learningIdentity});
+        return reply(200,{...await live.broker.remote.learning('sessions'),busy:running||activeAction,message});
+      }
+      if(req.method==='POST'&&req.url==='/learning/run'){
+        const release=reserveAction();let launched=false;
+        try{
+          const input=await json(req),live=requireProtectedSession(),config=await metadata();
+          if(!/^[a-f0-9]{24}$/.test(String(input.id))||!['start','replay'].includes(input.action)||Object.keys(input).some(k=>!['id','action','entryUrl'].includes(k)))throw new Error('Choose a learning session in OMF first');
+          if(input.entryUrl!==undefined&&(typeof input.entryUrl!=='string'||input.entryUrl.length>2048))throw new Error('Invalid bank entry address');
+          launched=true;
+          void runBankLearning({id:input.id,action:input.action,entryUrl:input.entryUrl,remote:live.broker.remote,root:directory,live,origin:config.baseUrl,onLaunch:ownBrowser(live),status:text=>{message=text;}})
+            .catch(()=>{message='銀行手順の確認が完了していません。OMFで状態を確認してください。';}).finally(release);
+          return reply(202,{started:true});
+        }finally{if(!launched)release();}
+      }
       if(req.method==='GET' && req.url==='/status') {
         // No secret is read here: entry presence comes from file names, metadata from the secret-free blob.
         const state=await vaultState();let config,legacy=false;

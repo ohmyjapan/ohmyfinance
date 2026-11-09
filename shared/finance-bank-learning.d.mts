@@ -1,0 +1,18 @@
+export const LEARNING_RUNTIME: string;
+export const LEARNING_MODEL: string;
+export const LEARNING_STATEMENT_CAPABILITY: string;
+export const LEARNING_ROLES: string[];
+export const LEARNING_STATES: string[];
+export const LEARNING_MISSING: string[];
+export function validateMissing(value: any): string[];
+export function stable(value: any): string;
+export function learningAssert(value: any, code?: string): asserts value;
+export function learningHash(value: any): boolean;
+export function learningId(value: any): boolean;
+export function learningDay(value: any): boolean;
+export function learningPeriod(value: any): any;
+export function learningOrigin(value: any, options?: any): string;
+export function validateEvidence(value: any, options?: any): any;
+export function validateRecipe(value: any, evidence: any, hash: string, options?: any): any;
+export function validateReplay(value: any, session: any): any;
+export function learningStatusText(state: string): string;

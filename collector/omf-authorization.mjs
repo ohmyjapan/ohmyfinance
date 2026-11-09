@@ -153,6 +153,12 @@ export function keyService(config,approval,signal,{renew,call=securityCall,now=D
   }
   return {
     get until(){return expiry;},refresh,
+    get learningIdentity(){check();return {installationId:current.installationId,generation:current.generation};},
+    // Dedicated protected learning transport. Neither the grant nor credentials leave this closure.
+    async learning(route,body){
+      if(!/^(sessions|[a-f0-9]{24}\/(start|replay|heartbeat|evidence|receipt|failed|finish))$/.test(route))throw new Error('Invalid learning route');
+      await refresh();check();const result=await call(config,route,{body,grant:current.grant,signal,prefix:'/api/finance-bank-learning/pc/'});check();return result;
+    },
     async put(record){await refresh();check();const response=await call(config,'keys',{body:record,grant:current.grant,signal});check();if(response.keyId!==record.keyId||response.generation!==current.generation)throw new Error('OMF key registration did not match.');return response;},
     async get(keyId){await refresh();check();const response=await call(config,'keys/'+keyId,{grant:current.grant,signal});check();if(response.keyId!==keyId||response.generation!==current.generation)throw new Error('OMF returned a different key record.');return response;},
     // The previous card setup's owner proof (plan omf-card-handover-20261030) under this same grant, which never leaves this closure: no
