@@ -86,6 +86,10 @@ export async function handleFollowup(request,env) {
  try{
   if(request.method==='POST'&&request.headers.get('Origin')!==url.origin)fail(403,'このページから操作してください。');
   const db=env.OMF_FOLLOWUP_DB;
+  if(tail==='api/logout'&&request.method==='POST'){
+   await db.prepare('DELETE FROM followup_sessions WHERE token_hash=? AND survey_slug=?').bind(await digest(tokenFrom(request)),slug).run();
+   return reply({ok:true},200,{'Set-Cookie':sessionCookie('',0,url)});
+  }
   const survey=await db.prepare('SELECT * FROM followup_surveys WHERE slug=? AND active=1').bind(slug).first();
   if(!survey)fail(404,'この確認ページは利用できません。ご案内したURLをご確認ください。');
   if(tail==='api/login'&&request.method==='POST'){
@@ -98,9 +102,6 @@ export async function handleFollowup(request,env) {
   }
   const session=await authenticate(request,db,survey);
   if(tail==='api/state'&&request.method==='GET')return reply(await state(db,survey,session.role));
-  if(tail==='api/logout'&&request.method==='POST'){
-   await db.prepare('DELETE FROM followup_sessions WHERE token_hash=?').bind(await digest(tokenFrom(request))).run();return reply({ok:true},200,{'Set-Cookie':sessionCookie('',0,url)});
-  }
   if(tail==='api/save'&&request.method==='POST'){
    if(session.role!=='customer')fail(403,'管理者画面ではお客様の回答を書き換えません。');
    const input=await body(request);if(!Number.isSafeInteger(input?.revision)||input.revision<0||input.documentVersion!==survey.document_version)fail(409,'確認内容が更新されています。入力を保存してから読み直してください。');
