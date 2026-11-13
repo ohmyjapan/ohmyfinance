@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS followup_attempts (
 CREATE TABLE IF NOT EXISTS followup_responses (
  survey_slug TEXT PRIMARY KEY, document_version INTEGER NOT NULL,
  revision INTEGER NOT NULL DEFAULT 0, response_json TEXT NOT NULL, updated_at INTEGER NOT NULL,
+ last_request_id TEXT, last_request_hash TEXT,
  FOREIGN KEY(survey_slug) REFERENCES followup_surveys(slug)
 );
 CREATE TABLE IF NOT EXISTS followup_submissions (

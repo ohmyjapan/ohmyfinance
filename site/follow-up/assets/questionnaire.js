@@ -2,7 +2,7 @@
  'use strict';
  const $=id=>document.getElementById(id),slug=location.pathname.split('/')[2],base='/follow-up/'+encodeURIComponent(slug)+'/api/';
  const labels={unanswered:'未回答',confirm:'この内容で確認',change:'修正・追加の希望',discuss:'相談して決めたい'};
- let state=null,index=0,review=false,dirty=false,version=0,timer=null,saving=null,conflict=false,toastTimer;
+ let state=null,index=0,review=false,dirty=false,version=0,timer=null,saving=null,conflict=false,toastTimer,pendingSave=null,recoveryDraft=null;
  const node=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e};
  const editing=()=>state?.role==='customer';
  function notify(text){$('notice').textContent=text;$('notice').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('notice').hidden=true,7000)}
@@ -14,8 +14,9 @@
  async function save(){
   clearTimeout(timer);if(!editing()||!dirty)return;if(conflict)throw Error('別の画面の更新があります。入力内容を手元に保存してから読み直してください。');
   if(saving){await saving;return save()}
-  const serial=version,payload={documentVersion:state.documentVersion,revision:state.revision,response:structuredClone(state.response)};
-  saving=api('save',payload).then(result=>{state.revision=result.revision;if(version===serial)dirty=false;setSave(dirty?'変更を保存しています…':'✓ サーバーに保存済み');$('retry-save').hidden=true}).catch(error=>{if(error.status===409)conflict=true;setSave(error.message,true);$('retry-save').hidden=false;throw error}).finally(()=>{saving=null});
+  pendingSave??={serial:version,payload:{requestId:crypto.randomUUID(),documentVersion:state.documentVersion,revision:state.revision,response:structuredClone(state.response)}};
+  const {serial,payload}=pendingSave;
+  saving=api('save',payload).then(result=>{state.revision=result.revision;pendingSave=null;if(version===serial)dirty=false;setSave(dirty?'変更を保存しています…':'✓ サーバーに保存済み');$('retry-save').hidden=true}).catch(error=>{if(error.status===409)conflict=true;setSave(error.message,true);$('retry-save').hidden=false;throw error}).finally(()=>{saving=null});
   await saving;if(dirty)return save();
  }
  function renderNav(){
@@ -44,9 +45,10 @@
   $('submission-history').textContent=state.submissions.length?'送信済み：'+state.submissions.map(s=>new Date(s.submitted_at).toLocaleString('ja-JP')+'（回答版 '+s.response_revision+'）').join('\n'):'まだ送信していません。入力内容は途中保存されています。';
  }
  function openReview(){review=true;$('topic-screen').hidden=true;$('review-screen').hidden=false;for(const [id,key]of [['company','company'],['respondent-name','name'],['email','email'],['position','position']]){$(id).value=state.response.respondent[key]||'';$(id).disabled=!editing()}$('extra').value=state.response.extra;$('extra').disabled=!editing();$('submit-area').hidden=!editing();$('admin-notice').hidden=editing();reviewSummary();renderNav();window.scrollTo({top:0,behavior:'auto'})}
- function loaded(data){state=data;dirty=false;version=0;conflict=false;$('login-screen').hidden=true;$('workspace').hidden=false;$('save-bar').hidden=false;$('logout').hidden=false;$('retry-save').hidden=true;setSave(editing()?'✓ サーバーに保存済み':'管理者として閲覧しています');if(editing())openTopic(index);else openReview()}
+ function loaded(data){state=data;dirty=false;version=0;conflict=false;pendingSave=null;$('workspace').inert=false;$('login-screen').hidden=true;$('workspace').hidden=false;$('save-bar').hidden=false;$('logout').hidden=false;$('retry-save').hidden=true;$('definition-notice').hidden=!data.needsReconfirmation;$('recovery-notice').hidden=!recoveryDraft||!editing();setSave(editing()?'✓ サーバーに保存済み':'管理者として閲覧しています');if(editing())openTopic(index);else openReview()}
+ function clearPrivateView(){for(const e of $('workspace').querySelectorAll('input,textarea,select')){if(e.type==='radio'||e.type==='checkbox')e.checked=false;else e.value=''}for(const id of ['topic-title','topic-intro','topic-question','points','topic-fields','topic-nav','review-summary','submission-history'])$(id).replaceChildren()}
  $('login-form').onsubmit=async event=>{event.preventDefault();$('login-button').disabled=true;$('login-status').classList.remove('error');$('login-status').textContent='確認しています…';try{await api('login',{password:$('password').value,role:$('admin-login').checked?'admin':'customer'});$('password').value='';loaded(await api('state'))}catch(error){$('login-status').textContent=error.message;$('login-status').classList.add('error')}finally{$('login-button').disabled=false}};
- $('logout').onclick=async()=>{try{await save();await api('logout',{});state=null;$('workspace').hidden=true;$('save-bar').hidden=true;$('logout').hidden=true;$('login-screen').hidden=false;$('login-status').textContent='退出しました。パスワードで再開できます。'}catch(error){notify(error.message)}};
+ $('logout').onclick=async()=>{try{try{await save()}catch{if(state&&dirty)recoveryDraft=structuredClone(draft())}await api('logout',{});clearTimeout(timer);state=null;dirty=false;pendingSave=null;conflict=false;clearPrivateView();$('workspace').hidden=true;$('save-bar').hidden=true;$('logout').hidden=true;$('recovery-notice').hidden=true;$('login-screen').hidden=false;$('login-status').textContent=recoveryDraft?'退出しました。未保存の入力は、再ログイン後に手元へ保存できます。この画面を閉じずに再開してください。':'退出しました。パスワードで再開できます。'}catch(error){notify(error.message)}};
  for(const radio of document.querySelectorAll('[name=decision]'))radio.onchange=()=>{editAnswer('status',radio.value);$('topic-status').textContent=labels[radio.value];renderNav()};
  $('comment').oninput=()=>editAnswer('comment',$('comment').value);
  for(const [id,key]of [['company','company'],['respondent-name','name'],['email','email'],['position','position']])$(id).oninput=()=>{state.response.respondent[key]=$(id).value;changed()};
@@ -58,10 +60,11 @@
  function download(text,name,type='text/plain;charset=utf-8'){const url=URL.createObjectURL(new Blob([text],{type})),a=node('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
  const draft=()=>({format:'omf-followup-draft-v1',document:state.document,documentVersion:state.documentVersion,response:state.response,revision:state.revision,savedToServer:!dirty,exportedAt:new Date().toISOString()});
  $('download-unsaved').onclick=()=>download(JSON.stringify(draft(),null,2),'OMF-入力内容.json','application/json');
+ $('download-recovery').onclick=()=>{if(editing()&&recoveryDraft)download(JSON.stringify(recoveryDraft,null,2),'OMF-前回の未保存入力.json','application/json')};
  $('export-json').onclick=async()=>{try{await save();download(JSON.stringify(await api('export'),null,2),'OMF-回答と送信履歴.json','application/json')}catch(error){notify(error.message)}};
  $('export-text').onclick=()=>{const r=state.response,lines=[state.document.title,'ご回答者：'+r.respondent.company+' / '+r.respondent.name,'回答版：'+state.revision,''];state.document.topics.forEach((t,i)=>{const a=answer(t);lines.push(String(i+1).padStart(2,'0')+' '+t.title,'状態：'+labels[a.status],...t.lines.map(x=>'・'+x));for(const f of t.fields||[])if(a.fields[f.id])lines.push(f.label+'：'+a.fields[f.id]);if(a.comment)lines.push('補足：'+a.comment);lines.push('')});lines.push('全体のご希望：',r.extra||'（記入なし）');download(lines.join('\n'),'OMF-確認内容.txt')};
  $('print').onclick=()=>{openReview();for(const d of document.querySelectorAll('.review-entry'))d.open=true;window.print()};
- $('submit').onclick=async()=>{if(!$('attest').checked){notify('最後の確認欄にチェックしてください。');return}if(!$('email').checkValidity()){$('email').reportValidity();return}$('submit').disabled=true;try{await save();const result=await api('submit',{documentVersion:state.documentVersion,revision:state.revision,attested:true});state.submissions=[{id:result.id,response_revision:state.revision,submitted_at:result.submittedAt},...state.submissions.filter(x=>x.id!==result.id)];reviewSummary();notify('ご回答ありがとうございます。内容を受け付けました。')}catch(error){notify(error.message)}finally{$('submit').disabled=false}};
- window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue=''}});
+ $('submit').onclick=async()=>{if(!$('attest').checked){notify('最後の確認欄にチェックしてください。');return}if(!$('email').checkValidity()){$('email').reportValidity();return}const attestedState=state,attestedVersion=version;$('submit').disabled=true;$('workspace').inert=true;try{await save();if(state!==attestedState||version!==attestedVersion||!$('attest').checked)throw Error('入力内容が変わりました。もう一度内容を確認して、送信してください。');const result=await api('submit',{documentVersion:state.documentVersion,revision:state.revision,attested:true});if(state!==attestedState)return;state.submissions=[{id:result.id,response_revision:state.revision,submitted_at:result.submittedAt},...state.submissions.filter(x=>x.id!==result.id)];reviewSummary();notify('ご回答ありがとうございます。内容を受け付けました。')}catch(error){notify(error.message)}finally{$('workspace').inert=false;$('submit').disabled=false}};
+ window.addEventListener('beforeunload',event=>{if(dirty||recoveryDraft){event.preventDefault();event.returnValue=''}});
  api('state').then(loaded).catch(error=>{if(error.status!==401)$('login-status').textContent=error.message});
 })();

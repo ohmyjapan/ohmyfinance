@@ -9,6 +9,7 @@ const security = {
  'Strict-Transport-Security':'max-age=31536000; includeSubDomains'
 };
 function reply(data, status=200, extra={}) { return new Response(JSON.stringify(data), {status,headers:{...security,'Content-Type':'application/json; charset=utf-8',...extra}}); }
+function protectAsset(response) { const headers=new Headers(response.headers);for(const [name,value]of Object.entries(security))headers.set(name,value);return new Response(response.body,{status:response.status,headers}); }
 function fail(status, message) { throw Object.assign(new Error(message), {status}); }
 const hex = buffer => [...new Uint8Array(buffer)].map(x=>x.toString(16).padStart(2,'0')).join('');
 export async function digest(value) { return hex(await crypto.subtle.digest('SHA-256',encoder.encode(value))); }
@@ -50,7 +51,9 @@ const blank=()=>({respondent:{name:'',company:'',email:'',position:''},answers:{
 async function state(db, survey, role) {
  const response=await db.prepare('SELECT * FROM followup_responses WHERE survey_slug=?').bind(survey.slug).first();
  const submissions=await db.prepare('SELECT id, document_version, response_revision, submitted_at FROM followup_submissions WHERE survey_slug=? ORDER BY submitted_at DESC').bind(survey.slug).all();
- return {document:JSON.parse(survey.document_json),documentVersion:survey.document_version,response:response?JSON.parse(response.response_json):blank(),revision:response?.revision||0,role,submissions:submissions.results||[]};
+ const document=JSON.parse(survey.document_json),value=response?JSON.parse(response.response_json):blank(),needsReconfirmation=!!response&&response.document_version!==survey.document_version;
+ if(needsReconfirmation){const prior=value.answers;value.answers={};for(const topic of document.topics){const old=prior[topic.id];if(!old)continue;const fields={};for(const field of topic.fields||[]){const v=old.fields?.[field.id];if(typeof v==='string'&&(!field.options||!v||field.options.includes(v)))fields[field.id]=v}value.answers[topic.id]={status:'unanswered',comment:old.comment||'',fields}}}
+ return {document,documentVersion:survey.document_version,responseDocumentVersion:response?.document_version||survey.document_version,needsReconfirmation,response:value,revision:response?.revision||0,role,submissions:submissions.results||[]};
 }
 async function authenticate(request, db, survey) {
  const token=tokenFrom(request);if(!/^[a-f0-9]{64}$/.test(token))fail(401,'パスワードを入力して、もう一度お入りください。');
@@ -69,13 +72,14 @@ export async function handleFollowup(request,env) {
  if(!['GET','POST'].includes(request.method))return reply({error:'この操作は利用できません。'},405);
  const match=url.pathname.match(/^\/follow-up\/([a-z0-9][a-z0-9-]{5,70})(?:\/(.*))?$/);
  const asset=url.pathname.startsWith('/follow-up/assets/');
- if(asset){if(request.method!=='GET')return reply({error:'この操作は利用できません。'},405);const response=await env.ASSETS.fetch(request);return new Response(response.body,{status:response.status,headers:{...Object.fromEntries(response.headers),...security}})}
+ if(asset){if(request.method!=='GET')return reply({error:'この操作は利用できません。'},405);return protectAsset(await env.ASSETS.fetch(request))}
  if(!match)return reply({error:'ご案内したURLからお開きください。'},404);
  const [,slug,tail='']=match;
  if(!tail||tail==='index.html'){
   if(request.method!=='GET')return reply({error:'この操作は利用できません。'},405);
-  const next=new URL('/follow-up/assets/shell.html',url);const response=await env.ASSETS.fetch(new Request(next,request));
-  return new Response(response.body,{status:response.status,headers:{...Object.fromEntries(response.headers),...security}});
+  const next=new URL('/follow-up/assets/shell',url);const response=await env.ASSETS.fetch(new Request(next,request));
+  if(response.status!==200)return reply({error:'ただいま準備中です。ご案内までお待ちください。'},503);
+  return protectAsset(response);
  }
  if(!tail.startsWith('api/'))return reply({error:'ページが見つかりません。'},404);
  if(!env.OMF_FOLLOWUP_DB)return reply({error:'ただいま準備中です。ご案内までお待ちください。'},503);
@@ -100,19 +104,25 @@ export async function handleFollowup(request,env) {
   if(tail==='api/save'&&request.method==='POST'){
    if(session.role!=='customer')fail(403,'管理者画面ではお客様の回答を書き換えません。');
    const input=await body(request);if(!Number.isSafeInteger(input?.revision)||input.revision<0||input.documentVersion!==survey.document_version)fail(409,'確認内容が更新されています。入力を保存してから読み直してください。');
+   if(typeof input.requestId!=='string'||!/^[-a-f0-9]{36}$/.test(input.requestId))fail(400,'ページを読み直してから、もう一度保存してください。');
    const response=validateResponse(input.response,JSON.parse(survey.document_json));
+   const requestHash=await digest(JSON.stringify({documentVersion:input.documentVersion,revision:input.revision,response}));
    await db.prepare('INSERT OR IGNORE INTO followup_responses(survey_slug,document_version,revision,response_json,updated_at) VALUES(?,?,0,?,?)').bind(slug,survey.document_version,JSON.stringify(blank()),Date.now()).run();
-   const updated=await db.prepare('UPDATE followup_responses SET response_json=?,revision=revision+1,document_version=?,updated_at=? WHERE survey_slug=? AND revision=? RETURNING revision').bind(JSON.stringify(response),survey.document_version,Date.now(),slug,input.revision).first();
-   if(!updated)fail(409,'別の画面で回答が更新されています。入力を保存してから読み直してください。');return reply({ok:true,revision:updated.revision});
+   const updated=await db.prepare('UPDATE followup_responses SET response_json=?,revision=revision+1,document_version=?,updated_at=?,last_request_id=?,last_request_hash=? WHERE survey_slug=? AND revision=? AND EXISTS(SELECT 1 FROM followup_surveys WHERE slug=? AND document_version=? AND active=1) RETURNING revision').bind(JSON.stringify(response),survey.document_version,Date.now(),input.requestId,requestHash,slug,input.revision,slug,survey.document_version).first();
+   if(updated)return reply({ok:true,revision:updated.revision});
+   const prior=await db.prepare('SELECT revision,last_request_id,last_request_hash,document_version FROM followup_responses WHERE survey_slug=?').bind(slug).first();
+   if(prior?.revision===input.revision+1&&prior.document_version===survey.document_version&&prior.last_request_id===input.requestId&&equal(prior.last_request_hash,requestHash))return reply({ok:true,revision:prior.revision});
+   fail(409,'別の画面で回答が更新されています。入力を保存してから読み直してください。');
   }
   if(tail==='api/submit'&&request.method==='POST'){
    if(session.role!=='customer')fail(403,'お客様用の画面から送信してください。');
    const input=await body(request);if(input?.attested!==true)fail(400,'最後の確認欄にチェックしてください。');
    const current=await state(db,survey,session.role);
    if(input.documentVersion!==survey.document_version||input.revision!==current.revision)fail(409,'回答が更新されています。保存状態を確認してから送信してください。');
+   if(current.needsReconfirmation)fail(409,'確認内容が更新されています。各項目を確認し、下書きを保存してから送信してください。');
    if(!current.response.respondent.name.trim()||!current.response.respondent.company.trim())fail(400,'会社名とご回答者名を入力してください。');
    const id=crypto.randomUUID(),now=Date.now(),snapshot=JSON.stringify({document:current.document,response:current.response});
-   await db.prepare('INSERT OR IGNORE INTO followup_submissions(id,survey_slug,document_version,response_revision,snapshot_json,submitted_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM followup_responses WHERE survey_slug=? AND revision=?)').bind(id,slug,survey.document_version,current.revision,snapshot,now,slug,input.revision).run();
+   await db.prepare('INSERT OR IGNORE INTO followup_submissions(id,survey_slug,document_version,response_revision,snapshot_json,submitted_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM followup_responses WHERE survey_slug=? AND revision=? AND document_version=?) AND EXISTS(SELECT 1 FROM followup_surveys WHERE slug=? AND document_version=? AND active=1)').bind(id,slug,survey.document_version,current.revision,snapshot,now,slug,input.revision,survey.document_version,slug,survey.document_version).run();
    const saved=await db.prepare('SELECT id,submitted_at FROM followup_submissions WHERE survey_slug=? AND document_version=? AND response_revision=?').bind(slug,survey.document_version,current.revision).first();
    if(!saved)fail(409,'回答が更新されています。保存状態を確認してから送信してください。');return reply({ok:true,id:saved.id,submittedAt:saved.submitted_at});
   }

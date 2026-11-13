@@ -2,5 +2,5 @@
  "name":"ohmyfinance",
  "pages_build_output_dir":".",
  "compatibility_date":"2026-11-13",
- "d1_databases":[{"binding":"OMF_FOLLOWUP_DB","database_name":"omf-followup","database_id":"00000000-0000-0000-0000-000000000000"}]
+ "d1_databases":[{"binding":"OMF_FOLLOWUP_DB","database_name":"omf-followup","database_id":"c2964330-d479-4334-90dd-76d696aad5ec"}]
 }
