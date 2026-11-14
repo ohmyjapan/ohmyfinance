@@ -30,6 +30,11 @@ nav .nav-number { font-size:12px; padding-top:0; }
 .topic-screen, .review-screen { display:block; max-width:840px; margin:auto; }
 .state-badge { font-size:13px; }
 .topic-intro { font-size:15px; margin-bottom:28px; }
+.topic-illustration { display:none; margin:0 0 34px; }
+.workspace:has(#topic-nav button:first-child.active) .topic-illustration { display:block; }
+.illustration-art { aspect-ratio:4.5 / 1; overflow:hidden; }
+.illustration-art img { display:block; width:100%; height:100%; object-fit:cover; object-position:center 58%; }
+.topic-illustration figcaption { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:12px; color:var(--muted); font-size:13px; line-height:1.6; text-align:center; }
 .points { gap:0; border-top:1px solid #737a81; }
 .point { position:relative; grid-template-columns:64px minmax(0,1fr); gap:24px; padding:28px 0; border:0; border-radius:0; background:transparent; }
 .point + .point::before { content:''; position:absolute; top:0; left:88px; right:0; height:1px; background:var(--line); }
@@ -88,6 +93,8 @@ textarea { min-height:96px; }
   .main-content { padding:26px 22px 30px; }
   .topic-content h1 { font-size:29px; line-height:1.65; margin:16px 0 24px; }
   .topic-intro { font-size:14px; }
+  .topic-illustration { margin-bottom:26px; }
+  .topic-illustration figcaption { gap:6px; margin-top:9px; font-size:12px; }
   .point { grid-template-columns:38px minmax(0,1fr); gap:16px; padding:24px 0; }
   .point + .point::before { left:54px; }
   .point-index { width:auto; height:auto; font-size:29px; }
