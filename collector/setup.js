@@ -1,26 +1,95 @@
 const key=location.hash.slice(1); history.replaceState(null,'','/');
 const $=selector=>document.querySelector(selector);
 let current={};
+let learningPoll;
+let learningListSerial=0,learningListApplied=0,learningListPoll,learningBusy=false;
+let learningMessageRevision=-1,learningActionFailure=false,learningStatusEpoch=0;
+function learningNote(id){let note=document.getElementById(id);if(!note){note=document.createElement('p');note.id=id;note.setAttribute('role','status');$('#learning-status').after(note);}return note;}
+const learningConsents=new Set();
+const learningEntryUrls=new Map();
+function clearLearningEntryInputs(){for(const input of document.querySelectorAll('[data-learning-entry-url]')){input.value='';input.disabled=true;}}
+let learningEpoch=0,learningSerial=0,learningAppliedSerial=0,learningRevision=-1,learningExpiry;
+const closedLearningRequests=new Set();
+let failedLearningSubmission=null;
+function clearLearningSubmissionFailure(){failedLearningSubmission=null;document.getElementById('learning-submit-status')?.replaceChildren();}
+function currentLearningSubmission(failure,data){return failure&&failure===failedLearningSubmission&&failure.epoch===learningEpoch&&failure.messageRevision===learningMessageRevision&&data.credentialRequest?.id===failure.id&&Number.isSafeInteger(data.credentialRevision)&&data.credentialRevision===failure.revision&&Number.isFinite(data.credentialExpiresAt)&&data.credentialExpiresAt===failure.expiresAt&&data.credentialExpiresAt>Date.now();}
+function clearLearningCredentials({invalidate=false,resetConsent=false}={}){
+  if(invalidate){learningEpoch++;clearLearningSubmissionFailure();}
+  if(resetConsent){learningConsents.clear();learningEntryUrls.clear();clearLearningEntryInputs();}
+  clearTimeout(learningExpiry);
+  const host=$('#learning-credentials');if(!host)return;
+  if(host.dataset.request){closedLearningRequests.add(host.dataset.request);while(closedLearningRequests.size>32)closedLearningRequests.delete(closedLearningRequests.values().next().value);}
+  // Clear the DOM objects before removing them, including a form kept alive by an in-flight callback.
+  for(const input of host.querySelectorAll('input')){input.value='';input.disabled=true;}
+  for(const button of host.querySelectorAll('button'))button.disabled=true;
+  host.replaceChildren();delete host.dataset.request;
+}
 async function refreshLearning(){
-  const target=$('#learning-sessions'),note=$('#learning-status');target.replaceChildren();
+  clearTimeout(learningListPoll);
+  const epoch=learningEpoch,serial=++learningListSerial;
+  const target=$('#learning-sessions'),note=learningNote('learning-list-status');
   try{
-    const data=await call('/learning/sessions');note.textContent=data.busy?'PCで処理中です。'+(data.message||''):'';
+    const data=await call('/learning/sessions');
+    if(epoch!==learningEpoch||serial<learningListApplied)return;learningListApplied=serial;learningBusy ||= !!data.busy;
+    note.textContent=data.busy?'PCで処理中です。'+(data.message||''):'';
+    clearLearningEntryInputs();target.replaceChildren();
     for(const session of data.sessions||[]){
       const row=document.createElement('p'),text=document.createElement('span'),button=document.createElement('button');
       text.textContent=session.entryOrigin+' · '+(session.state==='candidate'?'別の期間で確認':'照会手順を記録')+' ';
       button.textContent=session.state==='candidate'?'このPCで確認':'このPCで記録を開始';button.disabled=data.busy||session.state==='candidate'&&!session.replayPeriod;
-      button.onclick=async()=>{button.disabled=true;try{await call('/learning/run',{id:session.id,action:session.state==='candidate'?'replay':'start'});note.textContent='このPCのChromeで操作してください。';}catch{note.textContent='開始できませんでした。OMFの記録とPCの接続状態を確認してください。';}await refreshLearning();};
+      const consent=document.createElement('input');consent.type='checkbox';consent.checked=learningConsents.has(session.id);let entry;
+      if(session.teachLogin&&session.state!=='candidate'){const label=document.createElement('label');label.append(consent,document.createTextNode(' ログイン前から記録することに同意します。入力値は記録・送信せず、再実行のID・パスワードはこの設定画面で毎回入力します。'));row.append(label);button.disabled=!consent.checked||data.busy;consent.onchange=()=>{if(consent.checked)learningConsents.add(session.id);else learningConsents.delete(session.id);button.disabled=!consent.checked||data.busy;};}
+      if(session.teachLogin&&session.state!=='candidate'){const label=document.createElement('label'),help=document.createElement('small');label.textContent='開始ページのURL（省略すると銀行サイトの先頭）';entry=document.createElement('input');entry.type='url';entry.maxLength=2048;entry.autocomplete='off';entry.spellcheck=false;entry.placeholder=session.entryOrigin+'/';entry.dataset.learningEntryUrl=session.id;entry.value=learningEntryUrls.get(session.id)||'';entry.disabled=!!data.busy;entry.oninput=()=>learningEntryUrls.set(session.id,entry.value);help.textContent='このPCだけに暗号化保存し、OMF・開発側には送りません。ログインIDやパスワードを含むURLは使わないでください。';label.append(entry,help);row.append(label);}
+      button.onclick=async()=>{button.disabled=true;learningStatusEpoch++;learningActionFailure=false;const actionNote=$('#learning-status'),body={id:session.id,action:session.state==='candidate'?'replay':'start',loginConsent:consent.checked};actionNote.textContent='';try{if(entry?.value){let url;try{url=new URL(entry.value);}catch{throw Error('invalid-entry');}if(url.origin!==session.entryOrigin||url.username||url.password)throw Error('invalid-entry');body.entryUrl=url.href;}await call('/learning/run',body);actionNote.textContent='このPCのChromeで操作してください。ログイン入力の依頼はこの画面に表示します。';}catch{learningActionFailure=true;actionNote.textContent='開始できませんでした。銀行サイト内の開始ページURL、OMFの記録とPCの接続状態を確認してください。';}finally{learningEntryUrls.delete(session.id);if(entry)entry.value='';delete body.entryUrl;}await refreshLearning();};
       row.append(text,button);target.append(row);
     }
     if(!data.sessions?.length&&!data.busy)note.textContent='OMFから依頼された記録・確認はありません。';
-  }catch{note.textContent='このPCをOMFに接続してから更新してください。';}
+  }catch{if(epoch===learningEpoch)note.textContent='OMFの記録一覧を取得できません。ログイン入力はこのPCで続けられます。';}
+  finally{if(serial===learningListSerial)learningListPoll=setTimeout(()=>refreshLearning(),30000);}
 }
-$('#learning-refresh').onclick=refreshLearning;
+async function refreshLearningCredentials(recheck){
+  clearTimeout(learningPoll);const epoch=learningEpoch,statusEpoch=learningStatusEpoch,serial=++learningSerial,note=learningNote('learning-credential-status');
+  try{
+    const data=await call('/learning/credentials'),hasRevision=Number.isSafeInteger(data.credentialRevision);
+    if(epoch!==learningEpoch||(hasRevision?data.credentialRevision<learningRevision||data.credentialRevision===learningRevision&&serial<learningAppliedSerial:serial<learningAppliedSerial))return;
+    learningAppliedSerial=Math.max(learningAppliedSerial,serial);if(hasRevision)learningRevision=data.credentialRevision;
+    const finished=learningBusy&&!data.busy;learningBusy=!!data.busy;
+    note.textContent=data.busy?'PCで処理中です。'+(data.message||''):'';
+    if(statusEpoch===learningStatusEpoch&&Number.isSafeInteger(data.learningMessageRevision)&&data.learningMessageRevision>learningMessageRevision){learningMessageRevision=data.learningMessageRevision;if(!learningActionFailure&&data.learningMessage)$('#learning-status').textContent=data.learningMessage;}
+    if(failedLearningSubmission&&!currentLearningSubmission(failedLearningSubmission,data))clearLearningSubmissionFailure();
+    if(recheck&&currentLearningSubmission(recheck,data)){closedLearningRequests.delete(recheck.id);clearLearningSubmissionFailure();}
+    showLearningCredentials(data.credentialRequest,data.credentialExpiresAt);
+    if(finished)void refreshLearning();
+  }catch(error){
+    const currentDenial=Number.isSafeInteger(error.credentialRevision)?error.credentialRevision>=learningRevision:serial>=learningAppliedSerial;
+    if(epoch===learningEpoch&&currentDenial&&[401,403].includes(error.status)){if(Number.isSafeInteger(error.credentialRevision))learningRevision=error.credentialRevision;clearLearningCredentials({invalidate:true,resetConsent:true});}
+    if(epoch===learningEpoch)note.textContent='このPCの設定画面の接続状態を確認してください。';
+  }
+  finally{if(serial===learningSerial){clearTimeout(learningPoll);learningPoll=setTimeout(()=>refreshLearningCredentials(),2000);}}
+}
+function showLearningCredentials(request,expiresAt){
+  let host=document.getElementById('learning-credentials');
+  if(!host){host=document.createElement('div');host.id='learning-credentials';$('#learning-sessions').before(host);}
+  if(!request||closedLearningRequests.has(request.id)||(Number.isFinite(expiresAt)&&expiresAt<=Date.now())){clearLearningCredentials();return;}
+  if(host.dataset.request===request.id)return;
+  clearLearningCredentials();host.dataset.request=request.id;clearLearningSubmissionFailure();
+  if(Number.isFinite(expiresAt))learningExpiry=setTimeout(()=>clearLearningCredentials({invalidate:true}),Math.max(0,expiresAt-Date.now()));
+  const form=document.createElement('form'),note=document.createElement('p'),fields={};
+  note.textContent='ログイン手順をこのPCで実行します。ID・パスワードは保存せず、今回だけ使用します。値を送るのはこのPCで開いた銀行のログインフォームだけです。OMF・開発者には送信しません。認証コードや証明書はChromeで本人が操作します。中止しても送信済みのログインは銀行に届いている場合があります。自動で再送しません。';form.append(note);
+  for(const [name,label,type]of [...(request.identifier?[['identifier','ログインID','text']]:[]),['password','パスワード','password']]){const title=document.createElement('label'),input=document.createElement('input');input.type=type;input.required=true;input.maxLength=1024;input.autocomplete='off';input.dataset.learningCredential=name;title.append(document.createTextNode(label),input);form.append(title);fields[name]=input;}
+  const submit=document.createElement('button'),cancel=document.createElement('button');submit.textContent='今回だけ使用してログイン';cancel.type='button';cancel.textContent='取り消す';form.append(submit,cancel);
+  form.onsubmit=async event=>{event.preventDefault();if(submit.disabled||host.dataset.request!==request.id)return;submit.disabled=true;const body={id:request.id,...Object.fromEntries(Object.entries(fields).map(([name,input])=>[name,input.value]))};clearLearningCredentials({invalidate:true});const failure={id:request.id,epoch:learningEpoch,revision:learningRevision,expiresAt,messageRevision:learningMessageRevision};try{await call('/learning/credentials',body);}catch{if(learningEpoch===failure.epoch&&learningRevision===failure.revision&&learningMessageRevision===failure.messageRevision&&!host.dataset.request&&(!Number.isFinite(expiresAt)||expiresAt>Date.now())){failedLearningSubmission=failure;const notice=learningNote('learning-submit-status'),recheck=document.createElement('button');notice.textContent='入力情報を受け取ったか確認できません。銀行へのログインは自動でやり直しません。「入力依頼を確認する」を押し、入力欄が表示された場合だけ入力し直してください。入力欄が表示されない場合はPCのChromeとOMFの状態を確認してください。';recheck.type='button';recheck.textContent='入力依頼を確認する';recheck.onclick=async()=>{if(recheck.disabled||failedLearningSubmission!==failure)return;recheck.disabled=true;try{await refreshLearningCredentials(failure);}finally{if(failedLearningSubmission===failure)recheck.disabled=false;}};notice.append(recheck);}}finally{for(const name of ['identifier','password'])delete body[name];await refreshLearningCredentials();}};
+  cancel.onclick=async()=>{clearLearningCredentials({invalidate:true});await call('/learning/credentials',{id:request.id,cancel:true}).catch(()=>{});await refreshLearningCredentials();};host.append(form);
+}
+$('#learning-refresh').onclick=()=>{void refreshLearning();void refreshLearningCredentials();};
+// Native jobs can request local credentials without this page's teaching Run button.
+void refreshLearning();
+void refreshLearningCredentials();
 async function call(route,body) {
   const progress=['/connect','/connect/resume','/protect','/unlock','/protect/reset'].includes(route)?setInterval(()=>refresh().catch(()=>{}),1500):null;
   try{
-  const response=await fetch(route,{method:body?'POST':'GET',headers:{'X-Setup-Key':key,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
-  const data=await response.json(); if(!response.ok)throw Error(data.error || 'Request failed');return data;
+  const response=await fetch(route,{method:body?'POST':'GET',cache:'no-store',headers:{'X-Setup-Key':key,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+  const data=await response.json(); if(!response.ok)throw Object.assign(Error(data.error || 'Request failed'),{status:response.status,...(Number.isSafeInteger(data.credentialRevision)?{credentialRevision:data.credentialRevision}:{})});return data;
   }finally{if(progress)clearInterval(progress);}
 }
 // The one Connect action: OMF opens in the browser for the sign-in; this page only shows progress and offers Lock to
@@ -46,6 +115,7 @@ function connectText(data) {
   return data.reconnectNeeded?'Reconnect this PC through OMF to resume automatic syncing.':'Waiting to resume automatic syncing.';
 }
 function showProtection(data) {
+  if(!data.unlocked||!data.protected||data.mode!=='protected'||data.locking||data.authorizing)clearLearningCredentials({invalidate:true,resetConsent:true});
   const unlocked=!!data.unlocked, transitioning=!!data.authorizing || !!data.locking, protectedBatch=unlocked && !transitioning && data.mode==='protected', connect=data.connect || {};
   const text=connectText(data);
   $('#connect-message').textContent=data.message && !(!data.protected && !transitioning && !data.legacy) ? `${text}\n${data.message}` : text;

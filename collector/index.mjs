@@ -10,8 +10,9 @@ import { Vault, SplitStore, entryBinding, startBroker, testBrokerEnabled, aadOf,
 import { collectStatement, collectAplusStatement, closeOwnedBrowsers, findChrome, recoverEphemeral } from './browser.mjs';
 import { collectBankStatement, observeBankPortal, guidedAdapterFor } from './bank.mjs';
 import { runBalanceJob } from './bank-balance.mjs';
-import {runBankLearning,flushLearningOutbox,collectLearnedStatement} from './bank-learning.mjs';
-import {LEARNING_STATEMENT_CAPABILITY} from '../shared/finance-bank-learning.mjs';
+import {runBankLearning,flushLearningOutbox,collectLearnedStatement,prepareLearnedUpload} from './bank-learning.mjs';
+import {LearningCredentialRequest} from './bank-learning-login.mjs';
+import {LEARNING_STATEMENT_CAPABILITY,LEARNING_LOGIN_CAPABILITY,learningFailureText} from '../shared/finance-bank-learning.mjs';
 import { BALANCE_CAPABILITY, bankBalanceSupported } from '../shared/finance-bank-balance.mjs';
 import { BillingMailbox } from './mail.mjs';
 import { openYayoi, yayoiCredentials } from './yayoi.mjs';
@@ -34,8 +35,12 @@ const STATE_FILE=path.join(directory,'vault-state.json'), ACL_SCRIPT=fileURLToPa
 const TICK_MS=Math.max(1000,Number(process.env.OMF_COLLECTOR_TICK_MS)||10000), BATCH_MS=Math.max(5000,Number(process.env.OMF_COLLECTOR_BATCH_MS)||20*60*1000);
 const execute=promisify(execFile);
 let message='Connect this PC once to let OMF download statements automatically.', running=false,activeAction=false;
+let learningMessage='',learningMessageRevision=0;
+const setLearningMessage=text=>{message=learningMessage=text;learningMessageRevision++;};
 let yayoiState={state:'idle',message:'Connect this PC, save your Yayoi login, then open Yayoi in Chrome.'};
 let session=null;          // { id, broker, mode:'protected'|'manual', until, ran, browsers:Set<number>, publicKey, installationId }
+const learningCredentials=new LearningCredentialRequest();
+const requestLearningCredentials=(live,options)=>{assertSession(live);message='このPCのダウンローダー設定画面で今回のログインID・パスワードを入力してください。入力は保存しません。';return learningCredentials.request(live.id,options,randomBytes(24).toString('hex'));};
 let amexAttended=null;     // the armed attended Amex download (armAttended): {session, accountId, priorJobId, armedAt, until}; memory only
 let authorization=null, closing=null;
 let keyLost=false, approvalUrl=null, reconnectNeeded=false, nextAutoAttempt=0, stopped=false, ticking=false;
@@ -309,7 +314,7 @@ export async function claimWork(config,live) {
   const {account,covered}=await api(config,'claim',{capabilities:[RECENT_CAPABILITY]},undefined,live);
   if(account)return {account,covered,bank:null};
   let bank=null;
-  try{bank=await api(config,'bank/claim',{capabilities:[BALANCE_CAPABILITY,...(live?.mode==='protected'?[LEARNING_STATEMENT_CAPABILITY]:[])]},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
+  try{bank=await api(config,'bank/claim',{capabilities:[BALANCE_CAPABILITY,...(live?.mode==='protected'?[LEARNING_STATEMENT_CAPABILITY,LEARNING_LOGIN_CAPABILITY]:[])]},undefined,live,{base:BANK_BASE});}catch(error){if(error.status!==404)throw error;}
   return {account:null,covered,bank:bank?.job?bank:null};
 }
 // Which retained files of an Amex account a claimed job sends, and whether it still collects. A closed job sends everything, as ever, and a provisional file left behind never costs it its download.
@@ -335,10 +340,11 @@ const REFUSAL_REASON={unreadable:'CSV・テキストとして読めないファ�
 export const bankRefusalText=reasons=>`OMFが受け付けなかった明細ファイル${reasons.length}件（${[...new Set(reasons)].map(r=>REFUSAL_REASON[r]).join('・')}）はこのPCに残し、再送信しません`;
 // Plan omf-bank-hourly-balances-20261027: a balance job (kind balance) goes to collector/bank-balance.mjs runBalanceJob — its own
 // balance-only receipt outbox, no statement drain, no CSV; `inquire` is its bank-inquiry seam (the fixture's).
-export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,learnedCollect=collectLearnedStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null,inquire=undefined}={}) {
+export async function runBankJob(bank,config,live,{status,pending:listPending=pendingBank,upload:send=upload,collect=collectBankStatement,learnedCollect=collectLearnedStatement,observe=observeBankPortal,directory:root=directory,onLaunch=null,batch='batch',signal=null,now=Date.now,login=null,inquire=undefined,credentials=options=>requestLearningCredentials(live,options)}={}) {
   if(bank?.job?.kind==='balance')return runBalanceJob(bank,config,live,{status,send,root,onLaunch,batch,signal,now,login,...(inquire?{inquire}:{})}); // guard:balance-delegated
   const {job,account}=bank,refusals=[];
   const sendItem=async(item,own)=>{
+    await prepareLearnedUpload(item,{ownerId:String(account.ownerId),bankAccountId:String(account._id),origin:config.baseUrl},root);
     try{return await send(config,account,item,live,{route:'bank/upload',base:BANK_BASE,query:bankUploadQuery(item.manifest)});}
     catch(error){
       const reason=item.manifest.kind==='observation'?null:bankRefusal(error);
@@ -351,11 +357,11 @@ export async function runBankJob(bank,config,live,{status,pending:listPending=pe
   for(const item of await listPending(account,config,root)){await status('running','保存済みの明細を送信中');await sendItem(item,false);drained++;}
   const bound={bankAccountId:String(account._id),ownerId:String(account.ownerId),origin:config.baseUrl,jobId:job.jobId,snapshotHash:job.snapshotHash,provider:job.provider};
   let result;
-  try{result=job.kind==='retrieve'?(job.snapshot?.learned?await learnedCollect(bound,job,root,status,{batch,onLaunch,signal,live}):await collect(bound,job,root,status,{batch,onLaunch,signal,now,login})):await observe(bound,job,root,status,{batch,onLaunch,signal,now,...(login&&guidedBankJob(job)?{login}:{})});}
+  try{result=job.kind==='retrieve'?(job.snapshot?.learned?await learnedCollect(bound,job,root,status,{batch,onLaunch,signal:signal||live.abort.signal,live,credentials}):await collect(bound,job,root,status,{batch,onLaunch,signal,now,login})):await observe(bound,job,root,status,{batch,onLaunch,signal,now,...(login&&guidedBankJob(job)?{login}:{})});}
   catch(error){
     if(!job.snapshot?.learned)throw error;
     const reasons={'learned-previous-attempt-unknown':'この取得は途中で止まったため、銀行にはもう一度ログインしません。PCの設定画面で状態を確認してから、新しく取得を依頼してください。','local-recording-binding-changed':'このPCの接続に対応する操作記録がありません。記録したPCを確認するか、もう一度操作を実演してください。','learned-pc-binding-changed':'記録したPCの接続が変わったため、この取得は実行していません。','recorded-control-unavailable':'銀行の画面で記録した操作箇所を確認できませんでした。取得手順の更新が必要です。','recorded-control-changed':'銀行の操作箇所が変わったため、クリックせずに取得を止めました。'};
-    result={items:[],failed:reasons[error?.code||error?.message]||'記録した手順で明細を取得できませんでした。ログインは繰り返しません。取得の記録とPCの設定画面を確認してください。'};
+    result={items:[],failed:learningFailureText(error?.code||error?.message)||reasons[error?.code||error?.message]||'記録した手順で明細を取得できませんでした。ログインは繰り返しません。取得の記録とPCの設定画面を確認してください。'};
   }
   const items=[...(result.items||[])];
   if(result.observation){
@@ -1011,7 +1017,7 @@ const field=(value,max=512)=>typeof value==='string'&&value.length>0&&value.leng
 // `openSetup` is the explicit launch (run.mjs --open-setup): the setup page opens once, after readiness; when this
 // directory's collector already listens, the running instance's link is opened instead and nothing else starts.
 // Background starts never open a window. `open` is a constructor dependency for isolated tests.
-export async function startCollector({openSetup=false,open=launch}={}) {
+export async function startCollector({openSetup=false,open=launch,learningRun=runBankLearning}={}) {
   stopped=false;
   await mkdir(directory,{recursive:true});
   // Establish private permissions before creating the bearer setup capability or accepting requests.
@@ -1030,20 +1036,32 @@ export async function startCollector({openSetup=false,open=launch}={}) {
       if(req.headers.host!==`127.0.0.1:${port}` || (req.headers.origin && req.headers.origin!==origin))return reply(403,{error:'Local setup access required'});
       if(req.method==='GET' && ['/','/setup.js'].includes(req.url)) {res.setHeader('Content-Type',req.url==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');res.end(await readFile(fileURLToPath(new URL(req.url==='/'?'./setup.html':'./setup.js',import.meta.url))));return;}
       if(req.headers['x-setup-key']!==setupKey)return reply(403,{error:'Reopen the setup screen from the collector launch link'});
+      if(req.method==='GET'&&req.url==='/learning/credentials'){
+        const live=requireProtectedSession();assertSession(live);
+        return reply(200,{credentialRequest:learningCredentials.view(live.id),credentialRevision:learningCredentials.revision,credentialExpiresAt:learningCredentials.expiry(live.id),busy:running||activeAction,message,learningMessage,learningMessageRevision});
+      }
       if(req.method==='GET'&&req.url==='/learning/sessions'){
         const live=requireProtectedSession();
-        if(!activeAction)await flushLearningOutbox(directory,live.broker.remote,{origin:(await metadata()).baseUrl,...live.broker.remote.learningIdentity});
-        return reply(200,{...await live.broker.remote.learning('sessions'),busy:running||activeAction,message});
+        try{
+          if(!activeAction)await flushLearningOutbox(directory,live.broker.remote,{origin:(await metadata()).baseUrl,...live.broker.remote.learningIdentity});
+          const data=await live.broker.remote.learning('sessions');assertSession(live);
+          return reply(200,{...data,busy:running||activeAction,message});
+        }catch{assertSession(live);return reply(503,{error:'OMF learning requests are unavailable. Local login input remains available on this PC.'});}
+      }
+      if(req.method==='POST'&&req.url==='/learning/credentials'){
+        const live=requireProtectedSession();assertSession(live);
+        try{learningCredentials.submit(live.id,await json(req));return reply(200,{accepted:true});}
+        catch{return reply(400,{error:'The local login request changed or the input is incomplete.'});}
       }
       if(req.method==='POST'&&req.url==='/learning/run'){
         const release=reserveAction();let launched=false;
         try{
           const input=await json(req),live=requireProtectedSession(),config=await metadata();
-          if(!/^[a-f0-9]{24}$/.test(String(input.id))||!['start','replay'].includes(input.action)||Object.keys(input).some(k=>!['id','action','entryUrl'].includes(k)))throw new Error('Choose a learning session in OMF first');
-          if(input.entryUrl!==undefined&&(typeof input.entryUrl!=='string'||input.entryUrl.length>2048))throw new Error('Invalid bank entry address');
-          launched=true;
-          void runBankLearning({id:input.id,action:input.action,entryUrl:input.entryUrl,remote:live.broker.remote,root:directory,live,origin:config.baseUrl,onLaunch:ownBrowser(live),status:text=>{message=text;}})
-            .catch(()=>{message='銀行手順の確認が完了していません。OMFで状態を確認してください。';}).finally(release);
+          if(!/^[a-f0-9]{24}$/.test(String(input.id))||!['start','replay'].includes(input.action)||Object.keys(input).some(k=>!['id','action','entryUrl','loginConsent'].includes(k))||(input.loginConsent!==undefined&&typeof input.loginConsent!=='boolean'))throw new Error('Choose a learning session in OMF first');
+          if(input.entryUrl!==undefined){let url;try{url=new URL(input.entryUrl);}catch{throw new Error('Invalid bank entry address');}if(typeof input.entryUrl!=='string'||input.entryUrl.length>2048||!['http:','https:'].includes(url.protocol)||url.username||url.password)throw new Error('Invalid bank entry address');}
+          launched=true;setLearningMessage('このPCのChromeで操作してください。');
+          void learningRun({id:input.id,action:input.action,entryUrl:input.entryUrl,loginConsent:input.loginConsent===true,credentials:options=>requestLearningCredentials(live,options),remote:live.broker.remote,root:directory,live,origin:config.baseUrl,onLaunch:ownBrowser(live),status:setLearningMessage})
+            .catch(error=>{setLearningMessage(learningFailureText(error.code||error.message)||'銀行手順の確認が完了していません。OMFで状態を確認してください。');}).finally(release);
           return reply(202,{started:true});
         }finally{if(!launched)release();}
       }
@@ -1248,7 +1266,7 @@ export async function startCollector({openSetup=false,open=launch}={}) {
         })));
       }
       reply(404,{error:'Unknown setup endpoint'});
-    }catch(error){reply(codeOf(error),{error:error.message});}
+    }catch(error){reply(codeOf(error),{error:error.message,...(['/learning/sessions','/learning/credentials'].includes(req.url)?{credentialRevision:learningCredentials.revision}:{})});}
   });
   try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>resolve(undefined));});}
   catch(error){

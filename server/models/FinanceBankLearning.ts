@@ -4,6 +4,7 @@ const {Schema}=mongoose, oid=Schema.Types.ObjectId, mixed=Schema.Types.Mixed
 const schema=new Schema({
   ownerId:{type:oid,required:true,index:true},companyId:{type:oid,required:true,index:true},bankAccountId:{type:oid,required:true},collectorId:{type:oid,required:true},
   installationId:{type:String,required:true},generation:{type:String,required:true},origin:{type:String,required:true},
+  teachLogin:{type:Boolean,default:false},
   state:{type:String,enum:LEARNING_STATES,default:'awaiting_pc',index:true},open:{type:Boolean,default:true},
   entryOrigin:{type:String,required:true},connectionHash:{type:String,required:true},template:{type:mixed,required:true},demonstrationPeriod:{type:mixed,required:true},replayPeriod:mixed,
   evidence:mixed,evidenceHash:String,candidate:mixed,candidateHash:String,workerReceipt:mixed,replay:mixed,

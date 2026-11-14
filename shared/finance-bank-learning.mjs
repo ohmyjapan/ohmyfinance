@@ -2,7 +2,44 @@
 export const LEARNING_RUNTIME = 'omf-bank-learning-1';
 export const LEARNING_MODEL = 'gpt-6.1-sol';
 export const LEARNING_STATEMENT_CAPABILITY = 'bank-learning-statements-1';
+export const LEARNING_LOGIN_CAPABILITY = 'bank-learning-login-2';
 export const LEARNING_ROLES = ['inquiry','account','from','to','export','balance','logout'];
+export const LEARNING_DATE_PARTS = ['year','month','day'];
+// Schema 2 adds an opt-in login demonstration. Schema 1 readers reject it before execution.
+export const LEARNING_LOGIN_ROLES = ['login-navigation','login-identifier','login-password','login-submit','login-manual','login-success'];
+export const LEARNING_LOGIN_STOP_CODES = ['local-login-input-cancelled','local-login-input-timeout','local-login-input-required','local-login-input-unavailable','login-not-submitted','login-cancelled-before-submit','login-cancelled','login-control-changed','login-form-changed','login-success-already-present','login-demonstration-incomplete','unsupported-login-sequence','login-order-invalid','login-outcome-unconfirmed','manual-login-timeout','manual-login-successor-invalid'];
+export function learningFailureText(code){
+  if(['unsupported-login-sequence','login-order-invalid','login-demonstration-incomplete','manual-login-successor-invalid'].includes(code))return 'このログイン手順は自動実行に対応していません。記録を中止し、本人操作または手動CSV取り込みをご利用ください。';
+  if(code==='local-login-input-cancelled'||code==='login-cancelled-before-submit')return 'ログイン入力を取り消しました。ログイン送信は実行していません。自動で再送しません。';
+  if(code==='local-login-input-timeout')return 'このPCの設定画面でのログイン入力が時間切れになりました。ログイン送信は実行していません。';
+  if(['local-login-input-required','local-login-input-unavailable','login-not-submitted','login-control-changed','login-form-changed','login-success-already-present'].includes(code))return 'ログイン画面またはローカル入力を確認できず、ログイン送信前に停止しました。手順とこのPCの設定画面を確認してください。';
+  if(['login-cancelled','login-outcome-unconfirmed','manual-login-timeout'].includes(code))return 'ログイン完了を確認できません。送信済みのログインは銀行に届いている場合があります。自動で再送しません。銀行の画面・状態を確認してください。';
+  return '';
+}
+/** Closed structural prefix, shared by recording and the final evidence boundary. */
+export function validateLoginPrefix(events,{complete=false}={}){
+  learningAssert(Array.isArray(events)&&events.length<=32,'unsupported-login-sequence');
+  let identifier,password,submit,success,manual=false;
+  const same=(a,b)=>['popup','document','frame','origin'].every(k=>a[k]===b[k]);
+  for(let i=0;i<events.length;i++){
+    const e=events[i];learningAssert(LEARNING_LOGIN_ROLES.includes(e.role)&&!success,'unsupported-login-sequence');
+    if(e.role==='login-navigation')learningAssert(!identifier&&!password&&!submit,'unsupported-login-sequence');
+    if(e.role==='login-identifier'){learningAssert(!identifier&&!password&&!submit,'unsupported-login-sequence');identifier=e;}
+    if(e.role==='login-password'){learningAssert(!password&&!submit&&(!identifier||same(identifier,e)),'unsupported-login-sequence');password=e;}
+    if(e.role==='login-submit'){learningAssert(password&&!submit&&same(password,e)&&(!identifier||same(identifier,e)),'unsupported-login-sequence');submit=e;}
+    if(e.role==='login-manual'){
+      learningAssert(['otp','certificate','other'].includes(e.format),'invalid-manual-login');
+      // One inline manual check may own the native submit; no OTP is read or filled.
+      if(password&&!submit)learningAssert(events[i-1]===password,'unsupported-login-sequence');
+      manual=true;
+    }
+    if(e.role==='login-success'){
+      learningAssert((password&&submit)||(!identifier&&!password&&!submit&&manual),'login-demonstration-incomplete');success=e;
+    }
+  }
+  if(complete)learningAssert(events.length>1&&success===events.at(-1),'login-demonstration-incomplete');
+  return events;
+}
 export const LEARNING_STATES = ['awaiting_pc','recording','queued','developing','needs_demonstration','candidate','replaying','verified','enabled','failed','cancelled'];
 export const LEARNING_MISSING = ['frame','popup','account','from','to','export','balance','logout','runtime_extension_needed','worker_unavailable'];
 export const stable = value => JSON.stringify(canonical(value));
@@ -34,7 +71,7 @@ export function learningOrigin(value, { test = false } = {}) {
 }
 export function validateEvidence(input, options = {}) {
   keys(input,['schema','runtime','origins','events','complete','truncated']);
-  learningAssert(input.schema === 1 && input.runtime === LEARNING_RUNTIME && input.complete === true && input.truncated === false, 'incomplete-demonstration');
+  learningAssert([1,2].includes(input.schema) && input.runtime === LEARNING_RUNTIME && input.complete === true && input.truncated === false, 'incomplete-demonstration');
   learningAssert(Array.isArray(input.origins) && input.origins.length > 0 && input.origins.length <= 8);
   input.origins.forEach(v => learningOrigin(v,options));
   learningAssert(new Set(input.origins).size === input.origins.length);
@@ -44,8 +81,15 @@ export function validateEvidence(input, options = {}) {
     keys(e,['id','document','frame','popup','origin','role','tag','format'],['id','document','frame','popup','origin','role','tag']);
     learningAssert(/^e\d{1,3}$/.test(e.id) && !ids.has(e.id)); ids.add(e.id);
     learningAssert(/^d\d{1,3}$/.test(e.document) && /^f\d{1,3}$/.test(e.frame) && /^p\d{1,3}$/.test(e.popup));
-    learningAssert(input.origins.includes(e.origin) && LEARNING_ROLES.includes(e.role) && ['button','a','input','select','text'].includes(e.tag));
-    learningAssert(e.format === undefined || (['from','to'].includes(e.role) && ['iso','compact','slash'].includes(e.format)));
+    learningAssert(input.origins.includes(e.origin) && [...LEARNING_ROLES,...(input.schema===2?LEARNING_LOGIN_ROLES:[])].includes(e.role) && ['button','a','input','select','text'].includes(e.tag));
+    learningAssert(e.format === undefined || (['from','to'].includes(e.role) && ['iso','compact','slash',...LEARNING_DATE_PARTS].includes(e.format)) || (e.role==='login-manual'&&['otp','certificate','other'].includes(e.format)));
+    if(['login-identifier','login-password'].includes(e.role))learningAssert(e.tag==='input','invalid-login-control');
+  }
+  if(input.schema===2){
+    const login=input.events.filter(e=>LEARNING_LOGIN_ROLES.includes(e.role)),success=login.filter(e=>e.role==='login-success');
+    learningAssert(login.length>1&&login.length<=32&&success.length===1&&login.at(-1)===success[0],'login-demonstration-incomplete');
+    learningAssert(input.events.slice(0,login.length).every(e=>LEARNING_LOGIN_ROLES.includes(e.role)),'login-order-invalid');
+    validateLoginPrefix(login,{complete:true});
   }
   for (const role of LEARNING_ROLES.filter(v=>v!=='inquiry')) learningAssert(input.events.some(e=>e.role===role),'missing-'+role);
   return input;
@@ -53,21 +97,36 @@ export function validateEvidence(input, options = {}) {
 export function validateRecipe(input, evidence, evidenceHash, options = {}) {
   validateEvidence(evidence,options);
   keys(input,['schema','runtime','evidenceHash','steps']);
-  learningAssert(input.schema===1 && input.runtime===LEARNING_RUNTIME && learningHash(evidenceHash) && input.evidenceHash===evidenceHash,'candidate-binding-mismatch');
+  learningAssert(input.schema===evidence.schema && input.runtime===LEARNING_RUNTIME && learningHash(evidenceHash) && input.evidenceHash===evidenceHash,'candidate-binding-mismatch');
   learningAssert(Array.isArray(input.steps) && input.steps.length>0 && input.steps.length<=evidence.events.length);
   let index=-1;
-  const counts={};
+  const counts={},selected={};
   for(const step of input.steps) {
     keys(step,['eventId','op']);
     const at=evidence.events.findIndex(e=>e.id===step.eventId),event=evidence.events[at];
     learningAssert(at>index && event && event.role===step.op,'undemonstrated-action'); index=at;
     counts[step.op]=(counts[step.op]||0)+1;
+    (selected[step.op]||=[]).push(event);
   }
-  for(const role of LEARNING_ROLES.filter(v=>v!=='inquiry')) learningAssert(counts[role]===1,'candidate-missing-or-repeated-'+role);
+  for(const role of LEARNING_ROLES.filter(v=>v!=='inquiry')) {
+    if(['from','to'].includes(role)) {
+      const dates=selected[role]||[];
+      const whole=dates.length===1&&!LEARNING_DATE_PARTS.includes(dates[0].format);
+      const split=dates.length===3&&LEARNING_DATE_PARTS.every(part=>dates.some(e=>e.format===part));
+      learningAssert(whole||split,'candidate-missing-or-repeated-'+role);
+    } else learningAssert(counts[role]===1,'candidate-missing-or-repeated-'+role);
+  }
+  if(evidence.schema===2)learningAssert(stable(input.steps.filter(s=>LEARNING_LOGIN_ROLES.includes(s.op)).map(s=>s.eventId))===stable(evidence.events.filter(e=>LEARNING_LOGIN_ROLES.includes(e.role)).map(e=>e.id)),'candidate-login-steps-changed');
   return input;
 }
 export function validateReplay(input, session) {
-  keys(input,['candidateHash','evidenceHash','runtime','period','statementHash','rows','balanceObserved','accountMatched','loggedOut','freshBrowser','startedAt','finishedAt']);
+  const fields=['candidateHash','evidenceHash','runtime','period','statementHash','rows','balanceObserved','accountMatched','loggedOut','freshBrowser','startedAt','finishedAt'];
+  keys(input,[...fields,'authentication'],fields);
+  if(session.evidence?.schema===2||session.candidate?.schema===2){
+    keys(input.authentication,['outcome','mode']);
+    const manual=session.evidence?.events?.some(e=>e.role==='login-manual');
+    learningAssert(input.authentication.outcome==='success'&&input.authentication.mode===(manual?'attended':'local-credentials'),'login-replay-incomplete');
+  }else learningAssert(input.authentication===undefined,'unexpected-login-receipt');
   learningAssert(input.candidateHash===session.candidateHash && input.evidenceHash===session.evidenceHash && input.runtime===LEARNING_RUNTIME,'replay-binding-mismatch');
   learningPeriod(input.period);
   learningAssert(stable(input.period)===stable(session.replayPeriod) && stable(input.period)!==stable(session.demonstrationPeriod),'replay-needs-fresh-period');

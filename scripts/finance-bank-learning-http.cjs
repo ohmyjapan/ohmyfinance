@@ -12,6 +12,13 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,directory
   const response=await fetch(origin+'/api/finance-bank-learning/pc/'+route,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+deviceToken,'X-Collector-Grant':proof,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:response.status,data:await response.json()};
  }
  const api=(route,body,t=token)=>call('/api/finance-bank-learning/'+route,{token:t,...(body?{method:'POST',body}:{})});
+ if(process.env.OMF_TEST_LOGIN_UI_ONLY){await require('./finance-bank-learning-page-http.cjs')({db,api,pcCall,token,origin,root,directory,accountId,templateId,pc,workerToken:process.env.OMF_BANK_LEARNING_WORKER_TOKEN,pass});return;}
+ if(process.env.OMF_TEST_LOGIN_ENTRY_ONLY){await require('./finance-bank-learning-collection-http.cjs')({db,call,api,pcCall,token,other,deviceToken,origin,publicOrigin,pc,generation,owner,device,workerToken:process.env.OMF_BANK_LEARNING_WORKER_TOKEN,directory,root,pass,teachLogin:true,privateEntry:true});return;}
+ if(process.env.OMF_TEST_LOGIN_REFUSAL_ONLY){await require('./finance-bank-learning-refusal-http.cjs')({db,api,pcCall,root,directory,owner,device,pc,generation,publicOrigin,workerToken:process.env.OMF_BANK_LEARNING_WORKER_TOKEN,token,origin,pass});return;}
+ if(process.env.OMF_TEST_LOGIN_LEARNING_ONLY){
+  const workerToken=process.env.OMF_BANK_LEARNING_WORKER_TOKEN;
+  await require('./finance-bank-learning-collection-http.cjs')({db,call,api,pcCall,token,other,deviceToken,origin,publicOrigin,pc,generation,owner,device,workerToken,directory,root,pass,teachLogin:true});await require('./finance-bank-learning-collection-http.cjs')({db,call,api,pcCall,token,other,deviceToken,origin,publicOrigin,pc,generation,owner,device,workerToken,directory,root,pass,teachLogin:true,privateEntry:true});await require('./finance-bank-learning-workflow-http.cjs')({db,api,pcCall,root,directory,owner,device,pc,generation,publicOrigin,workerToken,pass});await require('./finance-bank-learning-refusal-http.cjs')({db,api,pcCall,root,directory,owner,device,pc,generation,publicOrigin,workerToken,token,origin,pass});return;
+ }
  const input={bankAccountId:String(accountId),installationId:pc,templateId:String(templateId),entryOrigin:'https://bank.example.invalid',period:{from:'2026-10-01',to:'2026-10-02'},companyAccountConfirmed:true};
  assert.equal((await api('sessions')).status,200);assert.equal((await api('sessions',input,other)).status,403);
  const created=await api('sessions',input);assert.equal(created.status,200,JSON.stringify(created));const key=created.data.session.id;
@@ -74,6 +81,9 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,directory
  await db.collection('collectorinstallations').updateOne({_id:pc},{$set:{generation}});
  pass('built HTTP owner/company/PC/worker boundaries and durable candidate/duplicate result passed; fixture generation only');
  await require('./finance-bank-learning-collection-http.cjs')({db,call,api,pcCall,token,other,deviceToken,origin,publicOrigin,pc,generation,owner,device,workerToken,directory,root,pass});
+ await require('./finance-bank-learning-collection-http.cjs')({db,call,api,pcCall,token,other,deviceToken,origin,publicOrigin,pc,generation,owner,device,workerToken,directory,root,pass,splitDates:true});
+ for(const wholeDateRole of ['from','to'])await require('./finance-bank-learning-collection-http.cjs')({db,call,api,pcCall,token,other,deviceToken,origin,publicOrigin,pc,generation,owner,device,workerToken,directory,root,pass,splitDates:true,wholeDateRole});
+ await require('./finance-bank-learning-collection-http.cjs')({db,call,api,pcCall,token,other,deviceToken,origin,publicOrigin,pc,generation,owner,device,workerToken,directory,root,pass,splitDates:true,dateNavigation:true});
  const puppeteer=await import('puppeteer-core'),browser=await puppeteer.default.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,userDataDir:path.join(directory,'learning-ui-profile')});
  try{
   const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(String(e)));

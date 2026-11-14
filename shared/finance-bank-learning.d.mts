@@ -1,6 +1,11 @@
 export const LEARNING_RUNTIME: string;
 export const LEARNING_MODEL: string;
 export const LEARNING_STATEMENT_CAPABILITY: string;
+export const LEARNING_LOGIN_CAPABILITY: string;
+export const LEARNING_LOGIN_ROLES: string[];
+export const LEARNING_LOGIN_STOP_CODES: string[];
+export function validateLoginPrefix(events: any[], options?: {complete?: boolean}): any[];
+export function learningFailureText(code: string): string;
 export const LEARNING_ROLES: string[];
 export const LEARNING_STATES: string[];
 export const LEARNING_MISSING: string[];

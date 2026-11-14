@@ -1,3 +1,4 @@
+import {selectLearningRole,waitForLearningCapture} from './finance-bank-learning-capture-ack.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -28,7 +29,7 @@ test('real Chrome: approved extra bank origin, popup and nested frame retain the
   browser=await launch();const page=await browser.newPage();await page.goto(origin);let record;
   const origins=[origin],download=await learningDownload(browser,path.join(root,'demo'),{origins});
   recording=recordBankLearning(browser,page,{entryOrigin:origin,origins,test:true,timeout:30000,store:async r=>{record=structuredClone(r);}});void recording.catch(e=>console.log('Synthetic recorder outcome: '+e.message));
-  const operate=async(frame,role,fn)=>{await frame.waitForSelector('#omf-learning-control select:not([hidden])');await frame.select('#omf-learning-control select',role);const n=record?.events.length||0;await fn();for(let i=0;i<100&&(record?.events.length||0)===n;i++)await new Promise(r=>setTimeout(r,20));assert.equal(record?.events.length,n+1,role);console.log('Synthetic recorded role: '+role);};
+  const operate=async(frame,role,fn)=>{await frame.waitForSelector('#omf-learning-control select:not([hidden])');await selectLearningRole(frame,role,recording);const n=record?.events.length||0;await fn();if(['from','to'].includes(role.split(':')[0]))await waitForLearningCapture(frame,recording);for(let i=0;i<100&&(record?.events.length||0)===n;i++)await new Promise(r=>setTimeout(r,20));assert.equal(record?.events.length,n+1,role);console.log('Synthetic recorded role: '+role);};
   const opened=browser.waitForTarget(t=>t.url()===origin+'/shell');await operate(page,'inquiry',()=>page.click('#inquiry'));const popup=await(await opened).page();popup.on('pageerror',e=>console.log('Synthetic popup error: '+e.message));await popup.waitForSelector('iframe');
   let frame;for(let i=0;i<100&&!frame;i++){frame=popup.frames().find(f=>f.url()===extra+'/details');if(!frame)await new Promise(r=>setTimeout(r,20));}assert.ok(frame);
   await frame.waitForSelector('#omf-learning-control button');assert.equal(await frame.$eval('#omf-learning-control select',el=>el.hidden),true,'new origin is paused until local approval');

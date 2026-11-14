@@ -5,7 +5,7 @@ import {FinanceCollector} from '../models/Finance'
 import {CollectorInstallation} from '../models/FinanceCollectorSecurity'
 import {BankAccount,BankTemplate,BankJob,initializePaymentMatching} from '../models/FinancePaymentMatch'
 import {companyMembership,companyRole} from '../utils/calendarAccess'
-import {LEARNING_MODEL,LEARNING_RUNTIME,LEARNING_STATEMENT_CAPABILITY,stable,learningAssert,learningOrigin,learningPeriod,validateEvidence,validateRecipe,validateReplay,validateMissing} from '../../shared/finance-bank-learning.mjs'
+import {LEARNING_MODEL,LEARNING_RUNTIME,LEARNING_STATEMENT_CAPABILITY,LEARNING_LOGIN_CAPABILITY,LEARNING_LOGIN_STOP_CODES,stable,learningAssert,learningOrigin,learningPeriod,validateEvidence,validateRecipe,validateReplay,validateMissing} from '../../shared/finance-bank-learning.mjs'
 import {frozenCoverage} from '../../shared/finance-payment-match.mjs'
 import {yieldQueuedBalance} from './financeBankBalanceService'
 const hash=(v:any)=>createHash('sha256').update(typeof v==='string'?v:stable(v)).digest('hex')
@@ -15,7 +15,7 @@ const QUEUE_WAIT_MS=15*60000,MAX_WORKER_CLAIMS=3
 const testOptions=()=>({test:process.env.NODE_ENV==='test'})
 const view=(r:any,account:any=null)=>{
   const active=account?.learningConnector,selected=active?.sessionId===String(r._id)&&active.candidateHash===r.candidateHash
-  return {id:String(r._id),bankAccountId:String(r.bankAccountId),collectorId:String(r.collectorId),installationId:r.installationId,generation:r.generation,state:r.state==='enabled'&&!selected?'verified':r.state,selected,cancellable:!['enabled','cancelled'].includes(r.state),activeSelectionHash:active?.selectionHash||null,entryOrigin:r.entryOrigin,demonstrationPeriod:r.demonstrationPeriod,replayPeriod:r.replayPeriod||null,candidateHash:r.candidateHash||null,missing:r.missing,lastCode:r.lastCode||null,updatedAt:r.updatedAt,enabledAt:r.enabledAt||null,model:r.workerReceipt?.model||null}
+  return {teachLogin:r.teachLogin===true,id:String(r._id),bankAccountId:String(r.bankAccountId),collectorId:String(r.collectorId),installationId:r.installationId,generation:r.generation,state:r.state==='enabled'&&!selected?'verified':r.state,selected,cancellable:!['enabled','cancelled'].includes(r.state),activeSelectionHash:active?.selectionHash||null,entryOrigin:r.entryOrigin,demonstrationPeriod:r.demonstrationPeriod,replayPeriod:r.replayPeriod||null,candidateHash:r.candidateHash||null,missing:r.missing,lastCode:r.lastCode||null,updatedAt:r.updatedAt,enabledAt:r.enabledAt||null,model:r.workerReceipt?.model||null}
 }
 async function init(){await ready();await initializePaymentMatching();await Learning.init()}
 async function member(owner:string,company:any,write=false){await companyMembership(owner,String(company));if(write&&await companyRole(owner,String(company))==='viewer')fail(403,'この会社の閲覧権限では変更できません。')}
@@ -49,6 +49,7 @@ export async function learningList(owner:string,company:any){
 }
 export async function learningCreate(owner:string,company:any,body:any){
   await init();await member(owner,company,true)
+  if(body?.teachLogin!==undefined&&typeof body.teachLogin!=='boolean')fail(400,'Invalid login recording consent')
   if(body?.companyAccountConfirmed!==true)fail(400,'この口座を選択中の会社で利用することを確認してください。')
   learningPeriod(body.period);learningOrigin(body.entryOrigin,testOptions())
   const account:any=await BankAccount.findOne({_id:id(body.bankAccountId),ownerId:owner}).lean()
@@ -60,7 +61,7 @@ export async function learningCreate(owner:string,company:any,body:any){
   if(!frozen.headers?.length||(!frozen.mapping?.date&&!frozen.mapping?.dateYear))fail(400,'取引日を割り当てた明細テンプレートが必要です。')
   if(await BankJob.exists({ownerId:owner,bankAccountId:account._id,open:true,state:{$in:['running','verification_required']}}))fail(409,'口座の取得が終わってから記録してください。')
   try{
-    const row=await Learning.create({ownerId:owner,companyId:company,bankAccountId:account._id,collectorId:device._id,installationId:installation._id,generation:installation.generation,origin:installation.origin,entryOrigin:body.entryOrigin,template:frozen,connectionHash:hash(account.connection||null),demonstrationPeriod:body.period})
+    const row=await Learning.create({teachLogin:body.teachLogin===true,ownerId:owner,companyId:company,bankAccountId:account._id,collectorId:device._id,installationId:installation._id,generation:installation.generation,origin:installation.origin,entryOrigin:body.entryOrigin,template:frozen,connectionHash:hash(account.connection||null),demonstrationPeriod:body.period})
     return {session:view(row)}
   }catch(e:any){if(e.code===11000)fail(409,'この口座はすでに記録・開発中です。');throw e}
 }
@@ -160,12 +161,13 @@ export async function queueLearnedStatement(owner:string,accountId:string,body:a
   if(old){if(old.snapshot?.learned?.selectionHash===active.selectionHash&&stable(old.snapshot.coverage)===stable(period))return {job:{jobId:old.jobId,state:old.state,snapshotHash:old.snapshotHash},message:'この期間の取得はすでに予約されています。'};fail(409,'Finish the existing bank job first')}
   const snapshot:any={templateId:null,templateRevision:r.template.revision||0,headers:r.template.headers,mapping:r.template.mapping,amountSign:r.template.amountSign,transactionIdConfirmed:r.template.transactionIdConfirmed===true,parserVersion:r.template.parserVersion,currency:account.currency||'JPY',provider:account.connection?.provider||'learned',variant:account.connection?.variant||null,accountLabel:null,coverage:period,learned:{...active,entryOrigin:r.entryOrigin,candidate:r.candidate}}
   const snapshotHash=createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')
-  let job:any;try{job=await BankJob.create({ownerId:owner,bankAccountId:account._id,jobId:randomUUID(),kind:'retrieve',state:'queued',open:true,requestedAt:new Date(),snapshot,snapshotHash,lastMessage:'記録した手順で明細を取得します。接続したPCのChromeで本人がサインインしてください。'})}catch(e:any){if(e.code===11000)fail(409,'Bank job already queued');throw e}
+  let job:any;try{job=await BankJob.create({ownerId:owner,bankAccountId:account._id,jobId:randomUUID(),kind:'retrieve',state:'queued',open:true,requestedAt:new Date(),snapshot,snapshotHash,lastMessage:r.teachLogin?'接続したPCのダウンローダー設定画面で今回のログイン入力をしてください。追加認証はChromeで本人が操作します。':'記録した手順で明細を取得します。接続したPCのChromeで本人がサインインしてください。'})}catch(e:any){if(e.code===11000)fail(409,'Bank job already queued');throw e}
   return {job:{jobId:job.jobId,state:job.state,snapshotHash},message:job.lastMessage}
 }
 export function learnedClaimScope(device:any,body:any){
   const capable=Array.isArray(body?.capabilities)&&body.capabilities.includes(LEARNING_STATEMENT_CAPABILITY)
-  return capable?{$or:[{'snapshot.learned':{$exists:false}},{'snapshot.learned.runtime':LEARNING_RUNTIME,'snapshot.learned.collectorId':String(device._id)}]}:{'snapshot.learned':{$exists:false}}
+  const loginCapable=capable&&body.capabilities.includes(LEARNING_LOGIN_CAPABILITY)
+  return capable?{$or:[{'snapshot.learned':{$exists:false}},{'snapshot.learned.runtime':LEARNING_RUNTIME,'snapshot.learned.collectorId':String(device._id),...(!loginCapable?{'snapshot.learned.candidate.schema':{$ne:2}}:{})}]}:{'snapshot.learned':{$exists:false}}
 }
 export async function learnedClaimCurrent(job:any,account:any,device:any){
   if(!job.snapshot?.learned)return true
@@ -187,6 +189,7 @@ async function pcRow(context:any,key:string){const r:any=await Learning.findOne(
 export async function learningPcAction(context:any,key:string,action:string,body:any){
   await init();const r=await pcRow(context,key)
   if(action==='start'||action==='replay'){
+    if(r.teachLogin&&(body?.loginSchema!==2||(action==='start'&&body?.loginConsent!==true)))fail(409,'This login recording needs an updated downloader and explicit local consent')
     const source=action==='start'?'awaiting_pc':'candidate',target=action==='start'?'recording':'replaying'
     if(action==='replay'&&!r.replayPeriod)fail(409,'Choose a different replay period in OMF first')
     if(await BankJob.exists({ownerId:r.ownerId,bankAccountId:r.bankAccountId,open:true,state:{$in:['running','verification_required']}}))fail(409,'Bank collection is running')
@@ -215,6 +218,7 @@ export async function learningPcAction(context:any,key:string,action:string,body
   const acknowledged=acknowledgement(r);if(acknowledged)return acknowledged
   let filter:any={_id:r._id,pcClaimHash:r.pcClaimHash},update:any
   if(action==='evidence'){
+    if((body?.evidence?.schema===2)!==(r.teachLogin===true))fail(400,'Login recording consent changed')
     validateEvidence(body.evidence,testOptions());if(!body.evidence.origins.includes(r.entryOrigin))fail(400,'Entry origin missing')
     filter={...filter,evidenceHash:null,$or:[{state:'recording'},{state:'needs_demonstration',lastCode:'interrupted_pc_action'}]}
     update={evidence:body.evidence,evidenceHash:hash(body.evidence),state:'queued',queuedAt:new Date(),pcLeaseUntil:new Date(0),lastCode:null,missing:[]}
@@ -229,9 +233,9 @@ export async function learningPcAction(context:any,key:string,action:string,body
     filter={...filter,state:r.state,pcLeaseUntil:{$gt:new Date()}}
     if(action==='heartbeat')update={pcLeaseUntil:lease()}
     else if(action==='failed'){
-      const codes=['recorded-control-unavailable','recorded-control-changed','account-mismatch','date-input-mismatch','statement-period-mismatch','statement-header-changed','balance-unavailable','logout-unconfirmed','unsupported-date-control']
+      const codes=[...LEARNING_LOGIN_STOP_CODES,'recorded-control-unavailable','recorded-control-changed','account-mismatch','date-input-mismatch','statement-period-mismatch','statement-header-changed','balance-unavailable','logout-unconfirmed','unsupported-date-control']
       const role=['inquiry','account','from','to','export','balance','logout'].includes(body.role)?body.role:null
-      update={state:'needs_demonstration',lastCode:codes.includes(body.code)?body.code:'pc_action_failed',missing:body.code==='unsupported-date-control'?['runtime_extension_needed']:role?[role]:['restart_demonstration'],pcLeaseUntil:new Date(0)}
+      update={state:'needs_demonstration',lastCode:codes.includes(body.code)?body.code:'pc_action_failed',missing:body.code==='unsupported-login-sequence'?['manual_login_required']:body.code==='unsupported-date-control'?['runtime_extension_needed']:role?[role]:['restart_demonstration'],pcLeaseUntil:new Date(0)}
     }else fail(404,'Unknown PC action')
   }
   if((await Learning.updateOne(filter,{$set:update})).modifiedCount!==1){const duplicate=acknowledgement(await pcRow(context,key));if(duplicate)return duplicate;fail(409,'PC action changed')}

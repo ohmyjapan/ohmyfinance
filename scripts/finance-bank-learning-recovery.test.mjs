@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,readFile,link} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
+import {pathToFileURL} from 'node:url';
+import {stable,LEARNING_RUNTIME,LEARNING_ROLES} from '../shared/finance-bank-learning.mjs';
+import {LearningCredentialRequest} from '../collector/bank-learning-login.mjs';
+const learning=await import(process.env.OMF_LOGIN_TEST_LEARNING_MODULE?pathToFileURL(process.env.OMF_LOGIN_TEST_LEARNING_MODULE).href:'../collector/bank-learning.mjs'),sha=v=>createHash('sha256').update(stable(v)).digest('hex'),digest=v=>createHash('sha256').update(v).digest('hex');
+test('bound legacy alias preserves bytes, tolerates alias-before-manifest crash, refuses corruption and honors durable ACK',async()=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'omf-learned-alias-')),bound={ownerId:'a'.repeat(24),bankAccountId:'b'.repeat(24),origin:'https://omf.example.invalid'},jobId=randomUUID(),directory=path.join(root,'outbox','bank',bound.bankAccountId,jobId+'-learned'),bytes=Buffer.from('date,description,amount\r\n2026-11-01,Fixture,-1\r\n');await mkdir(directory,{recursive:true});await writeFile(path.join(directory,'statement.csv'),bytes);
+ const sessionId='c'.repeat(24),identity={installationId:'d'.repeat(32),generation:'e'.repeat(32)},candidate={},selection={schema:1,mode:'attended-statement',runtime:LEARNING_RUNTIME,sessionId,...identity,candidateHash:sha(candidate),evidenceHash:'f'.repeat(64)},snapshotHash='1'.repeat(64),manifest={...bound,jobId,snapshotHash,kind:'statement',sourceFormat:'csv',filename:'statement.csv',sha256:digest(bytes),bytes:bytes.length,learnedSelectionHash:sha(selection)};
+ await writeFile(path.join(directory,'manifest.json'),JSON.stringify(manifest));const filename=learning.learnedArtifactAlias(manifest);await link(path.join(directory,'statement.csv'),path.join(directory,filename));
+ await assert.rejects(learning.prepareLearnedUpload({directory,manifest:{...manifest,ownerId:'9'.repeat(24)}},bound,root),{message:'learned-artifact-binding-changed'});
+ await assert.rejects(learning.prepareLearnedUpload({directory,manifest:{...manifest,sha256:'0'.repeat(64)}},bound,root),{message:'learned-artifact-changed'});
+ const item={directory,manifest};await learning.prepareLearnedUpload(item,bound,root);assert.equal(item.manifest.filename,filename);assert.deepEqual(await readFile(path.join(directory,filename)),bytes);assert.deepEqual(await readFile(path.join(directory,'statement.csv')),bytes);assert.equal((await learning.prepareLearnedUpload(item,bound,root)).manifest.filename,filename);
+ await writeFile(path.join(directory,'manifest.json'),JSON.stringify({...item.manifest,acknowledgedAt:new Date().toISOString()}));await learning.learningStore(root,sessionId).update(()=>({binding:{sessionId,...bound,...identity,bankAccountId:bound.bankAccountId},evidenceHash:selection.evidenceHash,record:{complete:true}}));
+ // Binding uses the teaching session's five fields, not native job fields.
+ await learning.learningStore(root,sessionId).update(v=>({...v,binding:{sessionId,origin:bound.origin,...identity,bankAccountId:bound.bankAccountId}}));
+ let launches=0;const result=await learning.collectLearnedStatement(bound,{jobId,snapshotHash,snapshot:{learned:{...selection,selectionHash:sha(selection),candidate,entryOrigin:'https://bank.example.invalid'}}},root,async()=>{},{live:{mode:'protected',broker:{remote:{learningIdentity:identity}}},browser:()=>{launches++;throw Error('unexpected-bank-open');}});assert.equal(launches,0);assert.equal(result.items.length,0,'server-acknowledged retained bytes are not sent again');
+});
+test('local failure reporter carries executor cancel/timeout codes and preserves the one-shot attempt',async()=>{
+ for(const kind of ['cancel','timeout']){
+  const root=await mkdtemp(path.join(os.tmpdir(),'omf-login-failed-code-')),id='a'.repeat(24),bankAccountId='b'.repeat(24),origin='https://omf.example.invalid',bankOrigin='https://bank.example.invalid',identity={installationId:'c'.repeat(32),generation:'d'.repeat(32)},roles=['login-identifier','login-password','login-submit','login-success',...LEARNING_ROLES],events=roles.map((role,i)=>({id:'e'+i,document:i<3?'d0':'d1',frame:'f0',popup:'p0',origin:bankOrigin,role,tag:['login-identifier','login-password','from','to'].includes(role)?'input':'text',private:{selector:'#control'+i,framePath:[],type:role==='login-password'?'password':'text'}})),record={schema:2,origins:[bankOrigin],complete:true,truncated:false,events},evidence={...record,runtime:LEARNING_RUNTIME,events:events.map(({private:local,...e})=>e)},evidenceHash=sha(evidence),candidate={schema:2,runtime:LEARNING_RUNTIME,evidenceHash,steps:events.map(e=>({eventId:e.id,op:e.role}))};
+  await learning.learningStore(root,id).update(()=>({binding:{sessionId:id,origin,...identity,bankAccountId},record,evidenceHash}));const failed=[],remote={learningIdentity:identity,learning:async(route,body)=>{if(route.endsWith('/replay'))return {claim:'fixture',nonce:'fixture',session:{bankAccountId,entryOrigin:bankOrigin,template:{},...identity,evidenceHash,candidate,candidateHash:sha(candidate),replayPeriod:{from:'2026-11-01',to:'2026-11-02'}}};if(route.endsWith('/failed'))failed.push(body);return {accepted:true};}},live={abort:new AbortController(),broker:{remote}},request=new LearningCredentialRequest({timeout:20});
+  // Unit seam only: no bank operation is reached before the real local request rejects.
+  const page={goto:async()=>{},mainFrame:()=>({url:()=>bankOrigin,$$:async()=>[]})},browser={on(){},off(){}},code=kind==='cancel'?'local-login-input-cancelled':'local-login-input-timeout';
+  await assert.rejects(learning.runBankLearning({id,action:'replay',remote,root,live,origin,browser:async(a,b,c,d,fn)=>fn(page,browser),credentials:options=>{const p=request.request('protected',options,'request');if(kind==='cancel')queueMicrotask(()=>request.submit('protected',{id:'request',cancel:true}));return p;},test:true}),{message:code});assert.equal(failed.length,1);assert.equal(failed[0].code,code);assert.equal((await learning.learningStore(root,id).read()).loginReplayAttempt,sha(candidate));
+ }
+});

@@ -1,0 +1,22 @@
+import {selectLearningRole} from './finance-bank-learning-capture-ack.mjs';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import {mkdtemp} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+import {pathToFileURL} from 'node:url';
+import '../collector/puppeteer-frame-init.mjs';
+const {recordBankLearning}=await import(process.env.OMF_LOGIN_TEST_RECORDER?pathToFileURL(process.env.OMF_LOGIN_TEST_RECORDER).href:'../collector/bank-learning-recorder.mjs'),puppeteer=createRequire(new URL('../collector/package.json',import.meta.url))('rebrowser-puppeteer-core'),pause=ms=>new Promise(r=>setTimeout(r,ms));
+for(const kind of ['control','prefix','password-success','host-broadcast','statement-secret','manual-successor'])test('all owned compact feedback '+kind,async()=>{
+ let record,posts=0;const abort=new AbortController(),root=await mkdtemp(path.join(os.tmpdir(),'omf-frame-feedback-')),server=http.createServer((req,res)=>{if(req.method==='POST')posts++;res.setHeader('Content-Type','text/html');res.end(req.url==='/'?'<input id="numeric" type="number"><iframe src="/login"></iframe>':'<p id="manual">本人操作</p><form action="'+(kind==='control'?'https://unapproved.example.invalid/':'/signin')+'" method="POST"><input id="identifier"><input id="password" type="password"><button id="submit" type="button">Sign in</button></form>');});await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port,browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,userDataDir:path.join(root,'profile')});let pending;
+ try{const page=await browser.newPage();await page.goto(origin);pending=recordBankLearning(browser,page,{entryOrigin:origin,teachLogin:true,test:true,signal:abort.signal,timeout:15000,store:async value=>{record=structuredClone(value);}});void pending.catch(()=>{});await page.waitForSelector('#omf-learning-control select');const frame=page.frames().find(f=>f.parentFrame());await frame.waitForSelector('#omf-learning-control select');const choose=async role=>{const toggle=await frame.$('#omf-learning-control [data-learning-toggle]');if(await toggle.evaluate(e=>e.getAttribute('aria-expanded')==='false'))await toggle.click();await selectLearningRole(frame,role,pending);};
+  if(kind==='prefix'){await choose('login-identifier');await frame.click('#identifier');for(let n=0;n<100&&!record?.events.length;n++)await pause(20);assert.equal(record.events.length,1);}
+  if(kind==='manual-successor'){await choose('login-manual:other');await frame.click('#manual');for(let n=0;n<100&&!record?.events.length;n++)await pause(20);assert.equal(record.events.length,1);await frame.waitForFunction(()=>document.querySelector('#omf-learning-control select')?.value==='');}
+  const role=kind==='control'?'login-submit':kind==='password-success'?'login-success':kind==='statement-secret'?'balance':'login-identifier';await choose(role);
+  if(kind==='host-broadcast'){await selectLearningRole(page,'login-identifier',pending);await page.click('#numeric');}else await frame.click(kind==='control'?'#submit':kind==='password-success'?'#manual':kind==='statement-secret'?'#password':'#identifier');
+  await frame.waitForFunction(()=>{const e=document.querySelector('#omf-learning-control [data-learning-feedback]');return e.textContent.includes('本人操作')||e.textContent.includes('認証情報は記録できません');});
+  assert.equal(await frame.$eval('#omf-learning-control [data-learning-feedback]',e=>{const r=e.getBoundingClientRect();return e.getClientRects().length>0&&r.top>=0&&r.bottom<=innerHeight;}),true,'actual refusal is within the unchanged150px iframe viewport');assert.equal(await frame.$eval('#omf-learning-control [data-learning-toggle]',e=>e.getAttribute('aria-expanded')),'true');assert.equal(posts,0);assert.equal(record?.events.length||0,['prefix','manual-successor'].includes(kind)?1:0);if(kind==='manual-successor')assert.equal(await frame.$eval('#omf-learning-control small',e=>e.textContent.includes('本人操作より前')),true);console.log('COMPACT-REFUSAL '+JSON.stringify({kind,visible:true,posts}));abort.abort();await assert.rejects(pending,/demonstration-cancelled/);
+ }finally{abort.abort();if(pending)await pending.catch(()=>{});await browser.close();await new Promise(r=>{server.closeAllConnections();server.close(r);});}
+});

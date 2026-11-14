@@ -11,17 +11,20 @@
       <label class="text-sm">明細の列・金額の割り当て<select v-model="form.templateId" class="input mt-1 w-full" required><option value="">保存済みテンプレート</option><option v-for="t in data.templates" :key="t.id" :value="t.id">{{ t.name }}</option></select></label>
       <label class="text-sm">実演の開始日<input v-model="form.period.from" class="input mt-1 w-full" type="date" required></label><label class="text-sm">実演の終了日<input v-model="form.period.to" class="input mt-1 w-full" type="date" required></label>
       <label class="flex items-start gap-2 text-sm sm:col-span-2"><input v-model="form.companyAccountConfirmed" type="checkbox" required>この口座を現在選択している会社で利用し、照会・明細出力だけを記録することを確認しました。</label>
+      <label class="flex items-start gap-2 text-sm sm:col-span-2"><input v-model="form.teachLogin" type="checkbox">ログイン前から操作を記録することに同意します。入力欄・送信・ログイン完了の表示を記録し、値を含まない手順だけをOhMyCodeに送ります。IDとパスワードは保存せず、再実行時にPCの設定画面で入力します。認証コード・電子証明書は本人が操作します。</label>
       <button class="btn btn-primary sm:col-span-2" :disabled="busy">この銀行の手順を覚える</button>
     </form>
     <article v-for="s in data.sessions" :key="s.id" class="card space-y-3 p-4">
-      <div class="flex flex-wrap justify-between gap-2"><strong>{{ accountName(s.bankAccountId) }}</strong><span class="text-sm">{{ learningStatusText(s.state) }}</span></div>
+      <div class="flex flex-wrap justify-between gap-2"><strong>{{ accountName(s.bankAccountId) }}</strong><span class="text-sm">{{ s.lastCode==='unsupported-login-sequence'?'本人操作・手動CSVをご利用ください':learningStatusText(s.state) }}</span></div>
       <p class="break-all text-sm text-gray-500">{{ s.entryOrigin }} · 実演 {{ s.demonstrationPeriod.from }}〜{{ s.demonstrationPeriod.to }}</p>
+      <p v-if="s.teachLogin" class="text-sm">ログイン手順も確認します。ID・パスワードはこのPCの設定画面で毎回入力します。追加認証は本人操作です。無人ログインにはなりません。</p>
       <p v-if="s.candidateHash" class="break-all text-xs text-gray-500">取得手順の版 {{ s.candidateHash.slice(0,16) }} · {{ s.model }}</p>
       <p v-if="s.state==='awaiting_pc'" class="text-sm">ダウンローダーの設定画面 →「銀行の照会手順を覚える」→ 更新 →「このPCで記録を開始」を押してください。</p>
       <form v-if="s.state==='candidate'" class="flex flex-wrap items-end gap-3" @submit.prevent="run(()=>requestReplay(s))"><label class="text-sm">確認の開始日<input v-model="replay.from" type="date" class="input block" required></label><label class="text-sm">確認の終了日<input v-model="replay.to" type="date" class="input block" required></label><button class="btn btn-secondary" :disabled="busy">この期間でPCの確認を準備</button><p v-if="s.replayPeriod" class="w-full text-sm">PCの設定画面で「このPCで確認」を押してください。</p></form>
-      <div v-if="s.state==='verified'" class="space-y-3 text-sm"><p class="text-emerald-700 dark:text-emerald-300">別の期間でCSV・口座・残高・ログアウトを確認しました。</p><label class="flex items-start gap-2"><input v-model="attendedConfirmed" type="checkbox">この手順で明細を取得するたびに、接続したPCのChromeで本人がサインインすることを確認しました。</label><button class="btn btn-secondary" :disabled="busy||!attendedConfirmed" @click="run(()=>enable(s))">この手順を手動の明細取得に使う</button><p class="text-gray-500">毎日の自動取得と1時間ごとの残高確認は、現在の接続設定を使います。</p></div>
+      <div v-if="s.state==='verified'" class="space-y-3 text-sm"><p class="text-emerald-700 dark:text-emerald-300">別の期間でCSV・口座・残高・ログアウトを確認しました。</p><label class="flex items-start gap-2"><input v-model="attendedConfirmed" type="checkbox">{{ s.teachLogin?'取得するたびに、このPCのダウンローダー設定画面でログイン入力し、追加認証はChromeで本人が操作することを確認しました。':'この手順で明細を取得するたびに、接続したPCのChromeで本人がサインインすることを確認しました。' }}</label><button class="btn btn-secondary" :disabled="busy||!attendedConfirmed" @click="run(()=>enable(s))">この手順を手動の明細取得に使う</button><p class="text-gray-500">毎日の自動取得と1時間ごとの残高確認は、現在の接続設定を使います。</p></div>
       <div v-if="s.selected" class="space-y-3 text-sm"><p>手動の明細取得に選択中です。取得を依頼すると、このPCのChromeが開きます。</p><form class="flex flex-wrap items-end gap-3" @submit.prevent="run(()=>collect(s))"><label>開始日<input v-model="collection.from" class="input block" type="date" required></label><label>終了日<input v-model="collection.to" class="input block" type="date" required></label><button class="btn btn-primary" :disabled="busy">この期間の明細を取得</button></form><NuxtLink to="/intake/payments" class="inline-block text-primary-main dark:text-primary-light">取得の結果と取り込まれた明細を確認 →</NuxtLink><button class="block text-gray-500" :disabled="busy" @click="run(()=>disable(s))">記録した手順の選択を解除</button></div>
-      <p v-if="s.missing?.length" class="text-sm">{{ missingText(s.missing) }}</p>
+      <p v-if="learningFailureText(s.lastCode)" role="status" class="text-sm">{{ learningFailureText(s.lastCode) }}</p>
+      <p v-if="(s.state==='needs_demonstration'&&s.missing?.includes('restart_demonstration'))||(!learningFailureText(s.lastCode)&&s.missing?.length)" class="text-sm">{{ missingText(s.missing) }}</p>
       <button v-if="s.state==='failed'&&s.lastCode==='worker_failed'" class="btn btn-secondary" :disabled="busy" @click="run(()=>retryDevelopment(s))">開発だけを再試行（銀行にはログインしません）</button>
       <button v-if="s.cancellable" class="text-sm text-gray-500" :disabled="busy" @click="run(()=>cancel(s))">この依頼を取り消す</button>
     </article>
@@ -30,9 +33,9 @@
 <script setup lang="ts">
 import {computed,onMounted,onUnmounted,reactive,ref} from 'vue'
 import {useUserStore} from '~/stores/user'
-import {learningStatusText} from '~/shared/finance-bank-learning.mjs'
+import {learningStatusText,learningFailureText} from '~/shared/finance-bank-learning.mjs'
 const user=useUserStore(),busy=ref(false),error=ref(''),message=ref(''),attendedConfirmed=ref(false),data=reactive<any>({accounts:[],templates:[],pcs:[],sessions:[]})
-const form=reactive({bankAccountId:'',installationId:'',entryOrigin:'',templateId:'',period:{from:'',to:''},companyAccountConfirmed:false}),replay=reactive({from:'',to:''})
+const form=reactive({bankAccountId:'',installationId:'',entryOrigin:'',templateId:'',period:{from:'',to:''},companyAccountConfirmed:false,teachLogin:false}),replay=reactive({from:'',to:''})
 const collection=reactive({from:'',to:''})
 const eligiblePcs=computed(()=>data.pcs.filter((p:any)=>p.bankAccountIds.includes(form.bankAccountId)))
 const api=(route:string,body?:any)=>$fetch<any>('/api/finance-bank-learning/'+route,{method:body?'POST':'GET',headers:user.authHeader,...(body?{body}:{})})
@@ -47,6 +50,7 @@ async function disable(s:any){await api(s.id+'/disable',{expectedSelectionHash:s
 async function collect(s:any){const result=await api(s.id+'/collect',{period:{...collection},expectedSelectionHash:s.activeSelectionHash});message.value=result.message;await refresh()}
 const accountName=(id:string)=>data.accounts.find((a:any)=>a.id===id)?.name||'銀行口座'
 const missingText=(missing:string[])=>{
+  if(missing.includes('manual_login_required'))return learningFailureText('unsupported-login-sequence')
   if(missing.includes('runtime_extension_needed'))return 'この画面の操作に対応するダウンローダーの更新が必要です。'
   if(missing.includes('worker_unavailable'))return '取得手順を作成できませんでした。「開発だけを再試行」を押してください。銀行での実演をやり直す必要はありません。'
   const labels:Record<string,string>={inquiry:'照会画面への移動',account:'対象口座',from:'開始日',to:'終了日',export:'CSVの出力',balance:'残高の表示',logout:'ログアウト'}

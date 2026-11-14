@@ -1,3 +1,4 @@
+import {selectLearningRole,waitForLearningCapture} from './finance-bank-learning-capture-ack.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -40,8 +41,8 @@ test('real Chrome: record a previously unknown synthetic portal; replay with fre
   const recording=recordBankLearning(browser,page,{entryOrigin:origin,test:true,timeout:30000,store:async value=>{record=structuredClone(value);}});
   void recording.catch(e=>console.log('Synthetic recorder outcome: '+e.message)); // A failed action still closes Chrome without an unhandled recorder rejection.
   const operate=async(role,fn)=>{
-    await page.waitForSelector('#omf-learning-control select');await page.select('#omf-learning-control select',role);
-    const count=record?.events.length||0;await fn();
+    await page.waitForSelector('#omf-learning-control select');await selectLearningRole(page,role,recording);
+    const count=record?.events.length||0;await fn();if(['from','to'].includes(role.split(':')[0]))await waitForLearningCapture(page,recording);
     for(let i=0;i<100&&(record?.events.length||0)===count;i++)await new Promise(resolve=>setTimeout(resolve,20));
     if(record?.events.length!==count+1)console.log('Synthetic role diagnostics: '+JSON.stringify(await page.evaluate(()=>({role:document.querySelector('#omf-learning-control select')?.value,status:document.querySelector('#omf-learning-control small')?.textContent,bindings:Object.keys(window).filter(k=>k.includes('__omfLearn')).map(k=>[k,typeof window[k]])}))));
     assert.equal(record?.events.length,count+1,'recorded '+role);
