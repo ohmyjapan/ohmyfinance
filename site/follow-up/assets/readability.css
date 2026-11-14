@@ -26,9 +26,9 @@ nav .nav-number { font-size:12px; padding-top:0; }
 .topic-screen, .review-screen { display:block; max-width:840px; margin:auto; }
 .state-badge { font-size:13px; }
 .topic-intro { font-size:15px; margin-bottom:28px; }
-.points { gap:0; border-top:1px solid var(--line); }
-.point { grid-template-columns:30px minmax(0,1fr); gap:16px; padding:20px 0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; }
-.point-index { font-size:13px; padding-top:5px; font-variant-numeric:tabular-nums; }
+.points { gap:14px; border-top:0; }
+.point { grid-template-columns:48px minmax(0,1fr); gap:20px; padding:22px 24px; border:1px solid #42483c; border-left:3px solid #b98b6c; border-radius:8px; background:#1e211c; }
+.point-index { display:flex; align-items:center; justify-content:center; width:48px; height:48px; padding:0; border:1px solid #81634c; border-radius:7px; background:#332c23; color:#f1c9aa; font-family:OMFMincho,serif; font-size:23px; font-weight:600; line-height:1; letter-spacing:.02em; font-variant-numeric:tabular-nums; }
 .point p { font-size:20px; line-height:1.95; word-break:normal; word-break:auto-phrase; }
 .topic-question { font-size:16px; line-height:1.95; border:0; padding:0; margin:26px 0; }
 legend { font-size:14px; margin-bottom:12px; }
@@ -82,8 +82,9 @@ textarea { min-height:96px; }
   .main-content { padding:26px 22px 30px; }
   .topic-content h1 { font-size:29px; line-height:1.65; margin:16px 0 24px; }
   .topic-intro { font-size:14px; }
-  .point { grid-template-columns:25px minmax(0,1fr); gap:12px; padding:18px 0; }
-  .point-index { font-size:12px; padding-top:4px; }
+  .points { gap:12px; }
+  .point { grid-template-columns:36px minmax(0,1fr); gap:12px; padding:18px 14px; }
+  .point-index { width:36px; height:36px; font-size:19px; }
   .point p { font-size:18px; line-height:1.95; }
   .topic-question { font-size:16px; margin:24px 0; }
   .decision-options { grid-template-columns:1fr; }
@@ -101,6 +102,7 @@ textarea { min-height:96px; }
   .toast { left:18px; right:18px; top:82px; bottom:auto; }
 }
 @media print {
-  .point, .points { border:0; }
+  .point, .points { border:0; background:transparent; }
+  .point-index { color:#111; background:transparent; border-color:#999; }
   .review-body { color:#111; }
 }
