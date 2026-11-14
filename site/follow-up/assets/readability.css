@@ -1,0 +1,106 @@
+/* A full-width reading layout. The guide stays inside the brand portrait. */
+:root { --bg:#171816; --surface:#20221e; --ink:#f4f1e9; --muted:#b2b4a9; --line:#3b4037; --accent:#e6b296; --sage:#bdcba9; }
+html { scroll-padding-top:94px; }
+body { font-size:16px; }
+button { border-radius:6px; padding:12px 18px; }
+header { position:sticky; top:0; z-index:5; min-height:76px; padding:16px 32px; background:var(--bg); }
+.brand { display:inline-flex; align-items:center; gap:12px; font-size:23px; white-space:nowrap; }
+.brand::before { content:''; flex:none; width:40px; height:40px; border:1px solid #60604d; border-radius:50%; background:#2c2a23 url('host.png') no-repeat -80px 0 / 320px 160px; }
+.header-caption, header #logout { font-size:13px; }
+.quiet { font-size:14px; }
+.eyebrow { font-size:12px; letter-spacing:.08em; }
+h1 { font-size:clamp(30px,3vw,40px); line-height:1.6; margin:18px 0 26px; word-break:normal; word-break:auto-phrase; overflow-wrap:break-word; }
+.login-portrait, .host-portrait { display:none; }
+.login-screen { display:block; max-width:680px; margin:72px auto 110px; padding:0 30px; }
+#login-form > label, .status { font-size:14px; }
+.admin-choice { font-size:13px; }
+.workspace { max-width:1480px; grid-template-columns:238px minmax(0,1fr); padding-bottom:0; }
+.outline { top:76px; display:flex; flex-direction:column; height:calc(100dvh - 94px); min-height:0; overflow:hidden; padding:28px 18px 18px; }
+.progress-label { flex:none; font-size:13px; margin:10px 0; }
+.progress-track { flex:none; height:3px; margin:0 0 20px; }
+nav { align-content:start; min-height:0; overflow-y:auto; padding-right:3px; scrollbar-color:#626956 transparent; scrollbar-width:thin; }
+nav button { width:100%; grid-template-columns:23px minmax(0,1fr) 12px; border-radius:3px; padding:10px 9px; font-size:13px; }
+nav .nav-number { font-size:12px; padding-top:0; }
+.review-link { flex:none; margin-top:16px; font-size:13px; padding:15px 0 0; }
+.main-content { padding:38px 48px 40px; }
+.topic-screen, .review-screen { display:block; max-width:840px; margin:auto; }
+.state-badge { font-size:13px; }
+.topic-intro { font-size:15px; margin-bottom:28px; }
+.points { gap:0; border-top:1px solid var(--line); }
+.point { grid-template-columns:30px minmax(0,1fr); gap:16px; padding:20px 0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; }
+.point-index { font-size:13px; padding-top:5px; font-variant-numeric:tabular-nums; }
+.point p { font-size:20px; line-height:1.95; word-break:normal; word-break:auto-phrase; }
+.topic-question { font-size:16px; line-height:1.95; border:0; padding:0; margin:26px 0; }
+legend { font-size:14px; margin-bottom:12px; }
+.decision-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }
+.decision-options label { flex:none; min-width:0; }
+.decision-options input { opacity:1; left:16px; top:50%; transform:translateY(-50%); margin:0; width:18px; height:18px; }
+.decision-options label span { justify-content:flex-start; min-height:64px; padding:13px 12px 13px 44px; border-color:#646958; border-radius:6px; font-size:14px; line-height:1.7; white-space:normal; }
+.decision-options label i { display:none; }
+.field-label { font-size:14px; color:#d3d3c7; }
+.field-label small { font-size:12px; }
+input:not([type=radio]):not([type=checkbox]), textarea, select { border-color:#626956; border-radius:6px; }
+textarea { min-height:96px; }
+.topic-actions { padding-top:24px; }
+.review-screen .intro, .review-body { font-size:16px; line-height:1.95; }
+.review-entry { border-radius:6px; padding:18px 20px; }
+.review-entry > summary { gap:14px; }
+.review-entry > summary span:first-child { flex:none; font-size:12px; }
+.review-entry > summary strong { font-size:16px; }
+.review-entry > summary .summary-status { flex:none; font-size:12px; }
+.review-body dt, .submission-history { font-size:13px; }
+.edit-link, .attest, .notice { font-size:14px; }
+.attest input { width:18px; height:18px; margin-top:5px; }
+.footnote { font-size:12px; }
+.save-bar { position:static; gap:18px; padding:18px 30px; background:#1e221b; border-color:#515947; font-size:13px; }
+.save-bar button { font-size:13px; }
+.toast { right:24px; top:94px; bottom:auto; border-radius:6px; pointer-events:none; }
+@media(max-width:1100px) {
+  .workspace { grid-template-columns:208px minmax(0,1fr); }
+  .outline { padding-inline:12px; }
+  .main-content { padding:32px 30px 40px; }
+  .decision-options { grid-template-columns:1fr; }
+  .decision-options label span { min-height:56px; }
+}
+@media(max-width:760px) {
+  html { scroll-padding-top:82px; }
+  header { min-height:68px; padding:13px 18px; gap:12px; }
+  .brand { font-size:20px; gap:9px; }
+  .brand::before { width:34px; height:34px; background-size:272px 136px; background-position:-68px 0; }
+  .header-caption { display:none; }
+  header #logout { font-size:13px; }
+  .login-screen { padding:0 22px; margin:44px auto 90px; }
+  .login-copy h1 { font-size:32px; }
+  .login-copy > p:not(.eyebrow) { font-size:15px; }
+  .workspace { padding-bottom:0; }
+  .outline { position:static; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px 14px; height:auto; padding:14px 18px; overflow:visible; }
+  .progress-label { grid-column:1; grid-row:1; margin:0; font-size:12px; }
+  .progress-track { grid-column:1 / -1; grid-row:2; margin:0; }
+  nav { grid-column:1 / -1; grid-row:3; display:flex; gap:8px; overflow:auto; padding:3px 0; }
+  nav button { min-width:156px; width:156px; padding:9px; font-size:12px; }
+  .review-link { position:static; grid-column:2; grid-row:1; width:auto; margin:0; padding:0; border:0; font-size:12px; }
+  .main-content { padding:26px 22px 30px; }
+  .topic-content h1 { font-size:29px; line-height:1.65; margin:16px 0 24px; }
+  .topic-intro { font-size:14px; }
+  .point { grid-template-columns:25px minmax(0,1fr); gap:12px; padding:18px 0; }
+  .point-index { font-size:12px; padding-top:4px; }
+  .point p { font-size:18px; line-height:1.95; }
+  .topic-question { font-size:16px; margin:24px 0; }
+  .decision-options { grid-template-columns:1fr; }
+  .decision-options label span { min-height:58px; font-size:15px; }
+  .review-screen h1 { font-size:30px; }
+  .review-entry { padding:16px 14px; }
+  .review-entry > summary { gap:10px; }
+  .review-entry > summary strong { min-width:180px; font-size:16px; }
+  .save-bar { padding:10px 18px; gap:5px; }
+  #save-status { font-size:12px; }
+  .save-bar > div { width:100%; justify-content:space-between; gap:12px; }
+  .save-bar button { font-size:12px; padding:3px 0; }
+  .topic-actions { gap:16px; }
+  .topic-actions button { font-size:14px; }
+  .toast { left:18px; right:18px; top:82px; bottom:auto; }
+}
+@media print {
+  .point, .points { border:0; }
+  .review-body { color:#111; }
+}
