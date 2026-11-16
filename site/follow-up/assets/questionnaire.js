@@ -2,9 +2,10 @@
  'use strict';
  const $=id=>document.getElementById(id),slug=location.pathname.split('/')[2],base='/follow-up/'+encodeURIComponent(slug)+'/api/';
  const labels={unanswered:'未回答',confirm:'この内容で確認',change:'修正・追加の希望',discuss:'相談して決めたい'};
- let state=null,index=0,review=false,dirty=false,version=0,timer=null,saving=null,conflict=false,toastTimer,pendingSave=null,recoveryDraft=null;
+ let state=null,index=0,review=false,dirty=false,version=0,timer=null,saving=null,conflict=false,toastTimer,pendingSave=null,recoveryDraft=null,sheetAnimation=null,sheetTurn=0;
  const node=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e};
  const editing=()=>state?.role==='customer';
+ function resetSheet(){sheetTurn++;sheetAnimation?.cancel();sheetAnimation=null;$('topic-screen').querySelector('.topic-content').inert=false;$('next').disabled=false}
  function notify(text){$('notice').textContent=text;$('notice').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('notice').hidden=true,7000)}
  async function api(path,body){const response=await fetch(base+path,{method:body===undefined?'GET':'POST',credentials:'same-origin',cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let data;try{data=await response.json()}catch{throw Error('通信を確認してください。入力はこの画面に残っています。')}if(!response.ok)throw Object.assign(new Error(data.error||'保存できませんでした。'),{status:response.status});return data}
  function setSave(text,error=false){$('save-status').textContent=text;$('save-status').classList.toggle('error',error)}
@@ -25,36 +26,45 @@
   topics.forEach((t,i)=>{const b=node('button'),n=node('span',String(i+1).padStart(2,'0'),'nav-number'),title=node('span',t.shortTitle||t.title),mark=node('span',answer(t).status==='confirm'?'✓':answer(t).status==='unanswered'?'':'•','nav-state');b.append(n,title,mark);b.classList.toggle('active',!review&&index===i);b.setAttribute('aria-current',!review&&index===i?'step':'false');b.onclick=()=>openTopic(i);$('topic-nav').append(b)})
  }
  function renderTopic(){
-  const topic=state.document.topics[index],a=answer();$('topic-number').textContent=String(index+1).padStart(2,'0')+' / '+state.document.topics.length;$('topic-status').textContent=labels[a.status];$('topic-title').textContent=topic.title;$('topic-intro').textContent=topic.intro||'';$('topic-intro').hidden=!topic.intro;$('topic-question').textContent=topic.question;
+  const topic=state.document.topics[index],a=answer();$('topic-number').textContent=String(index+1).padStart(2,'0');$('topic-total').textContent='/ '+state.document.topics.length+' 項目';$('topic-status').textContent=labels[a.status];$('topic-title').textContent=topic.title;$('topic-intro').textContent=topic.intro||'';$('topic-intro').hidden=!topic.intro;$('topic-question').textContent=topic.question;
   $('points').replaceChildren();topic.lines.forEach((text,i)=>{const p=node('div',undefined,'point');p.append(node('span',String(i+1).padStart(2,'0'),'point-index'),node('p',text));$('points').append(p)});
   for(const radio of document.querySelectorAll('[name=decision]')){radio.checked=radio.value===a.status;radio.disabled=!editing()}
-  $('comment').value=a.comment;$('comment').disabled=!editing();$('topic-fields').replaceChildren();
+  $('comment').value=a.comment;$('comment').disabled=!editing();$('comment-area').open=Boolean(a.comment)||['change','discuss'].includes(a.status);$('topic-fields').replaceChildren();
   for(const f of topic.fields||[]){const label=node('label',f.label,'field-label');if(f.hint)label.append(node('small',f.hint));let input;
    if(f.options){input=node('select');input.append(new Option('選択してください',''));for(const option of f.options)input.append(new Option(option,option))}
    else if(f.multiline){input=node('textarea');input.rows=3;input.maxLength=2000}
    else{input=node('input');input.type=f.type==='date'?'date':'text';input.maxLength=2000}
    input.id='field-'+f.id;input.value=a.fields[f.id]||'';input.disabled=!editing();input.addEventListener('input',()=>{const next=answer();next.fields={...next.fields,[f.id]:input.value};state.response.answers[topic.id]=next;changed()});label.append(input);$('topic-fields').append(label)
   }
-  $('previous').disabled=index===0;$('next').textContent=index===state.document.topics.length-1?'回答をまとめて確認 →':'保存して次へ →';renderNav();
+  $('previous').disabled=index===0;$('next').textContent=index===state.document.topics.length-1?'回答をまとめて確認 →':'保存して切り取る →';renderNav();
  }
- function openTopic(i){index=i;review=false;$('topic-screen').hidden=false;$('review-screen').hidden=true;renderTopic();window.scrollTo({top:0,behavior:'auto'})}
+ function openTopic(i){resetSheet();index=i;review=false;$('topic-screen').hidden=false;$('review-screen').hidden=true;renderTopic();window.scrollTo({top:0,behavior:'auto'})}
  function reviewSummary(){
   $('review-summary').replaceChildren();state.document.topics.forEach((t,i)=>{const a=answer(t),entry=node('details',undefined,'review-entry'),summary=node('summary'),status=node('span',labels[a.status],'summary-status'+(a.status==='unanswered'?' unanswered':''));summary.append(node('span',String(i+1).padStart(2,'0')),node('strong',t.title),status);entry.append(summary);
    const body=node('div',undefined,'review-body');body.append(node('p',t.lines.join('\n')));const dl=node('dl');for(const f of t.fields||[])if(a.fields[f.id])dl.append(node('dt',f.label),node('dd',a.fields[f.id]));if(a.comment)dl.append(node('dt','補足・ご希望'),node('dd',a.comment));body.append(dl);const edit=node('button','この項目を開く →','edit-link');edit.onclick=()=>openTopic(i);body.append(edit);entry.append(body);$('review-summary').append(entry)
   });
   $('submission-history').textContent=state.submissions.length?'送信済み：'+state.submissions.map(s=>new Date(s.submitted_at).toLocaleString('ja-JP')+'（回答版 '+s.response_revision+'）').join('\n'):'まだ送信していません。入力内容は途中保存されています。';
  }
- function openReview(){review=true;$('topic-screen').hidden=true;$('review-screen').hidden=false;for(const [id,key]of [['company','company'],['respondent-name','name'],['email','email'],['position','position']]){$(id).value=state.response.respondent[key]||'';$(id).disabled=!editing()}$('extra').value=state.response.extra;$('extra').disabled=!editing();$('submit-area').hidden=!editing();$('admin-notice').hidden=editing();reviewSummary();renderNav();window.scrollTo({top:0,behavior:'auto'})}
+ function openReview(){resetSheet();review=true;$('topic-screen').hidden=true;$('review-screen').hidden=false;for(const [id,key]of [['company','company'],['respondent-name','name'],['email','email'],['position','position']]){$(id).value=state.response.respondent[key]||'';$(id).disabled=!editing()}$('extra').value=state.response.extra;$('extra').disabled=!editing();$('submit-area').hidden=!editing();$('admin-notice').hidden=editing();reviewSummary();renderNav();window.scrollTo({top:0,behavior:'auto'})}
  function loaded(data){state=data;dirty=false;version=0;conflict=false;pendingSave=null;$('workspace').inert=false;$('login-screen').hidden=true;$('workspace').hidden=false;$('save-bar').hidden=false;$('logout').hidden=false;$('retry-save').hidden=true;$('definition-notice').hidden=!data.needsReconfirmation;$('recovery-notice').hidden=!recoveryDraft||!editing();setSave(editing()?'✓ サーバーに保存済み':'管理者として閲覧しています');if(editing())openTopic(index);else openReview();if(data.needsReconfirmation&&editing())changed()}
- function clearPrivateView(){for(const e of $('workspace').querySelectorAll('input,textarea,select')){if(e.type==='radio'||e.type==='checkbox')e.checked=false;else e.value=''}for(const id of ['topic-title','topic-intro','topic-question','points','topic-fields','topic-nav','review-summary','submission-history'])$(id).replaceChildren()}
+ function clearPrivateView(){resetSheet();for(const e of $('workspace').querySelectorAll('input,textarea,select')){if(e.type==='radio'||e.type==='checkbox')e.checked=false;else e.value=''}for(const id of ['topic-title','topic-intro','topic-question','points','topic-fields','topic-nav','review-summary','submission-history'])$(id).replaceChildren()}
  $('login-form').onsubmit=async event=>{event.preventDefault();$('login-button').disabled=true;$('login-status').classList.remove('error');$('login-status').textContent='確認しています…';try{await api('login',{password:$('password').value,role:$('admin-login').checked?'admin':'customer'});$('password').value='';loaded(await api('state'))}catch(error){$('login-status').textContent=error.message;$('login-status').classList.add('error')}finally{$('login-button').disabled=false}};
  $('logout').onclick=async()=>{try{try{await save()}catch{if(state&&dirty)recoveryDraft=structuredClone(draft())}await api('logout',{});clearTimeout(timer);state=null;dirty=false;pendingSave=null;conflict=false;clearPrivateView();$('workspace').hidden=true;$('save-bar').hidden=true;$('logout').hidden=true;$('recovery-notice').hidden=true;$('login-screen').hidden=false;$('login-status').textContent=recoveryDraft?'退出しました。未保存の入力は、再ログイン後に手元へ保存できます。この画面を閉じずに再開してください。':'退出しました。パスワードで再開できます。'}catch(error){notify(error.message)}};
- for(const radio of document.querySelectorAll('[name=decision]'))radio.onchange=()=>{editAnswer('status',radio.value);$('topic-status').textContent=labels[radio.value];renderNav()};
+ for(const radio of document.querySelectorAll('[name=decision]'))radio.onchange=()=>{editAnswer('status',radio.value);$('topic-status').textContent=labels[radio.value];$('comment-area').open||=radio.value!=='confirm';renderNav()};
  $('comment').oninput=()=>editAnswer('comment',$('comment').value);
  for(const [id,key]of [['company','company'],['respondent-name','name'],['email','email'],['position','position']])$(id).oninput=()=>{state.response.respondent[key]=$(id).value;changed()};
  $('extra').oninput=()=>{state.response.extra=$('extra').value;changed()};
  $('previous').onclick=()=>openTopic(Math.max(0,index-1));
- $('next').onclick=async()=>{try{await save();if(index===state.document.topics.length-1)openReview();else openTopic(index+1)}catch(error){notify(error.message)}};
+ $('next').onclick=async()=>{
+  const session=state,turn=sheetTurn,from=index;$('next').disabled=true;
+  try{
+   await save();if(state!==session||sheetTurn!==turn)return;
+   const paper=$('topic-screen').querySelector('.topic-content');paper.inert=true;
+   sheetAnimation=paper.animate([{transform:'translate(0,0) rotate(0deg)',opacity:1},{transform:'translate(12px,8px) rotate(-1deg)',opacity:1,offset:.25},{transform:'translate(70px,85px) rotate(5deg)',opacity:0}],{duration:matchMedia('(prefers-reduced-motion: reduce)').matches?0:320,easing:'cubic-bezier(.35,0,.8,.45)'});
+   await sheetAnimation.finished.catch(()=>{});if(state!==session||sheetTurn!==turn)return;
+   if(from===state.document.topics.length-1)openReview();else openTopic(from+1);
+  }catch(error){notify(error.message)}finally{if(sheetTurn===turn){sheetAnimation=null;$('topic-screen').querySelector('.topic-content').inert=false;$('next').disabled=false}}
+ };
  for(const id of ['review-open','go-review'])$(id).onclick=()=>{openReview();save().catch(()=>{})};
  $('retry-save').onclick=()=>save().then(()=>notify('保存しました。')).catch(error=>notify(error.message));
  function download(text,name,type='text/plain;charset=utf-8'){const url=URL.createObjectURL(new Blob([text],{type})),a=node('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
