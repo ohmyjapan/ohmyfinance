@@ -14,8 +14,8 @@
 .calendar-sheet .state-badge { color:#536978; font-size:13px; text-align:right; }
 .calendar-sheet h1 { margin:0 0 24px; font-size:28px; line-height:1.6; color:#182934; }
 .calendar-sheet .topic-intro { color:#55636d; font-size:14px; }
-.card-art { float:right; width:112px; height:112px; margin:0 0 16px 20px; }
-.card-art svg { display:block; width:100%; height:100%; }
+.card-art { float:right; width:160px; height:160px; margin:0 0 18px 22px; }
+.card-art img { display:block; width:100%; height:100%; object-fit:contain; }
 .calendar-sheet .points { clear:both; border:0; }
 .calendar-sheet .point { display:block; padding:0; border:0; }
 .calendar-sheet .point + .point { margin-top:18px; }
@@ -25,10 +25,12 @@
 .calendar-sheet fieldset { margin:28px 0 0; }
 .calendar-sheet legend { color:#465b69; }
 .calendar-sheet .decision-options { gap:9px; }
-.calendar-sheet .decision-options label span { min-height:62px; color:#304654; background:#fbfcf9; border-color:#a7b4bd; font-size:13px; }
-.calendar-sheet .decision-options input { accent-color:#34566c; }
-.calendar-sheet .decision-options input:checked + span { background:#dfeaf0; border-color:#42677e; color:#1e3b4e; }
-.calendar-sheet .decision-options input:focus-visible + span { outline-color:#345b77; }
+.calendar-sheet .decision-options button { display:flex; align-items:center; justify-content:center; min-height:62px; padding:12px 14px; color:#304654; background:#fbfcf9; border:1px solid #a7b4bd; border-radius:3px; font-size:13px; font-weight:500; line-height:1.6; white-space:normal; cursor:pointer; }
+.calendar-sheet .decision-options button:hover { border-color:#34566c; background:#e7eef1; }
+.calendar-sheet .decision-options button[aria-pressed=true] { background:#28495f; border-color:#28495f; color:#fff; }
+.calendar-sheet .decision-options button[aria-pressed=true]:hover { background:#365c73; }
+.calendar-sheet .decision-options button:focus-visible { outline:2px solid #345b77; outline-offset:3px; }
+.calendar-sheet .decision-options button:disabled { opacity:.7; cursor:default; }
 .calendar-sheet .field-label { color:#455c6a; }
 .calendar-sheet input:not([type=radio]):not([type=checkbox]), .calendar-sheet textarea, .calendar-sheet select { color:#253641; background:#fbfcf9; border-color:#9cabb5; }
 .calendar-sheet input::placeholder, .calendar-sheet textarea::placeholder { color:#71818c; }
@@ -56,9 +58,9 @@
   .calendar-sheet .topic-meta { padding-bottom:18px; margin-bottom:22px; gap:12px; }
   .card-context, .calendar-sheet .state-badge { font-size:12px; }
   .calendar-sheet h1 { font-size:25px; line-height:1.6; }
-  .card-art { width:88px; height:88px; margin-left:14px; }
+  .card-art { width:104px; height:104px; margin-left:14px; }
   .calendar-sheet .point p { font-size:20px; }
-  .calendar-sheet .decision-options label span { min-height:57px; font-size:14px; }
+  .calendar-sheet .decision-options button { min-height:57px; font-size:14px; }
   .calendar-sheet .topic-actions { gap:14px; flex-wrap:wrap; }
   .calendar-sheet .topic-actions .primary { margin-left:auto; }
   .sheet-return-note { text-align:left; }
