@@ -38,7 +38,7 @@ nav .nav-number { font-size:12px; padding-top:0; }
 .points { gap:0; border-top:1px solid #737a81; }
 .point { position:relative; grid-template-columns:64px minmax(0,1fr); gap:24px; padding:28px 0; border:0; border-radius:0; background:transparent; }
 .point + .point::before { content:''; position:absolute; top:0; left:88px; right:0; height:1px; background:var(--line); }
-.point-index { display:block; width:auto; height:auto; padding:2px 0 0; border:0; border-radius:0; background:transparent; color:#9da6af; font-family:Arial,Helvetica,sans-serif; font-size:40px; font-weight:400; line-height:1; letter-spacing:-.06em; font-variant-numeric:tabular-nums; }
+.point-index { display:grid; place-items:center; width:54px; height:60px; padding:0; border:1px solid #b6c3d0; border-radius:3px; background:#d4e0ec; color:#202932; box-shadow:0 2px 0 #101315; font-family:Arial,Helvetica,sans-serif; font-size:30px; font-weight:400; line-height:1; letter-spacing:-.05em; font-variant-numeric:tabular-nums; }
 .point p { font-size:20px; font-weight:400; line-height:1.9; word-break:normal; word-break:auto-phrase; }
 .topic-question { color:#c3cbd3; font-size:16px; line-height:1.95; border:0; padding:0; margin:26px 0; }
 legend { font-size:14px; margin-bottom:12px; }
@@ -97,7 +97,7 @@ textarea { min-height:96px; }
   .topic-illustration figcaption { gap:6px; margin-top:9px; font-size:12px; }
   .point { grid-template-columns:38px minmax(0,1fr); gap:16px; padding:24px 0; }
   .point + .point::before { left:54px; }
-  .point-index { width:auto; height:auto; font-size:29px; }
+  .point-index { width:38px; height:44px; font-size:24px; }
   .point p { font-size:18px; line-height:1.95; }
   .topic-question { font-size:16px; margin:24px 0; }
   .decision-options { grid-template-columns:1fr; }
@@ -116,6 +116,6 @@ textarea { min-height:96px; }
 }
 @media print {
   .point, .points { border:0; background:transparent; }
-  .point-index { color:#111; background:transparent; border-color:#999; }
+  .point-index { color:#111; background:transparent; border-color:#999; box-shadow:none; }
   .review-body { color:#111; }
 }
