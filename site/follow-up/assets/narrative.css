@@ -1,14 +1,17 @@
 /* Full-screen scenes, following the OhMyJapan v2 scroll presentation. */
-html.introduction-active { scroll-snap-type:y proximity; scroll-padding-top:76px; }
+html.introduction-active { scroll-snap-type:none; scroll-padding-top:76px; }
 .introduction-active #workspace { display:block; width:100%; max-width:none; padding:0; }
 .introduction-active #workspace > .outline, .introduction-active #save-bar { display:none; }
 .introduction-active .main-content { padding:0; overflow:visible; }
 .introduction-screen { position:relative; width:100%; max-width:none; margin:0; padding:0; }
-.introduction-scene { position:relative; display:flex; flex-direction:column; justify-content:center; box-sizing:border-box; min-height:calc(100svh - 76px); padding:58px max(84px,6vw) 120px; scroll-snap-align:start; border-bottom:1px solid #35424b; background:#181c20; }
+.introduction-scene { position:relative; display:block; height:calc(var(--scene-frame-height,100svh) + var(--scene-scroll-distance,100svh)); background:#181c20; }
+.scene-frame { position:sticky; top:var(--intro-header-height,76px); display:flex; flex-direction:column; justify-content:center; box-sizing:border-box; min-height:calc(100svh - var(--intro-header-height,76px)); padding:58px max(84px,6vw) 120px; border-bottom:1px solid #35424b; background:inherit; }
+.introduction-scene.scene-flowing { height:auto; }
+.scene-flowing .scene-frame { position:relative; top:auto; }
 .introduction-scene:nth-of-type(2) { background:#1c2227; }
 .introduction-scene:nth-of-type(3) { background:#192127; }
 .introduction-scene:nth-of-type(4) { background:#1a1e22; }
-.scene-inner { display:grid; grid-template-columns:260px minmax(0,1fr); align-items:center; gap:52px; width:100%; max-width:1100px; margin:0 auto; opacity:var(--scene-visibility,1); transform:translate3d(0,var(--scene-offset,0px),0); transition:opacity .45s ease,transform .65s cubic-bezier(.16,1,.3,1); }
+.scene-inner { display:grid; grid-template-columns:260px minmax(0,1fr); align-items:center; gap:52px; width:100%; max-width:1100px; margin:0 auto; opacity:var(--scene-visibility,1); transform:translate3d(0,var(--scene-offset,0px),0); transition:none; }
 .introduction-guide { width:260px; height:560px; background:url('host.png') no-repeat -224px 0 / 1120px 560px; pointer-events:none; }
 .introduction-guide.is-bowing { background-position:-652px 0; }
 .story-copy { min-width:0; }
@@ -44,6 +47,8 @@ html.introduction-active { scroll-snap-type:y proximity; scroll-padding-top:76px
 .scene-controls { position:absolute; bottom:22px; left:max(32px,6vw); right:max(32px,6vw); display:flex; justify-content:space-between; align-items:flex-end; }
 .scene-controls button { border:0; background:transparent; color:#adc4d3; font-size:12px; }
 .scene-next { display:flex; flex-direction:column; align-items:center; gap:8px; padding:7px 12px; }
+.scroll-meter { display:block; width:96px; height:2px; background:#48606e; overflow:hidden; }
+.scroll-meter i { display:block; height:100%; background:#c2d9e8; transform:scaleX(var(--scene-progress,0)); transform-origin:left; }
 .scroll-arrow { display:grid; place-items:center; width:30px; height:30px; border:1px solid #6c8595; border-radius:50%; font-size:17px; }
 #topic-nav .intro-nav { border-bottom:1px solid #414b53; margin-bottom:8px; padding-block:13px; color:#c6d6e1; }
 .chapter-context { max-width:680px; margin:0 auto 25px; }
@@ -51,7 +56,7 @@ html.introduction-active { scroll-snap-type:y proximity; scroll-padding-top:76px
 .chapter-context p { margin:0; color:#aebbc5; font-size:15px; line-height:1.9; }
 .calendar-sheet .topic-responsibility { display:table; margin:-8px 0 22px; padding:5px 9px; border:1px solid #bdc8cb; border-radius:2px; color:#3c5969; font-size:12px; font-weight:500; line-height:1.7; }
 @media(max-width:1100px) {
-  .introduction-scene { padding-inline:52px 100px; }
+  .scene-frame { padding-inline:52px 100px; }
   .scene-inner { grid-template-columns:190px minmax(0,1fr); gap:32px; }
   .introduction-guide { width:190px; height:460px; background-size:920px 460px; background-position:-194px 0; }
   .introduction-guide.is-bowing { background-position:-540px 0; }
@@ -68,7 +73,7 @@ html.introduction-active { scroll-snap-type:y proximity; scroll-padding-top:76px
   .introduction-lead { font-size:14px; }
 }
 @media(max-height:650px) and (min-width:761px) {
-  .introduction-scene { padding-top:38px; padding-bottom:112px; }
+  .scene-frame { padding-top:38px; padding-bottom:112px; }
   .introduction-guide { height:320px; background-size:640px 320px; background-position:-107px 0; }
   .introduction-guide.is-bowing { background-position:-347px 0; }
   .introduction-screen h1, .story-copy > h2 { font-size:30px; }
@@ -77,7 +82,7 @@ html.introduction-active { scroll-snap-type:y proximity; scroll-padding-top:76px
 }
 @media(max-width:760px) {
   html.introduction-active { scroll-padding-top:68px; }
-  .introduction-scene { min-height:calc(100svh - 68px); padding:72px 22px 185px; }
+  .scene-frame { padding:72px 22px 185px; }
   .scene-inner { grid-template-columns:96px minmax(0,1fr); align-items:start; gap:18px 16px; }
   .introduction-guide { grid-column:1; grid-row:1 / 3; width:96px; height:156px; background-size:720px 360px; background-position:-180px 0; }
   .introduction-guide.is-bowing { background-position:-448px 0; }
