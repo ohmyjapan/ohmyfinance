@@ -105,6 +105,7 @@ export const getConnectionStatus = () => ({
   isConnected,
   readyState: mongoose.connection.readyState,
   host: mongoose.connection.host,
+  port: mongoose.connection.port,
   name: mongoose.connection.name,
   isMemoryServer: !!mongoServer
 })
