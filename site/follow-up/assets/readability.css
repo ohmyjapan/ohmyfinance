@@ -121,3 +121,12 @@ textarea { min-height:96px; }
   .point-index { color:#111; background:transparent; border-color:#999; box-shadow:none; }
   .review-body { color:#111; }
 }
+
+/* Resume and recovery controls share the existing notice and button treatment. */
+.required-label{font-size:.75em;color:var(--omc-accent,#9bd6c2);margin-inline-start:.4em}
+.unanswered-notice{margin-block:1.5rem;padding:1rem;border:1px solid #ffffff26;border-radius:12px}
+.unanswered-notice p{margin-top:0}
+.recovery-conflict{margin-block:1rem;padding-block:1rem;border-top:1px solid #ffffff26;overflow-wrap:anywhere}
+.recovery-conflict h3{font-size:1rem}
+.recovery-conflict p{white-space:pre-wrap}
+.recovery-conflict button,#recovery-current-document{margin:.4rem .5rem .4rem 0}
