@@ -42,7 +42,7 @@
   const header=document.querySelector('header').getBoundingClientRect().height,available=Math.max(1,innerHeight-header),panels=[...document.querySelectorAll('[data-intro-panel]')];
   $('introduction-screen').style.setProperty('--intro-header-height',header+'px');
   const sizes=panels.map(panel=>({panel,height:panel.querySelector('.scene-frame').getBoundingClientRect().height}));
-  for(const {panel,height}of sizes){panel.classList.toggle('scene-flowing',introMotion.matches||height>available+4);panel.style.setProperty('--scene-frame-height',height+'px');panel.style.setProperty('--scene-scroll-distance',Math.round(available*1.15)+'px')}
+  for(const {panel,height}of sizes){panel.classList.toggle('scene-flowing',introMotion.matches||height>available+4);panel.style.setProperty('--scene-frame-height',height+'px');panel.style.setProperty('--scene-scroll-distance',Math.round(available*1.9)+'px')}
  }
  function updateIntroductionScroll(){
   introFrame=null;if(!intro)return;
