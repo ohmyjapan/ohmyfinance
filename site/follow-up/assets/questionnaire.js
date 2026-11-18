@@ -71,7 +71,7 @@
    else{input=node('input');input.type=f.type==='date'?'date':'text';input.maxLength=2000}
    input.id='field-'+f.id;input.value=a.fields[f.id]||'';input.disabled=!editing();input.addEventListener('input',()=>{const next=answer();next.fields={...next.fields,[f.id]:input.value};state.response.answers[topic.id]=next;changed()});label.append(input);$('topic-fields').append(label)
   }
-  $('previous').disabled=index===0&&!state.document.introduction;$('previous').textContent=index===0&&state.document.introduction?'← はじめに':'← 前のカード';$('next').textContent=index===state.document.topics.length-1?'回答をまとめて確認 →':'保存して切り取る →';renderNav();
+  $('previous').disabled=index===0&&!state.document.introduction;$('previous').textContent=index===0&&state.document.introduction?'← はじめに':'← 前のカード';$('next').textContent=index===state.document.topics.length-1?'回答をまとめて確認 →':'保存';renderNav();
  }
  function openTopic(i){resetSheet();index=i;intro=false;review=false;$('introduction-screen').hidden=true;$('topic-screen').hidden=false;$('review-screen').hidden=true;renderTopic();window.scrollTo({top:0,behavior:'auto'})}
  function reviewSummary(){
