@@ -28,11 +28,14 @@ function fixture(){
   }
   assert.equal(url.origin,'https://gmail.googleapis.com');
   if(method==='GET'&&/\/messages$/.test(url.pathname)){
-   searches++;if(mode==='search-fail')return json({error:{code:503}},503);const q=url.searchParams.get('q')||'';assert.ok(q.includes('rfc822msgid:'));return json({messages:messages.filter(m=>q.includes(m.messageId.replace(/[<>]/g,''))||q.includes(m.messageId)).map(m=>({id:m.id}))});
+   searches++;if(mode==='search-fail')return json({error:{code:503}},503);const q=url.searchParams.get('q')||'';assert.ok(q.includes('in:sent'));const marker=q.match(/"(OMFNOTICE[a-f0-9]+)"/)?.[1];assert.ok(marker);if(mode==='unrelated')return json({messages:[{id:'unrelated'}]});return json({messages:messages.filter(m=>mimeBody(m.raw).includes(marker)).map(m=>({id:m.id}))});
+  }
+  if(method==='GET'&&/\/messages\/[^/]+$/.test(url.pathname)){
+   const id=url.pathname.split('/').pop(),m=messages.find(x=>x.id===id);assert.ok(m||id==='unrelated');return json({id,payload:{mimeType:'text/plain',headers:[{name:'To',value:'info@ohmyjapan.com'}],body:{data:Buffer.from(m?mimeBody(m.raw):'Unrelated message').toString('base64url')}}});
   }
   if(method==='POST'&&url.pathname.endsWith('/messages/send')){
    posts++;if(mode==='reject')return json({error:{code:503,message:'Synthetic temporary failure'}},503);
-   const raw=Buffer.from(JSON.parse(init.body).raw,'base64url').toString('utf8'),messageId=raw.match(/^Message-ID:\s*(.+)$/im)?.[1].trim();assert.ok(messageId);const m={id:'message-'+messages.length,messageId,raw};messages.push(m);
+   const suppliedRaw=Buffer.from(JSON.parse(init.body).raw,'base64url').toString('utf8'),suppliedId=suppliedRaw.match(/^Message-ID:\s*(.+)$/im)?.[1].trim();assert.ok(suppliedId);const messageId='<google-rewritten-'+messages.length+'@mail.gmail.example>',raw=suppliedRaw.replace(/^Message-ID:.*$/im,'Message-Id: '+messageId);const m={id:'message-'+messages.length,messageId,raw};messages.push(m);
    if(mode==='accepted-then-lost')throw Error('Synthetic lost acknowledgement');return json({id:m.id,threadId:'synthetic-thread'});
   }
   throw Error('Unexpected mock endpoint '+method+' '+url.pathname);
@@ -47,6 +50,7 @@ function fixture(){
  const advance=id=>{const n=notice(id);clock=Math.max(clock+1,n.next_attempt_at+1,n.lease_until+1);};
  return{db,env,invoke,seed,notice,advance,messages,get posts(){return posts;},get searches(){return searches;},set mode(v){mode=v;},set clock(v){clock=v;},get clock(){return clock;}};
 }
+function mimeBody(raw){const body=raw.split(/\r?\n\r?\n/).slice(1).join('\n');return /Content-Transfer-Encoding:\s*base64/i.test(raw)?Buffer.from(body.replace(/\s/g,''),'base64').toString('utf8'):body;}
 
 test('real customer submit produces snapshot totals, trusted recipient and no private free text',async()=>{
  const f=fixture();try{
@@ -75,8 +79,12 @@ test('provider failure preserves submission, records retry, and recovers without
  const f=fixture();try{const row=f.seed();f.mode='reject';await f.invoke();assert.equal(f.notice(row.id).status,'retry');assert.equal(f.db.prepare('SELECT count(*) AS n FROM followup_submissions').get().n,1);assert.equal(f.messages.length,0);await f.invoke();assert.equal(f.posts,1,'not due means no immediate retry');f.advance(row.id);f.mode='ok';await f.invoke();assert.equal(f.notice(row.id).status,'sent');assert.equal(f.messages.length,1);}finally{f.db.close();}
 });
 
-test('lost send acknowledgement reconciles the stable Message-ID before retrying',async()=>{
- const f=fixture();try{const row=f.seed();f.mode='accepted-then-lost';await f.invoke();assert.equal(f.messages.length,1);assert.equal(f.notice(row.id).status,'retry');f.advance(row.id);f.mode='ok';await f.invoke();assert.equal(f.notice(row.id).status,'sent');assert.equal(f.posts,1,'already accepted mail is found and not sent again');assert.ok(f.searches>0);}finally{f.db.close();}
+test('lost acknowledgement reconciles a marker even when Gmail replaces Message-ID',async()=>{
+ const f=fixture();try{const row=f.seed();f.mode='accepted-then-lost';await f.invoke();assert.equal(f.messages.length,1);assert.notEqual(f.messages[0].messageId,formatNotification(row,config).messageId);assert.equal(f.notice(row.id).status,'retry');f.advance(row.id);f.mode='ok';await f.invoke();assert.equal(f.notice(row.id).status,'sent');assert.equal(f.posts,1,'already accepted mail is found and not sent again');assert.ok(f.searches>0);}finally{f.db.close();}
+});
+
+test('unrelated search results defer delivery and cannot be counted as a notification receipt',async()=>{
+ const f=fixture();try{const row=f.seed();f.mode='reject';await f.invoke();f.advance(row.id);f.mode='unrelated';await f.invoke();assert.equal(f.notice(row.id).status,'retry');assert.equal(f.posts,1);f.advance(row.id);f.mode='ok';await f.invoke();assert.equal(f.notice(row.id).status,'sent');assert.equal(f.messages.length,1);assert.notEqual(f.notice(row.id).gmail_message_id,'unrelated');}finally{f.db.close();}
 });
 
 test('reconciliation outage defers sending; later recovery still avoids a duplicate',async()=>{

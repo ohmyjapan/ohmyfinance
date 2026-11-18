@@ -42,6 +42,7 @@ export function formatNotification(submission, config) {
       !Number.isSafeInteger(submission.submitted_at)) throw safeError('snapshot_metadata_invalid');
   const submitted = new Date(submission.submitted_at + 9 * 60 * 60_000).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' JST');
   const subject = config.testMode === true ? `【配送テスト】${SUBJECT}` : SUBJECT;
+  const marker = 'OMFNOTICE' + Array.from(encoder.encode(submission.id), byte => byte.toString(16).padStart(2, '0')).join('');
   const text = [
     config.testMode === true ? 'これは通知機能の配送テストです。JABLE様の回答ではありません。' : 'JABLE様から確認事項への回答が届きました。', '',
     `送信日時：${submitted}`, `全項目：${snapshot.document.topics.length}件`,
@@ -49,7 +50,7 @@ export function formatNotification(submission, config) {
     `相談して決めたい：${counts.discuss}件`, `未回答：${counts.unanswered}件`,
     `回答版：${submission.response_revision}`, `文書版：${submission.document_version}`, '',
     '送信時点の回答状況です。回答内容は管理者として以下からご確認ください。',
-    `https://ohmyfinance.jp/follow-up/${config.surveySlug}/`, ''
+    `https://ohmyfinance.jp/follow-up/${config.surveySlug}/`, '', `通知ID：${marker}`, ''
   ].join('\n');
   const messageId = `<omf-followup.${submission.id}@ohmyfinance.jp>`;
   const encodedBody = utf8base64(text).match(/.{1,76}/g).join('\r\n');
@@ -60,7 +61,48 @@ export function formatNotification(submission, config) {
     'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: base64', '', encodedBody, ''
   ].join('\r\n');
-  return { subject, text, messageId, raw };
+  return { subject, text, messageId, marker, raw };
+}
+
+function matchingDelivery(message, candidateId, notification, config) {
+  if (!message || message.id !== candidateId || !message.payload || !Array.isArray(message.payload.headers)) {
+    throw safeError('gmail_message_invalid');
+  }
+  const headers = message.payload.headers;
+  if (headers.some(header => !header || typeof header.name !== 'string' || typeof header.value !== 'string')) {
+    throw safeError('gmail_message_headers_invalid');
+  }
+  const recipients = headers.filter(header => header.name.toLowerCase() === 'to');
+  if (!recipients.length) throw safeError('gmail_message_recipient_missing');
+  const bodies = [];
+  let visited = 0;
+  function readPart(part, depth = 0) {
+    if (!part || typeof part !== 'object' || ++visited > 100 || depth > 20 ||
+        typeof part.mimeType !== 'string' || !part.body || typeof part.body !== 'object') {
+      throw safeError('gmail_message_body_invalid');
+    }
+    if (part.body.data !== undefined) {
+      if (typeof part.body.data !== 'string' || !/^[A-Za-z0-9_-]*={0,2}$/.test(part.body.data) ||
+          part.body.data.replace(/=+$/, '').length % 4 === 1) throw safeError('gmail_message_encoding_invalid');
+      if (part.mimeType.toLowerCase() === 'text/plain') {
+        try {
+          const bytes = Uint8Array.from(atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0));
+          bodies.push(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+        } catch { throw safeError('gmail_message_encoding_invalid'); }
+      }
+    } else if (part.mimeType.toLowerCase() === 'text/plain' && part.body.size !== 0) {
+      // Do not treat an unavailable/attachment-backed text body as proof of absence.
+      throw safeError('gmail_message_body_unavailable');
+    }
+    if (part.parts !== undefined) {
+      if (!Array.isArray(part.parts)) throw safeError('gmail_message_parts_invalid');
+      for (const child of part.parts) readPart(child, depth + 1);
+    }
+  }
+  readPart(message.payload);
+  const markerPattern = new RegExp(`(^|[^A-Za-z0-9])${notification.marker}(?=$|[^A-Za-z0-9])`);
+  return recipients.length === 1 && recipients[0].value.trim().toLowerCase() === config.recipient.toLowerCase() &&
+    bodies.some(body => markerPattern.test(body));
 }
 
 async function requestJson(fetchImpl, url, options, code) {
@@ -123,13 +165,27 @@ export async function runNotifications(env, { fetchImpl = fetch, now = Date.now 
       let gmailId;
       let reconciled = false;
       if (claim.attempts > 1) {
-        const query = new URLSearchParams({ q: `rfc822msgid:${notification.messageId}`, includeSpamTrash: 'true', maxResults: '1' });
+        const query = new URLSearchParams({ q: `in:sent "${notification.marker}"`, includeSpamTrash: 'true', maxResults: '5' });
         const result = await requestJson(fetchImpl, `https://gmail.googleapis.com/gmail/v1/users/me/messages?${query}`, { headers }, 'gmail_search');
-        if (result.messages !== undefined && !Array.isArray(result.messages)) throw safeError('gmail_search_invalid');
-        if (result.messages?.length) {
-          gmailId = result.messages[0].id;
-          if (typeof gmailId !== 'string' || !gmailId) throw safeError('gmail_search_id_missing');
-          reconciled = true;
+        if (!result || typeof result !== 'object' || Array.isArray(result) ||
+            (result.messages !== undefined && (!Array.isArray(result.messages) || result.messages.length > 5)) ||
+            (result.resultSizeEstimate !== undefined && (!Number.isSafeInteger(result.resultSizeEstimate) || result.resultSizeEstimate < 0)) ||
+            (result.nextPageToken !== undefined && (typeof result.nextPageToken !== 'string' || !result.nextPageToken))) {
+          throw safeError('gmail_search_invalid');
+        }
+        for (const candidate of result.messages || []) {
+          if (!candidate || typeof candidate.id !== 'string' || !candidate.id) throw safeError('gmail_search_id_missing');
+          const message = await requestJson(fetchImpl,
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(candidate.id)}?format=full`,
+            { headers }, 'gmail_message');
+          if (matchingDelivery(message, candidate.id, notification, config)) {
+            gmailId = candidate.id;
+            reconciled = true;
+            break;
+          }
+        }
+        if (!gmailId && (result.messages?.length || result.nextPageToken || result.resultSizeEstimate > 0)) {
+          throw safeError('gmail_search_unverified');
         }
       }
       if (!gmailId) {
