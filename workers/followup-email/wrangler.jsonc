@@ -1,0 +1,13 @@
+{
+  "name": "omf-followup-email",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-18",
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [{
+    "binding": "OMF_FOLLOWUP_DB",
+    "database_name": "omf-followup",
+    "database_id": "c2964330-d479-4334-90dd-76d696aad5ec"
+  }]
+}
