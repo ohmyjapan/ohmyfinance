@@ -1,3 +1,5 @@
+import { reviewDocuments } from './document-review.mjs';
+
 const encoder = new TextEncoder();
 const cookieName = 'omf_followup';
 const sessionSeconds = 8 * 60 * 60;
@@ -75,9 +77,10 @@ export async function handleFollowup(request,env) {
  if(asset){if(request.method!=='GET')return reply({error:'この操作は利用できません。'},405);return protectAsset(await env.ASSETS.fetch(request))}
  if(!match)return reply({error:'ご案内したURLからお開きください。'},404);
  const [,slug,tail='']=match;
- if(!tail||tail==='index.html'){
+ const documentsPage = tail==='documents'||tail==='documents/'||tail==='documents/index.html';
+ if(!tail||tail==='index.html'||documentsPage){
   if(request.method!=='GET')return reply({error:'この操作は利用できません。'},405);
-  const next=new URL('/follow-up/assets/shell',url);const response=await env.ASSETS.fetch(new Request(next,request));
+  const next=new URL(documentsPage?'/follow-up/assets/document-review':'/follow-up/assets/shell',url);const response=await env.ASSETS.fetch(new Request(next,request));
   if(response.status!==200)return reply({error:'ただいま準備中です。ご案内までお待ちください。'},503);
   return protectAsset(response);
  }
@@ -101,6 +104,7 @@ export async function handleFollowup(request,env) {
    return reply({ok:true,role},200, {'Set-Cookie':sessionCookie(token,sessionSeconds,url)});
   }
   const session=await authenticate(request,db,survey);
+  if(tail==='api/document-review')return await reviewDocuments({request,db,slug,role:session.role,body,reply,fail});
   if(tail==='api/state'&&request.method==='GET')return reply(await state(db,survey,session.role));
   if(tail==='api/save'&&request.method==='POST'){
    if(session.role!=='customer')fail(403,'管理者画面ではお客様の回答を書き換えません。');

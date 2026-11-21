@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>契約書・NDAの確認 | OhMyFinance</title>
+  <link rel="stylesheet" href="/follow-up/assets/document-review.css">
+  <script defer src="/follow-up/assets/document-review.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="mast-inner">
+      <span class="brand">OhMyFinance</span>
+      <span class="mast-label">契約書・NDAの確認</span>
+      <button id="sign-out" type="button" hidden>ログアウト</button>
+    </div>
+  </header>
+  <main>
+    <section id="login" class="login" aria-labelledby="login-title">
+      <h1 id="login-title">契約書・NDAの確認</h1>
+      <p>ご案内のパスワードで、文書とコメントを開けます。</p>
+      <form id="login-form">
+        <label for="password">パスワード</label>
+        <input id="password" type="password" autocomplete="current-password" required maxlength="200">
+        <label class="admin-choice"><input id="admin" type="checkbox"> 管理者として入る</label>
+        <button class="primary" id="sign-in" type="submit">文書を開く</button>
+      </form>
+      <p class="status" id="login-status" role="status"></p>
+    </section>
+    <section id="workspace" class="workspace" aria-label="文書の確認" hidden>
+      <nav id="files" class="files" aria-label="文書"></nav>
+      <p id="workspace-status" class="status" role="status"></p>
+      <div class="reading-layout" id="reading-layout">
+        <article class="paper" id="paper"></article>
+        <aside id="notes" class="notes" hidden aria-labelledby="notes-title">
+          <div class="notes-header">
+            <div><span class="notes-kicker">条項へのコメント</span><h2 id="notes-title"></h2></div>
+            <button class="close" id="close-notes" type="button" aria-label="コメント欄を閉じる">×</button>
+          </div>
+          <ol class="comment-list" id="comment-list"></ol>
+          <form id="note-form" class="note-form">
+            <div id="quote-wrap" class="quote-wrap" hidden>
+              <blockquote id="quote"></blockquote>
+              <button id="remove-quote" type="button">引用を外す</button>
+            </div>
+            <label for="author">お名前</label>
+            <input id="author" autocomplete="name" maxlength="80" required>
+            <label for="message">コメント</label>
+            <textarea id="message" maxlength="3000" rows="4" required placeholder="確認したい点や変更のご希望をお書きください。"></textarea>
+            <p class="note-hint">コメントは両社から見えます。</p>
+            <button class="primary" type="submit" id="post-note">コメントを追加</button>
+            <p id="note-status" class="status" role="status"></p>
+          </form>
+        </aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
