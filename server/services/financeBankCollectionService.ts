@@ -226,7 +226,14 @@ export async function storeObservation(device:any,query:any,bytes:Buffer){return
 // captures) is appended once when it is not among them. A balance job is never that retrieval.
 export async function listBankJobs(ownerId:string,accountId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const jobs:any[]=await BankJob.find({ownerId,bankAccountId:account._id}).sort({requestedAt:-1,_id:-1}).limit(50).lean();
  if(!jobs.some(j=>j.kind==='retrieve'&&j.state!=='superseded')){const latest:any=await BankJob.findOne({ownerId,bankAccountId:account._id,kind:'retrieve',state:{$ne:'superseded'}}).sort({requestedAt:-1,_id:-1}).lean();if(latest)jobs.push(latest)} // guard:history-latest-retrieval
- const statements:any[]=await BankStatement.find({ownerId,'capture.jobId':{$in:jobs.map(j=>j.jobId)}}).lean();return{jobs:jobs.map(j=>({...jobView(j),trigger:j.trigger==='schedule'?'schedule':'manual',...(j.kind==='balance'?{balanceTrigger:j.balance?.trigger==='hourly'?'hourly':'manual'}:{}),scheduledDay:j.schedule?.day??j.schedule?.supersededDay??null,captures:statements.filter(s=>s.capture?.jobId===j.jobId).map(captureView)}))}}
+ const jobIds=jobs.map(j=>j.jobId);
+ const statements:any[]=await BankStatement.find({ownerId,$or:[{'capture.jobId':{$in:jobIds}},{'initialUnmappedCapture.jobId':{$in:jobIds}}]}).select('+initialUnmappedCapture').lean();
+ const capturesFor=(jobId:string)=>statements.flatMap(s=>{
+  if(s.capture?.jobId===jobId)return [captureView(s)];
+  if(s.initialUnmappedCapture?.jobId===jobId)return [captureView({...s,dateRange:null,capture:s.initialUnmappedCapture})];
+  return [];
+ });
+ return{jobs:jobs.map(j=>({...jobView(j),trigger:j.trigger==='schedule'?'schedule':'manual',...(j.kind==='balance'?{balanceTrigger:j.balance?.trigger==='hourly'?'hourly':'manual'}:{}),scheduledDay:j.schedule?.day??j.schedule?.supersededDay??null,captures:capturesFor(j.jobId)}))}}
 // The stored observation of one owned job, read-only (plan omf-rakuten-bank-connector-amended-20261019 R4): the sanctioned
 // input for writing a bank's contract. Another owner's account or an unknown job is 404; nothing is written.
 export async function getBankObservation(ownerId:string,accountId:string,jobId:string){await init();const account=await ownedBankAccount(ownerId,accountId);const job:any=await BankJob.findOne({ownerId,bankAccountId:account._id,jobId:sid(jobId)}).lean();if(!job)fail(404,'取得の記録が見つかりません。');return{jobId:job.jobId,kind:job.kind,state:job.state,requestedAt:job.requestedAt||null,snapshotHash:job.snapshotHash,observation:Array.isArray(job.observation)?job.observation:null}}

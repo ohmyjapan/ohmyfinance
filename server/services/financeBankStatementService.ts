@@ -184,28 +184,49 @@ async function planCapture(ownerId:string,doc:any,account:any,frozen:any,provena
  const overlapMode=job.kind==='retrieve'&&frozen.coverage&&mapping.balance!==''?'capture':'resolve';
  return{...s,account,mapping,amountSign:frozen.amountSign,...await planRows(ownerId,s,planAccount,mapping,frozen.amountSign,provenance,{mode:overlapMode,coverage:frozen.coverage})};
 }
-// A2/A3: a statement received from the collector under a claimed job. The bytes are retained like an upload; identical bytes
-// return the first capture unchanged (the first interpretation of those bytes stands). The rows are read with the job's frozen
-// snapshot only. Holds (needs_review, no rows): a header row that no longer matches, a row that does not normalize, or
-// (after writing new and unchanged keys) a keyed row whose values differ — `interpretation-differs`. A manifest carrying
-// another snapshotHash is never ingested under this job (400).
+// An unmapped first capture contains no interpretation to preserve in the ledger. A subsequent verified PayPay retrieval
+// may apply its frozen mapping to the same bytes. Keep the original receipt and leave interpreted captures alone.
+function canResolveUnmappedCapture(capture:any,job:any,channel:string,labelChecked:boolean){
+ if(job.kind!=='retrieve'||channel!=='collector'||job.snapshot?.provider!=='paypay'||!text(job.snapshot.templateId))return false;
+ if(text(job.snapshot.accountLabel)&&!labelChecked)return false;
+ return capture.state==='needs_review'&&capture.reason===MAPPING_REQUIRED
+  &&capture.snapshot?.provider==='paypay'&&capture.snapshot.interpretation==='unmapped'
+  &&['new','existing','unchanged','differs'].every(key=>capture.rows?.[key]===0);
+}
+
 export async function acceptBankCapture(job:any,account:any,bytes:Buffer,query:any):Promise<any>{
  await init();
  if(String(query?.snapshotHash||'')!==job.snapshotHash)fail(400,'取得時の設定が一致しません。');
  const ownerId=String(job.ownerId),channel=query?.channel==='collector-observe'?'collector-observe':'collector',name=safeName(query?.name)||`bank-${String(job.jobId).slice(0,8)}.csv`;
  const doc:any=await retainBankFile(ownerId,name,bytes,String(query?.mimeType||'text/csv'));
  const captureOf=(d:any)=>({id:String(d._id),state:d.capture.state,reason:d.capture.reason||null,rows:d.capture.rows,labelChecked:d.capture.labelChecked===true,snapshotHash:d.capture.snapshotHash,duplicate:true});
+ const labelChecked=query?.labelChecked==='true'&&job.kind==='retrieve'&&Boolean(text(job.snapshot?.accountLabel));
  // Review fold F3: the one PERMANENT capture 409 (these bytes are already another account's statement) carries the stable code
  // capture-other-account, so the collector keeps the file and never sends it again; every other 409 carries none (statusMessage as fail()).
- if(doc.capture){if(String(doc.capture.bankAccountId)!==String(account._id))throw createError({statusCode:409,statusMessage:'Finance request failed',data:{message:'この明細は別の口座で受信済みです。',code:'capture-other-account'}});return captureOf(doc)}
+ const forAccount=(capture:any)=>{
+  if(capture&&String(capture.bankAccountId)!==String(account._id))throw createError({statusCode:409,statusMessage:'Finance request failed',data:{message:'この明細は別の口座で受信済みです。',code:'capture-other-account'}});
+  return capture;
+ };
+ if(forAccount(doc.capture)&&!canResolveUnmappedCapture(doc.capture,job,channel,labelChecked))return captureOf(doc);
  const frozen=interpretationOf(job.snapshot);
  // Phase S: planning and writing run under the account lease. A delivery that waited while another request finished these same
  // bytes takes that request's receipt (the identical-bytes rule above, read again).
  return withAccountRows(ownerId,account._id,async held=>{
- if((await BankStatement.findOne({_id:doc._id,ownerId}).lean() as any)?.capture)return acceptBankCapture(job,account,bytes,query);
- const finish=async(state:string,reason:string|null,rows:any)=>{const capture={bankAccountId:String(account._id),jobId:job.jobId,kind:job.kind,collectorId:job.collectorId?String(job.collectorId):null,channel,labelChecked:query?.labelChecked==='true'&&job.kind==='retrieve'&&Boolean(text(job.snapshot?.accountLabel)),snapshot:job.snapshot,snapshotHash:job.snapshotHash,sourceHost:text(query?.sourceHost)||null,capturedAt:text(query?.capturedAt)||null,receivedAt:new Date(),state,reason,rows};const saved=await BankStatement.updateOne({_id:doc._id,ownerId,capture:null},{$set:{capture}});if(!saved.matchedCount)return captureOf(await BankStatement.findOne({_id:doc._id,ownerId}).lean());return{id:String(doc._id),state,reason,rows,labelChecked:capture.labelChecked,snapshotHash:job.snapshotHash,duplicate:false}};
+ const current=await ownedFile(ownerId,String(doc._id));
+ const previous=forAccount(current.capture);
+ if(previous&&!canResolveUnmappedCapture(previous,job,channel,labelChecked))return captureOf(current);
+ const finish=async(state:string,reason:string|null,rows:any)=>{
+  const capture={bankAccountId:String(account._id),jobId:job.jobId,kind:job.kind,collectorId:job.collectorId?String(job.collectorId):null,channel,labelChecked,snapshot:job.snapshot,snapshotHash:job.snapshotHash,sourceHost:text(query?.sourceHost)||null,capturedAt:text(query?.capturedAt)||null,receivedAt:new Date(),state,reason,rows};
+  const expected=previous?{'capture.jobId':previous.jobId,'capture.bankAccountId':previous.bankAccountId,'capture.snapshotHash':previous.snapshotHash,'capture.state':'needs_review'}:{capture:null};
+  const saved=await BankStatement.updateOne({_id:doc._id,ownerId,...expected},{$set:{capture,...(previous?{initialUnmappedCapture:previous}:{})}});
+  if(!saved.matchedCount){const latest=await ownedFile(ownerId,String(doc._id));forAccount(latest.capture);return captureOf(latest)}
+  return{id:String(doc._id),state,reason,rows,labelChecked,snapshotHash:job.snapshotHash,duplicate:false};
+ };
  const planned=await planCapture(ownerId,doc,account,frozen,{channel,jobId:job.jobId,snapshotHash:job.snapshotHash},job);
- if(planned.held)return finish('needs_review',planned.reason,{new:0,existing:0,unchanged:0,differs:0});
+ if(planned.held){
+  if(previous)return {...captureOf(current),reason:planned.reason};
+  return finish('needs_review',planned.reason,{new:0,existing:0,unchanged:0,differs:0});
+ }
  const {counts,differing}=await saveRows(ownerId,planned,true,held);
  return finish(differing.length?'needs_review':'imported',differing.length?'interpretation-differs: '+differing.slice(0,20).join(', '):null,counts);
  });

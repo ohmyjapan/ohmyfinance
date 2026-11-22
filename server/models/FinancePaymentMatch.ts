@@ -14,9 +14,8 @@ account.add({schedule:{type:mixed,default:null}})
 account.add({learningLease:{type:mixed,default:null,select:false}})
 // Explicit selection for attended statement requests; native schedules and hourly balance readers keep their existing connection.
 account.add({learningConnector:{type:mixed,default:null},learningConnectorHistory:{type:[mixed],default:[]}})
-// `capture` is written once for a statement received from the collector: the job, a copy of the interpretation it was taken
-// under and its hash, the source host, the state (received|imported|needs_review), the reason and the row counts.
-const statement=new Schema({ownerId:{type:oid,required:true},hash:{type:String,required:true},name:String,mimeType:String,size:Number,sheetNames:[String],dateRange:mixed,capture:{type:mixed,default:null}},options)
+// A first capture without a mapping can be resolved by a verified retrieval. Keep the original receipt for its job.
+const statement=new Schema({ownerId:{type:oid,required:true},hash:{type:String,required:true},name:String,mimeType:String,size:Number,sheetNames:[String],dateRange:mixed,capture:{type:mixed,default:null},initialUnmappedCapture:{type:mixed,select:false}},options)
 statement.index({ownerId:1,hash:1},{unique:true})
 const row=new Schema({ownerId:{type:oid,required:true},bankAccountId:{type:oid,required:true},key:{type:String,required:true},idKind:String,fingerprint:String,occurrence:Number,date:String,direction:String,amount:Number,currency:String,description:String,reference:String,transactionId:String,identicalCount:Number,provenance:{type:[mixed],default:[]},state:{type:String,default:'active'},supersedes:oid,supersededBy:oid,revision:{type:Number,default:1},history:{type:[mixed],default:[]}},options)
 row.index({ownerId:1,bankAccountId:1,key:1},{unique:true})
