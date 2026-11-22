@@ -1,4 +1,4 @@
-'use strict';
+import {selectionExcerpt} from './document-review-anchors.mjs';
 
 const $ = id => document.getElementById(id);
 const workspace = $('workspace');
@@ -7,12 +7,16 @@ const layout = $('reading-layout');
 const notes = $('notes');
 const author = $('author');
 const message = $('message');
+const selectionButton = $('selection-comment');
 const desktop = matchMedia('(min-width: 900px)');
 const drafts = new Map();
 const mount = location.pathname.match(/^\/follow-up\/[a-z0-9-]+\//)?.[0];
 const dates = new Intl.DateTimeFormat('ja-JP', {dateStyle:'medium', timeStyle:'short', timeZone:'Asia/Tokyo'});
 let data, selected, active, restore, restoreRole, writer = '', sending = false;
 let sections = new Map();
+let candidate = null;
+let dragging = false;
+let selectionFrame = 0;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -49,7 +53,7 @@ function commentsFor(doc, section) {
 }
 
 function draftFor(target) {
-  if (!drafts.has(target.key)) drafts.set(target.key, {message:'', quote:'', attempt:null});
+  if (!drafts.has(target.key)) drafts.set(target.key, {message:'', quote:'', anchor:null, attempt:null});
   return drafts.get(target.key);
 }
 
@@ -80,6 +84,7 @@ function clearNotes(returnFocus = false) {
   message.value = '';
   author.value = '';
   status('note-status', '');
+  if (previous) drawPassages(previous);
   if (returnFocus) previous?.button.focus();
 }
 
@@ -108,6 +113,11 @@ function renderNotes() {
   if (!comments.length) list.append(element('li','この条項にはまだコメントがありません。','comment-empty'));
   for (const item of comments) {
     const line = element('li');
+    line.dataset.commentId = item.id;
+    if (item.id === active.commentId) {
+      line.classList.add('is-current');
+      line.tabIndex = -1;
+    }
     const meta = element('div',null,'comment-meta');
     meta.append(element('strong',item.author), element('span',item.role === 'admin' ? '提供側' : 'ご担当者'));
     const time = element('time',dates.format(new Date(item.createdAt)));
@@ -125,49 +135,140 @@ function renderNotes() {
   status('note-status', '');
   placeNotes();
   notes.hidden = false;
+  drawPassages(active);
 }
 
-function openNotes(entry, quotedText = '', focus = true) {
+function openNotes(entry, passage = null, commentId = null) {
   if (sending) return;
+  dismissSelection();
   if (active) clearNotes();
-  active = {...entry, key:commentKey(selected, entry.section)};
-  if (quotedText) draftFor(active).quote = quotedText;
+  active = {...entry, key:commentKey(selected, entry.section), commentId};
+  if (passage) Object.assign(draftFor(active), {quote:passage.quote, anchor:passage.anchor});
   entry.block.classList.add('is-active');
   entry.button.setAttribute('aria-expanded', 'true');
   renderNotes();
-  if (focus) {
-    const field = writer ? message : author;
-    field.focus({preventScroll:true});
-    if (!desktop.matches) notes.scrollIntoView({block:'start'});
+  const focus = $('comment-list').querySelector('.is-current') || (writer ? message : author);
+  focus.focus({preventScroll:true});
+  if (!desktop.matches) notes.scrollIntoView({block:'start'});
+}
+
+function dismissSelection() {
+  candidate = null;
+  selectionButton.hidden = true;
+  window.getSelection()?.removeAllRanges();
+}
+
+function readPassage() {
+  if (!selected || sending) return null;
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  function point(node, offset) {
+    const source = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest('[data-review-text]');
+    if (!source || !paper.contains(source)) return null;
+    const clause = source.closest('[data-section]');
+    const within = document.createRange();
+    within.selectNodeContents(source);
+    within.setEnd(node, offset);
+    return {sectionId:clause.dataset.section, block:Number(source.dataset.reviewText), offset:within.toString().length};
+  }
+  const start = point(range.startContainer, range.startOffset);
+  const end = point(range.endContainer, range.endOffset);
+  if (!start || !end || start.sectionId !== end.sectionId) return null;
+  const entry = sections.get(start.sectionId);
+  const anchor = {startBlock:start.block, startOffset:start.offset, endBlock:end.block, endOffset:end.offset};
+  const quote = selectionExcerpt(entry.section, anchor);
+  return quote ? {entry, anchor, quote, range} : null;
+}
+
+function showSelection() {
+  selectionFrame = 0;
+  candidate = dragging ? null : readPassage();
+  const width = document.documentElement.clientWidth;
+  const height = document.documentElement.clientHeight;
+  const rect = candidate && [...candidate.range.getClientRects()].filter(r =>
+    r.width && r.height && r.right > 0 && r.bottom > 0 && r.left < width && r.top < height
+  ).at(-1);
+  selectionButton.hidden = !rect;
+  if (!rect) return;
+  const {offsetWidth,offsetHeight} = selectionButton;
+  const y = rect.bottom + 8 + offsetHeight < height ? rect.bottom + 8 : rect.top - offsetHeight - 8;
+  selectionButton.style.left = Math.max(8, Math.min(rect.right + 10, width - offsetWidth - 8)) + 'px';
+  selectionButton.style.top = Math.max(8, Math.min(y, height - offsetHeight - 8)) + 'px';
+}
+
+function queueSelection() {
+  if (!selectionFrame) selectionFrame = requestAnimationFrame(showSelection);
+}
+
+function drawPassages(entry) {
+  const comments = commentsFor(selected, entry.section).filter(item => item.anchor);
+  const draft = active?.section.id === entry.section.id && draftFor(active);
+  const ranges = [...comments, ...(draft?.anchor ? [{anchor:draft.anchor}] : [])];
+  for (const [index, {node,text}] of entry.blocks.entries()) {
+    const spans = ranges.filter(({anchor:a}) => index >= a.startBlock && index <= a.endBlock)
+      .map(item => ({item,
+        start:index === item.anchor.startBlock ? item.anchor.startOffset : 0,
+        end:index === item.anchor.endBlock ? item.anchor.endOffset : text.length
+      })).filter(span => span.start < span.end);
+    if (!spans.length) {
+      if (node.childElementCount) node.textContent = text;
+      continue;
+    }
+    const stops = [...new Set([0,text.length,...spans.flatMap(span => [span.start,span.end])])].sort((a,b)=>a-b);
+    const fragment = document.createDocumentFragment();
+    for (let i = 1; i < stops.length; i++) {
+      const start = stops[i-1], end = stops[i], portion = text.slice(start,end);
+      const covering = spans.filter(span => span.start <= start && span.end >= end);
+      const match = covering.find(span => span.item.id === active?.commentId && span.item.id) ||
+        covering.find(span => span.item.id) || covering[0];
+      if (!match) {
+        fragment.append(document.createTextNode(portion));
+        continue;
+      }
+      const mark = element('mark',portion,'passage-mark');
+      if (!match.item.id) mark.classList.add('is-draft');
+      else {
+        mark.dataset.commentId = match.item.id;
+        mark.classList.toggle('is-active',match.item.id === active?.commentId);
+        mark.setAttribute('role','button');
+        mark.setAttribute('aria-label','この箇所のコメントを開く');
+        mark.tabIndex = 0;
+        const open = () => openNotes(entry,null,match.item.id);
+        mark.addEventListener('click', () => { if (!readPassage()) open(); });
+        mark.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            open();
+          }
+        });
+      }
+      fragment.append(mark);
+    }
+    node.replaceChildren(fragment);
   }
 }
 
-function quoteFrom(block) {
-  const selection = window.getSelection();
-  if (!selection?.rangeCount || selection.isCollapsed) return '';
-  const range = selection.getRangeAt(0);
-  const source = node => (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest('[data-review-text]');
-  const start = source(range.startContainer);
-  if (!start || !block.contains(start) || source(range.endContainer) !== start) return '';
-  return selection.toString().trim().replace(/\s+/g, ' ').slice(0, 400).trim();
+function textBlock(node, text, blocks) {
+  node.textContent = text;
+  node.dataset.reviewText = String(blocks.length);
+  blocks.push({node,text});
+  return node;
 }
 
-function renderTable(info) {
+function renderTable(info, blocks) {
   const table = element('table');
   const head = table.createTHead().insertRow();
   for (const label of info.headers) {
-    const th = element('th',label);
+    const th = textBlock(element('th'),label,blocks);
     th.scope = 'col';
-    th.dataset.reviewText = '';
     head.append(th);
   }
   const body = table.createTBody();
   for (const row of info.rows) {
     const tr = body.insertRow();
     for (const value of row) {
-      const cell = tr.insertCell();
-      cell.dataset.reviewText = '';
-      cell.textContent = value;
+      textBlock(tr.insertCell(),value,blocks);
     }
   }
   return table;
@@ -175,6 +276,7 @@ function renderTable(info) {
 
 function chooseDocument(doc, focusTitle = false) {
   if (sending) return;
+  dismissSelection();
   clearNotes();
   selected = doc;
   sections = new Map();
@@ -184,9 +286,10 @@ function chooseDocument(doc, focusTitle = false) {
   const title = element('h1',doc.title);
   title.tabIndex = -1;
   paper.replaceChildren(element('span',doc.subtitle,'version'), title, element('p',doc.notice,'notice'),
-    element('p','条項の「コメント」から意見を書けます。文章を選んで押すと、その箇所を引用できます。','guide'));
+    element('p','文章を選ぶと、その箇所にコメントを付けられます。条項全体へのコメントは見出しの横から追加できます。','guide'));
   for (const section of doc.sections) {
     const block = element('section',null,'clause');
+    block.dataset.section = section.id;
     const header = element('div',null,'clause-heading');
     const heading = element('h2',section.heading);
     heading.id = 'heading-' + section.id;
@@ -195,20 +298,17 @@ function chooseDocument(doc, focusTitle = false) {
     button.type = 'button';
     button.setAttribute('aria-controls','notes');
     button.setAttribute('aria-expanded','false');
-    const entry = {section, block, button};
-    let poisedQuote = '';
-    button.addEventListener('pointerdown', () => { poisedQuote = quoteFrom(block); });
-    button.addEventListener('click', () => { openNotes(entry, poisedQuote || quoteFrom(block)); poisedQuote = ''; });
+    const entry = {section, block, button, blocks:[]};
+    button.addEventListener('click', () => { openNotes(entry); });
     header.append(heading, button);
     block.append(header);
     for (const content of section.paragraphs) {
-      const paragraph = element('p',content);
-      paragraph.dataset.reviewText = '';
-      block.append(paragraph);
+      block.append(textBlock(element('p'),content,entry.blocks));
     }
-    if (section.table) block.append(renderTable(section.table));
+    if (section.table) block.append(renderTable(section.table,entry.blocks));
     sections.set(section.id, entry);
     paper.append(block);
+    drawPassages(entry);
   }
   updateCounts();
   if (focusTitle) title.focus();
@@ -251,6 +351,7 @@ function lock(instruction, keepDrafts = false) {
     restoreRole = data?.role;
     restore = active && {documentId:selected.id, version:selected.version, sectionId:active.section.id};
   }
+  dismissSelection();
   clearNotes();
   if (!keepDrafts) {
     drafts.clear();
@@ -308,10 +409,30 @@ $('close-notes').addEventListener('click', () => clearNotes(true));
 $('remove-quote').addEventListener('click', () => {
   const draft = draftFor(active);
   draft.quote = '';
+  draft.anchor = null;
   renderQuote(draft);
+  drawPassages(active);
   message.focus();
 });
 desktop.addEventListener('change', placeNotes);
+document.addEventListener('selectionchange', queueSelection);
+document.addEventListener('pointerdown', event => {
+  if (event.button === 0 && event.target.closest('[data-review-text]')) {
+    dragging = true;
+    queueSelection();
+  }
+});
+for (const type of ['pointerup','pointercancel']) {
+  document.addEventListener(type, () => { dragging = false; queueSelection(); });
+}
+window.addEventListener('scroll',queueSelection,{passive:true});
+window.addEventListener('resize',queueSelection);
+selectionButton.addEventListener('pointerdown', event => {
+  if (event.pointerType === 'mouse') event.preventDefault();
+});
+selectionButton.addEventListener('click', () => {
+  if (candidate) openNotes(candidate.entry,candidate);
+});
 notes.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !sending) clearNotes(true);
 });
@@ -322,7 +443,7 @@ $('note-form').addEventListener('submit', async event => {
   retainDraft();
   const draft = draftFor(active);
   const payload = {documentId:selected.id, version:selected.version, sectionId:active.section.id,
-    author:writer.trim(), message:draft.message.trim(), quote:draft.quote};
+    author:writer.trim(), message:draft.message.trim(), quote:draft.quote, anchor:draft.anchor};
   if (!payload.author || !payload.message) {
     status('note-status','お名前とコメントを入力してください。',true);
     return;

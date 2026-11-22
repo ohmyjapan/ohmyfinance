@@ -1,6 +1,7 @@
+import {documentBlocks, normalizeQuote, selectionExcerpt} from './assets/document-review-anchors.mjs';
+
 const docIds = new Set(['nda', 'service-agreement']);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const normalizeQuote = value => value.trim().replace(/\s+/g, ' ');
 
 function readText(input, name, max, fail, required = true) {
   const value = input?.[name];
@@ -14,7 +15,8 @@ function commentView(row) {
   return {
     id: row.id, documentId: row.document_id, version: row.version,
     sectionId: row.section_id, author: row.author, role: row.role,
-    message: row.message, quote: row.quote, createdAt: row.created_at
+    message: row.message, quote: row.quote, anchor: row.anchor_json ? JSON.parse(row.anchor_json) : null,
+    createdAt: row.created_at
   };
 }
 
@@ -46,13 +48,22 @@ export async function reviewDocuments({request, db, slug, role, body, reply, fai
   const author = readText(input, 'author', 80, fail);
   const message = readText(input, 'message', 3000, fail);
   const quote = normalizeQuote(readText(input, 'quote', 400, fail, false));
+  let anchor = null;
+  if (input.anchor != null) {
+    if (typeof input.anchor !== 'object' || Array.isArray(input.anchor)) {
+      fail(400, '文書内の文章を選び直してください。');
+    }
+    const {startBlock, startOffset, endBlock, endOffset} = input.anchor;
+    anchor = {startBlock, startOffset, endBlock, endOffset};
+  }
+  const anchorJson = anchor && JSON.stringify(anchor);
   const existingComment = () => db.prepare(
     'SELECT * FROM followup_review_comments WHERE survey_slug=? AND id=?'
   ).bind(slug, input.id).first();
   const acceptDuplicate = row => {
     const matches = row.document_id === input.documentId && row.version === input.version &&
       row.section_id === input.sectionId && row.author === author && row.message === message &&
-      row.quote === quote && row.role === role;
+      row.quote === quote && row.anchor_json === anchorJson && row.role === role;
     if (!matches) fail(409, 'コメントを開き直し、もう一度送信してください。');
     return reply({comment: commentView(row)});
   };
@@ -65,19 +76,21 @@ export async function reviewDocuments({request, db, slug, role, body, reply, fai
   if (!doc) fail(409, '文書の版が変わりました。元の文書を確認してからコメントしてください。');
   const section = JSON.parse(doc.document_json).sections.find(item => item.id === input.sectionId);
   if (!section) fail(400, 'コメントを付ける条項を選び直してください。');
-  const quoteSources = [...section.paragraphs, ...(section.table?.headers || []), ...(section.table?.rows.flat() || [])];
-  if (quote && !quoteSources.some(value => normalizeQuote(value).includes(quote))) {
+  if (anchor && (!quote || selectionExcerpt(section, anchor) !== quote)) {
+    fail(400, '文書内の文章を選び直してください。');
+  }
+  if (!anchor && quote && !documentBlocks(section).some(value => normalizeQuote(value).includes(quote))) {
     fail(400, '文書内の一つの段落または表のセルを選んでください。');
   }
 
   const saved = await db.prepare(
     `INSERT INTO followup_review_comments
-      (survey_slug,id,document_id,version,section_id,author,role,message,quote,created_at)
-      SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(
+      (survey_slug,id,document_id,version,section_id,author,role,message,quote,anchor_json,created_at)
+      SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(
         SELECT 1 FROM followup_review_documents d JOIN followup_surveys s ON s.slug=d.survey_slug
           WHERE s.active=1 AND d.active=1 AND d.survey_slug=? AND d.document_id=? AND d.version=?)
       ON CONFLICT(survey_slug,id) DO NOTHING RETURNING *`
-  ).bind(slug, input.id, input.documentId, input.version, input.sectionId, author, role, message, quote,
+  ).bind(slug, input.id, input.documentId, input.version, input.sectionId, author, role, message, quote, anchorJson,
     Date.now(), slug, input.documentId, input.version).first();
   if (saved) return reply({comment: commentView(saved)}, 201);
   const duplicate = await existingComment();

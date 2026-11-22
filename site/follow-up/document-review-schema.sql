@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS followup_review_comments (
   role TEXT NOT NULL CHECK(role IN ('admin','customer')),
   message TEXT NOT NULL,
   quote TEXT NOT NULL,
+  anchor_json TEXT,
   created_at INTEGER NOT NULL,
   PRIMARY KEY(survey_slug, id),
   FOREIGN KEY(survey_slug, document_id, version)
