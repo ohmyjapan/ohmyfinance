@@ -9,6 +9,7 @@ const author = $('author');
 const message = $('message');
 const selectionButton = $('selection-comment');
 const desktop = matchMedia('(min-width: 900px)');
+const wideOutline = matchMedia('(min-width: 1180px)');
 const drafts = new Map();
 const mount = location.pathname.match(/^\/follow-up\/[a-z0-9-]+\//)?.[0];
 const dates = new Intl.DateTimeFormat('ja-JP', {dateStyle:'medium', timeStyle:'short', timeZone:'Asia/Tokyo'});
@@ -186,15 +187,16 @@ function showSelection() {
   candidate = dragging ? null : readPassage();
   const width = document.documentElement.clientWidth;
   const height = document.documentElement.clientHeight;
+  const mastBottom = document.querySelector('.masthead').getBoundingClientRect().bottom;
   const rect = candidate && [...candidate.range.getClientRects()].filter(r =>
-    r.width && r.height && r.right > 0 && r.bottom > 0 && r.left < width && r.top < height
+    r.width && r.height && r.right > 0 && r.bottom > mastBottom && r.left < width && r.top < height
   ).at(-1);
   selectionButton.hidden = !rect;
   if (!rect) return;
   const {offsetWidth,offsetHeight} = selectionButton;
   const y = rect.bottom + 8 + offsetHeight < height ? rect.bottom + 8 : rect.top - offsetHeight - 8;
   selectionButton.style.left = Math.max(8, Math.min(rect.right + 10, width - offsetWidth - 8)) + 'px';
-  selectionButton.style.top = Math.max(8, Math.min(y, height - offsetHeight - 8)) + 'px';
+  selectionButton.style.top = Math.max(mastBottom + 6, Math.min(y, height - offsetHeight - 8)) + 'px';
 }
 
 function queueSelection() {
@@ -285,6 +287,10 @@ function chooseDocument(doc, focusTitle = false) {
   }
   const title = element('h1',doc.title);
   title.tabIndex = -1;
+  const clauseLinks = $('clause-links');
+  clauseLinks.replaceChildren();
+  $('outline-clauses').hidden = false;
+  $('outline-clauses').open = wideOutline.matches;
   paper.replaceChildren(element('span',doc.subtitle,'version'), title, element('p',doc.notice,'notice'),
     element('p','文章を選ぶと、その箇所にコメントを付けられます。条項全体へのコメントは見出しの横から追加できます。','guide'));
   for (const section of doc.sections) {
@@ -294,6 +300,10 @@ function chooseDocument(doc, focusTitle = false) {
     const heading = element('h2',section.heading);
     heading.id = 'heading-' + section.id;
     block.setAttribute('aria-labelledby', heading.id);
+    const link = element('a',section.heading);
+    link.href = '#' + heading.id;
+    link.addEventListener('click', () => { if (!wideOutline.matches) $('outline-clauses').open = false; });
+    clauseLinks.append(link);
     const button = element('button','コメント','note-toggle');
     button.type = 'button';
     button.setAttribute('aria-controls','notes');
@@ -363,6 +373,8 @@ function lock(instruction, keepDrafts = false) {
   sections.clear();
   paper.replaceChildren();
   $('files').replaceChildren();
+  $('clause-links').replaceChildren();
+  $('outline-clauses').hidden = true;
   workspace.hidden = true;
   $('sign-out').hidden = true;
   $('login').hidden = false;
@@ -415,6 +427,7 @@ $('remove-quote').addEventListener('click', () => {
   message.focus();
 });
 desktop.addEventListener('change', placeNotes);
+wideOutline.addEventListener('change', () => { $('outline-clauses').open = wideOutline.matches; });
 document.addEventListener('selectionchange', queueSelection);
 document.addEventListener('pointerdown', event => {
   if (event.button === 0 && event.target.closest('[data-review-text]')) {

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="dark light">
   <title>契約書・NDAの確認 | OhMyFinance</title>
   <link rel="stylesheet" href="/follow-up/assets/document-review.css">
   <script type="module" src="/follow-up/assets/document-review.js"></script>
@@ -13,25 +14,38 @@
     <div class="mast-inner">
       <span class="brand">OhMyFinance</span>
       <span class="mast-label">契約書・NDAの確認</span>
-      <button id="sign-out" type="button" hidden>ログアウト</button>
+      <button id="sign-out" type="button" hidden>退出する</button>
     </div>
   </header>
   <main>
     <section id="login" class="login" aria-labelledby="login-title">
-      <h1 id="login-title">契約書・NDAの確認</h1>
-      <p>ご案内のパスワードで、文書とコメントを開けます。</p>
-      <form id="login-form">
-        <label for="password">パスワード</label>
-        <input id="password" type="password" autocomplete="current-password" required maxlength="200">
-        <label class="admin-choice"><input id="admin" type="checkbox"> 管理者として入る</label>
-        <button class="primary" id="sign-in" type="submit">文書を開く</button>
-      </form>
-      <p class="status" id="login-status" role="status"></p>
+      <div class="login-portrait" aria-hidden="true"></div>
+      <div class="login-copy">
+        <h1 id="login-title">契約書・NDAのご確認</h1>
+        <p>気になる条項や文言に、その場でコメントを付けられます。</p>
+        <form id="login-form">
+          <label for="password">ご案内したパスワード</label>
+          <div class="password-row">
+            <input id="password" type="password" autocomplete="current-password" required maxlength="200">
+            <button class="primary" id="sign-in" type="submit">文書を開く <span aria-hidden="true">→</span></button>
+          </div>
+          <label class="admin-choice"><input id="admin" type="checkbox"> 管理者として確認する</label>
+          <p class="status" id="login-status" role="status"></p>
+        </form>
+      </div>
     </section>
     <section id="workspace" class="workspace" aria-label="文書の確認" hidden>
-      <nav id="files" class="files" aria-label="文書"></nav>
-      <p id="workspace-status" class="status" role="status"></p>
-      <div class="reading-layout" id="reading-layout">
+      <aside class="outline" aria-label="文書を切り替える">
+        <p class="outline-title" aria-hidden="true">確認する文書</p>
+        <nav id="files" class="files" aria-label="文書"></nav>
+        <details id="outline-clauses" class="outline-clauses" hidden>
+          <summary>条項一覧</summary>
+          <nav id="clause-links" aria-label="条項一覧"></nav>
+        </details>
+      </aside>
+      <div class="review-main">
+        <p id="workspace-status" class="status" role="status"></p>
+        <div class="reading-layout" id="reading-layout">
         <article class="paper" id="paper"></article>
         <aside id="notes" class="notes" hidden aria-labelledby="notes-title">
           <div class="notes-header">
@@ -52,7 +66,8 @@
             <button class="primary" type="submit" id="post-note">コメントを追加</button>
             <p id="note-status" class="status" role="status"></p>
           </form>
-        </aside>
+          </aside>
+        </div>
       </div>
     </section>
   </main>
