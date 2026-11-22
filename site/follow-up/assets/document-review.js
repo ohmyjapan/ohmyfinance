@@ -276,6 +276,28 @@ function renderTable(info, blocks) {
   return table;
 }
 
+function chapterName(doc) {
+  const label = doc.id === 'nda' ? '秘密保持契約（NDA）' : 'サービス契約書';
+  return '第' + (data.documents.indexOf(doc) + 1) + '章 ' + label;
+}
+
+function chapterNavigation(doc) {
+  const index = data.documents.indexOf(doc);
+  const navigation = element('nav',null,'chapter-navigation');
+  navigation.setAttribute('aria-label','前後の章へ移動');
+  for (const [offset, label, direction] of [[-1,'← 前の章','previous'],[1,'次の章 →','next']]) {
+    const target = data.documents[index + offset];
+    if (!target) continue;
+    const button = element('button',null,'chapter-button');
+    button.type = 'button';
+    button.dataset.direction = direction;
+    button.append(element('span',label),element('strong',chapterName(target)));
+    button.addEventListener('click', () => chooseDocument(target, true));
+    navigation.append(button);
+  }
+  return navigation;
+}
+
 function chooseDocument(doc, focusTitle = false) {
   if (sending) return;
   dismissSelection();
@@ -291,7 +313,9 @@ function chooseDocument(doc, focusTitle = false) {
   clauseLinks.replaceChildren();
   $('outline-clauses').hidden = false;
   $('outline-clauses').open = wideOutline.matches;
-  paper.replaceChildren(element('span',doc.subtitle,'version'), title, element('p',doc.notice,'notice'),
+  const meta = element('div',null,'chapter-meta');
+  meta.append(element('span','第' + (data.documents.indexOf(doc) + 1) + '章','chapter-number'),element('span',doc.subtitle,'version'));
+  paper.replaceChildren(meta, title, element('p',doc.notice,'notice'),
     element('p','文章を選ぶと、その箇所にコメントを付けられます。条項全体へのコメントは見出しの横から追加できます。','guide'));
   for (const section of doc.sections) {
     const block = element('section',null,'clause');
@@ -320,8 +344,13 @@ function chooseDocument(doc, focusTitle = false) {
     paper.append(block);
     drawPassages(entry);
   }
+  if (data.documents.length > 1) paper.append(chapterNavigation(doc));
   updateCounts();
-  if (focusTitle) title.focus();
+  if (focusTitle) {
+    if (location.hash) history.replaceState(null,'',location.pathname + location.search);
+    title.focus({preventScroll:true});
+    window.scrollTo(0,0);
+  }
 }
 
 function enter(review) {
@@ -337,11 +366,10 @@ function enter(review) {
   $('sign-out').hidden = false;
   $('files').replaceChildren();
   for (const doc of data.documents) {
-    const label = doc.id === 'nda' ? '秘密保持契約（NDA）' : 'サービス契約書';
     const tab = element('button');
     tab.type = 'button';
     tab.dataset.document = doc.id;
-    tab.append(element('span',label),element('small'));
+    tab.append(element('span',chapterName(doc)),element('small'));
     tab.addEventListener('click', () => { if (selected !== doc) chooseDocument(doc, true); });
     $('files').append(tab);
   }
@@ -384,7 +412,7 @@ function lock(instruction, keepDrafts = false) {
 function submitBusy(busy) {
   sending = busy;
   for (const control of [$('post-note'), $('sign-out'), $('close-notes'), $('remove-quote'), author, message,
-    ...$('files').querySelectorAll('button'), ...paper.querySelectorAll('.note-toggle')]) {
+    ...$('files').querySelectorAll('button'), ...paper.querySelectorAll('.note-toggle, .chapter-button')]) {
     control.disabled = busy;
   }
 }

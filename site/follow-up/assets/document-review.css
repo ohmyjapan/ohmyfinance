@@ -57,6 +57,8 @@ textarea{resize:vertical}
 .reading-layout{display:grid;align-items:start;gap:16px}
 .paper,.notes{color-scheme:light;color:var(--ink)}
 .paper{background:var(--paper);padding:22px 18px 32px;border:1px solid var(--rule);border-top:4px solid #6e818e;border-radius:3px;min-width:0;box-shadow:0 8px 26px #0003}
+.chapter-meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 11px}
+.chapter-number{font-weight:700;color:var(--accent);font-size:14px}
 .paper h1{font-family:OMF Editorial,'Yu Mincho','Hiragino Mincho ProN',serif;font-size:clamp(23px,4vw,34px);line-height:1.45;margin:7px 0 12px;overflow-wrap:anywhere}
 .paper p,.paper td,.paper th{white-space:pre-line;overflow-wrap:anywhere}
 .paper .notice{font-size:14px;color:var(--muted);border-left:2px solid var(--accent);padding-left:11px;margin:0 0 25px}
@@ -79,6 +81,12 @@ textarea{resize:vertical}
 .comment-list li.is-current{border-left:2px solid var(--accent);padding-left:9px}
 .note-toggle{flex:none;font-size:13px;min-height:35px;padding:5px 9px}
 .note-toggle[aria-expanded=true]{background:var(--mark);border-color:var(--accent);color:var(--accent)}
+.chapter-navigation{display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid var(--rule);padding-top:20px;margin-top:8px}
+.chapter-button{display:grid;gap:3px;text-align:left;color:var(--accent);padding:9px 13px;background:var(--side);max-width:100%}
+.chapter-button span{font-size:12px}
+.chapter-button strong{font-size:15px}
+.chapter-button[data-direction=next]{margin-left:auto;background:var(--accent);color:var(--chrome-text);border-color:var(--accent)}
+.chapter-button[data-direction=next]:hover{background:#2c536d}
 .paper table{width:100%;border-collapse:collapse;font-size:14px;line-height:1.65;margin-top:10px}
 .paper th,.paper td{border:1px solid var(--rule);text-align:left;vertical-align:top;padding:8px}
 .paper th{background:var(--side);font-weight:650}
