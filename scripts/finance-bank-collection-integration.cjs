@@ -306,6 +306,25 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  const mappedClaim=ok(await dev('bank/claim',{},ppPc.token),'claim-paypay-mapped');assert.ok([mappedJob.jobId,retry3.jobId].includes(mappedClaim.job.jobId));const mappedClaim2=ok(await dev('bank/claim',{},ppPc.token),'claim-paypay-mapped-2');assert.ok([mappedJob.jobId,retry3.jobId].includes(mappedClaim2.job.jobId));
  const unverified=ok(await ppUpload(mappedJob,ppCsv(0),{labelChecked:'false'}),'capture-paypay-unverified');
  assert.equal(unverified.state,'needs_review','bank:paypay-unverified-duplicate-stays-held');
+ const storedMappedJob=await jobDoc(mappedJob.jobId);
+ const heldSnapshot={...storedMappedJob.snapshot,headers:storedMappedJob.snapshot.headers.map(header=>header==='残高'?'残高（円）':header)};
+ const heldJobId=uuid(),heldSnapshotHash=crypto.createHash('sha256').update(JSON.stringify(heldSnapshot)).digest('hex');
+ const statementBeforeHold=await statementDoc(ppCaptures[0].id),rowsBeforeHold=await rows(pp[0]);
+ const bankJobs=db.collection('financebankjobs');
+ await bankJobs.insertOne({...storedMappedJob,_id:new ObjectId(),jobId:heldJobId,snapshot:heldSnapshot,snapshotHash:heldSnapshotHash,state:'complete',open:false,statementIds:[]});
+ try {
+  const held=ok(await ppUpload({jobId:heldJobId,snapshotHash:heldSnapshotHash},ppCsv(0)),'capture-paypay-recovery-header-hold');
+  const statementAfterHold=await statementDoc(ppCaptures[0].id);
+  assert.deepEqual(statementAfterHold.capture,statementBeforeHold.capture,'bank:paypay-recovery-hold-preserves-original-receipt');
+  assert.equal(statementAfterHold.initialUnmappedCapture,undefined,'bank:paypay-recovery-hold-does-not-archive-original');
+  assert.deepEqual(await rows(pp[0]),rowsBeforeHold,'bank:paypay-recovery-hold-writes-no-rows');
+  assert.deepEqual([held.id,held.state,held.duplicate,held.snapshotHash],
+   [ppCaptures[0].id,'needs_review',true,statementBeforeHold.capture.snapshotHash]);
+  assert.deepEqual(held.rows,{new:0,existing:0,unchanged:0,differs:0});
+  assert.match(held.reason,/見出し行/);
+ } finally {
+  await bankJobs.deleteOne({jobId:heldJobId});
+ }
  const recovered=await Promise.all([ppUpload(mappedJob,ppCsv(0)),ppUpload(mappedJob,ppCsv(0))]);
  for(const result of recovered){
   const receipt=ok(result,'capture-paypay-mapped-identical');
@@ -320,6 +339,7 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  assert.equal(recoveryJobs.find(j=>j.jobId===mappedJob.jobId).captures[0].state,'imported');
  assert.equal(recoveryJobs.find(j=>j.jobId===ppJobs[0].jobId).captures[0].state,'needs_review');
  assert.ok((await rows(pp[0])).every(row=>row.revision===1),'bank:paypay-recovery-does-not-revise-imported-rows');
+ pass('PayPay recovery with a mismatched header leaves the original review receipt and ledger intact before the valid retry succeeds');
  const later=ok(await ppUpload(mappedJob,Buffer.concat([ppCsv(0),Buffer.from('2026/10/20,架空リース,5500,,104170\r\n')])),'capture-paypay-mapped');assert.equal(later.state,'imported','bank:paypay-mapped-capture-imported');assert.deepEqual(later.rows,{new:1,existing:2,unchanged:0,differs:0},'bank:paypay-mapped-overlap-anchored');assert.equal((await rows(pp[0])).length,3);
  // a job queued before plan omf-paypay-routine-20261022 (a historical guided observe job, inserted with the shape the 12cf98c queue froze)
  // keeps its own kind and label in the owner's job list
