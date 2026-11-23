@@ -451,7 +451,10 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
    assert.match(await page.$eval(card(pp[1])+'[data-bank-connection-state]',e=>e.textContent),/未割り当て/,'bank:chrome-paypay-unmapped-state');
    assert.equal(await page.$eval(card(pp[1])+'[data-bank-connect-save]',e=>e.disabled),false,'bank:chrome-paypay-guided-save-without-template');
    assert.match(await page.$eval(card(pp[1])+'[data-bank-capture-mapping]',e=>e.textContent),/列の割り当て待ち/,'bank:chrome-paypay-mapping-pending');
-   assert.match(await page.$eval(card(pp[0])+'[data-bank-capture-mapping]',e=>e.textContent),/割り当て済み/,'bank:chrome-paypay-mapped-capture');
+   const recoveredCapture=card(pp[0])+'[data-bank-capture="'+ppCaptures[0].id+'"]';
+   await wait(selector=>!!document.querySelector(selector),recoveredCapture);
+   assert.match(await page.$eval(recoveredCapture,e=>e.textContent),/取込済み.*新規 0/,'bank:chrome-paypay-mapped-capture');
+   assert.equal(await page.$(recoveredCapture+' [data-bank-capture-mapping]'),null,'bank:chrome-paypay-recovered-capture-no-review-badge');
    const ppTest=await page.$eval(card(pp[1])+'[data-bank-test-state]',e=>e.textContent);assert.match(ppTest,/接続テスト: 完了（取り込んだ明細なし・要確認）/,'bank:chrome-paypay-test-state');assert.doesNotMatch(ppTest,/対象外|成功/,'bank:chrome-paypay-test-state (no success claimed)');
    await wait(id=>!!document.querySelector('[data-bank-connection="'+id+'"] [data-bank-capture-map]'),bankA);const captureText=await page.$eval(card(bankA)+'[data-bank-capture]',e=>e.textContent);assert.ok(/要確認|取込済み/.test(captureText),'bank:chrome-capture-state');assert.match(captureText,/口座照合 未確認/,'bank:chrome-label-unchecked');
    await settledClick(card(bankA)+'[data-bank-capture="'+held.id+'"] [data-bank-capture-map]');await wait(()=>!!document.querySelector('[data-bank-importer]')&&!document.querySelector('[data-bank-file]').disabled&&/原本を保存済み/.test(document.querySelector('[data-bank-importer]').textContent));
