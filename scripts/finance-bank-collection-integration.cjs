@@ -348,21 +348,6 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
  assert.deepEqual(ok(await get('bank/accounts/'+pp[1]+'/jobs'),'jobs-paypay-2').jobs.map(j=>j.kind).sort(),['observe','retrieve'],'bank:paypay-historical-job-listed');
  for(const j of [mappedJob,retry3])ok(await dev('bank/status',{jobId:j.jobId,state:'complete',message:'done'},ppPc.token),'status-paypay-final');
  assert.deepEqual(await Promise.all(pp.slice(1).map(id=>rows(id).then(r=>r.length))),[0,0,0],'bank:paypay-other-accounts-untouched');
- const guidedBytes=Buffer.concat([ppCsv(1),Buffer.from('2026/10/20,架空リース別口座,500,,118840\r\n')]);
- const guidedJob=await jobDoc(histJobId);
- const guided=ok(await ppUpload(guidedJob,guidedBytes,{channel:'collector-observe',labelChecked:'false'}),'paypay-guided-unmapped');
- assert.equal(guided.state,'needs_review');
- ok(await req('bank/accounts/'+pp[1]+'/connection',{provider:'paypay',variant:'standard',templateId:ppTpl.id,coverage:ppPeriod},'PUT'),'paypay-guided-mapped-connection');
- const automatic=ok(await req('bank/accounts/'+pp[1]+'/sync',{}),'paypay-guided-mapped-retrieval').job;
- assert.equal(automatic.snapshot.accountLabel,null,'bank:paypay-no-optional-label');
- assert.equal(ok(await dev('bank/claim',{},ppPc.token),'paypay-guided-mapped-claim').job.jobId,automatic.jobId);
- const mappedGuided=ok(await ppUpload(automatic,guidedBytes,{labelChecked:'false'}),'paypay-guided-recover');
- assert.equal(mappedGuided.id,guided.id);
- assert.deepEqual([mappedGuided.state,mappedGuided.labelChecked,mappedGuided.rows],['imported',false,{new:3,existing:0,unchanged:0,differs:0}]);
- assert.equal((await statementDoc(guided.id)).initialUnmappedCapture.kind,'observe');
- assert.equal((await rows(pp[1])).length,3);
- ok(await dev('bank/status',{jobId:automatic.jobId,state:'complete',message:'done'},ppPc.token),'paypay-guided-recovered-complete');
- pass('PayPay reuses a same-account unmapped retrieval or observation when a routine job has a mapping, archives the original receipt, and writes each row once');
  pass('G PayPay銀行 標準: template-free connection (BA-PLUS, no login type and other providers still need a template), four retrieve jobs with their frozen period (none without one) and frozen unmapped interpretations and separate claims, first captures retained needs_review/mapping-required with zero rows and original bytes, duplicate replay, cross-account 409, retry isolation, native mapping through the importer, the mapped connection\'s next whole-period capture anchors the imported rows and adds only the new one; a historical guided job keeps its kind');
  // ── P (plan omf-paypay-split-dates-retry-20261022): PayPay銀行's actual statement shape — the transaction date in three columns
  // 操作日(年)/(月)/(日), plus 操作時刻 and 取引順番号 (a sequence number, not a bank transaction ID). Fictional Shift_JIS rows under the exact
@@ -492,4 +477,20 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,origin,pass
   }finally{if(page)await page.close();await browser.close();if(!path.resolve(profileDir).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('Unsafe owned Chrome cleanup');await fs.rm(profileDir,{recursive:true,force:true})}
   pass('V hidden real Chrome: connect (provider, template, label), support label, device scope, 観察取得（準備）, job listing, capture → importer picker, split year/month/day selects guessed and previewed, cleared for a single-date file, 390/1440 px without overflow, dark controls, no console errors');
  }
+ // The browser checks above use the second PayPay account before a template is assigned.
+ const guidedBytes=Buffer.concat([ppCsv(1),Buffer.from('2026/10/20,架空リース別口座,500,,118840\r\n')]);
+ const guidedJob=await jobDoc(histJobId);
+ const guided=ok(await ppUpload(guidedJob,guidedBytes,{channel:'collector-observe',labelChecked:'false'}),'paypay-guided-unmapped');
+ assert.equal(guided.state,'needs_review');
+ ok(await req('bank/accounts/'+pp[1]+'/connection',{provider:'paypay',variant:'standard',templateId:ppTpl.id,coverage:ppPeriod},'PUT'),'paypay-guided-mapped-connection');
+ const automatic=ok(await req('bank/accounts/'+pp[1]+'/sync',{}),'paypay-guided-mapped-retrieval').job;
+ assert.equal(automatic.snapshot.accountLabel,null,'bank:paypay-no-optional-label');
+ assert.equal(ok(await dev('bank/claim',{},ppPc.token),'paypay-guided-mapped-claim').job.jobId,automatic.jobId);
+ const mappedGuided=ok(await ppUpload(automatic,guidedBytes,{labelChecked:'false'}),'paypay-guided-recover');
+ assert.equal(mappedGuided.id,guided.id);
+ assert.deepEqual([mappedGuided.state,mappedGuided.labelChecked,mappedGuided.rows],['imported',false,{new:3,existing:0,unchanged:0,differs:0}]);
+ assert.equal((await statementDoc(guided.id)).initialUnmappedCapture.kind,'observe');
+ assert.equal((await rows(pp[1])).length,3);
+ ok(await dev('bank/status',{jobId:automatic.jobId,state:'complete',message:'done'},ppPc.token),'paypay-guided-recovered-complete');
+ pass('PayPay reuses a same-account unmapped retrieval or observation when a routine job has a mapping, archives the original receipt, and writes each row once');
 };
