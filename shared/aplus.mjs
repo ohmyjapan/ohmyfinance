@@ -1,6 +1,7 @@
 import { csvRows, dateOnly, digest, MAX_BYTES, MAX_ROWS } from './amex.mjs';
 export const PARSER_VERSION = 'aplus-jp-2';
 export const HEADERS = ['カード番号','ご利用日','ご利用店名','ご利用金','売上種別','支払回数','今回回数','お支払金額','摘要   現地通貨額(通貨略称)／換算レート／換算日等／手数料'];
+const BILLED_HEADERS = [HEADERS[0], '請求月', HEADERS[1], HEADERS[2], 'ご利用金額', ...HEADERS.slice(4)];
 const yen = value => {
   const text=String(value??'').trim();
   if(!/^-?(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(text)) throw Error('円の金額を整数で指定してください');
@@ -33,16 +34,20 @@ export function parseAplus(bytes,cardIdentifiers,metadata){
   if(expectedRefund!==null&&expectedRefund<0) throw Error('別途返金額は正の金額で指定してください');
   const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
   const table=csvRows(text.replace(/^\uFEFF/,'')),headers=table.shift();
-  if(!headers||headers.length!==HEADERS.length||headers.some((h,i)=>h.trim()!==HEADERS[i])) throw Error('対応するAplus確定明細CSVではありません。未確定データは取り込めません');
+  const schema=[HEADERS,BILLED_HEADERS].find(fields=>headers?.length===fields.length&&fields.every((field,i)=>headers[i].trim()===field));
+  if(!schema) throw Error('対応するAplus確定明細CSVではありません。未確定データは取り込めません');
   if(!table.length||table.length>MAX_ROWS) throw Error('CSVの行数は1〜5000行にしてください');
   const allowed=new Set(cardIdentifiers);
   if(!allowed.size||[...allowed].some(v=>!/^\d{4}$/.test(v))) throw Error('Aplusのカード番号下4桁を確認してください');
   let paymentTotal=0,purchaseTotal=0,sourceRefundTotal=0,accountAdjustmentTotal=0;
   const occurrences=new Map();
-  const rows=table.map((cells,index)=>{
+  const hasBillingMonth=schema===BILLED_HEADERS, billingMonth=coverage.statementMonth.replace('-','');
+  const rows=table.map((source,index)=>{
     try{
-      if(cells.length!==HEADERS.length) throw Error('列数が一致しません');
-      const raw=Object.fromEntries(HEADERS.map((h,i)=>[h,cells[i]]));
+      if(source.length!==schema.length) throw Error('列数が一致しません');
+      if(hasBillingMonth&&source[1]!==billingMonth) throw Error('CSVの請求月が対象の請求月と一致しません');
+      const raw=Object.fromEntries(schema.map((h,i)=>[h,source[i]]));
+      const cells=hasBillingMonth?[source[0],...source.slice(2)]:source;
       const description=cells[2].trim(),details=cells[8].trim();
       if(!description||description.length>2000||details.length>2000) throw Error('利用先または摘要を確認してください');
       const annualFee=!cells[0].trim()&&!cells[1].trim()&&description==='年会費'&&!cells[4].trim()&&!cells[5].trim()&&!cells[6].trim();
@@ -80,5 +85,5 @@ export function parseAplus(bytes,cardIdentifiers,metadata){
   if(paymentTotal!==expectedTotal) throw Error('CSVの支払金額合計とAplusの表示額が一致しません');
   if(expectedRefund!==null&&sourceRefundTotal!==expectedRefund) throw Error('CSVの別途返金額とAplusの返金通知額が一致しません');
   if(Buffer.byteLength(JSON.stringify(rows))>8*1024*1024) throw Error('CSVを小さい期間に分割してください');
-  return {parserVersion:PARSER_VERSION,encoding:'utf-8',sha256:digest(bytes),rows,period:coverage,reconciliation:{statementTotal:paymentTotal,purchaseTotal,separateRefundTotal:expectedRefund,sourceRefundTotal,accountAdjustmentTotal,verified:true,version:2,...(paymentDueDate===undefined?{}:{paymentDueDate})}};
+  return {parserVersion:hasBillingMonth?'aplus-jp-3':PARSER_VERSION,encoding:'utf-8',sha256:digest(bytes),rows,period:coverage,reconciliation:{statementTotal:paymentTotal,purchaseTotal,separateRefundTotal:expectedRefund,sourceRefundTotal,accountAdjustmentTotal,verified:true,version:2,...(paymentDueDate===undefined?{}:{paymentDueDate})}};
 }

@@ -57,3 +57,5 @@ test('exception mappings cannot be relabeled as spending',()=>{
  assert.throws(()=>mappingRows(batch));
  const spending=parse([row()]);assert.throws(()=>mappingRows({...batch,hash:spending.sha256,rows:spending.rows,mappingPreview:{version:1,sourceHash:spending.sha256,rows:[{...batch.mappingPreview.rows[0],line:spending.rows[0].line,key:spending.rows[0].key,purpose:'statement_review'}]}}));
 });
+
+import './finance-aplus-layout.test.mjs';
