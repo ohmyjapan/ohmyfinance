@@ -8,8 +8,9 @@ statement matching and payment allocation are described in [支払い照合](pay
 
 ## Records
 
-Twenty fields, all optional: 注文・取引ID, 商品・明細ID, 外部注文番号, お客様・案件, 商品・依頼内容, 購入先・店舗, 店舗・商品URL, 購入日,
-購入金額 (the total), 商品価格, 税額, 送料, その他手数料, 会社名（法人名）, 登録番号（T番号）, 通貨, 購入状況 (受付中 / 購入済み / キャンセル / 返金),
+Twenty-one fields, all optional: 注文・取引ID, 商品・明細ID, 外部注文番号, お客様・案件, 商品・依頼内容, 購入先・店舗, 店舗・商品URL, 購入日
+(the day the service bought at the shop), 注文日 (the day the customer ordered and paid the service; cleaned by the same date rule as
+購入日; a record stored before this field existed reads it blank and a save records no change for it), 購入金額 (the total), 商品価格, 税額, 送料, その他手数料, 会社名（法人名）, 登録番号（T番号）, 通貨, 購入状況 (受付中 / 購入済み / キャンセル / 返金),
 メモ, 受付元・サービス (default 自社受付), サービス内アカウント. Field list, labels and header aliases live in `shared/finance-intake.mjs`
 (`FIELDS`), one place to change. The five money fields (`MONEY`: 購入金額, 商品価格, 税額, 送料, その他手数料) drop ¥/￥, commas and
 spaces and keep the plain number as a string (zero and negative kept); identifiers (注文ID, 外部注文番号, T番号) stay strings exactly as

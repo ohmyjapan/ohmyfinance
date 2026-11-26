@@ -75,10 +75,42 @@ test('revised source documents append provenance while keeping one purchase iden
   const result = planImport(records, [row({ orderId: '001', amount: '120' }, proof(6, 'b'))]);
   assert.equal(applyPlan(records, result).length, 1); assert.equal(result.rows[0].record.provenance.length, 2); assert.equal(result.rows[0].record.history.at(-1).changes.find(c => c.field === 'amount').before, '100');
 });
-test('header guessing maps the prototype aliases onto the twenty fields by column index', () => {
+test('header guessing maps the prototype aliases onto the twenty-one fields by column index', () => {
   const mapping = guessMapping(['注文番号', '商品名', '購入金額', '購入状況', 'unknown column']);
   assert.equal(mapping.orderId, '0'); assert.equal(mapping.description, '1'); assert.equal(mapping.amount, '2'); assert.equal(mapping.purchaseState, '3'); assert.equal(mapping.merchant, '');
-  assert.equal(FIELDS.length, 20); assert.deepEqual(Object.keys(mapping), FIELDS.map(f => f[0]));
+  assert.equal(FIELDS.length, 21); assert.deepEqual(Object.keys(mapping), FIELDS.map(f => f[0]));
+});
+// Plan omf-order-mapping piece 1: 注文日 (the day the customer ordered and paid the service) beside 購入日 (the day the service
+// bought at the shop), cleaned by the same date rule; the proxy shop list's own 「주문일(注文日)」 header is not taken for it.
+test('piece 1: 注文日 is the 21st field after 購入日, guessed from its own header and cut to the day like 購入日', () => {
+  assert.equal(FIELDS.length, 21, 'piece1:field-count');
+  const keys = FIELDS.map(f => f[0]);
+  assert.equal(keys[keys.indexOf('purchaseDate') + 1], 'orderDate', 'piece1:after-purchase-date');
+  assert.equal(FIELDS.find(f => f[0] === 'orderDate')[1], '注文日', 'piece1:label');
+  const headers = ['注文番号', '注文日', '購入日'];
+  const mapping = guessMapping(headers);
+  assert.equal(mapping.orderDate, '1', 'piece1:guessed'); assert.equal(mapping.purchaseDate, '2', 'piece1:purchase-date-kept');
+  assert.equal(guessMapping(['orderdate']).orderDate, '0', 'piece1:alias-orderdate'); assert.equal(guessMapping(['order_date']).orderDate, '0', 'piece1:alias-order_date');
+  const rows = mappedRows([['A-0001', '2026/1/5 9:07', '2026/1/6']], mapping, defaults, { ...proof(), firstRow: 2 });
+  assert.equal(rows[0].values.orderDate, '2026-01-05', 'piece1:date-cut-to-day'); assert.equal(rows[0].values.purchaseDate, '2026-01-06');
+  assert.ok(rows[0].present.includes('orderDate'), 'piece1:present');
+  for (const kept of ['10/5/26', '2026/02/30', '2026-10-05T03:00:00Z']) assert.equal(normalize({ orderDate: kept }).orderDate, kept, 'piece1:kept ' + kept);
+  // The proxy shop list's header 「주문일(注文日)」 is the shop's own order day; it is not 注文日 (brackets and spaces dropped it reads 주문일注文日).
+  const shop = guessMapping(['주문번호(注文番号)', '결제일(決済日)', '주문일(注文日)']);
+  assert.equal(shop.orderDate, '', 'piece1:shop-header-not-guessed'); assert.equal(shop.purchaseDate, '', 'piece1:shop-header-not-purchase-date');
+});
+test('piece 1: a record stored before 注文日 existed reads blank and an unrelated save records no 注文日 change', () => {
+  const stored = Object.fromEntries(FIELDS.filter(f => f[0] !== 'orderDate').map(f => [f[0], '']));
+  Object.assign(stored, { service: '自社受付', currency: 'JPY', purchaseState: 'requested', orderId: 'OLD-1' });
+  assert.equal('orderDate' in stored, false, 'SETUP: the old record has no 注文日 key');
+  // The service's save (patchRecord) merges the non-blank incoming values onto the stored ones, normalizes, and lists a change for a
+  // field only when (stored || '') differs from the normalized value.
+  const merged = normalize({ ...stored, notes: 'memo' }), changes = FIELDS.filter(([k]) => (stored[k] || '') !== merged[k]).map(([k]) => k);
+  assert.equal(merged.orderDate, '', 'piece1:old-record-blank'); assert.deepEqual(changes, ['notes'], 'piece1:no-order-date-change');
+  // An import of the same order without a 注文日 column keeps the stored record unchanged.
+  const record = { id: 'old', key: JSON.stringify(['自社受付', '', 'OLD-1', '']), values: stored, extra: {}, createdAt: 'x', updatedAt: 'x', revision: 1, history: [], provenance: [], identityReview: false, archived: false };
+  const again = planImport([record], mappedRows([['OLD-1']], { orderId: '0' }, defaults, { ...proof(), firstRow: 2 }));
+  assert.deepEqual(again.rows[0].changes, [], 'piece1:import-no-order-date-change');
 });
 test('the eight owner fields are guessed from their headers and the five money fields are cleaned alike', () => {
   const mapping = guessMapping(['注文番号', '商品ID', '外部注文番号', 'URL', '商品価格', '税額', '送料', '手数料', '担当者']);

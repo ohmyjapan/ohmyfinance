@@ -1,4 +1,4 @@
-export type IntakeField = 'orderId' | 'itemId' | 'externalOrderId' | 'customer' | 'description' | 'merchant' | 'merchantUrl' | 'purchaseDate' | 'amount' | 'itemPrice' | 'tax' | 'shippingFee' | 'otherFee' | 'supplierName' | 'invoiceNumber' | 'currency' | 'purchaseState' | 'notes' | 'service' | 'account';
+export type IntakeField = 'orderId' | 'itemId' | 'externalOrderId' | 'customer' | 'description' | 'merchant' | 'merchantUrl' | 'purchaseDate' | 'orderDate' | 'amount' | 'itemPrice' | 'tax' | 'shippingFee' | 'otherFee' | 'supplierName' | 'invoiceNumber' | 'currency' | 'purchaseState' | 'notes' | 'service' | 'account';
 export type IntakeState = 'requested' | 'purchased' | 'cancelled' | 'refunded';
 export type IntakeValues = Record<IntakeField, string>;
 export type IntakeMapping = Record<IntakeField, string>;

@@ -69,7 +69,8 @@
           <article v-for="row in filteredRows" :key="row.id" :data-record="row.id" :data-state="row.values.purchaseState" class="table-row-hover px-4 py-4 sm:px-6">
             <div class="grid grid-cols-2 items-start gap-x-4 gap-y-2 xl:grid-cols-[9rem_minmax(0,2fr)_8rem_minmax(0,1fr)_minmax(0,1fr)] xl:gap-x-6">
               <div class="min-w-0">
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ row.values.purchaseDate || '日付未定' }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400"><span v-if="row.values.orderDate">購入 </span>{{ row.values.purchaseDate || '日付未定' }}</p>
+                <p v-if="row.values.orderDate" class="text-xs text-gray-500 dark:text-gray-400" data-order-date>注文 {{ row.values.orderDate }}</p>
                 <span class="badge-status mt-1 inline-block" :class="stateClass(row.values.purchaseState)">{{ STATE_NAMES[row.values.purchaseState] || row.values.purchaseState }}</span>
               </div>
               <div class="col-span-2 min-w-0 xl:col-span-1">

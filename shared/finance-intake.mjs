@@ -1,4 +1,4 @@
-// Intake (購入受付) model: the twenty fields a purchase request carries, the owner-named extra columns beside them, how a row
+// Intake (購入受付) model: the twenty-one fields a purchase request carries, the owner-named extra columns beside them, how a row
 // from a sheet becomes values, and how an incoming set of rows is planned against the stored records (new / update /
 // unchanged / ambiguous). Pure: no database, no clock beyond options.now, no identifiers beyond options.id. Behaviour
 // reference: output/omf-intake-platform-20261016/model.js; fields 14-20 and extras: plan omf-intake-mapping-research-amended-20261017.
@@ -11,6 +11,8 @@ export const FIELDS = [
   ['merchant', '購入先・店舗', ['店舗', '購入先', 'merchant', 'shop', 'seller', '판매처']],
   ['merchantUrl', '店舗・商品URL', ['url', '商品url', '店舗url', 'producturl', 'shopurl', 'website', 'websiteurl']],
   ['purchaseDate', '購入日', ['購入日', '利用日', 'date', 'purchasedate', 'purchase_date', '구매일']],
+  // The day the customer ordered and paid the service (購入日 is the day the service bought at the shop); cleaned like 購入日.
+  ['orderDate', '注文日', ['注文日', 'orderdate', 'order_date']],
   ['amount', '購入金額', ['購入金額', '金額', '合計', 'amount', 'total', '금액']],
   ['itemPrice', '商品価格', ['商品価格', 'itemprice', 'item_price', '単価', 'price', '상품가격']],
   ['tax', '税額', ['税額', 'tax', '税', '消費税', '세금']],
@@ -56,7 +58,7 @@ export function normalize(v = {}) {
   for (const [k] of FIELDS) r[k] = text(v[k]);
   r.service = r.service || DEFAULT_SERVICE; r.currency = r.currency || DEFAULT_CURRENCY;
   r.purchaseState = STATES.includes(r.purchaseState) ? r.purchaseState : purchaseState(r.purchaseState);
-  r.purchaseDate = purchaseDateOf(r.purchaseDate);
+  r.purchaseDate = purchaseDateOf(r.purchaseDate); r.orderDate = purchaseDateOf(r.orderDate);
   for (const k of MONEY) if (r[k]) { const n = Number(r[k].replace(/[¥￥,，\s]/g, '')); if (Number.isFinite(n)) r[k] = String(n); }
   return r;
 }

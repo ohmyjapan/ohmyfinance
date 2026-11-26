@@ -320,6 +320,17 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
  assert.equal(await researchCollection.countDocuments({state:{$in:['queued','working']}}),0,'intake-research:limits-cleanup-complete');assert.deepEqual(await ledger(),ledgerBefore,'intake-research:limits-ledger-untouched');
  pass('history limit and three-active limit return their own 409 messages, rejected fourth lookup creates no research row, and the owned queue is drained');
 
+ // Plan omf-order-mapping piece 1: 注文日. A typed date is cut to the day like 購入日; a record stored before the field existed (no
+ // values.orderDate key) reads blank and an unrelated save records no 注文日 change.
+ {
+  const dated=await req('records',{values:{description:'注文日 entry',orderDate:'2026/1/5 9:07'}});assert.equal(dated.status,200,'intake:order-date-create '+JSON.stringify(dated.data));assert.equal(dated.data.values.orderDate,'2026-01-05','intake:order-date-cut');
+  await db.collection('financeintakerecords').updateOne({_id:new ObjectId(dated.data.id)},{$unset:{'values.orderDate':''}});
+  const oldShape=(await get('records/'+dated.data.id)).data;assert.equal(oldShape.values.orderDate,undefined,'SETUP: intake:order-date-old-shape');
+  const oldSaved=await req('records/'+dated.data.id,{revision:oldShape.revision,values:{merchant:'Old shape shop'}},'PATCH');assert.equal(oldSaved.status,200,'intake:order-date-old-save '+JSON.stringify(oldSaved.data));
+  assert.equal(oldSaved.data.values.orderDate,'','intake:order-date-old-blank');assert.deepEqual(oldSaved.data.history.at(-1).changes.map(c=>c.field),['merchant'],'intake:order-date-old-no-change');
+  pass('注文日 is cut to the day; a record stored without it saves another field with no 注文日 change');
+ }
+
  if(process.env.OMF_TEST_INTAKE_MUTANT){console.log('mutant run: the hidden-Chrome and real-worker legs run once in the main run, not per mutant');return;}
 
  // 19 MANDATORY hidden real Chrome through the collector's own launcher (pipe transport, no debug port, headless)
@@ -347,7 +358,8 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
    await noOverflow('list');
    await page.evaluate(()=>document.querySelector('[data-new-record]').click());await waitFor(()=>!!document.querySelector('[data-new-form]'));
    for(const f of ['externalOrderId','itemPrice','tax','shippingFee','otherFee','merchantUrl','supplierName','invoiceNumber'])assert.equal(await page.evaluate(f=>!!document.querySelector('[data-field="'+f+'"]'),f),true,'intake-ui:field-'+f);
-   assert.equal(await page.evaluate(()=>document.querySelectorAll('[data-new-form] [data-field]').length),20,'intake-ui:20-fields');
+   assert.equal(await page.evaluate(()=>document.querySelectorAll('[data-new-form] [data-field]').length),21,'intake-ui:21-fields');
+   assert.equal(await page.evaluate(()=>!!document.querySelector('[data-new-form] [data-field="orderDate"]')),true,'intake-ui:field-orderDate');
    await noOverflow('form');
    await page.evaluate(()=>document.querySelector('[data-open-importer]').click());await waitFor(()=>!!document.querySelector('[data-import-file]'));
    const fileInput=await page.$('[data-import-file]');await fileInput.uploadFile(xlsxPath);await waitFor(()=>!!document.querySelector('[data-import-mapping]'));
@@ -390,7 +402,7 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
    assert.equal(await page.evaluate(()=>document.querySelector('#intake-invoiceNumber').value),'T1234567890123','intake-ui:confirm-saved-number');assert.equal(await page.evaluate(()=>document.querySelector('[data-research-confirm]').textContent.trim()),'受付に保存済み','intake-ui:confirm-button-done');
    assert.equal((await get('records/'+uiRec0.id)).data.values.supplierName,'Synthetic Intake Shop 株式会社','intake-ui:confirm-persisted');
    assert.deepEqual(failedRequests,[],'intake-ui:no-failed-intake-requests');assert.deepEqual(consoleErrors,[],'intake-ui:no-console-errors');
-   pass('hidden real Chrome: sidebar entry, 20 fields, eight-column import with an extra column, record page with extras, the research card offline / worker-update / pending / result / registry line, confirm saves the values; 390 px without overflow; no failed intake request, no app console error (shell API answers >=400 outside intake: '+([...new Set(otherFailures)].join(', ')||'none')+')');
+   pass('hidden real Chrome: sidebar entry, 21 fields, eight-column import with an extra column, record page with extras, the research card offline / worker-update / pending / result / registry line, confirm saves the values; 390 px without overflow; no failed intake request, no app console error (shell API answers >=400 outside intake: '+([...new Set(otherFailures)].join(', ')||'none')+')');
   }finally{if(page)await page.close().catch(()=>{});await browser.close().catch(()=>{});for(let i=0;i<10;i++){try{await fsp.rm(uiDir,{recursive:true,force:true});break}catch{await pause(500)}}}
  }
 

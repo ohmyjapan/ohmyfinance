@@ -1,11 +1,11 @@
 // Fixture for plan omf-intake-feature-20261016 (5-plan.json), extended by plan omf-intake-mapping-research-amended-20261017:
-// the intake (購入受付) platform inside OMF's shell — hand entry, Excel/CSV import by column mapping (20 fields + owner-named
+// the intake (購入受付) platform inside OMF's shell — hand entry, Excel/CSV import by column mapping (21 fields + owner-named
 // extra columns), corrections that never wipe a known value, originals and attachments by hash, owner scope, and the
 // URL → company + T number research through the existing research worker (queue / claim / result / confirm, recovery of a
 // queued or lost lookup at read time).
 // Run ONLY through the hub verifier (never directly; a direct run dropped the hub database on 2026-09-17):
 //   node scripts/zoomer-verify.mjs --run-fixture omf-intake.mjs --cwd <this worktree>
-// Legs: 1 the pure module (ten prototype cases, 20 fields, five money fields, identifiers, extras) · 2 the built app
+// Legs: 1 the pure module (ten prototype cases, 21 fields, five money fields, identifiers, extras) · 2 the built app
 // (scripts/finance-intake-integration.cjs chained by scripts/finance-integration.cjs behind OMF_TEST_INTAKE_ONLY on its own
 // ephemeral MongoDB; legs 1-12 kept + 13 eight fields + 14 extras/templates + 15 research + 16 supplier null / failed /
 // mismatch + 17 recovery + 18 owner scope + 19 MANDATORY hidden real Chrome + 20 MANDATORY real worker cycle on the claude CLI;
@@ -106,8 +106,8 @@ export default {
       assert.deepEqual(M.mappedRows([['001'], [''], ['002']], { orderId: '0' }, { service: 'A' }, { ...proof(), firstRow: 5 }).filter(r => r.provenance.raw.some(Boolean)).map(r => r.provenance.row), [5, 7], 'blank rows keep row numbers');
       records = M.applyPlan([], M.planImport([], [row({ orderId: '001', amount: '100' }, proof(2, 'a'))])); const revised = M.planImport(records, [row({ orderId: '001', amount: '120' }, proof(6, 'b'))]);
       assert.equal(M.applyPlan(records, revised).length, 1); assert.equal(revised.rows[0].record.provenance.length, 2); assert.equal(revised.rows[0].record.history.at(-1).changes.find(c => c.field === 'amount').before, '100', 'a revised file appends provenance');
-      // amended plan: 20 fields, the eight owner headers guessed, five money fields cleaned alike, identifiers kept, extras
-      assert.equal(M.FIELDS.length, 20, 'FIELDS carries the twenty fields'); assert.equal(M.guessMapping(['注文番号', '商品名']).orderId, '0');
+      // amended plan: 20 fields (21 with 注文日, plan omf-order-mapping piece 1), the eight owner headers guessed, five money fields cleaned alike, identifiers kept, extras
+      assert.equal(M.FIELDS.length, 21, 'FIELDS carries the twenty-one fields'); assert.equal(M.guessMapping(['注文番号', '商品名']).orderId, '0');
       const eight = M.guessMapping(['注文番号', '商品ID', '外部注文番号', 'URL', '商品価格', '税額', '送料', '手数料', '担当者']);
       assert.deepEqual([eight.orderId, eight.itemId, eight.externalOrderId, eight.merchantUrl, eight.itemPrice, eight.tax, eight.shippingFee, eight.otherFee], ['0', '1', '2', '3', '4', '5', '6', '7'], 'the eight owner headers are guessed');
       assert.ok(!Object.values(eight).includes('8'), 'an unknown header stays unmapped');
@@ -125,7 +125,7 @@ export default {
       assert.equal(xblank.rows[0].record.extra['担当者'], '山田', 'a blank extra cell keeps the stored value'); assert.equal(xblank.rows[0].changes.length, 0);
       const xchanged = M.planImport(xrecords, M.mappedRows([['001', '田中']], { orderId: '0' }, defaults, { ...proof(2, 'c'), firstRow: 2 }, extras));
       assert.deepEqual(xchanged.rows[0].changes, [{ field: 'extra:担当者', before: '山田', after: '田中' }], 'extra changes are labelled extra:<name>'); assert.equal(xrecords[0].extra['担当者'], '山田', 'the stored record is not mutated');
-      return '10 prototype cases + 20 fields, money, identifiers, extras';
+      return '10 prototype cases + 21 fields, money, identifiers, extras';
     });
 
     // 2 built app: the intake integration chained in the finance harness on its own ephemeral MongoDB (legs 1-20).
