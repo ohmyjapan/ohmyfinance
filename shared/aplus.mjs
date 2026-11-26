@@ -10,7 +10,7 @@ const yen = value => {
   return n;
 };
 export function aplusPeriod(value) {
-  if(value?.kind!=='statement'||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(value.statementMonth||'')) throw Error('Aplusの確定した請求月を指定してください');
+  if(value?.kind!=='statement'||typeof value.statementMonth!=='string'||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(value.statementMonth)) throw Error('Aplusの確定した請求月を指定してください');
   const start=dateOnly(value.statementMonth+'-01');
   const end=new Date(Date.UTC(Number(start.slice(0,4)),Number(start.slice(5,7)),0)).toISOString().slice(0,10);
   if(value.start!==undefined&&dateOnly(value.start)!==start||value.end!==undefined&&dateOnly(value.end)!==end) throw Error('請求月と対象期間が一致しません');
@@ -41,7 +41,8 @@ export function parseAplus(bytes,cardIdentifiers,metadata){
   if(!allowed.size||[...allowed].some(v=>!/^\d{4}$/.test(v))) throw Error('Aplusのカード番号下4桁を確認してください');
   let paymentTotal=0,purchaseTotal=0,sourceRefundTotal=0,accountAdjustmentTotal=0;
   const occurrences=new Map();
-  const hasBillingMonth=schema===BILLED_HEADERS, billingMonth=coverage.statementMonth.replace('-','');
+  const hasBillingMonth=schema===BILLED_HEADERS;
+  const billingMonth=hasBillingMonth?coverage.statementMonth.replace('-',''):null;
   const rows=table.map((source,index)=>{
     try{
       if(source.length!==schema.length) throw Error('列数が一致しません');

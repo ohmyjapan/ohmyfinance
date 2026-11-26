@@ -10,6 +10,14 @@ const metadata = {kind:'statement', statementMonth:'2026-02', statementTotal:120
 const csv = (headers, rows) => Buffer.from('\uFEFF'+[headers,...rows].map(row=>row.map(s=>'"'+s.replaceAll('"','""')+'"').join(',')).join('\r\n')+'\r\n');
 const parse = (headers, rows, overrides={}) => parseAplus(csv(headers,rows),['1234'],{...metadata,...overrides});
 
+test('both layouts require a single billing month string',()=>{
+  for(const [headers,row] of [[HEADERS,oldRow],[newHeaders,newRow]]){
+    for(const statementMonth of [undefined,null,[],['2026-02'],['2026-02','2026-02'],202602]){
+      assert.throws(()=>parse(headers,[row],{statementMonth}),{message:'Aplusの確定した請求月を指定してください'});
+    }
+  }
+});
+
 test('both issuer layouts retain original fields, byte hash and transaction identity',()=>{
   const old = parse(HEADERS,[oldRow]), bytes = csv(newHeaders,[newRow]), original = Buffer.from(bytes);
   const newer = parseAplus(bytes,['1234'],metadata);
