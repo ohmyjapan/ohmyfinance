@@ -207,3 +207,102 @@ test('piece 2: recognition reads row 1 only, and a plain CSV or an unrelated wor
   assert.deepEqual(Object.keys(recognised.mapping), FIELDS.map(f => f[0]), 'kinds:mapping-has-every-field');
   assert.equal(recognised.name, 'ショップ注文リスト', 'kinds:name');
 });
+
+// ── piece 3: the proxy auction remittance list (オークション送金リスト) ──────────────────────────────────────────────────────────
+const AUCTION_HEADERS = ['サイト', 'オークションID', '商品ページ', 'Seller ID', 'Bid ID', '現在ステタス', '決済日', 'STORE', '送金日', '送金 ID', '落札価', '数量', '消費税', '送金量', '配送料', '追加', '差し引き', '送金額', '送金額', '送金銀行', '送料支払い'];
+// Invented auctions. A full row sends one payment (送金額 twice: without and with the transfer fee and cash-on-delivery shipping); a row
+// paid under another has 「-」 as 送金日 and 送金 ID, a claim text over columns 13-16, and lies inside the paying row's merged 送金額 cells.
+const AUCTIONS = [
+  { id: 'x1000000001', status: '결제완료', store: 'STORE', sentAt: '2026-01-05 09:00', sendId: 'pay-a', price: 1000, qty: 1, tax: 100, fee: 0, ship: 500, payer: '선불', extraYen: 2 }, // pays for the two below, 2 yen above its lines
+  { id: 'x1000000002', status: '현지도착', under: true, price: 2000, qty: 1, tax: 200, claim: 'x1000000002(YAHOO) 청구' }, // names itself, not the paying auction
+  { id: 'x1000000003', status: '현지도착', under: true, price: 300, qty: 1, tax: 0, claim: 'x1000000001(YAHOO) 청구' },
+  { id: 'x1000000004', status: '국제배송', sentAt: '2026-01-05 10:00', sendId: 'pay-c', price: 1500, qty: 1, tax: 150, fee: 0, ship: 700, payer: '착불' }, // cash on delivery
+  { id: 'x1000000005', status: '2차결제완료', store: 'STORE', sentAt: '2026-01-05 11:00', sendId: 'pay-d', price: 400, qty: 2, tax: 80, fee: 110, ship: 0, payer: '선불' }, // transfer fee, 数量 2
+  { id: 'x1000000006', status: '거래취소', sentAt: '2026-01-05 12:00', sendId: 'pay-e', price: 0, qty: 1, tax: 0, fee: 0, ship: 0, payer: '선불' }, // cancelled, pays for the one below
+  { id: 'x1000000007', status: '결제완료', under: true, price: 0, qty: 1, tax: 0, claim: 'x1000000006(YAHOO) 청구', spill: ['0', '0', 'BANK-Y', '선불'] }, // its own four cells spill to columns 21-24
+  { id: '1000000008', status: '처분', sentAt: '2026-01-05 13:00', sendId: 'pay-g', price: 600, qty: 1, tax: 60, fee: 0, ship: 0, payer: '선불' } // all-digit auction ID
+];
+function auctionRows(list = AUCTIONS) {
+  const rows = list.map((a, i) => ({ ...a, paidAt: `2026-01-03 0${i}:30`, url: `https://auctions.example.invalid/item/${a.id}`, seller: `seller-${i}`, bidder: 'bidder-1', add: 0, ded: 0 }));
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].under) continue;
+    let j = i + 1; while (j < rows.length && rows[j].under) j++;
+    const group = rows.slice(i, j), lines = sum(group, a => a.price * a.qty + a.tax) + rows[i].ship + rows[i].add - rows[i].ded, cod = rows[i].payer === '착불' ? rows[i].ship : 0;
+    Object.assign(rows[i], { covers: j - i - 1, lines1: lines - cod, lines2: lines + rows[i].fee, amount1: lines - cod + (rows[i].extraYen || 0), amount2: lines + rows[i].fee + (rows[i].extraYen || 0) });
+  }
+  return rows;
+}
+const auctionCells = a => a.under
+  ? ['YAHOO', a.id, a.url, a.seller, a.bidder, a.status, a.paidAt, a.store || '', '-', '-', yen(a.price), a.qty, yen(a.tax)]
+  : ['YAHOO', a.id, a.url, a.seller, a.bidder, a.status, a.paidAt, a.store || '', a.sentAt, a.sendId, yen(a.price), a.qty, yen(a.tax), yen(a.fee), yen(a.ship), yen(a.add), yen(a.ded)];
+function auctionFile({ rows = auctionRows(), spill = true, headers = AUCTION_HEADERS } = {}) {
+  const full = rows.filter(a => !a.under);
+  // The file's total row: its first cell spans columns 0-6, so each sum sits three columns left of its header; the two 送金額 sums are
+  // the sums of the lines (a payment above its lines is not in them).
+  const totals = [sum(rows, a => a.price * a.qty), sum(rows, a => a.qty), sum(rows, a => a.tax), sum(full, a => a.fee), sum(full, a => a.ship), sum(full, a => a.add), sum(full, a => a.ded), sum(full, a => a.lines1)];
+  const body = rows.map(a => {
+    if (a.under) return `<tr>${auctionCells(a).map(v => td(v)).join('')}${td(a.claim, ' colspan="4"')}${spill && a.spill ? a.spill.map(v => td(v)).join('') : ''}</tr>`;
+    const span = a.covers ? ` rowspan="${a.covers + 1}"` : '';
+    return `<tr>${auctionCells(a).map(v => td(v)).join('')}${[yen(a.amount1), yen(a.amount2), a.bank || 'BANK-X', a.payer].map(v => td(v, span)).join('')}</tr>`;
+  }).join('\n');
+  const summaryTable = cells => `<table>${cells.map(r => `<tr>${r.map(v => td(v)).join('')}</tr>`).join('')}</table>`;
+  return `<table><tr><td colspan="20"><b>경매 송금 리스트 ( 2026-01-05 ~ 2026-01-05 )</b></td></tr></table>\n`
+    + `<table border="1"><tr>${headers.map(h => td(h)).join('')}</tr>\n${body}\n`
+    + `<tr><td colspan=7>합계</td>${totals.map((v, i) => td(i === 1 ? String(v) : yen(v) + ' 엔')).join('')}${td(yen(sum(full, a => a.lines2)) + ' 엔', ' colspan=3')}<td colspan=3></td></tr></table>\n`
+    + summaryTable([['BANK', 'TOTAL'], ['BANK-X', '1'], ['합계', '1']]) + summaryTable([['구분', 'BANK-X', '합계'], ['송금금액', '1 엔', '1 엔']]) + summaryTable([['BANK-X'], ['0 엔']]);
+}
+
+test('piece 3: the auction remittance list is recognised at 21 and at 25 columns, one record per auction, the all-digit ID as written', () => {
+  for (const spill of [false, true]) {
+    const wb = readText(auctionFile({ spill })), result = omfImport([], wb, { file: 'auction.xls', hash: 'auction-' + spill });
+    assert.equal(result.recognised.kind, 'proxy-auction-remittance-list', 'auction:recognised spill=' + spill);
+    assert.equal(sheetRowsOf(wb, 'Sheet2')[0].length, spill ? 25 : 21, 'SETUP: auction:sheet-width');
+    assert.equal(result.records.length, 8, 'auction:one-record-per-auction'); assert.equal(result.applied.summary.totalRows, 1, 'auction:total-row-left-out');
+    assert.ok(byOrder(result.records, '1000000008'), 'auction:all-digit-id-as-written');
+  }
+  const headers = [...AUCTION_HEADERS]; headers[18] = '送金額2';
+  const near = FT.recogniseFile(firstRowsOf(readText(auctionFile({ headers }))), { text: true });
+  assert.deepEqual([near.kind, near.near?.kind, near.near?.column], [null, 'proxy-auction-remittance-list', 18], 'auction:renamed-header-named');
+});
+
+test('piece 3: rows paid under another auction take the paying row\'s date, name it from the merged cell, and carry no amount', () => {
+  const result = omfImport([], readText(auctionFile()), { file: 'auction.xls' }), rec = id => byOrder(result.records, id);
+  const a = rec('x1000000001'), b1 = rec('x1000000002'), b2 = rec('x1000000003'), e = rec('x1000000006'), f = rec('x1000000007');
+  for (const r of [b1, b2]) {
+    assert.deepEqual([r.values.purchaseDate, r.extra['まとめ払い先'], r.values.amount, r.values.shippingFee, r.values.otherFee, r.extra['購入アカウント'] ?? ''], ['2026-01-05', 'x1000000001', '', '', '', ''], 'auction:paid-under ' + r.values.orderId);
+    assert.equal(r.values.orderDate, '2026-01-03', 'auction:paid-under-own-payment-day');
+  }
+  assert.deepEqual([b1.values.itemPrice, b1.values.tax, b1.extra['数量'], b1.values.purchaseState], ['2000', '200', '1', 'purchased'], 'auction:paid-under-own-price-and-tax');
+  assert.equal(b1.extra['元の請求先表記'], 'x1000000002(YAHOO) 청구', 'auction:wrong-claim-text-kept'); assert.equal(b2.extra['元の請求先表記'], undefined, 'auction:right-claim-text-not-kept');
+  assert.deepEqual([a.extra['まとめ払い件数'], e.extra['まとめ払い件数'], rec('x1000000004').extra['まとめ払い件数']], ['3', '2', undefined], 'auction:paying-order-counts-its-auctions');
+  assert.deepEqual([f.extra['まとめ払い先'], f.values.purchaseDate, f.values.purchaseState, e.values.purchaseState], ['x1000000006', '2026-01-05', 'purchased', 'cancelled'], 'auction:paid-under-the-cancelled-row');
+  assert.deepEqual(f.provenance[0].raw.slice(21), ['0', '0', 'BANK-Y', '선불'], 'auction:spilled-cells-kept-in-the-original-row');
+  const kinds = result.applied.notes.map(n => n.kind);
+  assert.ok(kinds.includes('claim-text-differs') && kinds.includes('spilled-cells') && kinds.includes('cancelled-paying-row'), 'auction:each-anomaly-reported ' + JSON.stringify(kinds));
+  assert.deepEqual(result.applied.notes.find(n => n.kind === 'claim-text-differs').rows, [{ row: 3, auctionId: 'x1000000002', named: 'x1000000002', paying: 'x1000000001' }], 'auction:wrong-text-row');
+  assert.deepEqual([result.applied.summary.paidUnder, result.applied.summary.payments], [3, 2], 'auction:summary-paid-under');
+  // The amounts of all orders add up to the money sent.
+  assert.equal(sum(result.records, r => Number(r.values.amount || 0)), sum(auctionRows().filter(x => !x.under), x => x.amount2), 'auction:amounts-add-up-to-the-money-sent');
+});
+
+test('piece 3: 購入金額 is the second 送金額 by position, both kept; seven part totals match; a payment 2 yen above its lines is listed and nothing fails', () => {
+  const result = omfImport([], readText(auctionFile()), { file: 'auction.xls' }), rec = id => byOrder(result.records, id);
+  assert.deepEqual([rec('x1000000004').values.amount, rec('x1000000004').extra['総送金額'], rec('x1000000004').extra['全体合計']], ['2350', '1,650', '2,350'], 'auction:cash-on-delivery-two-amounts');
+  assert.deepEqual([rec('x1000000005').values.amount, rec('x1000000005').extra['総送金額'], rec('x1000000005').values.otherFee, rec('x1000000005').extra['数量']], ['990', '880', '110', '2'], 'auction:transfer-fee-two-amounts');
+  assert.deepEqual([rec('x1000000001').extra['出品者区分'], rec('x1000000004').extra['出品者区分'] ?? '', rec('x1000000001').extra['送料支払'], rec('x1000000001').extra['購入アカウント'], rec('x1000000001').extra['入札アカウント']], ['STORE', '', '선불', 'pay-a', 'bidder-1'], 'auction:extras-as-written');
+  const parts = result.applied.checks.filter(c => !c.info);
+  assert.equal(parts.length, 7, 'auction:seven-part-totals'); assert.ok(parts.every(c => c.ok), 'auction:part-totals-match ' + JSON.stringify(parts.filter(c => !c.ok)));
+  const info = result.applied.checks.filter(c => c.info);
+  assert.deepEqual(info.map(c => [c.key, c.sum, c.total]), [['total:17', 7292, 7290], ['total:18', 8102, 8100]], 'auction:sent-amounts-shown-as-information');
+  assert.deepEqual(result.applied.notes.find(n => n.kind === 'payment-above-lines')?.payments, [{ row: 2, auctionId: 'x1000000001', amount: 4102, lines: 4100, difference: 2 }], 'auction:payment-above-lines-listed');
+  const again = omfImport(result.records, readText(auctionFile()), { file: 'auction.xls' });
+  assert.deepEqual([again.plan.new, again.plan.update, again.plan.unchanged], [0, 0, 8], 'auction:same-file-unchanged');
+});
+
+test('piece 3: a table that stops dating a row paid under another clears that 購入日 on re-upload and nothing else (question C5)', () => {
+  const first = omfImport([], readText(auctionFile()), { file: 'auction.xls', hash: 'a-1' });
+  const table = FT.fileTypeTable(first.recognised), changed = { ...table, derive: (row, info) => { const d = table.derive(row, info); return info.paying ? { ...d, set: { ...d.set, purchaseDate: '' } } : d; } };
+  const second = omfImport(first.records, readText(auctionFile()), { file: 'auction.xls', hash: 'a-1', table: changed });
+  assert.deepEqual([second.plan.update, second.plan.unchanged], [3, 5], 'auction:c5-three-updates');
+  assert.ok(second.plan.rows.filter(r => r.operation === 'update').every(r => JSON.stringify(r.changes.map(c => [c.field, c.after])) === JSON.stringify([['purchaseDate', '']])), 'auction:c5-only-the-date-cleared');
+});

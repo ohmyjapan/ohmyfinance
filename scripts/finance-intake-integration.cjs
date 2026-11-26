@@ -393,6 +393,27 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
   assert.deepEqual([upR.data.fileType,upR.data.fileTypeNear?.column,upR.data.fileTypeNear?.found],[null,7,'상품가격'],'kinds:renamed-header-named');assert.equal((await get('files/'+upR.data.document.id+'/sheet')).data.sheet,'Sheet1','kinds:renamed-today-first-sheet');
   pass('a total that does not match is kept on the batch with both numbers and the import runs; fileType off imports the kind\'s sheet as today; a plain CSV and a file with one renamed header are read as before');
  }
+ // Plan omf-order-mapping piece 3: an invented auction remittance list over HTTP — the service hands the sheet's merged cells and range
+ // start to the kind, so a row paid under another auction takes the paying row's 送金日 and names it; the paying order keeps the payment.
+ {
+  const AH=['サイト','オークションID','商品ページ','Seller ID','Bid ID','現在ステタス','決済日','STORE','送金日','送金 ID','落札価','数量','消費税','送金量','配送料','追加','差し引き','送金額','送金額','送金銀行','送料支払い'];
+  const full=(id,sent,price,tax,ship)=>['YAHOO',id,'https://auctions.example.invalid/item/'+id,'seller-1','bidder-1','결제완료','2026-01-03 10:00','',sent,'pay-'+id,yen(price),'1',yen(tax),'0',yen(ship),'0','0'];
+  const td=(v,a='')=>'<td'+a+'>'+esc(v)+'</td>';
+  const html='<table><tr><td colspan="20">경매 송금 리스트 ( 2026-01-05 ~ 2026-01-05 )</td></tr></table>\n<table><tr>'+AH.map(h=>td(h)).join('')+'</tr>\n'
+   +'<tr>'+full('y2000000001','2026-01-05 09:00',1000,100,500).map(v=>td(v)).join('')+['3,800','3,800','BANK-X','선불'].map(v=>td(v,' rowspan="2"')).join('')+'</tr>\n'
+   +'<tr>'+['YAHOO','y2000000002','https://auctions.example.invalid/item/y2000000002','seller-2','bidder-1','현지도착','2026-01-03 11:00','','-','-','2,000','1','200'].map(v=>td(v)).join('')+td('y2000000001(YAHOO) 청구',' colspan="4"')+'</tr>\n'
+   +'<tr>'+full('2000000003','2026-01-05 10:00',600,60,0).map(v=>td(v)).join('')+['660','660','BANK-X','선불'].map(v=>td(v)).join('')+'</tr>\n'
+   +'<tr><td colspan=7>합계</td>'+['3,600 엔','3','360 엔','0 엔','500 엔','0 엔','0 엔','4,460 엔'].map(v=>td(v)).join('')+td('4,460 엔',' colspan=3')+'<td colspan=3></td></tr></table>\n<table><tr><td>BANK-X</td></tr></table><table><tr><td>구분</td></tr></table><table><tr><td>BANK-X</td></tr></table>';
+  const up=await send('files?name=yahoo-invented.xls',Buffer.from(html,'utf8'),XLS_TYPE);assert.equal(up.data.fileType?.kind,'proxy-auction-remittance-list','auction-http:recognised '+JSON.stringify(up.data));
+  const sh=(await get('files/'+up.data.document.id+'/sheet')).data;
+  const imp=await req('files/'+up.data.document.id+'/import',{sheet:sh.sheet,headerRow:1,mapping:sh.mapping,extras:sh.extras,defaults:{service:KIND_SVC}});assert.equal(imp.status,200,'auction-http:import '+JSON.stringify(imp.data));
+  assert.deepEqual([imp.data.batch.counts.new,imp.data.batch.checks.summary.paidUnder,imp.data.batch.checks.summary.payments,imp.data.batch.checks.checks.filter(c=>!c.ok).length],[3,1,1,0],'auction-http:batch');
+  const ar=async id=>(await get('records')).data.records.find(r=>r.values.orderId===id&&r.values.service===KIND_SVC);
+  const pay=await ar('y2000000001'),under=await ar('y2000000002'),single=await ar('2000000003');
+  assert.deepEqual([under.values.purchaseDate,under.extra['まとめ払い先'],under.values.amount,under.values.otherFee,under.values.itemPrice],['2026-01-05','y2000000001','','','2000'],'auction-http:paid-under');
+  assert.deepEqual([pay.values.amount,pay.extra['まとめ払い件数'],single.values.amount,single.extra['まとめ払い件数']],['3800','2','660',undefined],'auction-http:paying-order');
+  pass('an auction remittance list over HTTP: the merged 送金額 cell links the row paid under another auction to its paying auction, whose amount is the whole payment');
+ }
 
  if(process.env.OMF_TEST_INTAKE_MUTANT){console.log('mutant run: the hidden-Chrome and real-worker legs run once in the main run, not per mutant');return;}
 
@@ -443,7 +464,7 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
     assert.deepEqual(await page.evaluate(()=>[document.querySelector('[data-file-kind-name]').textContent.trim(),document.querySelector('[data-file-kind-orders]').textContent.trim(),document.querySelector('[data-file-kind-totals]').textContent.trim(),document.querySelector('[data-import-sheet]').value]),['ショップ注文リスト','2 件の注文','合計一致','Sheet2'],'intake-ui:kind-panel');
     assert.match(await page.evaluate(()=>document.querySelector('[data-file-kind-service]').textContent),new RegExp(KIND_SVC),'intake-ui:kind-service-kept');
     assert.deepEqual(await page.evaluate(()=>[!!document.querySelector('[data-import-mapping]'),!!document.querySelector('[data-template-name]'),document.querySelectorAll('[data-file-kind-checks] [data-check-ok="true"]').length]),[false,false,13],'intake-ui:kind-grid-hidden-checks-shown');
-    await noOverflow('kind');if(shots){await page.screenshot({path:path.join(shots,'kind-390.png'),fullPage:true});await page.setViewport({width:1280,height:900});await page.screenshot({path:path.join(shots,'kind-1280.png'),fullPage:true});await page.setViewport({width:390,height:844});}
+    await noOverflow('kind');if(shots){const shot=async n=>(await page.$('[data-importer]')).screenshot({path:path.join(shots,n)});await shot('kind-390.png');await page.setViewport({width:1280,height:900});await shot('kind-1280.png');await page.setViewport({width:390,height:844});}
     await page.evaluate(()=>document.querySelector('[data-kind-off]').click());await waitFor(()=>!!document.querySelector('[data-import-mapping]')&&!!document.querySelector('[data-file-kind-off]'));
     assert.equal(await page.evaluate(()=>document.querySelector('[data-mapping="orderId"]').value),'5','intake-ui:kind-off-grid-starts-from-the-kind-mapping');
     await page.evaluate(()=>document.querySelector('[data-kind-on]').click());await waitFor(()=>!!document.querySelector('[data-file-kind-orders]')&&!document.querySelector('[data-import-mapping]'));

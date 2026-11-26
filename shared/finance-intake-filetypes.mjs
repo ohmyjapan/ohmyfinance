@@ -64,7 +64,78 @@ const SHOP = {
 };
 const check = (key, label, sum, total, info = false) => ({ key, label, sum, total, ok: total !== null && Number.isFinite(sum) && Number.isFinite(total) && sum === total, ...(info ? { info: true } : {}) });
 
-const TABLES = [SHOP];
+// ── 5.2 the proxy auction remittance list (オークション送金リスト) ─────────────────────────────────────────────────────────────
+const AUCTION_HEADERS = ['サイト', 'オークションID', '商品ページ', 'Seller ID', 'Bid ID', '現在ステタス', '決済日', 'STORE', '送金日', '送金 ID', '落札価', '数量', '消費税', '送金量', '配送料', '追加', '差し引き', '送金額', '送金額', '送金銀行', '送料支払い'];
+const PAYING_COLUMN = 17; // the first 送金額: a payment for several auctions is one cell merged down over the rows it pays for
+const AUCTION = {
+  id: 'proxy-auction-remittance-list', kind: 'proxy-auction-remittance-list', name: 'オークション送金リスト', title: '경매 송금 리스트', textOnly: true, sheetIndex: 1, headers: AUCTION_HEADERS, trailingBlank: true, totalRow: true,
+  // 決済日 → 注文日, 送金日 → 購入日; 購入金額 is the second 送金額, read by position (both are kept), until answer A3.
+  mapping: fullMapping({ orderId: 1, merchantUrl: 2, merchant: 3, purchaseState: 5, orderDate: 6, purchaseDate: 8, itemPrice: 10, tax: 12, otherFee: 13, shippingFee: 14, amount: 18 }),
+  extras: extraColumns([['入札アカウント', 4], ['元のステータス', 5], ['出品者区分', 7], ['購入アカウント', 9], ['数量', 11], ['追加金', 15], ['差し引き', 16], ['総送金額', 17], ['全体合計', 18], ['決済方法', 19], ['送料支払', 20]]),
+  statusColumn: 5,
+  // An order row is a YAHOO row with a 送金日; a row paid under another auction is a YAHOO row whose 送金日 is 「-」.
+  rowKind: raw => { const c0 = norm(raw[0]); if (c0 === '합계') return 'total'; if (c0 !== 'YAHOO') return 'other'; if (isDay(raw[8])) return 'order'; return norm(raw[8]) === '-' ? 'paid-under' : 'other'; },
+  // A paid-under row's paying row is the row where the merged cell in the first 送金額 column that covers it starts (the reader gives
+  // merged cells by sheet position; the sheet range's start is subtracted). The claim text (`<auction ID>(YAHOO) 청구`) is only compared.
+  prepare(orders, context, notes) {
+    const start = context.start || { r: 0, c: 0 }, abs = row => start.r + row.provenance.row - 1, at = new Map(orders.map(r => [abs(r), r])), payingAt = new Map();
+    for (const m of context.merges || []) if (m.s.c - start.c === PAYING_COLUMN && m.e.c === m.s.c && m.e.r > m.s.r) for (let r = m.s.r + 1; r <= m.e.r; r++) payingAt.set(r, m.s.r);
+    const info = new Map(), groups = new Map(), list = kind => notes.find(n => n.kind === kind) || (notes.push({ kind, count: 0, rows: [] }), notes.at(-1));
+    const add = (kind, entry) => { const n = list(kind); n.count++; if (n.rows.length < 20) n.rows.push(entry); };
+    const id = row => text(row.provenance.raw[1]);
+    for (const row of orders) {
+      if (this.rowKind(row.provenance.raw) !== 'paid-under') { info.set(row, { full: true }); continue; }
+      const candidate = payingAt.has(abs(row)) ? at.get(payingAt.get(abs(row))) : null, paying = candidate && this.rowKind(candidate.provenance.raw) === 'order' ? candidate : null;
+      if (!paying) { info.set(row, { paying: null }); add('paid-under-without-payment', { row: row.provenance.row, auctionId: id(row) }); continue; }
+      groups.set(paying, [...(groups.get(paying) || []), row]);
+      const claim = text(row.provenance.raw[13]), named = /^\s*([^\s()]+)\s*\(/.exec(claim)?.[1] || '';
+      info.set(row, { paying, claim, claimDiffers: named !== id(paying) });
+      if (named !== id(paying)) add('claim-text-differs', { row: row.provenance.row, auctionId: id(row), named, paying: id(paying) });
+    }
+    for (const [paying, under] of groups) {
+      info.set(paying, { full: true, group: under });
+      if (statusOf(paying.provenance.raw[this.statusColumn]).state === 'cancelled') add('cancelled-paying-row', { row: paying.provenance.row, auctionId: id(paying), paidUnder: under.length });
+    }
+    for (const row of orders) if (row.provenance.raw.slice(this.headers.length).some(v => text(v) !== '')) add('spilled-cells', { row: row.provenance.row, auctionId: id(row) });
+    return info;
+  },
+  // A paid-under auction is its own order with its own price, tax, quantity and status; its 購入日 is the paying row's 送金日 and it
+  // names the paying auction; it has no amount, shipping, fee or paying account of its own (the paying row's 送金額 holds the whole
+  // payment, so nothing is counted twice). The paying order counts the auctions its payment covers.
+  derive(row, info) {
+    const set = { [FT]: this.name, purchaseState: info.state }, blank = [];
+    if (info.paying !== undefined) {
+      blank.push('amount', 'shippingFee', 'otherFee', 'extra:購入アカウント');
+      if (info.paying) { set.purchaseDate = info.paying.provenance.raw[8]; set['extra:まとめ払い先'] = text(info.paying.provenance.raw[1]); if (info.claimDiffers) set['extra:元の請求先表記'] = info.claim; }
+      else blank.push('purchaseDate');
+    } else if (info.group?.length) set['extra:まとめ払い件数'] = String(info.group.length + 1);
+    return { set, blank };
+  },
+  // Seven sums against the total row, whose first cell spans columns 0-6 (each sum three columns left of its header): 落札価 × 数量,
+  // 数量 and 消費税 over every auction, 送金量, 配送料, 追加 and 差し引き over the paying rows. The two 送金額 sums are information only,
+  // with the payments that are not the sum of their lines listed (lines: price × quantity and tax of every auction in the payment,
+  // plus the paying row's 送金量, 配送料 and 追加, less its 差し引き; the second 送金額 is compared).
+  checks(orders, totals, context, info, notes) {
+    const total = totals[0]?.provenance.raw || null, at = c => total ? amountOf(total[c - 3]) : null, h = this.headers;
+    const all = orders.map(r => r.provenance.raw), full = orders.filter(r => info.get(r)?.full).map(r => r.provenance.raw), sumOf = (rows, f) => rows.reduce((a, r) => a + f(r), 0);
+    const out = [check('total:10', h[10] + ' × ' + h[11], sumOf(all, r => amountOf(r[10]) * amountOf(r[11])), at(10)), check('total:11', h[11], sumOf(all, r => amountOf(r[11])), at(11)), check('total:12', h[12], sumOf(all, r => amountOf(r[12])), at(12)),
+      ...[13, 14, 15, 16].map(c => check('total:' + c, h[c], sumOf(full, r => amountOf(r[c])), at(c))),
+      check('total:17', h[17] + '（1つ目）', sumOf(full, r => amountOf(r[17])), at(17), true), check('total:18', h[18] + '（2つ目）', sumOf(full, r => amountOf(r[18])), at(18), true)];
+    const above = [], below = [];
+    for (const row of orders) {
+      const own = info.get(row); if (!own?.full) continue;
+      const r = row.provenance.raw, lines = [r, ...(own.group || []).map(g => g.provenance.raw)].reduce((a, g) => a + amountOf(g[10]) * amountOf(g[11]) + amountOf(g[12]), 0) + amountOf(r[13]) + amountOf(r[14]) + amountOf(r[15]) - amountOf(r[16]);
+      const amount = amountOf(r[18]), entry = { row: row.provenance.row, auctionId: text(r[1]), amount, lines, difference: amount - lines };
+      if (amount > lines) above.push(entry); else if (amount < lines) below.push(entry);
+    }
+    if (above.length) notes.push({ kind: 'payment-above-lines', count: above.length, payments: above.slice(0, 20) });
+    if (below.length) notes.push({ kind: 'payment-below-lines', count: below.length, payments: below.slice(0, 20) });
+    return out;
+  },
+  summary(orders, info) { const under = orders.filter(r => info.get(r)?.paying !== undefined); return { paidUnder: under.length, paidUnderLinked: under.filter(r => info.get(r).paying).length, payments: orders.filter(r => info.get(r)?.group?.length).length }; }
+};
+
+const TABLES = [SHOP, AUCTION];
 const TABLE_BY_ID = Object.fromEntries(TABLES.map(t => [t.id, t]));
 export const FILE_KINDS = Object.freeze(Object.fromEntries(TABLES.map(t => [t.kind, t.name])));
 // The table behind a recognition result (or a table id); a table object is returned as it is (a test may hand over a changed table).
