@@ -42,6 +42,40 @@ Import: sheet + header row → headers, first 20 rows and a guessed column mappi
 (`POST files/:id/import`, optional `template: { name }` saves the column mapping, defaults and extras as an owner template).
 Templates: `GET/PUT templates` (with `extras`). Batches: `GET batches` (with `extras`).
 
+## File kinds (plan omf-order-mapping pieces 2-4)
+
+Some customer order files are known by their own layout: `shared/finance-intake-filetypes.mjs` holds one table per kind (sheet,
+header row 1, column → field or extra, the status table, what the kind computes). `recogniseFile` reads row 1 of each sheet only —
+never every row — so a file that uploads today still uploads; `applyFileType` turns the rows of the kind's sheet into orders, notes
+and checks. Kinds: `proxy-shop-order-list` (ショップ注文リスト).
+
+- Upload (`POST files`) answers `fileType { kind, name, sheet, headerRow, service, otherService }` for a known kind (else `null`) and
+  `fileTypeNear { kind, name, sheet, column, expected, found }` when the first sheet's title is a kind's but a header differs: the
+  file is then not a kind and the importer works as today, naming the column.
+- `GET files/:id/sheet` without a sheet opens the kind's sheet; on the kind's sheet and header row it answers the kind's `mapping` and
+  `extras` (instead of the guessed mapping) and `fileType`. Another sheet or header row is read exactly as today.
+- Preview and import on the kind's sheet and header row (unless the body carries `fileType: 'off'`) use the kind's mapping, extra
+  columns and fixed values: account blank, currency JPY, and the service name of the person's latest batch of that kind once one
+  exists (the first import names it; the importer prefills the name used for the other kind, else the company name). A request that
+  names another service, an account, another currency, another mapping or extra columns, or carries a template answers 409 naming
+  「列の割り当てを自分で変える」; nothing is stored. The rows pass through `applyFileType` and `planImport` runs with `clearBlank`:
+  only a value the kind itself lists as present and blank is cleared (a later table change), a blank cell never clears a stored
+  value. Preview adds `fileType`, `summary { orders, totalRows, otherRows, unknownStatus, … }`, `checks [{ key, label, sum, total,
+  ok, info? }]` and `notes`; a batch stores `fileType` and `checks { summary, checks, notes }`. A total that does not match is shown
+  with both numbers and kept on the batch; the import still runs.
+- `fileType: 'off'` (the importer's 「列の割り当てを自分で変える」, or choosing a saved template) imports the kind's sheet as an
+  ordinary mapping: total rows become records, as before. Navi's `preview_intake_import` and `apply_intake_import` take the same key.
+- Every order of a kind carries the extra ファイルの種類. Extras keep the customer's words as the file writes them; only 購入状況 is
+  translated, by the status table (주문완료・결제완료・현지도착・2차결제대기・2차결제완료・국제배송・처분 → 購入済み, 거래취소 → キャンセル;
+  any other word → 受付中, reported with its count and kept in 元のステータス).
+
+**ショップ注文リスト** (HTML text with an `.xls` name): the first sheet's first cell starts with `구매 주문 리스트` and the second
+sheet's row 1 is the list's 21 headers. One record per order row (column 0 a number, 주문번호 filled); the `합계` row and any other
+row are left out and counted. 결제일 → 注文日, 주문일 → 購入日, 현지주문총액 → 購入金額 (until the customer answers which amount is
+paid) and extra 現地注文総額, 지불액 → extra 支払金; 주문자 → 購入アカウント; 결제방식 and 송료지불 as written. Checks: ten sums of
+the order rows against the `합계` row (its first cell spans six columns, so each sum sits one column left of its header) and
+현지주문총액 per card against the fourth sheet (a card line `LABEL` matches 결제방식 `…(LABEL)` or `LABEL`) and in all.
+
 ## 会社・登録番号の調査 (URL → company + T number)
 
 The record page's card 「会社・登録番号の調査」 sends the record's 店舗・商品URL (https only) to the owner's research worker:
@@ -68,7 +102,7 @@ agent without a recent call shows 「調査担当に接続できません」.
 ## Collections
 
 `financeintakerecords` (unique ownerId+key; `extra` per record), `financeintakedocuments` (unique ownerId+hash), `financeintakebatches`
-(with `extras`), `financeintaketemplates` (unique ownerId+name; with `extras`), `financeintakeresearch` (unique ownerId+recordId). All
+(with `extras`; a file-kind import adds `fileType` and `checks`), `financeintaketemplates` (unique ownerId+name; with `extras`), `financeintakeresearch` (unique ownerId+recordId). All
 owner-scoped by `financeUser`; collector tokens never reach these routes; the worker routes are scoped to the agent's owner.
 
 Backup: full MongoDB plus the complete `OMF_DATA_DIR` directory, as for the finance collections (docs/finance-mapping-preview.md).

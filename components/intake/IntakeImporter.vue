@@ -30,7 +30,39 @@
       </label>
     </div>
 
-    <div v-if="sheetData" class="mt-4" data-import-mapping>
+    <!-- Plan omf-order-mapping piece 2: a known file kind is read on its own sheet with its own columns; the owner sees what the
+         file holds and its totals, then imports. The grid stays one click away and turns the kind off for this import. -->
+    <section v-if="kindActive && sheetData" class="mt-4 rounded-xl border border-gray-200 p-4 dark:border-white/10" aria-label="ファイルの種類" data-file-kind>
+      <p class="text-sm text-gray-900 dark:text-gray-100"><strong class="font-semibold" data-file-kind-name>{{ fileType.name }}</strong><template v-if="kindPreview"><span class="text-gray-400"> · </span><span class="tabular-nums" data-file-kind-orders>{{ kindPreview.summary.orders }} 件の注文</span><span class="text-gray-400"> · </span><span :class="failedChecks.length ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'" data-file-kind-totals>{{ failedChecks.length ? '合計が一致しない項目 ' + failedChecks.length : kindPreview.checks.length ? '合計一致' : '合計の確認なし' }}</span></template></p>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ sheet }} シートの {{ headerRow }} 行目を見出しとして、このファイルの種類の列の割り当てで読み取ります。購入状況は元の表記から決め、ほかの列は書かれているとおりに保存します。</p>
+      <p v-if="fileType.service" class="mt-3 text-sm text-gray-700 dark:text-gray-300" data-file-kind-service>受付元・サービス：<strong class="font-medium">{{ fileType.service }}</strong><span class="ml-1 text-xs text-gray-500 dark:text-gray-400">（前回の取込と同じ名前で取り込みます）</span></p>
+      <label v-else class="mt-3 block text-sm font-medium text-gray-700 dark:text-gray-300">受付元・サービス<span class="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">このファイルの種類で最初の取込です。次回からこの名前で取り込みます。</span><input v-model="kindServiceName" type="text" maxlength="200" class="intake-control mt-1 md:max-w-md" data-file-kind-service-input @input="previewData = null"></label>
+      <button v-if="!kindPreview" type="button" class="btn btn-primary mt-3 text-sm" :disabled="busy || !kindServiceText" data-file-kind-preview @click="preview">取込内容を確認</button>
+      <template v-if="kindPreview">
+        <ul class="mt-3 space-y-1 text-xs leading-relaxed text-gray-700 dark:text-gray-300" data-file-kind-summary>
+          <li v-if="kindPreview.summary.totalRows || kindPreview.summary.otherRows" data-file-kind-left-out>取り込まない行：合計行 {{ kindPreview.summary.totalRows }}<span v-if="kindPreview.summary.otherRows">・注文ではない行 {{ kindPreview.summary.otherRows }}（{{ noteOf('other-rows')?.rows?.join('・') }}行目）</span></li>
+          <li v-for="n in kindPreview.notes.filter((x: any) => x.kind === 'unknown-status')" :key="'s' + n.word" class="text-amber-700 dark:text-amber-400" data-file-kind-unknown-status>表にない購入状況「{{ n.word || '（空）' }}」{{ n.count }} 件：受付中として取り込み、元の表記を「元のステータス」に残します</li>
+          <li v-for="(line, i) in kindNoteLines" :key="'n' + i" class="text-amber-700 dark:text-amber-400" data-file-kind-note>{{ line }}</li>
+        </ul>
+        <div v-if="kindPreview.checks.length" class="mt-3 overflow-x-auto">
+          <table class="min-w-full text-left text-xs" data-file-kind-checks>
+            <thead><tr class="text-gray-600 dark:text-gray-300"><th class="px-2 py-1 font-medium">ファイルの合計と照合</th><th class="px-2 py-1 text-right font-medium">注文の合計</th><th class="px-2 py-1 text-right font-medium">ファイルの値</th><th class="px-2 py-1 font-medium">結果</th></tr></thead>
+            <tbody>
+              <tr v-for="c in kindPreview.checks" :key="c.key" class="border-t border-gray-200 text-gray-700 dark:border-white/10 dark:text-gray-300" :data-check="c.key" :data-check-ok="String(c.ok)">
+                <td class="px-2 py-1">{{ c.label }}</td><td class="px-2 py-1 text-right tabular-nums">{{ numberText(c.sum) }}</td><td class="px-2 py-1 text-right tabular-nums">{{ c.total === null ? '（なし）' : numberText(c.total) }}</td>
+                <td class="px-2 py-1" :class="c.ok ? 'text-green-700 dark:text-green-400' : c.info ? 'text-gray-500 dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'">{{ c.ok ? '一致' : c.info ? '参考（差 ' + numberText(c.sum - (c.total || 0)) + '）' : '不一致' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="failedChecks.length" class="mt-2 text-xs text-amber-700 dark:text-amber-400">一致しない合計があっても取込は止めません。両方の値は取込履歴にも残ります。</p>
+        </div>
+      </template>
+      <button type="button" class="mt-3 text-xs text-primary-main underline dark:text-primary-light" data-kind-off @click="turnKindOff">列の割り当てを自分で変える</button>
+    </section>
+    <p v-if="kindOffNotice" role="status" class="mt-4 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-500/10 dark:text-amber-300" data-file-kind-off>「{{ fileType.name }}」の読み取りを使わず、いつもの取込で進めます（合計行も1件の受付になります）。<button type="button" class="ml-1 underline" data-kind-on @click="turnKindOn">ファイルの種類で取り込む</button></p>
+    <p v-if="nearNotice" role="status" class="mt-4 rounded-lg bg-gray-50 p-3 text-xs leading-relaxed text-gray-700 dark:bg-white/5 dark:text-gray-300" data-file-kind-near>{{ nearNotice }}</p>
+
+    <div v-if="sheetData && !kindActive" class="mt-4" data-import-mapping>
       <div v-if="templateNotice.length" role="status" class="mb-3 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-500/10 dark:text-amber-300" data-template-header-notice>
         <p>テンプレートを保存したときの見出しと、このシートの見出しが異なります。列の割り当てと「取込内容を確認」の結果で、正しい列か確かめてください（取込は止めません）。</p>
         <p v-for="(d, i) in templateNotice.slice(0, 10)" :key="i" class="break-words">{{ d }}</p><p v-if="templateNotice.length > 10">ほか {{ templateNotice.length - 10 }} 列</p>
@@ -79,14 +111,14 @@
               <td class="px-2 py-1 tabular-nums">{{ r.row }}</td>
               <td class="px-2 py-1">{{ operationLabel(r.operation) }}<span v-if="r.ambiguous || r.identityReview" class="ml-1 text-amber-700 dark:text-amber-400">（ID確認）</span><span v-if="r.identityChanged" class="ml-1 text-amber-700 dark:text-amber-400" data-identity-changed>（同じファイル行の受付のIDを変更）</span><span v-if="r.provenanceConflict?.length" class="ml-1 text-amber-700 dark:text-amber-400" data-provenance-conflict>（同じファイル行の別の受付あり・統合しません）</span></td>
               <td class="px-2 py-1">{{ r.values.orderId }}</td><td class="px-2 py-1">{{ r.values.description }}</td><td class="px-2 py-1 text-right tabular-nums">{{ r.values.amount }}</td>
-              <td class="px-2 py-1">{{ r.changes.map((c: any) => labelOf(c.field) + ': ' + (c.before || '（空）') + ' → ' + c.after).join('、') }}</td>
+              <td class="px-2 py-1">{{ r.changes.map((c: any) => labelOf(c.field) + ': ' + (c.before || '（空）') + ' → ' + (c.after || '（空）')).join('、') }}</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <div class="mt-4 grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">この列の割り当てをテンプレートとして保存（任意）<input v-model="templateName" type="text" placeholder="例: 日次シート" class="intake-control mt-1" data-template-name></label>
-        <button type="button" class="btn btn-primary text-sm" :disabled="busy" data-import-run @click="runImport">取り込む</button>
+      <div class="mt-4 grid items-end gap-3" :class="kindActive ? '' : 'md:grid-cols-[minmax(0,1fr)_auto]'">
+        <label v-if="!kindActive" class="block text-sm font-medium text-gray-700 dark:text-gray-300">この列の割り当てをテンプレートとして保存（任意）<input v-model="templateName" type="text" placeholder="例: 日次シート" class="intake-control mt-1" data-template-name></label>
+        <button type="button" class="btn btn-primary text-sm" :class="kindActive ? 'justify-self-start' : ''" :disabled="busy || (kindActive && !kindServiceText)" data-import-run @click="runImport">取り込む</button>
       </div>
     </div>
     <p v-if="result" role="status" class="mt-4 text-sm text-green-700 dark:text-green-400" data-import-done>取込が完了しました：新規 {{ result.counts.new }}・更新 {{ result.counts.update }}・変更なし {{ result.counts.unchanged }}<span v-if="result.counts.conflicts">・他の画面で変更されたため見送り {{ result.counts.conflicts }}</span></p>
@@ -106,6 +138,28 @@ const sheetData = ref<any>(null), mapping = reactive<Record<string, string>>(Obj
 // Owner-named extra columns beside the fixed fields: { name, column }; sent only when both are filled.
 const extras = ref<{ name: string; column: string }[]>([])
 const previewData = ref<any>(null), result = ref<any>(null)
+// Plan omf-order-mapping piece 2: the file kind the server recognised (null for any other file), whether the owner turned it off for
+// this import (grid opened or template chosen), and the service name of the kind's first import. The kind applies on its own sheet
+// and header row only; any other sheet or header row is read exactly as today.
+const fileType = ref<any>(null), fileTypeNear = ref<any>(null), kindOff = ref(false), kindServiceName = ref('')
+const onKindSheet = computed(() => !!fileType.value && sheet.value === fileType.value.sheet && Number(headerRow.value) === fileType.value.headerRow)
+const kindActive = computed(() => onKindSheet.value && !kindOff.value)
+const kindOffNotice = computed(() => onKindSheet.value && kindOff.value)
+const kindServiceText = computed(() => String(fileType.value?.service || kindServiceName.value || '').trim())
+const kindPreview = computed(() => kindActive.value && previewData.value?.summary ? previewData.value : null)
+const failedChecks = computed(() => (kindPreview.value?.checks || []).filter((c: any) => !c.ok && !c.info))
+const noteOf = (kind: string) => kindPreview.value?.notes?.find((n: any) => n.kind === kind)
+const numberText = (n: number) => Number.isFinite(n) ? n.toLocaleString('ja-JP') : '—'
+const nearNotice = computed(() => { const n = fileTypeNear.value; return n?.reason === 'header' ? '「' + n.name + '」と同じ形のファイルに見えますが、' + n.sheet + ' シートの列 ' + (n.column + 1) + ' の見出しが「' + (n.found || '（空）') + '」です（「' + (n.expected || '（なし）') + '」のはずです）。ファイルの種類としては読み取らず、いつもの取込で進めます。' : '' })
+function noteText(n: any): string {
+  if (n.kind === 'card-sheet-missing') return '決済方法ごとの合計のシートがないため、カードごとの照合はしません。'
+  if (n.kind === 'total-row-missing') return 'ファイルに合計行がないため、合計の照合はしません。'
+  if (n.kind === 'several-total-rows') return '合計行が ' + n.count + ' 行あります（' + n.rows.join('・') + '行目）。最初の合計行と照合します。'
+  return ''
+}
+const kindNoteLines = computed(() => (kindPreview.value?.notes || []).map(noteText).filter(Boolean))
+function turnKindOff() { kindOff.value = true; previewData.value = null; result.value = null }
+async function turnKindOn() { kindOff.value = false; templateId.value = ''; templateNotice.value = []; previewData.value = null; result.value = null; if (sheetData.value) { Object.assign(mapping, sheetData.value.mapping); applyExtras(sheetData.value.extras) } if (kindServiceText.value) await preview() }
 watch([() => doc.value?.id, sheet, headerRow], () => {
   if (doc.value) assistant.pageSelection = { path: intakePath, documentId: doc.value.id, sheet: sheet.value, headerRow: headerRow.value, label: doc.value.name }
 })
@@ -125,7 +179,11 @@ const operationLabel = (op: string) => op === 'new' ? '新規' : op === 'update'
 const labelOf = (field: string) => field.startsWith('extra:') ? field.slice(6) : (FIELD_NAMES as Record<string, string>)[field] || field
 function errorMessage(e: any) { return e.data?.data?.message || e.data?.statusMessage || e.message || '処理に失敗しました。再試行してください。' }
 async function run(action: () => Promise<void>) { busy.value = true; error.value = ''; try { await action() } catch (e: any) { error.value = errorMessage(e) } finally { busy.value = false } }
-const body = () => ({ sheet: sheet.value, headerRow: headerRow.value, mapping: { ...mapping }, defaults: { ...defaults }, extras: extras.value.filter(x => x.name.trim() && x.column !== '').map(x => ({ name: x.name.trim(), column: x.column })) })
+// A kind import sends the kind's own mapping and extra columns (as the sheet read answered them), no account and JPY; the server
+// refuses anything else. Any other import is today's, with fileType 'off' when the file is a kind the owner chose not to use.
+const body = () => kindActive.value
+  ? { sheet: sheet.value, headerRow: headerRow.value, mapping: { ...sheetData.value.mapping }, extras: sheetData.value.extras || [], defaults: { service: kindServiceText.value, account: '', currency: DEFAULT_CURRENCY } }
+  : { sheet: sheet.value, headerRow: headerRow.value, mapping: { ...mapping }, defaults: { ...defaults }, extras: extras.value.filter(x => x.name.trim() && x.column !== '').map(x => ({ name: x.name.trim(), column: x.column })), ...(fileType.value ? { fileType: 'off' } : {}) }
 function applyExtras(source: any[] | undefined) { const limit = sheetData.value?.headers.length || 0; extras.value = (source || []).filter(x => x && typeof x.name === 'string' && x.name.trim() && Number(x.column) < limit).map(x => ({ name: x.name, column: String(x.column) })) }
 function contentType(file: File) { if (file.type) return file.type; const ext = file.name.toLowerCase().split('.').pop(); return ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : ext === 'xls' ? 'application/vnd.ms-excel' : 'text/csv' }
 async function loadTemplates() { try { templates.value = ((await $fetch(api + 'templates', { headers: user.authHeader })) as any).templates } catch { templates.value = [] } }
@@ -134,8 +192,13 @@ async function upload(event: Event) {
   await run(async () => {
     if (file.size > 10 * 1024 * 1024) throw Error('ファイルは10MB以内で選択してください。')
     const data: any = await $fetch(api + 'files', { method: 'POST', query: { name: file.name }, headers: { ...user.authHeader, 'Content-Type': contentType(file) }, body: file })
-    doc.value = data.document; sheet.value = data.document.sheetNames[0] || ''; headerRow.value = 1; previewData.value = null; result.value = null
+    // A known kind opens on its own sheet and header row and is checked at once; its first import is prefilled with the name used
+    // for the person's other kind, else the company name.
+    doc.value = data.document; fileType.value = data.fileType || null; fileTypeNear.value = data.fileTypeNear || null; kindOff.value = false
+    if (fileType.value) { templateId.value = ''; templateName.value = ''; kindServiceName.value = fileType.value.service || fileType.value.otherService || user.currentOrganization?.name || '' }
+    sheet.value = fileType.value?.sheet || data.document.sheetNames[0] || ''; headerRow.value = fileType.value?.headerRow || 1; previewData.value = null; result.value = null
     await readSheetNow()
+    if (kindActive.value && kindServiceText.value) await previewNow()
   })
   input.value = ''
 }
@@ -143,7 +206,7 @@ async function readSheetNow() {
   const data: any = await $fetch(api + 'files/' + doc.value.id + '/sheet', { query: { sheet: sheet.value, headerRow: headerRow.value }, headers: user.authHeader })
   sheetData.value = data; previewData.value = null
   const template = templates.value.find(t => t.id === templateId.value)
-  if (template) { applyMapping(template.mapping); applyExtras(template.extras) } else { Object.assign(mapping, data.mapping); applyExtras(extras.value) }
+  if (template) { applyMapping(template.mapping); applyExtras(template.extras) } else { Object.assign(mapping, data.mapping); applyExtras(data.extras || extras.value) }
   compareHeaders(template)
 }
 function readSheet() { if (doc.value) run(readSheetNow) }
@@ -152,6 +215,8 @@ function applyTemplate() {
   const template = templates.value.find(t => t.id === templateId.value)
   compareHeaders(template)
   if (!template) { if (sheetData.value) Object.assign(mapping, sheetData.value.mapping); extras.value = []; return }
+  // A saved template is a column mapping of its own: choosing one turns the file kind off for this import.
+  if (onKindSheet.value) kindOff.value = true
   applyMapping(template.mapping); applyExtras(template.extras); defaults.service = template.service || DEFAULT_SERVICE; defaults.account = template.account || ''; defaults.currency = template.currency || DEFAULT_CURRENCY; templateName.value = template.name; previewData.value = null
 }
 // F1 (plan omf-monthly-reconciliation-20261020): a saved template is applied by column position; when its stored headers differ from
@@ -173,10 +238,14 @@ const cellNoteLines = computed(() => {
 })
 const FIELD_LABELS = FIELD_NAMES as Record<string, string>
 const warningText = (w: any) => w.kind === 'numeric-id' ? (FIELD_LABELS[w.field] || w.field) + 'に数値のセルの列（' + columnName(w.column) + '）が割り当てられています。先頭の0や15桁を超える桁は元のファイルにありません。必要なら元のファイルを文字列で保存し直してください。' : w.kind === 'imprecise-number' ? columnName(w.column) + 'の15桁を超える数値（' + (w.rows || []).join('・') + '行目など、例：' + w.shown + '）は表示どおりに取り込みます。' : String(w.kind || '')
-async function preview() { await run(async () => { previewData.value = await $fetch(api + 'files/' + doc.value.id + '/preview', { method: 'POST', headers: user.authHeader, body: body() }); result.value = null }) }
+async function previewNow() { previewData.value = await $fetch(api + 'files/' + doc.value.id + '/preview', { method: 'POST', headers: user.authHeader, body: body() }); result.value = null }
+async function preview() { await run(previewNow) }
 async function runImport() {
   await run(async () => {
-    const data: any = await $fetch(api + 'files/' + doc.value.id + '/import', { method: 'POST', headers: user.authHeader, body: { ...body(), ...(templateName.value.trim() ? { template: { name: templateName.value.trim() } } : {}) } })
+    const kind = kindActive.value
+    const data: any = await $fetch(api + 'files/' + doc.value.id + '/import', { method: 'POST', headers: user.authHeader, body: { ...body(), ...(!kind && templateName.value.trim() ? { template: { name: templateName.value.trim() } } : {}) } })
+    // The kind's service name is now fixed by this batch; a second import in this session shows it without a box.
+    if (kind && data.batch?.defaults?.service) fileType.value = { ...fileType.value, service: data.batch.defaults.service }
     result.value = data.batch; previewData.value = null; emit('imported', data.batch); await loadTemplates()
   })
 }

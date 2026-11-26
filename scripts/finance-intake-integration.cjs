@@ -331,6 +331,69 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
   pass('注文日 is cut to the day; a record stored without it saves another field with no 注文日 change');
  }
 
+ // Plan omf-order-mapping piece 2: a known file kind over HTTP. An invented proxy shop order list (HTML text with an .xls name, as
+ // the real export is shaped): upload → recognised → its own sheet and mapping → preview with totals → import; the kind's fixed
+ // values are refused (409, nothing stored); fileType 'off' imports the sheet as today; a plain CSV is not a kind.
+ const SHOP_HEADERS=['번호(NO)','현재상태(現在ステタス)','사이트(サイト)','물품정보(商品情報)','스토어(ストア)','주문번호(注文番号)','결제일(決済日)','상품가(商品価)','수량(数量)','국내송료(国内送料)','국내송금료(国内送金料)','소비세(消費税)','추가금(追加金)','차감금(差し引き金)','포인트(point)','지불액(支払金)','현지주문총액','주문일(注文日)','주문자(注文者)','결제방식(決済方法)','송료지불(送料支払)'];
+ const yen=n=>n.toLocaleString('en-US'),esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+ // [orderId, status, price, qty, shipping, card label, local total override]: paid = price*qty+shipping; local total = paid unless overridden.
+ const shopList=(orders,{shipTotalDelta=0}={})=>{
+  const rows=orders.map(([id,status,price,qty,ship,card,local],i)=>{const paid=price*qty+ship;return {cells:[i+1,status,'https://shop.example.invalid/kind/'+id,'Invented kind item '+id,'Invented store',id,'2026-01-04 1'+i+':05',yen(price),qty,yen(ship),'0','0','0','0','0',yen(paid),yen(local??paid),'2026-01-05 0'+i+':30','buyer-x','카드('+card+')','선불'],price,qty,ship,paid,local:local??paid,card}});
+  const s=f=>rows.reduce((a,r)=>a+f(r),0),totals=[s(r=>r.price*r.qty),s(r=>r.qty),s(r=>r.ship)+shipTotalDelta,0,0,0,0,0,s(r=>r.paid),s(r=>r.local)];
+  const cards=[...new Set(rows.map(r=>r.card))].map(c=>[c,s(r=>r.card===c?r.local:0)]);
+  return Buffer.from('﻿<table><tr><td colspan="20">구매 주문 리스트 ( 2026-01-05 ~ 2026-01-05 )</td></tr></table>\n<table><tr>'+SHOP_HEADERS.map(h=>'<td nowrap>'+esc(h)+'</td>').join('')+'</tr>\n'
+   +rows.map(r=>'<tr>'+r.cells.map(c=>'<td>'+esc(c)+'</td>').join('')+'</tr>').join('\n')
+   +'\n<tr><td colspan=6>합계</td>'+totals.map((v,i)=>'<td>'+(i===1?v:yen(v)+' 엔')+'</td>').join('')+'<td colspan="4"></td></tr></table>\n<table><tr><td colspan="3">결제 수단별 지불액(支払金) 합계</td></tr></table>\n<table>'
+   +[...cards,['합계',s(r=>r.local)]].map(([c,v])=>'<tr><td colspan="2">'+esc(c)+'</td><td>'+yen(v)+' 엔</td></tr>').join('')+'</table>\n','utf8');
+ };
+ const SHOP_ORDERS=[['TSTK0001','주문완료',1200,1,0,'CARD-A'],['TSTK0002','거래취소',0,1,0,'CARD-B',3300],['TSTK0003','검토중',900,2,500,'CARD-A']];
+ const XLS_TYPE='application/vnd.ms-excel',KIND_SVC='INVENTED-SHOP-SVC',recordsOf=svc=>db.collection('financeintakerecords').countDocuments({'values.service':svc});
+ {
+  const bytes=shopList(SHOP_ORDERS),up=await send('files?name=purchase-invented.xls',bytes,XLS_TYPE);assert.equal(up.status,200,'kinds:upload '+JSON.stringify(up.data));
+  assert.deepEqual([up.data.fileType?.kind,up.data.fileType?.name,up.data.fileType?.sheet,up.data.fileType?.headerRow,up.data.fileType?.service],['proxy-shop-order-list','ショップ注文リスト','Sheet2',1,null],'kinds:upload-recognised');
+  const kdoc=up.data.document,sh=(await get('files/'+kdoc.id+'/sheet')).data;
+  assert.equal(sh.sheet,'Sheet2','kinds:sheet-without-name-is-the-kind-sheet');assert.equal(sh.fileType?.kind,'proxy-shop-order-list','kinds:sheet-file-type');
+  assert.deepEqual([sh.mapping.orderId,sh.mapping.purchaseDate,sh.mapping.orderDate,sh.mapping.amount],['5','17','6','16'],'kinds:sheet-kind-mapping');assert.equal(sh.extras.length,10,'kinds:sheet-kind-extras');
+  const first=(await get('files/'+kdoc.id+'/sheet?sheet=Sheet1')).data;assert.equal(first.fileType,null,'kinds:other-sheet-today');
+  const kplan={sheet:'Sheet2',headerRow:1,mapping:sh.mapping,extras:sh.extras,defaults:{service:KIND_SVC,account:'',currency:'JPY'}};
+  const kprev=await req('files/'+kdoc.id+'/preview',kplan);assert.equal(kprev.status,200,'kinds:preview '+JSON.stringify(kprev.data));
+  assert.deepEqual([kprev.data.counts.new,kprev.data.summary.orders,kprev.data.summary.totalRows,kprev.data.fileType.service,kprev.data.fileType.serviceFixed],[3,3,1,KIND_SVC,false],'kinds:preview-counts');
+  assert.equal(kprev.data.checks.length,13,'kinds:preview-checks');assert.ok(kprev.data.checks.every(c=>c.ok),'kinds:preview-totals-match '+JSON.stringify(kprev.data.checks.filter(c=>!c.ok)));
+  assert.deepEqual(kprev.data.notes.find(n=>n.kind==='unknown-status'),{kind:'unknown-status',word:'검토중',count:1,rows:[4]},'kinds:preview-unknown-status');
+  assert.equal(await recordsOf(KIND_SVC),0,'kinds:preview-writes-nothing');
+  const kimp=await req('files/'+kdoc.id+'/import',kplan);assert.equal(kimp.status,200,'kinds:import '+JSON.stringify(kimp.data));
+  assert.deepEqual([kimp.data.batch.counts.new,kimp.data.batch.fileType,kimp.data.batch.checks?.checks?.length,kimp.data.batch.checks?.summary?.orders],[3,'proxy-shop-order-list',13,3],'kinds:import-batch');
+  const kr=async id=>(await get('records')).data.records.find(r=>r.values.orderId===id&&r.values.service===KIND_SVC);
+  const k1=await kr('TSTK0001'),k2=await kr('TSTK0002'),k3=await kr('TSTK0003');
+  assert.deepEqual([k1.values.purchaseState,k2.values.purchaseState,k3.values.purchaseState],['purchased','cancelled','requested'],'kinds:import-statuses');
+  assert.deepEqual([k1.values.orderDate,k1.values.purchaseDate,k2.values.amount,k2.extra['支払金'],k3.extra['元のステータス'],k1.extra['ファイルの種類']],['2026-01-04','2026-01-05','3300','0','검토중','ショップ注文リスト'],'kinds:import-values');
+  assert.equal(await recordsOf(KIND_SVC),3,'kinds:no-record-for-the-total-row');
+  pass('a known file kind: the upload names it and its sheet, the sheet read answers the kind\'s mapping, the preview reports orders, left-out lines, every total and the unknown status word, the import stores one record per order with statuses from the table');
+  // The second upload of the kind answers the first import's service name; the kind's fixed values are refused and nothing is stored.
+  const again=await send('files?name=purchase-invented-again.xls',bytes,XLS_TYPE);assert.equal(again.data.fileType?.service,KIND_SVC,'kinds:second-upload-service');
+  const refusals=[['service',{...kplan,defaults:{service:'ANOTHER-SVC'}}],['account',{...kplan,defaults:{service:KIND_SVC,account:'acct-1'}}],['currency',{...kplan,defaults:{service:KIND_SVC,currency:'USD'}}],['mapping',{...kplan,mapping:{...sh.mapping,amount:'15'}}],['extras',{...kplan,extras:[]}],['template',{...kplan,template:{name:'kind-template'}}]];
+  for(const [name,body] of refusals){const r=await req('files/'+kdoc.id+'/import',body);assert.equal(r.status,409,'kinds:409-'+name+' '+JSON.stringify(r.data));assert.match(JSON.stringify(r.data),/列の割り当てを自分で変える/,'kinds:409-names-the-grid-switch '+name);}
+  assert.equal(await recordsOf(KIND_SVC),3,'kinds:409-nothing-stored');assert.equal(await recordsOf('ANOTHER-SVC'),0,'kinds:409-no-other-service');assert.equal((await get('templates')).data.templates.some(t=>t.name==='kind-template'),false,'kinds:409-no-template');
+  assert.equal((await req('files/'+kdoc.id+'/preview',{...kplan,fileType:'on'})).status,400,'kinds:file-type-only-off');
+  const kagain=await req('files/'+kdoc.id+'/import',{...kplan,defaults:{}});assert.deepEqual([kagain.status,kagain.data.batch?.counts?.unchanged,kagain.data.batch?.defaults?.service],[200,3,KIND_SVC],'kinds:same-file-unchanged-under-the-kept-name');
+  pass('the second upload of the kind returns the first import\'s service name; another service, an account, another currency, another mapping or a template is refused with 409 naming the grid switch and stores nothing; the same file again is unchanged');
+  // A total that does not match is shown with both numbers and kept on the batch; the import still runs.
+  const off=shopList([['TSTK0004','주문완료',700,1,300,'CARD-A']],{shipTotalDelta:100}),upOff=await send('files?name=purchase-invented-mismatch.xls',off,XLS_TYPE);
+  const mis=await req('files/'+upOff.data.document.id+'/import',{sheet:'Sheet2',headerRow:1,mapping:sh.mapping,extras:sh.extras,defaults:{}});assert.equal(mis.status,200,'kinds:mismatch-imports '+JSON.stringify(mis.data));
+  const failed=mis.data.batch.checks.checks.filter(c=>!c.ok);assert.deepEqual(failed.map(c=>[c.key,c.sum,c.total]),[['total:9',300,400]],'kinds:mismatch-kept-on-the-batch');assert.equal(await recordsOf(KIND_SVC),4,'kinds:mismatch-record-stored');
+  // fileType 'off': the kind's sheet with an ordinary mapping, as today — the total row becomes a record.
+  const offImp=await req('files/'+kdoc.id+'/import',{...kplan,defaults:{service:'OFF-SVC',account:'',currency:'JPY'},fileType:'off'});assert.equal(offImp.status,200,'kinds:off-import '+JSON.stringify(offImp.data));
+  assert.deepEqual([offImp.data.batch.counts.new,offImp.data.batch.fileType],[4,null],'kinds:off-total-row-is-a-record');
+  // A plain CSV is not a kind and imports exactly as before.
+  const csvUp=await send('files?name=plain-kind-check.csv',Buffer.from('注文番号,商品名,購入金額\nTSTC0001,Plain CSV item,500\n','utf8'),'text/csv');assert.deepEqual([csvUp.status,csvUp.data.fileType,csvUp.data.fileTypeNear],[200,null,null],'kinds:csv-not-a-kind');
+  const csvSheet=(await get('files/'+csvUp.data.document.id+'/sheet')).data;assert.deepEqual([csvSheet.sheet,csvSheet.fileType,csvSheet.mapping.orderId],['Sheet1',null,'0'],'kinds:csv-sheet-as-today');
+  const csvImp=await req('files/'+csvUp.data.document.id+'/import',{sheet:'Sheet1',headerRow:1,mapping:csvSheet.mapping,defaults:{service:'CSV-SVC',account:'',currency:'JPY'}});assert.deepEqual([csvImp.status,csvImp.data.batch?.counts?.new,csvImp.data.batch?.fileType],[200,1,null],'kinds:csv-imports-as-before');
+  // One renamed header: not recognised, the column named, today's importer.
+  const renamed=Buffer.from(bytes.toString('utf8').replace('상품가(商品価)','상품가격'),'utf8'),upR=await send('files?name=purchase-renamed.xls',renamed,XLS_TYPE);
+  assert.deepEqual([upR.data.fileType,upR.data.fileTypeNear?.column,upR.data.fileTypeNear?.found],[null,7,'상품가격'],'kinds:renamed-header-named');assert.equal((await get('files/'+upR.data.document.id+'/sheet')).data.sheet,'Sheet1','kinds:renamed-today-first-sheet');
+  pass('a total that does not match is kept on the batch with both numbers and the import runs; fileType off imports the kind\'s sheet as today; a plain CSV and a file with one renamed header are read as before');
+ }
+
  if(process.env.OMF_TEST_INTAKE_MUTANT){console.log('mutant run: the hidden-Chrome and real-worker legs run once in the main run, not per mutant');return;}
 
  // 19 MANDATORY hidden real Chrome through the collector's own launcher (pipe transport, no debug port, headless)
@@ -372,6 +435,22 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
    await noOverflow('importer');
    await page.evaluate(()=>document.querySelector('[data-import-run]').click());await waitFor(()=>!!document.querySelector('[data-import-done]'));
    const uiImported=await byOrder('000021','UI-TEST');assert.ok(uiImported,'intake-ui:imported-record');assert.equal(uiImported.extra['担当者'],'山田','intake-ui:imported-extra');
+   // Plan omf-order-mapping piece 2: a known kind opens on its own sheet, is checked at once (orders, totals, the kept service name),
+   // the grid is one click away and turns the kind off, and 取り込む imports it.
+   {
+    const shots=process.env.OMF_TEST_INTAKE_SCREENSHOTS||'',kindPath=path.join(uiDir,'purchase-ui.xls');await fsp.writeFile(kindPath,shopList([['TSTU0001','주문완료',1500,1,0,'CARD-A'],['TSTU0002','현지도착',2000,1,0,'CARD-B']]));
+    await (await page.$('[data-import-file]')).uploadFile(kindPath);await waitFor(()=>!!document.querySelector('[data-file-kind-orders]'));
+    assert.deepEqual(await page.evaluate(()=>[document.querySelector('[data-file-kind-name]').textContent.trim(),document.querySelector('[data-file-kind-orders]').textContent.trim(),document.querySelector('[data-file-kind-totals]').textContent.trim(),document.querySelector('[data-import-sheet]').value]),['ショップ注文リスト','2 件の注文','合計一致','Sheet2'],'intake-ui:kind-panel');
+    assert.match(await page.evaluate(()=>document.querySelector('[data-file-kind-service]').textContent),new RegExp(KIND_SVC),'intake-ui:kind-service-kept');
+    assert.deepEqual(await page.evaluate(()=>[!!document.querySelector('[data-import-mapping]'),!!document.querySelector('[data-template-name]'),document.querySelectorAll('[data-file-kind-checks] [data-check-ok="true"]').length]),[false,false,13],'intake-ui:kind-grid-hidden-checks-shown');
+    await noOverflow('kind');if(shots){await page.screenshot({path:path.join(shots,'kind-390.png'),fullPage:true});await page.setViewport({width:1280,height:900});await page.screenshot({path:path.join(shots,'kind-1280.png'),fullPage:true});await page.setViewport({width:390,height:844});}
+    await page.evaluate(()=>document.querySelector('[data-kind-off]').click());await waitFor(()=>!!document.querySelector('[data-import-mapping]')&&!!document.querySelector('[data-file-kind-off]'));
+    assert.equal(await page.evaluate(()=>document.querySelector('[data-mapping="orderId"]').value),'5','intake-ui:kind-off-grid-starts-from-the-kind-mapping');
+    await page.evaluate(()=>document.querySelector('[data-kind-on]').click());await waitFor(()=>!!document.querySelector('[data-file-kind-orders]')&&!document.querySelector('[data-import-mapping]'));
+    await page.evaluate(()=>document.querySelector('[data-import-run]').click());await waitFor(()=>!!document.querySelector('[data-import-done]'));
+    const uiKind=(await get('records')).data.records.find(r=>r.values.orderId==='TSTU0002'&&r.values.service===KIND_SVC);assert.deepEqual([uiKind?.values.purchaseState,uiKind?.extra['ファイルの種類']],['purchased','ショップ注文リスト'],'intake-ui:kind-imported');
+    pass('hidden real Chrome: a known file kind opens on its own sheet with its orders, totals and kept service name, the grid switch turns it off and back, and 取り込む imports it');
+   }
    await page.goto(origin+'/intake/'+uiImported.id,{waitUntil:'networkidle2'});await waitFor(()=>!!document.querySelector('[data-extras]')&&!!document.querySelector('[data-intake-research]'));
    assert.equal(await page.evaluate(()=>document.querySelector('[data-extra="担当者"]')?.value),'山田','intake-ui:extras-shown');assert.equal(await page.evaluate(()=>document.querySelector('#intake-externalOrderId')?.value),'EXT-21','intake-ui:external-shown');assert.equal(await page.evaluate(()=>document.querySelector('#intake-otherFee')?.value),'-500','intake-ui:fee-shown');
    await waitFor(()=>!!document.querySelector('[data-research-connection]'));

@@ -14,7 +14,10 @@ const mutationNames = new Set(['create_intake_record', 'patch_intake_record', 's
 export const isIntakeMutation = (name: string) => mutationNames.has(name)
 const revision = { type: 'integer', minimum: 1, description: 'Current record revision from a fresh get_intake_record; never guess.' }
 const researchRevision = { type: 'integer', minimum: 0, description: 'Current research revision from get_intake_research, or0 if none exists.' }
-const importArgs = { ...sheetArgs, mapping: { type: 'object' }, defaults: { type: 'object' }, extras: { type: 'array', maxItems: 30, items: { type: 'object' } } }
+// Plan omf-order-mapping piece 2: on a recognised file kind's sheet the kind's mapping and fixed values apply (read_intake_sheet
+// answers them with fileType); 'off' imports that sheet as an ordinary mapping instead. Both import inputs take it.
+const fileTypeArg = { type: 'string', enum: ['off'], description: "Only 'off': import a recognised file kind's sheet with this mapping as an ordinary file (its total rows become records)." }
+const importArgs = { ...sheetArgs, mapping: { type: 'object' }, defaults: { type: 'object' }, extras: { type: 'array', maxItems: 30, items: { type: 'object' } }, fileType: fileTypeArg }
 const requestedFields = (name: string, args: any) => name === 'set_intake_archived' ? ['archived'] : name === 'confirm_intake_research' ? ['supplierName', 'invoiceNumber'] : [...Object.keys(args.values || {}), ...Object.keys(args.extra || {}).map(k => 'extra:' + k)]
 const pending = (name: string, args: any, nativeResourceIds: any = null) => ({ state: 'unresolved', recoveryOwner: 'user', receipt: { requestedFields: requestedFields(name, args), acceptedRevision: null, nativeResourceIds } })
 // No native evidence is not evidence that a database write never happened. Expired intake claims stay unresolved;
@@ -85,7 +88,7 @@ export const intakeActions: any[] = [
     (scope: any, args: any) => intake.readRecord(scope.ownerId, required(args.recordId, '受付'))),
   read('read_intake_sheet', 'Read JSON headers, first20 nonempty rows, total row count and guessed mapping from an existing uploaded intake document. No second upload is needed. File bytes are not a model tool.', sheetArgs,
     (scope: any, args: any) => intake.readSheet(scope.ownerId, required(args.documentId, '取込ファイル'), args.sheet, args.headerRow)),
-  read('preview_intake_import', 'Preview mapping of an existing intake upload. Returns counts/proposed changes only; it does not import or save a template.', { ...sheetArgs, mapping: { type: 'object' }, defaults: { type: 'object' }, extras: { type: 'array', maxItems: 30, items: { type: 'object' } } },
+  read('preview_intake_import', 'Preview mapping of an existing intake upload. Returns counts/proposed changes only; it does not import or save a template.', { ...sheetArgs, mapping: { type: 'object' }, defaults: { type: 'object' }, extras: { type: 'array', maxItems: 30, items: { type: 'object' } }, fileType: fileTypeArg },
     (scope: any, args: any) => intake.previewImport(scope.ownerId, required(args.documentId, '取込ファイル'), args)),
   read('list_intake_batches', 'Read the owner\'s latest200 intake import batches and actual imported/conflict counts, with source-file hashes. This is intake history, not bank collection status.', {},
     (scope: any) => intake.listBatches(scope.ownerId)),

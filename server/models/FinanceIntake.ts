@@ -25,7 +25,9 @@ const batchSchema = new Schema({
   ownerId: { type: oid, required: true, index: true }, documentId: { type: oid, required: true }, hash: { type: String, required: true },
   sheet: { type: String, required: true }, headerRow: { type: Number, required: true },
   mapping: { type: Schema.Types.Mixed, required: true }, defaults: { type: Schema.Types.Mixed, required: true }, extras: { type: [Schema.Types.Mixed], default: [] },
-  counts: { type: Schema.Types.Mixed, required: true }, recordIds: { type: [oid], default: [] }, operation: Schema.Types.Mixed
+  counts: { type: Schema.Types.Mixed, required: true }, recordIds: { type: [oid], default: [] }, operation: Schema.Types.Mixed,
+  // Plan omf-order-mapping piece 2: the file kind of a kind import and what it reported ({ summary, checks, notes }); absent otherwise.
+  fileType: String, checks: Schema.Types.Mixed
 }, { timestamps: true })
 const templateSchema = new Schema({
   ownerId: { type: oid, required: true, index: true }, name: { type: String, required: true },

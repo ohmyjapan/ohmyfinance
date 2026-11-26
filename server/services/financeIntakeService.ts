@@ -2,7 +2,7 @@
 // Plan omf-intake-feature-20261016 §2. Reuses fail/id/ready (financeService), digest (shared/amex.mjs), the wx temp file +
 // hard link store of acceptImport, the UTF-8-then-Shift_JIS decode of parseAmex and the signature checks of addDocument.
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile, readFile, link, unlink } from 'node:fs/promises'
+import { mkdir, writeFile, readFile, link, unlink, open } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import mongoose from 'mongoose'
@@ -11,6 +11,7 @@ import { fail, id, ready } from './financeService'
 import { digest } from '../../shared/amex.mjs'
 import { IntakeRecord, IntakeDocument, IntakeBatch, IntakeTemplate, initializeIntake } from '../models/FinanceIntake'
 import { FIELDS, STATES, normalize, externalKey, manualKey, guessMapping, mappedRows, planImport, text, type IntakeValues, type IntakeMapping, type IntakeRecordShape, type IntakeExtra, type IntakeExtraColumn } from '../../shared/finance-intake.mjs'
+import { recogniseFile, applyFileType, kindRequestRefusal, kindService, kindDefaults, type IntakeFileType, type IntakeKindRefusal } from '../../shared/finance-intake-filetypes.mjs'
 
 export const MAX_BYTES = 10 * 1024 * 1024
 const MAX_ROWS = 5000
@@ -200,6 +201,35 @@ export async function downloadDocument(ownerId: string, documentId: string) {
   if (digest(bytes) !== doc.hash || bytes.length !== doc.size) fail(409, '書類の整合性を確認できません。')
   return { doc, bytes }
 }
+// Plan omf-order-mapping piece 2 (file kinds): recognition reads row 1 of each sheet only — never every row — so a file that uploads
+// today still uploads (the 5,000-row check stays in sheetRows). A kind's proxy lists are text the reader turns into sheets.
+function firstRows(workbook: XLSX.WorkBook) {
+  return workbook.SheetNames.map(name => {
+    const ws: any = workbook.Sheets[name]
+    if (!ws?.['!ref']) return { name, header: [] as string[] }
+    const r = XLSX.utils.decode_range(ws['!ref'])
+    const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, raw: false, defval: '', blankrows: true, range: { s: r.s, e: { r: r.s.r, c: r.e.c } } })
+    return { name, header: (Array.isArray(rows[0]) ? rows[0] : []).map(text) }
+  })
+}
+const recognise = (workbook: XLSX.WorkBook, bytes: Buffer) => recogniseFile(firstRows(workbook), { text: !isXlsx(bytes) && !isXls(bytes) })
+// The first four bytes of a stored original: enough to tell a real workbook from text the reader turned into sheets.
+async function signature(ownerId: string, hash: string) {
+  const handle = await open(filePath(ownerId, hash), 'r')
+  try { const { buffer, bytesRead } = await handle.read(Buffer.alloc(4), 0, 4, 0); return buffer.subarray(0, bytesRead) } finally { await handle.close() }
+}
+// The person's latest batch of this kind fixes its service name; before the first one, the importer prefills the name used for the
+// person's other kind (else the company name, in the browser).
+async function latestKindService(ownerId: string, kind: string): Promise<string | null> {
+  const latest: any = await IntakeBatch.findOne({ ownerId, fileType: kind }).sort({ createdAt: -1 }).select('defaults').lean()
+  return latest?.defaults?.service || null
+}
+async function fileTypeView(ownerId: string, fileType: IntakeFileType | null) {
+  if (!fileType?.kind) return null
+  const service = await latestKindService(ownerId, fileType.kind)
+  const other: any = service ? null : await IntakeBatch.findOne({ ownerId, fileType: { $nin: [null, '', fileType.kind] } }).sort({ createdAt: -1 }).select('defaults').lean()
+  return { kind: fileType.kind, name: fileType.name, sheet: fileType.sheet, headerRow: fileType.headerRow, service, otherService: other?.defaults?.service || null }
+}
 export async function uploadFile(ownerId: string, name: any, bytes: Buffer, mimeType: string) {
   await init(); const fileName = checkName(name)
   if (!SHEET_TYPES.has(mimeType)) fail(415, 'Excel（xlsx・xls）またはCSVを選択してください（最大10MB）。')
@@ -207,12 +237,14 @@ export async function uploadFile(ownerId: string, name: any, bytes: Buffer, mime
   const workbook = readWorkbook(bytes); if (!workbook.SheetNames.length) fail(415, 'シートが見つかりません。')
   const doc = await storeDocument(ownerId, fileName, bytes, mimeType, 'source', workbook.SheetNames)
   if (!doc.sheetNames?.length) await IntakeDocument.updateOne({ _id: doc._id, ownerId }, { $set: { sheetNames: workbook.SheetNames } })
-  return { document: documentView({ ...doc, sheetNames: workbook.SheetNames }) }
+  const recognised = recognise(workbook, bytes)
+  return { document: documentView({ ...doc, sheetNames: workbook.SheetNames }), fileType: await fileTypeView(ownerId, recognised.kind ? recognised : null), fileTypeNear: recognised.kind ? null : recognised.near || null }
 }
 async function sheetOf(ownerId: string, documentId: string, sheet: any, headerRow: any) {
   const doc = await ownedDocument(ownerId, documentId)
-  const workbook = readWorkbook(await readFile(filePath(ownerId, doc.hash)), { intake: true })
-  const name = sheet ? String(sheet) : workbook.SheetNames[0]
+  const workbook = readWorkbook(await readFile(filePath(ownerId, doc.hash)), { intake: true }), recognised = recognise(workbook, await signature(ownerId, doc.hash))
+  // A caller that names no sheet gets the kind's sheet when the file is a known kind (today's first sheet otherwise).
+  const name = sheet ? String(sheet) : recognised.kind ? recognised.sheet as string : workbook.SheetNames[0]
   if (!workbook.SheetNames.includes(name)) fail(400, 'シートが見つかりません。')
   const header = headerRow === undefined || headerRow === '' ? 1 : Number(headerRow)
   if (!Number.isSafeInteger(header) || header < 1 || header > 100) fail(400, '見出し行を確認してください。')
@@ -222,12 +254,15 @@ async function sheetOf(ownerId: string, documentId: string, sheet: any, headerRo
   const below = notes.filter(n => n.row > header), columns = (kinds: string[]) => [...new Set(below.filter(n => kinds.includes(n.kind)).map(n => n.column))].sort((a, b) => a - b)
   const imprecise = below.filter(n => n.kind === 'imprecise')
   const cellNotes = { numericColumns: columns(['number', 'imprecise']), dateColumns: columns(['date']), imprecise: imprecise.slice(0, 20).map(({ row, column, shown }) => ({ row, column, shown })), impreciseCount: imprecise.length }
-  return { doc, workbook, sheet: name, headerRow: header, headers, data, cellNotes }
+  // The kind applies only on its own sheet and header row; another sheet or header row is read exactly as today.
+  const ws: any = workbook.Sheets[name], start = XLSX.utils.decode_range(ws?.['!ref'] || 'A1').s
+  const fileType: IntakeFileType | null = recognised.kind && recognised.sheet === name && recognised.headerRow === header ? recognised : null
+  return { doc, workbook, sheet: name, headerRow: header, headers, data, cellNotes, merges: (ws?.['!merges'] || []) as XLSX.Range[], start, fileType }
 }
 export async function readSheet(ownerId: string, documentId: string, sheet: any, headerRow: any) {
   await init(); const s = await sheetOf(ownerId, documentId, sheet, headerRow)
   const filled = s.data.filter(r => r.some(Boolean))
-  return { document: documentView(s.doc), sheet: s.sheet, headerRow: s.headerRow, headers: s.headers, rows: filled.slice(0, 20), rowCount: filled.length, mapping: guessMapping(s.headers), cellNotes: s.cellNotes }
+  return { document: documentView(s.doc), sheet: s.sheet, headerRow: s.headerRow, headers: s.headers, rows: filled.slice(0, 20), rowCount: filled.length, mapping: s.fileType ? s.fileType.mapping : guessMapping(s.headers), ...(s.fileType ? { extras: s.fileType.extras } : {}), cellNotes: s.cellNotes, fileType: await fileTypeView(ownerId, s.fileType) }
 }
 function mappingInput(input: any, headers: string[]): IntakeMapping {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, '列の割り当てを確認してください。')
@@ -254,26 +289,55 @@ function defaultsInput(input: any) {
   for (const [k, v] of Object.entries(values)) if (text(v) !== '') out[k] = text(v)
   return out
 }
+// A kind import's fixed values: refused with the reason and the way out (the grid switch sends fileType 'off').
+const KIND_REFUSAL: Record<IntakeKindRefusal['reason'], (r: IntakeKindRefusal) => string> = {
+  service: r => '受付元・サービスは前回の取込と同じ「' + r.expected + '」です', account: () => 'サービス内アカウントは指定できません', currency: () => '通貨はJPYです',
+  mapping: () => '列の割り当てはファイルの種類で決まっています', template: () => '列の割り当てのテンプレートは保存しません'
+}
+const kindRefusalMessage = (fileType: IntakeFileType, r: IntakeKindRefusal) => 'このファイルは「' + fileType.name + '」として取り込みます。' + KIND_REFUSAL[r.reason](r) + '。別の設定で取り込むには「列の割り当てを自分で変える」を開いてください。'
 async function planFor(ownerId: string, documentId: string, body: any) {
   const s = await sheetOf(ownerId, documentId, body?.sheet, body?.headerRow)
-  const mapping = mappingInput(body?.mapping, s.headers), defaults = defaultsInput(body?.defaults), extras = extrasInput(body?.extras, s.headers)
-  if (!Object.values(mapping).some(Boolean) && !extras.length) fail(400, '少なくとも一列を割り当ててください。')
-  const incoming = mappedRows(s.data, mapping, defaults, { hash: s.doc.hash, fileName: s.doc.name, documentId: String(s.doc._id), sheet: s.sheet, firstRow: s.headerRow + 1 }, extras).filter(r => r.provenance.raw.some(Boolean))
+  if (body?.fileType !== undefined && body.fileType !== 'off') fail(400, 'ファイルの種類の指定を確認してください。')
+  // Plan omf-order-mapping piece 2: on the kind's own sheet and header row, unless the request turns the kind off, the kind's
+  // mapping, extra columns and fixed values apply, the rows pass through applyFileType, and a blank the kind lists clears.
+  const kind = s.fileType && body?.fileType !== 'off' ? s.fileType : null
+  let mapping: IntakeMapping, defaults: Record<string, string>, extras: IntakeExtraColumn[], latest: string | null = null
+  if (kind) {
+    const requested = defaultsInput(body?.defaults); latest = await latestKindService(ownerId, kind.kind)
+    const requestMapping = body?.mapping === undefined ? null : mappingInput(body.mapping, s.headers), requestExtras = body?.extras === undefined || body?.extras === null ? null : extrasInput(body.extras, s.headers)
+    const refusal = kindRequestRefusal(kind, { service: requested.service || '', account: requested.account || '', currency: requested.currency || '', mapping: requestMapping, extras: requestExtras, template: body?.template !== undefined }, latest)
+    if (refusal) fail(409, kindRefusalMessage(kind, refusal))
+    mapping = kind.mapping as IntakeMapping; extras = kind.extras; defaults = kindDefaults(kindService({ service: requested.service || '' }, latest))
+  } else {
+    mapping = mappingInput(body?.mapping, s.headers); defaults = defaultsInput(body?.defaults); extras = extrasInput(body?.extras, s.headers)
+    if (!Object.values(mapping).some(Boolean) && !extras.length) fail(400, '少なくとも一列を割り当ててください。')
+  }
+  let incoming: any[] = mappedRows(s.data, mapping, defaults, { hash: s.doc.hash, fileName: s.doc.name, documentId: String(s.doc._id), sheet: s.sheet, firstRow: s.headerRow + 1 }, extras).filter(r => r.provenance.raw.some(Boolean))
+  let applied: ReturnType<typeof applyFileType> | null = null
+  if (kind) {
+    const related: Record<string, { name: string; rows: string[][] }> = {}
+    for (const [role, name] of Object.entries(kind.related || {})) related[role] = { name, rows: sheetRows(s.workbook, name, { intake: true }) }
+    applied = applyFileType(kind, incoming, { merges: s.merges, start: s.start, related }); incoming = applied.rows
+  }
   const stored: any[] = await IntakeRecord.find({ ownerId }).limit(20001).lean()
   if (stored.length > 20000) fail(409, '受付が多すぎます。先にアーカイブしてください。')
   // F1 fold: the reading the rows were mapped with, so a re-read file row re-keys only the record that still carries its stored identity.
-  const plan = planImport(stored.map(shape), incoming, { id: () => new mongoose.Types.ObjectId().toHexString(), reading: { mapping, defaults } })
+  const plan = planImport(stored.map(shape), incoming, { id: () => new mongoose.Types.ObjectId().toHexString(), reading: { mapping, defaults }, ...(kind ? { clearBlank: true } : {}) })
   // F1: non-blocking warnings — identifier fields mapped to numeric cells (zeros and digits beyond 15 are not in the file), and
   // numbers whose display is all the file keeps. Nothing is guessed or rejected.
   const warnings: any[] = []
   for (const field of ['orderId', 'itemId', 'externalOrderId', 'invoiceNumber', 'account'] as const) if (mapping[field] !== '' && s.cellNotes.numericColumns.includes(Number(mapping[field]))) warnings.push({ kind: 'numeric-id', field, column: Number(mapping[field]) })
   for (const column of [...new Set(s.cellNotes.imprecise.map(n => n.column))]) warnings.push({ kind: 'imprecise-number', column, rows: s.cellNotes.imprecise.filter(n => n.column === column).map(n => n.row).slice(0, 5), shown: s.cellNotes.imprecise.find(n => n.column === column)?.shown || '' })
-  return { ...s, mapping, defaults, extras, plan, warnings }
+  // serviceFixed: a batch of the kind exists, so its service name is the one every later import of the kind takes.
+  const fileType = kind ? { kind: kind.kind, name: kind.name, sheet: kind.sheet, headerRow: kind.headerRow, service: defaults.service, serviceFixed: !!latest, otherService: null } : null
+  return { ...s, mapping, defaults, extras, plan, warnings, kind, fileType, applied }
 }
 const planCounts = (plan: any) => ({ new: plan.new, update: plan.update, unchanged: plan.unchanged, ambiguous: plan.ambiguous, identityChanged: plan.identityChanged || 0, provenanceConflicts: plan.provenanceConflicts || 0 })
+// What a kind import reports beside the counts: the orders and the lines left out, every total against the file's own, the notes.
+const kindReport = (p: any) => p.applied ? { fileType: p.fileType, summary: p.applied.summary, checks: p.applied.checks, notes: p.applied.notes } : { fileType: null }
 export async function previewImport(ownerId: string, documentId: string, body: any) {
   await init(); const p = await planFor(ownerId, documentId, body)
-  return { document: documentView(p.doc), sheet: p.sheet, headerRow: p.headerRow, headers: p.headers, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts: planCounts(p.plan), warnings: p.warnings, cellNotes: p.cellNotes, rows: p.plan.rows.map(r => ({ row: r.row, operation: r.operation, ambiguous: r.ambiguous, identityReview: r.record.identityReview, key: r.record.key, values: r.record.values, extra: r.record.extra || {}, changes: r.changes, identityChanged: r.identityChanged || null, provenanceConflict: r.provenanceConflict || [] })) }
+  return { document: documentView(p.doc), sheet: p.sheet, headerRow: p.headerRow, headers: p.headers, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts: planCounts(p.plan), warnings: p.warnings, cellNotes: p.cellNotes, ...kindReport(p), rows: p.plan.rows.map(r => ({ row: r.row, operation: r.operation, ambiguous: r.ambiguous, identityReview: r.record.identityReview, key: r.record.key, values: r.record.values, extra: r.record.extra || {}, changes: r.changes, identityChanged: r.identityChanged || null, provenanceConflict: r.provenanceConflict || [] })) }
 }
 // Inserts by the unique (ownerId, key) index or updates with the revision the plan read; a row another tab changed meanwhile
 // is a conflict (left alone; the next run shows it as unchanged or plans it again). No lease, no hold.
@@ -301,10 +365,12 @@ export async function applyImport(ownerId: string, documentId: string, body: any
   }
   const template = templateInput ? await saveTemplate(ownerId, templateInput, operation) : null
   // The completed batch is last: row/template markers without this batch are a partial outcome, never a full success.
-  const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts, recordIds, ...intakeMarker(operation) })
+  // A kind import keeps its kind and what it reported (totals against the file's own, notes) on the batch; a mismatch never stops it.
+  const kindFields = p.kind && p.applied ? { fileType: p.kind.kind, checks: { summary: p.applied.summary, checks: p.applied.checks, notes: p.applied.notes } } : {}
+  const batch = await IntakeBatch.create({ ownerId, documentId: p.doc._id, hash: p.doc.hash, sheet: p.sheet, headerRow: p.headerRow, mapping: p.mapping, defaults: p.defaults, extras: p.extras, counts, recordIds, ...kindFields, ...intakeMarker(operation) })
   return { batch: batchView(batch.toObject(), p.doc), ...(template ? { template: template.template } : {}) }
 }
-const batchView = (b: any, doc: any) => ({ id: String(b._id), documentId: String(b.documentId), fileName: doc?.name || '', hash: b.hash, sheet: b.sheet, headerRow: b.headerRow, mapping: b.mapping, defaults: b.defaults, extras: b.extras || [], counts: b.counts, recordCount: (b.recordIds || []).length, createdAt: b.createdAt })
+const batchView = (b: any, doc: any) => ({ id: String(b._id), documentId: String(b.documentId), fileName: doc?.name || '', hash: b.hash, sheet: b.sheet, headerRow: b.headerRow, mapping: b.mapping, defaults: b.defaults, extras: b.extras || [], counts: b.counts, recordCount: (b.recordIds || []).length, fileType: b.fileType || null, checks: b.checks || null, createdAt: b.createdAt })
 export async function listBatches(ownerId: string) {
   await init()
   const batches: any[] = await IntakeBatch.find({ ownerId }).sort({ createdAt: -1 }).limit(200).lean()
