@@ -15,6 +15,7 @@ export const FILE_TYPE_EXTRA: string;
 export const STATUS_TABLE: Readonly<Record<string, IntakeState>>;
 export const FILE_KINDS: Readonly<Record<string, string>>;
 export function amountOf(value: unknown): number;
+export function linksOf(cell: unknown): string[];
 export function statusOf(word: unknown, table?: Record<string, IntakeState>): { state: IntakeState; known: boolean };
 export function fileTypeTable(fileType: string | IntakeFileType | object): any;
 export function recogniseFile(sheets: { name: string; header: string[] }[], options?: { text?: boolean }): IntakeRecognition;

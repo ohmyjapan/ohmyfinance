@@ -42,6 +42,7 @@
         <ul class="mt-3 space-y-1 text-xs leading-relaxed text-gray-700 dark:text-gray-300" data-file-kind-summary>
           <li v-if="kindPreview.summary.totalRows || kindPreview.summary.otherRows" data-file-kind-left-out>取り込まない行：合計行 {{ kindPreview.summary.totalRows }}<span v-if="kindPreview.summary.otherRows">・注文ではない行 {{ kindPreview.summary.otherRows }}（{{ noteOf('other-rows')?.rows?.join('・') }}行目）</span></li>
           <li v-if="kindPreview.summary.paidUnder" data-file-kind-paid-under>ほかのオークションとまとめて送金：{{ kindPreview.summary.paidUnder }} 件（{{ kindPreview.summary.payments }} 件の送金）。それぞれ1件の受付として、送金したオークションの送金日を購入日にし、金額は送金したオークション側に入ります。</li>
+          <li v-if="kindPreview.summary.multiLink" data-file-kind-links>商品URLが複数の注文 {{ kindPreview.summary.multiLink }} 件（リンク合計 {{ kindPreview.summary.links }} 件）：最初のリンクを店舗・商品URLに、すべてのリンクを「商品URL（全件）」に保存します。</li>
           <li v-for="n in kindPreview.notes.filter((x: any) => x.kind === 'unknown-status')" :key="'s' + n.word" class="text-amber-700 dark:text-amber-400" data-file-kind-unknown-status>表にない購入状況「{{ n.word || '（空）' }}」{{ n.count }} 件：受付中として取り込み、元の表記を「元のステータス」に残します</li>
           <li v-for="(line, i) in kindNoteLines" :key="'n' + i" class="text-amber-700 dark:text-amber-400" data-file-kind-note>{{ line }}</li>
         </ul>
@@ -50,7 +51,7 @@
             <thead><tr class="text-gray-600 dark:text-gray-300"><th class="px-2 py-1 font-medium">ファイルの合計と照合</th><th class="whitespace-nowrap px-2 py-1 text-right font-medium">注文の合計</th><th class="whitespace-nowrap px-2 py-1 text-right font-medium">ファイルの値</th><th class="whitespace-nowrap px-2 py-1 font-medium">結果</th></tr></thead>
             <tbody>
               <tr v-for="c in kindPreview.checks" :key="c.key" class="border-t border-gray-200 text-gray-700 dark:border-white/10 dark:text-gray-300" :data-check="c.key" :data-check-ok="String(c.ok)">
-                <td class="min-w-[8rem] break-words px-2 py-1">{{ c.label }}</td><td class="whitespace-nowrap px-2 py-1 text-right tabular-nums">{{ numberText(c.sum) }}</td><td class="whitespace-nowrap px-2 py-1 text-right tabular-nums">{{ c.total === null ? '（なし）' : numberText(c.total) }}</td>
+                <td class="break-words px-2 py-1">{{ c.label }}</td><td class="whitespace-nowrap px-2 py-1 text-right tabular-nums">{{ numberText(c.sum) }}</td><td class="whitespace-nowrap px-2 py-1 text-right tabular-nums">{{ c.total === null ? '（なし）' : numberText(c.total) }}</td>
                 <td class="whitespace-nowrap px-2 py-1" :class="c.ok ? 'text-green-700 dark:text-green-400' : c.info ? 'text-gray-500 dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'">{{ c.ok ? '一致' : c.info ? '参考（差 ' + numberText(c.sum - (c.total || 0)) + '）' : '不一致' }}</td>
               </tr>
             </tbody>
@@ -162,6 +163,11 @@ function noteText(n: any): string {
   if (n.kind === 'paid-under-without-payment') return 'まとめて送金した先が見つからない行 ' + n.count + ' 件' + at(n.rows) + '：購入日は空欄で取り込みます。'
   if (n.kind === 'cancelled-paying-row') return 'キャンセルのオークションがほかのオークションの送金をまとめています ' + n.count + ' 件' + at(n.rows) + '。'
   if (n.kind === 'spilled-cells') return '見出しのない列に値がある行 ' + n.count + ' 件' + at(n.rows) + '：元の行のまま保存します。'
+  // Plan omf-order-mapping piece 4: what the order sheet reports; every row still imports.
+  if (n.kind === 'links-on-two-websites') return 'リンクが2つ以上のサイトにまたがる注文 ' + n.count + ' 件' + at(n.rows) + '：最初のリンクのサイトで取り込みます。'
+  if (n.kind === 'link-not-https') return 'https で始まらないリンクがある注文 ' + n.count + ' 件' + at(n.rows) + '：書かれているとおりに取り込みます。'
+  if (n.kind === 'amount-not-a-number') return '商品金額か国内送料が数字でない注文 ' + n.count + ' 件' + at(n.rows) + '：購入金額は空欄で取り込みます。'
+  if (n.kind === 'other-sheet-differs') return 'シート「' + n.sheet + '」と内容が違います' + (n.count ? '：金額の違い ' + n.count + ' 件' + at(n.rows) : '') + (n.onlyHereCount ? '・このシートだけにある伝票番号 ' + n.onlyHereCount + ' 件' : '') + (n.onlyThereCount ? '・「' + n.sheet + '」だけにある伝票番号 ' + n.onlyThereCount + ' 件' : '') + '。このシートのとおりに取り込みます。'
   if (n.kind === 'payment-above-lines' || n.kind === 'payment-below-lines') return '送金額が明細の合計と違う送金 ' + n.count + ' 件（' + n.payments.map((p: any) => p.row + '行目 ' + (p.difference > 0 ? '+' : '') + numberText(p.difference) + '円').join('・') + '）：送金額のとおりに取り込みます。'
   return ''
 }

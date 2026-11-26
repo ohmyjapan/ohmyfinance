@@ -135,7 +135,58 @@ const AUCTION = {
   summary(orders, info) { const under = orders.filter(r => info.get(r)?.paying !== undefined); return { paidUnder: under.length, paidUnderLinked: under.filter(r => info.get(r).paying).length, payments: orders.filter(r => info.get(r)?.group?.length).length }; }
 };
 
-const TABLES = [SHOP, AUCTION];
+// ── 5.3 the order sheet (注文シート) ──────────────────────────────────────────────────────────────────────────────────────────
+// Recognised by row 1 of a sheet (sheet names are not read): the 10-header form, or the 7-header form without the three fee
+// columns. When both are present the 10-header sheet is read (until answer B2) and the other is compared with it.
+const SHEET_LONG_HEADERS = ['伝票番号', '一次決済日', '送金日', '商品金額', '商品url', '国内送料', 'サービス手数料', 'フリマ手数料', '取引手数料', '処理担当者'];
+const SHEET_SHORT_HEADERS = ['伝票番号', '一次決済日', '送金日', '商品金額', '商品url', '国内送料', '処理担当者'];
+// Links of one cell, in the cell's order: split at line breaks (the only separator the file uses); a link written twice stays twice.
+export const linksOf = cell => String(cell ?? '').split(/\r\n|\r|\n/).map(s => s.trim()).filter(Boolean);
+const hostOf = link => { try { return new URL(link).hostname.toLowerCase(); } catch { return ''; } };
+const orderSheet = (id, headers, extras) => ({
+  id, kind: 'proxy-order-sheet', name: '注文シート', headers,
+  mapping: fullMapping({ orderId: 0, orderDate: 1, purchaseDate: 2, itemPrice: 3, merchantUrl: 4, shippingFee: 5 }),
+  extras: extraColumns(extras),
+  rowKind: raw => text(raw[0]) !== '' ? 'order' : 'other',
+  prepare(orders, context, notes) {
+    const list = kind => notes.find(n => n.kind === kind) || (notes.push({ kind, count: 0, rows: [] }), notes.at(-1)), add = (kind, entry) => { const n = list(kind); n.count++; if (n.rows.length < 20) n.rows.push(entry); };
+    for (const row of orders) {
+      const raw = row.provenance.raw, links = linksOf(raw[4]), hosts = [...new Set(links.map(hostOf))], at = { row: row.provenance.row, orderId: text(raw[0]) };
+      if (hosts.length > 1) add('links-on-two-websites', { ...at, hosts });
+      if (links.some(l => !/^https:\/\//i.test(l) || !hostOf(l))) add('link-not-https', at);
+      if ([raw[3], raw[5]].some(v => !Number.isFinite(amountOf(v)))) add('amount-not-a-number', at);
+    }
+    return new Map();
+  },
+  // The file has no status and no paid total: 送金日 filled → 購入済み, blank → 受付中 (question C3); 購入金額 = 商品金額 + 国内送料 (C11).
+  // The first link is 店舗・商品URL; every link is kept with one space between them (the order page shows an extra on one line).
+  derive(row) {
+    const raw = row.provenance.raw, links = linksOf(raw[4]), set = { [FT]: this.name, purchaseState: text(raw[2]) ? 'purchased' : 'requested' }, blank = [];
+    if (links.length) Object.assign(set, { merchantUrl: links[0], 'extra:商品URL（全件）': links.join(' '), 'extra:リンク数': String(links.length) }); else blank.push('merchantUrl');
+    const price = amountOf(raw[3]), shipping = amountOf(raw[5]);
+    if ((text(raw[3]) === '' && text(raw[5]) === '') || !Number.isFinite(price) || !Number.isFinite(shipping)) blank.push('amount'); else set.amount = String(price + shipping);
+    return { set, blank };
+  },
+  // No total of its own. When the other form is present: the same 伝票番号, and 商品金額 and 国内送料 equal per order.
+  checks(orders, totals, context, info, notes) {
+    const other = context.related?.other; if (!other?.rows?.length) return [];
+    const [head, ...rows] = other.rows, at = name => (head || []).findIndex(h => norm(h) === name), oi = at('伝票番号'), cols = [[3, at('商品金額'), '商品金額'], [5, at('国内送料'), '国内送料']];
+    const theirs = new Map(rows.filter(r => text(r[oi]) !== '').map(r => [text(r[oi]), r])), mine = new Map(orders.map(r => [text(r.provenance.raw[0]), r.provenance]));
+    const both = [...mine.keys()].filter(k => theirs.has(k)), differs = [];
+    for (const id of both) for (const [c, oc, column] of cols) { const p = mine.get(id); if (amountOf(p.raw[c]) !== amountOf(theirs.get(id)[oc])) differs.push({ row: p.row, orderId: id, column, value: text(p.raw[c]), other: text(theirs.get(id)[oc]) }); }
+    const onlyHere = [...mine.keys()].filter(k => !theirs.has(k)), onlyThere = [...theirs.keys()].filter(k => !mine.has(k));
+    if (differs.length || onlyHere.length || onlyThere.length) notes.push({ kind: 'other-sheet-differs', sheet: other.name, count: differs.length, rows: differs.slice(0, 20), onlyHere: onlyHere.slice(0, 20), onlyHereCount: onlyHere.length, onlyThere: onlyThere.slice(0, 20), onlyThereCount: onlyThere.length });
+    const sumOf = (list, f) => list.reduce((a, x) => a + f(x), 0), label = name => name + '（シート「' + other.name + '」）';
+    return [{ ...check('other-sheet:orders', label('伝票番号'), both.length, theirs.size), ok: !onlyHere.length && !onlyThere.length },
+      ...cols.map(([c, oc, name]) => ({ ...check('other-sheet:' + c, label(name), sumOf([...mine.values()], p => amountOf(p.raw[c])), sumOf([...theirs.values()], r => amountOf(r[oc]))), ok: !onlyHere.length && !onlyThere.length && !differs.some(d => d.column === name) }))];
+  },
+  summary(orders) { const counts = orders.map(r => linksOf(r.provenance.raw[4]).length); return { links: counts.reduce((a, n) => a + n, 0), multiLink: counts.filter(n => n > 1).length }; }
+});
+const SHEET_LONG = orderSheet('proxy-order-sheet', SHEET_LONG_HEADERS, [['サービス手数料', 6], ['フリマ手数料', 7], ['取引手数料', 8], ['処理担当者', 9]]);
+const SHEET_SHORT = orderSheet('proxy-order-sheet/7', SHEET_SHORT_HEADERS, [['処理担当者', 6]]);
+SHEET_LONG.otherForm = SHEET_SHORT;
+
+const TABLES = [SHOP, AUCTION, SHEET_LONG, SHEET_SHORT];
 const TABLE_BY_ID = Object.fromEntries(TABLES.map(t => [t.id, t]));
 export const FILE_KINDS = Object.freeze(Object.fromEntries(TABLES.map(t => [t.kind, t.name])));
 // The table behind a recognition result (or a table id); a table object is returned as it is (a test may hand over a changed table).
@@ -172,7 +223,10 @@ export function recogniseFile(sheets, options = {}) {
   }
   for (const table of TABLES.filter(t => !t.title)) {
     const sheet = sheets.find(s => !headerDiff(table, s.header || []));
-    if (sheet) return recognised(table, sheets, sheet.name);
+    if (!sheet) continue;
+    const result = recognised(table, sheets, sheet.name), other = table.otherForm && sheets.find(s => s !== sheet && !headerDiff(table.otherForm, s.header || []));
+    if (other) result.related.other = other.name;
+    return result;
   }
   return { kind: null, near: null };
 }

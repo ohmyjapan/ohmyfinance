@@ -306,3 +306,82 @@ test('piece 3: a table that stops dating a row paid under another clears that �
   assert.deepEqual([second.plan.update, second.plan.unchanged], [3, 5], 'auction:c5-three-updates');
   assert.ok(second.plan.rows.filter(r => r.operation === 'update').every(r => JSON.stringify(r.changes.map(c => [c.field, c.after])) === JSON.stringify([['purchaseDate', '']])), 'auction:c5-only-the-date-cleared');
 });
+
+// ── piece 4: the order sheet (注文シート) ────────────────────────────────────────────────────────────────────────────────────────
+const SHEET_LONG = ['伝票番号', '一次決済日', '送金日', '商品金額', '商品url', '国内送料', 'サービス手数料', 'フリマ手数料', '取引手数料', '処理担当者'];
+const SHEET_SHORT = ['伝票番号', '一次決済日', '送金日', '商品金額', '商品url', '国内送料', '処理担当者'];
+const excelDay = day => { const [y, m, d] = day.split('-').map(Number); return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000; };
+// Invented orders: several links in one cell separated by a line break, as the real sheet writes them.
+const ORDER_SHEET = [
+  { id: 'D-0001-01', paid: '2026-01-04', sent: '2026-01-05', price: 3000, ship: 500, fees: [100, 0, 30], staff: 'staff-a', links: ['https://shop-a.example.invalid/i/1', 'https://shop-a.example.invalid/i/2', 'https://shop-a.example.invalid/i/3'] },
+  { id: 'D-0002-01', paid: '2026-01-04', sent: '', price: 1200, ship: 0, fees: [50, 0, 0], staff: 'auto', links: ['https://shop-b.example.invalid/i/9'] }, // not yet sent
+  { id: 'D-0003-01', paid: '2026-01-04', sent: '2026-01-05', price: 800, ship: 300, fees: [40, 0, 0], staff: 'staff-b', links: ['https://shop-b.example.invalid/x', 'https://shop-b.example.invalid/x'] }, // one link written twice
+  { id: 'D-0004-01', paid: '2026-01-04', sent: '2026-01-06', price: 2200, ship: 0, fees: [0, 0, 0], staff: 'staff-a', links: ['https://shop-c.example.invalid/1', 'https://other.example.invalid/2'] } // two websites
+];
+// An in-memory xlsx with the 7-column sheet first (as the real file has it) and the 10-column sheet second; dates are date cells.
+function orderSheetFile({ orders = ORDER_SHEET, long = true, short = true, shortPrice = {} } = {}) {
+  const wb = XLSX.utils.book_new(), sheet = (headers, row) => {
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...orders.map(row)]);
+    orders.forEach((o, i) => { for (const [c, day] of [[1, o.paid], [2, o.sent]]) { const at = XLSX.utils.encode_cell({ r: i + 1, c }); if (day) ws[at] = { t: 'n', v: excelDay(day), z: 'yyyy/m/d' }; else delete ws[at]; } });
+    return ws;
+  };
+  if (short) XLSX.utils.book_append_sheet(wb, sheet(SHEET_SHORT, o => [o.id, '', '', shortPrice[o.id] ?? o.price, o.links.join('\n'), o.ship, o.staff]), 'SheetA');
+  if (long) XLSX.utils.book_append_sheet(wb, sheet(SHEET_LONG, o => [o.id, '', '', o.price, o.links.join('\n'), o.ship, ...o.fees, o.staff]), 'SheetB');
+  return readBinary(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+}
+const sheetImport = (records, wb, extra = {}) => omfImport(records, wb, { file: 'order-sheet.xlsx', hash: 'sheet-1', textFile: false, service: 'INVENTED-SHEET-SVC', ...extra });
+
+test('piece 4: the order sheet is recognised by its 10 headers, or its 7 when only that sheet exists; the 10-column sheet is read when both exist', () => {
+  const both = orderSheetFile(), result = sheetImport([], both);
+  assert.equal(result.recognised.kind, 'proxy-order-sheet', 'sheet:recognised');
+  assert.deepEqual([both.SheetNames[0], result.recognised.sheet, result.recognised.related.other], ['SheetA', 'SheetB', 'SheetA'], 'sheet:the-ten-column-sheet-not-the-first');
+  assert.deepEqual(result.recognised.extras.map(x => x.name), ['サービス手数料', 'フリマ手数料', '取引手数料', '処理担当者'], 'sheet:ten-column-extras');
+  assert.equal(result.records.length, 4, 'sheet:one-record-per-order');
+  const short = sheetImport([], orderSheetFile({ long: false }));
+  assert.deepEqual([short.recognised.kind, short.recognised.sheet, short.recognised.extras.map(x => x.name), short.records.length], ['proxy-order-sheet', 'SheetA', ['処理担当者'], 4], 'sheet:seven-column-only');
+  const headers = (() => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[...SHEET_LONG.slice(0, 9), '担当']]), 'X'); return wb; })();
+  assert.equal(FT.recogniseFile(firstRowsOf(headers), { text: false }).kind, null, 'sheet:other-headers-not-a-kind');
+});
+
+test('piece 4: first link in the URL field, every link with one space, the count, the sum as 購入金額, dates from date cells', () => {
+  const result = sheetImport([], orderSheetFile()), rec = id => byOrder(result.records, id);
+  const one = rec('D-0001-01');
+  assert.deepEqual([one.values.merchantUrl, one.extra['商品URL（全件）'], one.extra['リンク数']], [ORDER_SHEET[0].links[0], ORDER_SHEET[0].links.join(' '), '3'], 'sheet:links');
+  assert.ok(!/[\r\n]/.test(one.extra['商品URL（全件）']), 'sheet:no-line-break');
+  assert.ok(one.provenance[0].raw[4].includes('\n'), 'sheet:original-cell-kept-as-written');
+  assert.deepEqual([one.values.amount, one.values.itemPrice, one.values.shippingFee, one.values.orderDate, one.values.purchaseDate, one.values.purchaseState], ['3500', '3000', '500', '2026-01-04', '2026-01-05', 'purchased'], 'sheet:values');
+  assert.deepEqual([one.extra['サービス手数料'], one.extra['フリマ手数料'], one.extra['取引手数料'], one.extra['処理担当者'], one.extra['ファイルの種類']], ['100', '0', '30', 'staff-a', '注文シート'], 'sheet:extras');
+  assert.deepEqual([one.values.description, one.values.merchant, one.values.service, one.values.account, one.values.currency], ['', '', 'INVENTED-SHEET-SVC', '', 'JPY'], 'sheet:no-item-or-shop-column');
+  assert.deepEqual([rec('D-0003-01').extra['商品URL（全件）'], rec('D-0003-01').extra['リンク数']], ['https://shop-b.example.invalid/x https://shop-b.example.invalid/x', '2'], 'sheet:a-link-written-twice-stays-twice');
+  const two = rec('D-0002-01');
+  assert.deepEqual([two.values.purchaseDate, two.values.purchaseState, two.values.amount], ['', 'requested', '1200'], 'sheet:not-sent-yet');
+  assert.ok(result.applied.checks.length && result.applied.checks.every(c => c.ok), 'sheet:both-sheets-agree ' + JSON.stringify(result.applied.checks));
+  const again = sheetImport(result.records, orderSheetFile());
+  assert.deepEqual([again.plan.new, again.plan.update, again.plan.unchanged], [0, 0, 4], 'sheet:same-file-unchanged');
+});
+
+test('piece 4: the same order in a later file with 送金日 becomes 購入済み (one update)', () => {
+  const first = sheetImport([], orderSheetFile());
+  const later = sheetImport(first.records, orderSheetFile({ orders: [{ ...ORDER_SHEET[1], sent: '2026-01-07' }] }), { hash: 'sheet-2', file: 'later.xlsx' });
+  assert.deepEqual([later.plan.new, later.plan.update, later.plan.unchanged], [0, 1, 0], 'sheet:later-one-update');
+  assert.deepEqual(later.plan.rows[0].changes.map(c => [c.field, c.before, c.after]).sort(), [['purchaseDate', '', '2026-01-07'], ['purchaseState', 'requested', 'purchased']], 'sheet:later-status-and-date');
+});
+
+test('piece 4: the two sheets disagreeing on one amount and an order on two websites are reported; the import still runs', () => {
+  const result = sheetImport([], orderSheetFile({ shortPrice: { 'D-0001-01': 2900 } }));
+  const failed = result.applied.checks.filter(c => !c.ok);
+  assert.deepEqual(failed.map(c => [c.key, c.sum, c.total]), [['other-sheet:3', 7200, 7100]], 'sheet:disagreement-check');
+  assert.deepEqual(result.applied.notes.find(n => n.kind === 'other-sheet-differs')?.rows, [{ row: 2, orderId: 'D-0001-01', column: '商品金額', value: '3000', other: '2900' }], 'sheet:disagreement-reported');
+  assert.deepEqual(result.applied.notes.find(n => n.kind === 'links-on-two-websites')?.rows, [{ row: 5, orderId: 'D-0004-01', hosts: ['shop-c.example.invalid', 'other.example.invalid'] }], 'sheet:two-websites-reported');
+  assert.equal(byOrder(result.records, 'D-0004-01').values.merchantUrl, 'https://shop-c.example.invalid/1', 'sheet:two-websites-first-link');
+  assert.equal(result.records.length, 4, 'sheet:reported-and-imported');
+  assert.deepEqual([result.applied.summary.links, result.applied.summary.multiLink], [8, 3], 'sheet:summary-links');
+});
+
+test('piece 4: a table that stops setting 購入金額 clears it on re-upload and nothing else (question C11)', () => {
+  const first = sheetImport([], orderSheetFile());
+  const table = FT.fileTypeTable(first.recognised), changed = { ...table, derive: (row, info) => { const d = table.derive(row, info); return { ...d, set: { ...d.set, amount: '' } }; } };
+  const second = sheetImport(first.records, orderSheetFile(), { table: changed });
+  assert.equal(second.plan.update, 4, 'sheet:c11-four-updates');
+  assert.ok(second.plan.rows.every(r => JSON.stringify(r.changes.map(c => [c.field, c.after])) === JSON.stringify([['amount', '']])), 'sheet:c11-only-the-amount-cleared');
+});

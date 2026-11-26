@@ -414,6 +414,30 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
   assert.deepEqual([pay.values.amount,pay.extra['まとめ払い件数'],single.values.amount,single.extra['まとめ払い件数']],['3800','2','660',undefined],'auction-http:paying-order');
   pass('an auction remittance list over HTTP: the merged 送金額 cell links the row paid under another auction to its paying auction, whose amount is the whole payment');
  }
+ // Plan omf-order-mapping piece 4: an invented order sheet (xlsx, 7-column sheet first, 10-column sheet second, date cells) with a
+ // 30-link order; the order's other fields save without an error because the order page sends only the extras that changed.
+ let manyLinkRecordId=null;
+ {
+  const LONG=['伝票番号','一次決済日','送金日','商品金額','商品url','国内送料','サービス手数料','フリマ手数料','取引手数料','処理担当者'],SHORT=['伝票番号','一次決済日','送金日','商品金額','商品url','国内送料','処理担当者'];
+  const links=Array.from({length:30},(_,i)=>'https://many.example.invalid/items/'+String(i).padStart(3,'0')+'/'+'x'.repeat(60)),orders=[['DX-0001-01',links.join('\n'),5000,300,true],['DX-0002-01','https://one.example.invalid/a',800,0,false]];
+  const day=d=>(Date.UTC(2026,0,d)-Date.UTC(1899,11,30))/86400000,wb=XLSX.utils.book_new();
+  const make=(headers,row)=>{const ws=XLSX.utils.aoa_to_sheet([headers,...orders.map(row)]);orders.forEach((o,i)=>{ws[XLSX.utils.encode_cell({r:i+1,c:1})]={t:'n',v:day(4),z:'yyyy/m/d'};const sent=XLSX.utils.encode_cell({r:i+1,c:2});if(o[4])ws[sent]={t:'n',v:day(5),z:'yyyy/m/d'};else delete ws[sent]});return ws};
+  XLSX.utils.book_append_sheet(wb,make(SHORT,o=>[o[0],'','',o[2],o[1],o[3],'staff-z']),'Short');XLSX.utils.book_append_sheet(wb,make(LONG,o=>[o[0],'','',o[2],o[1],o[3],10,0,0,'staff-z']),'Long');
+  const up=await send('files?name=order-sheet-invented.xlsx',XLSX.write(wb,{type:'buffer',bookType:'xlsx'}),XLSX_TYPE);assert.deepEqual([up.status,up.data.fileType?.kind,up.data.fileType?.sheet],[200,'proxy-order-sheet','Long'],'order-sheet:recognised '+JSON.stringify(up.data));
+  const sh=(await get('files/'+up.data.document.id+'/sheet')).data,SHEET_SVC='INVENTED-SHEET-SVC';
+  const imp=await req('files/'+up.data.document.id+'/import',{sheet:sh.sheet,headerRow:1,mapping:sh.mapping,extras:sh.extras,defaults:{service:SHEET_SVC}});assert.equal(imp.status,200,'order-sheet:import '+JSON.stringify(imp.data));
+  assert.deepEqual([imp.data.batch.counts.new,imp.data.batch.checks.checks.every(c=>c.ok),imp.data.batch.checks.summary.links],[2,true,31],'order-sheet:batch');
+  const records=(await get('records')).data.records.filter(r=>r.values.service===SHEET_SVC),many=records.find(r=>r.values.orderId==='DX-0001-01'),one=records.find(r=>r.values.orderId==='DX-0002-01');
+  assert.deepEqual([many.values.merchantUrl,many.extra['リンク数'],many.values.amount,many.values.purchaseState,many.values.orderDate,many.values.purchaseDate],[links[0],'30','5300','purchased','2026-01-04','2026-01-05'],'order-sheet:many-links');
+  assert.ok(many.extra['商品URL（全件）'].length>2000&&many.extra['商品URL（全件）']===links.join(' '),'order-sheet:all-links-one-space');
+  assert.deepEqual([one.values.purchaseState,one.values.purchaseDate,one.values.amount],['requested','','800'],'order-sheet:not-sent-yet');
+  const saved=await req('records/'+many.id,{revision:many.revision,values:{notes:'checked by hand'},extra:{}},'PATCH');assert.equal(saved.status,200,'order-sheet:30-link-order-saves-another-field '+JSON.stringify(saved.data));
+  assert.deepEqual([saved.data.values.notes,saved.data.extra['商品URL（全件）']===links.join(' ')],['checked by hand',true],'order-sheet:30-link-order-kept');
+  // Why the page sends only the changed extras: the stored value, sent back as a hand edit, is over the 2,000-character limit.
+  assert.equal((await req('records/'+many.id,{revision:saved.data.revision,values:{},extra:{'商品URL（全件）':links.join(' ')}},'PATCH')).status,400,'order-sheet:hand-edit-limit');
+  manyLinkRecordId=many.id;
+  pass('an order sheet over HTTP: the 10-column sheet is read, a 30-link order keeps its first link as the URL and every link in one extra, 購入金額 is 商品金額 + 国内送料, 送金日 decides the status, and another field of the 30-link order saves');
+ }
 
  if(process.env.OMF_TEST_INTAKE_MUTANT){console.log('mutant run: the hidden-Chrome and real-worker legs run once in the main run, not per mutant');return;}
 
@@ -471,6 +495,16 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
     await page.evaluate(()=>document.querySelector('[data-import-run]').click());await waitFor(()=>!!document.querySelector('[data-import-done]'));
     const uiKind=(await get('records')).data.records.find(r=>r.values.orderId==='TSTU0002'&&r.values.service===KIND_SVC);assert.deepEqual([uiKind?.values.purchaseState,uiKind?.extra['ファイルの種類']],['purchased','ショップ注文リスト'],'intake-ui:kind-imported');
     pass('hidden real Chrome: a known file kind opens on its own sheet with its orders, totals and kept service name, the grid switch turns it off and back, and 取り込む imports it');
+   }
+   // Plan omf-order-mapping piece 4: the order page of a 30-link order saves another field (only changed extras are sent).
+   {
+    await page.goto(origin+'/intake/'+manyLinkRecordId,{waitUntil:'networkidle2'});await waitFor(()=>!!document.querySelector('[data-extra="商品URL（全件）"]'));
+    assert.ok(await page.evaluate(()=>document.querySelector('[data-extra="商品URL（全件）"]').value.length>2000),'intake-ui:many-links-shown');
+    await page.click('#intake-notes',{clickCount:3});await page.keyboard.type('UI save of a 30-link order');
+    await page.evaluate(()=>document.querySelector('[data-save]').click());await waitFor(()=>document.querySelector('[data-message]')?.textContent.includes('保存しました'));
+    assert.equal((await get('records/'+manyLinkRecordId)).data.values.notes,'UI save of a 30-link order','intake-ui:many-links-saved');
+    await noOverflow('many-links');
+    pass('hidden real Chrome: the order page of a 30-link order saves another field without an error');
    }
    await page.goto(origin+'/intake/'+uiImported.id,{waitUntil:'networkidle2'});await waitFor(()=>!!document.querySelector('[data-extras]')&&!!document.querySelector('[data-intake-research]'));
    assert.equal(await page.evaluate(()=>document.querySelector('[data-extra="担当者"]')?.value),'山田','intake-ui:extras-shown');assert.equal(await page.evaluate(()=>document.querySelector('#intake-externalOrderId')?.value),'EXT-21','intake-ui:external-shown');assert.equal(await page.evaluate(()=>document.querySelector('#intake-otherFee')?.value),'-500','intake-ui:fee-shown');

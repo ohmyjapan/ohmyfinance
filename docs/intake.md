@@ -47,7 +47,7 @@ Templates: `GET/PUT templates` (with `extras`). Batches: `GET batches` (with `ex
 Some customer order files are known by their own layout: `shared/finance-intake-filetypes.mjs` holds one table per kind (sheet,
 header row 1, column → field or extra, the status table, what the kind computes). `recogniseFile` reads row 1 of each sheet only —
 never every row — so a file that uploads today still uploads; `applyFileType` turns the rows of the kind's sheet into orders, notes
-and checks. Kinds: `proxy-shop-order-list` (ショップ注文リスト), `proxy-auction-remittance-list` (オークション送金リスト).
+and checks. Kinds: `proxy-shop-order-list` (ショップ注文リスト), `proxy-auction-remittance-list` (オークション送金リスト), `proxy-order-sheet` (注文シート).
 
 - Upload (`POST files`) answers `fileType { kind, name, sheet, headerRow, service, otherService }` for a known kind (else `null`) and
   `fileTypeNear { kind, name, sheet, column, expected, found }` when the first sheet's title is a kind's but a header differs: the
@@ -79,7 +79,7 @@ the order rows against the `합계` row (its first cell spans six columns, so ea
 **オークション送金リスト** (HTML text with an `.xls` name): the first sheet's first cell starts with `경매 송금 리스트`, the second
 sheet's first 21 headers are the list's and any header after them is blank (one row may spill four cells to columns 21-24). An
 order row is a `YAHOO` row with a 送金日; a row paid under another auction is a `YAHOO` row whose 送金日 is `-`. 決済日 → 注文日,
-送금日 → 購入日, 送金量 → その他手数料, 配送料 → 送料, the second 送金額 (by position) → 購入金額 and extra 全体合計, the first → extra
+送金日 → 購入日, 送金量 → その他手数料, 配送料 → 送料, the second 送金額 (by position) → 購入金額 and extra 全体合計, the first → extra
 総送金額; Bid ID → 入札アカウント, 送金 ID → 購入アカウント, STORE → 出品者区分. A row paid under another auction is its own order with
 its own status, 決済日, price, quantity and tax; its paying row is where the merged cell of the first 送金額 column that covers it
 starts (merged cells by sheet position, less the range start): 購入日 = the paying row's 送金日, extra まとめ払い先 = the paying
@@ -90,6 +90,18 @@ paid-under row with no merged cell (blank 購入日). Checks: 落札価 × 数�
 差し引き over the paying rows, against the total row (first cell over seven columns: each sum three columns left of its header); the
 two 送金額 sums are information, with the payments that are not the sum of their lines listed (price × quantity and tax of every
 auction in the payment plus the paying row's 送金量, 配送料 and 追加, less its 差し引き).
+
+**注文シート** (xlsx; sheet names are not read): a sheet whose row 1 is `伝票番号, 一次決済日, 送金日, 商品金額, 商品url, 国内送料,
+サービス手数料, フリマ手数料, 取引手数料, 処理担当者`, or the 7-header form without the three fees. When both forms are present the
+10-header sheet is read and the other is compared with it (same 伝票番号, equal 商品金額 and 国内送料 per order; a difference is
+reported). One order per row (伝票番号 filled). 一次決済日 → 注文日, 送金日 → 購入日 (date cells through the typed reader), 商品金額 →
+商品価格, 国内送料 → 送料, the fees and 処理担当者 as extras. The links of 商品url are split at line breaks: the first is 店舗・商品URL,
+all of them are kept in 商品URL（全件） with one space between them (the order page shows an extra on one line; the cell as written
+stays in the original row) and their number in リンク数; a link written twice stays twice. 購入金額 = 商品金額 + 国内送料 and
+購入状況 = 購入済み when 送金日 is filled, else 受付中 (the file has neither a paid total nor a status). Reported: links on two
+websites (the first link's website is kept), a link that is not https (imported as written), an amount that is not a number. An
+import writes extras without the 2,000-character limit of a hand edit; the order page sends only the extras that changed, so
+saving another field of a many-link order works.
 
 ## 会社・登録番号の調査 (URL → company + T number)
 
