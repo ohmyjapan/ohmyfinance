@@ -178,8 +178,8 @@ const developerSignedIn = (tab, name, stored) => {
   assert.equal(tab.store.user.id, 'aaaaaaaaaaaaaaaaaaaaaaaa', name + ' as the developer'); assert.ok(tab.store.refreshToken, name + ' with the developer\'s refresh token')
   assert.equal(tab.store.token, stored.tokens.accessToken, name + ' holds the stored session')
 }
-const insideTwoTabs = () => {
-  const saved = new Map(), a = harness(saved)
+const insideTwoTabs = (saved = new Map()) => {
+  const a = harness(saved)
   a.handle(async () => json({ success: true })); a.signInDeveloper(); a.store.enterAccount(a.entered())
   const b = harness(saved); b.handle(async () => json({ success: true })); b.store.initAuth()
   assert.equal(b.store.entry?.id, 'eeeeeeeeeeeeeeeeeeeeeeee', 'tab B is inside the same entry')
@@ -201,6 +201,26 @@ test('the same at a storage event: a tab inside that hears "session cleared" aft
   for (const cb of b.events.storage || []) cb({ key: 'ohmyfinance_session', newValue: null })
   const stored = JSON.parse(saved.get('ohmyfinance_session') || 'null')
   assert.ok(stored && !stored.entry, 'the developer session is still stored'); developerSignedIn(b, 'tab B', stored)
+})
+
+// Release review F1: in a browser each tab runs in its own process and receives another tab's storage changes one at a time. Tab B's
+// leave runs when it has received only the first storage change of tab A's leave (the storage calls back after each real change).
+class OneStorage extends Map {
+  set(key, value) { super.set(key, value); this.changed(); return this }
+  delete(key) { const had = super.delete(key); if (had) this.changed(); return had }
+  changed() { const then = this.afterNextChange; this.afterNextChange = null; if (then) then() }
+}
+
+test('two tabs leave one entry at once, tab B after only the first storage change of tab A\'s leave: both stay the developer', async () => {
+  const saved = new OneStorage(), { a, b } = insideTwoTabs(saved)
+  let bLeaving = null
+  saved.afterNextChange = () => { bLeaving = b.store.leaveEntry('expired') }
+  await a.store.leaveEntry('expired')
+  assert.ok(bLeaving, 'tab B left in the middle of tab A\'s leave'); await bLeaving
+  const stored = JSON.parse(saved.get('ohmyfinance_session') || 'null')
+  assert.ok(stored, 'a session is still stored'); assert.equal(stored.entry, undefined, 'not an entry session'); assert.equal(stored.user.id, 'aaaaaaaaaaaaaaaaaaaaaaaa'); assert.ok(stored.tokens.refreshToken)
+  assert.equal(saved.get('ohmyfinance_developer_session'), undefined, 'the kept copy is gone')
+  developerSignedIn(a, 'tab A', stored); developerSignedIn(b, 'tab B', stored)
 })
 
 test('a real clear still signs out: nothing kept, and no session stored or the entry session still stored', async () => {

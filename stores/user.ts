@@ -130,11 +130,11 @@ export const useUserStore = defineStore('user', {
             this.scheduleRefresh()
         },
 
-        // The developer's own session, kept while inside an entry, back in place (storage only; initAuth then loads it).
+        // The developer's own session, kept while inside an entry, back in place (storage only; initAuth then loads it). The kept key is
+        // removed last: another tab receives these changes one at a time and in order, so it sees either the kept copy or the session.
         restoreDeveloperSession(): boolean {
             const target = storage(), kept = readJSON(DEVELOPER_SESSION_KEY)
-            target?.removeItem(DEVELOPER_SESSION_KEY)
-            if (!target || !kept?.tokens?.accessToken) return false
+            if (!target || !kept?.tokens?.accessToken) { target?.removeItem(DEVELOPER_SESSION_KEY); return false }
             const tokens = { accessToken: kept.tokens.accessToken, refreshToken: kept.tokens.refreshToken || null }
             target.setItem('auth_token', tokens.accessToken || '')
             target.setItem('auth_refresh_token', tokens.refreshToken || '')
@@ -143,6 +143,7 @@ export const useUserStore = defineStore('user', {
             if (kept.currentOrganization?.id) target.setItem('current_organization_id', kept.currentOrganization.id)
             else target.removeItem('current_organization_id')
             target.setItem(SESSION_KEY, JSON.stringify({ sessionId: newSessionId(), tokens, user: kept.user || null, organizations: kept.organizations || [], currentOrganization: kept.currentOrganization || null }))
+            target.removeItem(DEVELOPER_SESSION_KEY)
             return true
         },
 
