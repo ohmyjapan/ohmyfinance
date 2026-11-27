@@ -72,7 +72,9 @@ and checks. Kinds: `proxy-shop-order-list` (ショップ注文リスト), `proxy
 **ショップ注文リスト** (HTML text with an `.xls` name): the first sheet's first cell starts with `구매 주문 리스트` and the second
 sheet's row 1 is the list's 21 headers. One record per order row (column 0 a number, 주문번호 filled); the `합계` row and any other
 row are left out and counted. 결제일 → 注文日, 주문일 → 購入日, 현지주문총액 → 購入金額 (until the customer answers which amount is
-paid) and extra 現地注文総額, 지불액 → extra 支払金; 주문자 → 購入アカウント; 결제방식 and 송료지불 as written. Checks: ten sums of
+paid) and extra 現地注文総額, 지불액 → extra 支払金; 주문자 → 購入アカウント; 결제방식 and 송료지불 as written. 물품정보 → 商品・依頼内容
+with numeric character references (`&#215;`, which the text reader keeps) turned into their characters; the original row keeps the
+cell as read. Checks: ten sums of
 the order rows against the `합계` row (its first cell spans six columns, so each sum sits one column left of its header) and
 현지주문총액 per card against the fourth sheet (a card line `LABEL` matches 결제방식 `…(LABEL)` or `LABEL`) and in all.
 

@@ -22,6 +22,8 @@ const norm = v => text(v).normalize('NFKC').trim();
 // A money cell of a file: ` 엔`, ¥ and commas dropped. Blank is 0; anything else that is not a number is NaN (its check fails).
 export const amountOf = v => { const s = text(v).replace(/엔|円|[¥￥,，\s]/g, ''); if (s === '') return 0; const n = Number(s); return Number.isFinite(n) ? n : NaN; };
 const isDay = v => /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/.test(text(v));
+// Decimal (&#215;) and hexadecimal (&#xD7;) character references → their characters; a number that names no character stays as written.
+const withCharacters = v => text(text(v).replace(/&#(?:(\d+)|[xX]([0-9a-fA-F]+));/g, (m, dec, hex) => { const n = dec ? Number(dec) : parseInt(hex, 16); return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m; }));
 
 // Plan §5.4: the status words of both proxy lists. Any other word → 受付中, and the import names the word and how many rows carry it.
 export const STATUS_TABLE = Object.freeze({
@@ -41,7 +43,9 @@ const SHOP = {
   extras: extraColumns([['元のステータス', 1], ['数量', 8], ['追加金', 12], ['差し引き', 13], ['ポイント', 14], ['支払金', 15], ['現地注文総額', 16], ['購入アカウント', 18], ['決済方法', 19], ['送料支払', 20]]),
   statusColumn: 1,
   rowKind: raw => norm(raw[0]) === '합계' ? 'total' : /^\d+$/.test(norm(raw[0])) && text(raw[5]) !== '' ? 'order' : 'other',
-  derive(row, info) { return { set: { [FT]: this.name, purchaseState: info.state }, blank: [] }; },
+  // The export writes × or ° in an item name as a numeric character reference (&#215;), which the text reader keeps: 商品・依頼内容 is
+  // the cell with those references turned into their characters (the original row keeps the cell as read; a blank cell sets nothing).
+  derive(row, info) { const item = withCharacters(row.provenance.raw[3]); return { set: { [FT]: this.name, purchaseState: info.state, ...(item ? { description: item } : {}) }, blank: [] }; },
   // Ten sums of the order rows against the total row, whose first cell spans columns 0-5 (each sum one column left of its header);
   // 현지주문총액 per card against the card sheet (a line's label is the card named in 결제방식, `카드(LABEL)` or `LABEL`) and in all.
   checks(orders, totals, context) {

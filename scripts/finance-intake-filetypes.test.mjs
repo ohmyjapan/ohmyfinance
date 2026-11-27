@@ -385,3 +385,19 @@ test('piece 4: a table that stops setting 購入金額 clears it on re-upload an
   assert.equal(second.plan.update, 4, 'sheet:c11-four-updates');
   assert.ok(second.plan.rows.every(r => JSON.stringify(r.changes.map(c => [c.field, c.after])) === JSON.stringify([['amount', '']])), 'sheet:c11-only-the-amount-cleared');
 });
+
+// ── build 1 review findings ──────────────────────────────────────────────────────────────────────────────────────────────────
+test('review finding 2: the shop list\'s 商品・依頼内容 has decimal and hexadecimal character references turned into characters; the original row stays as read', () => {
+  // The export writes × and ° in an item name as numeric references; the reader turns &amp; back into & but leaves &#…; as it is.
+  const written = 'Invented 2&#215;3 cm &#176;C &#x41;&#X42; item', shown = 'Invented 2×3 cm °C AB item', file = shopFile().replace('Invented item 1', written);
+  assert.equal(sheetRowsOf(readText(file), 'Sheet2')[1][3], written, 'SETUP: the reader keeps numeric references');
+  const result = omfImport([], readText(file), { hash: 'refs-1' }), r = byOrder(result.records, 'TST9000001');
+  assert.equal(r.values.description, shown, 'refs:item-name-has-the-characters');
+  assert.equal(r.provenance[0].raw[3], written, 'refs:original-row-as-read');
+  assert.equal(byOrder(result.records, 'TST9000002').values.description, 'Invented item 2', 'refs:name-without-references-unchanged');
+  // An order stored with the reference text is corrected by a re-upload of the same file: same identity, one update of the name only.
+  const stored = result.records.map(x => x.values.orderId === 'TST9000001' ? { ...x, values: { ...x.values, description: written } } : x);
+  const again = omfImport(stored, readText(file), { hash: 'refs-1' });
+  assert.deepEqual([again.plan.new, again.plan.update, again.plan.unchanged], [0, 1, 5], 'refs:re-upload-one-update');
+  assert.deepEqual(again.plan.rows.find(x => x.operation === 'update').changes, [{ field: 'description', before: written, after: shown }], 'refs:re-upload-changes-the-name-only');
+});
