@@ -401,3 +401,23 @@ test('review finding 2: the shop list\'s 商品・依頼内容 has decimal and h
   assert.deepEqual([again.plan.new, again.plan.update, again.plan.unchanged], [0, 1, 5], 'refs:re-upload-one-update');
   assert.deepEqual(again.plan.rows.find(x => x.operation === 'update').changes, [{ field: 'description', before: written, after: shown }], 'refs:re-upload-changes-the-name-only');
 });
+
+test('review finding 4: a proxy list without its total row shows no failed totals; the note that the totals were not checked stays', () => {
+  // The shop list without its total row and card sheet, as the review's input; then the same list with its card sheet kept.
+  const shopNoTotal = shopFile().replace(/\n<tr><td align='center' colspan=6>합계<\/td>[\s\S]*$/, '</table>\n');
+  assert.ok(!shopNoTotal.includes('합계') && shopNoTotal.endsWith('</tr></table>\n'), 'SETUP: shop list without total row');
+  const shop = omfImport([], readText(shopNoTotal));
+  assert.equal(shop.records.length, 6, 'nototal:shop-orders-imported');
+  assert.deepEqual(shop.applied.checks.filter(c => !c.ok && !c.info).map(c => c.key), [], 'nototal:shop-no-failed-totals');
+  assert.deepEqual(shop.applied.checks.filter(c => c.total === null).map(c => c.key), [], 'nototal:shop-no-check-without-a-file-value');
+  assert.deepEqual(shop.applied.notes.map(n => n.kind).sort(), ['card-sheet-missing', 'total-row-missing'], 'nototal:shop-notes-stay');
+  const withCards = omfImport([], readText(shopFile().replace(/\n<tr><td align='center' colspan=6>합계<\/td>.*<\/tr>/, '')));
+  assert.deepEqual(withCards.applied.checks.map(c => [c.key, c.ok]), [['card:CARD-A', true], ['card:CARD-B', true], ['card:합계', true]], 'nototal:shop-card-sheet-still-checked');
+  const auctionNoTotal = auctionFile().replace(/<tr><td colspan=7>합계<\/td>.*<\/tr>/, '');
+  assert.ok(!auctionNoTotal.includes('colspan=7>합계'), 'SETUP: auction list without total row');
+  const auction = omfImport([], readText(auctionNoTotal), { file: 'auction.xls' });
+  assert.equal(auction.records.length, 8, 'nototal:auction-orders-imported');
+  assert.deepEqual(auction.applied.checks.filter(c => !c.ok && !c.info).map(c => c.key), [], 'nototal:auction-no-failed-totals');
+  assert.deepEqual(auction.applied.checks.filter(c => c.total === null).map(c => c.key), [], 'nototal:auction-no-check-without-a-file-value');
+  assert.ok(auction.applied.notes.some(n => n.kind === 'total-row-missing'), 'nototal:auction-note-stays');
+});

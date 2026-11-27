@@ -62,7 +62,8 @@ and checks. Kinds: `proxy-shop-order-list` (ショップ注文リスト), `proxy
   only a value the kind itself lists as present and blank is cleared (a later table change), a blank cell never clears a stored
   value. Preview adds `fileType`, `summary { orders, totalRows, otherRows, unknownStatus, … }`, `checks [{ key, label, sum, total,
   ok, info? }]` and `notes`; a batch stores `fileType` and `checks { summary, checks, notes }`. A total that does not match is shown
-  with both numbers and kept on the batch; the import still runs.
+  with both numbers and kept on the batch; the import still runs. A list without its total row has no total checks (the note
+  `total-row-missing` says the totals were not checked).
 - `fileType: 'off'` (the importer's 「列の割り当てを自分で変える」, or choosing a saved template) imports the kind's sheet as an
   ordinary mapping: total rows become records, as before. Navi's `preview_intake_import` and `apply_intake_import` take the same key.
 - Every order of a kind carries the extra ファイルの種類. Extras keep the customer's words as the file writes them; only 購入状況 is

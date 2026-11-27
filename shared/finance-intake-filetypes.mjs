@@ -48,10 +48,11 @@ const SHOP = {
   derive(row, info) { const item = withCharacters(row.provenance.raw[3]); return { set: { [FT]: this.name, purchaseState: info.state, ...(item ? { description: item } : {}) }, blank: [] }; },
   // Ten sums of the order rows against the total row, whose first cell spans columns 0-5 (each sum one column left of its header);
   // 현지주문총액 per card against the card sheet (a line's label is the card named in 결제방식, `카드(LABEL)` or `LABEL`) and in all.
+  // Without a total row there are no total checks (the note total-row-missing says so); the card sheet is still checked.
   checks(orders, totals, context) {
     const out = [], total = totals[0]?.provenance.raw || null, raws = orders.map(r => r.provenance.raw);
     const sums = [[7, r => amountOf(r[7]) * amountOf(r[8]), this.headers[7] + ' × ' + this.headers[8]], ...[8, 9, 10, 11, 12, 13, 14, 15, 16].map(c => [c, r => amountOf(r[c]), this.headers[c]])];
-    for (const [column, f, label] of sums) out.push(check('total:' + column, label, raws.reduce((a, r) => a + f(r), 0), total ? amountOf(total[column - 1]) : null));
+    if (total) for (const [column, f, label] of sums) out.push(check('total:' + column, label, raws.reduce((a, r) => a + f(r), 0), amountOf(total[column - 1])));
     const cards = context.related?.cards?.rows;
     if (cards) {
       const local = r => amountOf(r[16]), method = r => norm(r[19]);
@@ -118,11 +119,12 @@ const AUCTION = {
   // Seven sums against the total row, whose first cell spans columns 0-6 (each sum three columns left of its header): 落札価 × 数量,
   // 数量 and 消費税 over every auction, 送金量, 配送料, 追加 and 差し引き over the paying rows. The two 送金額 sums are information only,
   // with the payments that are not the sum of their lines listed (lines: price × quantity and tax of every auction in the payment,
-  // plus the paying row's 送金量, 配送料 and 追加, less its 差し引き; the second 送金額 is compared).
+  // plus the paying row's 送金量, 配送料 and 追加, less its 差し引き; the second 送金額 is compared). Without a total row there are no
+  // total checks (the note total-row-missing says so); the payments that differ from their lines are still listed.
   checks(orders, totals, context, info, notes) {
     const total = totals[0]?.provenance.raw || null, at = c => total ? amountOf(total[c - 3]) : null, h = this.headers;
     const all = orders.map(r => r.provenance.raw), full = orders.filter(r => info.get(r)?.full).map(r => r.provenance.raw), sumOf = (rows, f) => rows.reduce((a, r) => a + f(r), 0);
-    const out = [check('total:10', h[10] + ' × ' + h[11], sumOf(all, r => amountOf(r[10]) * amountOf(r[11])), at(10)), check('total:11', h[11], sumOf(all, r => amountOf(r[11])), at(11)), check('total:12', h[12], sumOf(all, r => amountOf(r[12])), at(12)),
+    const out = !total ? [] : [check('total:10', h[10] + ' × ' + h[11], sumOf(all, r => amountOf(r[10]) * amountOf(r[11])), at(10)), check('total:11', h[11], sumOf(all, r => amountOf(r[11])), at(11)), check('total:12', h[12], sumOf(all, r => amountOf(r[12])), at(12)),
       ...[13, 14, 15, 16].map(c => check('total:' + c, h[c], sumOf(full, r => amountOf(r[c])), at(c))),
       check('total:17', h[17] + '（1つ目）', sumOf(full, r => amountOf(r[17])), at(17), true), check('total:18', h[18] + '（2つ目）', sumOf(full, r => amountOf(r[18])), at(18), true)];
     const above = [], below = [];
