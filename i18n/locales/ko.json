@@ -851,7 +851,8 @@
       "recurring": "정기 결제",
       "category": "카테고리",
       "template": "템플릿",
-      "settings": "설정"
+      "settings": "설정",
+      "auth": "인증"
     }
   },
   "invite": {

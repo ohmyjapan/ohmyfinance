@@ -884,6 +884,18 @@ async function main() {
           assert.equal(cell, end, 'the page shows the entry\'s end (' + end + '), not the visit (' + (await shown(new Date().toISOString())).replace(/\s+/g, '') + ')')
         })
       })
+      await check(L('E-browser-customer-log-types-in-words'), async () => {
+        // Review finding 3: on the customer's activity log page the 種類 column of the two developer lines (and of the sign-in lines,
+        // which share the type) reads in words, in Japanese and Korean, never as the raw text key.
+        const e = await entered(quiet, null, { token: dev2.plain })
+        expectStatus(await call('/api/auth/logout', { token: e.token, method: 'POST' }), 200, '終了')
+        for (const [route, enteredText, leftText, typeText] of [['/audit', '開発者が入室', '開発者が退室', '認証'], ['/ko/audit', '개발자 입실', '개발자 퇴실', '인증']]) {
+          await customerLog(quiet, route, e.eid, async rows => {
+            assert.deepEqual(rows.filter(r => r[3] === e.eid).map(r => r[1] + ' | ' + r[2]).sort(), [enteredText + ' | ' + typeText, leftText + ' | ' + typeText].sort(), route + ': the two lines of the entry')
+            assert.deepEqual(rows.filter(r => /audit\./i.test(r[2])).map(r => r[1] + ' | ' + r[2]), [], route + ': rows with a raw key in the 種類 column')
+          })
+        }
+      })
       if (context) await context.close().catch(() => {})
     }
   } catch (error) {
