@@ -495,6 +495,26 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
     await page.evaluate(()=>document.querySelector('[data-import-run]').click());await waitFor(()=>!!document.querySelector('[data-import-done]'));
     const uiKind=(await get('records')).data.records.find(r=>r.values.orderId==='TSTU0002'&&r.values.service===KIND_SVC);assert.deepEqual([uiKind?.values.purchaseState,uiKind?.extra['ファイルの種類']],['purchased','ショップ注文リスト'],'intake-ui:kind-imported');
     pass('hidden real Chrome: a known file kind opens on its own sheet with its orders, totals and kept service name, the grid switch turns it off and back, and 取り込む imports it');
+    // Review finding 1: the importer stays open after the kind import. The next ordinary 3-column file carries none of the kind's
+    // extra columns (the request sends none, the stored order has none); an extra column the owner types still carries over to the next file.
+    const sent=[],onRequest=r=>{if(r.method()==='POST'&&/\/api\/finance-intake\/files\/[^/]+\/import$/.test(r.url()))sent.push(JSON.parse(r.postData()||'{}'))};page.on('request',onRequest);
+    const plain=async(name,row)=>{const p=path.join(uiDir,name);await fsp.writeFile(p,'注文番号,商品名,購入金額\n'+row+'\n');await (await page.$('[data-import-file]')).uploadFile(p);await waitFor(id=>!!document.querySelector('[data-import-mapping] details tbody')?.textContent.includes(id),row.split(',')[0]);};
+    const importPlain=async()=>{await waitFor(()=>document.querySelector('[data-import-preview]')?.disabled===false);await page.evaluate(()=>document.querySelector('[data-import-preview]').click());await waitFor(()=>document.querySelector('[data-import-run]')?.disabled===false);await page.evaluate(()=>document.querySelector('[data-import-run]').click());await waitFor(()=>!!document.querySelector('[data-import-done]'));};
+    await plain('plain-after-kind.csv','TSTF0001,Plain thing,500');
+    assert.deepEqual(await page.evaluate(()=>[...document.querySelectorAll('[data-extra-name]')].map(e=>[e.value,document.querySelector('[data-extra-column="'+e.dataset.extraName+'"]')?.value])),[],'intake-ui:plain-after-kind-no-kind-extras');
+    await page.click('[data-default-service]',{clickCount:3});await page.keyboard.type('PLAIN-AFTER-KIND');await importPlain();
+    assert.deepEqual(sent.at(-1)?.extras,[],'intake-ui:plain-after-kind-request-no-extras');
+    const plainRecord=async id=>(await get('records')).data.records.find(r=>r.values.orderId===id&&r.values.service==='PLAIN-AFTER-KIND');
+    assert.deepEqual((await plainRecord('TSTF0001'))?.extra,{},'intake-ui:plain-after-kind-stored-no-extras');
+    await page.evaluate(()=>document.querySelector('[data-extra-add]').click());await waitFor(()=>!!document.querySelector('[data-extra-name="0"]'));
+    await page.click('[data-extra-name="0"]');await page.keyboard.type('手入力の項目');await page.select('[data-extra-column="0"]','1');
+    await plain('plain-after-kind-2.csv','TSTF0002,Typed extra thing,700');
+    assert.deepEqual(await page.evaluate(()=>[document.querySelectorAll('[data-extra-name]').length,document.querySelector('[data-extra-name="0"]')?.value,document.querySelector('[data-extra-column="0"]')?.value]),[1,'手入力の項目','1'],'intake-ui:typed-extra-carries-over');
+    await importPlain();
+    assert.deepEqual(sent.at(-1)?.extras,[{name:'手入力の項目',column:'1'}],'intake-ui:typed-extra-request');
+    assert.deepEqual((await plainRecord('TSTF0002'))?.extra,{'手入力の項目':'Typed extra thing'},'intake-ui:typed-extra-stored');
+    page.off('request',onRequest);
+    pass('hidden real Chrome: after a kind import the next ordinary file carries none of the kind\'s extra columns (request and stored order), and an extra column the owner typed carries over to the next file');
    }
    // Plan omf-order-mapping piece 4: the order page of a 30-link order saves another field (only changed extras are sent).
    {

@@ -216,11 +216,15 @@ async function upload(event: Event) {
   })
   input.value = ''
 }
+// Whether the last sheet read answered extra columns (a kind's sheet): those are the kind's, not the owner's, so the next read that
+// answers none (an ordinary file, another sheet or header row) starts from an empty list; extras the owner typed carry over as before.
+let lastExtrasFromKind = false
 async function readSheetNow() {
   const data: any = await $fetch(api + 'files/' + doc.value.id + '/sheet', { query: { sheet: sheet.value, headerRow: headerRow.value }, headers: user.authHeader })
   sheetData.value = data; previewData.value = null
   const template = templates.value.find(t => t.id === templateId.value)
-  if (template) { applyMapping(template.mapping); applyExtras(template.extras) } else { Object.assign(mapping, data.mapping); applyExtras(data.extras || extras.value) }
+  if (template) { applyMapping(template.mapping); applyExtras(template.extras) } else { Object.assign(mapping, data.mapping); applyExtras(data.extras || (lastExtrasFromKind ? [] : extras.value)) }
+  lastExtrasFromKind = !!data.extras
   compareHeaders(template)
 }
 function readSheet() { if (doc.value) run(readSheetNow) }
