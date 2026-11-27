@@ -653,6 +653,34 @@ async function main() {
       ended(await call('/api/finance-intake/records', { token: done.token }), 'an ended entry stays ended after a restart')
       expectStatus(await call('/api/auth/logout', { token: open.token, method: 'POST' }), 200, 'leave')
     })
+    // Review finding 1: the customer's "developer left" line carries the entry's true end as its time, whenever it is written. An entry
+    // that runs out unused (its start and end moved 3 h and 2 h into the past, standing for a closed browser) is settled when a developer
+    // next opens the record, when the developer starts the next entry, or at a request whose token is still valid; one ends by 終了.
+    await check(L('E-left-line-dated-at-the-end'), async () => {
+      const past = async e => { const endsAt = new Date(Date.now() - 2 * 3600000); await col('developerentries').updateOne({ _id: new ObjectId(e.eid) }, { $set: { startedAt: new Date(Date.now() - 3 * 3600000), endsAt } }); return endsAt }
+      const leftLines = async eid => { const r = await call('/api/audit?limit=100&entityId=' + eid, { token: cust.token }); expectStatus(r, 200, 'the customer\'s activity log'); return r.data.logs.filter(l => l.action === 'developer_left') }
+      const dated = async (eid, label, plannedEnd) => {
+        const row = await rowOf(eid), lines = await leftLines(eid)
+        assert.ok(row.endedAt, label + ': row ended'); assert.equal(lines.length, 1, label + ': one "left" line')
+        if (plannedEnd) { assert.equal(row.endedHow, 'expired', label + ': how'); assert.equal(row.endedAt.toISOString(), plannedEnd.toISOString(), label + ': the row ends at its planned end') }
+        assert.equal(new Date(lines[0].timestamp).toISOString(), row.endedAt.toISOString(), label + ': the customer\'s "left" line is dated at the entry\'s end, not at the moment it was written')
+      }
+      const by = { token: dev2.plain }
+      const a = await entered(cust, companies.cust, by), aEnd = await past(a)
+      assert.deepEqual(await leftLines(a.eid), [], 'no "left" line while nobody has come back')
+      await pause(1100)
+      expectStatus(await call('/api/developer/entries', by), 200, 'the developer opens the record')
+      await dated(a.eid, 'settled when the developer opens the record', aEnd)
+      const b = await entered(cust, companies.cust, by), bEnd = await past(b)
+      const c = await entered(cust, companies.cust, by)
+      await dated(b.eid, 'settled when the developer starts the next entry', bEnd)
+      const cEnd = await past(c)
+      ended(await call('/api/auth/me', { token: c.token }), 'a request with a valid token after the row\'s end')
+      await dated(c.eid, 'settled at a request', cEnd)
+      const d = await entered(cust, companies.cust, by)
+      expectStatus(await call('/api/auth/logout', { token: d.token, method: 'POST' }), 200, '終了')
+      await dated(d.eid, '終了')
+    })
     await check(L('E-customer-audit-and-account-untouched'), async () => {
       const entries = await col('developerentries').find({ targetUserId: cust.id }).toArray()
       assert.ok(entries.length >= 10, 'the entries of this run exist: ' + entries.length)
@@ -830,6 +858,31 @@ async function main() {
         const result = await page.evaluate(async (s, bad) => { const x = eval(s); x.token = bad; const r = await fetch('/api/finance-intake/records', { headers: { Authorization: 'Bearer ' + bad } }); return { status: r.status, renewed: x.token !== bad, authenticated: x.isAuthenticated } }, STORE, rejected)
         assert.deepEqual(result, { status: 200, renewed: true, authenticated: true }, 'a 401 is followed by renewal for an ordinary user')
         assert.equal((await store()).entry, null)
+      })
+      // The customer's own activity log page, opened by the customer (signed in now) in a context of its own: `use` gets the table rows
+      // (each the cells' text) once a row naming `entryId` is shown, and the page.
+      const customerLog = async (who, route, entryId, use) => {
+        const session = await signIn(who), own = await browser.createBrowserContext(), p = await own.newPage()
+        try {
+          await p.goto(origin + '/login', { waitUntil: 'domcontentloaded' })
+          await p.evaluate(value => localStorage.setItem('ohmyfinance_session', value), JSON.stringify({ sessionId: 'test-' + crypto.randomUUID(), tokens: session.tokens, user: session.user, organizations: session.organizations || [], currentOrganization: (session.organizations || [])[0] || null }))
+          await p.goto(origin + route, { waitUntil: 'networkidle2' })
+          await p.waitForFunction(id => [...document.querySelectorAll('table tbody tr')].some(tr => tr.textContent.includes(id)), { timeout: 20000, polling: 200 }, entryId).catch(async () => { throw Error(route + ' never showed a row of entry ' + entryId + ': ' + (await textOf(p)).replace(/\s+/g, ' ').slice(0, 300)) })
+          await use(await p.$$eval('table tbody tr', trs => trs.map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.replace(/\s+/g, ' ').trim()))), p)
+        } finally { await own.close().catch(() => {}) }
+      }
+      await check(L('E-browser-customer-log-shows-end-time'), async () => {
+        // Review finding 1 on the page: an entry into an invented customer ran out unused (start and end moved 3 h and 2 h into the past);
+        // a developer opens the record afterwards. The customer's "開発者が退室" row shows the entry's end, not the moment of that visit.
+        const q = await entered(quiet, null, { token: dev2.plain }), endsAt = new Date(Date.now() - 2 * 3600000)
+        await col('developerentries').updateOne({ _id: new ObjectId(q.eid) }, { $set: { startedAt: new Date(Date.now() - 3 * 3600000), endsAt } })
+        expectStatus(await call('/api/developer/entries', { token: dev2.plain }), 200, 'a developer opens the record')
+        await customerLog(quiet, '/audit', q.eid, async (rows, p) => {
+          const left = rows.find(r => r[3] === q.eid && r[1] === '開発者が退室'); assert.ok(left, 'the "left" row: ' + JSON.stringify(rows.filter(r => r[3] === q.eid)))
+          const shown = iso => p.evaluate(value => { const d = new Date(value); return d.toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' }) + d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) }, iso)
+          const cell = left[0].replace(/\s+/g, ''), end = (await shown(endsAt.toISOString())).replace(/\s+/g, '')
+          assert.equal(cell, end, 'the page shows the entry\'s end (' + end + '), not the visit (' + (await shown(new Date().toISOString())).replace(/\s+/g, '') + ')')
+        })
       })
       if (context) await context.close().catch(() => {})
     }

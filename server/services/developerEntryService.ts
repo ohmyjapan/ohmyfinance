@@ -9,6 +9,7 @@ import User from '../models/User'
 import Organization from '../models/Organization'
 import PlatformDeveloper from '../models/PlatformDeveloper'
 import { DeveloperEntry, DeveloperEntryRequest, type EntryEndReason, type IDeveloperEntry } from '../models/DeveloperEntry'
+import AuditLog from '../models/AuditLog'
 import { signEntryToken, type EntryTokenPayload } from './authService'
 import { logAudit } from '../utils/audit'
 
@@ -82,11 +83,16 @@ export async function checkEntry(payload: EntryTokenPayload): Promise<{ ok: true
 }
 
 // Ends an open row once and writes the customer's "developer left" line. A row that has already ended is left as it is.
+// The line is dated at the entry's end, whenever it is written: an entry that ran out while nobody used it is settled later (when a
+// developer next opens the record or starts an entry), and the customer's activity log shows the line's time. logAudit stamps the
+// moment of writing, so the line is written here.
 export async function endEntry(entry: Pick<IDeveloperEntry, '_id' | 'targetUserId' | 'reason' | 'endsAt'>, how: EntryEndReason, at = new Date()): Promise<boolean> {
   const endedAt = how === 'expired' ? new Date(Math.min(at.getTime(), new Date(entry.endsAt).getTime())) : at
   const result = await DeveloperEntry.updateOne({ _id: entry._id, endedAt: null }, { $set: { endedAt, endedHow: how } })
   if (result.modifiedCount !== 1) return false
-  await logAudit({ action: 'developer_left', entityType: 'auth', entityId: String(entry._id), userId: String(entry.targetUserId), metadata: { entryId: String(entry._id), reason: entry.reason || '', how, endedAt: endedAt.toISOString() } })
+  try {
+    await AuditLog.create({ action: 'developer_left', entityType: 'auth', entityId: String(entry._id), userId: String(entry.targetUserId), metadata: { entryId: String(entry._id), reason: entry.reason || '', how, endedAt: endedAt.toISOString() }, timestamp: endedAt })
+  } catch (error) { console.error('Failed to log audit entry:', error) }
   return true
 }
 

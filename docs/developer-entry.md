@@ -67,7 +67,7 @@ A refused call shows the one refusal notice OMF already has for 閲覧のみ, wi
 - `developerentries`: developer, customer, company, reason, start, planned end, actual end, how it ended (developer / expired / removed from the list / developer's password changed / customer deactivated / replaced by the developer's next entry / developer deactivated / customer made a developer / token mismatch), the developer's address and browser.
 - `developerentryrequests`: entry id, time, method, path, status code (added when the response is sent), refused or not. Values and request bodies are not kept; for orders, the order's own history holds the before and after of every edit and import.
 - `GET /api/developer/entries` shows the newest 50 entries with their lines, changes first; the 開発者 page shows them.
-- The customer's activity log (`GET /api/audit`, their own lines) shows `developer_entered` and `developer_left` with the entry id and reason. An entry whose time ran out while nobody used it gets its "left" line when the developer next opens 開発者 or starts an entry.
+- The customer's activity log (`GET /api/audit`, their own lines) shows `developer_entered` and `developer_left` with the entry id and reason. An entry whose time ran out while nobody used it gets its "left" line when the developer next opens 開発者 or starts an entry. The "left" line is always dated at the entry's end (the row's `endedAt`; for an entry that ran out, its planned end), not at the moment it is written, so the activity log page shows when the developer really left.
 
 ## The customer's session and credentials
 
