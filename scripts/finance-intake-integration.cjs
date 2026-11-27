@@ -515,6 +515,16 @@ module.exports=async({db,call,token,other,deviceToken,origin,pass,root,pause})=>
     assert.deepEqual((await plainRecord('TSTF0002'))?.extra,{'手入力の項目':'Typed extra thing'},'intake-ui:typed-extra-stored');
     page.off('request',onRequest);
     pass('hidden real Chrome: after a kind import the next ordinary file carries none of the kind\'s extra columns (request and stored order), and an extra column the owner typed carries over to the next file');
+    // Review finding 3: the panel's explanation holds for every kind. The order sheet has no status word, computes 購入金額 and splits its
+    // links: the panel says the file is read by the kind's own rules, and the kind's own line (several links) stands below it.
+    const sheetPath=path.join(uiDir,'order-sheet-ui.xlsx'),swb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(swb,XLSX.utils.aoa_to_sheet([['伝票番号','一次決済日','送金日','商品金額','商品url','国内送料','サービス手数料','フリマ手数料','取引手数料','処理担当者'],['DU-0001-01','2026/1/4','2026/1/5',1000,'https://ui.example.invalid/a\nhttps://ui.example.invalid/b',200,0,0,0,'staff-u']]),'Orders');
+    await fsp.writeFile(sheetPath,XLSX.write(swb,{type:'buffer',bookType:'xlsx'}));
+    await (await page.$('[data-import-file]')).uploadFile(sheetPath);await waitFor(()=>document.querySelector('[data-file-kind-name]')?.textContent.trim()==='注文シート'&&!!document.querySelector('[data-file-kind-orders]'));
+    assert.equal(await page.evaluate(()=>[...document.querySelectorAll('[data-file-kind] p')].find(p=>p.textContent.includes('行目を見出しとして'))?.textContent.trim()),'Orders シートの 1 行目を見出しとして、このファイルの種類の決まりで読み取ります。','intake-ui:kind-explanation-true-for-the-order-sheet');
+    assert.match(await page.evaluate(()=>document.querySelector('[data-file-kind-links]')?.textContent||''),/商品URLが複数の注文 1 件（リンク合計 2 件）/,'intake-ui:order-sheet-own-line');
+    await noOverflow('order-sheet-kind');if(shots){const shot=async n=>(await page.$('[data-importer]')).screenshot({path:path.join(shots,n)});await shot('order-sheet-390.png');await page.setViewport({width:1280,height:900});await shot('order-sheet-1280.png');await page.setViewport({width:390,height:844});}
+    pass('hidden real Chrome: the kind panel\'s explanation holds for the order sheet (read by the kind\'s own rules) with the kind\'s own line below it');
    }
    // Plan omf-order-mapping piece 4: the order page of a 30-link order saves another field (only changed extras are sent).
    {
