@@ -15,7 +15,8 @@ export const ENTRY_END_REASONS = [
   'replaced',               // the same developer started another entry
   'developer_deactivated',  // the developer's own account was deactivated
   'target_is_developer',    // the entered account was put on the developer list
-  'token_mismatch'          // a correctly signed token for this row with another token id
+  'token_mismatch',         // a correctly signed token for this row with another token id
+  'entered_line_failed'     // the customer's "developer entered" line could not be written: the entry never started (no token given)
 ] as const
 export type EntryEndReason = typeof ENTRY_END_REASONS[number]
 

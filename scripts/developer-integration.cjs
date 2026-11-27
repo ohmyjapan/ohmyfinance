@@ -681,6 +681,32 @@ async function main() {
       expectStatus(await call('/api/auth/logout', { token: d.token, method: 'POST' }), 200, '終了')
       await dated(d.eid, '終了')
     })
+    // Review finding 4: the customer's two lines are written so that a failure is seen. The throwaway database's activity log is made
+    // to refuse one of the two developer actions (a collection validator); these entries go into another invented customer.
+    const auditRefuses = async (action, fn) => {
+      await db.command({ collMod: 'auditlogs', validator: { action: { $ne: action } }, validationLevel: 'strict', validationAction: 'error' })
+      try { return await fn() } finally { await db.command({ collMod: 'auditlogs', validator: {}, validationLevel: 'off' }) }
+    }
+    await check(L('E-entered-line-fails-no-entry'), async () => {
+      const by = { token: dev2.plain }, before = await col('developerentries').find({ targetUserId: other.id }).project({ _id: 1 }).toArray()
+      const r = await auditRefuses('developer_entered', () => enter(other, companies.other, by))
+      expectStatus(r, 503, 'a start whose "developer entered" line cannot be written'); assert.equal(code(r), 'DEVELOPER_ENTRY_UNAVAILABLE'); assert.equal(r.data?.token, undefined, 'no token')
+      const added = (await col('developerentries').find({ targetUserId: other.id }).toArray()).filter(row => !before.some(b => String(b._id) === String(row._id)))
+      assert.equal(added.length, 1, 'the start wrote its row'); assert.ok(added[0].endedAt, 'and the row is ended'); assert.equal(added[0].endedHow, 'entered_line_failed')
+      assert.equal(await col('auditlogs').countDocuments({ entityId: String(added[0]._id) }), 0, 'no line for an entry that did not start')
+      const again = await entered(other, companies.other, by)
+      expectStatus(await call('/api/auth/me', { token: again.token }), 200, 'with the activity log writable again an entry starts')
+      expectStatus(await call('/api/auth/logout', { token: again.token, method: 'POST' }), 200, 'and ends')
+    })
+    await check(L('E-left-line-fails-seen'), async () => {
+      const e = await entered(other, companies.other, { token: dev2.plain })
+      expectStatus(await call('/api/finance-intake/records', { token: e.token }), 200, 'inside')
+      const r = await auditRefuses('developer_left', () => call('/api/auth/logout', { token: e.token, method: 'POST' }))
+      expectStatus(r, 503, '終了 whose "developer left" line cannot be written'); assert.equal(code(r), 'DEVELOPER_ENTRY_UNAVAILABLE', 'the failure is answered, not swallowed')
+      const row = await rowOf(e.eid); assert.ok(row.endedAt, 'the row still ends'); assert.equal(row.endedHow, 'developer')
+      assert.equal(await col('auditlogs').countDocuments({ action: 'developer_left', entityId: e.eid }), 0, 'no "left" line was written')
+      ended(await call('/api/finance-intake/records', { token: e.token }), 'the entry is over')
+    })
     await check(L('E-customer-audit-and-account-untouched'), async () => {
       const entries = await col('developerentries').find({ targetUserId: cust.id }).toArray()
       assert.ok(entries.length >= 10, 'the entries of this run exist: ' + entries.length)

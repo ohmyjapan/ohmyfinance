@@ -1977,7 +1977,8 @@
       "replaced": "次の入室で終了",
       "developer_deactivated": "開発者のアカウント停止",
       "target_is_developer": "相手が開発者に登録",
-      "token_mismatch": "別のトークン"
+      "token_mismatch": "別のトークン",
+      "entered_line_failed": "入室の記録に失敗（開始せず）"
     },
     "banner": {
       "label": "開発者の入室",

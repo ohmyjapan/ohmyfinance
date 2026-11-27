@@ -20,7 +20,7 @@ npx tsx scripts/manage-developers.ts remove <email or user id> [--apply]
 
 The developer signs in as themselves and opens 開発者 (`/developer`). The page lists the accounts that can be entered (`GET /api/developer/accounts`: active users that are not developers, with id, email, name and their companies' ids and names; nothing else). The developer chooses an account and one of its companies (none when it has none), may type a reason, and presses 入る.
 
-`POST /api/developer/entries { userId, organizationId, reason }` ends any entry this developer still has open, writes the entry row, writes "開発者が入室" (with the entry id and reason) into the customer's activity log, and answers the entry token and the customer's profile in the shape of `GET /api/auth/me`. Nothing is done to the customer: no password check, no `lastLoginAt`, no `loginAttempts`, no sign-in line under their name.
+`POST /api/developer/entries { userId, organizationId, reason }` ends any entry this developer still has open, writes the entry row, writes "開発者が入室" (with the entry id and reason) into the customer's activity log, and answers the entry token and the customer's profile in the shape of `GET /api/auth/me`. If the "開発者が入室" line cannot be written, the entry does not start: the new row is ended at once (`entered_line_failed`) and the start answers 503 `DEVELOPER_ENTRY_UNAVAILABLE` with no token. Nothing is done to the customer: no password check, no `lastLoginAt`, no `loginAttempts`, no sign-in line under their name.
 
 ## The entry token
 
@@ -64,10 +64,10 @@ A refused call shows the one refusal notice OMF already has for 閲覧のみ, wi
 
 ## The record
 
-- `developerentries`: developer, customer, company, reason, start, planned end, actual end, how it ended (developer / expired / removed from the list / developer's password changed / customer deactivated / replaced by the developer's next entry / developer deactivated / customer made a developer / token mismatch), the developer's address and browser.
+- `developerentries`: developer, customer, company, reason, start, planned end, actual end, how it ended (developer / expired / removed from the list / developer's password changed / customer deactivated / replaced by the developer's next entry / developer deactivated / customer made a developer / token mismatch / the customer's "開発者が入室" line could not be written, so the entry never started), the developer's address and browser.
 - `developerentryrequests`: entry id, time, method, path, status code (added when the response is sent), refused or not. Values and request bodies are not kept; for orders, the order's own history holds the before and after of every edit and import.
 - `GET /api/developer/entries` shows the newest 50 entries with their lines, changes first; the 開発者 page shows them.
-- The customer's activity log (`GET /api/audit`, their own lines) shows `developer_entered` and `developer_left` with the entry id and reason. An entry whose time ran out while nobody used it gets its "left" line when the developer next opens 開発者 or starts an entry. The "left" line is always dated at the entry's end (the row's `endedAt`; for an entry that ran out, its planned end), not at the moment it is written, so the activity log page shows when the developer really left.
+- The customer's activity log (`GET /api/audit`, their own lines) shows `developer_entered` and `developer_left` with the entry id and reason. An entry whose time ran out while nobody used it gets its "left" line when the developer next opens 開発者 or starts an entry. The "left" line is always dated at the entry's end (the row's `endedAt`; for an entry that ran out, its planned end), not at the moment it is written, so the activity log page shows when the developer really left. Both lines are written so that a failed write is seen, not swallowed: without its "入室" line an entry does not start (above); if the "退室" line cannot be written the row still ends and the request that ended it answers an error (503 inside the entry, for example at 終了).
 
 ## The customer's session and credentials
 

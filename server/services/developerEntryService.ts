@@ -11,7 +11,6 @@ import PlatformDeveloper from '../models/PlatformDeveloper'
 import { DeveloperEntry, DeveloperEntryRequest, type EntryEndReason, type IDeveloperEntry } from '../models/DeveloperEntry'
 import AuditLog from '../models/AuditLog'
 import { signEntryToken, type EntryTokenPayload } from './authService'
-import { logAudit } from '../utils/audit'
 
 export const ENTRY_MINUTES = 60
 export const DEVELOPER_ENTRY_ENDED = 'DEVELOPER_ENTRY_ENDED'
@@ -85,14 +84,15 @@ export async function checkEntry(payload: EntryTokenPayload): Promise<{ ok: true
 // Ends an open row once and writes the customer's "developer left" line. A row that has already ended is left as it is.
 // The line is dated at the entry's end, whenever it is written: an entry that ran out while nobody used it is settled later (when a
 // developer next opens the record or starts an entry), and the customer's activity log shows the line's time. logAudit stamps the
-// moment of writing, so the line is written here.
+// moment of writing and swallows a failed write, so the line is written here: if it cannot be written the row stays ended and the
+// error reaches the caller (inside an entry the request answers 503).
 export async function endEntry(entry: Pick<IDeveloperEntry, '_id' | 'targetUserId' | 'reason' | 'endsAt'>, how: EntryEndReason, at = new Date()): Promise<boolean> {
   const endedAt = how === 'expired' ? new Date(Math.min(at.getTime(), new Date(entry.endsAt).getTime())) : at
   const result = await DeveloperEntry.updateOne({ _id: entry._id, endedAt: null }, { $set: { endedAt, endedHow: how } })
   if (result.modifiedCount !== 1) return false
   try {
     await AuditLog.create({ action: 'developer_left', entityType: 'auth', entityId: String(entry._id), userId: String(entry.targetUserId), metadata: { entryId: String(entry._id), reason: entry.reason || '', how, endedAt: endedAt.toISOString() }, timestamp: endedAt })
-  } catch (error) { console.error('Failed to log audit entry:', error) }
+  } catch (error) { console.error('Failed to log audit entry:', error); throw error }
   return true
 }
 
@@ -151,7 +151,15 @@ export async function startEntry(developer: { userId: string; sessionVersion: nu
   const reason = typeof body?.reason === 'string' ? body.reason.trim() : ''
   const now = new Date(), endsAt = new Date(now.getTime() + ENTRY_MINUTES * 60 * 1000), jti = uuidv4()
   const created = await DeveloperEntry.create({ developerId: developer.userId, targetUserId: userId, organizationId: organizationId || null, reason, jti, developerSessionVersion: developer.sessionVersion, startedAt: now, endsAt, endedAt: null, endedHow: null, ipAddress: client.ipAddress, userAgent: client.userAgent })
-  await logAudit({ action: 'developer_entered', entityType: 'auth', entityId: String(created._id), userId, metadata: { entryId: String(created._id), reason } })
+  // The customer's "developer entered" line is written so that a failure is seen (logAudit would swallow it): without the line the
+  // entry does not start. The new row is ended at once and the start answers an error, with no token.
+  try {
+    await AuditLog.create({ action: 'developer_entered', entityType: 'auth', entityId: String(created._id), userId, metadata: { entryId: String(created._id), reason } })
+  } catch (error) {
+    console.error('Failed to log audit entry:', error)
+    await DeveloperEntry.updateOne({ _id: created._id, endedAt: null }, { $set: { endedAt: new Date(), endedHow: 'entered_line_failed' } })
+    throw fail(503, 'DEVELOPER_ENTRY_UNAVAILABLE', '相手の監査ログに入室を記録できなかったため、入室は始まっていません。少し待ってからもう一度お試しください。')
+  }
   // Only the newer stays open: every older open entry of this developer ends (ids grow with time, so two starts at once leave one).
   for (const older of await DeveloperEntry.find({ developerId: developer.userId, endedAt: null, _id: { $lt: created._id } }).lean()) await endEntry(older, new Date(older.endsAt).getTime() <= now.getTime() ? 'expired' : 'replaced', now)
   const token = signEntryToken({ eid: String(created._id), jti, forUser: userId, forCompany: organizationId || null }, endsAt)

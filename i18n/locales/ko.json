@@ -1977,7 +1977,8 @@
       "replaced": "다음 입실로 종료",
       "developer_deactivated": "개발자 계정 정지",
       "target_is_developer": "상대가 개발자로 등록",
-      "token_mismatch": "다른 토큰"
+      "token_mismatch": "다른 토큰",
+      "entered_line_failed": "입실 기록 실패(시작 안 됨)"
     },
     "banner": {
       "label": "개발자 입실",
