@@ -1,5 +1,5 @@
 import { defineEventHandler, getRequestHeaders, createError, appendHeader, getMethod } from 'h3'
-import { verifyAccessToken } from '../services/authService'
+import { verifyAccessToken, verifyEntryToken } from '../services/authService'
 
 /**
  * API Middleware for Transaction Middleware System
@@ -61,8 +61,9 @@ export default defineEventHandler(async (event) => {
                 })
             }
 
-            // This middleware runs before auth.ts; verify signature and token purpose here.
-            if (!verifyAccessToken(token)) {
+            // This middleware runs before auth.ts; verify signature and token purpose here. A developer entry token passes on
+            // signature and type only (plan omf-order-mapping §4.8); its entry row is checked by developerEntry.ts before any handler.
+            if (!verifyAccessToken(token) && !verifyEntryToken(token)) {
                 throw createError({
                     statusCode: 401,
                     statusMessage: 'Unauthorized',

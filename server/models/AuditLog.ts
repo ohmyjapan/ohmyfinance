@@ -25,7 +25,8 @@ const AuditLogSchema = new Schema<IAuditLog>({
     enum: [
       'create', 'update', 'delete', 'import', 'export', 'match', 'unmatch', 'backup', 'restore',
       'login', 'logout', 'login_failed', '2fa_enabled', '2fa_disabled', 'password_changed',
-      'lockout', 'unlock', 'pin_set', 'pin_failed', 'pin_disabled'
+      'lockout', 'unlock', 'pin_set', 'pin_failed', 'pin_disabled',
+      'developer_entered', 'developer_left'
     ]
   },
   entityType: {

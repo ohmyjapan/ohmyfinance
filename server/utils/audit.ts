@@ -5,7 +5,8 @@ import { ensureConnection } from '../config/database'
 export interface AuditEntry {
   action: 'create' | 'update' | 'delete' | 'import' | 'export' | 'match' | 'unmatch' | 'backup' | 'restore' |
     'login' | 'logout' | 'login_failed' | '2fa_enabled' | '2fa_disabled' | 'password_changed' |
-    'lockout' | 'unlock' | 'pin_set' | 'pin_failed' | 'pin_disabled'
+    'lockout' | 'unlock' | 'pin_set' | 'pin_failed' | 'pin_disabled' |
+    'developer_entered' | 'developer_left' // plan omf-order-mapping §4.5: the customer's own lines for a developer entry
   entityType: 'transaction' | 'receipt' | 'recurring' | 'category' | 'template' | 'settings' | 'auth'
   entityId?: string
   entityName?: string

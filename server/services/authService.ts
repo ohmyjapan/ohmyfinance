@@ -579,3 +579,30 @@ export async function acceptInvite(inviteToken: string, userData?: {
     tokens
   }
 }
+
+// Developer entry (plan omf-order-mapping §4.3). One signed token { type: 'entry', eid, jti, forUser, forCompany }, same secret,
+// expiring when the entry ends. It carries no userId, email, organizationId or role claim: verifyAccessToken refuses it (no userId,
+// not the access type) and each verifyToken reader above demands its own exact type. Who is entered, by whom and into which company
+// is the entry row, read at every request by server/middleware/developerEntry.ts. forUser and forCompany are for the browser only
+// (utils/auth-session.ts); no server code reads them. There is no refresh token for an entry.
+export interface EntryTokenPayload {
+  type: 'entry'
+  eid: string
+  jti: string
+  forUser: string
+  forCompany?: string
+  exp?: number
+}
+
+export function signEntryToken(claims: { eid: string; jti: string; forUser: string; forCompany?: string | null }, endsAt: Date): string {
+  const exp = Math.floor(endsAt.getTime() / 1000)
+  if (!(exp > Math.floor(Date.now() / 1000))) throw new Error('Entry already ended')
+  return jwt.sign({ type: 'entry', eid: claims.eid, jti: claims.jti, forUser: claims.forUser, ...(claims.forCompany ? { forCompany: claims.forCompany } : {}), exp }, JWT_SECRET)
+}
+
+// Signature, expiry, the entry type and an entry id: nothing else. The entry row decides the rest.
+export function verifyEntryToken(token: string): EntryTokenPayload | null {
+  const payload = verifyToken(token) as any
+  if (!payload || payload.type !== 'entry' || typeof payload.eid !== 'string' || !payload.eid || typeof payload.jti !== 'string' || !payload.jti) return null
+  return payload as EntryTokenPayload
+}

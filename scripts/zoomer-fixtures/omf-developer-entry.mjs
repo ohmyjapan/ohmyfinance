@@ -16,13 +16,27 @@ export const timeoutMs = 3600000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BUILT = existsSync(path.join(root, '.output', 'server', 'index.mjs'));
 const SCRIPT_COVERS = ['scripts/developer-integration.cjs', 'scripts/zoomer-fixtures/omf-developer-entry.mjs', 'scripts/manage-developers.ts'];
-const APP_COVERS = ['server/models/PlatformDeveloper.ts', 'server/utils/developerAccess.ts', 'server/api/developer/[...path].ts', 'pages/developer/index.vue', 'components/common/AppSidebar.vue', 'shared/finance-navi-features.mjs', 'i18n/locales/ja.json', 'i18n/locales/ko.json'];
+const APP_COVERS = ['server/models/PlatformDeveloper.ts', 'server/utils/developerAccess.ts', 'server/api/developer/[...path].ts', 'pages/developer/index.vue', 'components/common/AppSidebar.vue', 'shared/finance-navi-features.mjs', 'i18n/locales/ja.json', 'i18n/locales/ko.json',
+  'server/models/DeveloperEntry.ts', 'server/services/developerEntryService.ts', 'server/middleware/developerEntry.ts', 'server/middleware/api.ts', 'server/services/authService.ts', 'server/utils/audit.ts', 'server/models/AuditLog.ts'];
 const binary = path.resolve(root, '..', 'node_modules', '.cache', 'mongodb-memory-server', 'mongod-x64-win32-8.2.1.exe');
 const chrome = [path.join(process.env.ProgramFiles || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'), path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Google/Chrome/Application/chrome.exe'), path.join(process.env.LOCALAPPDATA || '', 'Google/Chrome/Application/chrome.exe')].find(existsSync);
 
-// Each defect: a whitespace-tolerant anchor in the compiled server chunks (matched at least once, replaced wherever it occurs), its
-// replacement, and the checks that must turn red. Filled by piece 7.
-export const DEFECTS = [];
+// Each defect (plan §4.9, the four put back): a whitespace-tolerant anchor in the compiled server chunks (matched at least once,
+// replaced wherever it occurs), its replacement, and every check that must turn red with it.
+export const DEFECTS = [
+  // 1 No entry-row check: every row passes, ended, expired, removed or not.
+  { name: 'd1-no-entry-row-check', anchor: /function entryRowProblem(\$\d+)?\(entry, payload, people, now\) \{/g, replacement: m => m + ' return null;',
+    expect: ['E-two-entries-newer-open', 'E-logout-ends-row-no-customer-logout-line', 'E-removed-developer-stops', 'E-developer-password-stops', 'E-target-deactivated-stops', 'E-end-time-stops', 'E-restart-row-decides'] },
+  // 2 Every write allowed: the eight-path list replaced by "anything goes" (the closed sign-in, developer and invitation paths stay).
+  { name: 'd2-every-write-allowed', anchor: /return ENTRY_ALLOWED_WRITES(\$\d+)?\.some\([^;]*\? "allowed" : "refused";/g, replacement: 'return "allowed";',
+    expect: ['E-route-tree-refused-before-handler', 'E-allowed-path-variants-refused', 'E-ten-paths-change-nothing', 'E-navi-writes-refused', 'E-old-upload-answered-by-entry', 'E-invitation-misuses-fail', 'E-every-request-lined'] },
+  // 3 verifyAccessToken accepting the entry type.
+  { name: 'd3-verifyAccessToken-accepts-entry', anchor: /if \(!payload\?\.userId \|\| payload\.type && payload\.type !== "access" \|\|/g, replacement: 'if (!payload?.userId || payload.type && payload.type !== "access" && payload.type !== "entry" ||',
+    expect: ['E-verifyAccessToken-refuses-entry-type'] },
+  // 4 developerEntry.ts removed: the middleware does nothing, so an entry token signs in nobody.
+  { name: 'd4-developerEntry-removed', anchor: /return developerEntryRequest(\$\d+)?\(event, payload, path\);/g, replacement: 'return;',
+    expect: ['E-reads-as-customer', 'E-api-ts', 'E-forged-claims-act-as-row-target', 'E-navi-history-equal', 'E-me-inside-false-no-line', 'E-closed-paths-inside', 'E-route-tree-refused-before-handler', 'E-eight-allowed-writes-saved-and-lined', 'E-logout-ends-row-no-customer-logout-line'] }
+].map(d => ({ ...d, expect: d.expect.map(label => 'developer:' + label) }));
 
 function run(appRoot, { mutant = false, timeout = 1500000 } = {}) {
   const env = { ...process.env, OMF_DEVELOPER_APP_ROOT: appRoot, OMF_DEVELOPER_SOURCE_ROOT: root, OMF_DEVELOPER_MUTANT: mutant ? '1' : '', OMF_DEVELOPER_BROWSER: mutant ? '' : (process.env.OMF_DEVELOPER_BROWSER ?? (chrome ? '1' : '')), ...(existsSync(binary) ? { OMF_MONGOD_BINARY: binary, MONGOMS_SYSTEM_BINARY: binary } : {}) };
@@ -84,7 +98,7 @@ export default {
           } catch (error) { defects.push({ name: defect.name, detected: false, setupError: String(error.message).slice(0, 300) }); pass = false; }
           finally { await reset(); }
         }
-        if (DEFECTS.length) lines.push(`3 defects: ${defects.map(d => d.name + ': ' + (d.detected ? `detected (red: ${d.red.length}, named all ${DEFECTS.find(x => x.name === d.name).expect.length})` : 'NOT DETECTED' + (d.setupError ? ' (' + d.setupError + ')' : ' — missing ' + (d.missing || []).join(', ')))).join(' · ')}`);
+        if (DEFECTS.length) lines.push(`3 defects: ${defects.map(d => d.name + ': ' + (d.detected ? `detected (red: ${d.red.length}, named all ${DEFECTS.find(x => x.name === d.name).expect.length}: ${d.red.map(l => l.replace('developer:', '')).join(', ')})` : 'NOT DETECTED' + (d.setupError ? ' (' + d.setupError + ')' : ' — missing ' + (d.missing || []).join(', ')))).join(' · ')}`);
       } finally { await rm(directory, { recursive: true, force: true }); }
     } else if (BUILT) lines.push('2-3 control and defects: NOT RUN — leg 1 is not green, defects prove nothing');
     pass = pass && !!control && defects.length === DEFECTS.length && defects.every(d => d.detected);
