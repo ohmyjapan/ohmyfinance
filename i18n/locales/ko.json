@@ -220,7 +220,8 @@
     "organizationSettings": "조직 설정",
     "importTemplates": "가져오기 템플릿",
     "auditLog": "감사 로그",
-    "apiConfiguration": "API 설정"
+    "apiConfiguration": "API 설정",
+    "developer": "개발자"
   },
   "dashboard": {
     "title": "대시보드",
@@ -1931,5 +1932,13 @@
   "fieldMapping": {
     "typeField": "구분 (Type: 지출/입금)",
     "typeCode": "구분 코드 (지출/입금)"
+  },
+  "developer": {
+    "title": "개발자",
+    "description": "개발자로 등록된 사람만 사용하는 화면입니다.",
+    "onlyDevelopers": "이 화면은 개발자만 사용할 수 있습니다.",
+    "checking": "확인하고 있습니다…",
+    "howListed": "개발자는 서버의 운영 명령으로만 등록됩니다. 화면이나 앱 조작으로는 등록할 수 없습니다.",
+    "loadFailed": "개발자 정보를 불러오지 못했습니다."
   }
 }

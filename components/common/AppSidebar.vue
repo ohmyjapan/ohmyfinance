@@ -186,9 +186,10 @@ import {
   Users,
   Copy,
   FileCheck,
-  LogOut
+  LogOut,
+  Wrench
 } from 'lucide-vue-next'
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useUserStore } from '~/stores/user'
 
 defineProps({
@@ -208,6 +209,21 @@ const userStore = useUserStore()
 // Computed properties for template
 const user = computed(() => userStore.user)
 const isAuthenticated = computed(() => userStore.isAuthenticated)
+
+// The 開発者 link (plan omf-order-mapping piece 5): shown only when GET /api/developer/me says so. Any signed-in user may ask; an
+// ordinary user gets false, never an error.
+const isDeveloper = ref(false)
+let developerTicket = 0
+async function loadDeveloper() {
+  const ticket = ++developerTicket
+  if (!userStore.isAuthenticated || !userStore.token) { isDeveloper.value = false; return }
+  try {
+    const me: any = await $fetch('/api/developer/me', { headers: userStore.authHeader })
+    if (ticket === developerTicket) isDeveloper.value = me?.developer === true
+  } catch { if (ticket === developerTicket) isDeveloper.value = false }
+}
+onMounted(loadDeveloper)
+watch(() => [userStore.isAuthenticated, userStore.user?.id], loadDeveloper)
 
 const handleLogout = async () => {
   await userStore.logout()
@@ -234,7 +250,8 @@ const icons: Record<string, any> = {
   Users,
   Copy,
   FileCheck,
-  LogOut
+  LogOut,
+  Wrench
 }
 
 // Navigation items with i18n keys
@@ -290,7 +307,8 @@ const navItems = computed(() => [
       { name: t('nav.organizationSettings'), icon: 'Users', route: '/settings/organization' },
       { name: t('nav.importTemplates'), icon: 'FileSpreadsheet', route: '/templates' },
       { name: t('nav.auditLog'), icon: 'History', route: '/audit' },
-      { name: t('nav.apiConfiguration'), icon: 'Code', route: '/settings/api' }
+      { name: t('nav.apiConfiguration'), icon: 'Code', route: '/settings/api' },
+      ...(isDeveloper.value ? [{ name: t('nav.developer'), icon: 'Wrench', route: '/developer' }] : [])
     ]
   }
 ])

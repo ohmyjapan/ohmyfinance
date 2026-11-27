@@ -220,7 +220,8 @@
     "organizationSettings": "組織設定",
     "importTemplates": "インポートテンプレート",
     "auditLog": "監査ログ",
-    "apiConfiguration": "API設定"
+    "apiConfiguration": "API設定",
+    "developer": "開発者"
   },
   "dashboard": {
     "title": "ダッシュボード",
@@ -1931,5 +1932,13 @@
   "fieldMapping": {
     "typeField": "区別 (Type: 支出/入金)",
     "typeCode": "区別コード (支出/入金)"
+  },
+  "developer": {
+    "title": "開発者",
+    "description": "開発者として登録された人だけが使う画面です。",
+    "onlyDevelopers": "この画面は開発者だけが使えます。",
+    "checking": "確認しています…",
+    "howListed": "開発者は、サーバーでの運用コマンドでだけ登録されます。画面やアプリの操作からは登録できません。",
+    "loadFailed": "開発者の情報を読み込めませんでした。"
   }
 }
