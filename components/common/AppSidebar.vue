@@ -211,23 +211,25 @@ const user = computed(() => userStore.user)
 const isAuthenticated = computed(() => userStore.isAuthenticated)
 
 // The 開発者 link (plan omf-order-mapping piece 5): shown only when GET /api/developer/me says so. Any signed-in user may ask; an
-// ordinary user gets false, never an error.
+// ordinary user gets false, never an error. Inside a developer entry it is not asked (the entered person is never a developer).
 const isDeveloper = ref(false)
 let developerTicket = 0
 async function loadDeveloper() {
   const ticket = ++developerTicket
-  if (!userStore.isAuthenticated || !userStore.token) { isDeveloper.value = false; return }
+  if (!userStore.isAuthenticated || !userStore.token || userStore.entry) { isDeveloper.value = false; return }
   try {
     const me: any = await $fetch('/api/developer/me', { headers: userStore.authHeader })
     if (ticket === developerTicket) isDeveloper.value = me?.developer === true
   } catch { if (ticket === developerTicket) isDeveloper.value = false }
 }
 onMounted(loadDeveloper)
-watch(() => [userStore.isAuthenticated, userStore.user?.id], loadDeveloper)
+watch(() => [userStore.isAuthenticated, userStore.user?.id, userStore.entry?.id], loadDeveloper)
 
 const handleLogout = async () => {
+  // Inside a developer entry this is 終了: the store leaves the entry and opens /developer, the developer stays signed in.
+  const leavingEntry = !!userStore.entry
   await userStore.logout()
-  router.push('/login')
+  if (!leavingEntry) router.push('/login')
 }
 
 // Map icon names to components

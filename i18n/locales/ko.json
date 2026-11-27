@@ -841,7 +841,9 @@
       "import": "가져오기",
       "export": "내보내기",
       "backup": "백업",
-      "restore": "복원"
+      "restore": "복원",
+      "developer_entered": "개발자 입실",
+      "developer_left": "개발자 퇴실"
     },
     "entityTypes": {
       "transaction": "거래",
@@ -1939,6 +1941,48 @@
     "onlyDevelopers": "이 화면은 개발자만 사용할 수 있습니다.",
     "checking": "확인하고 있습니다…",
     "howListed": "개발자는 서버의 운영 명령으로만 등록됩니다. 화면이나 앱 조작으로는 등록할 수 없습니다.",
-    "loadFailed": "개발자 정보를 불러오지 못했습니다."
+    "loadFailed": "개발자 정보를 불러오지 못했습니다.",
+    "accountsTitle": "고객 계정에 들어가기",
+    "accountsHelp": "입실은 60분 후 끝납니다. 안에서는 고객의 화면을 그대로 볼 수 있고, 변경은 구매 접수의 가져오기·편집만 할 수 있습니다. 고객의 활동 로그에 「개발자 입실」「개발자 퇴실」이 남습니다.",
+    "search": "이름·메일·회사로 좁히기",
+    "noAccounts": "들어갈 수 있는 계정이 없습니다.",
+    "noMatch": "조건에 맞는 계정이 없습니다.",
+    "noCompany": "회사 없음",
+    "choose": "들어가기",
+    "company": "들어갈 회사",
+    "reason": "이유(선택)",
+    "reasonPlaceholder": "예: 가져오기 결과 확인",
+    "enter": "이 계정에 들어가기",
+    "entering": "입실하고 있습니다…",
+    "cancel": "취소",
+    "enterFailed": "입실하지 못했습니다.",
+    "entriesTitle": "입실 기록",
+    "entriesHelp": "입실마다 모든 요청을 기록합니다. 변경을 먼저 표시합니다.",
+    "noEntries": "아직 입실 기록이 없습니다.",
+    "open": "입실 중",
+    "until": "{time}까지",
+    "endedAt": "{time} 종료",
+    "counts": "요청 {requests}건·변경 {changes}건·거부 {refused}건",
+    "showLines": "기록 보기",
+    "hideLines": "기록 닫기",
+    "refusedMark": "거부",
+    "noReason": "이유 없음",
+    "how": {
+      "developer": "개발자가 종료",
+      "expired": "시간 초과",
+      "removed": "개발자 등록 해제",
+      "password_changed": "개발자 비밀번호 변경",
+      "target_deactivated": "계정 정지",
+      "replaced": "다음 입실로 종료",
+      "developer_deactivated": "개발자 계정 정지",
+      "target_is_developer": "상대가 개발자로 등록",
+      "token_mismatch": "다른 토큰"
+    },
+    "banner": {
+      "label": "개발자 입실",
+      "inside": "개발자로 입실 중",
+      "timeLeft": "남은 시간 {minutes}분",
+      "end": "종료"
+    }
   }
 }

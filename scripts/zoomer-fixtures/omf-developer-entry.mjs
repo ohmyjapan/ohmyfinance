@@ -15,9 +15,10 @@ import { fileURLToPath } from 'node:url';
 export const timeoutMs = 3600000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BUILT = existsSync(path.join(root, '.output', 'server', 'index.mjs'));
-const SCRIPT_COVERS = ['scripts/developer-integration.cjs', 'scripts/zoomer-fixtures/omf-developer-entry.mjs', 'scripts/manage-developers.ts'];
+const SCRIPT_COVERS = ['scripts/developer-integration.cjs', 'scripts/developer-entry-session.test.cjs', 'scripts/zoomer-fixtures/omf-developer-entry.mjs', 'scripts/manage-developers.ts'];
 const APP_COVERS = ['server/models/PlatformDeveloper.ts', 'server/utils/developerAccess.ts', 'server/api/developer/[...path].ts', 'pages/developer/index.vue', 'components/common/AppSidebar.vue', 'shared/finance-navi-features.mjs', 'i18n/locales/ja.json', 'i18n/locales/ko.json',
-  'server/models/DeveloperEntry.ts', 'server/services/developerEntryService.ts', 'server/middleware/developerEntry.ts', 'server/middleware/api.ts', 'server/services/authService.ts', 'server/utils/audit.ts', 'server/models/AuditLog.ts'];
+  'server/models/DeveloperEntry.ts', 'server/services/developerEntryService.ts', 'server/middleware/developerEntry.ts', 'server/middleware/api.ts', 'server/services/authService.ts', 'server/utils/audit.ts', 'server/models/AuditLog.ts',
+  'stores/user.ts', 'utils/auth-session.ts', 'utils/session-fetch.ts', 'components/common/DeveloperEntryBanner.vue', 'layouts/default.vue'];
 const binary = path.resolve(root, '..', 'node_modules', '.cache', 'mongodb-memory-server', 'mongod-x64-win32-8.2.1.exe');
 const chrome = [path.join(process.env.ProgramFiles || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'), path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Google/Chrome/Application/chrome.exe'), path.join(process.env.LOCALAPPDATA || '', 'Google/Chrome/Application/chrome.exe')].find(existsSync);
 
@@ -67,6 +68,11 @@ export default {
   async run() {
     const started = Date.now(), lines = [], defects = [];
     let pass = true, positive = null, control = null;
+    // 0 the browser session code (stores/user.ts, utils/auth-session.ts, utils/session-fetch.ts) in its unit harness.
+    const unit = await new Promise(resolve => execFile(process.execPath, ['--test', path.join(root, 'scripts', 'developer-entry-session.test.cjs')], { cwd: root, windowsHide: true, timeout: 300000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? (Number.isInteger(error.code) ? error.code : 1) : 0, text: String(stdout || '') + String(stderr || '') })));
+    const unitCounts = (unit.text.match(/ℹ pass (\d+)/) || [])[1];
+    if (unit.code !== 0) { pass = false; lines.push('0 session unit test: RED — ' + unit.text.split(/\r?\n/).filter(l => /✖|not ok|Error/.test(l)).slice(0, 4).join(' | ').slice(0, 600)); }
+    else lines.push(`0 session unit test: ok (${unitCounts} tests)`);
     if (!BUILT) { pass = false; lines.push('1 built app: NOT RUN — .output/server/index.mjs is missing (run nuxt build first); no coverage claimed'); }
     else {
       positive = await run(root);

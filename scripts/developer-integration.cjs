@@ -665,6 +665,174 @@ async function main() {
       const after = await col('users').findOne({ _id: cust.id })
       assert.deepEqual(after, custUserBefore, 'the customer\'s account (password, 2FA, PIN, devices, session version, last sign-in) is untouched')
     })
+
+    // ---- Browser (installed Chrome, headless): enter, pages, reload, second tab, 終了, lock, expiry, >30 minutes, ended on the server.
+    if (BROWSER) {
+      const puppeteer = require('puppeteer-core'), executablePath = chromePath()
+      if (!browser) browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-first-run', '--no-default-browser-check', '--disable-extensions'] })
+      const shots = process.env.OMF_DEVELOPER_SCREENS || ''
+      const shot = async (page, name) => { if (shots) { await fsp.mkdir(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, name + '.png'), fullPage: false }) } }
+      const STORE = "document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user')"
+      const PAGES = [['/', 'dashboard'], ['/transactions', '取引一覧'], ['/invoices', '請求書'], ['/receipts', '領収書'], ['/calendar', 'カレンダー'], ['/budgets', '予算'], ['/intake', '購入受付']]
+      let context, page, errors = [], leftByEnd = false
+      const fresh = async () => {
+        if (context) await context.close().catch(() => {})
+        const session = await signIn(dev)
+        context = await browser.createBrowserContext(); page = await context.newPage(); errors = []
+        page.on('pageerror', e => errors.push(e.message)); page.on('dialog', d => d.accept().catch(() => {}))
+        if (process.env.OMF_DEVELOPER_DEBUG) page.on('console', m => console.log('PAGE ' + m.type() + ' ' + m.text().slice(0, 300)))
+        await page.setViewport({ width: 1440, height: 900 })
+        await page.goto(origin + '/login', { waitUntil: 'domcontentloaded' })
+        await page.evaluate(value => localStorage.setItem('ohmyfinance_session', value), JSON.stringify({ sessionId: 'test-' + crypto.randomUUID(), tokens: session.tokens, user: session.user, organizations: session.organizations, currentOrganization: session.organizations[0] }))
+        return session
+      }
+      const store = (p = page) => p.evaluate(s => { const x = eval(s); return { token: x.token, refreshToken: x.refreshToken, userId: x.user?.id || x.user?._id, entry: x.entry ? { id: x.entry.id } : null, isAuthenticated: x.isAuthenticated } }, STORE)
+      const textOf = (p = page) => p.evaluate(() => document.body.innerText)
+      const waitText = async (needle, p = page, timeout = 20000) => { try { await p.waitForFunction(n => document.body.innerText.includes(n), { timeout, polling: 200 }, needle) } catch { throw Error('page ' + new URL(p.url()).pathname + ' never showed ' + needle + ': ' + (await textOf(p)).replace(/\s+/g, ' ').slice(0, 300)) } }
+      const enterInPage = async (target = cust, company = companies.cust) => {
+        // A check that failed while inside leaves its entry open in this page: leave it first, so each check starts as the developer.
+        if ((await store().catch(() => null))?.entry) { await page.evaluate(s => eval(s).leaveEntry('developer'), STORE).catch(() => {}); await page.waitForFunction(() => location.pathname === '/developer', { timeout: 20000, polling: 200 }).catch(() => {}) }
+        await page.goto(origin + '/developer', { waitUntil: 'networkidle2' })
+        await page.waitForSelector(`[data-developer-account="${target.sid}"]`, { timeout: 20000 })
+        await page.click(`[data-developer-account="${target.sid}"] [data-developer-choose]`)
+        await page.waitForSelector('[data-developer-enter-form]', { timeout: 10000 })
+        if (company) await page.select('[data-developer-company]', String(company))
+        await page.type('[data-developer-reason]', 'Synthetic browser check')
+        await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }), page.click('[data-developer-enter]')])
+        assert.equal(new URL(page.url()).pathname, '/', 'entering opens the dashboard of the customer')
+        await page.waitForSelector('[data-developer-entry-banner]', { timeout: 20000 })
+      }
+      // What identifies an owner's data on a page: the dashboard lists date, type, category, amount and status (no names), so there the
+      // owner's own transaction amount stands for it; every other page shows the marked names.
+      const needle = (route, mark) => route === '/' ? AMOUNT_TEXT[mark] : mark
+      const pagesShow = async (mark, absent, label, p = page) => {
+        const problems = []
+        for (const [route, name] of PAGES) {
+          await p.goto(origin + route, { waitUntil: 'networkidle2' })
+          try { await waitText(needle(route, mark), p, 15000) } catch (error) { problems.push(name + ': ' + error.message); continue }
+          const text = await textOf(p)
+          for (const a of absent) if (text.includes(needle(route, a))) problems.push(name + ' shows ' + a)
+        }
+        assert.deepEqual(problems, [], label)
+        await p.goto(origin + '/', { waitUntil: 'networkidle2' })
+        await p.click('[data-assistant-toggle]')
+        await waitText(mark + ' navi question', p)
+        const navi = await textOf(p); for (const a of absent) assert.ok(!navi.includes(a + ' navi'), label + ': the Navi panel shows ' + a)
+        await p.click('[data-assistant-close]').catch(() => {})
+      }
+      const backHome = async (label, p = page) => {
+        await p.waitForFunction(() => location.pathname === '/developer', { timeout: 30000, polling: 200 }).catch(async () => { throw Error(label + ': not at /developer but ' + new URL(p.url()).pathname) })
+        await p.waitForSelector('[data-developer-page]', { timeout: 20000 })
+        const s = await store(p); assert.equal(s.entry, null, label + ': left the entry'); assert.equal(String(s.userId), dev.sid, label + ': the developer\'s own session'); assert.ok(s.refreshToken, label + ': with the developer\'s refresh token')
+        assert.equal(await p.$('[data-developer-entry-banner]'), null, label + ': no banner')
+      }
+      await check(L('E-browser-enter-pages-show-customer'), async () => {
+        await fresh(); await enterInPage()
+        const s = await store(); assert.ok(s.entry, 'inside an entry'); assert.equal(String(s.userId), cust.sid); assert.equal(s.refreshToken, null, 'no refresh token inside')
+        const banner = await page.$eval('[data-developer-entry-banner]', e => e.innerText)
+        assert.ok(banner.includes(cust.name) && banner.includes('Synthetic Customer Trading'), 'the banner names the customer and company: ' + banner)
+        await shot(page, 'entry-dashboard')
+        await pagesShow('CUSTMARK', ['DEVMARK', 'OTHERMARK'], 'inside')
+        await page.goto(origin + '/intake', { waitUntil: 'networkidle2' }); await waitText('CUSTMARK'); await shot(page, 'entry-intake')
+        assert.deepEqual(errors, [], 'no page error')
+      })
+      await check(L('E-browser-every-sidebar-page-inside'), async () => {
+        const links = await page.$$eval('nav a[href^="/"]', as => [...new Set(as.map(a => a.getAttribute('href')))])
+        assert.ok(links.length >= 15, 'sidebar links: ' + links.length)
+        assert.ok(!links.includes('/developer'), 'no 開発者 link inside an entry')
+        for (const href of links) {
+          errors.length = 0
+          await page.goto(origin + href, { waitUntil: 'networkidle2' }); await pause(800)
+          assert.deepEqual(errors, [], href + ' page error')
+          assert.equal(await page.$('[data-viewer-refusal]'), null, href + ' shows a refusal notice nobody caused')
+          assert.ok((await store()).entry, href + ' still inside')
+        }
+      })
+      await check(L('E-browser-reload-and-second-tab'), async () => {
+        await page.goto(origin + '/transactions', { waitUntil: 'networkidle2' }); await page.reload({ waitUntil: 'networkidle2' })
+        await page.waitForSelector('[data-developer-entry-banner]', { timeout: 20000 }); await waitText('CUSTMARK')
+        const second = await context.newPage(); second.on('pageerror', e => errors.push('tab2: ' + e.message))
+        await second.goto(origin + '/budgets', { waitUntil: 'networkidle2' }); await second.waitForSelector('[data-developer-entry-banner]', { timeout: 20000 }); await waitText('CUSTMARK', second)
+        await page.bringToFront()
+        await page.click('[data-developer-entry-end]')
+        await backHome('終了')
+        await second.bringToFront()
+        await backHome('second tab', second)
+        leftByEnd = true
+        await page.bringToFront()
+        await second.close()
+      })
+      await check(L('E-browser-after-end-pages-show-developer'), async () => {
+        assert.ok(leftByEnd, 'this browser entered the account of the customer and left it with 終了 just before')
+        await pagesShow('DEVMARK', ['CUSTMARK', 'OTHERMARK'], 'after 終了')
+        assert.deepEqual(errors, [], 'no page error')
+      })
+      await check(L('E-browser-lock-leaves-and-asks-developer'), async () => {
+        await enterInPage()
+        await page.evaluate(() => { localStorage.setItem('ohmyfinance_locked_at', String(Date.now())); setTimeout(() => location.reload(), 50) })
+        await pause(800)
+        await page.waitForFunction(() => location.pathname === '/developer', { timeout: 30000, polling: 200 })
+        await page.waitForSelector('input[type=password]:not([maxlength])', { timeout: 20000 })
+        const s = await store(); assert.equal(s.entry, null, 'the lock left the entry'); assert.equal(String(s.userId), dev.sid, 'the lock belongs to the developer\'s session')
+        await page.type('input[type=password]:not([maxlength])', PASSWORD)
+        await page.$eval('input[type=password]:not([maxlength])', el => el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true })))
+        await page.waitForFunction(() => !localStorage.getItem('ohmyfinance_locked_at'), { timeout: 20000, polling: 200 })
+        await backHome('after unlock')
+      })
+      await check(L('E-browser-expiry-leaves'), async () => {
+        await enterInPage()
+        const s = await store(), claims = jwt.decode(s.token)
+        await col('developerentries').updateOne({ _id: new ObjectId(claims.eid) }, { $set: { endsAt: new Date(Date.now() + 65000) } })
+        const short = sign({ ...claims, exp: Math.floor(Date.now() / 1000) + 65 }, {})
+        await page.evaluate((s, t) => { const x = eval(s); x.token = t; x.persistSession(); x.scheduleRefresh() }, STORE, short)
+        await backHome('expiry')
+      })
+      await check(L('E-browser-over-30-minutes-inside'), async () => {
+        await enterInPage()
+        const kept = await page.evaluate(() => JSON.parse(localStorage.getItem('ohmyfinance_developer_session') || 'null'))
+        assert.ok(kept?.tokens?.refreshToken, 'the developer\'s own session is kept under its own key')
+        const { iat, exp, ...keptClaims } = jwt.decode(kept.tokens.accessToken)
+        const expired = jwt.sign({ ...keptClaims, exp: Math.floor(Date.now() / 1000) - 120 }, secret)
+        await page.evaluate(v => { const k = JSON.parse(localStorage.getItem('ohmyfinance_developer_session')); k.tokens.accessToken = v; localStorage.setItem('ohmyfinance_developer_session', JSON.stringify(k)) }, expired)
+        await page.click('[data-developer-entry-end]')
+        await backHome('leaving after the developer\'s own token ran out')
+        await page.waitForFunction((s, old) => eval(s).token !== old, { timeout: 20000, polling: 200 }, STORE, expired)
+        const r = await page.evaluate(async () => (await fetch('/api/developer/entries', { headers: { Authorization: 'Bearer ' + document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('user').token } })).status)
+        assert.equal(r, 200, 'renewed with the kept refresh token')
+      })
+      await check(L('E-browser-server-ended-returns-at-next-request'), async () => {
+        await enterInPage()
+        const s = await store(), claims = jwt.decode(s.token)
+        await col('developerentries').updateOne({ _id: new ObjectId(claims.eid) }, { $set: { endedAt: new Date(), endedHow: 'developer' } })
+        assert.ok(jwt.decode(s.token).exp * 1000 > Date.now() + 600000, 'the token is still valid')
+        await page.click('a[href="/intake"]')
+        await backHome('ended on the server')
+        // The developer's page after this run: the account list and the record, one entry opened (screenshots for the build report).
+        await page.reload({ waitUntil: 'networkidle2' }); await page.waitForSelector('[data-developer-entries] [data-developer-entry]', { timeout: 20000 })
+        await shot(page, 'developer-page')
+        await page.click('[data-developer-entries] [data-developer-entry] button[aria-expanded]'); await pause(300)
+        await page.$eval('[data-developer-entries]', e => e.scrollIntoView()); await pause(200)
+        await shot(page, 'developer-record')
+        await page.setViewport({ width: 390, height: 844 }); await page.reload({ waitUntil: 'networkidle2' }); await page.waitForSelector('[data-developer-page]', { timeout: 20000 })
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no sideways overflow on a phone width')
+        await shot(page, 'developer-page-narrow')
+        await enterInPage().catch(() => {}); await page.setViewport({ width: 390, height: 844 }); await shot(page, 'entry-banner-narrow')
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'the banner does not overflow a phone width')
+        await page.click('[data-developer-entry-end]'); await backHome('narrow 終了'); await page.setViewport({ width: 1440, height: 900 })
+      })
+      await check(L('E-browser-ordinary-401-then-renewal'), async () => {
+        if (context) await context.close(); context = await browser.createBrowserContext(); page = await context.newPage(); errors = []; page.on('pageerror', e => errors.push(e.message))
+        const session = await signIn(cust)
+        await page.goto(origin + '/login', { waitUntil: 'domcontentloaded' })
+        await page.evaluate(value => localStorage.setItem('ohmyfinance_session', value), JSON.stringify({ sessionId: 'test-' + crypto.randomUUID(), tokens: session.tokens, user: session.user, organizations: session.organizations, currentOrganization: session.organizations[0] }))
+        await page.goto(origin + '/intake', { waitUntil: 'networkidle2' }); await waitText('CUSTMARK')
+        const rejected = jwt.sign({ userId: cust.sid, email: cust.email, sv: 0, jti: crypto.randomUUID() }, crypto.randomBytes(32).toString('hex'), { expiresIn: '20m' })
+        const result = await page.evaluate(async (s, bad) => { const x = eval(s); x.token = bad; const r = await fetch('/api/finance-intake/records', { headers: { Authorization: 'Bearer ' + bad } }); return { status: r.status, renewed: x.token !== bad, authenticated: x.isAuthenticated } }, STORE, rejected)
+        assert.deepEqual(result, { status: 200, renewed: true, authenticated: true }, 'a 401 is followed by renewal for an ordinary user')
+        assert.equal((await store()).entry, null)
+      })
+      if (context) await context.close().catch(() => {})
+    }
   } catch (error) {
     results.push({ label: 'SETUP', ok: false, why: String(error?.stack || error).slice(0, 1500) })
     console.log('FAIL SETUP :: ' + String(error?.stack || error).slice(0, 1500))

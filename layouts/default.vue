@@ -3,7 +3,11 @@
     <AppSidebar :is-open="isSidebarOpen" @close="isSidebarOpen = false" />
 
     <div class="lg:pl-64 flex min-w-0 flex-col flex-1">
-      <AppHeader data-app-header class="!z-30" @toggle-sidebar="isSidebarOpen = !isSidebarOpen" />
+      <!-- The developer entry banner (plan omf-order-mapping §4.8) rides with the header, so it stays in view and Navi clears both. -->
+      <div class="sticky top-0 z-30">
+        <DeveloperEntryBanner />
+        <AppHeader data-app-header class="!z-30" @toggle-sidebar="isSidebarOpen = !isSidebarOpen" />
+      </div>
 
       <main class="navi-host min-w-0 flex-1 p-4 md:p-6">
         <div class="navi-page-frame min-w-0 max-w-7xl mx-auto">
@@ -29,6 +33,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import AssistantPanel from '~/components/finance/AssistantPanel.vue'
+import DeveloperEntryBanner from '~/components/common/DeveloperEntryBanner.vue'
 import { useThemeStore } from '../stores/theme'
 import { useLanguageStore } from '../stores/language'
 import { useActivityTracker } from '~/composables/useActivityTracker'

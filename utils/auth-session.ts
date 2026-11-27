@@ -15,19 +15,27 @@ export interface AuthSessionResponse {
 }
 
 // Decoding only schedules renewal. The server always verifies the signature.
+// A developer entry token (plan omf-order-mapping §4.3) names no user: its browser-only claims forUser and forCompany are handed on as
+// userId and organizationId, so every page that reads the person and company from the token holds the entered customer's data. The
+// server never reads those two claims. An ordinary token is returned exactly as before.
 export function tokenClaims(token: unknown): Record<string, any> | null {
   if (typeof token !== 'string') return null
   try {
     const part = token.split('.')[1]
     if (!part) return null
     const claims = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')))
+    if (claims?.type === 'entry') {
+      return typeof claims.exp === 'number' && typeof claims.forUser === 'string' && claims.forUser
+        ? { ...claims, userId: claims.forUser, organizationId: typeof claims.forCompany === 'string' && claims.forCompany ? claims.forCompany : undefined }
+        : null
+    }
     return typeof claims.exp === 'number' && typeof claims.userId === 'string' ? claims : null
   } catch { return null }
 }
 
 export function accessExpiry(token: unknown): number {
   const claims = tokenClaims(token)
-  return claims && (!claims.type || claims.type === 'access') ? claims.exp * 1000 : 0
+  return claims && (!claims.type || claims.type === 'access' || claims.type === 'entry') ? claims.exp * 1000 : 0
 }
 
 export function validRefresh(token: unknown): boolean {

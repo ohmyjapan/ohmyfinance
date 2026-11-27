@@ -812,7 +812,9 @@
       "import": "インポート",
       "export": "エクスポート",
       "backup": "バックアップ",
-      "restore": "復元"
+      "restore": "復元",
+      "developer_entered": "開発者が入室",
+      "developer_left": "開発者が退室"
     },
     "entityTypes": {
       "transaction": "取引",
@@ -1939,6 +1941,48 @@
     "onlyDevelopers": "この画面は開発者だけが使えます。",
     "checking": "確認しています…",
     "howListed": "開発者は、サーバーでの運用コマンドでだけ登録されます。画面やアプリの操作からは登録できません。",
-    "loadFailed": "開発者の情報を読み込めませんでした。"
+    "loadFailed": "開発者の情報を読み込めませんでした。",
+    "accountsTitle": "お客様のアカウントに入る",
+    "accountsHelp": "入室は60分で終わります。中ではお客様の画面をそのまま見られ、変更は購入受付の取込・編集だけができます。お客様の活動ログに「開発者が入室」「開発者が退室」が残ります。",
+    "search": "名前・メール・会社で絞り込む",
+    "noAccounts": "入れるアカウントがありません。",
+    "noMatch": "条件に合うアカウントがありません。",
+    "noCompany": "会社なし",
+    "choose": "入る",
+    "company": "入る会社",
+    "reason": "理由（任意）",
+    "reasonPlaceholder": "例: 取込結果の確認",
+    "enter": "このアカウントに入る",
+    "entering": "入室しています…",
+    "cancel": "キャンセル",
+    "enterFailed": "入室できませんでした。",
+    "entriesTitle": "入室の記録",
+    "entriesHelp": "入室ごとに、すべてのリクエストを記録しています。変更を先に表示します。",
+    "noEntries": "まだ入室の記録はありません。",
+    "open": "入室中",
+    "until": "{time} まで",
+    "endedAt": "{time} 終了",
+    "counts": "リクエスト {requests} 件・変更 {changes} 件・拒否 {refused} 件",
+    "showLines": "記録を見る",
+    "hideLines": "記録を閉じる",
+    "refusedMark": "拒否",
+    "noReason": "理由なし",
+    "how": {
+      "developer": "開発者が終了",
+      "expired": "時間切れ",
+      "removed": "開発者の登録解除",
+      "password_changed": "開発者のパスワード変更",
+      "target_deactivated": "アカウント停止",
+      "replaced": "次の入室で終了",
+      "developer_deactivated": "開発者のアカウント停止",
+      "target_is_developer": "相手が開発者に登録",
+      "token_mismatch": "別のトークン"
+    },
+    "banner": {
+      "label": "開発者の入室",
+      "inside": "開発者として入室中",
+      "timeLeft": "残り {minutes} 分",
+      "end": "終了"
+    }
   }
 }

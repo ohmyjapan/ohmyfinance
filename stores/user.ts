@@ -37,6 +37,19 @@ const storage = () => typeof window === 'undefined' ? null : window.localStorage
 const readJSON = (key: string) => {
     try { return JSON.parse(storage()?.getItem(key) || 'null') } catch { return null }
 }
+// Developer entry (plan omf-order-mapping §4.8): while inside, the developer's own session is kept under this second key and the entry
+// token is the session, with no refresh token. Leaving puts the kept session back and opens /developer.
+export const DEVELOPER_SESSION_KEY = 'ohmyfinance_developer_session'
+export interface DeveloperEntryState {
+    id: string
+    user: { id: string; email: string; name: string }
+    organization: { id: string; name: string } | null
+    reason?: string
+    startedAt: string
+    endsAt: string
+}
+const newSessionId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
+const openDeveloperPage = () => { if (typeof window !== 'undefined' && typeof window.location?.assign === 'function') window.location.assign('/developer') }
 
 export const useUserStore = defineStore('user', {
     state: () => ({
@@ -52,7 +65,8 @@ export const useUserStore = defineStore('user', {
         tempToken: null as string | null,
         initialized: false,
         sessionUnavailable: false,
-        sessionId: null as string | null
+        sessionId: null as string | null,
+        entry: null as DeveloperEntryState | null
     }),
     getters: {
         fullName: state => state.user?.name || '',
@@ -75,13 +89,22 @@ export const useUserStore = defineStore('user', {
             target.setItem('auth_tokens', JSON.stringify(tokens))
             if (this.currentOrganization?.id) target.setItem('current_organization_id', this.currentOrganization.id)
             else target.removeItem('current_organization_id')
-            target.setItem(SESSION_KEY, JSON.stringify({ sessionId: this.sessionId, tokens, user: this.user, organizations: this.organizations, currentOrganization: this.currentOrganization }))
+            target.setItem(SESSION_KEY, JSON.stringify({ sessionId: this.sessionId, tokens, user: this.user, organizations: this.organizations, currentOrganization: this.currentOrganization, ...(this.entry ? { entry: this.entry } : {}) }))
         },
 
         initAuth(force = false) {
             if (!storage() || (this.initialized && !force)) return
             this.initialized = true
             const session = readJSON(SESSION_KEY)
+            if (session?.entry) {
+                // An entry session: the entry token and no refresh token. Expired on load → back to the developer's own session.
+                const entryToken = session.tokens?.accessToken
+                if (tokenClaims(entryToken)?.type !== 'entry' || accessExpiry(entryToken) <= Date.now() || typeof session.entry.id !== 'string') {
+                    this.entry = null
+                    if (this.restoreDeveloperSession()) { this.initAuth(true); openDeveloperPage() } else this.clearSession()
+                    return
+                }
+            }
             const legacy = readJSON('auth_tokens')
             const tokens = session?.tokens || (storage()?.getItem('auth_token') ? {
                 accessToken: storage()?.getItem('auth_token'), refreshToken: storage()?.getItem('auth_refresh_token')
@@ -98,9 +121,76 @@ export const useUserStore = defineStore('user', {
             this.user = session?.user || readJSON('auth_user')
             this.organizations = session?.organizations || []
             this.currentOrganization = session?.currentOrganization || null
+            this.entry = session?.entry && tokenClaims(access)?.type === 'entry' ? session.entry : null
             this.isAuthenticated = true
             this.startSessionRuntime()
             this.scheduleRefresh()
+        },
+
+        // The developer's own session, kept while inside an entry, back in place (storage only; initAuth then loads it).
+        restoreDeveloperSession(): boolean {
+            const target = storage(), kept = readJSON(DEVELOPER_SESSION_KEY)
+            target?.removeItem(DEVELOPER_SESSION_KEY)
+            if (!target || !kept?.tokens?.accessToken) return false
+            const tokens = { accessToken: kept.tokens.accessToken, refreshToken: kept.tokens.refreshToken || null }
+            target.setItem('auth_token', tokens.accessToken || '')
+            target.setItem('auth_refresh_token', tokens.refreshToken || '')
+            target.setItem('auth_user', JSON.stringify(kept.user || null))
+            target.setItem('auth_tokens', JSON.stringify(tokens))
+            if (kept.currentOrganization?.id) target.setItem('current_organization_id', kept.currentOrganization.id)
+            else target.removeItem('current_organization_id')
+            target.setItem(SESSION_KEY, JSON.stringify({ sessionId: newSessionId(), tokens, user: kept.user || null, organizations: kept.organizations || [], currentOrganization: kept.currentOrganization || null }))
+            return true
+        },
+
+        // Enter a customer's account (POST /api/developer/entries answered): the developer's session is kept under its own key, the entry
+        // token takes its place with no refresh token and a new session id. acceptSession/adoptTokens are not used: they demand a refresh token.
+        enterAccount(data: { token: string; entry: DeveloperEntryState; user: User; organizations?: any[]; currentOrganization?: any }) {
+            const claims = tokenClaims(data?.token)
+            if (!this.isAuthenticated || this.entry || claims?.type !== 'entry' || accessExpiry(data.token) <= Date.now() || !data.entry?.id || claims.userId !== String(data.user?.id ?? data.user?._id ?? '')) {
+                throw new Error('Invalid entry response')
+            }
+            storage()?.setItem(DEVELOPER_SESSION_KEY, JSON.stringify({ sessionId: this.sessionId, tokens: { accessToken: this.token, refreshToken: this.refreshToken }, user: this.user, organizations: this.organizations, currentOrganization: this.currentOrganization }))
+            const rt = runtime(this)
+            rt.epoch++
+            rt.refresh = null
+            rt.profile = null
+            rt.profileLoaded = true
+            if (rt.timer) clearTimeout(rt.timer)
+            rt.timer = null
+            this.token = data.token
+            this.refreshToken = null
+            this.sessionId = newSessionId()
+            this.user = data.user
+            this.organizations = data.organizations || []
+            this.currentOrganization = data.currentOrganization || null
+            this.entry = data.entry
+            this.sessionUnavailable = false
+            this.persistSession()
+            this.scheduleRefresh()
+        },
+
+        // Leave the entry: 終了, its time (the browser leaves when renewal would be due, up to a minute before the server's end), the
+        // screen lock, a 401 inside (the server ended it), or another tab. The server is told while the token still holds; the kept
+        // session is put back (its access token is renewed with the kept refresh token as on any load) and /developer opens. The
+        // screen lock is not reset: it then asks for the developer's own password or PIN.
+        async leaveEntry(how: 'developer' | 'expired' | 'ended' | 'lock' = 'developer') {
+            if (!this.entry) return
+            const token = this.token
+            if (how !== 'ended' && token && accessExpiry(token) > Date.now()) {
+                try { void fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: '{}', keepalive: true }).catch(() => {}) } catch { /* leaving never waits for the server */ }
+            }
+            const rt = runtime(this)
+            rt.epoch++
+            rt.refresh = null
+            rt.profile = null
+            rt.profileLoaded = false
+            if (rt.timer) clearTimeout(rt.timer)
+            rt.timer = null
+            this.entry = null
+            if (this.restoreDeveloperSession()) this.initAuth(true)
+            else this.clearSession()
+            openDeveloperPage()
         },
 
         startSessionRuntime() {
@@ -114,12 +204,20 @@ export const useUserStore = defineStore('user', {
             document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake() })
             window.addEventListener('storage', event => {
                 if (event.key !== SESSION_KEY) return
+                const before = this.entry?.id || null
                 rt.epoch++
                 rt.refresh = null
                 rt.profileLoaded = false
                 rt.profile = null
-                if (event.newValue === null) this.clearSession(false)
+                if (event.newValue === null) {
+                    // Another tab cleared the session: inside an entry this tab leaves it instead (the kept session, when one is left).
+                    if (this.entry) { this.entry = null; if (this.restoreDeveloperSession()) this.initAuth(true); else this.clearSession(false) }
+                    else this.clearSession(false)
+                }
                 else { this.initAuth(true); void this.ensureSession() }
+                // All tabs share the stored session: entering or leaving in one tab takes every tab in or out, with a fresh load.
+                const after = this.entry?.id || null
+                if (before !== after && this.isAuthenticated) { if (after) window.location.reload(); else openDeveloperPage() }
             })
         },
 
@@ -162,8 +260,8 @@ export const useUserStore = defineStore('user', {
                         rt.profileLoaded = true
                         this.persistSession()
                     } else if (response.status === 401 || response.status === 403) {
-                        // A transient refresh must never invalidate a stored session.
-                        if (!this.sessionUnavailable) this.clearSession()
+                        // A transient refresh must never invalidate a stored session. Inside an entry the entry is left instead.
+                        if (!this.sessionUnavailable) { if (this.entry) await this.leaveEntry('ended'); else this.clearSession() }
                     } else this.sessionUnavailable = true
                 } catch { if (epoch === rt.epoch) this.sessionUnavailable = true }
                 return this.isAuthenticated
@@ -278,13 +376,16 @@ export const useUserStore = defineStore('user', {
             this.requires2FA = false
             this.tempToken = null
             this.sessionUnavailable = false
+            this.entry = null
             resetActivitySession()
             if (persist && storage()) {
-                for (const key of ['auth_token', 'auth_refresh_token', 'auth_user', 'auth_tokens', 'current_organization_id', SESSION_KEY]) storage()!.removeItem(key)
+                for (const key of ['auth_token', 'auth_refresh_token', 'auth_user', 'auth_tokens', 'current_organization_id', SESSION_KEY, DEVELOPER_SESSION_KEY]) storage()!.removeItem(key)
             }
         },
 
         async logout() {
+            // Inside an entry, signing out is leaving it (終了): the developer stays signed in as themselves.
+            if (this.entry) { await this.leaveEntry('developer'); return true }
             const token = this.token, refreshToken = this.refreshToken
             this.clearSession()
             if (token || refreshToken) {
@@ -302,6 +403,8 @@ export const useUserStore = defineStore('user', {
             const rt = runtime(this)
             if (rt.refresh) return rt.refresh
             if (!validRefresh(this.refreshToken)) {
+                // Inside a developer entry there is no refresh token: renewal time is the entry's end, so the browser leaves it.
+                if (this.entry) { await this.leaveEntry(accessExpiry(this.token) > Date.now() ? 'expired' : 'ended'); return 'rejected' }
                 // An unexpired access token still permits use until its actual expiry.
                 if (accessExpiry(this.token) > Date.now()) { this.scheduleRefresh(true); return 'refreshed' }
                 this.clearSession()
