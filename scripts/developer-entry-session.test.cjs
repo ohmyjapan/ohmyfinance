@@ -170,3 +170,52 @@ test('a 401 from /api/auth/me inside leaves the entry; another tab clearing the 
   for (const cb of h2.events.storage || []) cb({ key: 'ohmyfinance_session', newValue: null })
   assert.equal(h2.store.entry, null); assert.equal(h2.store.isAuthenticated, true); assert.equal(h2.store.user.id, 'aaaaaaaaaaaaaaaaaaaaaaaa')
 })
+
+// Review finding 2: two tabs (two stores over one shared storage) inside one entry reach its time limit together. Tab A leaves first
+// and puts the developer's session back; tab B leaves before its storage event for that change has run, so it finds no kept copy.
+const developerSignedIn = (tab, name, stored) => {
+  assert.equal(tab.store.isAuthenticated, true, name + ' is signed in'); assert.equal(tab.store.entry, null, name + ' left the entry')
+  assert.equal(tab.store.user.id, 'aaaaaaaaaaaaaaaaaaaaaaaa', name + ' as the developer'); assert.ok(tab.store.refreshToken, name + ' with the developer\'s refresh token')
+  assert.equal(tab.store.token, stored.tokens.accessToken, name + ' holds the stored session')
+}
+const insideTwoTabs = () => {
+  const saved = new Map(), a = harness(saved)
+  a.handle(async () => json({ success: true })); a.signInDeveloper(); a.store.enterAccount(a.entered())
+  const b = harness(saved); b.handle(async () => json({ success: true })); b.store.initAuth()
+  assert.equal(b.store.entry?.id, 'eeeeeeeeeeeeeeeeeeeeeeee', 'tab B is inside the same entry')
+  return { saved, a, b }
+}
+
+test('two tabs leave one entry at once: the second loads the developer session the first put back instead of clearing it', async () => {
+  const { saved, a, b } = insideTwoTabs()
+  await a.store.leaveEntry('expired')
+  await b.store.leaveEntry('expired')
+  const stored = JSON.parse(saved.get('ohmyfinance_session') || 'null')
+  assert.ok(stored, 'a session is still stored'); assert.equal(stored.entry, undefined, 'not an entry session'); assert.equal(stored.user.id, 'aaaaaaaaaaaaaaaaaaaaaaaa'); assert.ok(stored.tokens.refreshToken)
+  developerSignedIn(a, 'tab A', stored); developerSignedIn(b, 'tab B', stored)
+})
+
+test('the same at a storage event: a tab inside that hears "session cleared" after the developer session was put back loads it', async () => {
+  const { saved, a, b } = insideTwoTabs()
+  await a.store.leaveEntry('developer')
+  for (const cb of b.events.storage || []) cb({ key: 'ohmyfinance_session', newValue: null })
+  const stored = JSON.parse(saved.get('ohmyfinance_session') || 'null')
+  assert.ok(stored && !stored.entry, 'the developer session is still stored'); developerSignedIn(b, 'tab B', stored)
+})
+
+test('a real clear still signs out: nothing kept, and no session stored or the entry session still stored', async () => {
+  const inside = (ttl = 3600) => { const h = harness(); h.handle(async () => json({ success: true })); h.signInDeveloper(); h.store.enterAccount(h.entered(h.entryToken({}, ttl))); h.saved.delete('ohmyfinance_developer_session'); return h }
+  const signedOut = (h, label) => { assert.equal(h.store.isAuthenticated, false, label); assert.equal(h.store.entry, null, label); assert.equal(h.store.token, null, label) }
+  const leftWithEntryStored = inside(); await leftWithEntryStored.store.leaveEntry('developer')
+  signedOut(leftWithEntryStored, 'leaving, the entry session still stored'); assert.equal(leftWithEntryStored.saved.get('ohmyfinance_session'), undefined, 'and removed')
+  const leftWithNothing = inside(); leftWithNothing.saved.delete('ohmyfinance_session'); await leftWithNothing.store.leaveEntry('developer')
+  signedOut(leftWithNothing, 'leaving, no session stored')
+  const expired = inside(120), loaded = harness(expired.saved); loaded.advance(130000); loaded.store.initAuth()
+  signedOut(loaded, 'loading an expired entry session'); assert.equal(expired.saved.get('ohmyfinance_session'), undefined, 'and removed')
+  const heardWithNothing = inside(); heardWithNothing.saved.delete('ohmyfinance_session')
+  for (const cb of heardWithNothing.events.storage || []) cb({ key: 'ohmyfinance_session', newValue: null })
+  signedOut(heardWithNothing, 'another tab cleared the session')
+  const heardWithEntryStored = inside()
+  for (const cb of heardWithEntryStored.events.storage || []) cb({ key: 'ohmyfinance_session', newValue: null })
+  signedOut(heardWithEntryStored, 'a "session cleared" event with the entry session still stored')
+})

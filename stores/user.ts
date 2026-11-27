@@ -48,6 +48,9 @@ export interface DeveloperEntryState {
     startedAt: string
     endsAt: string
 }
+// Leaving with no kept copy: another tab (all tabs share the stored session) may already have put the developer's session back. When the
+// stored session is no longer an entry session, this tab goes on with it; no session stored, or still an entry session, is a real clear.
+const ordinarySessionStored = () => { const session = readJSON(SESSION_KEY); return !!session?.tokens?.accessToken && !session.entry }
 const newSessionId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const openDeveloperPage = () => { if (typeof window !== 'undefined' && typeof window.location?.assign === 'function') window.location.assign('/developer') }
 
@@ -101,7 +104,7 @@ export const useUserStore = defineStore('user', {
                 const entryToken = session.tokens?.accessToken
                 if (tokenClaims(entryToken)?.type !== 'entry' || accessExpiry(entryToken) <= Date.now() || typeof session.entry.id !== 'string') {
                     this.entry = null
-                    if (this.restoreDeveloperSession()) { this.initAuth(true); openDeveloperPage() } else this.clearSession()
+                    if (this.restoreDeveloperSession() || ordinarySessionStored()) { this.initAuth(true); openDeveloperPage() } else this.clearSession()
                     return
                 }
             }
@@ -188,7 +191,7 @@ export const useUserStore = defineStore('user', {
             if (rt.timer) clearTimeout(rt.timer)
             rt.timer = null
             this.entry = null
-            if (this.restoreDeveloperSession()) this.initAuth(true)
+            if (this.restoreDeveloperSession() || ordinarySessionStored()) this.initAuth(true)
             else this.clearSession()
             openDeveloperPage()
         },
@@ -211,7 +214,7 @@ export const useUserStore = defineStore('user', {
                 rt.profile = null
                 if (event.newValue === null) {
                     // Another tab cleared the session: inside an entry this tab leaves it instead (the kept session, when one is left).
-                    if (this.entry) { this.entry = null; if (this.restoreDeveloperSession()) this.initAuth(true); else this.clearSession(false) }
+                    if (this.entry) { this.entry = null; if (this.restoreDeveloperSession() || ordinarySessionStored()) this.initAuth(true); else this.clearSession(false) }
                     else this.clearSession(false)
                 }
                 else { this.initAuth(true); void this.ensureSession() }
