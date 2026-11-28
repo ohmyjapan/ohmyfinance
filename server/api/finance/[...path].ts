@@ -5,7 +5,7 @@ import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3
 import { calendarCompany } from '../../utils/calendarAccess'
 import { requireLedgerRegistrar } from '../../utils/ledgerRegistrarAccess'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
-import { describeAplusStage, ownerAplusHistory, readAplusStage } from '../../../shared/aplus-run-status'
+import { describeAplusStage, ownerAplusHistory, readAplusStage, readLegacyAplusStage } from '../../../shared/aplus-run-status'
 import { aplusExportReservation } from '../../services/financeAplusExport'
 import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, AUTO_SYNC_PROVIDERS, queueSync, syncSource, claimCapabilities, AMEX_RECENT_CAPABILITY, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
 import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
@@ -51,9 +51,8 @@ export default defineEventHandler(async event => {
         const typed = entry ? extension : readAplusStage(message)
         // Older installed Aplus PCs report one terminal summary without an attempt identifier.
         // Group that terminal by job; preserve the current message and journal only fixed enums.
-        const legacy = !typed && !message.startsWith('APLUS ') && (body.state === 'failed' || (body.state === 'complete' &&
-          (message === 'すべての確定明細を取得済み' || /^確定明細 [0-9]{1,6}件・未請求 [0-9]{1,6}件を保存(?:（未提供: [0-9, -]+）)?$/u.test(message))))
-        const stage = typed || (legacy ? {attempt:'legacy-terminal', stage:'complete' as const, outcome:body.state === 'failed' ? 'failed' as const : 'succeeded' as const, month:undefined} : null)
+        const legacy = typed ? null : readLegacyAplusStage(body.state, message)
+        const stage = typed || legacy
         const lastMessage = typed ? describeAplusStage(typed) : message.startsWith('APLUS ') ? '取得状況を更新しました' : message.slice(0,200)
         const fields = { jobState: body.state, jobLeaseUntil: new Date(Date.now() + 180000), lastMessage }
         const filter = { ...scope, _id: { $in: device.accountIds, $eq: id(body.accountId) }, jobId: body.jobId, jobDeviceId: device._id, jobState: { $in: ['running','verification_required'] } }
@@ -64,7 +63,10 @@ export default defineEventHandler(async event => {
               { $eq: ['$$last.jobId', '$jobId'] }, { $eq: ['$$last.attempt', stage.attempt] },
               { $eq: ['$$last.stage', stage.stage] }, { $eq: ['$$last.outcome', stage.outcome] },
               { $eq: ['$$last.state', body.state] }, { $eq: [{ $ifNull: ['$$last.month', null] }, stage.month ?? null] },
-            ] }, '$$history', { $slice: [{ $concatArrays: [[{ ...stage, state:body.state, jobId: '$jobId', at: '$$NOW' }], '$$history'] }, 256] }],
+            ] }, '$$history', { $slice: [{ $concatArrays: [[{ $mergeObjects: [
+                { ...stage, state:body.state, jobId: '$jobId', at: '$$NOW' },
+                { $cond: [{ $and: [{ $eq: ['$jobId','$autoSync.lastQueuedJobId'] }, { $eq: [{ $type: '$autoSync.lastQueuedDay' },'string'] }] }, { scheduledDay:'$autoSync.lastQueuedDay' }, {}] },
+              ] }], '$$history'] }, 256] }],
           } },
         }, { $ifNull: ['$aplusRunHistory','$$REMOVE'] } ] } } }] : { $set: fields }
         const account = await FinancialAccount.findOneAndUpdate(typed ? { ...filter, provider:'aplus' } : filter, update, { new: true })
@@ -105,6 +107,7 @@ export default defineEventHandler(async event => {
       if (method === 'GET') {
         const accounts = await FinancialAccount.find({ ownerId }).select('-commitLease -commitLeaseUntil +aplusRunHistory').sort({ createdAt: 1 }).lean()
         return { accounts: await Promise.all(accounts.map(async account => ({ ...account,
+          ...(account.provider === 'aplus' && account.lastMessage === 'すべての確定明細を取得済み' ? {lastMessage:'PCからの保存報告：確定明細 0件・未請求 0件'} : {}),
           ...(account.provider==='aplus' && account.aplusRunHistory ? {aplusRunHistory:ownerAplusHistory(account.aplusRunHistory as any,account)} : {}),
           fiscalPeriod: await accountFiscalPeriod(ownerId, account) }))) }
       }

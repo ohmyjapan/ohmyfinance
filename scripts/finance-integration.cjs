@@ -78,6 +78,50 @@ async function recentJobs({db,call,request,token,other,pass,csv,row}){
  await db.collection('financialaccounts').updateOne({_id:new ObjectId(aplusId)},{$set:{jobId:'recent-aplus-job',jobState:'queued',jobRequestedAt:new Date()}});const third=await sync({source:'recent'});assert.equal(third.status,200,JSON.stringify(third));
  const first=await claim(CAPABLE);assert.deepEqual([first.data.account?._id,Array.isArray(first.data.covered?.statements)],[aplusId,true],'recent-api:closed-work-first-aplus-reply-unchanged');const next=(await claim(CAPABLE)).data.account;assert.equal(next?.jobSource,'recent','recent-api:then-the-recent-job');
  pass('closed jobs stay closed after a recent job for legacy and capable collectors, a lost recent job resumes only on a capable one, and Aplus claims are unchanged');
+ const run = crypto.randomUUID();
+ const report = (message, state='running') => call('/api/finance/collector/status', {
+   method:'POST', token:dev, body:{accountId:aplusId, jobId:first.data.account.jobId, state, message}
+ });
+ const step = 'APLUS '+run+' sign_in started';
+ for (const reply of await Promise.all([report(step), report(step)])) assert.equal(reply.status,200);
+ const reserve = (attemptId, operation='reserve') => call('/api/finance/collector/export-reservation', {
+   method:'POST', token:dev, body:{accountId:aplusId, jobId:first.data.account.jobId, month:'2026-12', attemptId, operation}
+ });
+ const attempts = [crypto.randomUUID(), crypto.randomUUID()];
+ const grants = await Promise.all(attempts.map(attempt => reserve(attempt)));
+ assert(grants.every(result => result.status === 200));
+ const claimed = grants.findIndex(result => result.data.reserved);
+ assert(claimed >= 0 && grants[1-claimed].data.reason === 'uncertain');
+ assert.equal((await reserve(attempts[claimed])).data.reserved,true);
+ assert.equal((await reserve(attempts[1-claimed],'withdraw')).data.withdrawn,true);
+ assert.equal((await reserve(attempts[claimed])).data.reserved,true);
+ assert.equal((await reserve(attempts[claimed],'withdraw')).data.withdrawn,true);
+ assert.equal((await reserve(attempts[1-claimed])).data.reserved,false);
+ assert.equal((await reserve(attempts[claimed])).data.reserved,false);
+ const freshNonce=crypto.randomUUID();
+ assert.equal((await reserve(freshNonce)).data.reserved,true);
+ assert.equal((await reserve(freshNonce,'withdraw')).data.withdrawn,true);
+ pass('only the dispatch which owns the account-month reservation can withdraw its pre-submit attempt');
+ assert.equal((await report('APLUS '+run+' sign_in unrecognized value')).status,200);
+ assert.equal((await report('APLUS '+run+' acknowledgment missing_receipt','failed')).status,200);
+ const historyAccount=(await call('/api/finance/accounts',{token})).data.accounts.find(account=>account._id===aplusId);
+ assert.deepEqual(historyAccount.aplusRunHistory.map(event=>[event.stage,event.outcome]), [
+   ['acknowledgment','missing_receipt'],['sign_in','started']
+ ]);
+ assert.equal(historyAccount.lastMessage,'受領確認 · 受領記録がありません');
+ pass('Aplus owner history retains distinct safe transitions and identifies a missing receipt');
+ const legacyId=crypto.randomUUID(), aplusScope={_id:new ObjectId(aplusId)};
+ await db.collection('financialaccounts').updateOne(aplusScope,{$set:{jobId:legacyId,jobState:'running','autoSync.lastQueuedJobId':legacyId,'autoSync.lastQueuedDay':'2026-12-03'}});
+ const legacy=(state,message)=>call('/api/finance/collector/status',{method:'POST',token:dev,body:{accountId:aplusId,jobId:legacyId,state,message}});
+ for(const reply of await Promise.all([legacy('verification_required','確認'),legacy('verification_required','確認')]))assert.equal(reply.status,200);
+ assert.equal((await legacy('complete','すべての確定明細を取得済み')).status,200);
+ await db.collection('financialaccounts').updateOne(aplusScope,{$set:{'autoSync.lastQueuedJobId':crypto.randomUUID(),'autoSync.lastQueuedDay':'2026-12-04'}});
+ const old=(await call('/api/finance/accounts',{token})).data.accounts.find(a=>a._id===aplusId),journal=old.aplusRunHistory.filter(e=>e.jobId===legacyId);
+ assert.deepEqual(journal.map(e=>[e.state,e.scheduledDay]),[['complete','2026-12-03'],['verification_required','2026-12-03']]);
+ assert.deepEqual([journal[0].statementFiles,journal[0].pendingFiles,journal[0].month],[0,0,undefined]);
+ assert.equal(old.lastMessage,'PCからの保存報告：確定明細 0件・未請求 0件');
+ pass('prior scheduled day, reported file counts and one explicit prompt survive a subsequent scheduler slot; zero files do not assert coverage');
+
 }
 async function main(){
  let mongo,child,client,directory,logs='',checks=0;const pass=name=>{checks++;console.log('PASS '+name);};

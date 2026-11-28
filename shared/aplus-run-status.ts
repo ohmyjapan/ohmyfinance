@@ -39,6 +39,9 @@ export interface AplusStage {
   stage: keyof typeof stages
   outcome: keyof typeof outcomes
   month?: string
+  scheduledDay?: string
+  statementFiles?: number
+  pendingFiles?: number
   displayState?: 'interrupted' | 'stalled'
 }
 
@@ -54,8 +57,28 @@ export function readAplusStage(message: string): AplusStage | null {
   return { attempt: match[1], stage: match[2] as AplusStage['stage'], outcome: match[3] as AplusStage['outcome'], ...(match[4] ? { month: match[4] } : {}) }
 }
 
+export function readLegacyAplusStage(state: string, message: string): AplusStage | null {
+  if (message.startsWith('APLUS ')) return null
+  const base = { attempt: 'legacy-terminal', stage: 'complete' as const }
+  if (state === 'verification_required') return { ...base, outcome: 'operator_needed' }
+  if (state === 'failed') return { ...base, outcome: 'failed' }
+  if (state !== 'complete') return null
+  if (message === 'すべての確定明細を取得済み') return { ...base, outcome: 'succeeded', statementFiles: 0, pendingFiles: 0 }
+  const match = /^確定明細 (\d{1,6})件・未請求 (\d{1,6})件を保存(?:（未提供: 20\d{2}-(?:0[1-9]|1[0-2])(?:, 20\d{2}-(?:0[1-9]|1[0-2]))*）)?$/u.exec(message)
+  if (!match || match[0] !== message) return null
+  return { ...base, outcome: 'succeeded', statementFiles: Number(match[1]), pendingFiles: Number(match[2]) }
+}
+
 export function describeAplusStage(event: AplusStage) {
-  const step = (event.month ? event.month + ' · ' : '') + stages[event.stage] + ' · ' + outcomes[event.outcome]
+  const schedule = event.scheduledDay ? event.scheduledDay + ' 定時取得 · ' : ''
+  let detail = outcomes[event.outcome]
+  if (event.attempt === 'legacy-terminal') {
+    if (event.outcome === 'operator_needed') detail = 'PCで確認操作を求めました'
+    if (event.outcome === 'succeeded') detail = event.statementFiles === undefined || event.pendingFiles === undefined
+      ? '完了（取得件数の記録なし）'
+      : 'PCからの保存報告：確定明細 ' + event.statementFiles + '件・未請求 ' + event.pendingFiles + '件'
+  }
+  const step = schedule + (event.month ? event.month + ' · ' : '') + stages[event.stage] + ' · ' + detail
   if (event.displayState === 'interrupted') return step + ' の後に中断しました'
   if (event.displayState === 'stalled') return step + ' · PCからの応答を待っています'
   return step

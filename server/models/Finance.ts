@@ -17,7 +17,7 @@ const account = new Schema({
   // every closed enqueue in that same atomic write. Absent is the closed statement, as every job before it, so an account that never asked for recent activity never holds this field.
   jobSource: { type: String, enum: ['recent'] },
   jobDeviceId: oid, jobLeaseUntil: Date, lastAttemptAt: Date, lastSuccessAt: Date, lastMessage: String,
-    aplusRunHistory: { type: [new Schema({ jobId: String, attempt: String, stage: String, outcome: String, state: String, month: String, at: Date }, { _id: false })], default: undefined, select: false },
+    aplusRunHistory: { type: [new Schema({ jobId: String, attempt: String, stage: String, outcome: String, state: String, month: String, scheduledDay: String, statementFiles: Number, pendingFiles: Number, at: Date }, { _id: false })], default: undefined, select: false },
   aplusExportReservations: { type: [new Schema({ month: String, jobId: String, attemptId: String, deviceId: oid }, { _id: false })], default: undefined, select: false },
   aplusCancelledDispatches: { type: [String], default: undefined, select: false },
   // Automatic Aplus collection (plan omf-auto-sync-build-20261014 §2 A1): on/off per account, the JST hour after which one
