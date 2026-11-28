@@ -15,12 +15,16 @@ module.exports=async({db,call,request,upload,token,other,deviceToken,pass,csv,ro
  assert.equal((await post({...body,names:['Unrelated category']})).status,400);assert.equal((await post({...body,names:[...body.names,...body.names]})).status,400);
  assert.equal(await db.collection('transactioncategories').countDocuments(),categoriesBefore);assert.deepEqual(await before(),original);
  pass('source category registration rejects unauthorized, stale and arbitrary requests without writes');
+ const missing=await post(body);
+ assert.equal(missing.status,403);assert.equal(missing.data.statusMessage,'Shared master read only');
+ assert.equal(await db.collection('transactioncategories').countDocuments(),categoriesBefore);
+ await db.collection('transactioncategories').insertOne({name:body.names[0],isActive:true});
  const responses=await Promise.all([post(body),post(body)]);assert.ok(responses.every(r=>r.status===200),JSON.stringify(responses));assert.equal(responses[0].data.categories[0].id,responses[1].data.categories[0].id);
  const registered=await db.collection('transactioncategories').findOne({name:body.names[0]});assert.ok(registered);
  assert.equal((await post(body)).status,200);assert.deepEqual(await db.collection('transactioncategories').findOne({_id:registered._id}),registered);
  assert.equal(await db.collection('transactioncategories').countDocuments(),categoriesBefore+1);assert.deepEqual(await before(),original);
  view=await read();assert.equal(view.sourceCategories[0].matches,1);assert.equal(view.rows[0].preparation.missing.some(f=>f.key==='transactionCategoryId'),false);assert.equal(view.rows[0].preparation.state,'accounting');
- pass('source categories register once under concurrent retries and leave every financial document unchanged');
+ pass('concurrent retries reuse the existing shared category and leave every financial document unchanged');
  const draft=(await request('imports/'+batchId+'/drafts/2',undefined,'GET')).data;
  assert.equal(draft.values.transactionCategoryId,String(registered._id));
  const values={...draft.values,transactionCategoryId:'',notes:'Synthetic saved correction'};

@@ -121,8 +121,11 @@ module.exports = async function draftChecks({ db, call, request, upload, token, 
   assert.deepEqual(resumed.metadata, transaction.metadata); assert.equal(await db.collection('transactions').countDocuments(), countBefore + 1);
   pass('posting carries every transaction field and receipt through an immutable snapshot; retries and interrupted posting preserve identity without duplicate transactions');
 
-  const createReference = await request(`imports/${batchId}/references`, { field: 'transactionCategoryId', name: 'New synthetic classification' });
-  assert.equal(createReference.status, 200); assert.ok(createReference.data.references.transactionCategories.some(v => v._id === createReference.data.id));
+  const sharedReference = await request(`imports/${batchId}/references`, { field: 'transactionCategoryId', name: 'New synthetic classification' });
+  assert.equal(sharedReference.status, 403);
+  assert.equal(sharedReference.data.statusMessage, 'Shared master read only');
+  const createReference = await request(`imports/${batchId}/references`, { field: 'customerId', name: 'New synthetic customer' });
+  assert.equal(createReference.status, 200); assert.ok(createReference.data.references.customers.some(v => v._id === createReference.data.id));
   assert.equal((await call(`/api/finance/imports/${batchId}/references`, { method: 'POST', token: other, body: { field: 'customerId', name: 'Forbidden' } })).status, 404);
   assert.equal((await request(`imports/${batchId}/references`, { field: 'sourceId', name: 'Unsupported' })).status, 400);
   const legacyId = oid();
