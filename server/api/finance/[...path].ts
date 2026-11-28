@@ -5,12 +5,15 @@ import { defineEventHandler, getHeader, getQuery, readBody, setHeader } from 'h3
 import { calendarCompany } from '../../utils/calendarAccess'
 import { requireLedgerRegistrar } from '../../utils/ledgerRegistrarAccess'
 import { FinancialAccount, FinanceCollector, FinanceImport } from '../../models/Finance'
+import { describeAplusStage, ownerAplusHistory, readAplusStage } from '../../../shared/aplus-run-status'
+import { aplusExportReservation } from '../../services/financeAplusExport'
 import { fail, id, financeUser, financeDevice, ownedAccount, ownedImport, accountInput, accountFiscalPeriod, fiscalPeriodInput, saveAutoSync, AUTO_SYNC_PROVIDERS, queueSync, syncSource, claimCapabilities, AMEX_RECENT_CAPABILITY, createCollector, csvBody, acceptImport, reviewImport, reviewMapping, commitImport, commitCompanyImport, originalFile } from '../../services/financeService'
 import { recordBillingNotice, recordBillingMailStatus, coveredNoticeIds, bindCalendarCompany, billingMailInput, listNotices, linkNotice, importCalendarReview, linkImport } from '../../services/financeBillService'
 
 // A JSON artifact of the collector (notice, mail receipt): bounded by csvBody, parsed once, never echoed back.
-async function jsonArtifact(event: any) {
-  try { return JSON.parse((await csvBody(event)).toString('utf8')) } catch (error: any) { if (error?.statusCode) throw error; return fail(400, 'Invalid collector artifact JSON') }
+async function jsonArtifact(event: any, refusalCode: string) {
+  const bytes = await csvBody(event, refusalCode)
+  try { return JSON.parse(bytes.toString('utf8')) } catch { return fail(400, 'Invalid collector artifact JSON', refusalCode) }
 }
 
 export default defineEventHandler(async event => {
@@ -21,6 +24,7 @@ export default defineEventHandler(async event => {
       const device = await financeDevice(event)
       const scope = { ownerId: device.ownerId, _id: { $in: device.accountIds }, active: true, provider: { $in: ['amex', 'aplus'] } }
       if (parts[1] === 'accounts' && parts.length === 2 && method === 'GET') return { accounts: await FinancialAccount.find(scope).select('-commitLease -commitLeaseUntil').lean() }
+      if (parts[1] === 'export-reservation' && parts.length === 2 && method === 'POST') return await aplusExportReservation(device, await readBody(event))
       if (parts[1] === 'claim' && parts.length === 2 && method === 'POST') {
         // Case omf-amex-recent-activity-20261102. An older collector declares nothing (its body is {}), so a recent job is never handed to it, also not on a lease reclaim: it keeps every closed
         // job as before. guard:recent-claim — closed work goes first, and a recent claim leaves lastAttemptAt alone: that is the day's closed attempt, which a recent job must not use up.
@@ -36,12 +40,43 @@ export default defineEventHandler(async event => {
         // Billing notices already completed or owned by a member (read only): the collector never sends them again; a
         // pending or transient one is sent again and retried.
         const held: any[] = await FinanceImport.find({ ownerId: device.ownerId, accountId: account._id, provider: 'aplus', 'period.kind': 'statement' }).select('period').lean()
-        return { account, covered: { statements: [...new Set(held.map(b => b.period?.statementMonth).filter((m: any): m is string => typeof m === 'string'))], notices: await coveredNoticeIds(account._id) } }
+        return { account, covered: { stageMonth: true, detailedRefusals: true, entryConnectionReason: true, statements: [...new Set(held.map(b => b.period?.statementMonth).filter((m: any): m is string => typeof m === 'string'))], notices: await coveredNoticeIds(account._id) } }
       }
       if (parts[1] === 'status' && parts.length === 2 && method === 'POST') {
         const body = await readBody(event)
         if (!['running','verification_required','complete','failed'].includes(body?.state) || typeof body.jobId !== 'string') fail(400, 'Invalid job status')
-        const account = await FinancialAccount.findOneAndUpdate({ ...scope, _id: { $in: device.accountIds, $eq: id(body.accountId) }, jobId: body.jobId, jobDeviceId: device._id, jobState: { $in: ['running','verification_required'] } }, { $set: { jobState: body.state, jobLeaseUntil: new Date(Date.now() + 180000), lastMessage: typeof body.message === 'string' ? body.message.slice(0,200) : '' } }, { new: true })
+        const message = typeof body.message === 'string' ? body.message : ''
+        const extension = typeof body.aplusEntryStage === 'string' ? readAplusStage(body.aplusEntryStage) : null
+        const entry = extension?.stage === 'sign_in' && extension.outcome === 'entry_connection_failed' && !extension.month && body.state === 'failed'
+        const typed = entry ? extension : readAplusStage(message)
+        // Older installed Aplus PCs report one terminal summary without an attempt identifier.
+        // Group that terminal by job; preserve the current message and journal only fixed enums.
+        const legacy = !typed && !message.startsWith('APLUS ') && (body.state === 'failed' || (body.state === 'complete' &&
+          (message === 'すべての確定明細を取得済み' || /^確定明細 [0-9]{1,6}件・未請求 [0-9]{1,6}件を保存(?:（未提供: [0-9, -]+）)?$/u.test(message))))
+        const stage = typed || (legacy ? {attempt:'legacy-terminal', stage:'complete' as const, outcome:body.state === 'failed' ? 'failed' as const : 'succeeded' as const, month:undefined} : null)
+        const lastMessage = typed ? describeAplusStage(typed) : message.startsWith('APLUS ') ? '取得状況を更新しました' : message.slice(0,200)
+        const fields = { jobState: body.state, jobLeaseUntil: new Date(Date.now() + 180000), lastMessage }
+        const filter = { ...scope, _id: { $in: device.accountIds, $eq: id(body.accountId) }, jobId: body.jobId, jobDeviceId: device._id, jobState: { $in: ['running','verification_required'] } }
+        // A heartbeat can repeat the last transition. Store one copy, in the same bound write as the job status.
+        const update = stage ? [{ $set: { ...fields, lastMessage: { $literal: lastMessage }, aplusRunHistory: { $cond: [ { $eq: ['$provider','aplus'] }, {
+          $let: { vars: { history: { $ifNull: ['$aplusRunHistory', []] }, last: { $arrayElemAt: ['$aplusRunHistory', 0] } }, in: {
+            $cond: [{ $and: [
+              { $eq: ['$$last.jobId', '$jobId'] }, { $eq: ['$$last.attempt', stage.attempt] },
+              { $eq: ['$$last.stage', stage.stage] }, { $eq: ['$$last.outcome', stage.outcome] },
+              { $eq: ['$$last.state', body.state] }, { $eq: [{ $ifNull: ['$$last.month', null] }, stage.month ?? null] },
+            ] }, '$$history', { $slice: [{ $concatArrays: [[{ ...stage, state:body.state, jobId: '$jobId', at: '$$NOW' }], '$$history'] }, 256] }],
+          } },
+        }, { $ifNull: ['$aplusRunHistory','$$REMOVE'] } ] } } }] : { $set: fields }
+        const account = await FinancialAccount.findOneAndUpdate(typed ? { ...filter, provider:'aplus' } : filter, update, { new: true })
+        // A reply may be lost after the terminal write committed. A repeat can
+        // acknowledge only this device's identical, still-current terminal event.
+        if (!account && stage && (body.state === 'complete' || body.state === 'failed')) {
+          const repeat = await FinancialAccount.exists({ ...filter, provider:'aplus', jobState:body.state, ...(legacy ? {lastMessage} : {}),
+            'aplusRunHistory.0.jobId':body.jobId, 'aplusRunHistory.0.attempt':stage.attempt,
+            'aplusRunHistory.0.stage':stage.stage, 'aplusRunHistory.0.outcome':stage.outcome,
+            'aplusRunHistory.0.state':body.state, 'aplusRunHistory.0.month':stage.month ?? null })
+          if (repeat) return { success:true }
+        }
         if (!account) fail(409, 'Job is no longer assigned to this collector')
         return { success: true }
       }
@@ -56,10 +91,10 @@ export default defineEventHandler(async event => {
         if (!getHeader(event,'content-type')?.startsWith(json ? 'application/json' : 'text/csv')) fail(415, json ? 'Bank page JSON capture required' : 'CSV required')
         // An issuer billing notice (parsed claims + body hash, never the body) and the mail read's receipt are JSON
         // artifacts of the same claimed job; the statement CSV path is unchanged apart from the issuer-shown due date.
-        if (json && kind === 'notice') return await recordBillingNotice(device.ownerId.toString(), account, await jsonArtifact(event), device._id.toString())
-        if (json && kind === 'billing-mail') return await recordBillingMailStatus(account, await jsonArtifact(event))
+        if (json && kind === 'notice') return await recordBillingNotice(device.ownerId.toString(), account, await jsonArtifact(event, 'aplus-invalid-notice'), device._id.toString())
+        if (json && kind === 'billing-mail') return await recordBillingMailStatus(account, await jsonArtifact(event, 'aplus-invalid-mail-report'))
         // A JSON page capture proves its own page and row counts (shared/finance-pending.mjs); its manifest page count is not a CSV row count.
-        return await acceptImport(device.ownerId.toString(), account, await csvBody(event), { kind: query.kind, start: query.start, end: query.end, fiscalStart: query.fiscalStart, fiscalEnd: query.fiscalEnd, pageCount: json ? undefined : query.pageCount, statementMonth: query.statementMonth, statementTotal: query.statementTotal, refundTotal: query.refundTotal, paymentDueDate: query.paymentDueDate }, device._id.toString())
+        return await acceptImport(device.ownerId.toString(), account, await csvBody(event, account.provider==='aplus' ? 'aplus-invalid-artifact' : undefined), { kind: query.kind, start: query.start, end: query.end, fiscalStart: query.fiscalStart, fiscalEnd: query.fiscalEnd, pageCount: json ? undefined : query.pageCount, statementMonth: query.statementMonth, statementTotal: query.statementTotal, refundTotal: query.refundTotal, paymentDueDate: query.paymentDueDate }, device._id.toString())
       }
       fail(404, 'Collector endpoint not found')
     }
@@ -68,8 +103,10 @@ export default defineEventHandler(async event => {
     setHeader(event, 'Cache-Control', 'no-store')
     if (parts[0] === 'accounts' && parts.length === 1) {
       if (method === 'GET') {
-        const accounts = await FinancialAccount.find({ ownerId }).select('-commitLease -commitLeaseUntil').sort({ createdAt: 1 }).lean()
-        return { accounts: await Promise.all(accounts.map(async account => ({ ...account, fiscalPeriod: await accountFiscalPeriod(ownerId, account) }))) }
+        const accounts = await FinancialAccount.find({ ownerId }).select('-commitLease -commitLeaseUntil +aplusRunHistory').sort({ createdAt: 1 }).lean()
+        return { accounts: await Promise.all(accounts.map(async account => ({ ...account,
+          ...(account.provider==='aplus' && account.aplusRunHistory ? {aplusRunHistory:ownerAplusHistory(account.aplusRunHistory as any,account)} : {}),
+          fiscalPeriod: await accountFiscalPeriod(ownerId, account) }))) }
       }
       if (method === 'POST') return { account: await FinancialAccount.create({ ownerId, ...accountInput(await readBody(event)) }) }
     }

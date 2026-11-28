@@ -21,6 +21,16 @@
       <section class="card" v-for="account in accounts" :key="account._id">
         <h2>{{ account.name }}</h2><p>カード {{ account.cardIdentifiers.map((v: string) => v.slice(-4)).join(' / ') }}</p>
         <p>{{ states[account.jobState] || account.jobState }} · {{ account.lastMessage || '未取得' }}</p>
+        <p v-for="month in missingBilledMonths(account._id)" :key="month" class="notice" role="status">{{ month }} の請求額は確定していますが、OMFにはまだ明細が届いていません。</p>
+        <details v-if="account.provider === 'aplus' && account.aplusRunHistory?.length" class="aplus-run-history">
+          <summary>取得の実行履歴</summary>
+          <details v-for="events in aplusAttempts(account.aplusRunHistory)" :key="events[0].jobId + events[0].attempt">
+            <summary>{{ formatDate(events[0].at) }} · {{ describeAplusStage(events[0]) }}</summary>
+            <ul>
+              <li v-for="(entry, index) in events" :key="index"><time :datetime="entry.at">{{ formatDate(entry.at) }}</time> · {{ describeAplusStage(entry) }}</li>
+            </ul>
+          </details>
+        </details>
         <small>最終取得: {{ formatDate(account.lastSuccessAt) }}<template v-if="account.provider !== 'aplus'"><br>認証メール: {{ account.otpRecipient }} → {{ account.otpMailbox }}</template></small>
         <button class="btn btn-primary" :disabled="busy || ['queued','running','verification_required'].includes(account.jobState)" @click="run(() => sync(account._id))">確定明細を取得</button>
         <template v-if="account.provider !== 'aplus'">
@@ -144,9 +154,11 @@
 import { useUserStore } from '~/stores/user'
 import { useAssistantStore } from '~/stores/assistant'
 import { billingMailSchedule } from '~/shared/billing-mail.mjs'
+import { aplusAttempts, describeAplusStage } from '~/shared/aplus-run-status'
 definePageMeta({ middleware: 'auth' })
 const user = useUserStore(), assistant = useAssistantStore()
 const accounts = ref<any[]>([]), collectors = ref<any[]>([]), imports = ref<any[]>([]), notices = ref<any[]>([]), selected = ref<any>(null), selectedCalendar = ref<any>(null)
+const missingBilledMonths = (accountId: string) => [...new Set(notices.value.filter(n => n.accountId === accountId && n.receiptOverdue).map(n => n.claims.statementMonth))]
 const fiscalInputs = reactive<Record<string, { start: string; end: string }>>({})
 const autoSyncInputs = reactive<Record<string, { enabled: boolean; hour: number }>>({})
 // The providers the server's daily schedule queues (financeService AUTO_SYNC_PROVIDERS): Amex fetches its latest closed statement, Aplus
@@ -238,6 +250,8 @@ onUnmounted(() => clearInterval(poll))
 .notice { @apply break-words rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm dark:border-white/10 dark:bg-white/5; }
 .notice a { @apply text-primary-main underline dark:text-primary-light; }
 .history { @apply mt-3 block w-full text-left; }
+.aplus-run-history details { @apply mt-2 pl-2; }
+.aplus-run-history li { @apply my-1 text-sm; }
 .review-list article { @apply grid gap-3 break-words border-t border-gray-200 py-5 dark:border-white/10; }
 .review-list strong { @apply block; }
 .notice-list article { @apply grid gap-3 break-words border-t border-gray-200 py-5 dark:border-white/10; }

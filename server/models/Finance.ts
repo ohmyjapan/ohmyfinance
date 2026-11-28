@@ -17,9 +17,12 @@ const account = new Schema({
   // every closed enqueue in that same atomic write. Absent is the closed statement, as every job before it, so an account that never asked for recent activity never holds this field.
   jobSource: { type: String, enum: ['recent'] },
   jobDeviceId: oid, jobLeaseUntil: Date, lastAttemptAt: Date, lastSuccessAt: Date, lastMessage: String,
+    aplusRunHistory: { type: [new Schema({ jobId: String, attempt: String, stage: String, outcome: String, state: String, month: String, at: Date }, { _id: false })], default: undefined, select: false },
+  aplusExportReservations: { type: [new Schema({ month: String, jobId: String, attemptId: String, deviceId: oid }, { _id: false })], default: undefined, select: false },
+  aplusCancelledDispatches: { type: [String], default: undefined, select: false },
   // Automatic Aplus collection (plan omf-auto-sync-build-20261014 §2 A1): on/off per account, the JST hour after which one
   // job per day is queued, and the JST day (YYYY-MM-DD) last queued by the schedule.
-  autoSync: { enabled: { type: Boolean, default: false }, hour: { type: Number, min: 0, max: 23, default: 9 }, lastQueuedDay: String },
+  autoSync: { enabled: { type: Boolean, default: false }, hour: { type: Number, min: 0, max: 23, default: 9 }, lastQueuedDay: String, lastQueuedJobId: String },
   // Internal markers of an owner Navi action, written in the SAME atomic write as the job enqueue / schedule change it records
   // (operationId of the journal row, and the queued jobId or saved values), so a lost reply is reconciled, never repeated. Never
   // supplied by a request; the native buttons leave them untouched.

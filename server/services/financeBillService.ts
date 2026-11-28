@@ -14,6 +14,7 @@ import { fail, id, ownedAccount, ownedImport, queueSync } from './financeService
 import { dateOnly } from '../../shared/amex.mjs'
 import { aplusPeriod } from '../../shared/aplus.mjs'
 import { BILLING_MAIL_PARSER } from '../../shared/billing-mail.mjs'
+import { jstDay, jstInstant, nextDay } from '../../shared/finance-bank-schedule.mjs'
 
 export type BillSource = 'issuer-mail' | 'statement-csv'
 export interface BillEvidence { periodKey: string; statementMonth: string; statementTotal: number; paymentDueDate: string | null; importId?: string; sourceHash?: string; noticeId?: string; dueDateEvidence?: 'issuer-page' | 'user-entered' | 'issuer-mail' }
@@ -239,28 +240,28 @@ export function billingMailInput(body: any): { enabled: boolean; mailbox: string
 function noticeInput(value: any, account: any) {
   const hex = (v: any, min: number, max: number) => typeof v === 'string' && new RegExp('^[a-f0-9]{' + min + ',' + max + '}$').test(v)
   const text = (v: any, max: number) => (typeof v === 'string' && v.length <= max ? v : null)
-  if (!value || typeof value !== 'object' || value.kind !== 'notice' || value.parserVersion !== BILLING_MAIL_PARSER) fail(400, 'Unsupported billing notice')
-  if (!hex(value.mailId, 1, 32) || !hex(value.bodySha256, 64, 64)) fail(400, 'Invalid billing notice identity')
+  if (!value || typeof value !== 'object' || value.kind !== 'notice' || value.parserVersion !== BILLING_MAIL_PARSER) fail(400, 'Unsupported billing notice', 'aplus-invalid-notice')
+  if (!hex(value.mailId, 1, 32) || !hex(value.bodySha256, 64, 64)) fail(400, 'Invalid billing notice identity', 'aplus-invalid-notice')
   const mailbox = typeof value.mailbox === 'string' ? value.mailbox.toLowerCase() : ''
   if (!account.billingMail?.enabled || !account.billingMail.mailbox || mailbox !== String(account.billingMail.mailbox).toLowerCase()) fail(409, 'Billing mail is not enabled for this account or the mailbox differs')
-  if (!['aplus', 'amex'].includes(value.issuer) || !['bill-confirmed', 'bill-ready'].includes(value.noticeKind)) fail(400, 'Invalid billing notice')
+  if (!['aplus', 'amex'].includes(value.issuer) || !['bill-confirmed', 'bill-ready'].includes(value.noticeKind)) fail(400, 'Invalid billing notice', 'aplus-invalid-notice')
   const subject = text(value.subject, 300), from = text(value.from, 300)
-  if (subject === null || from === null) fail(400, 'Invalid billing notice headers')
+  if (subject === null || from === null) fail(400, 'Invalid billing notice headers', 'aplus-invalid-notice')
   const dkim = text(value.authentication?.dkim, 20), dmarc = text(value.authentication?.dmarc, 20)
-  if (!dkim || !dmarc) fail(400, 'Billing notice authentication results required')
+  if (!dkim || !dmarc) fail(400, 'Billing notice authentication results required', 'aplus-invalid-notice')
   const internalDate = Number(value.internalDate)
-  if (!Number.isFinite(internalDate) || internalDate <= 0) fail(400, 'Invalid billing notice date')
+  if (!Number.isFinite(internalDate) || internalDate <= 0) fail(400, 'Invalid billing notice date', 'aplus-invalid-notice')
   const claims = value.claims || {}
   let parsed: any
   if (value.noticeKind === 'bill-confirmed') {
-    if (value.issuer !== 'aplus' || !/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(claims.statementMonth || ''))) fail(400, 'Invalid statement month')
+    if (value.issuer !== 'aplus' || !/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(claims.statementMonth || ''))) fail(400, 'Invalid statement month', 'aplus-invalid-notice')
     let dueDate = ''
-    try { dueDate = dateOnly(claims.dueDate) } catch { fail(400, 'Invalid due date') }
-    if (!dueDate.startsWith(claims.statementMonth)) fail(400, 'Due date outside the statement month')
-    if (!Number.isSafeInteger(claims.amount) || claims.amount < 0 || claims.amount > 1e12) fail(400, 'Invalid amount')
+    try { dueDate = dateOnly(claims.dueDate) } catch { fail(400, 'Invalid due date', 'aplus-invalid-notice') }
+    if (!dueDate.startsWith(claims.statementMonth)) fail(400, 'Due date outside the statement month', 'aplus-invalid-notice')
+    if (!Number.isSafeInteger(claims.amount) || claims.amount < 0 || claims.amount > 1e12) fail(400, 'Invalid amount', 'aplus-invalid-notice')
     parsed = { statementMonth: claims.statementMonth, dueDate, amount: claims.amount, currency: 'JPY' }
   } else {
-    if (value.issuer !== 'amex' || !/^\d{4,5}$/.test(String(claims.cardSuffix || ''))) fail(400, 'Invalid card suffix')
+    if (value.issuer !== 'amex' || !/^\d{4,5}$/.test(String(claims.cardSuffix || ''))) fail(400, 'Invalid card suffix', 'aplus-invalid-notice')
     parsed = { cardSuffix: String(claims.cardSuffix) }
   }
   return { mailId: value.mailId as string, threadId: hex(value.threadId, 1, 32) ? value.threadId as string : value.mailId as string, mailbox, issuer: value.issuer as string, kind: value.noticeKind as string, subject, from, internalDate: new Date(internalDate), bodySha256: value.bodySha256 as string, authentication: { dkim, dmarc }, parserVersion: value.parserVersion as string, claims: parsed }
@@ -346,9 +347,9 @@ async function evaluateNotice(ownerId: string, account: any, stored: any, hooks:
 
 /** The collector's durable receipt of one mail read (B5): a failed read is recorded even when the bank run succeeds. */
 export async function recordBillingMailStatus(account: any, body: any) {
-  if (!body || typeof body !== 'object' || body.kind !== 'billing-mail' || typeof body.ok !== 'boolean') fail(400, 'Invalid billing mail receipt')
+  if (!body || typeof body !== 'object' || body.kind !== 'billing-mail' || typeof body.ok !== 'boolean') fail(400, 'Invalid billing mail receipt', 'aplus-invalid-mail-report')
   const readAt = new Date(body.readAt)
-  if (!Number.isFinite(readAt.getTime())) fail(400, 'Invalid billing mail receipt time')
+  if (!Number.isFinite(readAt.getTime())) fail(400, 'Invalid billing mail receipt time', 'aplus-invalid-mail-report')
   const count = Number.isSafeInteger(body.noticesRead) && body.noticesRead >= 0 ? body.noticesRead : 0
   const error = body.ok ? null : (typeof body.error === 'string' && body.error.trim() ? body.error.trim().slice(0, 300) : '請求メールを読めませんでした')
   const set: any = { 'billingMail.lastAttemptAt': readAt, 'billingMail.lastError': error }
@@ -376,11 +377,33 @@ async function choiceOffers(ownerId: string, calendar: any, memberships = new Ma
 export async function listNotices(ownerId: string, accountId: string) {
   const account = await ownedAccount(ownerId, accountId)
   const rows: any[] = await FinanceNotice.find({ ownerId, accountId: account._id }).sort({ internalDate: -1, _id: -1 }).limit(100).lean()
+  // An issuer-confirmed month first becomes due at the next configured daily check.
+  const dueMonths = new Set<string>()
+  if (account.active && account.autoSync?.enabled) {
+    const now = Date.now(), hour = account.autoSync.hour ?? 9
+    for (const notice of rows) {
+      if (notice.issuer !== 'aplus' || notice.kind !== 'bill-confirmed' || !notice.claims?.statementMonth) continue
+      const received = notice.internalDate
+      if (!(received instanceof Date) || !Number.isFinite(received.getTime())) continue
+      const day = jstDay(received), scheduled = jstInstant(day, hour)
+      const due = scheduled >= received ? scheduled : jstInstant(nextDay(day), hour)
+      const attemptStarted = account.lastAttemptAt?.getTime()
+      const checking = (account.jobState === 'running' || account.jobState === 'verification_required') &&
+        (account.jobLeaseUntil?.getTime() ?? 0) > now && (attemptStarted ?? 0) >= due.getTime()
+      if (due.getTime() <= now && !checking) dueMonths.add(notice.claims.statementMonth)
+    }
+  }
+  if (dueMonths.size) {
+    const receivedMonths = await FinanceImport.distinct('period.statementMonth', {
+      ownerId, accountId: account._id, 'period.kind': 'statement', 'period.statementMonth': { $in: [...dueMonths] },
+    })
+    for (const month of receivedMonths) dueMonths.delete(month as string)
+  }
   const memberships = new Map<string, boolean>()
   const notices: any[] = []
   for (const n of rows) {
     const offers = await choiceOffers(ownerId, n.calendar, memberships)
-    notices.push({ _id: String(n._id), mailId: n.mailId, issuer: n.issuer, kind: n.kind, subject: n.subject, internalDate: n.internalDate, claims: n.claims, calendar: n.calendar, action: n.action, versions: (n.versions || []).length, attempts: n.attempts, lastAttemptAt: n.lastAttemptAt, createdAt: n.createdAt, ...offers })
+    notices.push({ _id: String(n._id), mailId: n.mailId, issuer: n.issuer, kind: n.kind, subject: n.subject, internalDate: n.internalDate, claims: n.claims, calendar: n.calendar, action: n.action, versions: (n.versions || []).length, attempts: n.attempts, lastAttemptAt: n.lastAttemptAt, createdAt: n.createdAt, ...(n.kind === 'bill-confirmed' && dueMonths.has(n.claims?.statementMonth) ? { receiptOverdue: true } : {}), ...offers })
   }
   return { notices }
 }

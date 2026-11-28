@@ -25,7 +25,7 @@ const User = UserModel as mongoose.Model<IUser>
 const Transaction = TransactionModel as mongoose.Model<ITransaction>
 const AccountCategory = AccountCategoryModel as mongoose.Model<IAccountCategory>
 
-export const fail: (statusCode: number, message: string) => never = (statusCode, message) => { throw createError({ statusCode, statusMessage: /[^\x20-\x7e]/.test(message) ? 'Finance request failed' : message, data: { message } }) }
+export const fail: (statusCode: number, message: string, code?: string) => never = (statusCode, message, code) => { throw createError({ statusCode, statusMessage: /[^\x20-\x7e]/.test(message) ? 'Finance request failed' : message, data: { message, ...(code ? { code } : {}) } }) }
 export function id(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f\d]{24}$/i.test(value)) fail(400, 'Invalid identifier')
   return value as string
@@ -145,7 +145,7 @@ export async function queueSync(ownerId: string, account: any, operation?: { ope
   const recent = source === 'recent'
   if (recent && !await FinanceCollector.exists({ ownerId, accountIds: account._id, revokedAt: null, capabilities: AMEX_RECENT_CAPABILITY })) fail(409, RECENT_UNSUPPORTED)
   const jobId = randomUUID(), requestedAt = new Date()
-  const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId, jobState: 'queued', jobRequestedAt: requestedAt, lastMessage: 'Waiting for collector', ...(recent ? { jobSource: 'recent' } : {}), ...(operation ? { jobOperation: { operationId: operation.operationId, jobId, at: requestedAt } } : {}) }, $unset: { jobLeaseUntil: '', jobDeviceId: '', ...(recent ? {} : { jobSource: '' }) } }, { new: true })
+  const updated = await FinancialAccount.findOneAndUpdate({ _id: account._id, ownerId, active: true, $or: [{ jobState: { $nin: ['queued','running','verification_required'] } }, { jobLeaseUntil: { $lt: new Date() }, jobState: { $ne: 'queued' } }] }, { $set: { jobId, jobState: 'queued', jobRequestedAt: requestedAt, lastMessage: 'Waiting for collector', ...(recent ? { jobSource: 'recent' } : {}), ...(operation ? { jobOperation: { operationId: operation.operationId, jobId, at: requestedAt } } : {}) }, $unset: { aplusCancelledDispatches: '', jobLeaseUntil: '', jobDeviceId: '', ...(recent ? {} : { jobSource: '' }) } }, { new: true })
   if (!updated) fail(409, 'A synchronization is already queued or running')
   return updated
 }
@@ -171,12 +171,13 @@ export const AUTO_SYNC_PROVIDERS: readonly string[] = Object.freeze(['amex', 'ap
 // scan and this write makes it a no-op; two schedulers cannot both pass lastQueuedDay ≠ day. A running job with an expired
 // lease is NOT re-queued (a re-claim continues the same jobId). Returns the queued document or null, never 409.
 export async function queueScheduledSync(account: any, { day, hour, dayStartUtc, now = new Date() }: { day: string; hour: number; dayStartUtc: Date; now?: Date }) {
-  return FinancialAccount.findOneAndUpdate({ _id: account._id, provider: { $in: [...AUTO_SYNC_PROVIDERS] }, active: true, 'autoSync.enabled': true, 'autoSync.hour': { $lte: hour }, 'autoSync.lastQueuedDay': { $ne: day }, jobState: { $nin: ['queued','running','verification_required'] }, $or: [{ lastAttemptAt: { $exists: false } }, { lastAttemptAt: { $lt: dayStartUtc } }] }, { $set: { jobId: randomUUID(), jobState: 'queued', jobRequestedAt: now, lastMessage: '自動取得を予約しました', 'autoSync.lastQueuedDay': day }, $unset: { jobLeaseUntil: '', jobDeviceId: '', jobSource: '' } }, { new: true }).lean() // guard:schedule-providers-atomic
+  const jobId = randomUUID()
+  return FinancialAccount.findOneAndUpdate({ _id: account._id, provider: { $in: [...AUTO_SYNC_PROVIDERS] }, active: true, 'autoSync.enabled': true, 'autoSync.hour': { $lte: hour }, 'autoSync.lastQueuedDay': { $ne: day }, jobState: { $nin: ['queued','running','verification_required'] }, $or: [{ lastAttemptAt: { $exists: false } }, { lastAttemptAt: { $lt: dayStartUtc } }] }, { $set: { jobId, jobState: 'queued', jobRequestedAt: now, lastMessage: '自動取得を予約しました', 'autoSync.lastQueuedDay': day, 'autoSync.lastQueuedJobId': jobId }, $unset: { aplusCancelledDispatches: '', jobLeaseUntil: '', jobDeviceId: '', jobSource: '' } }, { new: true }).lean() // guard:schedule-providers-atomic
 }
-export async function csvBody(event: H3Event): Promise<Buffer> {
-  if (Number(getHeader(event, 'content-length') || 0) > MAX_BYTES) fail(413, 'CSV exceeds 5MB')
+export async function csvBody(event: H3Event, tooLargeCode?: string): Promise<Buffer> {
+  if (Number(getHeader(event, 'content-length') || 0) > MAX_BYTES) fail(413, 'CSV exceeds 5MB', tooLargeCode)
   const chunks: Buffer[] = []; let length = 0
-  for await (const data of event.node.req) { const chunk = Buffer.from(data); length += chunk.length; if (length > MAX_BYTES) fail(413, 'CSV exceeds 5MB'); chunks.push(chunk) }
+  for await (const data of event.node.req) { const chunk = Buffer.from(data); length += chunk.length; if (length > MAX_BYTES) fail(413, 'CSV exceeds 5MB', tooLargeCode); chunks.push(chunk) }
   return Buffer.concat(chunks)
 }
 function archivePath(hash: string) {
@@ -270,11 +271,13 @@ async function linkImportCalendar(ownerId: string, account: any, batch: any, met
 export async function acceptImport(ownerId: string, account: any, bytes: Buffer, metadata: any, collectorId?: string) {
   if (collectorId) metadata = await collectorImportMetadata(ownerId, account, bytes, metadata)
   let parsed: ReturnType<typeof parseCardImport>
-  try { parsed = parseFinanceImport(bytes, account, metadata) } catch (error: any) { fail(400, error.message) }
-  if (metadata.pageCount !== undefined && (!Number.isSafeInteger(Number(metadata.pageCount)) || Number(metadata.pageCount) !== parsed!.rows.length)) fail(400, 'CSV row count does not match the card statement')
+  const aplusUpload = collectorId && account.provider === 'aplus'
+  const invalidArtifact = aplusUpload ? 'aplus-invalid-artifact' : undefined
+  try { parsed = parseFinanceImport(bytes, account, metadata) } catch (error: any) { fail(400, error.message, invalidArtifact) }
+  if (metadata.pageCount !== undefined && (!Number.isSafeInteger(Number(metadata.pageCount)) || Number(metadata.pageCount) !== parsed!.rows.length)) fail(400, 'CSV row count does not match the card statement', invalidArtifact)
   const lookup = { ownerId, accountId: account._id, hash: parsed!.sha256 }
   const duplicate = async (batch: any) => {
-    if (account.provider === 'aplus' && JSON.stringify(batch.period) !== JSON.stringify(parsed!.period)) fail(409, 'This file was already uploaded with different statement metadata; review the original import')
+    if (account.provider === 'aplus' && JSON.stringify(batch.period) !== JSON.stringify(parsed!.period)) fail(409, 'This file was already uploaded with different statement metadata; review the original import', aplusUpload ? 'aplus-period-conflict' : undefined)
     // Unfinished calendar work is re-run on re-delivery (the owner's re-upload with the due date, the collector's retry);
     // a historical batch without a calendar record is left alone.
     const calendar = batch.calendar?.state && RETRY_IMPORT_STATES.includes(batch.calendar.state) ? await linkImportCalendar(ownerId, account, batch, metadata) : batch.calendar
