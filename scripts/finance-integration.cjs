@@ -27,6 +27,7 @@ async function recentJobs({db,call,request,token,other,pass,csv,row}){
  const stored=()=>db.collection('financialaccounts').findOne({_id:new ObjectId(id)}),collector=()=>db.collection('financecollectors').findOne({_id:new ObjectId(device.data.id)});
  const sync=(body,account=id,auth=token)=>call('/api/finance/accounts/'+account+'/sync',{method:'POST',token:auth,...(body===undefined?{}:{body})});
  const status=(jobId,state)=>call('/api/finance/collector/status',{method:'POST',token:dev,body:{accountId:id,jobId,state,message:'synthetic'}});
+ const amexPost=(jobId,state,message)=>call('/api/finance/collector/status',{method:'POST',token:dev,body:{accountId:id,jobId,state,message}});
  const sent=(jobId,query,bytes)=>call('/api/finance/collector/upload?accountId='+id+'&jobId='+jobId+query,{method:'POST',token:dev,body:bytes,raw:true});
  const cell=changes=>row({0:'2026/10/06',1:'2026/10/07',2:'Recent shop',4:'71560',5:'1200',...changes}),activity=csv([cell(),cell({2:'Recent other',5:'800'})]);
  const imports=()=>db.collection('financeimports').countDocuments({accountId:new ObjectId(id)});
@@ -67,6 +68,10 @@ async function recentJobs({db,call,request,token,other,pass,csv,row}){
  // afterwards: closed jobs are what they were, for a legacy and a capable collector alike
  const closed=await sync();assert.equal(closed.status,200,JSON.stringify(closed));assert.equal(closed.data.account.jobSource,undefined,'recent-api:a-closed-request-clears-the-kind');assert.equal((await stored()).jobSource,undefined,'recent-api:cleared-in-the-store');
  const legacyJob=(await claim()).data.account;assert.deepEqual([legacyJob?._id,legacyJob?.jobSource],[id,undefined],'recent-api:a-legacy-claim-takes-the-closed-job');assert.ok((await stored()).lastAttemptAt,'recent-api:a-closed-claim-records-its-attempt');
+ const amexPrompt=await amexPost(legacyJob.jobId,'verification_required','My APLUSにChromeでサインインしてください');
+ assert.equal(amexPrompt.status,200);const amexPrompted=await stored();
+ assert.equal(amexPrompted.jobState,'verification_required');assert(!Object.hasOwn(amexPrompted,'aplusRunHistory'));
+ pass('Amex verification keeps its status while the database omits Aplus history');
  const statement=csv([cell({0:'2026/09/10',1:'2026/09/11',2:'Closed shop'}),cell({0:'2026/09/12',1:'2026/09/13',2:'Closed other',5:'700'})]);
  const accepted2=await sent(legacyJob.jobId,'&kind=statement&start=2026-09-05&end=2026-10-04&pageCount=2',statement);assert.equal(accepted2.status,200,JSON.stringify(accepted2));assert.equal((await db.collection('financeimports').findOne({_id:new ObjectId(accepted2.data.id)})).sourceStatus,undefined,'recent-api:a-closed-import-stays-confirmed');assert.equal((await status(legacyJob.jobId,'complete')).status,200);
  const named=await sync({source:'statement'});assert.equal(named.status,200,JSON.stringify(named));const capableClosed=(await claim(CAPABLE)).data.account;assert.deepEqual([capableClosed?._id,capableClosed?.jobSource],[id,undefined],'recent-api:a-capable-claim-takes-closed-jobs-too');
@@ -114,13 +119,16 @@ async function recentJobs({db,call,request,token,other,pass,csv,row}){
  await db.collection('financialaccounts').updateOne(aplusScope,{$set:{jobId:legacyId,jobState:'running','autoSync.lastQueuedJobId':legacyId,'autoSync.lastQueuedDay':'2026-12-03'}});
  const legacy=(state,message)=>call('/api/finance/collector/status',{method:'POST',token:dev,body:{accountId:aplusId,jobId:legacyId,state,message}});
  for(const reply of await Promise.all([legacy('verification_required','確認'),legacy('verification_required','確認')]))assert.equal(reply.status,200);
+ const signIn='My APLUSにChromeでサインインしてください',code='My APLUSの認証コードをChromeで入力してください';
+ for(const [state,text] of [['verification_required',signIn],['verification_required',signIn],['verification_required',code],['verification_required',code],['running','確定明細の一覧を確認'],['verification_required',code]])assert.equal((await legacy(state,text)).status,200);
  assert.equal((await legacy('complete','すべての確定明細を取得済み')).status,200);
  await db.collection('financialaccounts').updateOne(aplusScope,{$set:{'autoSync.lastQueuedJobId':crypto.randomUUID(),'autoSync.lastQueuedDay':'2026-12-04'}});
  const old=(await call('/api/finance/accounts',{token})).data.accounts.find(a=>a._id===aplusId),journal=old.aplusRunHistory.filter(e=>e.jobId===legacyId);
- assert.deepEqual(journal.map(e=>[e.state,e.scheduledDay]),[['complete','2026-12-03'],['verification_required','2026-12-03']]);
+ assert(journal.every(e=>e.scheduledDay==='2026-12-03'));
+ assert.deepEqual(journal.map(e=>[e.state,e.stage]),[['complete','complete'],['verification_required','local_download'],['verification_required','local_download'],['verification_required','sign_in'],['verification_required','complete']]);
  assert.deepEqual([journal[0].statementFiles,journal[0].pendingFiles,journal[0].month],[0,0,undefined]);
  assert.equal(old.lastMessage,'PCからの保存報告：確定明細 0件・未請求 0件');
- pass('prior scheduled day, reported file counts and one explicit prompt survive a subsequent scheduler slot; zero files do not assert coverage');
+ pass('prior scheduled day, reported file counts and distinct observed prompts survive a subsequent scheduler slot; zero files do not assert coverage');
 
 }
 async function main(){

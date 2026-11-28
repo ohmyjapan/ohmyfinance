@@ -63,6 +63,8 @@ export default defineEventHandler(async event => {
               { $eq: ['$$last.jobId', '$jobId'] }, { $eq: ['$$last.attempt', stage.attempt] },
               { $eq: ['$$last.stage', stage.stage] }, { $eq: ['$$last.outcome', stage.outcome] },
               { $eq: ['$$last.state', body.state] }, { $eq: [{ $ifNull: ['$$last.month', null] }, stage.month ?? null] },
+              // A real running update between identical untagged prompts starts a fresh observation.
+              ...(legacy && body.state === 'verification_required' ? [{ $eq: ['$jobState',body.state] }] : []),
             ] }, '$$history', { $slice: [{ $concatArrays: [[{ $mergeObjects: [
                 { ...stage, state:body.state, jobId: '$jobId', at: '$$NOW' },
                 { $cond: [{ $and: [{ $eq: ['$jobId','$autoSync.lastQueuedJobId'] }, { $eq: [{ $type: '$autoSync.lastQueuedDay' },'string'] }] }, { scheduledDay:'$autoSync.lastQueuedDay' }, {}] },

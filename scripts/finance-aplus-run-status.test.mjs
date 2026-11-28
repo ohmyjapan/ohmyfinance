@@ -17,3 +17,11 @@ test('only bounded legacy summary shapes become file totals', () => {
   assert.equal(partial.statementFiles,1)
   assert.equal(partial.month,undefined)
 })
+
+test('installed sign-in and statement code prompts retain distinct safe stages', () => {
+  const signIn = readLegacyAplusStage('verification_required', 'My APLUSにChromeでサインインしてください')
+  const code = readLegacyAplusStage('verification_required', 'My APLUSの認証コードをChromeで入力してください')
+  assert.equal(signIn.stage, 'sign_in')
+  assert.equal(code.stage, 'local_download')
+  assert.match(describeAplusStage(code), /認証コードの入力/)
+})

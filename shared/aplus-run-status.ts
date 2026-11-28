@@ -60,7 +60,11 @@ export function readAplusStage(message: string): AplusStage | null {
 export function readLegacyAplusStage(state: string, message: string): AplusStage | null {
   if (message.startsWith('APLUS ')) return null
   const base = { attempt: 'legacy-terminal', stage: 'complete' as const }
-  if (state === 'verification_required') return { ...base, outcome: 'operator_needed' }
+  if (state === 'verification_required') {
+    const stage = message === 'My APLUSにChromeでサインインしてください' ? 'sign_in'
+      : message === 'My APLUSの認証コードをChromeで入力してください' ? 'local_download' : base.stage
+    return { ...base, stage, outcome: 'operator_needed' }
+  }
   if (state === 'failed') return { ...base, outcome: 'failed' }
   if (state !== 'complete') return null
   if (message === 'すべての確定明細を取得済み') return { ...base, outcome: 'succeeded', statementFiles: 0, pendingFiles: 0 }
@@ -73,7 +77,7 @@ export function describeAplusStage(event: AplusStage) {
   const schedule = event.scheduledDay ? event.scheduledDay + ' 定時取得 · ' : ''
   let detail = outcomes[event.outcome]
   if (event.attempt === 'legacy-terminal') {
-    if (event.outcome === 'operator_needed') detail = 'PCで確認操作を求めました'
+    if (event.outcome === 'operator_needed') detail = event.stage === 'local_download' ? 'PCで認証コードの入力を求めました' : 'PCで確認操作を求めました'
     if (event.outcome === 'succeeded') detail = event.statementFiles === undefined || event.pendingFiles === undefined
       ? '完了（取得件数の記録なし）'
       : 'PCからの保存報告：確定明細 ' + event.statementFiles + '件・未請求 ' + event.pendingFiles + '件'
